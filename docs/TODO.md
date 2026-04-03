@@ -3,168 +3,168 @@
 ## 1. Project Setup
 
 ### 1.1 Create Android project skeleton
-- [ ] Create Android project for PoC app
-- [ ] Set package/application identifiers
-- [ ] Configure min SDK / target SDK appropriately for planned networking/audio APIs
-- [ ] Set up build variants if useful (`debug`, `release`, possibly `pocDebug`)
-- [ ] Enable logging strategy suitable for networking/audio diagnostics
+- [x] Create Android project for PoC app
+- [x] Set package/application identifiers
+- [x] Configure min SDK / target SDK appropriately for planned networking/audio APIs
+- [x] Set up build variants if useful (`debug`, `release`, possibly `pocDebug`)
+- [x] Enable logging strategy suitable for networking/audio diagnostics
 
 ### 1.2 Establish project architecture
-- [ ] Choose app architecture approach
-  - [ ] Define UI layer structure
-  - [ ] Define state management approach
-  - [ ] Define service/session manager boundaries
-- [ ] Separate code by feature area
-  - [ ] host/session control
-  - [ ] listener/join flow
-  - [ ] transport/networking
-  - [ ] sync/timing
-  - [ ] audio pipeline
-  - [ ] diagnostics
+- [x] Choose app architecture approach
+  - [x] Define UI layer structure
+  - [x] Define state management approach
+  - [x] Define service/session manager boundaries
+- [x] Separate code by feature area
+  - [x] host/session control
+  - [x] listener/join flow
+  - [x] transport/networking
+  - [x] sync/timing
+  - [x] audio pipeline
+  - [x] diagnostics
 
 ### 1.3 Permissions and platform plumbing
-- [ ] Identify all runtime permissions required
-  - [ ] nearby/wifi related permissions
-  - [ ] bluetooth permissions if BLE discovery is included
-  - [ ] storage/media access for local audio file selection
-- [ ] Implement permission request flow
-- [ ] Implement permission denied states in UI
+- [x] Identify all runtime permissions required
+  - [x] nearby/wifi related permissions
+  - [x] bluetooth permissions if BLE discovery is included
+  - [x] storage/media access for local audio file selection
+- [x] Implement permission request flow
+- [x] Implement permission denied states in UI
 
 ## 2. Core Domain Model
 
 ### 2.1 Define core data models
-- [ ] Create models for:
-  - [ ] session
-  - [ ] host info
-  - [ ] listener info
-  - [ ] join request
-  - [ ] approval decision
-  - [ ] playback state
-  - [ ] sync state
-  - [ ] diagnostics snapshot
+- [x] Create models for:
+  - [x] session
+  - [x] host info
+  - [x] listener info
+  - [x] join request
+  - [x] approval decision
+  - [x] playback state
+  - [x] sync state
+  - [x] diagnostics snapshot
 
 ### 2.2 Define role/state enums
-- [ ] Create enums/state objects for host lifecycle
-- [ ] Create enums/state objects for listener lifecycle
-- [ ] Create enums/state objects for join/approval states
-- [ ] Create enums/state objects for transport connection states
-- [ ] Create enums/state objects for playback/sync health badges
+- [x] Create enums/state objects for host lifecycle
+- [x] Create enums/state objects for listener lifecycle
+- [x] Create enums/state objects for join/approval states
+- [x] Create enums/state objects for transport connection states
+- [x] Create enums/state objects for playback/sync health badges
 
 ### 2.3 Define protocol models
-- [ ] Create message definitions for control-plane messages
-- [ ] Create message definitions for sync packets
-- [ ] Create message definitions for audio packets
-- [ ] Create session identifiers and stream identifiers
-- [ ] Define versioning field for protocol messages
+- [x] Create message definitions for control-plane messages
+- [x] Create message definitions for sync packets
+- [x] Create message definitions for audio packets
+- [x] Create session identifiers and stream identifiers
+- [x] Define versioning field for protocol messages
 
 ## 3. UI Implementation
 
 ## 3.1 Home / Role Select screen
-- [ ] Create Home screen
-- [ ] Add **Host a Session** button
-- [ ] Add **Join a Session** button
-- [ ] Add permission/status summary area
-- [ ] Wire role buttons into navigation flow
+- [x] Create Home screen
+- [x] Add **Host a Session** button
+- [x] Add **Join a Session** button
+- [x] Add permission/status summary area
+- [x] Wire role buttons into navigation flow
 
 ## 3.2 Create Host Session screen
-- [ ] Create host session creation screen
-- [ ] Add session name input
-- [ ] Add approval mode selector
-  - [ ] manual approval
-  - [ ] trusted devices auto-approve placeholder if not implemented yet
-  - [ ] invite code mode placeholder or actual implementation
-- [ ] Add optional invite code input
-- [ ] Add remember approved devices toggle
-- [ ] Add choose audio file action
-- [ ] Add start hosting action
-- [ ] Add validation/error handling for missing/invalid inputs
+- [x] Create host session creation screen
+- [x] Add session name input
+- [x] Add approval mode selector
+  - [x] manual approval
+  - [x] trusted devices auto-approve placeholder if not implemented yet
+  - [x] invite code mode placeholder or actual implementation
+- [x] Add optional invite code input
+- [x] Add remember approved devices toggle
+- [x] Add choose audio file action
+- [x] Add start hosting action
+- [x] Add validation/error handling for missing/invalid inputs
 
 ## 3.3 Host Control screen
-- [ ] Create host control screen
-- [ ] Add session status card
-- [ ] Add pending join requests list
-- [ ] Add approved/connected listeners list
-- [ ] Add selected audio source section
-- [ ] Add playback controls
-  - [ ] start
-  - [ ] pause
-  - [ ] stop
-  - [ ] end session
+- [x] Create host control screen
+- [x] Add session status card
+- [x] Add pending join requests list
+- [x] Add approved/connected listeners list
+- [x] Add selected audio source section
+- [x] Add playback controls
+  - [x] start
+  - [x] pause
+  - [x] stop
+  - [x] end session
 - [ ] Add listener actions
-  - [ ] approve
-  - [ ] reject
+  - [x] approve
+  - [x] reject
   - [ ] trust placeholder or actual trust action
   - [ ] remove/kick listener
-- [ ] Add diagnostics navigation/button
-- [ ] Add visible sync/health summary badges
+- [x] Add diagnostics navigation/button
+- [x] Add visible sync/health summary badges
 
 ## 3.4 Discover Sessions screen
-- [ ] Create nearby session discovery screen
-- [ ] Add scan/refresh action
-- [ ] Add list of nearby sessions
-- [ ] Add per-session card content
-  - [ ] session name
-  - [ ] host name
-  - [ ] approval requirement
-  - [ ] signal/availability hint if available
-- [ ] Add join action
-- [ ] Add empty state UI when no sessions found
+- [x] Create nearby session discovery screen
+- [x] Add scan/refresh action
+- [x] Add list of nearby sessions
+- [x] Add per-session card content
+  - [x] session name
+  - [x] host name
+  - [x] approval requirement
+  - [x] signal/availability hint if available
+- [x] Add join action
+- [x] Add empty state UI when no sessions found
 
 ## 3.5 Join / Approval / Connect Progress screen
-- [ ] Create listener connection progress screen
-- [ ] Add current join state text
-- [ ] Add progress stepper/timeline
-  - [ ] discovered
-  - [ ] requested
-  - [ ] approved
-  - [ ] connected
-  - [ ] synced
-  - [ ] playing
-- [ ] Add invite code entry if required
-- [ ] Add cancel action
-- [ ] Add retry action
-- [ ] Add rejection/error UI states
+- [x] Create listener connection progress screen
+- [x] Add current join state text
+- [x] Add progress stepper/timeline
+  - [x] discovered
+  - [x] requested
+  - [x] approved
+  - [x] connected
+  - [x] synced
+  - [x] playing
+- [x] Add invite code entry if required
+- [x] Add cancel action
+- [x] Add retry action
+- [x] Add rejection/error UI states
 
 ## 3.6 Listener Playback screen
-- [ ] Create listener playback screen
-- [ ] Add session header
-- [ ] Add host/session info
-- [ ] Add sync quality indicator
-- [ ] Add now-playing section
-- [ ] Add playback state text
-- [ ] Add local volume control
-- [ ] Add leave session action
-- [ ] Add reconnect action if needed
-- [ ] Add diagnostics navigation/button
+- [x] Create listener playback screen
+- [x] Add session header
+- [x] Add host/session info
+- [x] Add sync quality indicator
+- [x] Add now-playing section
+- [x] Add playback state text
+- [x] Add local volume control
+- [x] Add leave session action
+- [x] Add reconnect action if needed
+- [x] Add diagnostics navigation/button
 
 ## 3.7 Diagnostics screens/panels
-- [ ] Implement diagnostics UI for host
-- [ ] Implement diagnostics UI for listener
-- [ ] Add copy/share debug info action if useful
-- [ ] Ensure diagnostics are easy to access during testing
+- [x] Implement diagnostics UI for host
+- [x] Implement diagnostics UI for listener
+- [x] Add copy/share debug info action if useful
+- [x] Ensure diagnostics are easy to access during testing
 
 ## 4. Navigation and State Flow
 
 ### 4.1 Navigation graph
-- [ ] Implement root navigation flow
-  - [ ] Home → Host flow
-  - [ ] Home → Listener flow
-- [ ] Implement Host flow navigation
-- [ ] Implement Listener flow navigation
-- [ ] Implement return-to-home behavior after session end/leave
+- [x] Implement root navigation flow
+  - [x] Home → Host flow
+  - [x] Home → Listener flow
+- [x] Implement Host flow navigation
+- [x] Implement Listener flow navigation
+- [x] Implement return-to-home behavior after session end/leave
 
 ### 4.2 State-driven UI updates
-- [ ] Bind host lifecycle state to Host Control UI
-- [ ] Bind listener lifecycle state to Join/Playback UI
-- [ ] Ensure error states show correct actions and messages
-- [ ] Ensure reconnect/resync states are visible
+- [x] Bind host lifecycle state to Host Control UI
+- [x] Bind listener lifecycle state to Join/Playback UI
+- [x] Ensure error states show correct actions and messages
+- [x] Ensure reconnect/resync states are visible
 
 ## 5. Audio File Selection and Source Handling
 
 ### 5.1 Local audio source selection
-- [ ] Implement host-side local audio file picker
-- [ ] Validate supported file types for PoC
-- [ ] Display selected file metadata
+- [x] Implement host-side local audio file picker
+- [x] Validate supported file types for PoC
+- [x] Display selected file metadata
 - [ ] Handle file access errors cleanly
 
 ### 5.2 Audio decode pipeline
@@ -179,11 +179,11 @@
 ## 6. Host Networking / Session Management
 
 ### 6.1 Host session lifecycle
-- [ ] Implement session creation service/manager
-- [ ] Generate session id
-- [ ] Start host advertisement/discovery availability
-- [ ] Maintain session state
-- [ ] End/teardown session cleanly
+- [x] Implement session creation service/manager
+- [x] Generate session id
+- [x] Start host advertisement/discovery availability
+- [x] Maintain session state
+- [x] End/teardown session cleanly
 
 ### 6.2 Wi-Fi Direct transport setup
 - [ ] Implement Wi-Fi Direct-based host setup
@@ -192,11 +192,11 @@
 - [ ] Handle transport errors and retries
 
 ### 6.3 Optional BLE discovery support
-- [ ] Decide whether BLE discovery is phase 1 or phase 2 within PoC
+- [x] Decide whether BLE discovery is phase 1 or phase 2 within PoC
 - [ ] If implemented:
-  - [ ] create BLE advertisement model
-  - [ ] advertise minimal host metadata
-  - [ ] implement listener-side scanning
+  - [x] create BLE advertisement model
+  - [x] advertise minimal host metadata
+  - [x] implement listener-side scanning
   - [ ] bridge BLE discovery into Wi-Fi Direct join flow
 - [ ] If deferred:
   - [ ] leave abstraction hooks/placeholders
@@ -204,56 +204,56 @@
 ## 7. Join Request and Approval Flow
 
 ### 7.1 Listener join request
-- [ ] Implement join request initiation from listener
-- [ ] Send device/session metadata required for host approval
-- [ ] Support optional invite code field
+- [x] Implement join request initiation from listener
+- [x] Send device/session metadata required for host approval
+- [x] Support optional invite code field
 
 ### 7.2 Host approval flow
-- [ ] Deliver pending join requests to host UI
-- [ ] Implement manual approve action
-- [ ] Implement reject action
-- [ ] On approval, allow listener to proceed to active connection/session path
+- [x] Deliver pending join requests to host UI
+- [x] Implement manual approve action
+- [x] Implement reject action
+- [x] On approval, allow listener to proceed to active connection/session path
 - [ ] On rejection, notify listener clearly
 
 ### 7.3 Trust model placeholders
-- [ ] Add trust-state model for future use
-- [ ] Implement session-only approval now
+- [x] Add trust-state model for future use
+- [x] Implement session-only approval now
 - [ ] Optionally persist trusted-device records if simple to do in PoC
 
 ## 8. Protocol and Message Framing
 
 ### 8.1 Control-plane messages
-- [ ] Define concrete message schema for:
-  - [ ] hello/session announce
-  - [ ] join request
-  - [ ] join approval
-  - [ ] join rejection
-  - [ ] heartbeat
-  - [ ] stream start
-  - [ ] pause
-  - [ ] stop
-  - [ ] disconnect
-  - [ ] resync request/notice
+- [x] Define concrete message schema for:
+  - [x] hello/session announce
+  - [x] join request
+  - [x] join approval
+  - [x] join rejection
+  - [x] heartbeat
+  - [x] stream start
+  - [x] pause
+  - [x] stop
+  - [x] disconnect
+  - [x] resync request/notice
 
 ### 8.2 Sync messages
-- [ ] Define concrete sync packet structure
-- [ ] Include four-timestamp exchange fields
-- [ ] Include sequence/correlation identifiers for sync requests
+- [x] Define concrete sync packet structure
+- [x] Include four-timestamp exchange fields
+- [x] Include sequence/correlation identifiers for sync requests
 
 ### 8.3 Audio messages
-- [ ] Define concrete audio packet structure
-- [ ] Include required header fields
-  - [ ] version
-  - [ ] session id
-  - [ ] stream id
-  - [ ] packet sequence
-  - [ ] sample rate
-  - [ ] channels
-  - [ ] samples per packet
-  - [ ] first sample index
-  - [ ] host presentation timestamp
-  - [ ] payload
-- [ ] Choose serialization/framing approach
+- [x] Define concrete audio packet structure
+- [x] Include required header fields
+  - [x] version
+  - [x] session id
+  - [x] stream id
+  - [x] packet sequence
+  - [x] sample rate
+  - [x] channels
+  - [x] samples per packet
+  - [x] first sample index
+  - [x] host presentation timestamp
+  - [x] payload
+- [x] Choose serialization/framing approach
 - [ ] Validate packet sizes and overhead
 
 ## 9. Clock Sync Implementation
@@ -264,18 +264,18 @@
 - [ ] Return sync responses quickly and predictably
 
 ### 9.2 Listener sync client
-- [ ] Implement repeated sync probing
-- [ ] Capture local send/receive timestamps
-- [ ] Compute per-sample offset estimate
-- [ ] Compute RTT estimate
-- [ ] Store sync sample history
+- [x] Implement repeated sync probing
+- [x] Capture local send/receive timestamps
+- [x] Compute per-sample offset estimate
+- [x] Compute RTT estimate
+- [x] Store sync sample history
 
 ### 9.3 Sync estimation logic
-- [ ] Reject bad/outlier samples
-- [ ] Prefer lower RTT samples
-- [ ] Calculate stable initial offset estimate
+- [x] Reject bad/outlier samples
+- [x] Prefer lower RTT samples
+- [x] Calculate stable initial offset estimate
 - [ ] Optionally implement skew estimate model
-- [ ] Expose sync confidence/quality state to UI and diagnostics
+- [x] Expose sync confidence/quality state to UI and diagnostics
 
 ### 9.4 Ongoing sync maintenance
 - [ ] Run periodic re-sync during session
@@ -286,16 +286,16 @@
 ## 10. Host Audio Streaming Pipeline
 
 ### 10.1 Host packetization
-- [ ] Read decoded PCM frames in fixed packet windows
-- [ ] Segment into 20 ms packets
-- [ ] Assign sample index timeline
-- [ ] Assign future host presentation timestamps
-- [ ] Queue/send packets to listeners
+- [x] Read decoded PCM frames in fixed packet windows
+- [x] Segment into 20 ms packets
+- [x] Assign sample index timeline
+- [x] Assign future host presentation timestamps
+- [x] Queue/send packets to listeners
 
 ### 10.2 Stream control
-- [ ] Implement stream start message with future start time
-- [ ] Implement pause behavior
-- [ ] Implement stop behavior
+- [x] Implement stream start message with future start time
+- [x] Implement pause behavior
+- [x] Implement stop behavior
 - [ ] Ensure listeners receive state changes consistently
 
 ### 10.3 Host pacing
@@ -313,10 +313,10 @@
 - [ ] Drop packets that are too late to use
 
 ### 11.2 Listener buffer implementation
-- [ ] Build jitter/playback buffer
-- [ ] Store packets by stream timeline
-- [ ] Track current fill depth in time and/or samples
-- [ ] Expose buffer health to diagnostics/UI
+- [x] Build jitter/playback buffer
+- [x] Store packets by stream timeline
+- [x] Track current fill depth in time and/or samples
+- [x] Expose buffer health to diagnostics/UI
 
 ### 11.3 Playback scheduling
 - [ ] Translate host presentation time into local playback deadline
@@ -363,33 +363,33 @@
 - [ ] Define threshold for hard resync/rebuffer state
 
 ### 13.3 Resync UI/behavior
-- [ ] Expose resync state to listeners
+- [x] Expose resync state to listeners
 - [ ] Expose listener sync trouble to host
-- [ ] Provide manual resync action in diagnostics if useful
+- [x] Provide manual resync action in diagnostics if useful
 
 ## 14. Host and Listener Diagnostics
 
 ### 14.1 Host diagnostics data
-- [ ] Implement listener roster snapshot
-- [ ] Track per-listener state
+- [x] Implement listener roster snapshot
+- [x] Track per-listener state
 - [ ] Track per-listener last heartbeat / last contact
-- [ ] Track stream state and packet send counts
-- [ ] Track join/pending/approved counts
+- [x] Track stream state and packet send counts
+- [x] Track join/pending/approved counts
 
 ### 14.2 Listener diagnostics data
-- [ ] Track sync offset estimate
-- [ ] Track RTT estimate
-- [ ] Track jitter estimate if implemented
-- [ ] Track current buffer depth
+- [x] Track sync offset estimate
+- [x] Track RTT estimate
+- [x] Track jitter estimate if implemented
+- [x] Track current buffer depth
 - [ ] Track packet loss count
 - [ ] Track underrun count
-- [ ] Track reconnect/resync count
-- [ ] Track current playback state
+- [x] Track reconnect/resync count
+- [x] Track current playback state
 
 ### 14.3 Diagnostics presentation
-- [ ] Render diagnostics cleanly in UI
-- [ ] Keep values readable during live testing
-- [ ] Allow copying/exporting diagnostic summary for debugging
+- [x] Render diagnostics cleanly in UI
+- [x] Keep values readable during live testing
+- [x] Allow copying/exporting diagnostic summary for debugging
 
 ## 15. Error Handling and Recovery
 
@@ -408,15 +408,15 @@
 - [ ] Handle session disappearance
 
 ### 15.3 UI recovery flows
-- [ ] Add retry actions where appropriate
-- [ ] Add clear error messages
-- [ ] Add back/leave/end session recovery actions
+- [x] Add retry actions where appropriate
+- [x] Add clear error messages
+- [x] Add back/leave/end session recovery actions
 
 ## 16. Logging and Observability
 
 ### 16.1 Structured logging
 - [ ] Add structured logs for:
-  - [ ] join flow
+  - [x] join flow
   - [ ] approval actions
   - [ ] transport connection lifecycle
   - [ ] sync sampling
@@ -432,11 +432,11 @@
 ## 17. Test Strategy
 
 ### 17.1 Unit-level tests where practical
-- [ ] Test protocol model serialization/deserialization
-- [ ] Test sync math helpers
+- [x] Test protocol model serialization/deserialization
+- [x] Test sync math helpers
 - [ ] Test packet ordering helpers
-- [ ] Test buffer bookkeeping logic
-- [ ] Test state transitions
+- [x] Test buffer bookkeeping logic
+- [x] Test state transitions
 
 ### 17.2 Integration/device tests
 - [ ] Test host creation on real Android device
@@ -455,14 +455,14 @@
 
 ## 18. Open Questions to Resolve During Implementation
 
-- [ ] Decide whether BLE discovery is included in phase 1 PoC or deferred
-- [ ] Choose exact packet framing/serialization format
+- [x] Decide whether BLE discovery is included in phase 1 PoC or deferred
+- [x] Choose exact packet framing/serialization format
 - [ ] Tune sync sample count and cadence
 - [ ] Tune startup buffer threshold
 - [ ] Tune late packet / desync thresholds
 - [ ] Decide whether skew estimation is required immediately
 - [ ] Measure actual listener capacity of a host phone
-- [ ] Decide whether Host Control and Host Playback remain a single screen or split later
+- [x] Decide whether Host Control and Host Playback remain a single screen or split later
 
 ## 19. Nice-to-Haves if Time Permits
 

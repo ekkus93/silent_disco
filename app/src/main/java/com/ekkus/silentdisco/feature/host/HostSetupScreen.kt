@@ -1,0 +1,89 @@
+package com.ekkus.silentdisco.feature.host
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.core.model.ApprovalMode
+
+@Composable
+fun HostSetupScreen(
+    uiState: AppUiState,
+    onSessionNameChanged: (String) -> Unit,
+    onApprovalModeChanged: (ApprovalMode) -> Unit,
+    onInviteCodeChanged: (String) -> Unit,
+    onRememberApprovedChanged: (Boolean) -> Unit,
+    onPickAudio: () -> Unit,
+    onStartHosting: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text("Create Host Session", style = MaterialTheme.typography.headlineMedium)
+        OutlinedTextField(
+            value = uiState.hostForm.sessionName,
+            onValueChange = onSessionNameChanged,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Session name") },
+        )
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Approval mode", style = MaterialTheme.typography.titleMedium)
+                ApprovalMode.entries.forEach { mode ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = uiState.hostForm.approvalMode == mode,
+                            onClick = { onApprovalModeChanged(mode) },
+                        )
+                        Text(mode.name.replace("_", " "))
+                    }
+                }
+                OutlinedTextField(
+                    value = uiState.hostForm.inviteCode,
+                    onValueChange = onInviteCodeChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Optional invite code") },
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = uiState.hostForm.rememberApprovedDevices,
+                        onCheckedChange = onRememberApprovedChanged,
+                    )
+                    Text("Remember approved devices")
+                }
+            }
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Audio source", style = MaterialTheme.typography.titleMedium)
+                Text(uiState.hostForm.selectedAudio?.displayName ?: "No audio file selected")
+                Button(onClick = onPickAudio) {
+                    Text("Choose Audio File")
+                }
+            }
+        }
+        Button(onClick = onStartHosting, modifier = Modifier.fillMaxWidth()) {
+            Text("Start Hosting")
+        }
+    }
+}
