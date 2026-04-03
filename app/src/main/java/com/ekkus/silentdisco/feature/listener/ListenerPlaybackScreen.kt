@@ -38,6 +38,8 @@ fun ListenerPlaybackScreen(
                 Text("Sync quality: ${uiState.syncSummary()}")
                 Text("Playback state: ${uiState.listenerPlaybackState}")
                 Text("Buffer depth: ${uiState.listenerDiagnostics.bufferDepthMs} ms")
+                Text("Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}")
+                Text("EOF reached: ${uiState.listenerDiagnostics.endOfStreamReached}")
                 Text("Now playing: ${uiState.hostForm.selectedAudio?.displayName ?: "Host-selected stream"}")
             }
         }

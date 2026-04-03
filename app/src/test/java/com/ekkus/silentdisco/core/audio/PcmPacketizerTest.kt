@@ -23,5 +23,8 @@ class PcmPacketizerTest {
         assertThat(packets).hasSize(2)
         assertThat(packets.first().hostPresentationTimeMs).isEqualTo(1_000)
         assertThat(packets.last().hostPresentationTimeMs).isEqualTo(1_020)
+        val budget = packets.validatePacketBudget()
+        assertThat(budget.valid).isTrue()
+        assertThat(budget.maxPacketBytes).isGreaterThan(0)
     }
 }

@@ -106,6 +106,7 @@ class WifiDirectTransportService(
     }
 
     override fun discoverPeers() {
+        logger.i("transport.discover", "Scanning for Wi-Fi Direct peers")
         val peers = listOf(
             WifiDirectPeer(deviceName = "Pixel Listener", deviceAddress = "02:11:22:33:44:55"),
             WifiDirectPeer(deviceName = "Galaxy Listener", deviceAddress = "AA:BB:CC:DD:EE:FF"),
@@ -118,6 +119,7 @@ class WifiDirectTransportService(
     }
 
     override fun connectToSession(session: SessionInfo) {
+        logger.i("transport.connect", "Connecting to ${session.id}")
         _snapshot.value = _snapshot.value.copy(
             state = TransportConnectionState.CONNECTED,
             peers = _snapshot.value.peers.ifEmpty {
@@ -129,6 +131,7 @@ class WifiDirectTransportService(
     }
 
     override fun recordHeartbeat() {
+        logger.d("transport.heartbeat", "Heartbeat recorded")
         _snapshot.value = _snapshot.value.copy(lastContactElapsedMs = SystemClock.elapsedRealtime())
     }
 
@@ -141,6 +144,7 @@ class WifiDirectTransportService(
     }
 
     override fun retry() {
+        logger.i("transport.retry", "Retrying transport setup")
         _snapshot.value = _snapshot.value.copy(
             state = TransportConnectionState.RETRYING,
             retryCount = _snapshot.value.retryCount + 1,
@@ -149,6 +153,7 @@ class WifiDirectTransportService(
     }
 
     override fun stop() {
+        logger.i("transport.stop", "Transport disconnected")
         _snapshot.value = TransportSnapshot(state = TransportConnectionState.DISCONNECTED)
     }
 }

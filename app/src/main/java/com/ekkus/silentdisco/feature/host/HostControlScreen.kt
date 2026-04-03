@@ -48,6 +48,7 @@ fun HostControlScreen(
                     Text("Host state: ${uiState.hostState}")
                     Text("Playback: ${uiState.hostPlaybackState}")
                     Text("Health: ${uiState.hostDiagnostics.connectedListenerCount} connected / ${uiState.hostDiagnostics.pendingJoinCount} pending")
+                    Text("Sync trouble: ${uiState.hostDiagnostics.desyncedListenerCount} listener(s)")
                 }
             }
         }

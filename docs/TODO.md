@@ -174,7 +174,7 @@
   - [x] stereo
   - [x] 16-bit PCM
 - [x] Verify stable frame generation at fixed packet duration
-- [ ] Handle end-of-file behavior
+- [x] Handle end-of-file behavior
 
 ## 6. Host Networking / Session Management
 
@@ -254,7 +254,7 @@
   - [x] host presentation timestamp
   - [x] payload
 - [x] Choose serialization/framing approach
-- [ ] Validate packet sizes and overhead
+- [x] Validate packet sizes and overhead
 
 ## 9. Clock Sync Implementation
 
@@ -296,18 +296,18 @@
 - [x] Implement stream start message with future start time
 - [x] Implement pause behavior
 - [x] Implement stop behavior
-- [ ] Ensure listeners receive state changes consistently
+- [x] Ensure listeners receive state changes consistently
 
 ### 10.3 Host pacing
-- [ ] Ensure packet send timing is stable
-- [ ] Prevent bursty or poorly paced packet output where possible
-- [ ] Instrument packet send timing for diagnostics
+- [x] Ensure packet send timing is stable
+- [x] Prevent bursty or poorly paced packet output where possible
+- [x] Instrument packet send timing for diagnostics
 
 ## 11. Listener Audio Pipeline
 
 ### 11.1 Listener receive path
 - [x] Receive audio packets
-- [ ] Validate session/stream identifiers
+- [x] Validate session/stream identifiers
 - [x] Order packets by sequence/sample index
 - [x] Detect missing packets
 - [x] Drop packets that are too late to use
@@ -324,7 +324,7 @@
 - [x] Feed scheduled audio into playback engine
 
 ### 11.4 Audio output engine
-- [ ] Implement playback path using appropriate Android audio APIs
+- [x] Implement playback path using appropriate Android audio APIs
 - [x] Prefer Oboe / AAudio-oriented implementation if feasible
 - [ ] Verify stable playback callback/write behavior
 - [x] Expose playback timestamp/position if possible
@@ -333,10 +333,10 @@
 
 ### 12.1 Packet loss handling
 - [x] Detect missing packet ranges
-- [ ] Decide simple concealment behavior for PoC
-  - [ ] silence fill
-  - [ ] zero-fill
-  - [ ] minimal gap handling
+- [x] Decide simple concealment behavior for PoC
+  - [x] silence fill
+  - [x] zero-fill
+  - [x] minimal gap handling
 - [x] Count/report packet loss events
 
 ### 12.2 Late packet handling
@@ -347,7 +347,7 @@
 ### 12.3 Underrun handling
 - [x] Detect playback underruns
 - [x] Surface underruns in diagnostics/UI
-- [ ] Define simple recovery behavior
+- [x] Define simple recovery behavior
 
 ## 13. Drift Correction and Resync
 
@@ -358,13 +358,13 @@
 
 ### 13.2 Correction policy
 - [x] Implement simple PoC correction strategy first
-- [ ] Avoid advanced time-stretch unless clearly needed
+- [x] Avoid advanced time-stretch unless clearly needed
 - [x] Define threshold for soft correction
 - [x] Define threshold for hard resync/rebuffer state
 
 ### 13.3 Resync UI/behavior
 - [x] Expose resync state to listeners
-- [ ] Expose listener sync trouble to host
+- [x] Expose listener sync trouble to host
 - [x] Provide manual resync action in diagnostics if useful
 
 ## 14. Host and Listener Diagnostics
@@ -394,18 +394,18 @@
 ## 15. Error Handling and Recovery
 
 ### 15.1 Host errors
-- [ ] Handle failure to create/start session
+- [x] Handle failure to create/start session
 - [ ] Handle failure to advertise/connect transport
 - [x] Handle audio file load/decode failure
-- [ ] Handle stream failure/stoppage
+- [x] Handle stream failure/stoppage
 
 ### 15.2 Listener errors
 - [x] Handle no sessions found
 - [x] Handle host rejection
-- [ ] Handle connection failure
-- [ ] Handle sync establishment failure
-- [ ] Handle disconnect during playback
-- [ ] Handle session disappearance
+- [x] Handle connection failure
+- [x] Handle sync establishment failure
+- [x] Handle disconnect during playback
+- [x] Handle session disappearance
 
 ### 15.3 UI recovery flows
 - [x] Add retry actions where appropriate
@@ -415,19 +415,19 @@
 ## 16. Logging and Observability
 
 ### 16.1 Structured logging
-- [ ] Add structured logs for:
+- [x] Add structured logs for:
   - [x] join flow
   - [x] approval actions
   - [x] transport connection lifecycle
-  - [ ] sync sampling
-  - [ ] stream start/stop
-  - [ ] packet send/receive anomalies
-  - [ ] playback underruns/desyncs
+  - [x] sync sampling
+  - [x] stream start/stop
+  - [x] packet send/receive anomalies
+  - [x] playback underruns/desyncs
 
 ### 16.2 Debug instrumentation
 - [x] Add counters/timers for key performance indicators
-- [ ] Make logs useful for real-device testing
-- [ ] Avoid logging so much that it breaks timing-sensitive paths
+- [x] Make logs useful for real-device testing
+- [x] Avoid logging so much that it breaks timing-sensitive paths
 
 ## 17. Test Strategy
 

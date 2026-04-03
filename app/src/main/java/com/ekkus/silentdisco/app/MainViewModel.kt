@@ -14,8 +14,10 @@ import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
 import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.OboePlaybackEngine
+import com.ekkus.silentdisco.core.audio.packetizationStats
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
+import com.ekkus.silentdisco.core.audio.validatePacketBudget
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.logging.DiagnosticsMetrics
@@ -29,6 +31,7 @@ import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.core.model.SessionInfo
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
@@ -80,6 +83,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var listenerScheduler: ListenerPlaybackScheduler? = null
     private var latestDecodedAudio: AudioDecodeResult? = null
     private var latestPackets: List<AudioPacket> = emptyList()
+    private var hostStreamJob: Job? = null
     private var playbackJob: Job? = null
     private var resyncJob: Job? = null
 
@@ -141,31 +145,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             approvalMode = form.approvalMode,
             inviteCodeRequired = form.approvalMode == ApprovalMode.INVITE_CODE,
         )
-        bleService.startAdvertising(
-            BleAdvertisement(
-                sessionId = session.id,
-                sessionName = session.name,
-                hostName = session.hostDeviceName,
-                approvalRequired = true,
-            ),
-        )
-        wifiDirectService.startHost(session)
-        logger.i("transport.host", "Started BLE discovery bridge for ${session.id}")
-        diagnosticsStore.updateHost {
-            it.copy(
-                sessionId = session.id,
-                streamState = PlaybackState.STOPPED,
-                lastContactElapsedMs = SystemClock.elapsedRealtime(),
+        return runCatching {
+            bleService.startAdvertising(
+                BleAdvertisement(
+                    sessionId = session.id,
+                    sessionName = session.name,
+                    hostName = session.hostDeviceName,
+                    approvalRequired = true,
+                ),
             )
-        }
-        _uiState.value = _uiState.value.copy(
-            hostState = HostLifecycleState.WAITING_FOR_LISTENERS,
-            discoveredSessions = (listOf(session) + demoSessions()).distinctBy { it.id },
-            lastMessage = "Hosting ${session.name}",
-            lastError = null,
-        )
-        refreshHostDiagnostics()
-        return true
+            wifiDirectService.startHost(session)
+        }.onSuccess {
+            logger.i("transport.host", "Started BLE discovery bridge for ${session.id}")
+            diagnosticsStore.updateHost {
+                it.copy(
+                    sessionId = session.id,
+                    streamState = PlaybackState.STOPPED,
+                    lastContactElapsedMs = SystemClock.elapsedRealtime(),
+                    lastError = null,
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.WAITING_FOR_LISTENERS,
+                discoveredSessions = (listOf(session) + demoSessions()).distinctBy { it.id },
+                lastMessage = "Hosting ${session.name}",
+                lastError = null,
+            )
+            refreshHostDiagnostics()
+        }.onFailure { error ->
+            logger.e("transport.host", "Failed to create host session", error)
+            wifiDirectService.fail("Failed to start host session", retryable = true)
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                lastError = error.message ?: "Failed to create host session",
+            )
+            refreshHostDiagnostics(streamState = PlaybackState.ERROR, sessionId = session.id)
+        }.isSuccess
     }
 
     fun addDemoJoinRequest() {
@@ -261,29 +276,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
                 hostPresentationStartMs = SystemClock.elapsedRealtime() + 500,
             )
+            if (latestPackets.isEmpty()) {
+                error("Decoded stream produced no playable packets")
+            }
+            val packetBudget = latestPackets.validatePacketBudget()
+            val packetStats = latestPackets.packetizationStats()
+            if (!packetBudget.valid) {
+                error("Packet budget exceeded: ${packetBudget.maxPacketBytes} bytes")
+            }
             metrics.increment("stream_start")
-            metrics.increment("packet_send_total", latestPackets.size.toLong())
             metrics.recordTiming("packet_duration_ms", 20.0)
+            metrics.recordTiming("average_packet_bytes", packetStats.averagePacketBytes)
             diagnosticsStore.updateHost {
                 it.copy(
-                    packetSendCount = latestPackets.size.toLong(),
-                    packetSendRatePerSecond = 50.0,
+                    packetSendCount = 0,
+                    packetSendRatePerSecond = 0.0,
+                    packetBudgetSummary = packetBudget.summary(),
                     streamState = PlaybackState.PLAYING,
                     lastContactElapsedMs = SystemClock.elapsedRealtime(),
                     metricsSummary = summarizeMetrics(),
                     lastError = null,
                 )
             }
+            val backend = playbackEngine.start(decoded.format)
+            logger.i(
+                "stream.start",
+                "stream=${streamId.value} packets=${latestPackets.size} budget=${packetBudget.summary()}",
+            )
             _uiState.value = _uiState.value.copy(
                 hostState = HostLifecycleState.STREAMING,
                 hostPlaybackState = PlaybackState.PLAYING,
-                lastMessage = "Host stream started via ${playbackEngine.start()}",
+                lastMessage = "Host stream started via $backend",
                 lastError = null,
             )
             refreshHostDiagnostics()
+            startHostStreamingLoop(streamId)
             startPeriodicResync()
         }.onFailure { error ->
             metrics.increment("stream_start_error")
+            logger.e("stream.start", "Failed to start host playback", error)
             _uiState.value = _uiState.value.copy(
                 hostState = HostLifecycleState.ERROR,
                 hostPlaybackState = PlaybackState.ERROR,
@@ -295,15 +326,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun pauseHostPlayback() {
+        logger.i("stream.pause", "Pausing host stream")
         _uiState.value = _uiState.value.copy(
             hostState = HostLifecycleState.PAUSED,
             hostPlaybackState = PlaybackState.PAUSED,
         )
         metrics.increment("stream_pause")
+        propagateListenerPlaybackState(
+            playbackState = PlaybackState.PAUSED,
+            listenerState = _uiState.value.listenerState,
+            message = "Host paused the stream",
+        )
         refreshHostDiagnostics(streamState = PlaybackState.PAUSED)
     }
 
     fun stopHostPlayback() {
+        logger.i("stream.stop", "Stopping host stream")
+        hostStreamJob?.cancel()
         playbackJob?.cancel()
         resyncJob?.cancel()
         playbackEngine.stop()
@@ -312,6 +351,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hostPlaybackState = PlaybackState.STOPPED,
         )
         metrics.increment("stream_stop")
+        propagateListenerPlaybackState(
+            playbackState = PlaybackState.STOPPED,
+            listenerState = _uiState.value.listenerState,
+            message = "Host stopped the stream",
+        )
         refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
     }
 
@@ -319,6 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         stopHostPlayback()
         bleService.stop()
         wifiDirectService.stop()
+        logger.i("session.end", "Session ended by host")
         _uiState.value = _uiState.value.copy(
             hostState = HostLifecycleState.IDLE,
             pendingJoinRequests = emptyList(),
@@ -326,6 +371,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hostPlaybackState = PlaybackState.STOPPED,
             lastMessage = "Session ended",
         )
+        if (_uiState.value.selectedSession != null) {
+            _uiState.value = _uiState.value.copy(
+                listenerState = ListenerLifecycleState.DISCONNECTED,
+                listenerPlaybackState = PlaybackState.STOPPED,
+                lastError = "Host ended the session",
+            )
+        }
         refreshHostDiagnostics(streamState = PlaybackState.STOPPED, sessionId = "")
     }
 
@@ -343,6 +395,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ),
             lastError = if (discovered.isEmpty()) "No sessions found nearby" else null,
         )
+        diagnosticsStore.updateListener {
+            it.copy(lastError = if (discovered.isEmpty()) "No sessions found nearby" else null)
+        }
+        refreshListenerDiagnostics()
     }
 
     fun selectDiscoveredSession(session: SessionInfo) {
@@ -359,6 +415,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestJoin() {
         val session = _uiState.value.selectedSession ?: run {
             _uiState.value = _uiState.value.copy(lastError = "Select a session before joining")
+            return
+        }
+        if (_uiState.value.discoveredSessions.none { it.id == session.id }) {
+            _uiState.value = _uiState.value.copy(lastError = "Selected session disappeared before join")
+            diagnosticsStore.updateListener { it.copy(lastError = "Selected session disappeared before join") }
+            refreshListenerDiagnostics()
             return
         }
         if (session.inviteCodeRequired && _uiState.value.connectionProgress.inviteCode.isBlank()) {
@@ -400,6 +462,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retryJoin() {
+        logger.i("listener.retry", "Retrying listener connection")
         wifiDirectService.retry()
         diagnosticsStore.updateListener {
             it.copy(
@@ -422,9 +485,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun leaveSession() {
+        hostStreamJob?.cancel()
         playbackJob?.cancel()
         resyncJob?.cancel()
         listenerScheduler = null
+        logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.IDLE,
             listenerPlaybackState = PlaybackState.STOPPED,
@@ -446,6 +511,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             resyncCount = _uiState.value.listenerSyncState.resyncCount + 1,
         )
         val shouldResync = controller.shouldResync(state = syncState)
+        logger.i(
+            "sync.sample",
+            "offset=${"%.2f".format(syncState.offsetMs)} rtt=${"%.2f".format(syncState.rttMs)} jitter=${"%.2f".format(syncState.jitterMs)}",
+        )
+        if (shouldResync && !_uiState.value.connectionProgress.synced) {
+            handleSyncFailure("Unable to establish a stable sync estimate")
+            return
+        }
         _uiState.value = _uiState.value.copy(
             listenerSyncState = syncState,
             listenerState = if (shouldResync) ListenerLifecycleState.DESYNCED else _uiState.value.listenerState,
@@ -462,6 +535,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         metrics.increment("sync_sample")
         metrics.recordTiming("sync_rtt_ms", syncState.rttMs)
+        if (shouldResync) {
+            metrics.increment("playback_desync")
+            logger.w("playback.desync", "Resync threshold exceeded")
+        }
         refreshListenerDiagnostics()
         refreshHostDiagnostics()
     }
@@ -489,6 +566,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             delay(400)
             wifiDirectService.connectToSession(_uiState.value.selectedSession ?: demoSessions().first())
+            if (wifiDirectService.snapshot.value.state != TransportConnectionState.CONNECTED) {
+                handleListenerConnectionFailure("Failed to connect to host transport")
+                return@launch
+            }
             _uiState.value = _uiState.value.copy(
                 listenerState = ListenerLifecycleState.CONNECTING,
                 connectionProgress = _uiState.value.connectionProgress.copy(
@@ -510,30 +591,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startListenerPlaybackSimulation(sessionId: String) {
-        val mapper = HostTimeMapper(offsetMs = _uiState.value.listenerSyncState.offsetMs, skewPpm = _uiState.value.listenerSyncState.skewPpm)
-        listenerScheduler = ListenerPlaybackScheduler(
-            mapper = mapper,
-            thresholds = PlaybackThresholds(),
-        )
         val packets = if (latestPackets.isNotEmpty()) {
             latestPackets.take(24)
         } else {
             generateSyntheticPackets(sessionId)
         }
+        val expectedStreamId = packets.firstOrNull()?.streamId ?: currentStreamId ?: StreamId("synthetic-stream")
+        val mapper = HostTimeMapper(offsetMs = _uiState.value.listenerSyncState.offsetMs, skewPpm = _uiState.value.listenerSyncState.skewPpm)
+        listenerScheduler = ListenerPlaybackScheduler(
+            mapper = mapper,
+            thresholds = PlaybackThresholds(),
+            expectedSessionId = SessionId(sessionId),
+            expectedStreamId = expectedStreamId,
+        )
         packets.forEach { packet ->
             val telemetry = listenerScheduler?.submit(packet)
+            if ((telemetry?.lateDropCount ?: 0) > 0) {
+                logger.w("packet.receive.anomaly", "Late packet dropped seq=${packet.sequenceNumber}")
+            }
             diagnosticsStore.updateListener {
                 it.copy(
                     sessionId = sessionId,
                     packetLossCount = telemetry?.packetLossCount ?: it.packetLossCount,
                     lateDropCount = telemetry?.lateDropCount ?: it.lateDropCount,
+                    invalidPacketCount = telemetry?.invalidPacketCount ?: it.invalidPacketCount,
+                    concealedPacketCount = telemetry?.concealedPacketCount ?: it.concealedPacketCount,
                     bufferDepthMs = telemetry?.bufferDepthMs ?: it.bufferDepthMs,
                     lastPacketSequence = packet.sequenceNumber,
+                    endOfStreamReached = false,
                 )
             }
         }
         playbackJob?.cancel()
         playbackJob = viewModelScope.launch {
+            var lastUnderrunCount = 0
             delay(300)
             _uiState.value = _uiState.value.copy(
                 listenerState = ListenerLifecycleState.PLAYING,
@@ -544,9 +635,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
             )
             while (listenerScheduler?.canStart() == true) {
+                if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
+                    wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
+                ) {
+                    handleListenerDisconnect("Transport disconnected during playback")
+                    return@launch
+                }
                 val frame = listenerScheduler?.poll() ?: break
                 playbackEngine.write(frame)
                 val telemetry = listenerScheduler?.snapshot() ?: break
+                if (frame.concealed) {
+                    logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
+                }
+                if (telemetry.underrunCount > lastUnderrunCount) {
+                    logger.w("playback.underrun", "Underrun count=${telemetry.underrunCount}")
+                    lastUnderrunCount = telemetry.underrunCount
+                }
                 diagnosticsStore.updateListener {
                     it.copy(
                         playbackState = if (telemetry.underrunCount > 0) PlaybackState.UNDERRUN else PlaybackState.PLAYING,
@@ -555,6 +659,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         packetLossCount = telemetry.packetLossCount,
                         lateDropCount = telemetry.lateDropCount,
                         underrunCount = telemetry.underrunCount,
+                        invalidPacketCount = telemetry.invalidPacketCount,
+                        concealedPacketCount = telemetry.concealedPacketCount,
                         lastPacketSequence = telemetry.lastPlayedSequence,
                         metricsSummary = summarizeMetrics(),
                     )
@@ -564,9 +670,146 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 delay(20)
             }
+            diagnosticsStore.updateListener {
+                it.copy(
+                    playbackState = PlaybackState.STOPPED,
+                    endOfStreamReached = true,
+                    metricsSummary = summarizeMetrics(),
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                listenerPlaybackState = PlaybackState.STOPPED,
+                lastMessage = "Reached end of file",
+            )
             refreshListenerDiagnostics()
         }
         startPeriodicResync()
+    }
+
+    private fun startHostStreamingLoop(streamId: StreamId) {
+        hostStreamJob?.cancel()
+        hostStreamJob = viewModelScope.launch {
+            var previousSendElapsedMs: Long? = null
+            val packetDurationMs = latestPackets.firstOrNull()?.let { it.samplesPerPacket * 1_000L / it.sampleRate } ?: 20L
+            latestPackets.forEachIndexed { index, packet ->
+                val now = SystemClock.elapsedRealtime()
+                previousSendElapsedMs?.let { previous ->
+                    val sendGap = now - previous
+                    metrics.recordTiming("packet_gap_ms", sendGap.toDouble())
+                    if (kotlin.math.abs(sendGap - packetDurationMs) > 8) {
+                        metrics.increment("packet_send_anomaly")
+                        logger.w("packet.send.anomaly", "seq=${packet.sequenceNumber} gap=${sendGap}ms")
+                    }
+                }
+                if (index % 25 == 0 || index == latestPackets.lastIndex) {
+                    logger.i("stream.packet", "stream=${streamId.value} sent=${index + 1}/${latestPackets.size}")
+                }
+                metrics.increment("packet_send_total")
+                diagnosticsStore.updateHost {
+                    it.copy(
+                        packetSendCount = (index + 1).toLong(),
+                        packetSendRatePerSecond = 1_000.0 / packetDurationMs,
+                        lastContactElapsedMs = now,
+                        metricsSummary = summarizeMetrics(),
+                    )
+                }
+                refreshHostDiagnostics()
+                previousSendElapsedMs = now
+                delay(packetDurationMs)
+            }
+            logger.i("stream.stop", "Reached end of file for host stream")
+            metrics.increment("stream_eof")
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.READY,
+                hostPlaybackState = PlaybackState.STOPPED,
+                lastMessage = "Reached end of file",
+            )
+            propagateListenerPlaybackState(
+                playbackState = PlaybackState.STOPPED,
+                listenerState = _uiState.value.listenerState,
+                message = "Host stream reached end of file",
+            )
+            refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
+        }
+    }
+
+    private fun propagateListenerPlaybackState(
+        playbackState: PlaybackState,
+        listenerState: ListenerLifecycleState,
+        message: String,
+    ) {
+        _uiState.value = _uiState.value.copy(
+            listenerPlaybackState = playbackState,
+            listenerState = listenerState,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                playing = playbackState == PlaybackState.PLAYING,
+            ),
+            lastMessage = message,
+        )
+        diagnosticsStore.updateListener {
+            it.copy(
+                playbackState = playbackState,
+                metricsSummary = summarizeMetrics(),
+                lastError = if (listenerState == ListenerLifecycleState.DESYNCED) {
+                    "Listener sync trouble detected"
+                } else {
+                    it.lastError
+                },
+            )
+        }
+        refreshListenerDiagnostics()
+    }
+
+    private fun handleListenerConnectionFailure(message: String) {
+        logger.w("transport.error", message)
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.ERROR,
+            listenerPlaybackState = PlaybackState.ERROR,
+            lastError = message,
+        )
+        diagnosticsStore.updateListener {
+            it.copy(
+                playbackState = PlaybackState.ERROR,
+                lastError = message,
+                metricsSummary = summarizeMetrics(),
+            )
+        }
+        refreshListenerDiagnostics()
+    }
+
+    private fun handleSyncFailure(message: String) {
+        logger.w("sync.error", message)
+        metrics.increment("sync_establish_failure")
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.ERROR,
+            listenerPlaybackState = PlaybackState.ERROR,
+            lastError = message,
+        )
+        diagnosticsStore.updateListener {
+            it.copy(
+                playbackState = PlaybackState.ERROR,
+                lastError = message,
+                metricsSummary = summarizeMetrics(),
+            )
+        }
+        refreshListenerDiagnostics()
+    }
+
+    private fun handleListenerDisconnect(message: String) {
+        logger.w("transport.disconnect", message)
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.DISCONNECTED,
+            listenerPlaybackState = PlaybackState.STOPPED,
+            lastError = message,
+        )
+        diagnosticsStore.updateListener {
+            it.copy(
+                playbackState = PlaybackState.STOPPED,
+                lastError = message,
+                metricsSummary = summarizeMetrics(),
+            )
+        }
+        refreshListenerDiagnostics()
     }
 
     private fun startPeriodicResync() {
@@ -576,6 +819,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(2_000)
                 manualResync()
                 wifiDirectService.recordHeartbeat()
+                if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
+                    wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
+                ) {
+                    handleListenerDisconnect("Transport disconnected during playback")
+                    return@launch
+                }
                 refreshHostDiagnostics()
             }
         }
@@ -593,9 +842,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 connectedListenerCount = _uiState.value.approvedListeners.count {
                     it.connectionState == TransportConnectionState.CONNECTING || it.connectionState == TransportConnectionState.CONNECTED
                 },
+                desyncedListenerCount = _uiState.value.approvedListeners.count {
+                    it.listenerState == ListenerLifecycleState.DESYNCED || it.syncQuality == SyncQualityBadge.POOR
+                } + if (_uiState.value.listenerState == ListenerLifecycleState.DESYNCED) 1 else 0,
                 streamState = streamState,
                 lastContactElapsedMs = wifiDirectService.snapshot.value.lastContactElapsedMs,
                 metricsSummary = summarizeMetrics(),
+                packetBudgetSummary = it.packetBudgetSummary,
                 lastError = _uiState.value.lastError,
             )
         }
@@ -624,8 +877,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun summarizeMetrics(): String {
         val counters = metrics.snapshotCounters()
-        if (counters.isEmpty()) return "No metrics yet"
-        return counters.entries.joinToString(", ") { "${it.key}=${it.value}" }
+        val timings = metrics.snapshotTimings()
+        if (counters.isEmpty() && timings.isEmpty()) return "No metrics yet"
+        val counterSummary = counters.entries.joinToString(", ") { "${it.key}=${it.value}" }
+        val timingSummary = timings.entries.joinToString(", ") { "${it.key}=${"%.1f".format(it.value)}ms" }
+        return listOf(counterSummary, timingSummary).filter { it.isNotBlank() }.joinToString(" | ")
     }
 
     private fun demoSessions(): List<SessionInfo> = listOf(

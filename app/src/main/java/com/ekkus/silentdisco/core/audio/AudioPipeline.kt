@@ -7,6 +7,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.CRC32
 
+private const val EstimatedPacketHeaderBytes = 48
+
 data class AudioFormatSpec(
     val sampleRate: Int = 48_000,
     val channelCount: Int = 2,
@@ -76,7 +78,21 @@ data class PacketizationStats(
     val packetCount: Int,
     val averagePayloadBytes: Double,
     val maxPayloadBytes: Int,
+    val averagePacketBytes: Double,
+    val maxPacketBytes: Int,
+    val headerBytesPerPacket: Int,
+    val overheadRatio: Double,
 )
+
+data class PacketBudgetValidation(
+    val valid: Boolean,
+    val averagePacketBytes: Int,
+    val maxPacketBytes: Int,
+    val overheadRatio: Double,
+) {
+    fun summary(): String =
+        "avg=${averagePacketBytes}B, max=${maxPacketBytes}B, overhead=${"%.1f".format(overheadRatio * 100)}%"
+}
 
 class AudioPacketBuffer(
     private val startupTargetMs: Long = 400,
@@ -101,6 +117,8 @@ class AudioPacketBuffer(
         lastEmittedSequence = firstEntry.key
         return packets.remove(firstEntry.key)
     }
+
+    fun peekFirst(): BufferedAudioPacket? = packets.values.firstOrNull()
 
     fun missingSequenceCount(): Int {
         val last = lastEmittedSequence ?: return 0
@@ -142,12 +160,39 @@ object SilenceFiller {
 
 fun List<AudioPacket>.packetizationStats(): PacketizationStats {
     if (isEmpty()) {
-        return PacketizationStats(packetCount = 0, averagePayloadBytes = 0.0, maxPayloadBytes = 0)
+        return PacketizationStats(
+            packetCount = 0,
+            averagePayloadBytes = 0.0,
+            maxPayloadBytes = 0,
+            averagePacketBytes = 0.0,
+            maxPacketBytes = 0,
+            headerBytesPerPacket = EstimatedPacketHeaderBytes,
+            overheadRatio = 0.0,
+        )
     }
     val payloadSizes = map { it.payload.size }
+    val packetSizes = map { it.estimatedWireBytes() }
+    val averagePayload = payloadSizes.average()
+    val averagePacket = packetSizes.average()
     return PacketizationStats(
         packetCount = size,
-        averagePayloadBytes = payloadSizes.average(),
+        averagePayloadBytes = averagePayload,
         maxPayloadBytes = payloadSizes.maxOrNull() ?: 0,
+        averagePacketBytes = averagePacket,
+        maxPacketBytes = packetSizes.maxOrNull() ?: 0,
+        headerBytesPerPacket = EstimatedPacketHeaderBytes,
+        overheadRatio = if (averagePacket == 0.0) 0.0 else (averagePacket - averagePayload) / averagePacket,
+    )
+}
+
+fun AudioPacket.estimatedWireBytes(headerBytes: Int = EstimatedPacketHeaderBytes): Int = payload.size + headerBytes
+
+fun List<AudioPacket>.validatePacketBudget(maxWireBytes: Int = 4_096): PacketBudgetValidation {
+    val stats = packetizationStats()
+    return PacketBudgetValidation(
+        valid = stats.maxPacketBytes <= maxWireBytes,
+        averagePacketBytes = stats.averagePacketBytes.toInt(),
+        maxPacketBytes = stats.maxPacketBytes,
+        overheadRatio = stats.overheadRatio,
     )
 }

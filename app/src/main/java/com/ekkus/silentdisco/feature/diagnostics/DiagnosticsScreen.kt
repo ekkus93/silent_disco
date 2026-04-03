@@ -50,8 +50,10 @@ fun DiagnosticsScreen(
                 Text("Session id: ${uiState.hostDiagnostics.sessionId}")
                 Text("Listener count: ${uiState.hostDiagnostics.listenerCount}")
                 Text("Pending requests: ${uiState.hostDiagnostics.pendingJoinCount}")
+                Text("Desynced listeners: ${uiState.hostDiagnostics.desyncedListenerCount}")
                 Text("Packet send count: ${uiState.hostDiagnostics.packetSendCount}")
                 Text("Send rate: ${uiState.hostDiagnostics.packetSendRatePerSecond} pkt/s")
+                Text("Packet budget: ${uiState.hostDiagnostics.packetBudgetSummary}")
                 Text("Stream state: ${uiState.hostDiagnostics.streamState}")
                 Text("Last contact: ${uiState.hostDiagnostics.lastContactElapsedMs ?: -1} ms")
                 Text("Metrics: ${uiState.hostDiagnostics.metricsSummary}")
@@ -67,9 +69,12 @@ fun DiagnosticsScreen(
                 Text("Packet loss: ${uiState.listenerDiagnostics.packetLossCount}")
                 Text("Late drops: ${uiState.listenerDiagnostics.lateDropCount}")
                 Text("Underruns: ${uiState.listenerDiagnostics.underrunCount}")
+                Text("Invalid packets: ${uiState.listenerDiagnostics.invalidPacketCount}")
+                Text("Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}")
                 Text("Resync count: ${uiState.listenerDiagnostics.resyncCount}")
                 Text("Playback state: ${uiState.listenerDiagnostics.playbackState}")
                 Text("Playback position: ${uiState.listenerDiagnostics.playbackPositionMs} ms")
+                Text("Reached EOF: ${uiState.listenerDiagnostics.endOfStreamReached}")
                 Text("Metrics: ${uiState.listenerDiagnostics.metricsSummary}")
             }
         }
