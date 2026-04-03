@@ -48,7 +48,9 @@ import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.sync.HostTimingService
+import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
 import com.ekkus.silentdisco.core.sync.ListenerSyncController
+import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
 import com.ekkus.silentdisco.core.transport.BleAdvertisement
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
@@ -77,6 +79,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 PermissionState(permission = it, granted = false)
             },
             discoveredSessions = demoSessions(),
+            tuningSettings = loadTuningSettings(),
         ),
     )
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
@@ -633,6 +636,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(localVolume = volume)
     }
 
+    fun adjustTuning(field: TuningField, direction: Int) {
+        val updated = _uiState.value.tuningSettings.adjust(field, direction)
+        persistTuningSettings(updated)
+        listenerSyncController = _uiState.value.selectedSession?.let { createSyncController(SessionId(it.id)) }
+        _uiState.value = _uiState.value.copy(
+            tuningSettings = updated,
+            lastMessage = "Updated tuning: ${updated.summary()}",
+            lastError = null,
+        )
+        if (resyncJob?.isActive == true) {
+            startPeriodicResync()
+        }
+    }
+
     fun leaveSession() {
         hostStreamJob?.cancel()
         playbackJob?.cancel()
@@ -653,7 +670,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun manualResync() {
         val controller = listenerSyncController ?: _uiState.value.selectedSession?.let {
-            ListenerSyncController(SessionId(it.id))
+            createSyncController(SessionId(it.id))
         } ?: return
         listenerSyncController = controller
         val request = controller.newProbe()
@@ -940,7 +957,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val mapper = HostTimeMapper(offsetMs = _uiState.value.listenerSyncState.offsetMs, skewPpm = _uiState.value.listenerSyncState.skewPpm)
         listenerScheduler = ListenerPlaybackScheduler(
             mapper = mapper,
-            thresholds = PlaybackThresholds(),
+            thresholds = currentPlaybackThresholds(),
             expectedSessionId = SessionId(sessionId),
             expectedStreamId = expectedStreamId,
         )
@@ -1016,7 +1033,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         listenerScheduler = ListenerPlaybackScheduler(
             mapper = mapper,
-            thresholds = PlaybackThresholds(),
+            thresholds = currentPlaybackThresholds(),
             expectedSessionId = sessionId,
             expectedStreamId = streamId,
         )
@@ -1245,8 +1262,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun startPeriodicResync() {
         resyncJob?.cancel()
         resyncJob = viewModelScope.launch {
-            repeat(3) {
-                delay(2_000)
+            while (shouldKeepResyncing()) {
+                delay(_uiState.value.tuningSettings.syncCadenceMs)
                 manualResync()
                 wifiDirectService.recordHeartbeat()
                 if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
@@ -1316,6 +1333,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun generateInviteCode(): String =
         ((SystemClock.elapsedRealtime() % 9_000) + 1_000).toString()
+
+    private fun currentPlaybackThresholds(): PlaybackThresholds = PlaybackThresholds(
+        startupBufferMs = _uiState.value.tuningSettings.startupBufferMs,
+        softCorrectionThresholdMs = _uiState.value.tuningSettings.latePacketThresholdMs,
+        hardResyncThresholdMs = _uiState.value.tuningSettings.hardResyncThresholdMs,
+    )
+
+    private fun createSyncController(sessionId: SessionId): ListenerSyncController {
+        val tuning = _uiState.value.tuningSettings
+        return ListenerSyncController(
+            sessionId = sessionId,
+            estimator = ClockSyncEstimator(maxSamples = tuning.syncSampleWindow),
+            config = SyncMaintenanceConfig(
+                cadenceMs = tuning.syncCadenceMs,
+                driftThresholdMs = tuning.syncDriftThresholdMs,
+                sampleHistorySize = tuning.syncSampleWindow,
+            ),
+        )
+    }
+
+    private fun shouldKeepResyncing(): Boolean =
+        _uiState.value.hostPlaybackState == PlaybackState.PLAYING ||
+            _uiState.value.listenerState in setOf(
+                ListenerLifecycleState.APPROVED,
+                ListenerLifecycleState.CONNECTING,
+                ListenerLifecycleState.SYNCING_CLOCK,
+                ListenerLifecycleState.BUFFERING,
+                ListenerLifecycleState.PLAYING,
+                ListenerLifecycleState.DESYNCED,
+            )
+
+    private fun loadTuningSettings(): TuningSettings = TuningSettings(
+        syncSampleWindow = preferences.getInt("tuning:syncSampleWindow", 12),
+        syncCadenceMs = preferences.getLong("tuning:syncCadenceMs", 2_000L),
+        startupBufferMs = preferences.getLong("tuning:startupBufferMs", 400L),
+        latePacketThresholdMs = preferences.getLong("tuning:latePacketThresholdMs", 40L),
+        hardResyncThresholdMs = preferences.getLong("tuning:hardResyncThresholdMs", 120L),
+        syncDriftThresholdMs = java.lang.Double.longBitsToDouble(
+            preferences.getLong("tuning:syncDriftThresholdBits", java.lang.Double.doubleToLongBits(18.0)),
+        ),
+    )
+
+    private fun persistTuningSettings(settings: TuningSettings) {
+        preferences.edit()
+            .putInt("tuning:syncSampleWindow", settings.syncSampleWindow)
+            .putLong("tuning:syncCadenceMs", settings.syncCadenceMs)
+            .putLong("tuning:startupBufferMs", settings.startupBufferMs)
+            .putLong("tuning:latePacketThresholdMs", settings.latePacketThresholdMs)
+            .putLong("tuning:hardResyncThresholdMs", settings.hardResyncThresholdMs)
+            .putLong("tuning:syncDriftThresholdBits", java.lang.Double.doubleToLongBits(settings.syncDriftThresholdMs))
+            .apply()
+    }
 
     private fun hasPermission(permission: AppPermission): Boolean =
         _uiState.value.permissions.any { it.permission == permission && it.granted }

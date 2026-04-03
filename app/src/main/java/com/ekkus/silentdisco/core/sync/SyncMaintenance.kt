@@ -24,6 +24,7 @@ class HostTimingService {
 data class SyncMaintenanceConfig(
     val cadenceMs: Long = 2_000,
     val driftThresholdMs: Double = 18.0,
+    val sampleHistorySize: Int = 24,
 )
 
 class ListenerSyncController(
@@ -55,7 +56,7 @@ class ListenerSyncController(
             ),
         )
         samples += localReceiveTimeMs to state.offsetMs
-        if (samples.size > 24) {
+        if (samples.size > config.sampleHistorySize) {
             samples.removeAt(0)
         }
         lastSyncAtMs = localReceiveTimeMs

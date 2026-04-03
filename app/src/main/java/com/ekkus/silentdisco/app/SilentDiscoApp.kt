@@ -181,6 +181,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                 DiagnosticsScreen(
                     uiState = uiState,
                     onManualResync = viewModel::manualResync,
+                    onAdjustTuning = viewModel::adjustTuning,
                     onShare = { text ->
                         val context = navController.context
                         val shareIntent = Intent.createChooser(

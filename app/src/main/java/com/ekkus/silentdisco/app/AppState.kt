@@ -16,6 +16,24 @@ import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.permissions.PermissionState
 
+data class TuningSettings(
+    val syncSampleWindow: Int = 12,
+    val syncCadenceMs: Long = 2_000,
+    val startupBufferMs: Long = 400,
+    val latePacketThresholdMs: Long = 40,
+    val hardResyncThresholdMs: Long = 120,
+    val syncDriftThresholdMs: Double = 18.0,
+)
+
+enum class TuningField {
+    SyncSampleWindow,
+    SyncCadenceMs,
+    StartupBufferMs,
+    LatePacketThresholdMs,
+    HardResyncThresholdMs,
+    SyncDriftThresholdMs,
+}
+
 data class HostFormState(
     val sessionName: String = "Silent Disco Session",
     val approvalMode: ApprovalMode = ApprovalMode.MANUAL,
@@ -49,6 +67,7 @@ data class AppUiState(
     val hostPlaybackState: PlaybackState = PlaybackState.STOPPED,
     val listenerPlaybackState: PlaybackState = PlaybackState.STOPPED,
     val listenerSyncState: SyncState = SyncState(),
+    val tuningSettings: TuningSettings = TuningSettings(),
     val hostDiagnostics: HostDiagnosticsSnapshot = HostDiagnosticsSnapshot(),
     val listenerDiagnostics: ListenerDiagnosticsSnapshot = ListenerDiagnosticsSnapshot(),
     val localVolume: Float = 1.0f,
@@ -105,3 +124,28 @@ fun JoinRequest.toListenerInfo(): ListenerInfo = ListenerInfo(
     listenerState = ListenerLifecycleState.CONNECTING,
     syncQuality = SyncQualityBadge.UNKNOWN,
 )
+
+fun TuningSettings.adjust(field: TuningField, direction: Int): TuningSettings {
+    val step = when {
+        direction > 0 -> 1
+        direction < 0 -> -1
+        else -> 0
+    }
+    if (step == 0) return this
+    val updated = when (field) {
+        TuningField.SyncSampleWindow -> copy(syncSampleWindow = (syncSampleWindow + (step * 2)).coerceIn(4, 32))
+        TuningField.SyncCadenceMs -> copy(syncCadenceMs = (syncCadenceMs + (step * 250L)).coerceIn(500L, 5_000L))
+        TuningField.StartupBufferMs -> copy(startupBufferMs = (startupBufferMs + (step * 50L)).coerceIn(100L, 1_500L))
+        TuningField.LatePacketThresholdMs -> copy(latePacketThresholdMs = (latePacketThresholdMs + (step * 5L)).coerceIn(10L, 250L))
+        TuningField.HardResyncThresholdMs -> copy(hardResyncThresholdMs = (hardResyncThresholdMs + (step * 20L)).coerceIn(40L, 500L))
+        TuningField.SyncDriftThresholdMs -> copy(syncDriftThresholdMs = (syncDriftThresholdMs + (step * 2.0)).coerceIn(4.0, 100.0))
+    }
+    val lateThreshold = updated.latePacketThresholdMs.coerceAtMost(updated.hardResyncThresholdMs - 20L)
+    return updated.copy(
+        latePacketThresholdMs = lateThreshold.coerceAtLeast(10L),
+        hardResyncThresholdMs = updated.hardResyncThresholdMs.coerceAtLeast(lateThreshold + 20L),
+    )
+}
+
+fun TuningSettings.summary(): String =
+    "samples=$syncSampleWindow, cadence=${syncCadenceMs}ms, startup=${startupBufferMs}ms, late=${latePacketThresholdMs}ms, resync=${hardResyncThresholdMs}ms, drift=${"%.1f".format(syncDriftThresholdMs)}ms"

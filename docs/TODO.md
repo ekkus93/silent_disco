@@ -457,12 +457,13 @@ Note: BLE discovery is implemented in phase 1 for this PoC, so the deferred-path
 
 - [x] Decide whether BLE discovery is included in phase 1 PoC or deferred
 - [x] Choose exact packet framing/serialization format
-- [ ] Tune sync sample count and cadence
-- [ ] Tune startup buffer threshold
-- [ ] Tune late packet / desync thresholds
+- [x] Tune sync sample count and cadence
+- [x] Tune startup buffer threshold
+- [x] Tune late packet / desync thresholds
 - [x] Decide whether skew estimation is required immediately
 - [ ] Measure actual listener capacity of a host phone
 - [x] Decide whether Host Control and Host Playback remain a single screen or split later
+Note: sync/window/buffer/late/resync thresholds are now exposed as persisted in-app tuning controls in Diagnostics so real-device trials can adjust them without rebuilding; the remaining capacity item still requires phone testing.
 
 ## 19. Nice-to-Haves if Time Permits
 

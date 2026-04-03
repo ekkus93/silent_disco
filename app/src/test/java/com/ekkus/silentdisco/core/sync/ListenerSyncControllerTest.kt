@@ -28,6 +28,39 @@ class ListenerSyncControllerTest {
         assertThat(controller.shouldResync(nowMs = 2_100, state = stateOne)).isTrue()
     }
 
+    @Test
+    fun `controller respects configurable sample history size`() {
+        var nowMs = 0L
+        val controller = ListenerSyncController(
+            sessionId = SessionId("session"),
+            estimator = ClockSyncEstimator(maxSamples = 4),
+            config = SyncMaintenanceConfig(
+                cadenceMs = 1_000,
+                driftThresholdMs = 50.0,
+                sampleHistorySize = 4,
+            ),
+            nowProvider = { nowMs },
+        )
+
+        repeat(6) { index ->
+            nowMs = index * 100L
+            val request = controller.newProbe(index.toLong())
+            controller.onResponse(
+                response = controllerResponse(request, t2 = nowMs + 5, t3 = nowMs + 6),
+                localReceiveTimeMs = nowMs + 7,
+            )
+        }
+
+        val request = controller.newProbe(99)
+        val state = controller.onResponse(
+            response = controllerResponse(request, t2 = nowMs + 8, t3 = nowMs + 9),
+            localReceiveTimeMs = nowMs + 10,
+        )
+
+        assertThat(state.confidence).isNotNull()
+        assertThat(state.rttMs).isAtMost(50.0)
+    }
+
     private fun controllerResponse(
         request: com.ekkus.silentdisco.core.protocol.SyncRequestPacket,
         t2: Long,
