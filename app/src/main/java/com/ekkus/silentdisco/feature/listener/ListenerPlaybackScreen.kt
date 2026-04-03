@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.connectionQualitySummary
 import com.ekkus.silentdisco.app.syncSummary
 
 @Composable
@@ -36,6 +37,7 @@ fun ListenerPlaybackScreen(
                 Text("Session: ${uiState.selectedSession?.name ?: "Unknown"}")
                 Text("Host: ${uiState.selectedSession?.hostDeviceName ?: "Unknown"}")
                 Text("Sync quality: ${uiState.syncSummary()}")
+                Text("Connection quality: ${uiState.connectionQualitySummary()}")
                 Text("Playback state: ${uiState.listenerPlaybackState}")
                 Text("Buffer depth: ${uiState.listenerDiagnostics.bufferDepthMs} ms")
                 Text("Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}")

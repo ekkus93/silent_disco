@@ -70,6 +70,15 @@ fun AppUiState.syncSummary(): String = when (listenerSyncState.confidence) {
     SyncQualityBadge.UNKNOWN -> "Sync unknown"
 }
 
+fun AppUiState.connectionQualitySummary(): String = when {
+    lastError != null -> "Connection trouble"
+    listenerState == ListenerLifecycleState.DESYNCED -> "Needs resync"
+    listenerDiagnostics.underrunCount > 0 || listenerDiagnostics.lateDropCount > 0 -> "Recovering"
+    listenerSyncState.confidence == SyncQualityBadge.EXCELLENT ||
+        listenerSyncState.confidence == SyncQualityBadge.GOOD -> "Stable"
+    else -> "Monitoring"
+}
+
 fun AppUiState.listenerStateLabel(): String = when (listenerState) {
     ListenerLifecycleState.IDLE -> "Idle"
     ListenerLifecycleState.SCANNING -> "Scanning"

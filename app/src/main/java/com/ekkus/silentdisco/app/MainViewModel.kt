@@ -36,6 +36,7 @@ import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
+import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
@@ -105,11 +106,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         inviteCode: String = _uiState.value.hostForm.inviteCode,
         rememberApprovedDevices: Boolean = _uiState.value.hostForm.rememberApprovedDevices,
     ) {
+        val resolvedInviteCode = if (approvalMode == ApprovalMode.INVITE_CODE && inviteCode.isBlank()) {
+            generateInviteCode()
+        } else {
+            inviteCode
+        }
         _uiState.value = _uiState.value.copy(
             hostForm = _uiState.value.hostForm.copy(
                 sessionName = sessionName,
                 approvalMode = approvalMode,
-                inviteCode = inviteCode,
+                inviteCode = resolvedInviteCode,
                 rememberApprovedDevices = rememberApprovedDevices,
             ),
         )
@@ -134,6 +140,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val form = _uiState.value.hostForm
         if (form.sessionName.isBlank()) {
             _uiState.value = _uiState.value.copy(lastError = "Session name is required")
+            return false
+        }
+        if (!hasHostTransportPermissions()) {
+            val message = "Missing nearby connectivity permissions for advertising"
+            wifiDirectService.fail(message, retryable = true)
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                lastError = message,
+            )
+            refreshHostDiagnostics(streamState = PlaybackState.ERROR)
             return false
         }
         currentSessionId = SessionId(UUID.randomUUID().toString())
@@ -383,6 +399,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun scanForSessions() {
         logger.i("listener.scan", "Scanning for nearby sessions")
+        if (!hasListenerTransportPermissions()) {
+            val message = "Missing nearby connectivity permissions for discovery"
+            wifiDirectService.fail(message, retryable = true)
+            _uiState.value = _uiState.value.copy(
+                listenerState = ListenerLifecycleState.ERROR,
+                lastError = message,
+            )
+            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            refreshListenerDiagnostics()
+            return
+        }
         bleService.startScanning()
         wifiDirectService.discoverPeers()
         val discovered = bleService.discoveredSessions.value.ifEmpty { demoSessions() }
@@ -883,6 +910,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val timingSummary = timings.entries.joinToString(", ") { "${it.key}=${"%.1f".format(it.value)}ms" }
         return listOf(counterSummary, timingSummary).filter { it.isNotBlank() }.joinToString(" | ")
     }
+
+    private fun generateInviteCode(): String =
+        ((SystemClock.elapsedRealtime() % 9_000) + 1_000).toString()
+
+    private fun hasPermission(permission: AppPermission): Boolean =
+        _uiState.value.permissions.any { it.permission == permission && it.granted }
+
+    private fun hasHostTransportPermissions(): Boolean =
+        hasPermission(AppPermission.NearbyWifiDevices) &&
+            hasPermission(AppPermission.ChangeWifiState) &&
+            hasPermission(AppPermission.BluetoothAdvertise)
+
+    private fun hasListenerTransportPermissions(): Boolean =
+        hasPermission(AppPermission.NearbyWifiDevices) &&
+            hasPermission(AppPermission.BluetoothScan) &&
+            hasPermission(AppPermission.BluetoothConnect)
 
     private fun demoSessions(): List<SessionInfo> = listOf(
         SessionInfo(

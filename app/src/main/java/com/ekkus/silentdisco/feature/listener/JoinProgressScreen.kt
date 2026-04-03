@@ -52,6 +52,7 @@ fun JoinProgressScreen(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Invite code") },
             )
+            Text("Enter the host's 4-digit invite code before requesting access.")
         }
         Button(onClick = onJoin, modifier = Modifier.fillMaxWidth()) {
             Text("Request Join")

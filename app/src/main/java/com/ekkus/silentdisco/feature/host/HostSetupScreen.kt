@@ -64,6 +64,12 @@ fun HostSetupScreen(
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Optional invite code") },
                 )
+                if (uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE) {
+                    Text(
+                        text = "Listeners will enter code: ${uiState.hostForm.inviteCode.ifBlank { "Auto-generated when hosting" }}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
                         checked = uiState.hostForm.rememberApprovedDevices,

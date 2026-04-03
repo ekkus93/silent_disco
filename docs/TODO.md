@@ -198,8 +198,7 @@
   - [x] advertise minimal host metadata
   - [x] implement listener-side scanning
   - [x] bridge BLE discovery into Wi-Fi Direct join flow
-- [ ] If deferred:
-  - [ ] leave abstraction hooks/placeholders
+Note: BLE discovery is implemented in phase 1 for this PoC, so the deferred-path placeholder work is not applicable here.
 
 ## 7. Join Request and Approval Flow
 
@@ -395,7 +394,7 @@
 
 ### 15.1 Host errors
 - [x] Handle failure to create/start session
-- [ ] Handle failure to advertise/connect transport
+- [x] Handle failure to advertise/connect transport
 - [x] Handle audio file load/decode failure
 - [x] Handle stream failure/stoppage
 
@@ -466,11 +465,11 @@
 
 ## 19. Nice-to-Haves if Time Permits
 
-- [ ] QR code or invite code UX improvement
+- [x] QR code or invite code UX improvement
 - [x] Remember trusted devices
-- [ ] Better diagnostics export
+- [x] Better diagnostics export
 - [x] Manual listener resync action
-- [ ] Better connection quality visualization
+- [x] Better connection quality visualization
 
 ## 20. Explicitly Deferred to Later Versions
 
