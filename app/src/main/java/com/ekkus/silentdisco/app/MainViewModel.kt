@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
@@ -78,7 +79,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             permissions = PermissionCatalogue.requiredPermissions().map {
                 PermissionState(permission = it, granted = false)
             },
-            discoveredSessions = demoSessions(),
+            discoveredSessions = emptyList(),
             tuningSettings = loadTuningSettings(),
         ),
     )
@@ -95,10 +96,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var playbackJob: Job? = null
     private var resyncJob: Job? = null
     private var pendingSyncCorrelationId: Long? = null
+    private var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
     private val localListenerDeviceId = "listener-device"
 
     init {
         observeTransport()
+        observeDiscovery()
     }
 
     fun selectRole(role: AppRole) {
@@ -181,6 +184,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     sessionName = session.name,
                     hostName = session.hostDeviceName,
                     approvalRequired = true,
+                    inviteCodeRequired = session.inviteCodeRequired,
                 ),
             )
             wifiDirectService.startHost(session)
@@ -196,7 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             _uiState.value = _uiState.value.copy(
                 hostState = HostLifecycleState.WAITING_FOR_LISTENERS,
-                discoveredSessions = (listOf(session) + demoSessions()).distinctBy { it.id },
+                discoveredSessions = listOf(session),
                 lastMessage = "Hosting ${session.name}",
                 lastError = null,
             )
@@ -287,7 +291,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun trustListener(listenerId: String) {
-        preferences.edit().putBoolean("trusted:$listenerId", true).apply()
+        preferences.edit { putBoolean("trusted:$listenerId", true) }
         _uiState.value = _uiState.value.copy(
             approvedListeners = _uiState.value.approvedListeners.map {
                 if (it.deviceId == listenerId) it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER) else it
@@ -514,18 +518,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         bleService.startScanning()
         wifiDirectService.discoverPeers()
-        val discovered = bleService.discoveredSessions.value.ifEmpty { demoSessions() }
+        refreshDiscoveredSessions()
+        val discovered = _uiState.value.discoveredSessions
         _uiState.value = _uiState.value.copy(
-            listenerState = if (discovered.isEmpty()) ListenerLifecycleState.ERROR else ListenerLifecycleState.SCANNING,
+            listenerState = ListenerLifecycleState.SCANNING,
             discoveredSessions = discovered,
             connectionProgress = _uiState.value.connectionProgress.copy(
-                currentState = if (discovered.isEmpty()) ListenerLifecycleState.ERROR else ListenerLifecycleState.SCANNING,
+                currentState = ListenerLifecycleState.SCANNING,
                 discovered = discovered.isNotEmpty(),
             ),
-            lastError = if (discovered.isEmpty()) "No sessions found nearby" else null,
+            lastError = null,
         )
         diagnosticsStore.updateListener {
-            it.copy(lastError = if (discovered.isEmpty()) "No sessions found nearby" else null)
+            it.copy(lastError = null)
         }
         refreshListenerDiagnostics()
     }
@@ -564,39 +569,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         logger.i("listener.join", "Join request created for ${request.sessionId.value}")
         _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.AWAITING_APPROVAL,
+            listenerState = ListenerLifecycleState.CONNECTING,
             connectionProgress = _uiState.value.connectionProgress.copy(
-                currentState = ListenerLifecycleState.AWAITING_APPROVAL,
+                currentState = ListenerLifecycleState.CONNECTING,
                 requested = true,
             ),
-            lastMessage = "Join request sent",
+            lastMessage = "Connecting to host",
             lastError = null,
         )
-        val shouldReject = session.inviteCodeRequired && request.inviteCode != "1234"
-        val shouldSimulate = bleService.advertisement.value?.sessionId != session.id
+        pendingJoinRequestMessage = request
+        val shouldSimulate = session.id.startsWith("demo-session-")
         if (shouldSimulate) {
+            val shouldReject = session.inviteCodeRequired && request.inviteCode != "1234"
             simulateApprovalAndPlayback(session.id, shouldReject)
             return
         }
-        viewModelScope.launch {
-            wifiDirectService.connectToSession(session)
-            if (wifiDirectService.snapshot.value.state != TransportConnectionState.CONNECTED) {
-                handleListenerConnectionFailure("Failed to connect to host transport")
-                return@launch
-            }
-            _uiState.value = _uiState.value.copy(
-                listenerState = ListenerLifecycleState.CONNECTING,
-                connectionProgress = _uiState.value.connectionProgress.copy(
-                    currentState = ListenerLifecycleState.CONNECTING,
-                    connected = true,
-                ),
-            )
-            runCatching {
-                wifiDirectService.sendControlToHost(request)
-            }.onFailure { error ->
-                handleListenerConnectionFailure(error.message ?: "Failed to send join request")
-            }
-        }
+        wifiDirectService.connectToSession(session)
     }
 
     fun updateInviteCode(code: String) {
@@ -657,6 +645,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         listenerScheduler = null
         pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
+        pendingJoinRequestMessage = null
         logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.IDLE,
@@ -757,6 +746,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun observeDiscovery() {
+        viewModelScope.launch {
+            bleService.discoveredSessions.collect {
+                refreshDiscoveredSessions()
+            }
+        }
+        viewModelScope.launch {
+            wifiDirectService.snapshot.collect { snapshot ->
+                refreshDiscoveredSessions()
+                if (pendingJoinRequestMessage != null && snapshot.state == TransportConnectionState.CONNECTED) {
+                    sendPendingJoinRequest()
+                }
+                if (_uiState.value.listenerState == ListenerLifecycleState.SCANNING &&
+                    _uiState.value.discoveredSessions.isEmpty() &&
+                    snapshot.state == TransportConnectionState.DISCOVERING
+                ) {
+                    _uiState.value = _uiState.value.copy(lastMessage = "Scanning for nearby sessions...")
+                }
+                snapshot.lastError?.let { error ->
+                    if (_uiState.value.listenerState == ListenerLifecycleState.CONNECTING ||
+                        _uiState.value.listenerState == ListenerLifecycleState.SCANNING
+                    ) {
+                        _uiState.value = _uiState.value.copy(lastError = error.message)
+                    }
+                }
+            }
+        }
+    }
+
     private fun handleControlMessage(message: ControlMessage) {
         when (message) {
             is ControlMessage.JoinRequest -> handleJoinRequestMessage(message)
@@ -809,7 +827,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lastError = null,
         )
         if (message.trustedForFuture) {
-            preferences.edit().putBoolean("trusted:${message.listenerId}", true).apply()
+            preferences.edit { putBoolean("trusted:${message.listenerId}", true) }
         }
         refreshListenerDiagnostics()
         manualResync()
@@ -1334,6 +1352,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun generateInviteCode(): String =
         ((SystemClock.elapsedRealtime() % 9_000) + 1_000).toString()
 
+    private fun refreshDiscoveredSessions() {
+        val bleSessions = bleService.discoveredSessions.value
+        val peerSessions = wifiDirectService.snapshot.value.peers.map {
+            SessionInfo(
+                id = "p2p-${it.deviceAddress.replace(":", "").lowercase()}",
+                name = "Nearby session (${it.deviceName})",
+                hostDeviceName = it.deviceName,
+                approvalMode = ApprovalMode.MANUAL,
+                inviteCodeRequired = false,
+            )
+        }
+        val merged = (bleSessions + peerSessions)
+            .distinctBy { it.id }
+            .sortedBy { it.name }
+        _uiState.value = _uiState.value.copy(
+            discoveredSessions = merged,
+            connectionProgress = _uiState.value.connectionProgress.copy(discovered = merged.isNotEmpty()),
+        )
+    }
+
+    private fun sendPendingJoinRequest() {
+        val request = pendingJoinRequestMessage ?: return
+        viewModelScope.launch {
+            runCatching {
+                wifiDirectService.sendControlToHost(request)
+            }.onSuccess {
+                pendingJoinRequestMessage = null
+                _uiState.value = _uiState.value.copy(
+                    listenerState = ListenerLifecycleState.AWAITING_APPROVAL,
+                    connectionProgress = _uiState.value.connectionProgress.copy(
+                        currentState = ListenerLifecycleState.AWAITING_APPROVAL,
+                        connected = true,
+                    ),
+                    lastMessage = "Join request sent",
+                    lastError = null,
+                )
+            }.onFailure { error ->
+                handleListenerConnectionFailure(error.message ?: "Failed to send join request")
+            }
+        }
+    }
+
     private fun currentPlaybackThresholds(): PlaybackThresholds = PlaybackThresholds(
         startupBufferMs = _uiState.value.tuningSettings.startupBufferMs,
         softCorrectionThresholdMs = _uiState.value.tuningSettings.latePacketThresholdMs,
@@ -1376,14 +1436,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private fun persistTuningSettings(settings: TuningSettings) {
-        preferences.edit()
-            .putInt("tuning:syncSampleWindow", settings.syncSampleWindow)
-            .putLong("tuning:syncCadenceMs", settings.syncCadenceMs)
-            .putLong("tuning:startupBufferMs", settings.startupBufferMs)
-            .putLong("tuning:latePacketThresholdMs", settings.latePacketThresholdMs)
-            .putLong("tuning:hardResyncThresholdMs", settings.hardResyncThresholdMs)
-            .putLong("tuning:syncDriftThresholdBits", java.lang.Double.doubleToLongBits(settings.syncDriftThresholdMs))
-            .apply()
+        preferences.edit {
+            putInt("tuning:syncSampleWindow", settings.syncSampleWindow)
+            putLong("tuning:syncCadenceMs", settings.syncCadenceMs)
+            putLong("tuning:startupBufferMs", settings.startupBufferMs)
+            putLong("tuning:latePacketThresholdMs", settings.latePacketThresholdMs)
+            putLong("tuning:hardResyncThresholdMs", settings.hardResyncThresholdMs)
+            putLong("tuning:syncDriftThresholdBits", java.lang.Double.doubleToLongBits(settings.syncDriftThresholdMs))
+        }
     }
 
     private fun hasPermission(permission: AppPermission): Boolean =
@@ -1415,4 +1475,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             inviteCodeRequired = true,
         ),
     )
+
+    override fun onCleared() {
+        bleService.stop()
+        wifiDirectService.stop()
+        super.onCleared()
+    }
 }

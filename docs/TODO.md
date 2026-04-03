@@ -190,7 +190,7 @@
 - [x] Implement discovery/connection flow for listeners
 - [x] Abstract transport setup behind an interface so it can evolve later
 - [x] Handle transport errors and retries
-Note: the current PoC now uses real TCP socket channels for control, sync, and audio transport, with a Wi-Fi Direct group-owner address hint for device-to-device runs and loopback transport for same-process development/testing.
+Note: the current PoC now uses Android Wi-Fi Direct peer/group orchestration plus real TCP socket channels for control, sync, and audio transport. BLE advertisement/scanning is also wired for minimal host-session discovery metadata, while loopback transport still works for same-process development/testing.
 
 ### 6.3 Optional BLE discovery support
 - [x] Decide whether BLE discovery is phase 1 or phase 2 within PoC

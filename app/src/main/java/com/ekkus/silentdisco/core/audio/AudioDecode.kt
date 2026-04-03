@@ -6,7 +6,6 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
-import android.os.Build
 import android.provider.OpenableColumns
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import java.nio.ByteBuffer
@@ -120,12 +119,7 @@ class AudioFileDecoder(
             val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000)
             when {
                 outputIndex >= 0 -> {
-                    val outputBuffer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        codec.getOutputBuffer(outputIndex)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        codec.outputBuffers[outputIndex]
-                    } ?: ByteBuffer.allocate(0)
+                    val outputBuffer = codec.getOutputBuffer(outputIndex) ?: ByteBuffer.allocate(0)
                     if (bufferInfo.size > 0) {
                         val bytes = ByteArray(bufferInfo.size)
                         outputBuffer.position(bufferInfo.offset)
@@ -155,7 +149,7 @@ class AudioFileDecoder(
     ): AudioDecodeResult {
         val sourceRate = sourceFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         val sourceChannels = sourceFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-        val pcmEncoding = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && sourceFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+        val pcmEncoding = if (sourceFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
             sourceFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
         } else {
             AudioFormat.ENCODING_PCM_16BIT
