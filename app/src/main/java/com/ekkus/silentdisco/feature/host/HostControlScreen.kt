@@ -24,6 +24,8 @@ fun HostControlScreen(
     onAddDemoJoinRequest: () -> Unit,
     onApprove: (JoinRequest) -> Unit,
     onReject: (JoinRequest) -> Unit,
+    onTrust: (String) -> Unit,
+    onRemove: (String) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onStop: () -> Unit,
@@ -92,6 +94,10 @@ fun HostControlScreen(
                     Text("Join state: ${listener.joinState}")
                     Text("Transport: ${listener.connectionState}")
                     Text("Sync: ${listener.syncQuality}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { onTrust(listener.deviceId) }) { Text("Trust") }
+                        Button(onClick = { onRemove(listener.deviceId) }) { Text("Remove") }
+                    }
                 }
             }
         }

@@ -118,6 +118,8 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     onAddDemoJoinRequest = viewModel::addDemoJoinRequest,
                     onApprove = viewModel::approveJoinRequest,
                     onReject = viewModel::rejectJoinRequest,
+                    onTrust = viewModel::trustListener,
+                    onRemove = viewModel::removeListener,
                     onStart = viewModel::startHostPlayback,
                     onPause = viewModel::pauseHostPlayback,
                     onStop = viewModel::stopHostPlayback,

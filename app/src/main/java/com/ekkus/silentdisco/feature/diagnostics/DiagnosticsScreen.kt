@@ -53,6 +53,8 @@ fun DiagnosticsScreen(
                 Text("Packet send count: ${uiState.hostDiagnostics.packetSendCount}")
                 Text("Send rate: ${uiState.hostDiagnostics.packetSendRatePerSecond} pkt/s")
                 Text("Stream state: ${uiState.hostDiagnostics.streamState}")
+                Text("Last contact: ${uiState.hostDiagnostics.lastContactElapsedMs ?: -1} ms")
+                Text("Metrics: ${uiState.hostDiagnostics.metricsSummary}")
             }
         }
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -67,6 +69,8 @@ fun DiagnosticsScreen(
                 Text("Underruns: ${uiState.listenerDiagnostics.underrunCount}")
                 Text("Resync count: ${uiState.listenerDiagnostics.resyncCount}")
                 Text("Playback state: ${uiState.listenerDiagnostics.playbackState}")
+                Text("Playback position: ${uiState.listenerDiagnostics.playbackPositionMs} ms")
+                Text("Metrics: ${uiState.listenerDiagnostics.metricsSummary}")
             }
         }
         Card(modifier = Modifier.fillMaxWidth()) {

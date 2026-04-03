@@ -149,6 +149,8 @@ data class HostDiagnosticsSnapshot(
     val packetSendCount: Long = 0,
     val packetSendRatePerSecond: Double = 0.0,
     val streamState: PlaybackState = PlaybackState.STOPPED,
+    val lastContactElapsedMs: Long? = null,
+    val metricsSummary: String = "",
     val lastError: String? = null,
 )
 
@@ -162,8 +164,10 @@ data class ListenerDiagnosticsSnapshot(
     val lateDropCount: Int = 0,
     val underrunCount: Int = 0,
     val playbackState: PlaybackState = PlaybackState.STOPPED,
+    val playbackPositionMs: Long = 0,
     val reconnectCount: Int = 0,
     val resyncCount: Int = 0,
+    val metricsSummary: String = "",
     val lastPacketSequence: Long? = null,
     val lastError: String? = null,
 )

@@ -90,11 +90,11 @@
   - [x] pause
   - [x] stop
   - [x] end session
-- [ ] Add listener actions
+- [x] Add listener actions
   - [x] approve
   - [x] reject
-  - [ ] trust placeholder or actual trust action
-  - [ ] remove/kick listener
+  - [x] trust placeholder or actual trust action
+  - [x] remove/kick listener
 - [x] Add diagnostics navigation/button
 - [x] Add visible sync/health summary badges
 
@@ -165,15 +165,15 @@
 - [x] Implement host-side local audio file picker
 - [x] Validate supported file types for PoC
 - [x] Display selected file metadata
-- [ ] Handle file access errors cleanly
+- [x] Handle file access errors cleanly
 
 ### 5.2 Audio decode pipeline
-- [ ] Implement or integrate decode path on host side
-- [ ] Convert/normalize decoded audio into chosen stream format
-  - [ ] 48 kHz
-  - [ ] stereo
-  - [ ] 16-bit PCM
-- [ ] Verify stable frame generation at fixed packet duration
+- [x] Implement or integrate decode path on host side
+- [x] Convert/normalize decoded audio into chosen stream format
+  - [x] 48 kHz
+  - [x] stereo
+  - [x] 16-bit PCM
+- [x] Verify stable frame generation at fixed packet duration
 - [ ] Handle end-of-file behavior
 
 ## 6. Host Networking / Session Management
@@ -186,18 +186,18 @@
 - [x] End/teardown session cleanly
 
 ### 6.2 Wi-Fi Direct transport setup
-- [ ] Implement Wi-Fi Direct-based host setup
-- [ ] Implement discovery/connection flow for listeners
-- [ ] Abstract transport setup behind an interface so it can evolve later
-- [ ] Handle transport errors and retries
+- [x] Implement Wi-Fi Direct-based host setup
+- [x] Implement discovery/connection flow for listeners
+- [x] Abstract transport setup behind an interface so it can evolve later
+- [x] Handle transport errors and retries
 
 ### 6.3 Optional BLE discovery support
 - [x] Decide whether BLE discovery is phase 1 or phase 2 within PoC
-- [ ] If implemented:
+- [x] If implemented:
   - [x] create BLE advertisement model
   - [x] advertise minimal host metadata
   - [x] implement listener-side scanning
-  - [ ] bridge BLE discovery into Wi-Fi Direct join flow
+  - [x] bridge BLE discovery into Wi-Fi Direct join flow
 - [ ] If deferred:
   - [ ] leave abstraction hooks/placeholders
 
@@ -213,12 +213,12 @@
 - [x] Implement manual approve action
 - [x] Implement reject action
 - [x] On approval, allow listener to proceed to active connection/session path
-- [ ] On rejection, notify listener clearly
+- [x] On rejection, notify listener clearly
 
 ### 7.3 Trust model placeholders
 - [x] Add trust-state model for future use
 - [x] Implement session-only approval now
-- [ ] Optionally persist trusted-device records if simple to do in PoC
+- [x] Optionally persist trusted-device records if simple to do in PoC
 
 ## 8. Protocol and Message Framing
 
@@ -259,9 +259,9 @@
 ## 9. Clock Sync Implementation
 
 ### 9.1 Host timing service
-- [ ] Implement host timing endpoint/service
-- [ ] Stamp incoming sync requests with host receive/send times
-- [ ] Return sync responses quickly and predictably
+- [x] Implement host timing endpoint/service
+- [x] Stamp incoming sync requests with host receive/send times
+- [x] Return sync responses quickly and predictably
 
 ### 9.2 Listener sync client
 - [x] Implement repeated sync probing
@@ -274,14 +274,14 @@
 - [x] Reject bad/outlier samples
 - [x] Prefer lower RTT samples
 - [x] Calculate stable initial offset estimate
-- [ ] Optionally implement skew estimate model
+- [x] Optionally implement skew estimate model
 - [x] Expose sync confidence/quality state to UI and diagnostics
 
 ### 9.4 Ongoing sync maintenance
-- [ ] Run periodic re-sync during session
-- [ ] Update offset estimate over time
-- [ ] Detect drift growth or unstable timing
-- [ ] Trigger resync states when thresholds are exceeded
+- [x] Run periodic re-sync during session
+- [x] Update offset estimate over time
+- [x] Detect drift growth or unstable timing
+- [x] Trigger resync states when thresholds are exceeded
 
 ## 10. Host Audio Streaming Pipeline
 
@@ -306,11 +306,11 @@
 ## 11. Listener Audio Pipeline
 
 ### 11.1 Listener receive path
-- [ ] Receive audio packets
+- [x] Receive audio packets
 - [ ] Validate session/stream identifiers
-- [ ] Order packets by sequence/sample index
-- [ ] Detect missing packets
-- [ ] Drop packets that are too late to use
+- [x] Order packets by sequence/sample index
+- [x] Detect missing packets
+- [x] Drop packets that are too late to use
 
 ### 11.2 Listener buffer implementation
 - [x] Build jitter/playback buffer
@@ -319,48 +319,48 @@
 - [x] Expose buffer health to diagnostics/UI
 
 ### 11.3 Playback scheduling
-- [ ] Translate host presentation time into local playback deadline
-- [ ] Start playback only after minimum startup buffer achieved
-- [ ] Feed scheduled audio into playback engine
+- [x] Translate host presentation time into local playback deadline
+- [x] Start playback only after minimum startup buffer achieved
+- [x] Feed scheduled audio into playback engine
 
 ### 11.4 Audio output engine
 - [ ] Implement playback path using appropriate Android audio APIs
-- [ ] Prefer Oboe / AAudio-oriented implementation if feasible
+- [x] Prefer Oboe / AAudio-oriented implementation if feasible
 - [ ] Verify stable playback callback/write behavior
-- [ ] Expose playback timestamp/position if possible
+- [x] Expose playback timestamp/position if possible
 
 ## 12. Missing Packet / Underrun Handling
 
 ### 12.1 Packet loss handling
-- [ ] Detect missing packet ranges
+- [x] Detect missing packet ranges
 - [ ] Decide simple concealment behavior for PoC
   - [ ] silence fill
   - [ ] zero-fill
   - [ ] minimal gap handling
-- [ ] Count/report packet loss events
+- [x] Count/report packet loss events
 
 ### 12.2 Late packet handling
-- [ ] Detect unusably late packets
-- [ ] Drop late packets when necessary
-- [ ] Count/report late-drop events
+- [x] Detect unusably late packets
+- [x] Drop late packets when necessary
+- [x] Count/report late-drop events
 
 ### 12.3 Underrun handling
-- [ ] Detect playback underruns
-- [ ] Surface underruns in diagnostics/UI
+- [x] Detect playback underruns
+- [x] Surface underruns in diagnostics/UI
 - [ ] Define simple recovery behavior
 
 ## 13. Drift Correction and Resync
 
 ### 13.1 Initial drift management
-- [ ] Maintain target startup/playback buffer
-- [ ] Use periodic resync to keep offset estimate current
-- [ ] Detect growing playback error
+- [x] Maintain target startup/playback buffer
+- [x] Use periodic resync to keep offset estimate current
+- [x] Detect growing playback error
 
 ### 13.2 Correction policy
-- [ ] Implement simple PoC correction strategy first
+- [x] Implement simple PoC correction strategy first
 - [ ] Avoid advanced time-stretch unless clearly needed
-- [ ] Define threshold for soft correction
-- [ ] Define threshold for hard resync/rebuffer state
+- [x] Define threshold for soft correction
+- [x] Define threshold for hard resync/rebuffer state
 
 ### 13.3 Resync UI/behavior
 - [x] Expose resync state to listeners
@@ -372,7 +372,7 @@
 ### 14.1 Host diagnostics data
 - [x] Implement listener roster snapshot
 - [x] Track per-listener state
-- [ ] Track per-listener last heartbeat / last contact
+- [x] Track per-listener last heartbeat / last contact
 - [x] Track stream state and packet send counts
 - [x] Track join/pending/approved counts
 
@@ -381,8 +381,8 @@
 - [x] Track RTT estimate
 - [x] Track jitter estimate if implemented
 - [x] Track current buffer depth
-- [ ] Track packet loss count
-- [ ] Track underrun count
+- [x] Track packet loss count
+- [x] Track underrun count
 - [x] Track reconnect/resync count
 - [x] Track current playback state
 
@@ -396,12 +396,12 @@
 ### 15.1 Host errors
 - [ ] Handle failure to create/start session
 - [ ] Handle failure to advertise/connect transport
-- [ ] Handle audio file load/decode failure
+- [x] Handle audio file load/decode failure
 - [ ] Handle stream failure/stoppage
 
 ### 15.2 Listener errors
-- [ ] Handle no sessions found
-- [ ] Handle host rejection
+- [x] Handle no sessions found
+- [x] Handle host rejection
 - [ ] Handle connection failure
 - [ ] Handle sync establishment failure
 - [ ] Handle disconnect during playback
@@ -417,15 +417,15 @@
 ### 16.1 Structured logging
 - [ ] Add structured logs for:
   - [x] join flow
-  - [ ] approval actions
-  - [ ] transport connection lifecycle
+  - [x] approval actions
+  - [x] transport connection lifecycle
   - [ ] sync sampling
   - [ ] stream start/stop
   - [ ] packet send/receive anomalies
   - [ ] playback underruns/desyncs
 
 ### 16.2 Debug instrumentation
-- [ ] Add counters/timers for key performance indicators
+- [x] Add counters/timers for key performance indicators
 - [ ] Make logs useful for real-device testing
 - [ ] Avoid logging so much that it breaks timing-sensitive paths
 
@@ -434,7 +434,7 @@
 ### 17.1 Unit-level tests where practical
 - [x] Test protocol model serialization/deserialization
 - [x] Test sync math helpers
-- [ ] Test packet ordering helpers
+- [x] Test packet ordering helpers
 - [x] Test buffer bookkeeping logic
 - [x] Test state transitions
 
@@ -460,16 +460,16 @@
 - [ ] Tune sync sample count and cadence
 - [ ] Tune startup buffer threshold
 - [ ] Tune late packet / desync thresholds
-- [ ] Decide whether skew estimation is required immediately
+- [x] Decide whether skew estimation is required immediately
 - [ ] Measure actual listener capacity of a host phone
 - [x] Decide whether Host Control and Host Playback remain a single screen or split later
 
 ## 19. Nice-to-Haves if Time Permits
 
 - [ ] QR code or invite code UX improvement
-- [ ] Remember trusted devices
+- [x] Remember trusted devices
 - [ ] Better diagnostics export
-- [ ] Manual listener resync action
+- [x] Manual listener resync action
 - [ ] Better connection quality visualization
 
 ## 20. Explicitly Deferred to Later Versions

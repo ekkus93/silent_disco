@@ -72,6 +72,12 @@ data class BufferedAudioPacket(
     val scheduledLocalTimeMs: Long,
 )
 
+data class PacketizationStats(
+    val packetCount: Int,
+    val averagePayloadBytes: Double,
+    val maxPayloadBytes: Int,
+)
+
 class AudioPacketBuffer(
     private val startupTargetMs: Long = 400,
 ) {
@@ -106,6 +112,24 @@ class AudioPacketBuffer(
         if (packets.isEmpty()) return 0
         return packets.values.last().scheduledLocalTimeMs - packets.values.first().scheduledLocalTimeMs
     }
+
+    fun validatePacketIdentity(packet: AudioPacket, sessionId: SessionId, streamId: StreamId): Boolean {
+        return packet.sessionId == sessionId && packet.streamId == streamId
+    }
+
+    fun missingSequenceRanges(): List<LongRange> {
+        val sortedKeys = packets.keys.toList()
+        if (sortedKeys.size < 2) return emptyList()
+        val gaps = mutableListOf<LongRange>()
+        for (index in 1 until sortedKeys.size) {
+            val previous = sortedKeys[index - 1]
+            val current = sortedKeys[index]
+            if (current > previous + 1) {
+                gaps += (previous + 1)..(current - 1)
+            }
+        }
+        return gaps
+    }
 }
 
 object SilenceFiller {
@@ -114,4 +138,16 @@ object SilenceFiller {
             .order(ByteOrder.LITTLE_ENDIAN)
             .array()
     }
+}
+
+fun List<AudioPacket>.packetizationStats(): PacketizationStats {
+    if (isEmpty()) {
+        return PacketizationStats(packetCount = 0, averagePayloadBytes = 0.0, maxPayloadBytes = 0)
+    }
+    val payloadSizes = map { it.payload.size }
+    return PacketizationStats(
+        packetCount = size,
+        averagePayloadBytes = payloadSizes.average(),
+        maxPayloadBytes = payloadSizes.maxOrNull() ?: 0,
+    )
 }
