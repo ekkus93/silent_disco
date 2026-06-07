@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.TuningField
+import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.app.summary
 import com.ekkus.silentdisco.core.audio.OboeBridge
 
@@ -68,7 +69,7 @@ fun DiagnosticsScreen(
                 Text("Packet send count: ${uiState.hostDiagnostics.packetSendCount}")
                 Text("Send rate: ${uiState.hostDiagnostics.packetSendRatePerSecond} pkt/s")
                 Text("Packet budget: ${uiState.hostDiagnostics.packetBudgetSummary}")
-                Text("Stream state: ${uiState.hostDiagnostics.streamState}")
+                Text("Stream state: ${uiState.hostDiagnostics.streamState.label()}")
                 Text("Last contact: ${uiState.hostDiagnostics.lastContactElapsedMs ?: -1} ms")
                 Text("Metrics: ${uiState.hostDiagnostics.metricsSummary}")
             }

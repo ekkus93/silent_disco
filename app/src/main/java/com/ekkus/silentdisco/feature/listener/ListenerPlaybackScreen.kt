@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.connectionQualitySummary
+import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.app.syncSummary
 
 @Composable
@@ -38,7 +39,7 @@ fun ListenerPlaybackScreen(
                 Text("Host: ${uiState.selectedSession?.hostDeviceName ?: "Unknown"}")
                 Text("Sync quality: ${uiState.syncSummary()}")
                 Text("Connection quality: ${uiState.connectionQualitySummary()}")
-                Text("Playback state: ${uiState.listenerPlaybackState}")
+                Text("Playback state: ${uiState.listenerPlaybackState.label()}")
                 Text("Buffer depth: ${uiState.listenerDiagnostics.bufferDepthMs} ms")
                 Text("Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}")
                 Text("EOF reached: ${uiState.listenerDiagnostics.endOfStreamReached}")

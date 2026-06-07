@@ -15,7 +15,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.JoinRequest
 
 @Composable
@@ -45,8 +47,8 @@ fun HostControlScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Session status", style = MaterialTheme.typography.titleMedium)
-                    Text("Host state: ${uiState.hostState}")
-                    Text("Playback: ${uiState.hostPlaybackState}")
+                    Text("Host state: ${uiState.hostState.label()}")
+                    Text("Playback: ${uiState.hostPlaybackState.label()}")
                     Text("Health: ${uiState.hostDiagnostics.connectedListenerCount} connected / ${uiState.hostDiagnostics.pendingJoinCount} pending")
                     Text("Sync trouble: ${uiState.hostDiagnostics.desyncedListenerCount} listener(s)")
                 }
@@ -63,9 +65,11 @@ fun HostControlScreen(
                         Button(onClick = onStop) { Text("Stop") }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onAddDemoJoinRequest) { Text("Add Demo Join") }
                         Button(onClick = onOpenDiagnostics) { Text("Diagnostics") }
                         Button(onClick = onEndSession) { Text("End Session") }
+                    }
+                    if (BuildConfig.DEBUG) {
+                        Button(onClick = onAddDemoJoinRequest) { Text("[Debug] Add Demo Join") }
                     }
                 }
             }
@@ -92,9 +96,9 @@ fun HostControlScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(listener.displayName, style = MaterialTheme.typography.titleMedium)
-                    Text("Join state: ${listener.joinState}")
-                    Text("Transport: ${listener.connectionState}")
-                    Text("Sync: ${listener.syncQuality}")
+                    Text("Join state: ${listener.joinState.label()}")
+                    Text("Transport: ${listener.connectionState.label()}")
+                    Text("Sync: ${listener.syncQuality.label()}")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { onTrust(listener.deviceId) }) { Text("Trust") }
                         Button(onClick = { onRemove(listener.deviceId) }) { Text("Remove") }

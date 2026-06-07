@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.SessionInfo
 
 @Composable
@@ -47,7 +48,7 @@ fun DiscoverSessionsScreen(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(session.name, style = MaterialTheme.typography.titleMedium)
                     Text("Host: ${session.hostDeviceName}")
-                    Text("Approval: ${session.approvalMode}")
+                    Text("Approval: ${session.approvalMode.label()}")
                     Text(
                         if (session.inviteCodeRequired) {
                             "Connection quality hint: invite protected"

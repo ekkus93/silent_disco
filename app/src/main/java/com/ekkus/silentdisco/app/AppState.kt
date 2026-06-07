@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostDiagnosticsSnapshot
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.JoinApprovalState
+import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerDiagnosticsSnapshot
 import com.ekkus.silentdisco.core.model.ListenerInfo
@@ -149,3 +150,58 @@ fun TuningSettings.adjust(field: TuningField, direction: Int): TuningSettings {
 
 fun TuningSettings.summary(): String =
     "samples=$syncSampleWindow, cadence=${syncCadenceMs}ms, startup=${startupBufferMs}ms, late=${latePacketThresholdMs}ms, resync=${hardResyncThresholdMs}ms, drift=${"%.1f".format(syncDriftThresholdMs)}ms"
+
+fun HostLifecycleState.label(): String = when (this) {
+    HostLifecycleState.IDLE -> "Idle"
+    HostLifecycleState.CREATING_SESSION -> "Creating session…"
+    HostLifecycleState.ADVERTISING -> "Advertising…"
+    HostLifecycleState.WAITING_FOR_LISTENERS -> "Waiting for listeners"
+    HostLifecycleState.READY -> "Ready"
+    HostLifecycleState.STREAMING -> "Streaming"
+    HostLifecycleState.PAUSED -> "Paused"
+    HostLifecycleState.ENDING_SESSION -> "Ending session…"
+    HostLifecycleState.ERROR -> "Error"
+}
+
+fun PlaybackState.label(): String = when (this) {
+    PlaybackState.STOPPED -> "Stopped"
+    PlaybackState.BUFFERING -> "Buffering…"
+    PlaybackState.READY -> "Ready"
+    PlaybackState.PLAYING -> "Playing"
+    PlaybackState.PAUSED -> "Paused"
+    PlaybackState.UNDERRUN -> "Underrun"
+    PlaybackState.ERROR -> "Error"
+}
+
+fun ApprovalMode.label(): String = when (this) {
+    ApprovalMode.MANUAL -> "Manual approval"
+    ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER -> "Trusted devices"
+    ApprovalMode.INVITE_CODE -> "Invite code"
+}
+
+fun JoinApprovalState.label(): String = when (this) {
+    JoinApprovalState.DISCOVERED -> "Discovered"
+    JoinApprovalState.REQUESTED -> "Pending"
+    JoinApprovalState.APPROVED -> "Approved"
+    JoinApprovalState.REJECTED -> "Rejected"
+    JoinApprovalState.CANCELLED -> "Cancelled"
+}
+
+fun TransportConnectionState.label(): String = when (this) {
+    TransportConnectionState.IDLE -> "Idle"
+    TransportConnectionState.DISCOVERING -> "Discovering…"
+    TransportConnectionState.ADVERTISING -> "Advertising…"
+    TransportConnectionState.CONNECTING -> "Connecting…"
+    TransportConnectionState.CONNECTED -> "Connected"
+    TransportConnectionState.RETRYING -> "Retrying…"
+    TransportConnectionState.DISCONNECTED -> "Disconnected"
+    TransportConnectionState.FAILED -> "Failed"
+}
+
+fun SyncQualityBadge.label(): String = when (this) {
+    SyncQualityBadge.UNKNOWN -> "Unknown"
+    SyncQualityBadge.POOR -> "Poor"
+    SyncQualityBadge.FAIR -> "Fair"
+    SyncQualityBadge.GOOD -> "Good"
+    SyncQualityBadge.EXCELLENT -> "Excellent"
+}

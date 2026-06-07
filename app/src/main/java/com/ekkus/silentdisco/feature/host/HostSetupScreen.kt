@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.ApprovalMode
 
 @Composable
@@ -55,7 +56,7 @@ fun HostSetupScreen(
                             selected = uiState.hostForm.approvalMode == mode,
                             onClick = { onApprovalModeChanged(mode) },
                         )
-                        Text(mode.name.replace("_", " "))
+                        Text(mode.label())
                     }
                 }
                 OutlinedTextField(
