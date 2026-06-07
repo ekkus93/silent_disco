@@ -162,9 +162,9 @@ No screen shows any animated feedback during async operations. Users cannot dist
 
 The slider gives no numeric feedback.
 
-- [ ] Add a `Text` showing the current volume as a percentage next to or below the "Local volume" label:
+- [x] Add a `Text` showing the current volume as a percentage next to or below the "Local volume" label:
   - e.g. `"Local volume — ${(uiState.localVolume * 100).roundToInt()}%"`
-- [ ] Keep the text updated as the slider value changes (it is already reactive via `uiState.localVolume`)
+- [x] Keep the text updated as the slider value changes (it is already reactive via `uiState.localVolume`)
 
 ---
 
@@ -217,13 +217,13 @@ All buttons are text-only. Material Icons on key actions improve scannability an
 
 Several buttons are always enabled regardless of app state, causing silent failures.
 
-- [ ] `HostControlScreen` playback buttons:
+- [x] `HostControlScreen` playback buttons:
   - "Start" — disable when `hostPlaybackState == PLAYING` or no audio file selected
   - "Pause" — disable when `hostPlaybackState != PLAYING`
   - "Stop" — disable when `hostPlaybackState == STOPPED`
-- [ ] `HostSetupScreen`:
+- [x] `HostSetupScreen`:
   - "Start Hosting" — disable when `sessionName` is blank or `selectedAudio` is null; show a helper text explaining what is missing
-- [ ] `DiscoverSessionsScreen`:
+- [x] `DiscoverSessionsScreen`:
   - "Join" on each session card — disable if a join is already in progress for another session
 
 ---
@@ -232,9 +232,9 @@ Several buttons are always enabled regardless of app state, causing silent failu
 
 The subtitle is a spec/developer description, not user-facing copy.
 
-- [ ] Replace `"Offline host/listener sync validation with BLE discovery, Wi-Fi Direct transport, and Oboe-oriented playback."` with something user-oriented, e.g.:
+- [x] Replace `"Offline host/listener sync validation with BLE discovery, Wi-Fi Direct transport, and Oboe-oriented playback."` with something user-oriented, e.g.:
   - `"Play music in sync across multiple phones — no internet required."`
-- [ ] Keep the PoC nature honest without using implementation jargon
+- [x] Keep the PoC nature honest without using implementation jargon
 
 ---
 
@@ -242,11 +242,11 @@ The subtitle is a spec/developer description, not user-facing copy.
 
 The playback screen includes raw diagnostic counters that belong in the Diagnostics screen.
 
-- [ ] Remove `"Buffer depth: ${uiState.listenerDiagnostics.bufferDepthMs} ms"` from `ListenerPlaybackScreen`
-- [ ] Remove `"Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}"` from `ListenerPlaybackScreen`
-- [ ] Remove `"EOF reached: ${uiState.listenerDiagnostics.endOfStreamReached}"` from `ListenerPlaybackScreen`
-- [ ] Keep `Sync quality`, `Connection quality`, and `Playback state` on the playback screen — these are user-relevant
-- [ ] Verify the removed fields remain visible in `DiagnosticsScreen`
+- [x] Remove `"Buffer depth: ${uiState.listenerDiagnostics.bufferDepthMs} ms"` from `ListenerPlaybackScreen`
+- [x] Remove `"Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}"` from `ListenerPlaybackScreen`
+- [x] Remove `"EOF reached: ${uiState.listenerDiagnostics.endOfStreamReached}"` from `ListenerPlaybackScreen`
+- [x] Keep `Sync quality`, `Connection quality`, and `Playback state` on the playback screen — these are user-relevant
+- [x] Verify the removed fields remain visible in `DiagnosticsScreen`
 
 ---
 
@@ -254,8 +254,8 @@ The playback screen includes raw diagnostic counters that belong in the Diagnost
 
 `navController.context` is a slightly fragile way to obtain a `Context` inside a `NavHost` composable.
 
-- [ ] Replace with `LocalContext.current` from Compose to get the context for the share intent in the `DiagnosticsScreen` composable destination
-- [ ] Verify share intent still launches correctly after the change
+- [x] Replace with `LocalContext.current` from Compose to get the context for the share intent in the `DiagnosticsScreen` composable destination
+- [x] Verify share intent still launches correctly after the change
 
 ---
 

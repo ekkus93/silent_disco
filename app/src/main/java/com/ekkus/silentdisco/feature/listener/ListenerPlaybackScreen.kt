@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.connectionQualitySummary
 import com.ekkus.silentdisco.app.label
@@ -42,16 +43,13 @@ fun ListenerPlaybackScreen(
                 Text("Sync quality: ${uiState.syncSummary()}")
                 Text("Connection quality: ${uiState.connectionQualitySummary()}")
                 Text("Playback state: ${uiState.listenerPlaybackState.label()}")
-                Text("Buffer depth: ${uiState.listenerDiagnostics.bufferDepthMs} ms")
-                Text("Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}")
-                Text("EOF reached: ${uiState.listenerDiagnostics.endOfStreamReached}")
                 Text("Now playing: ${uiState.hostForm.selectedAudio?.displayName ?: "Host-selected stream"}")
             }
         }
         if (uiState.listenerPlaybackState == PlaybackState.BUFFERING) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        Text("Local volume")
+        Text("Local volume — ${(uiState.localVolume * 100).roundToInt()}%")
         Slider(
             value = uiState.localVolume,
             onValueChange = onVolumeChanged,

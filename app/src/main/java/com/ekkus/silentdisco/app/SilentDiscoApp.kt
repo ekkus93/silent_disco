@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -176,12 +177,12 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                 )
             }
             composable(Routes.Diagnostics) {
+                val context = LocalContext.current
                 DiagnosticsScreen(
                     uiState = uiState,
                     onManualResync = viewModel::manualResync,
                     onAdjustTuning = viewModel::adjustTuning,
                     onShare = { text ->
-                        val context = navController.context
                         val shareIntent = Intent.createChooser(
                             Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"

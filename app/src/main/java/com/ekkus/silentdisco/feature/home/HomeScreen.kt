@@ -31,7 +31,7 @@ fun HomeScreen(
     ) {
         Text("Silent Disco PoC", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Offline host/listener sync validation with BLE discovery, Wi-Fi Direct transport, and Oboe-oriented playback.",
+            "Play music in sync across multiple phones — no internet required.",
             style = MaterialTheme.typography.bodyLarge,
         )
 

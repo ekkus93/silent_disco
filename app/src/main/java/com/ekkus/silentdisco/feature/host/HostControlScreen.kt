@@ -19,6 +19,7 @@ import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.JoinRequest
+import com.ekkus.silentdisco.core.model.PlaybackState
 
 @Composable
 fun HostControlScreen(
@@ -59,10 +60,13 @@ fun HostControlScreen(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Selected audio", style = MaterialTheme.typography.titleMedium)
                     Text(uiState.hostForm.selectedAudio?.displayName ?: "No file selected")
+                    val isPlaying = uiState.hostPlaybackState == PlaybackState.PLAYING
+                    val isStopped = uiState.hostPlaybackState == PlaybackState.STOPPED
+                    val hasAudio = uiState.hostForm.selectedAudio != null
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onStart) { Text("Start") }
-                        Button(onClick = onPause) { Text("Pause") }
-                        Button(onClick = onStop) { Text("Stop") }
+                        Button(onClick = onStart, enabled = !isPlaying && hasAudio) { Text("Start") }
+                        Button(onClick = onPause, enabled = isPlaying) { Text("Pause") }
+                        Button(onClick = onStop, enabled = !isStopped) { Text("Stop") }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = onOpenDiagnostics) { Text("Diagnostics") }
