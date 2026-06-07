@@ -70,11 +70,11 @@ The "Add Demo Join" button is a development artifact exposed in the production U
 
 `JoinProgressScreen` displays raw booleans (`"Discovered: true"`, `"Requested: false"`) which is developer output, not user UX. Replace with a visual step indicator and a single human-readable status message.
 
-- [ ] Design a `ConnectionStepRow` composable that renders a step with:
+- [x] Design a `ConnectionStepRow` composable that renders a step with:
   - A check icon (completed), a progress indicator (in-progress), or a circle (pending)
   - A step label string
   - Visual distinction between completed/active/pending states
-- [ ] Replace the boolean `Text()` lines in `JoinProgressScreen.kt` with `ConnectionStepRow` for each step:
+- [x] Replace the boolean `Text()` lines in `JoinProgressScreen.kt` with `ConnectionStepRow` for each step:
   - Discovering session
   - Sending join request
   - Awaiting host approval
@@ -82,8 +82,8 @@ The "Add Demo Join" button is a development artifact exposed in the production U
   - Syncing clock
   - Buffering audio
   - Playing
-- [ ] Add a single prominent status message below the step list showing the current `listenerStateLabel()` in `bodyLarge` style
-- [ ] Remove the raw `"Current state: ${uiState.listenerStateLabel()}"` text once it is rendered more prominently
+- [x] Add a single prominent status message below the step list showing the current `listenerStateLabel()` in `bodyLarge` style
+- [x] Remove the raw `"Current state: ${uiState.listenerStateLabel()}"` text once it is rendered more prominently
 
 ---
 
@@ -91,11 +91,11 @@ The "Add Demo Join" button is a development artifact exposed in the production U
 
 All four action buttons are always visible simultaneously. Buttons should appear only when they are actionable.
 
-- [ ] "Request Join" — show only when state is `IDLE`, `SESSION_SELECTED`, `JOIN_REQUESTED`, or `ERROR`; hide otherwise
-- [ ] "Continue to Playback" — show only when state is `PLAYING`
-- [ ] "Retry" — show only when state is `ERROR` or `DISCONNECTED`
-- [ ] "Cancel" — always visible except when state is `PLAYING`
-- [ ] Audit each button's `enabled` state in addition to visibility so partially-valid states are handled gracefully
+- [x] "Request Join" — show only when state is `IDLE`, `SESSION_SELECTED`, `JOIN_REQUESTED`, or `ERROR`; hide otherwise
+- [x] "Continue to Playback" — show only when state is `PLAYING`
+- [x] "Retry" — show only when state is `ERROR` or `DISCONNECTED`
+- [x] "Cancel" — always visible except when state is `PLAYING`
+- [x] Audit each button's `enabled` state in addition to visibility so partially-valid states are handled gracefully
 
 ---
 
@@ -103,9 +103,9 @@ All four action buttons are always visible simultaneously. Buttons should appear
 
 When tapped before the listener is in `PLAYING` state, the button does nothing and gives no feedback.
 
-- [ ] Remove the `if (uiState.listenerState == PLAYING)` guard in `SilentDiscoApp.kt` and instead hide the button when not applicable (per item 4 above)
-- [ ] Alternatively, if the button must remain visible when not yet playing, show a snackbar: `"Not yet playing — waiting for sync and buffering to complete"`
-- [ ] Add a unit test or manual checklist item confirming the button behaves correctly in both states
+- [x] Remove the `if (uiState.listenerState == PLAYING)` guard in `SilentDiscoApp.kt` and instead hide the button when not applicable (per item 4 above)
+- [x] Alternatively, if the button must remain visible when not yet playing, show a snackbar: `"Not yet playing — waiting for sync and buffering to complete"`
+- [x] Add a unit test or manual checklist item confirming the button behaves correctly in both states
 
 ---
 

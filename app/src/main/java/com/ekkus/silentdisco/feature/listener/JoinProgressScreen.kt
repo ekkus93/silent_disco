@@ -2,19 +2,30 @@ package com.ekkus.silentdisco.feature.listener
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.ConnectionProgressState
 import com.ekkus.silentdisco.app.listenerStateLabel
+import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+
+private enum class StepState { Pending, Active, Done }
 
 @Composable
 fun JoinProgressScreen(
@@ -26,6 +37,9 @@ fun JoinProgressScreen(
     onContinueWhenPlaying: () -> Unit,
 ) {
     val session = uiState.selectedSession
+    val state = uiState.listenerState
+    val progress = uiState.connectionProgress
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -33,38 +47,145 @@ fun JoinProgressScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Join / Approval / Connect", style = MaterialTheme.typography.headlineMedium)
-        Text(session?.name ?: "No session selected")
+        Text(session?.name ?: "No session selected", style = MaterialTheme.typography.titleMedium)
+
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Current state: ${uiState.listenerStateLabel()}")
-                Text("Discovered: ${uiState.connectionProgress.discovered}")
-                Text("Requested: ${uiState.connectionProgress.requested}")
-                Text("Approved: ${uiState.connectionProgress.approved}")
-                Text("Connected: ${uiState.connectionProgress.connected}")
-                Text("Synced: ${uiState.connectionProgress.synced}")
-                Text("Playing: ${uiState.connectionProgress.playing}")
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ConnectionStepRow("Discovering session", progress.discoveredStep())
+                ConnectionStepRow("Sending join request", progress.requestedStep())
+                ConnectionStepRow("Awaiting host approval", progress.approvedStep())
+                ConnectionStepRow("Connecting transport", progress.connectedStep())
+                ConnectionStepRow("Syncing clock", progress.syncedStep())
+                ConnectionStepRow("Playing", progress.playingStep())
             }
         }
+
+        Text(
+            text = uiState.listenerStateLabel(),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+        )
+
         if (session?.inviteCodeRequired == true) {
             OutlinedTextField(
-                value = uiState.connectionProgress.inviteCode,
+                value = progress.inviteCode,
                 onValueChange = onInviteCodeChanged,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Invite code") },
             )
-            Text("Enter the host's 4-digit invite code before requesting access.")
+            Text(
+                "Enter the host's invite code before requesting access.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
-        Button(onClick = onJoin, modifier = Modifier.fillMaxWidth()) {
-            Text("Request Join")
+
+        if (state in joinableStates) {
+            Button(onClick = onJoin, modifier = Modifier.fillMaxWidth()) {
+                Text("Request Join")
+            }
         }
-        Button(onClick = onContinueWhenPlaying, modifier = Modifier.fillMaxWidth()) {
-            Text("Continue to Playback")
+
+        if (state == ListenerLifecycleState.PLAYING) {
+            Button(onClick = onContinueWhenPlaying, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue to Playback")
+            }
         }
-        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
-            Text("Retry")
+
+        if (state in retryableStates) {
+            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                Text("Retry")
+            }
         }
-        Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-            Text("Cancel")
+
+        if (state != ListenerLifecycleState.PLAYING) {
+            Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+                Text("Cancel")
+            }
         }
     }
+}
+
+private val joinableStates = setOf(
+    ListenerLifecycleState.IDLE,
+    ListenerLifecycleState.SESSION_SELECTED,
+    ListenerLifecycleState.JOIN_REQUESTED,
+    ListenerLifecycleState.ERROR,
+)
+
+private val retryableStates = setOf(
+    ListenerLifecycleState.ERROR,
+    ListenerLifecycleState.DISCONNECTED,
+)
+
+@Composable
+private fun ConnectionStepRow(label: String, stepState: StepState) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        when (stepState) {
+            StepState.Done -> Text(
+                "✓",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.width(28.dp),
+            )
+            StepState.Active -> CircularProgressIndicator(
+                modifier = Modifier
+                    .size(18.dp)
+                    .width(28.dp),
+                strokeWidth = 2.dp,
+            )
+            StepState.Pending -> Text(
+                "○",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.width(28.dp),
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (stepState == StepState.Active) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (stepState == StepState.Pending) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
+    }
+}
+
+private fun ConnectionProgressState.discoveredStep() =
+    if (discovered) StepState.Done else StepState.Active
+
+private fun ConnectionProgressState.requestedStep() = when {
+    requested -> StepState.Done
+    discovered -> StepState.Active
+    else -> StepState.Pending
+}
+
+private fun ConnectionProgressState.approvedStep() = when {
+    approved -> StepState.Done
+    requested -> StepState.Active
+    else -> StepState.Pending
+}
+
+private fun ConnectionProgressState.connectedStep() = when {
+    connected -> StepState.Done
+    approved -> StepState.Active
+    else -> StepState.Pending
+}
+
+private fun ConnectionProgressState.syncedStep() = when {
+    synced -> StepState.Done
+    connected -> StepState.Active
+    else -> StepState.Pending
+}
+
+private fun ConnectionProgressState.playingStep() = when {
+    playing -> StepState.Done
+    synced -> StepState.Active
+    else -> StepState.Pending
 }

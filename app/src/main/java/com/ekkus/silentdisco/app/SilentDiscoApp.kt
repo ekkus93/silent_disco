@@ -155,9 +155,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     },
                     onRetry = viewModel::retryJoin,
                     onContinueWhenPlaying = {
-                        if (uiState.listenerState == com.ekkus.silentdisco.core.model.ListenerLifecycleState.PLAYING) {
-                            navController.navigate(Routes.ListenerPlayback)
-                        }
+                        navController.navigate(Routes.ListenerPlayback)
                     },
                 )
             }
