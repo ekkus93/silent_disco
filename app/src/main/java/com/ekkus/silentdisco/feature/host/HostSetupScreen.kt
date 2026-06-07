@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.ApprovalMode
+import com.ekkus.silentdisco.core.model.HostLifecycleState
 
 @Composable
 fun HostSetupScreen(
@@ -110,8 +111,13 @@ fun HostSetupScreen(
                 }
             }
         }
-        Button(onClick = onStartHosting, modifier = Modifier.fillMaxWidth()) {
-            Text("Start Hosting")
+        val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION
+        Button(
+            onClick = onStartHosting,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isStarting,
+        ) {
+            Text(if (isStarting) "Starting…" else "Start Hosting")
         }
     }
 }

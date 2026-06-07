@@ -141,20 +141,20 @@ Radio buttons and checkboxes have tap targets limited to the widget itself, not 
 No screen shows any animated feedback during async operations. Users cannot distinguish between "working" and "stuck".
 
 ### 8.1 Discover Sessions scan state
-- [ ] Add a `isScanning: Boolean` field to `AppUiState` (set true during scan, false on completion or error)
-- [ ] Show a `LinearProgressIndicator` or `CircularProgressIndicator` below the "Scan / Refresh" button when scanning
-- [ ] Disable the "Scan / Refresh" button while scanning to prevent double-tap
+- [x] Add a `isScanning: Boolean` field to `AppUiState` (set true during scan, false on completion or error)
+- [x] Show a `LinearProgressIndicator` or `CircularProgressIndicator` below the "Scan / Refresh" button when scanning
+- [x] Disable the "Scan / Refresh" button while scanning to prevent double-tap
 
 ### 8.2 JoinProgressScreen connecting / syncing states
-- [ ] Show a `CircularProgressIndicator` next to the currently active step while in transient states (`CONNECTING`, `SYNCING_CLOCK`, `BUFFERING`, `JOIN_REQUESTED`, `AWAITING_APPROVAL`)
-- [ ] Remove the indicator once the step completes or errors
+- [x] Show a `CircularProgressIndicator` next to the currently active step while in transient states (`CONNECTING`, `SYNCING_CLOCK`, `BUFFERING`, `JOIN_REQUESTED`, `AWAITING_APPROVAL`)
+- [x] Remove the indicator once the step completes or errors
 
 ### 8.3 HostSetupScreen "Start Hosting"
-- [ ] Show a brief loading state while `createHostSession()` initialises Wi-Fi Direct and BLE advertising (if those are async)
-- [ ] Disable "Start Hosting" button while hosting startup is in progress
+- [x] Show a brief loading state while `createHostSession()` initialises Wi-Fi Direct and BLE advertising (if those are async)
+- [x] Disable "Start Hosting" button while hosting startup is in progress
 
 ### 8.4 ListenerPlaybackScreen buffering state
-- [ ] If `listenerPlaybackState` is `BUFFERING`, show a `LinearProgressIndicator` above the volume slider to communicate that audio is buffering before playback begins
+- [x] If `listenerPlaybackState` is `BUFFERING`, show a `LinearProgressIndicator` above the volume slider to communicate that audio is buffering before playback begins
 
 ---
 

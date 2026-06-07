@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -17,6 +18,7 @@ import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.connectionQualitySummary
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.app.syncSummary
+import com.ekkus.silentdisco.core.model.PlaybackState
 
 @Composable
 fun ListenerPlaybackScreen(
@@ -45,6 +47,9 @@ fun ListenerPlaybackScreen(
                 Text("EOF reached: ${uiState.listenerDiagnostics.endOfStreamReached}")
                 Text("Now playing: ${uiState.hostForm.selectedAudio?.displayName ?: "Host-selected stream"}")
             }
+        }
+        if (uiState.listenerPlaybackState == PlaybackState.BUFFERING) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         Text("Local volume")
         Slider(
