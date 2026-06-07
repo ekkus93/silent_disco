@@ -326,7 +326,7 @@ Note: BLE discovery is implemented in phase 1 for this PoC, so the deferred-path
 ### 11.4 Audio output engine
 - [x] Implement playback path using appropriate Android audio APIs
 - [x] Prefer Oboe / AAudio-oriented implementation if feasible
-- [ ] Verify stable playback callback/write behavior
+- [x] Verify stable playback callback/write behavior
 - [x] Expose playback timestamp/position if possible
 
 ## 12. Missing Packet / Underrun Handling
