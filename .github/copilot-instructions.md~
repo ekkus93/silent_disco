@@ -1,0 +1,140 @@
+# Copilot Instructions for `silent_disco`
+
+## Project purpose
+
+This repository is an **Android-only proof of concept** for an **offline silent disco app**.
+
+The goal is to validate whether:
+- one Android phone can act as the **session host**
+- the same host can act as the **audio source**
+- the same host can act as the **authoritative monotonic clock**
+- multiple nearby Android listener devices can join and hear the same playback in tight sync
+
+This is a **viability-focused PoC**, not a production app.
+
+## Confirmed project decisions
+
+- Use **Kotlin** for the Android app.
+- Use **Jetpack Compose** for UI.
+- Use **Oboe** for the playback path.
+- **BLE is included in phase 1**, but only for discovery/metadata assistance.
+- **Wi-Fi Direct is the primary transport** for session/data flow.
+- Keep framing/serialization **simple initially**.
+- Success means listeners hear the same thing **about 99% of the time** in real-world use.
+
+## Core implementation priorities
+
+Prefer decisions that improve **real-device sync reliability** over polish or feature breadth.
+
+Implementation priority order:
+1. offline connectivity
+2. approval-based joining
+3. clock sync
+4. timestamped packet playback
+5. diagnostics and observability
+6. tuning and stabilization
+7. UX polish later
+
+## Architecture expectations
+
+Organize code by feature/domain, not by generic technical layer alone. Favor clear boundaries around:
+- host/session control
+- listener/join flow
+- transport/networking
+- sync/timing
+- audio pipeline
+- diagnostics
+
+Model host and listener behavior explicitly with state machines or strongly typed state models.
+
+## Networking and sync rules
+
+- The app must work **without internet access**.
+- Topology is **strict star topology**: one host, multiple direct listeners, no relays, no mesh.
+- **BLE must not be used** for primary audio transport.
+- **BLE must not be used** as the authoritative playback timing transport.
+- Use a **monotonic clock**, never wall-clock time, for sync and playback scheduling.
+- The host defines the authoritative timeline.
+- Listeners map host monotonic time onto local monotonic time.
+- Use repeated **NTP-style four-timestamp exchange** for sync sampling.
+- Prefer low-RTT sync samples and reject bad/outlier samples.
+- Re-sync during playback is expected.
+
+## Audio rules
+
+- The host is the authoritative audio source.
+- Listeners should not independently decode local copies of the same file for the PoC.
+- Initial audio baseline:
+  - PCM
+  - 16-bit
+  - stereo
+  - 48 kHz
+- Initial packet duration target: **20 ms**
+- Initial startup buffer target: **roughly 300-500 ms**
+- Audio packets must include enough metadata to reconstruct stream order and playback time.
+- Packets must be scheduled using **authoritative host presentation time mapped into local listener time**.
+- Do **not** play packets immediately on arrival.
+- Prefer simple correction strategies before advanced time-stretch/resampling.
+
+## UI and UX guidance
+
+This PoC UI is a **testing/control interface**, not a polished consumer music experience.
+
+The UI should clearly communicate:
+- whether the device is hosting or joining
+- whether it is connected
+- whether the listener is approved
+- whether sync is healthy
+- what is playing
+- whether the session is healthy
+
+Prioritize visibility of state and failures over visual polish.
+
+## Diagnostics are mandatory
+
+Diagnostics are a first-class requirement, not an optional debug extra.
+
+Expose enough information to evaluate:
+- sync offset
+- RTT
+- jitter
+- drift
+- packet loss
+- underruns
+- buffer depth/health
+- resync events
+- listener health
+- stream state
+
+When implementing features, prefer designs that make diagnostics easier to capture and display.
+
+## Error handling guidance
+
+- Make failures visible in the UI.
+- Provide a recovery path where practical.
+- Do not silently auto-admit nearby devices.
+- Manual host approval is the default.
+- Do not hide transport, sync, or playback failures behind generic success states.
+
+## Out of scope for this phase
+
+Unless the user explicitly changes scope, do not optimize for:
+- iOS support
+- internet/cloud connectivity
+- accounts/login
+- streaming service integration
+- playlists/social features
+- mesh networking or relays
+- host failover/election
+- large-crowd scale optimization
+- polished production-grade UX
+- production security hardening
+
+## Guidance for Copilot when making changes
+
+- Prefer simple, readable implementations that help validate the PoC quickly.
+- Preserve the distinction between **discovery**, **authorization**, **transport**, **sync**, and **playback**.
+- Do not trade away timing visibility for abstraction neatness.
+- Keep sync-sensitive paths explicit and instrumentable.
+- If a design choice conflicts with low-latency, deterministic playback, favor the option that better supports measurement and correction.
+- When unsure, optimize for **sync correctness and observability** over convenience.
