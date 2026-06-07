@@ -50,13 +50,8 @@ fun DiscoverSessionsScreen(
                     Text("Host: ${session.hostDeviceName}")
                     Text("Approval: ${session.approvalMode.label()}")
                     Text(
-                        if (session.inviteCodeRequired) {
-                            "Connection quality hint: invite protected"
-                        } else {
-                            "Connection quality hint: open local session"
-                        },
+                        if (session.inviteCodeRequired) "Invite code required" else "Open — no code required",
                     )
-                    Text("Signal / availability: local demo transport")
                     Button(onClick = { onSelectSession(session) }) {
                         Text("Join")
                     }

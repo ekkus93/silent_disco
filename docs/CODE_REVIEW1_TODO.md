@@ -113,9 +113,9 @@ When tapped before the listener is in `PLAYING` state, the button does nothing a
 
 `DiscoverSessionsScreen` contains hardcoded placeholder strings that look broken to real users.
 
-- [ ] Remove `"Connection quality hint: invite protected"` and `"Connection quality hint: open local session"` strings — these are mislabelled and misleading
-- [ ] Remove `"Signal / availability: local demo transport"` — this is a dev placeholder
-- [ ] Replace with factual session card content:
+- [x] Remove `"Connection quality hint: invite protected"` and `"Connection quality hint: open local session"` strings — these are mislabelled and misleading
+- [x] Remove `"Signal / availability: local demo transport"` — this is a dev placeholder
+- [x] Replace with factual session card content:
   - Show `"Invite code required"` or `"Open — no code required"` based on `session.inviteCodeRequired`
   - Show approval mode using the label from item 1.3
   - Optionally show device count or last-seen time if that metadata is available
@@ -127,12 +127,12 @@ When tapped before the listener is in `PLAYING` state, the button does nothing a
 Radio buttons and checkboxes have tap targets limited to the widget itself, not the label. This is a Material accessibility issue and a common user frustration on small screens.
 
 ### 7.1 Approval mode radio buttons (`HostSetupScreen.kt`)
-- [ ] Wrap each approval mode `Row` in a `Modifier.selectable(selected = ..., onClick = ...)` with `role = Role.RadioButton`
-- [ ] Verify the full row (widget + label) responds to taps
+- [x] Wrap each approval mode `Row` in a `Modifier.selectable(selected = ..., onClick = ...)` with `role = Role.RadioButton`
+- [x] Verify the full row (widget + label) responds to taps
 
 ### 7.2 Remember approved devices checkbox (`HostSetupScreen.kt`)
-- [ ] Wrap the checkbox `Row` in a `Modifier.toggleable(value = ..., onValueChange = ...)` with `role = Role.Checkbox`
-- [ ] Verify the full row responds to taps
+- [x] Wrap the checkbox `Row` in a `Modifier.toggleable(value = ..., onValueChange = ...)` with `role = Role.Checkbox`
+- [x] Verify the full row responds to taps
 
 ---
 
