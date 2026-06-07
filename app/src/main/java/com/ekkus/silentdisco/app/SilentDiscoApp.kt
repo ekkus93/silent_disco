@@ -99,6 +99,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             composable(Routes.HostSetup) {
                 HostSetupScreen(
                     uiState = uiState,
+                    onBack = { navController.popBackStack() },
                     onSessionNameChanged = { viewModel.updateHostForm(sessionName = it) },
                     onApprovalModeChanged = { viewModel.updateHostForm(approvalMode = it) },
                     onInviteCodeChanged = { viewModel.updateHostForm(inviteCode = it) },
@@ -116,6 +117,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             composable(Routes.HostControl) {
                 HostControlScreen(
                     uiState = uiState,
+                    onBack = { navController.popBackStack() },
                     onAddDemoJoinRequest = viewModel::addDemoJoinRequest,
                     onApprove = viewModel::approveJoinRequest,
                     onReject = viewModel::rejectJoinRequest,
@@ -138,6 +140,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             composable(Routes.Discover) {
                 DiscoverSessionsScreen(
                     uiState = uiState,
+                    onBack = { navController.popBackStack() },
                     onRefresh = viewModel::scanForSessions,
                     onSelectSession = {
                         viewModel.selectDiscoveredSession(it)
@@ -146,14 +149,15 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                 )
             }
             composable(Routes.JoinProgress) {
+                val cancelJoin: () -> Unit = {
+                    viewModel.cancelJoin()
+                    navController.popBackStack(Routes.Discover, inclusive = false)
+                }
                 JoinProgressScreen(
                     uiState = uiState,
                     onInviteCodeChanged = viewModel::updateInviteCode,
                     onJoin = viewModel::requestJoin,
-                    onCancel = {
-                        viewModel.cancelJoin()
-                        navController.popBackStack(Routes.Discover, inclusive = false)
-                    },
+                    onCancel = cancelJoin,
                     onRetry = viewModel::retryJoin,
                     onContinueWhenPlaying = {
                         navController.navigate(Routes.ListenerPlayback)
@@ -163,6 +167,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             composable(Routes.ListenerPlayback) {
                 ListenerPlaybackScreen(
                     uiState = uiState,
+                    onBack = { navController.popBackStack() },
                     onVolumeChanged = viewModel::setLocalVolume,
                     onLeaveSession = {
                         viewModel.leaveSession()
@@ -180,6 +185,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                 val context = LocalContext.current
                 DiagnosticsScreen(
                     uiState = uiState,
+                    onBack = { navController.popBackStack() },
                     onManualResync = viewModel::manualResync,
                     onAdjustTuning = viewModel::adjustTuning,
                     onShare = { text ->

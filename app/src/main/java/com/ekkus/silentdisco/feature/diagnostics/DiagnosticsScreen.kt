@@ -3,15 +3,26 @@ package com.ekkus.silentdisco.feature.diagnostics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,9 +33,11 @@ import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.app.summary
 import com.ekkus.silentdisco.core.audio.OboeBridge
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticsScreen(
     uiState: AppUiState,
+    onBack: () -> Unit,
     onManualResync: () -> Unit,
     onAdjustTuning: (TuningField, Int) -> Unit,
     onShare: (String) -> Unit,
@@ -51,14 +64,22 @@ fun DiagnosticsScreen(
         appendLine("Audio backend: ${OboeBridge.backendSummary()}")
         appendLine("Audio status: ${OboeBridge.statusSummary()}")
     }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text("Diagnostics", style = MaterialTheme.typography.headlineMedium)
+    Column(modifier = Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("Diagnostics") },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Host", style = MaterialTheme.typography.titleMedium)
@@ -143,10 +164,15 @@ fun DiagnosticsScreen(
             }
         }
         Button(onClick = onManualResync, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
             Text("Manual Resync")
         }
         Button(onClick = { onShare(shareText) }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
             Text("Share Debug Info")
+        }
         }
     }
 }
