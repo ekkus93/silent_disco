@@ -28,10 +28,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.ConnectionProgressState
+import com.ekkus.silentdisco.app.StepState
+import com.ekkus.silentdisco.app.approvedStep
+import com.ekkus.silentdisco.app.connectedStep
+import com.ekkus.silentdisco.app.discoveredStep
 import com.ekkus.silentdisco.app.listenerStateLabel
+import com.ekkus.silentdisco.app.playingStep
+import com.ekkus.silentdisco.app.requestedStep
+import com.ekkus.silentdisco.app.syncedStep
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
-
-private enum class StepState { Pending, Active, Done }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -173,35 +178,3 @@ private fun ConnectionStepRow(label: String, stepState: StepState) {
     }
 }
 
-private fun ConnectionProgressState.discoveredStep() =
-    if (discovered) StepState.Done else StepState.Active
-
-private fun ConnectionProgressState.requestedStep() = when {
-    requested -> StepState.Done
-    discovered -> StepState.Active
-    else -> StepState.Pending
-}
-
-private fun ConnectionProgressState.approvedStep() = when {
-    approved -> StepState.Done
-    requested -> StepState.Active
-    else -> StepState.Pending
-}
-
-private fun ConnectionProgressState.connectedStep() = when {
-    connected -> StepState.Done
-    approved -> StepState.Active
-    else -> StepState.Pending
-}
-
-private fun ConnectionProgressState.syncedStep() = when {
-    synced -> StepState.Done
-    connected -> StepState.Active
-    else -> StepState.Pending
-}
-
-private fun ConnectionProgressState.playingStep() = when {
-    playing -> StepState.Done
-    synced -> StepState.Active
-    else -> StepState.Pending
-}

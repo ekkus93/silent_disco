@@ -128,10 +128,23 @@ fun HostSetupScreen(
                 }
             }
             val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION
+            val nameBlank = uiState.hostForm.sessionName.isBlank()
+            val noAudio = uiState.hostForm.selectedAudio == null
+            val missingItems = buildList {
+                if (nameBlank) add("a session name")
+                if (noAudio) add("an audio file")
+            }
+            if (missingItems.isNotEmpty()) {
+                Text(
+                    text = "Required: ${missingItems.joinToString(" and ")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             Button(
                 onClick = onStartHosting,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isStarting,
+                enabled = !isStarting && !nameBlank && !noAudio,
             ) {
                 Text(if (isStarting) "Starting…" else "Start Hosting")
             }

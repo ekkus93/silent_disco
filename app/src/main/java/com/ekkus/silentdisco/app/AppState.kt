@@ -205,3 +205,38 @@ fun SyncQualityBadge.label(): String = when (this) {
     SyncQualityBadge.GOOD -> "Good"
     SyncQualityBadge.EXCELLENT -> "Excellent"
 }
+
+enum class StepState { Pending, Active, Done }
+
+fun ConnectionProgressState.discoveredStep(): StepState =
+    if (discovered) StepState.Done else StepState.Active
+
+fun ConnectionProgressState.requestedStep(): StepState = when {
+    requested -> StepState.Done
+    discovered -> StepState.Active
+    else -> StepState.Pending
+}
+
+fun ConnectionProgressState.approvedStep(): StepState = when {
+    approved -> StepState.Done
+    requested -> StepState.Active
+    else -> StepState.Pending
+}
+
+fun ConnectionProgressState.connectedStep(): StepState = when {
+    connected -> StepState.Done
+    approved -> StepState.Active
+    else -> StepState.Pending
+}
+
+fun ConnectionProgressState.syncedStep(): StepState = when {
+    synced -> StepState.Done
+    connected -> StepState.Active
+    else -> StepState.Pending
+}
+
+fun ConnectionProgressState.playingStep(): StepState = when {
+    playing -> StepState.Done
+    synced -> StepState.Active
+    else -> StepState.Pending
+}
