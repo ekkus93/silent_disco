@@ -963,7 +963,7 @@ class MainViewModel @JvmOverloads constructor(
                 ),
             )
             delay(400)
-            manualResync()
+            requestListenerSyncProbe(source = "Demo clock sync")
             _uiState.value = _uiState.value.copy(
                 listenerState = ListenerLifecycleState.BUFFERING,
                 connectionProgress = _uiState.value.connectionProgress.copy(
