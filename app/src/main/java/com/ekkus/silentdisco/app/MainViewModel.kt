@@ -533,7 +533,14 @@ class MainViewModel @JvmOverloads constructor(
                             ),
                         )
                     }.onSuccess { result ->
-                        reportHostBroadcastDelivery("broadcast pause", result, requireAnyPeer = false)
+                        val warning = hostControlDeliveryMessage("Paused", "broadcast pause", result)
+                        if (warning != null) {
+                            _uiState.value = _uiState.value.copy(lastError = warning)
+                            diagnosticsStore.updateHost { it.copy(lastError = warning, metricsSummary = summarizeMetrics()) }
+                        } else {
+                            diagnosticsStore.updateHost { it.copy(lastError = null, metricsSummary = summarizeMetrics()) }
+                        }
+                        refreshHostDiagnostics()
                     }.onFailure { error ->
                         handleHostControlFailure("broadcast pause", error)
                     }
@@ -572,7 +579,14 @@ class MainViewModel @JvmOverloads constructor(
                             ),
                         )
                     }.onSuccess { result ->
-                        reportHostBroadcastDelivery("broadcast stop", result, requireAnyPeer = false)
+                        val warning = hostControlDeliveryMessage("Stopped", "broadcast stop", result)
+                        if (warning != null) {
+                            _uiState.value = _uiState.value.copy(lastError = warning)
+                            diagnosticsStore.updateHost { it.copy(lastError = warning, metricsSummary = summarizeMetrics()) }
+                        } else {
+                            diagnosticsStore.updateHost { it.copy(lastError = null, metricsSummary = summarizeMetrics()) }
+                        }
+                        refreshHostDiagnostics()
                     }.onFailure { error ->
                         handleHostControlFailure("broadcast stop", error)
                     }
@@ -595,7 +609,12 @@ class MainViewModel @JvmOverloads constructor(
                         ),
                     )
                 }.onSuccess { result ->
-                    reportHostBroadcastDelivery("broadcast session end", result, requireAnyPeer = false)
+                    val warning = hostControlDeliveryMessage("Ended session", "broadcast session end", result)
+                    if (warning != null) {
+                        _uiState.value = _uiState.value.copy(lastError = warning)
+                        diagnosticsStore.updateHost { it.copy(lastError = warning, metricsSummary = summarizeMetrics()) }
+                        refreshHostDiagnostics()
+                    }
                 }.onFailure { error ->
                     handleHostControlFailure("broadcast session end", error)
                 }
@@ -1689,6 +1708,19 @@ class MainViewModel @JvmOverloads constructor(
         }
         refreshHostDiagnostics()
         return report.severity == BroadcastDeliverySeverity.ZERO_PEERS && !requireAnyPeer
+    }
+
+    private fun hostControlDeliveryMessage(
+        localActionPastTense: String,
+        deliveryAction: String,
+        result: SendAllResult,
+    ): String? {
+        val report = classifyBroadcastDelivery(deliveryAction, result)
+        return when (report.severity) {
+            BroadcastDeliverySeverity.OK -> null
+            BroadcastDeliverySeverity.ZERO_PEERS -> "$localActionPastTense locally; no connected listeners received the command"
+            BroadcastDeliverySeverity.PARTIAL_FAILURE -> "$localActionPastTense locally; ${report.message}"
+        }
     }
 
     private fun handleHostControlFailure(action: String, error: Throwable) {
