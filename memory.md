@@ -1,5 +1,31 @@
 # memory.md — `silent_disco`
 
+## 2026-06-28T20:11:58Z - Claude Sonnet 4.6 - FIX3 Ralph Loop: COMPLETE (all 8 blocks delivered)
+
+**FIX3 (second hardening pass) COMPLETE. All 8 Ralph Loop blocks implemented and tested:**
+- Block 1 (35ba823): Rename OboePlaybackEngine → AudioTrackPlaybackEngine, add PlaybackEngine interface (P0.1)
+- Block 2 (91756f0): Start/catch playback engine writes in listener and host loops (P0.2-P0.5)
+- Block 3 (36e7fda): Scan/join UI wiring — isScanning, canSelectSession, clearScanState (P0.6-P0.8)
+- Block 4 (612da80): Host startup result handling, TransportOperationResult, stopAdvertising public (P0.9-P0.11)
+- Block 5 (74a927d): Transport delivery stats — SendAllResult, consecutive failure counter, stop after 10 (P0.12-P0.15)
+- Block 6 (a717993): Host control broadcast failure handling, handleHostControlFailure, propagate buffered clear (P1.1-P1.4)
+- Block 7 (ea24f01): Diagnostics honesty, invite code, SDK-aware permissions, misc correctness (P1.5-P2.1)
+- Block 8 (1075e94): Tests for PlaybackEngine failure, SendAllResult, PermissionCatalogue SDK matrix (P2.2-P2.7)
+
+**Test & Lint Results:** 179 unit tests pass across 20 test files. 0 new errors. All blocks committed and pushed to GitHub.
+
+**Key FIX3 decisions:**
+- PlaybackEngine interface in PlaybackScheduling.kt; AudioTrackPlaybackEngine is the impl; deprecated typealias OboePlaybackEngine kept as marker
+- handleListenerPlaybackEngineFailure / handleHostPlaybackEngineFailure cancel job + set ERROR + lastError + diagnostics
+- handleHostControlFailure sets lastError + host diagnostics (not listener) for all control broadcasts
+- propagateListenerPlaybackState clears buffered=false when playback is not PLAYING
+- PermissionCatalogue.requiredPermissions(sdkInt) is now SDK-aware: NearbyWifiDevices on 33+, FineLocation on 32-, Bluetooth runtime perms on 31+ only
+- SilentDiscoApp derives permission list from PermissionCatalogue (no more hand-rolled duplicate)
+- manualResync() local fallback gated behind BuildConfig.DEBUG + demo-session- prefix
+- startHostPlayback() no longer generates random session ID fallback; returns error if no active session
+- ByteArray concatenation uses pre-allocated array instead of fold+`+` (O(n²) → O(n))
+- OboeBridge now has loadResult: Result<Unit> and isAvailable: Boolean for structured diagnostics
+
 ## 2026-06-28T19:20:51Z - Claude Haiku 4.5 - CODE_REVIEW2 Ralph Loop: COMPLETE (all 8 blocks delivered)
 
 **CODE_REVIEW2 hardening pass COMPLETE. All 8 Ralph Loop blocks implemented and tested:**
