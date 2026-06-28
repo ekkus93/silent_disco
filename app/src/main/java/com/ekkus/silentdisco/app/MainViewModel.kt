@@ -706,7 +706,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setLocalVolume(volume: Float) {
-        _uiState.value = _uiState.value.copy(localVolume = volume)
+        val normalized = volume.coerceIn(0f, 1f)
+        playbackEngine.setVolume(normalized)
+        _uiState.value = _uiState.value.copy(localVolume = normalized)
     }
 
     fun adjustTuning(field: TuningField, direction: Int) {

@@ -160,6 +160,7 @@ class OboePlaybackEngine {
     private var audioTrack: AudioTrack? = null
     private var sampleRate: Int = 48_000
     private var writeCount: Long = 0
+    private var volume: Float = 1.0f
 
     fun start(format: AudioFormatSpec = AudioFormatSpec()): String {
         sampleRate = format.sampleRate
@@ -191,21 +192,30 @@ class OboePlaybackEngine {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setBufferSizeInBytes(minBufferSize)
                 .build()
-                .also { it.play() }
+                .also {
+                    it.setVolume(volume)
+                    it.play()
+                }
         }
         return "${OboeBridge.backendSummary()} + AudioTrack"
     }
 
     fun write(frame: PlaybackFrame): Long {
-        val written = audioTrack?.write(
+        val track = audioTrack ?: error("Playback engine is not started")
+        val written = track.write(
             frame.packet.payload,
             0,
             frame.packet.payload.size,
             AudioTrack.WRITE_NON_BLOCKING,
-        )?.coerceAtLeast(0) ?: frame.packet.payload.size
-        if (written > 0) {
-            writeCount += 1
+        ).coerceAtLeast(0)
+        if (written <= 0) {
+            error("AudioTrack write failed with result=$written")
         }
+        if (written < frame.packet.payload.size) {
+            writeCount += 1
+            return written.toLong()
+        }
+        writeCount += 1
         return written.toLong()
     }
 
@@ -219,6 +229,11 @@ class OboePlaybackEngine {
         audioTrack?.flush()
         audioTrack?.release()
         audioTrack = null
+    }
+
+    fun setVolume(value: Float) {
+        volume = value.coerceIn(0f, 1f)
+        audioTrack?.setVolume(volume)
     }
 
     fun statusSummary(): String = "writes=$writeCount, ${OboeBridge.statusSummary()}"
