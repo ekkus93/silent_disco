@@ -24,8 +24,11 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class BleOperationResult(
@@ -37,6 +40,16 @@ data class BleOperationResult(
         fun failed(message: String) = BleOperationResult(started = false, message = message)
     }
 }
+
+enum class BleOperation {
+    ADVERTISE,
+    SCAN,
+}
+
+data class BleOperationFailure(
+    val operation: BleOperation,
+    val message: String,
+)
 
 class BleDiscoveryService(
     context: Context,
@@ -54,6 +67,8 @@ class BleDiscoveryService(
     val discoveredSessions: StateFlow<List<SessionInfo>> = _discoveredSessions.asStateFlow()
     private val _advertisement = MutableStateFlow<BleAdvertisement?>(null)
     val advertisement: StateFlow<BleAdvertisement?> = _advertisement.asStateFlow()
+    private val _failures = MutableSharedFlow<BleOperationFailure>(extraBufferCapacity = 8)
+    val failures: SharedFlow<BleOperationFailure> = _failures.asSharedFlow()
 
     private val seenSessions = linkedMapOf<String, SessionInfo>()
     private var advertiseCallback: AdvertiseCallback? = null
@@ -80,7 +95,9 @@ class BleDiscoveryService(
             }
 
             override fun onStartFailure(errorCode: Int) {
-                logger.w("ble.advertise", "BLE advertise failed with code=$errorCode")
+                val message = "BLE advertise failed with code=$errorCode"
+                logger.w("ble.advertise", message)
+                _failures.tryEmit(BleOperationFailure(BleOperation.ADVERTISE, message))
             }
         }
         advertiseCallback = callback
@@ -150,7 +167,10 @@ class BleDiscoveryService(
             }
 
             override fun onScanFailed(errorCode: Int) {
-                logger.w("ble.scan", "BLE scan failed with code=$errorCode")
+                val message = "BLE scan failed with code=$errorCode"
+                logger.w("ble.scan", message)
+                _discoveredSessions.value = emptyList()
+                _failures.tryEmit(BleOperationFailure(BleOperation.SCAN, message))
             }
         }
         scanCallback = callback

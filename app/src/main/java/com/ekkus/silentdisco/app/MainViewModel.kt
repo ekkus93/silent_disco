@@ -56,6 +56,7 @@ import com.ekkus.silentdisco.core.sync.ListenerSyncController
 import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
 import com.ekkus.silentdisco.core.transport.BleAdvertisement
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
+import com.ekkus.silentdisco.core.transport.BleOperation
 import com.ekkus.silentdisco.core.transport.BroadcastDeliverySeverity
 import com.ekkus.silentdisco.core.transport.SendAllResult
 import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
@@ -110,6 +111,7 @@ class MainViewModel @JvmOverloads constructor(
     init {
         observeTransport()
         observeDiscovery()
+        observeBleFailures()
     }
 
     fun selectRole(role: AppRole) {
@@ -1030,6 +1032,52 @@ class MainViewModel @JvmOverloads constructor(
             }
             refreshHostDiagnostics()
         }
+    }
+
+    private fun observeBleFailures() {
+        viewModelScope.launch {
+            bleService.failures.collect { failure ->
+                when (failure.operation) {
+                    BleOperation.SCAN -> handleBleScanFailure(failure.message)
+                    BleOperation.ADVERTISE -> handleBleAdvertiseFailure(failure.message)
+                }
+            }
+        }
+    }
+
+    private fun handleBleScanFailure(message: String) {
+        clearScanState()
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.ERROR,
+            isScanning = false,
+            lastError = message,
+        )
+        diagnosticsStore.updateListener { it.copy(lastError = message) }
+        refreshListenerDiagnostics()
+    }
+
+    private fun handleBleAdvertiseFailure(message: String) {
+        val hosting = _uiState.value.hostState in setOf(
+            HostLifecycleState.CREATING_SESSION,
+            HostLifecycleState.WAITING_FOR_LISTENERS,
+            HostLifecycleState.READY,
+            HostLifecycleState.STREAMING,
+        )
+        if (!hosting) return
+        wifiDirectService.stop()
+        _uiState.value = _uiState.value.copy(
+            hostState = HostLifecycleState.ERROR,
+            hostPlaybackState = if (_uiState.value.hostPlaybackState == PlaybackState.PLAYING) {
+                PlaybackState.ERROR
+            } else {
+                _uiState.value.hostPlaybackState
+            },
+            lastError = message,
+        )
+        diagnosticsStore.updateHost {
+            it.copy(lastError = message, metricsSummary = summarizeMetrics())
+        }
+        refreshHostDiagnostics()
     }
 
     private fun handleControlMessage(message: ControlMessage) {
