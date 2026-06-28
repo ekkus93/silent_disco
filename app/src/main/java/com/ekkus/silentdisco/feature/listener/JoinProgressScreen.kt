@@ -30,6 +30,7 @@ import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.ConnectionProgressState
 import com.ekkus.silentdisco.app.StepState
 import com.ekkus.silentdisco.app.approvedStep
+import com.ekkus.silentdisco.app.bufferingStep
 import com.ekkus.silentdisco.app.connectedStep
 import com.ekkus.silentdisco.app.discoveredStep
 import com.ekkus.silentdisco.app.listenerStateLabel
@@ -76,6 +77,7 @@ fun JoinProgressScreen(
                     ConnectionStepRow("Awaiting host approval", progress.approvedStep())
                     ConnectionStepRow("Connecting transport", progress.connectedStep())
                     ConnectionStepRow("Syncing clock", progress.syncedStep())
+                    ConnectionStepRow("Buffering audio", progress.bufferingStep())
                     ConnectionStepRow("Playing", progress.playingStep())
                 }
             }

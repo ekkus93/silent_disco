@@ -803,6 +803,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 connectionProgress = _uiState.value.connectionProgress.copy(
                     currentState = ListenerLifecycleState.BUFFERING,
                     synced = true,
+                    buffered = false,
+                    playing = false,
                 ),
             )
             startListenerPlaybackSimulation(sessionId)
@@ -971,6 +973,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 approved = true,
                 connected = true,
                 synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
+                buffered = false,
+                playing = false,
             ),
             lastMessage = "Host stream starting",
             lastError = null,
@@ -1106,15 +1110,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         playbackJob = viewModelScope.launch {
             var lastUnderrunCount = 0
             delay(300)
-            _uiState.value = _uiState.value.copy(
-                listenerState = ListenerLifecycleState.PLAYING,
-                listenerPlaybackState = PlaybackState.PLAYING,
-                connectionProgress = _uiState.value.connectionProgress.copy(
-                    currentState = ListenerLifecycleState.PLAYING,
-                    playing = true,
-                ),
-            )
+            var playingStateSet = false
             while (listenerScheduler?.canStart() == true) {
+                if (!playingStateSet) {
+                    _uiState.value = _uiState.value.copy(
+                        listenerState = ListenerLifecycleState.PLAYING,
+                        listenerPlaybackState = PlaybackState.PLAYING,
+                        connectionProgress = _uiState.value.connectionProgress.copy(
+                            currentState = ListenerLifecycleState.PLAYING,
+                            connected = true,
+                            approved = true,
+                            synced = true,
+                            buffered = true,
+                            playing = true,
+                        ),
+                    )
+                    playingStateSet = true
+                }
                 if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
                     wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
                 ) {
