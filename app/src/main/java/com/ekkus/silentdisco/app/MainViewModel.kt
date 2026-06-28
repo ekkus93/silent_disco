@@ -14,8 +14,9 @@ import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
 import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
+import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
 import com.ekkus.silentdisco.core.audio.OboeBridge
-import com.ekkus.silentdisco.core.audio.OboePlaybackEngine
+import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
 import com.ekkus.silentdisco.core.audio.PlaybackFrame
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
@@ -64,7 +65,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+class MainViewModel @JvmOverloads constructor(
+    application: Application,
+    private val playbackEngine: PlaybackEngine = AudioTrackPlaybackEngine(),
+) : AndroidViewModel(application) {
     private val logger = AppLogger()
     private val diagnosticsStore = DiagnosticsStore()
     private val metrics = DiagnosticsMetrics()
@@ -72,7 +76,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val bleService = BleDiscoveryService(application)
     private val wifiDirectService = WifiDirectTransportService(application, logger)
     private val hostTimingService = HostTimingService()
-    private val playbackEngine = OboePlaybackEngine()
     private val preferences = application.getSharedPreferences("silent-disco", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(

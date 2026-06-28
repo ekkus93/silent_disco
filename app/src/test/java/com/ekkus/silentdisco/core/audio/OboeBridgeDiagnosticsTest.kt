@@ -59,14 +59,14 @@ class PlaybackEngineDiagnosticsTest {
 
     @Test
     fun playbackEngine_canBeCreatedWithoutAudioTrack() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         // Engine should be instantiable without system resources
         engine.stop() // Should not throw
     }
 
     @Test
     fun setVolume_defaultsToFullVolume() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         // Default volume should be 1.0 (full)
         engine.setVolume(0.5f)
         engine.setVolume(1.0f)
@@ -75,7 +75,7 @@ class PlaybackEngineDiagnosticsTest {
 
     @Test
     fun statusSummary_returnsClearyMessage() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         val summary = engine.statusSummary()
 
         // Should return a non-empty string

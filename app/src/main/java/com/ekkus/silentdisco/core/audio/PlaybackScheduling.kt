@@ -156,13 +156,21 @@ class ListenerPlaybackScheduler(
     )
 }
 
-class OboePlaybackEngine {
+interface PlaybackEngine {
+    fun start(format: AudioFormatSpec = AudioFormatSpec()): String
+    fun write(frame: PlaybackFrame): Long
+    fun setVolume(value: Float)
+    fun playbackPositionMs(frame: PlaybackFrame): Long
+    fun stop()
+}
+
+class AudioTrackPlaybackEngine : PlaybackEngine {
     private var audioTrack: AudioTrack? = null
     private var sampleRate: Int = 48_000
     private var writeCount: Long = 0
     private var volume: Float = 1.0f
 
-    fun start(format: AudioFormatSpec = AudioFormatSpec()): String {
+    override fun start(format: AudioFormatSpec): String {
         sampleRate = format.sampleRate
         if (audioTrack == null) {
             val channelMask = if (format.channelCount == 1) {
@@ -197,10 +205,10 @@ class OboePlaybackEngine {
                     it.play()
                 }
         }
-        return "${OboeBridge.backendSummary()} + AudioTrack"
+        return "Android AudioTrack"
     }
 
-    fun write(frame: PlaybackFrame): Long {
+    override fun write(frame: PlaybackFrame): Long {
         val track = audioTrack ?: error("Playback engine is not started")
         val written = track.write(
             frame.packet.payload,
@@ -219,22 +227,28 @@ class OboePlaybackEngine {
         return written.toLong()
     }
 
-    fun playbackPositionMs(frame: PlaybackFrame): Long {
+    override fun playbackPositionMs(frame: PlaybackFrame): Long {
         val headPosition = audioTrack?.playbackHeadPosition?.toLong() ?: return frame.localDeadlineMs
         return (headPosition * 1_000L) / sampleRate
     }
 
-    fun stop() {
+    override fun stop() {
         audioTrack?.pause()
         audioTrack?.flush()
         audioTrack?.release()
         audioTrack = null
     }
 
-    fun setVolume(value: Float) {
+    override fun setVolume(value: Float) {
         volume = value.coerceIn(0f, 1f)
         audioTrack?.setVolume(volume)
     }
 
     fun statusSummary(): String = "writes=$writeCount, ${OboeBridge.statusSummary()}"
 }
+
+@Deprecated(
+    message = "Use AudioTrackPlaybackEngine. Playback output is Android AudioTrack-backed; the native Oboe bridge is diagnostics-only.",
+    replaceWith = ReplaceWith("AudioTrackPlaybackEngine"),
+)
+typealias OboePlaybackEngine = AudioTrackPlaybackEngine

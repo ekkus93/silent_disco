@@ -8,15 +8,15 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
-class OboePlaybackEngineTest {
+class AudioTrackPlaybackEngineTest {
 
-    // --- OboePlaybackEngine null-AudioTrack path ---
+    // --- AudioTrackPlaybackEngine null-AudioTrack path ---
     // AudioTrack is an Android system class unavailable in JVM unit tests.
     // These tests cover pre-start / post-stop behavior via the null fallback path.
 
     @Test
     fun `write before start throws error`() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         val frame = frame(payloadSize = 3840)
         assertThrows(IllegalStateException::class.java) {
             engine.write(frame)
@@ -25,7 +25,7 @@ class OboePlaybackEngineTest {
 
     @Test
     fun `setVolume stores value and clamps to range`() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         engine.setVolume(0.5f)
         engine.setVolume(1.5f) // clamps to 1.0
         engine.setVolume(-0.5f) // clamps to 0.0
@@ -35,21 +35,21 @@ class OboePlaybackEngineTest {
 
     @Test
     fun `setVolume before start does not throw`() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         engine.setVolume(0.75f)
         // Should succeed
     }
 
     @Test
     fun `stop before start does not throw`() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         engine.stop()
         engine.stop() // idempotent
     }
 
     @Test
     fun `playbackPositionMs before start returns frame localDeadlineMs`() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         val frame = frame(payloadSize = 3840, localDeadlineMs = 12_345L)
         val posMs = engine.playbackPositionMs(frame)
         assertThat(posMs).isEqualTo(12_345L)
@@ -57,7 +57,7 @@ class OboePlaybackEngineTest {
 
     @Test
     fun `write after stop throws error`() {
-        val engine = OboePlaybackEngine()
+        val engine = AudioTrackPlaybackEngine()
         engine.stop()
         assertThrows(IllegalStateException::class.java) {
             engine.write(frame(payloadSize = 3840))
