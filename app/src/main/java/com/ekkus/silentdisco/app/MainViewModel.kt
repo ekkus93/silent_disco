@@ -1535,7 +1535,6 @@ class MainViewModel @JvmOverloads constructor(
         hostStreamJob = viewModelScope.launch {
             var previousSendElapsedMs: Long? = null
             var consecutiveAudioSendFailures = 0
-            var zeroPeerBroadcastCount = 0
             val packetDurationMs = latestPackets.firstOrNull()?.let { it.samplesPerPacket * 1_000L / it.sampleRate } ?: 20L
             latestPackets.forEachIndexed { index, packet ->
                 val now = SystemClock.elapsedRealtime()
@@ -1575,9 +1574,9 @@ class MainViewModel @JvmOverloads constructor(
                 }.onSuccess { result ->
                     when {
                         result.peerCount == 0 -> {
-                            zeroPeerBroadcastCount += 1
                             consecutiveAudioSendFailures = 0
                             val message = "No connected listeners for audio broadcast"
+                            _uiState.value = _uiState.value.copy(lastError = message)
                             diagnosticsStore.updateHost {
                                 it.copy(lastError = message, metricsSummary = summarizeMetrics())
                             }
