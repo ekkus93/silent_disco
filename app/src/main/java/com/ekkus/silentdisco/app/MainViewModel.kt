@@ -461,7 +461,6 @@ class MainViewModel @JvmOverloads constructor(
             }
             refreshHostDiagnostics()
             startHostStreamingLoop(streamId)
-            startPeriodicResync()
         }.onFailure { error ->
             metrics.increment("stream_start_error")
             logger.e("stream.start", "Failed to start host playback", error)
@@ -763,7 +762,7 @@ class MainViewModel @JvmOverloads constructor(
             lastError = null,
         )
         if (resyncJob?.isActive == true) {
-            startPeriodicResync()
+            startPeriodicListenerResync()
         }
     }
 
@@ -788,8 +787,19 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun manualResync() {
-        val state = _uiState.value
-        if (!state.canManualResync()) {
+        if (!_uiState.value.canManualResync()) {
+            val message = "Join a session before requesting manual resync"
+            _uiState.value = _uiState.value.copy(lastError = message)
+            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            refreshListenerDiagnostics()
+            return
+        }
+        requestListenerSyncProbe(source = "Manual resync")
+    }
+
+    private fun requestListenerSyncProbe(source: String) {
+        val session = _uiState.value.selectedSession
+        if (session == null) {
             val message = "Join a session before requesting manual resync"
             _uiState.value = _uiState.value.copy(lastError = message)
             diagnosticsStore.updateListener { it.copy(lastError = message) }
@@ -797,27 +807,29 @@ class MainViewModel @JvmOverloads constructor(
             return
         }
 
-        val controller = listenerSyncController ?: state.selectedSession?.let {
-            createSyncController(SessionId(it.id))
+        val controller = listenerSyncController ?: createSyncController(SessionId(session.id)).also {
+            listenerSyncController = it
         }
-        if (controller == null) {
-            val message = "Manual resync is unavailable because sync has not been initialized."
-            _uiState.value = _uiState.value.copy(lastError = message)
-            diagnosticsStore.updateListener { it.copy(lastError = message) }
-            refreshListenerDiagnostics()
-            return
-        }
-
-        listenerSyncController = controller
         val request = controller.newProbe()
         pendingSyncCorrelationId = request.correlationId
 
         if (wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED) {
+            _uiState.value = _uiState.value.copy(
+                listenerState = ListenerLifecycleState.SYNCING_CLOCK,
+                connectionProgress = _uiState.value.connectionProgress.copy(
+                    currentState = ListenerLifecycleState.SYNCING_CLOCK,
+                    requested = true,
+                    approved = true,
+                    connected = true,
+                ),
+                lastMessage = "$source sync probe sent",
+                lastError = null,
+            )
             viewModelScope.launch {
                 runCatching {
                     wifiDirectService.sendSyncRequestToHost(request)
                 }.onSuccess {
-                    _uiState.value = _uiState.value.copy(lastMessage = "Manual resync probe sent", lastError = null)
+                    _uiState.value = _uiState.value.copy(lastMessage = "$source sync probe sent", lastError = null)
                 }.onFailure { error ->
                     handleSyncFailure(error.message ?: "Failed to send sync probe")
                 }
@@ -825,17 +837,20 @@ class MainViewModel @JvmOverloads constructor(
             return
         }
 
-        val selectedSession = state.selectedSession
-        val isDemoSession = BuildConfig.DEBUG && selectedSession?.id?.startsWith("demo-session-") == true
+        val isDemoSession = BuildConfig.DEBUG && session.id.startsWith("demo-session-")
         if (isDemoSession) {
             applySyncResponse(hostTimingService.createResponse(request))
-            _uiState.value = _uiState.value.copy(lastMessage = "Manual resync applied locally (demo)", lastError = null)
-        } else {
-            val message = "Cannot resync: transport is not connected to host"
-            _uiState.value = _uiState.value.copy(lastError = message)
-            diagnosticsStore.updateListener { it.copy(lastError = message) }
-            refreshListenerDiagnostics()
+            _uiState.value = _uiState.value.copy(
+                lastMessage = "$source sync applied locally for demo session",
+                lastError = null,
+            )
+            return
         }
+
+        val message = "Manual resync requires an active host connection"
+        _uiState.value = _uiState.value.copy(lastError = message)
+        diagnosticsStore.updateListener { it.copy(lastError = message) }
+        refreshListenerDiagnostics()
     }
 
     private fun simulateApprovalAndPlayback(sessionId: String, reject: Boolean) {
@@ -1030,7 +1045,7 @@ class MainViewModel @JvmOverloads constructor(
             preferences.edit { putBoolean("trusted:${message.listenerId}", true) }
         }
         refreshListenerDiagnostics()
-        manualResync()
+        requestListenerSyncProbe(source = "Initial clock sync")
     }
 
     private fun handleJoinRejectionMessage(message: ControlMessage.JoinRejection) {
@@ -1260,7 +1275,7 @@ class MainViewModel @JvmOverloads constructor(
             )
             refreshListenerDiagnostics()
         }
-        startPeriodicResync()
+        startPeriodicListenerResync()
     }
 
     private fun startTransportListenerPlayback(sessionId: SessionId, streamId: StreamId, format: AudioFormatSpec = AudioFormatSpec()) {
@@ -1596,12 +1611,14 @@ class MainViewModel @JvmOverloads constructor(
         refreshListenerDiagnostics()
     }
 
-    private fun startPeriodicResync() {
+    private fun startPeriodicListenerResync() {
         resyncJob?.cancel()
         resyncJob = viewModelScope.launch {
             while (shouldKeepResyncing()) {
                 delay(_uiState.value.tuningSettings.syncCadenceMs)
-                manualResync()
+                if (_uiState.value.canManualResync()) {
+                    requestListenerSyncProbe(source = "Periodic listener resync")
+                }
                 wifiDirectService.recordHeartbeat()
                 if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
                     wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
@@ -1609,7 +1626,6 @@ class MainViewModel @JvmOverloads constructor(
                     handleListenerDisconnect("Transport disconnected during playback")
                     return@launch
                 }
-                refreshHostDiagnostics()
             }
         }
     }
@@ -1733,15 +1749,15 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private fun shouldKeepResyncing(): Boolean =
-        _uiState.value.hostPlaybackState == PlaybackState.PLAYING ||
-            _uiState.value.listenerState in setOf(
-                ListenerLifecycleState.APPROVED,
-                ListenerLifecycleState.CONNECTING,
-                ListenerLifecycleState.SYNCING_CLOCK,
-                ListenerLifecycleState.BUFFERING,
-                ListenerLifecycleState.PLAYING,
-                ListenerLifecycleState.DESYNCED,
-            )
+        _uiState.value.listenerState in setOf(
+            ListenerLifecycleState.APPROVED,
+            ListenerLifecycleState.CONNECTING,
+            ListenerLifecycleState.SYNCING_CLOCK,
+            ListenerLifecycleState.BUFFERING,
+            ListenerLifecycleState.PLAYING,
+            ListenerLifecycleState.RECONNECTING,
+            ListenerLifecycleState.DESYNCED,
+        )
 
     private fun loadTuningSettings(): TuningSettings = TuningSettings(
         syncSampleWindow = preferences.getInt("tuning:syncSampleWindow", 12),

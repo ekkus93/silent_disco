@@ -271,9 +271,10 @@ fun AppUiState.canSelectSession(session: SessionInfo): Boolean =
     !isJoinInProgress() || selectedSession?.id == session.id
 
 fun AppUiState.canManualResync(): Boolean =
-    selectedSession != null &&
-        listenerState in setOf(
-            ListenerLifecycleState.SYNCING_CLOCK,
-            ListenerLifecycleState.BUFFERING,
-            ListenerLifecycleState.PLAYING,
-        )
+    selectedSession != null && listenerState !in setOf(
+        ListenerLifecycleState.IDLE,
+        ListenerLifecycleState.SCANNING,
+        ListenerLifecycleState.SESSION_SELECTED,
+        ListenerLifecycleState.DISCONNECTED,
+        ListenerLifecycleState.ERROR,
+    )
