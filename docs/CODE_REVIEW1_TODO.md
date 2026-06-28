@@ -172,12 +172,12 @@ The slider gives no numeric feedback.
 
 The app uses `darkColorScheme()` with no overrides, producing a generic unbranded look.
 
-- [ ] Define a custom `SilentDiscoColors` palette in `Theme.kt`:
+- [x] Define a custom `SilentDiscoColors` palette in `Theme.kt`:
   - Pick a primary color appropriate for a music/audio app (e.g. a deep teal, indigo, or purple)
   - Set `primary`, `onPrimary`, `primaryContainer`, `secondary`, `background`, `surface` at minimum
-- [ ] Apply the custom color scheme to `darkColorScheme(primary = ..., secondary = ..., ...)` in `SilentDiscoTheme`
-- [ ] Optionally define a `Typography` override for the heading and body styles if the default Roboto scale is insufficient
-- [ ] Verify the theme change does not break any screen's readability
+- [x] Apply the custom color scheme to `darkColorScheme(primary = ..., secondary = ..., ...)` in `SilentDiscoTheme`
+- [x] Optionally define a `Typography` override for the heading and body styles if the default Roboto scale is insufficient
+- [x] Verify the theme change does not break any screen's readability
 
 ---
 
@@ -185,12 +185,12 @@ The app uses `darkColorScheme()` with no overrides, producing a generic unbrande
 
 No screen has a visible back button or app bar. Users rely entirely on the Android system back gesture.
 
-- [ ] Add a `TopAppBar` to each non-home screen using `Scaffold(topBar = ...)`:
+- [x] Add a `TopAppBar` to each non-home screen using `Scaffold(topBar = ...)`:
   - Display the screen title in the top bar (remove the duplicate `headlineMedium` title `Text` from the screen body)
   - Add a back arrow `IconButton` (using `Icons.AutoMirrored.Filled.ArrowBack`) that calls `navController.popBackStack()`
   - Home screen does not need a back arrow
-- [ ] Screens affected: `HostSetupScreen`, `HostControlScreen`, `DiscoverSessionsScreen`, `JoinProgressScreen`, `ListenerPlaybackScreen`, `DiagnosticsScreen`
-- [ ] Pass an `onBack: () -> Unit` callback into each screen composable from `SilentDiscoApp.kt` (consistent with existing callback pattern)
+- [x] Screens affected: `HostSetupScreen`, `HostControlScreen`, `DiscoverSessionsScreen`, `JoinProgressScreen`, `ListenerPlaybackScreen`, `DiagnosticsScreen`
+- [x] Pass an `onBack: () -> Unit` callback into each screen composable from `SilentDiscoApp.kt` (consistent with existing callback pattern)
 
 ---
 
@@ -198,8 +198,8 @@ No screen has a visible back button or app bar. Users rely entirely on the Andro
 
 All buttons are text-only. Material Icons on key actions improve scannability and visual polish.
 
-- [ ] Add dependency for `androidx.compose.material:material-icons-extended` if not already present in `build.gradle.kts`
-- [ ] Add icons to the following buttons:
+- [x] Add dependency for `androidx.compose.material:material-icons-extended` if not already present in `build.gradle.kts`
+- [x] Add icons to the following buttons:
   - "Start" → `Icons.Filled.PlayArrow`
   - "Pause" → `Icons.Filled.Pause`
   - "Stop" → `Icons.Filled.Stop`
@@ -209,7 +209,7 @@ All buttons are text-only. Material Icons on key actions improve scannability an
   - "Share Debug Info" → `Icons.Filled.Share`
   - "Scan / Refresh" → `Icons.Filled.Refresh`
   - "Manual Resync" → `Icons.Filled.Sync`
-- [ ] Use `Button(icon + text)` pattern: `Icon` + `Spacer(Modifier.size(ButtonDefaults.IconSpacing))` + `Text`
+- [x] Use `Button(icon + text)` pattern: `Icon` + `Spacer(Modifier.size(ButtonDefaults.IconSpacing))` + `Text`
 
 ---
 
@@ -263,16 +263,16 @@ The playback screen includes raw diagnostic counters that belong in the Diagnost
 
 After implementing the above, manually verify:
 
-- [ ] All screens show human-readable text only — no raw enum names visible
-- [ ] "Add Demo Join" does not appear on a release build
-- [ ] JoinProgressScreen stepper advances correctly through all states on a real or simulated join flow
-- [ ] Only contextually valid buttons are visible on JoinProgressScreen at each state
-- [ ] "Continue to Playback" navigates correctly when state is PLAYING
-- [ ] Session cards show clean, accurate content with no placeholder text
-- [ ] Radio button and checkbox rows respond to taps on the label text
-- [ ] Scan state shows a loading indicator
-- [ ] Volume slider displays percentage
-- [ ] Theme uses custom brand colors
-- [ ] All non-home screens have a TopAppBar with back navigation
-- [ ] Start/Pause/Stop buttons reflect correct enabled states
-- [ ] "Start Hosting" shows a validation message when fields are missing
+- [x] All screens show human-readable text only — no raw enum names visible
+- [x] "Add Demo Join" does not appear on a release build
+- [x] JoinProgressScreen stepper advances correctly through all states on a real or simulated join flow
+- [x] Only contextually valid buttons are visible on JoinProgressScreen at each state
+- [x] "Continue to Playback" navigates correctly when state is PLAYING
+- [x] Session cards show clean, accurate content with no placeholder text
+- [x] Radio button and checkbox rows respond to taps on the label text
+- [x] Scan state shows a loading indicator
+- [x] Volume slider displays percentage
+- [x] Theme uses custom brand colors
+- [x] All non-home screens have a TopAppBar with back navigation
+- [x] Start/Pause/Stop buttons reflect correct enabled states
+- [x] "Start Hosting" shows a validation message when fields are missing

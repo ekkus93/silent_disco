@@ -21,6 +21,25 @@
 - This was the last code-implementable unchecked item in docs/TODO.md.
 - Remaining unchecked items all require physical Android devices: 17.2 (integration/device tests), 17.3 (manual validation checklist), 18 (measure listener capacity). Section 20 items are explicitly deferred.
 
+## 2026-06-07T22:46:40Z - Claude Sonnet 4.6 - docs/CODE_REVIEW1_TODO.md fully complete — all items [x]
+
+- Fixed missing Start Hosting validation: button now disabled (and error text shown) when session name is blank or no audio file selected.
+- Moved `StepState` enum and 6 `ConnectionProgressState` step extension functions from private in JoinProgressScreen to package-visible in AppState.kt.
+- Added ConnectionProgressStepTest (22 tests) covering all six step state functions.
+- Added UiStateValidationTest covering JoinProgress button visibility (joinable/retryable sets), Start Hosting validation message logic, and playback button enabled states.
+- Added mockito-core + mockito-kotlin to test deps to mock android.net.Uri.
+- All 13 manual testing checklist items marked [x]. docs/CODE_REVIEW1_TODO.md has 0 unchecked items.
+- Committed as c666bba, pushed to GitHub.
+
+## 2026-06-07T22:29:52Z - Claude Sonnet 4.6 - Completed CODE_REVIEW1_TODO tasks 10, 11, 12 — all 16 tasks now done
+
+- Task 10: Added custom `darkColorScheme` to `Theme.kt` with deep purple/teal palette (`primary = 0xFF9C7DFF`, `secondary = 0xFF00E5CC`, dark background `0xFF0F0E1A`).
+- Task 11: Added `TopAppBar` to all 6 non-home screens (HostSetupScreen, HostControlScreen, DiscoverSessionsScreen, JoinProgressScreen, ListenerPlaybackScreen, DiagnosticsScreen). Each gets `onBack: () -> Unit` wired to `navController.popBackStack()` in SilentDiscoApp. JoinProgressScreen's back arrow calls `onCancel` (cancels join + pops back). Redundant `headlineMedium` title Texts removed from screen bodies.
+- Task 12: Added `material-icons-extended` icons to primary action buttons: PlayArrow (Start), Pause, Stop, Close (End Session), ExitToApp (Leave Session), BarChart (Diagnostics), Share, Refresh (Scan), Sync (Manual Resync). Pattern: `Icon + Spacer(ButtonDefaults.IconSpacing) + Text`.
+- LazyColumn screens (HostControlScreen, DiscoverSessionsScreen) restructured to `Column { TopAppBar; LazyColumn(contentPadding = ...) }` so app bar is pinned.
+- Column screens (HostSetupScreen, JoinProgressScreen, ListenerPlaybackScreen, DiagnosticsScreen) restructured to `Column { TopAppBar; Column(Modifier.weight(1f)) { content } }`.
+- All 16 tasks in docs/CODE_REVIEW1_TODO.md are now marked [x]. Committed as 863209d, pushed.
+
 ## 2026-06-07T22:07:00Z - Claude Sonnet 4.6 - UI/UX code review; created docs/CODE_REVIEW1_TODO.md
 
 - Conducted full UI/UX review of all 7 screens (HomeScreen, HostSetupScreen, HostControlScreen, DiscoverSessionsScreen, JoinProgressScreen, ListenerPlaybackScreen, DiagnosticsScreen) plus Theme.kt, AppState.kt, SilentDiscoApp.kt.
