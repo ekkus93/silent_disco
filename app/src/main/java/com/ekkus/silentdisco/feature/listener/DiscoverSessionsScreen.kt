@@ -27,8 +27,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.canSelectSession
 import com.ekkus.silentdisco.app.label
-import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.SessionInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,7 +39,7 @@ fun DiscoverSessionsScreen(
     onRefresh: () -> Unit,
     onSelectSession: (SessionInfo) -> Unit,
 ) {
-    val isScanning = uiState.listenerState == ListenerLifecycleState.SCANNING
+    val isScanning = uiState.isScanning
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -75,6 +75,7 @@ fun DiscoverSessionsScreen(
                 }
             }
             items(uiState.discoveredSessions, key = { it.id }) { session ->
+                val canSelect = uiState.canSelectSession(session)
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(session.name, style = MaterialTheme.typography.titleMedium)
@@ -83,8 +84,15 @@ fun DiscoverSessionsScreen(
                         Text(
                             if (session.inviteCodeRequired) "Invite code required" else "Open — no code required",
                         )
-                        Button(onClick = { onSelectSession(session) }) {
+                        Button(onClick = { onSelectSession(session) }, enabled = canSelect) {
                             Text("Join")
+                        }
+                        if (!canSelect) {
+                            Text(
+                                "Join already in progress for another session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }

@@ -685,11 +685,18 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun cancelJoin() {
+        clearScanState()
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.DISCONNECTED,
             connectionProgress = ConnectionProgressState(currentState = ListenerLifecycleState.DISCONNECTED),
             lastError = "Join cancelled",
         )
+    }
+
+    private fun clearScanState() {
+        scanJob?.cancel()
+        scanJob = null
+        _uiState.value = _uiState.value.copy(isScanning = false)
     }
 
     fun retryJoin() {
@@ -732,6 +739,7 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun leaveSession() {
+        clearScanState()
         hostStreamJob?.cancel()
         playbackJob?.cancel()
         resyncJob?.cancel()
