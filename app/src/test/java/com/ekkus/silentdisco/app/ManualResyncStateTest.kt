@@ -3,6 +3,7 @@ package com.ekkus.silentdisco.app
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.SessionInfo
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,5 +87,36 @@ class ManualResyncStateTest {
                 selectedSession = selected,
             ).canManualResync(),
         )
+    }
+
+    @Test
+    fun syncProbe_entersSyncingForInitialStates() {
+        listOf(
+            ListenerLifecycleState.APPROVED,
+            ListenerLifecycleState.CONNECTING,
+            ListenerLifecycleState.SYNCING_CLOCK,
+        ).forEach { state ->
+            assertEquals(
+                "state=$state should enter SYNCING_CLOCK",
+                ListenerLifecycleState.SYNCING_CLOCK,
+                nextStateForSyncProbe(state),
+            )
+        }
+    }
+
+    @Test
+    fun syncProbe_preservesActivePlaybackStates() {
+        listOf(
+            ListenerLifecycleState.BUFFERING,
+            ListenerLifecycleState.PLAYING,
+            ListenerLifecycleState.RECONNECTING,
+            ListenerLifecycleState.DESYNCED,
+        ).forEach { state ->
+            assertEquals(
+                "state=$state should be preserved by sync probe",
+                state,
+                nextStateForSyncProbe(state),
+            )
+        }
     }
 }

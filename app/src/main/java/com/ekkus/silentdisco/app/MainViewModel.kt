@@ -864,10 +864,16 @@ class MainViewModel @JvmOverloads constructor(
         pendingSyncCorrelationId = request.correlationId
 
         if (wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED) {
+            val nextState = nextStateForSyncProbe(_uiState.value.listenerState)
+            val nextProgressState = if (nextState == ListenerLifecycleState.SYNCING_CLOCK) {
+                ListenerLifecycleState.SYNCING_CLOCK
+            } else {
+                _uiState.value.connectionProgress.currentState
+            }
             _uiState.value = _uiState.value.copy(
-                listenerState = ListenerLifecycleState.SYNCING_CLOCK,
+                listenerState = nextState,
                 connectionProgress = _uiState.value.connectionProgress.copy(
-                    currentState = ListenerLifecycleState.SYNCING_CLOCK,
+                    currentState = nextProgressState,
                     requested = true,
                     approved = true,
                     connected = true,
@@ -1994,3 +2000,15 @@ class MainViewModel @JvmOverloads constructor(
         super.onCleared()
     }
 }
+
+internal fun nextStateForSyncProbe(currentState: ListenerLifecycleState): ListenerLifecycleState =
+    if (currentState in setOf(
+            ListenerLifecycleState.APPROVED,
+            ListenerLifecycleState.CONNECTING,
+            ListenerLifecycleState.SYNCING_CLOCK,
+        )
+    ) {
+        ListenerLifecycleState.SYNCING_CLOCK
+    } else {
+        currentState
+    }
