@@ -278,3 +278,13 @@ fun AppUiState.canManualResync(): Boolean =
         ListenerLifecycleState.DISCONNECTED,
         ListenerLifecycleState.ERROR,
     )
+
+internal object HostSessionValidator {
+    fun validate(form: HostFormState): String? = when {
+        form.sessionName.isBlank() -> "Enter a session name before hosting."
+        form.selectedAudio == null -> "Choose an audio file before hosting."
+        form.approvalMode == ApprovalMode.INVITE_CODE && form.inviteCode.isBlank() ->
+            "Enter an invite code or choose a different approval mode."
+        else -> null
+    }
+}

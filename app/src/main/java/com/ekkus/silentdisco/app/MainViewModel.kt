@@ -157,26 +157,7 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun validateHostForm(state: AppUiState): String? {
-        val form = state.hostForm
-
-        if (form.sessionName.isBlank()) {
-            return "Enter a session name before hosting."
-        }
-
-        if (form.selectedAudio == null) {
-            return "Choose an audio file before hosting."
-        }
-
-        if (
-            form.approvalMode == ApprovalMode.INVITE_CODE &&
-            form.inviteCode.isBlank()
-        ) {
-            return "Enter an invite code or choose a different approval mode."
-        }
-
-        return null
-    }
+    private fun validateHostForm(state: AppUiState): String? = HostSessionValidator.validate(state.hostForm)
 
     fun createHostSession(): Boolean {
         val validationError = validateHostForm(_uiState.value)
@@ -393,23 +374,24 @@ class MainViewModel @JvmOverloads constructor(
             _uiState.value = _uiState.value.copy(lastError = "Choose an audio file before starting playback")
             return
         }
-        val sessionId = currentSessionId ?: run {
-            val message = "Start a host session before starting playback"
+        val sessionError = requireHostSessionForPlayback(currentSessionId)
+        if (sessionError != null) {
             _uiState.value = _uiState.value.copy(
                 hostState = HostLifecycleState.ERROR,
                 hostPlaybackState = PlaybackState.ERROR,
-                lastError = message,
+                lastError = sessionError,
             )
             diagnosticsStore.updateHost {
                 it.copy(
                     streamState = PlaybackState.ERROR,
-                    lastError = message,
+                    lastError = sessionError,
                     metricsSummary = summarizeMetrics(),
                 )
             }
             refreshHostDiagnostics(streamState = PlaybackState.ERROR)
             return
         }
+        val sessionId = currentSessionId!!
         val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}").also {
             currentStreamId = it
         }
@@ -2054,6 +2036,9 @@ class MainViewModel @JvmOverloads constructor(
         super.onCleared()
     }
 }
+
+internal fun requireHostSessionForPlayback(currentSessionId: SessionId?): String? =
+    if (currentSessionId == null) "Start a host session before starting playback" else null
 
 internal enum class TransportSnapshotRole { HOST_FAILURE, LISTENER_FAILURE, IGNORE }
 

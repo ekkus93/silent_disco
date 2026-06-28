@@ -95,9 +95,7 @@ class BleDiscoveryService(
             }
 
             override fun onStartFailure(errorCode: Int) {
-                val message = "BLE advertise failed with code=$errorCode"
-                logger.w("ble.advertise", message)
-                _failures.tryEmit(BleOperationFailure(BleOperation.ADVERTISE, message))
+                emitAdvertiseFailure(errorCode)
             }
         }
         advertiseCallback = callback
@@ -167,10 +165,7 @@ class BleDiscoveryService(
             }
 
             override fun onScanFailed(errorCode: Int) {
-                val message = "BLE scan failed with code=$errorCode"
-                logger.w("ble.scan", message)
-                _discoveredSessions.value = emptyList()
-                _failures.tryEmit(BleOperationFailure(BleOperation.SCAN, message))
+                emitScanFailure(errorCode)
             }
         }
         scanCallback = callback
@@ -198,6 +193,22 @@ class BleDiscoveryService(
             },
         )
     }
+
+    private fun emitAdvertiseFailure(errorCode: Int) {
+        val message = "BLE advertise failed with code=$errorCode"
+        logger.w("ble.advertise", message)
+        _failures.tryEmit(BleOperationFailure(BleOperation.ADVERTISE, message))
+    }
+
+    private fun emitScanFailure(errorCode: Int) {
+        val message = "BLE scan failed with code=$errorCode"
+        logger.w("ble.scan", message)
+        _discoveredSessions.value = emptyList()
+        _failures.tryEmit(BleOperationFailure(BleOperation.SCAN, message))
+    }
+
+    internal fun emitAdvertiseFailureForTest(errorCode: Int) = emitAdvertiseFailure(errorCode)
+    internal fun emitScanFailureForTest(errorCode: Int) = emitScanFailure(errorCode)
 
     fun stop() {
         stopAdvertising()

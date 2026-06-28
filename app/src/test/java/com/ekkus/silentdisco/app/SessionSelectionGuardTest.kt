@@ -109,4 +109,24 @@ class SessionSelectionGuardTest {
             )
         }
     }
+
+    @Test
+    fun selectDiscoveredSession_doesNotSwitchSessionsDuringActiveJoin() {
+        val sessionA = session("a")
+        val sessionB = session("b")
+        // canSelectSession returns false when joining a different session — this is what
+        // selectDiscoveredSession() in the ViewModel checks before switching
+        val stateConnecting = AppUiState(
+            listenerState = ListenerLifecycleState.CONNECTING,
+            selectedSession = sessionA,
+        )
+        assertFalse(
+            "canSelectSession must reject sessionB while connecting to sessionA",
+            stateConnecting.canSelectSession(sessionB),
+        )
+        assertTrue(
+            "canSelectSession must allow re-selecting sessionA while connecting to sessionA",
+            stateConnecting.canSelectSession(sessionA),
+        )
+    }
 }

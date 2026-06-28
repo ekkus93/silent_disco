@@ -1,71 +1,47 @@
 package com.ekkus.silentdisco.app
 
-import com.ekkus.silentdisco.core.model.HostLifecycleState
-import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.protocol.SessionId
-import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.transport.SendAllResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HostPlaybackIdentityTest {
 
     @Test
-    fun missingSessionId_resultsInErrorState() {
-        val state = AppUiState(
-            hostState = HostLifecycleState.IDLE,
-            hostPlaybackState = PlaybackState.STOPPED,
-            lastError = null,
-        )
-        // Verify that the state machine logic maps null sessionId to ERROR correctly
-        // by testing the AppUiState data directly
-        val errorState = state.copy(
-            hostState = HostLifecycleState.ERROR,
-            hostPlaybackState = PlaybackState.ERROR,
-            lastError = "Start a host session before starting playback",
-        )
-        assertEquals(HostLifecycleState.ERROR, errorState.hostState)
-        assertEquals(PlaybackState.ERROR, errorState.hostPlaybackState)
-        assertNotNull(errorState.lastError)
+    fun requireHostSession_returnsErrorWhenSessionNull() {
+        val error = requireHostSessionForPlayback(currentSessionId = null)
+        assertNotNull(error)
+        assertEquals("Start a host session before starting playback", error)
     }
 
     @Test
-    fun streamId_nonNullAfterSessionCreated() {
-        val streamId = StreamId("stream-12345")
-        assertNotNull(streamId.value)
-        assertEquals("stream-12345", streamId.value)
-    }
-
-    @Test
-    fun sessionId_nonNullAfterHostSessionCreated() {
-        val sessionId = SessionId("session-abc")
-        assertNotNull(sessionId.value)
-        assertEquals("session-abc", sessionId.value)
-    }
-
-    @Test
-    fun hostPlaybackError_setsHostStateAndPlaybackState() {
-        val state = AppUiState(
-            hostState = HostLifecycleState.WAITING_FOR_LISTENERS,
-            hostPlaybackState = PlaybackState.STOPPED,
-            lastError = null,
-        )
-        val errorState = state.copy(
-            hostState = HostLifecycleState.ERROR,
-            hostPlaybackState = PlaybackState.ERROR,
-            lastError = "Start a host session before starting playback",
-        )
-        assertEquals(HostLifecycleState.ERROR, errorState.hostState)
-        assertEquals(PlaybackState.ERROR, errorState.hostPlaybackState)
-        assertEquals("Start a host session before starting playback", errorState.lastError)
+    fun requireHostSession_returnsNullWhenSessionPresent() {
+        val error = requireHostSessionForPlayback(currentSessionId = SessionId("session-abc"))
+        assertNull(error)
     }
 
     @Test
     fun zeroPeerApproval_isNotSuccess() {
         val result = SendAllResult(peerCount = 0, successCount = 0, failureCount = 0)
-        assertEquals(false, result.deliveredToAnyPeer)
-        assertEquals(false, result.allDelivered)
+        assertFalse(result.deliveredToAnyPeer)
+        assertFalse(result.allDelivered)
+    }
+
+    @Test
+    fun fullDelivery_isSuccess() {
+        val result = SendAllResult(peerCount = 2, successCount = 2, failureCount = 0)
+        assertTrue(result.deliveredToAnyPeer)
+        assertTrue(result.allDelivered)
+    }
+
+    @Test
+    fun partialDelivery_isNotAllDelivered() {
+        val result = SendAllResult(peerCount = 2, successCount = 1, failureCount = 1)
+        assertTrue(result.deliveredToAnyPeer)
+        assertFalse(result.allDelivered)
     }
 }
