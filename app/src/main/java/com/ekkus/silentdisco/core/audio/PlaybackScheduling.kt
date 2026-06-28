@@ -215,13 +215,9 @@ class AudioTrackPlaybackEngine : PlaybackEngine {
             0,
             frame.packet.payload.size,
             AudioTrack.WRITE_NON_BLOCKING,
-        ).coerceAtLeast(0)
+        )
         if (written <= 0) {
             error("AudioTrack write failed with result=$written")
-        }
-        if (written < frame.packet.payload.size) {
-            writeCount += 1
-            return written.toLong()
         }
         writeCount += 1
         return written.toLong()

@@ -88,26 +88,23 @@ fun HostSetupScreen(
                             Text(mode.label(), modifier = Modifier.padding(start = 8.dp))
                         }
                     }
+                    val inviteCodeRequired = uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE
                     OutlinedTextField(
                         value = uiState.hostForm.inviteCode,
                         onValueChange = onInviteCodeChanged,
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Optional invite code") },
+                        label = { Text(if (inviteCodeRequired) "Invite code" else "Optional invite code") },
+                        supportingText = {
+                            Text(
+                                if (inviteCodeRequired) {
+                                    "Listeners must enter this invite code to request approval."
+                                } else {
+                                    "Optional code shown to listeners."
+                                },
+                            )
+                        },
+                        isError = inviteCodeRequired && uiState.hostForm.inviteCode.isBlank(),
                     )
-                    if (uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE) {
-                        if (uiState.hostForm.inviteCode.isBlank()) {
-                            Text(
-                                text = "An invite code is required before hosting can start.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        } else {
-                            Text(
-                                text = "Listeners will enter code: ${uiState.hostForm.inviteCode}",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                    }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
