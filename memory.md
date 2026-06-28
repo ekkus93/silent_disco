@@ -1,5 +1,33 @@
 # memory.md — `silent_disco`
 
+## 2026-06-28T20:38:27Z - Claude Sonnet 4.6 - FIX4 Ralph Loop: COMPLETE (all 9 blocks delivered)
+
+**FIX4 (third hardening pass) COMPLETE. All 9 Ralph Loop blocks implemented and tested:**
+- Block 1 (77e166d): canManualResync broader, requestListenerSyncProbe helper, host/listener separation (P0.1-P0.4)
+- Block 2 (6eadd42): classifyBroadcastDelivery production helper, reportHostBroadcastDelivery, all control/sync broadcasts consumed (P0.5-P0.8)
+- Block 3 (34fdc4c): Host audio zero-peer disclosed, partial delivery warning, zeroPeerBroadcastCount (P0.9)
+- Block 4 (5597b04): Wi-Fi Direct permission check in startHost(), async group failure → host ERROR (P0.10-P0.11)
+- Block 5 (c965c4d): selectDiscoveredSession guarded with canSelectSession(), clearScanState in failure/disconnect (P1.1-P1.2)
+- Block 6 (3d03b69): Missing host session sets hostState=ERROR; streamId assigned to currentStreamId (P1.3-P1.4)
+- Block 7 (5cb30dc): BLE failures SharedFlow, observeBleFailures, handleBleScanFailure/AdvertiseFailure (P1.5-P1.6)
+- Block 8 (1427b61): AudioTrack write error code preserved (no coerceAtLeast), dynamic invite-code label (P1.7, P2.1)
+- Block 9: Tests embedded across blocks 1-7 (ManualResyncStateTest, BroadcastDeliveryTest, SessionSelectionGuardTest, HostPlaybackIdentityTest, BleDiscoveryServiceTest)
+
+**Tests:** All pass. Lint clean.
+
+**Key FIX4 decisions:**
+- canManualResync() is now allowlist-by-exclusion: any state except IDLE/SCANNING/SESSION_SELECTED/DISCONNECTED/ERROR with selectedSession != null
+- requestListenerSyncProbe(source) is the internal impl; manualResync() is the thin UI wrapper; handleJoinApprovalMessage calls probe directly bypassing UI gate
+- startPeriodicListenerResync() replaces startPeriodicResync(); no longer called from startHostPlayback(); shouldKeepResyncing() is listener-only
+- classifyBroadcastDelivery() in TransportModels.kt is the testable pure function; reportHostBroadcastDelivery() uses it
+- approveJoinRequest() sends approval first, only updates UI state if delivery succeeded (zero peers = not delivered)
+- Zero audio peers: disclosed via diagnostics but does NOT kill host preview; zeroPeerBroadcastCount tracked separately
+- WifiDirectTransportService.startHost() has own hasWifiDirectPermission() check; all socket/group errors caught and returned as failed()
+- handleTransportSnapshot() maps transport FAILED state to host ERROR when hosting is active
+- selectDiscoveredSession() enforces canSelectSession() in ViewModel; rejection sets visible lastError
+- BleDiscoveryService has failures: SharedFlow<BleOperationFailure> exposed via _failures MutableSharedFlow
+- AudioTrack.write() no longer coerces negative result to 0; error message shows actual platform error code
+
 ## 2026-06-28T20:11:58Z - Claude Sonnet 4.6 - FIX3 Ralph Loop: COMPLETE (all 8 blocks delivered)
 
 **FIX3 (second hardening pass) COMPLETE. All 8 Ralph Loop blocks implemented and tested:**
