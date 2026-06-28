@@ -103,8 +103,8 @@ class ConnectionProgressStepTest {
     // --- playingStep ---
 
     @Test
-    fun playingStep_syncedOnly_isActive() {
-        val p = ConnectionProgressState(synced = true, playing = false)
+    fun playingStep_bufferedOnly_isActive() {
+        val p = ConnectionProgressState(buffered = true, playing = false)
         assertEquals(StepState.Active, p.playingStep())
     }
 
@@ -115,8 +115,8 @@ class ConnectionProgressStepTest {
     }
 
     @Test
-    fun playingStep_notSynced_isPending() {
-        val p = ConnectionProgressState(synced = false, playing = false)
+    fun playingStep_notBuffered_isPending() {
+        val p = ConnectionProgressState(buffered = false, playing = false)
         assertEquals(StepState.Pending, p.playingStep())
     }
 

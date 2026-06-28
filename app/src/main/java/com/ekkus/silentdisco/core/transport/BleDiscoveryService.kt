@@ -28,6 +28,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+data class BleOperationResult(
+    val started: Boolean,
+    val message: String? = null,
+) {
+    companion object {
+        val Started = BleOperationResult(started = true)
+        fun failed(message: String) = BleOperationResult(started = false, message = message)
+    }
+}
+
 class BleDiscoveryService(
     context: Context,
     private val logger: AppLogger = AppLogger(),
@@ -94,16 +104,18 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    fun startScanning() {
+    fun startScanning(): BleOperationResult {
         if (!hasScanPermission()) {
-            logger.w("ble.scan", "Missing Bluetooth scan permission")
+            val message = "Missing Bluetooth scan permission"
+            logger.w("ble.scan", message)
             _discoveredSessions.value = emptyList()
-            return
+            return BleOperationResult.failed(message)
         }
         val scanner = scanner ?: run {
-            logger.w("ble.scan", "BLE scanner unavailable on this device")
+            val message = "BLE scanner unavailable on this device"
+            logger.w("ble.scan", message)
             _discoveredSessions.value = emptyList()
-            return
+            return BleOperationResult.failed(message)
         }
         stopScanning()
         seenSessions.clear()
@@ -135,7 +147,7 @@ class BleDiscoveryService(
             }
         }
         scanCallback = callback
-        runCatching {
+        return runCatching {
             scanner.startScan(
                 listOf(
                     ScanFilter.Builder()
@@ -147,10 +159,17 @@ class BleDiscoveryService(
                     .build(),
                 callback,
             )
-        }.onFailure { error ->
-            logger.w("ble.scan", "BLE scan start failed: ${error.message}")
-        }
-        logger.i("ble.scan", "Started BLE scanning")
+        }.fold(
+            onSuccess = {
+                logger.i("ble.scan", "Started BLE scanning")
+                BleOperationResult.Started
+            },
+            onFailure = { error ->
+                val message = error.message ?: "BLE scan start failed"
+                logger.w("ble.scan", message)
+                BleOperationResult.failed(message)
+            },
+        )
     }
 
     fun stop() {

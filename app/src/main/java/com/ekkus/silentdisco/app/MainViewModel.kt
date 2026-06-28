@@ -95,6 +95,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var hostStreamJob: Job? = null
     private var playbackJob: Job? = null
     private var resyncJob: Job? = null
+    private var scanJob: Job? = null
     private var pendingSyncCorrelationId: Long? = null
     private var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
     private val localListenerDeviceId = "listener-device"
@@ -505,10 +506,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun scanForSessions() {
         logger.i("listener.scan", "Scanning for nearby sessions")
+        scanJob?.cancel()
+
         if (!hasListenerTransportPermissions()) {
             val message = "Missing nearby connectivity permissions for discovery"
             wifiDirectService.fail(message, retryable = true)
             _uiState.value = _uiState.value.copy(
+                isScanning = false,
                 listenerState = ListenerLifecycleState.ERROR,
                 lastError = message,
             )
@@ -516,23 +520,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshListenerDiagnostics()
             return
         }
-        bleService.startScanning()
-        wifiDirectService.discoverPeers()
-        refreshDiscoveredSessions()
-        val discovered = _uiState.value.discoveredSessions
+
         _uiState.value = _uiState.value.copy(
+            isScanning = true,
             listenerState = ListenerLifecycleState.SCANNING,
-            discoveredSessions = discovered,
             connectionProgress = _uiState.value.connectionProgress.copy(
                 currentState = ListenerLifecycleState.SCANNING,
-                discovered = discovered.isNotEmpty(),
             ),
             lastError = null,
+            lastMessage = "Scanning for nearby sessions…",
         )
-        diagnosticsStore.updateListener {
-            it.copy(lastError = null)
+
+        scanJob = viewModelScope.launch {
+            val bleStart = bleService.startScanning()
+            if (!bleStart.started) {
+                val message = bleStart.message ?: "BLE scan could not start"
+                wifiDirectService.fail(message, retryable = true)
+                _uiState.value = _uiState.value.copy(
+                    isScanning = false,
+                    listenerState = ListenerLifecycleState.ERROR,
+                    lastError = message,
+                )
+                diagnosticsStore.updateListener { it.copy(lastError = message) }
+                refreshListenerDiagnostics()
+                return@launch
+            }
+
+            wifiDirectService.discoverPeers()
+            val scanWindowMs = _uiState.value.tuningSettings.normalized().scanWindowMs
+            delay(scanWindowMs)
+            refreshDiscoveredSessions()
+
+            val discovered = _uiState.value.discoveredSessions
+            _uiState.value = _uiState.value.copy(
+                isScanning = false,
+                listenerState = if (_uiState.value.selectedSession == null) {
+                    ListenerLifecycleState.IDLE
+                } else {
+                    ListenerLifecycleState.SESSION_SELECTED
+                },
+                discoveredSessions = discovered,
+                connectionProgress = _uiState.value.connectionProgress.copy(
+                    currentState = if (discovered.isEmpty()) {
+                        ListenerLifecycleState.IDLE
+                    } else {
+                        ListenerLifecycleState.SESSION_SELECTED
+                    },
+                    discovered = discovered.isNotEmpty(),
+                ),
+                lastMessage = if (discovered.isEmpty()) "No nearby sessions found" else "Found ${discovered.size} session(s)",
+                lastError = null,
+            )
+            diagnosticsStore.updateListener { it.copy(lastError = null) }
+            refreshListenerDiagnostics()
         }
-        refreshListenerDiagnostics()
     }
 
     fun selectDiscoveredSession(session: SessionInfo) {

@@ -24,7 +24,11 @@ data class TuningSettings(
     val latePacketThresholdMs: Long = 40,
     val hardResyncThresholdMs: Long = 120,
     val syncDriftThresholdMs: Double = 18.0,
-)
+    val scanWindowMs: Long = 3_000L,
+) {
+    fun normalized(): TuningSettings =
+        copy(scanWindowMs = scanWindowMs.coerceIn(1_000L, 10_000L))
+}
 
 enum class TuningField {
     SyncSampleWindow,
@@ -33,6 +37,7 @@ enum class TuningField {
     LatePacketThresholdMs,
     HardResyncThresholdMs,
     SyncDriftThresholdMs,
+    ScanWindowMs,
 }
 
 data class HostFormState(
@@ -50,6 +55,7 @@ data class ConnectionProgressState(
     val approved: Boolean = false,
     val connected: Boolean = false,
     val synced: Boolean = false,
+    val buffered: Boolean = false,
     val playing: Boolean = false,
     val inviteCode: String = "",
 )
@@ -72,6 +78,7 @@ data class AppUiState(
     val hostDiagnostics: HostDiagnosticsSnapshot = HostDiagnosticsSnapshot(),
     val listenerDiagnostics: ListenerDiagnosticsSnapshot = ListenerDiagnosticsSnapshot(),
     val localVolume: Float = 1.0f,
+    val isScanning: Boolean = false,
     val lastMessage: String? = null,
     val lastError: String? = null,
 )
@@ -140,6 +147,7 @@ fun TuningSettings.adjust(field: TuningField, direction: Int): TuningSettings {
         TuningField.LatePacketThresholdMs -> copy(latePacketThresholdMs = (latePacketThresholdMs + (step * 5L)).coerceIn(10L, 250L))
         TuningField.HardResyncThresholdMs -> copy(hardResyncThresholdMs = (hardResyncThresholdMs + (step * 20L)).coerceIn(40L, 500L))
         TuningField.SyncDriftThresholdMs -> copy(syncDriftThresholdMs = (syncDriftThresholdMs + (step * 2.0)).coerceIn(4.0, 100.0))
+        TuningField.ScanWindowMs -> copy(scanWindowMs = (scanWindowMs + (step * 500L)).coerceIn(1_000L, 10_000L))
     }
     val lateThreshold = updated.latePacketThresholdMs.coerceAtMost(updated.hardResyncThresholdMs - 20L)
     return updated.copy(
@@ -235,8 +243,37 @@ fun ConnectionProgressState.syncedStep(): StepState = when {
     else -> StepState.Pending
 }
 
-fun ConnectionProgressState.playingStep(): StepState = when {
-    playing -> StepState.Done
+fun ConnectionProgressState.bufferingStep(): StepState = when {
+    buffered -> StepState.Done
     synced -> StepState.Active
     else -> StepState.Pending
 }
+
+fun ConnectionProgressState.playingStep(): StepState = when {
+    playing -> StepState.Done
+    buffered -> StepState.Active
+    else -> StepState.Pending
+}
+
+fun AppUiState.isJoinInProgress(): Boolean = listenerState in setOf(
+    ListenerLifecycleState.JOIN_REQUESTED,
+    ListenerLifecycleState.AWAITING_APPROVAL,
+    ListenerLifecycleState.APPROVED,
+    ListenerLifecycleState.CONNECTING,
+    ListenerLifecycleState.SYNCING_CLOCK,
+    ListenerLifecycleState.BUFFERING,
+    ListenerLifecycleState.PLAYING,
+    ListenerLifecycleState.RECONNECTING,
+    ListenerLifecycleState.DESYNCED,
+)
+
+fun AppUiState.canSelectSession(session: SessionInfo): Boolean =
+    !isJoinInProgress() || selectedSession?.id == session.id
+
+fun AppUiState.canManualResync(): Boolean =
+    selectedSession != null &&
+        listenerState in setOf(
+            ListenerLifecycleState.SYNCING_CLOCK,
+            ListenerLifecycleState.BUFFERING,
+            ListenerLifecycleState.PLAYING,
+        )
