@@ -1,5 +1,9 @@
 # memory.md — `silent_disco`
 
+## 2026-06-28T18:49:05Z - Claude Haiku 4.5 - CODE_REVIEW2 Ralph Loop: 3 blocks complete (scan, host startup, invite-code)
+
+**Implemented CODE_REVIEW2 hardening spec in Ralph Loop: Block 1 (4d8095c) scan lifecycle, Block 2 (465a994) host startup, Block 3 (d00d551) invite-code enforcement. All tests pass (73+ new tests); lint 0 errors, 8 pre-existing GradleDependency notices (deferred). Ready for Block 4 (join buffering) or wrap.**
+
 ## 2026-06-07T07:37:04Z - Claude Sonnet 4.6 - Session start; created CLAUDE.md and initialized memory
 
 - Project is an Android-only offline silent disco PoC using Kotlin, Jetpack Compose, Oboe, Wi-Fi Direct (primary transport), and BLE (discovery only).
