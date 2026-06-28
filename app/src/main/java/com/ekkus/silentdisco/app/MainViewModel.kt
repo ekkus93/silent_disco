@@ -336,20 +336,9 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun rejectJoinRequest(request: JoinRequest) {
-        logger.w("approval.reject", "Rejected ${request.listenerName}")
-        _uiState.value = _uiState.value.copy(
-            pendingJoinRequests = _uiState.value.pendingJoinRequests - request,
-            lastMessage = "${request.listenerName} rejected",
-            lastError = "Host rejected ${request.listenerName}",
-        )
-        diagnosticsStore.updateListener {
-            it.copy(
-                sessionId = request.sessionId,
-                lastError = "Host rejected join request for ${request.listenerName}",
-            )
-        }
+        logger.w("approval.reject", "Rejecting ${request.listenerName}")
         viewModelScope.launch {
-            runCatching {
+            val delivered = runCatching {
                 wifiDirectService.broadcastControl(
                     ControlMessage.JoinRejection(
                         version = 1,
@@ -358,14 +347,25 @@ class MainViewModel @JvmOverloads constructor(
                         reason = "Host rejected ${request.listenerName}",
                     ),
                 )
-            }.onSuccess { result ->
+            }.map { result ->
                 reportHostBroadcastDelivery("send join rejection", result, requireAnyPeer = true)
-            }.onFailure { error ->
+            }.getOrElse { error ->
                 handleHostControlFailure("send join rejection", error)
+                false
             }
+
+            if (!delivered) return@launch
+
+            _uiState.value = _uiState.value.copy(
+                pendingJoinRequests = _uiState.value.pendingJoinRequests.filterNot { it.requestId == request.requestId },
+                lastMessage = "Rejected ${request.listenerName}",
+                lastError = null,
+            )
+            diagnosticsStore.updateHost {
+                it.copy(lastError = null, metricsSummary = summarizeMetrics())
+            }
+            refreshHostDiagnostics()
         }
-        refreshHostDiagnostics()
-        refreshListenerDiagnostics()
     }
 
     fun trustListener(listenerId: String) {
@@ -1126,7 +1126,7 @@ class MainViewModel @JvmOverloads constructor(
         if (rejectionReason != null) {
             logger.w("listener.join.reject", rejectionReason)
             viewModelScope.launch {
-                runCatching {
+                val delivered = runCatching {
                     wifiDirectService.broadcastControl(
                         ControlMessage.JoinRejection(
                             version = 1,
@@ -1135,16 +1135,22 @@ class MainViewModel @JvmOverloads constructor(
                             reason = rejectionReason,
                         ),
                     )
-                }.onSuccess { result ->
+                }.map { result ->
                     reportHostBroadcastDelivery("send join rejection", result, requireAnyPeer = true)
-                }.onFailure { error ->
+                }.getOrElse { error ->
                     handleHostControlFailure("send join rejection", error)
+                    false
+                }
+
+                if (delivered) {
+                    val hostMessage = "Rejected ${message.device.displayName}: $rejectionReason"
+                    diagnosticsStore.updateHost {
+                        it.copy(lastError = hostMessage, metricsSummary = summarizeMetrics())
+                    }
+                    _uiState.value = _uiState.value.copy(lastError = hostMessage)
+                    refreshHostDiagnostics()
                 }
             }
-            diagnosticsStore.updateHost {
-                it.copy(lastError = "Rejected ${message.device.displayName}: $rejectionReason")
-            }
-            refreshHostDiagnostics()
             return
         }
 
