@@ -678,13 +678,23 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun selectDiscoveredSession(session: SessionInfo) {
+        if (!_uiState.value.canSelectSession(session)) {
+            val message = "Finish or cancel the current join before joining another session."
+            _uiState.value = _uiState.value.copy(lastError = message)
+            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            refreshListenerDiagnostics()
+            return
+        }
         _uiState.value = _uiState.value.copy(
             selectedSession = session,
             listenerState = ListenerLifecycleState.SESSION_SELECTED,
             connectionProgress = _uiState.value.connectionProgress.copy(
                 currentState = ListenerLifecycleState.SESSION_SELECTED,
                 discovered = true,
+                inviteCode = "",
             ),
+            lastMessage = "Selected ${session.name}",
+            lastError = null,
         )
     }
 
@@ -1615,10 +1625,18 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private fun handleListenerConnectionFailure(message: String) {
+        clearScanState()
         logger.w("transport.error", message)
+        playbackJob?.cancel()
+        resyncJob?.cancel()
+        playbackEngine.stop()
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.ERROR,
             listenerPlaybackState = PlaybackState.ERROR,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                buffered = false,
+                playing = false,
+            ),
             lastError = message,
         )
         diagnosticsStore.updateListener {
@@ -1692,6 +1710,7 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private fun handleListenerDisconnect(message: String) {
+        clearScanState()
         logger.w("transport.disconnect", message)
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.DISCONNECTED,
