@@ -392,10 +392,25 @@ class MainViewModel @JvmOverloads constructor(
             return
         }
         val sessionId = currentSessionId ?: run {
-            _uiState.value = _uiState.value.copy(lastError = "No active host session — create a session before starting playback")
+            val message = "Start a host session before starting playback"
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                hostPlaybackState = PlaybackState.ERROR,
+                lastError = message,
+            )
+            diagnosticsStore.updateHost {
+                it.copy(
+                    streamState = PlaybackState.ERROR,
+                    lastError = message,
+                    metricsSummary = summarizeMetrics(),
+                )
+            }
+            refreshHostDiagnostics(streamState = PlaybackState.ERROR)
             return
         }
-        val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}")
+        val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}").also {
+            currentStreamId = it
+        }
         runCatching {
             latestDecodedAudio ?: decoder.decode(selectedAudio)
         }.onSuccess { decoded ->
