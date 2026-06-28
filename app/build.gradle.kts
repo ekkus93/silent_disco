@@ -21,6 +21,11 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        externalNativeBuild {
+            cmake {
+                arguments("-DANDROID_STL=c++_shared")
+            }
+        }
     }
 
     buildTypes {

@@ -34,3 +34,4 @@ google-services.json
 *.hprof
 
 run_copilot.sh
+run_claude.sh*
