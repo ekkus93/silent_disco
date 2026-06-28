@@ -1,5 +1,34 @@
 # memory.md — `silent_disco`
 
+## 2026-06-28T21:26:27Z - Claude Sonnet 4.6 - FIX5 Ralph Loop: COMPLETE (9 blocks delivered)
+
+**FIX5 (correctness hardening pass) COMPLETE. All P0/P1/P2 items implemented and tested:**
+- Block 1 (689713b): `nextStateForSyncProbe()` helper, `requestListenerSyncProbe()` preserves active playback state (P0.1-P0.2)
+- Block 2 (5b3b27b): `classifyTransportSnapshotRole()` helper, listener transport failure → ERROR state (P0.3-P0.4)
+- Block 3 (94562b6): Delivery-first `rejectJoinRequest()`, invite-code rejection diagnostics after delivery (P0.5-P0.7)
+- Block 4 (d1ff8fb): `hostControlDeliveryMessage()` helper, honest delivery warnings in pause/stop/endSession (P1.1-P1.2)
+- Block 5 (dbbdf91): Zero-listener audio broadcast sets `_uiState.lastError`, removed `zeroPeerBroadcastCount` (P1.3-P1.4)
+- Block 6 (b8d0853): `handleSyncFailure()` and `handleListenerDisconnect()` clear `buffered`/`playing` flags (P1.5-P1.7)
+- Block 7 (a5c1f3b): Demo simulation calls `requestListenerSyncProbe("Demo clock sync")` not `manualResync()` (P1.8)
+- Block 8 (5865a60): `HostSessionValidator`, `requireHostSessionForPlayback()`, BLE test hooks, tautological tests replaced (P2.1-P2.4)
+- Block 9 (a980bb2): Instrumented BLE tests on Samsung A54 via `emitScanFailureForTest`/`emitAdvertiseFailureForTest`
+
+**Key FIX5 decisions:**
+- `nextStateForSyncProbe()`: initial states (APPROVED/CONNECTING/SYNCING_CLOCK) → SYNCING_CLOCK; all others preserved
+- `classifyTransportSnapshotRole()`: HOST_FAILURE if hosting active, LISTENER_FAILURE if listener active, else IGNORE
+- `rejectJoinRequest()` now delivery-first: pending request only removed if rejection delivery succeeded
+- `handleJoinRequestMessage()` invite-code rejection: "Rejected X" diagnostics only written after delivery
+- `hostControlDeliveryMessage()`: returns warning string for ZERO_PEERS/PARTIAL_FAILURE, null for OK
+- `zeroPeerBroadcastCount` removed; zero-peer events surfaced through `_uiState.lastError` directly
+- `handleListenerDisconnect()` now also cancels playbackJob/resyncJob, stops engine, clears pending state
+- `HostSessionValidator.validate(form)` extracted to AppState.kt; `MainViewModel.validateHostForm()` delegates to it
+- `requireHostSessionForPlayback(sessionId)` extracted to MainViewModel.kt top-level
+- BLE internal hooks: `emitAdvertiseFailureForTest`/`emitScanFailureForTest` on concrete `BleDiscoveryService`
+- Instrumented test uses `runBlocking` + `delay(50)` before `tryEmit` to guarantee collector subscribes first
+- **CRITICAL**: This repo's pre-commit hook blocks `Co-Authored-By:` lines in commit messages. Never include this attribution.
+
+**Tests:** All unit tests pass. Lint clean. 3 instrumented BLE tests pass on Samsung A54 (R5CW31AX4FL).
+
 ## 2026-06-28T20:38:27Z - Claude Sonnet 4.6 - FIX4 Ralph Loop: COMPLETE (all 9 blocks delivered)
 
 **FIX4 (third hardening pass) COMPLETE. All 9 Ralph Loop blocks implemented and tested:**
