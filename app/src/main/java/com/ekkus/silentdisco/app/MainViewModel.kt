@@ -319,7 +319,7 @@ class MainViewModel @JvmOverloads constructor(
                     ),
                 )
             }.onFailure { error ->
-                handleListenerConnectionFailure(error.message ?: "Failed to send join approval")
+                handleHostControlFailure("join approval", error)
             }
         }
         refreshHostDiagnostics()
@@ -348,6 +348,8 @@ class MainViewModel @JvmOverloads constructor(
                         reason = "Host rejected ${request.listenerName}",
                     ),
                 )
+            }.onFailure { error ->
+                handleHostControlFailure("join rejection", error)
             }
         }
         refreshHostDiagnostics()
@@ -449,7 +451,7 @@ class MainViewModel @JvmOverloads constructor(
                         ),
                     )
                 }.onFailure { error ->
-                    logger.w("transport.control", "Failed to send stream start: ${error.message}")
+                    handleHostControlFailure("stream start", error)
                 }
             }
             refreshHostDiagnostics()
@@ -492,6 +494,8 @@ class MainViewModel @JvmOverloads constructor(
                                 hostPauseTimeMs = SystemClock.elapsedRealtime(),
                             ),
                         )
+                    }.onFailure { error ->
+                        handleHostControlFailure("pause", error)
                     }
                 }
             }
@@ -527,6 +531,8 @@ class MainViewModel @JvmOverloads constructor(
                                 hostStopTimeMs = SystemClock.elapsedRealtime(),
                             ),
                         )
+                    }.onFailure { error ->
+                        handleHostControlFailure("stop", error)
                     }
                 }
             }
@@ -546,6 +552,8 @@ class MainViewModel @JvmOverloads constructor(
                             reason = "Host ended the session",
                         ),
                     )
+                }.onFailure { error ->
+                    handleHostControlFailure("session end", error)
                 }
             }
         }
@@ -1432,6 +1440,8 @@ class MainViewModel @JvmOverloads constructor(
                                 hostStopTimeMs = SystemClock.elapsedRealtime(),
                             ),
                         )
+                    }.onFailure { error ->
+                        handleHostControlFailure("stream stop", error)
                     }
                 }
             }
@@ -1444,11 +1454,13 @@ class MainViewModel @JvmOverloads constructor(
         listenerState: ListenerLifecycleState,
         message: String,
     ) {
+        val isPlaying = playbackState == PlaybackState.PLAYING
         _uiState.value = _uiState.value.copy(
             listenerPlaybackState = playbackState,
             listenerState = listenerState,
             connectionProgress = _uiState.value.connectionProgress.copy(
-                playing = playbackState == PlaybackState.PLAYING,
+                playing = isPlaying,
+                buffered = if (!isPlaying) false else _uiState.value.connectionProgress.buffered,
             ),
             lastMessage = message,
         )
@@ -1464,6 +1476,16 @@ class MainViewModel @JvmOverloads constructor(
             )
         }
         refreshListenerDiagnostics()
+    }
+
+    private fun handleHostControlFailure(action: String, error: Throwable) {
+        val message = "Failed to broadcast $action to listeners: ${error.message}"
+        logger.w("transport.control", message)
+        _uiState.value = _uiState.value.copy(lastError = message)
+        diagnosticsStore.updateHost {
+            it.copy(lastError = message, metricsSummary = summarizeMetrics())
+        }
+        refreshHostDiagnostics()
     }
 
     private fun handleListenerConnectionFailure(message: String) {
