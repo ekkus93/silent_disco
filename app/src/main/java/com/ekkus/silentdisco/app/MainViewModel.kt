@@ -1017,26 +1017,28 @@ class MainViewModel @JvmOverloads constructor(
     private fun handleTransportSnapshot(snapshot: com.ekkus.silentdisco.core.transport.TransportSnapshot) {
         if (snapshot.state != TransportConnectionState.FAILED || snapshot.lastError == null) return
         val errorMessage = snapshot.lastError.message
-        val hosting = _uiState.value.hostState in setOf(
-            HostLifecycleState.CREATING_SESSION,
-            HostLifecycleState.WAITING_FOR_LISTENERS,
-            HostLifecycleState.READY,
-            HostLifecycleState.STREAMING,
-        )
-        if (hosting) {
-            _uiState.value = _uiState.value.copy(
-                hostState = HostLifecycleState.ERROR,
-                hostPlaybackState = if (_uiState.value.hostPlaybackState == PlaybackState.PLAYING) {
-                    PlaybackState.ERROR
-                } else {
-                    _uiState.value.hostPlaybackState
-                },
-                lastError = errorMessage,
-            )
-            diagnosticsStore.updateHost {
-                it.copy(lastError = errorMessage, metricsSummary = summarizeMetrics())
+        val role = classifyTransportSnapshotRole(_uiState.value.hostState, _uiState.value.listenerState)
+        when (role) {
+            TransportSnapshotRole.HOST_FAILURE -> {
+                _uiState.value = _uiState.value.copy(
+                    hostState = HostLifecycleState.ERROR,
+                    hostPlaybackState = if (_uiState.value.hostPlaybackState == PlaybackState.PLAYING) {
+                        PlaybackState.ERROR
+                    } else {
+                        _uiState.value.hostPlaybackState
+                    },
+                    lastError = errorMessage,
+                )
+                diagnosticsStore.updateHost {
+                    it.copy(lastError = errorMessage, metricsSummary = summarizeMetrics())
+                }
+                refreshHostDiagnostics()
             }
-            refreshHostDiagnostics()
+            TransportSnapshotRole.LISTENER_FAILURE -> {
+                pendingJoinRequestMessage = null
+                handleListenerConnectionFailure(errorMessage)
+            }
+            TransportSnapshotRole.IGNORE -> Unit
         }
     }
 
@@ -1999,6 +2001,36 @@ class MainViewModel @JvmOverloads constructor(
         wifiDirectService.stop()
         super.onCleared()
     }
+}
+
+internal enum class TransportSnapshotRole { HOST_FAILURE, LISTENER_FAILURE, IGNORE }
+
+internal fun classifyTransportSnapshotRole(
+    hostState: HostLifecycleState,
+    listenerState: ListenerLifecycleState,
+): TransportSnapshotRole {
+    val hosting = hostState in setOf(
+        HostLifecycleState.CREATING_SESSION,
+        HostLifecycleState.WAITING_FOR_LISTENERS,
+        HostLifecycleState.READY,
+        HostLifecycleState.STREAMING,
+    )
+    if (hosting) return TransportSnapshotRole.HOST_FAILURE
+    val listenerActiveOrJoining = listenerState in setOf(
+        ListenerLifecycleState.SCANNING,
+        ListenerLifecycleState.SESSION_SELECTED,
+        ListenerLifecycleState.JOIN_REQUESTED,
+        ListenerLifecycleState.CONNECTING,
+        ListenerLifecycleState.AWAITING_APPROVAL,
+        ListenerLifecycleState.APPROVED,
+        ListenerLifecycleState.SYNCING_CLOCK,
+        ListenerLifecycleState.BUFFERING,
+        ListenerLifecycleState.PLAYING,
+        ListenerLifecycleState.RECONNECTING,
+        ListenerLifecycleState.DESYNCED,
+    )
+    if (listenerActiveOrJoining) return TransportSnapshotRole.LISTENER_FAILURE
+    return TransportSnapshotRole.IGNORE
 }
 
 internal fun nextStateForSyncProbe(currentState: ListenerLifecycleState): ListenerLifecycleState =
