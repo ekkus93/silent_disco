@@ -41,6 +41,16 @@ data class TransportSnapshot(
     val hostAddressHint: String? = null,
 )
 
+data class TransportOperationResult(
+    val started: Boolean,
+    val message: String? = null,
+) {
+    companion object {
+        val Started = TransportOperationResult(started = true)
+        fun failed(message: String) = TransportOperationResult(started = false, message = message)
+    }
+}
+
 interface SessionTransport {
     val snapshot: StateFlow<TransportSnapshot>
     val controlMessages: SharedFlow<ControlMessage>
@@ -48,7 +58,7 @@ interface SessionTransport {
     val syncResponses: SharedFlow<SyncResponsePacket>
     val audioPackets: SharedFlow<AudioPacket>
 
-    fun startHost(session: SessionInfo)
+    fun startHost(session: SessionInfo): TransportOperationResult
     fun discoverPeers()
     fun connectToSession(session: SessionInfo)
     suspend fun sendControlToHost(message: ControlMessage)

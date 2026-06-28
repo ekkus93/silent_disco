@@ -188,7 +188,7 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    private fun stopAdvertising() {
+    fun stopAdvertising() {
         val callback = advertiseCallback ?: return
         if (hasAdvertisePermission()) {
             runCatching { advertiser?.stopAdvertising(callback) }

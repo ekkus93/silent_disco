@@ -234,34 +234,50 @@ class MainViewModel @JvmOverloads constructor(
             return false
         }
 
-        return runCatching {
+        val transportResult = runCatching {
             wifiDirectService.startHost(session)
-        }.onSuccess {
-            logger.i("transport.host", "Started host session ${session.id}")
-            diagnosticsStore.updateHost {
-                it.copy(
-                    sessionId = session.id,
-                    streamState = PlaybackState.STOPPED,
-                    lastContactElapsedMs = SystemClock.elapsedRealtime(),
-                    lastError = null,
-                )
-            }
-            _uiState.value = _uiState.value.copy(
-                hostState = HostLifecycleState.WAITING_FOR_LISTENERS,
-                discoveredSessions = listOf(session),
-                lastMessage = "Hosting ${session.name}",
-                lastError = null,
-            )
-            refreshHostDiagnostics()
-        }.onFailure { error ->
-            logger.e("transport.host", "Failed to create host session", error)
-            wifiDirectService.fail("Failed to start host session", retryable = true)
+        }.getOrElse { error ->
+            val message = error.message ?: "Failed to start host session"
+            logger.e("transport.host", message, error)
+            bleService.stopAdvertising()
+            wifiDirectService.fail(message, retryable = true)
             _uiState.value = _uiState.value.copy(
                 hostState = HostLifecycleState.ERROR,
-                lastError = error.message ?: "Failed to create host session",
+                lastError = message,
             )
             refreshHostDiagnostics(streamState = PlaybackState.ERROR, sessionId = session.id)
-        }.isSuccess
+            return false
+        }
+
+        if (!transportResult.started) {
+            val message = transportResult.message ?: "Wi-Fi Direct host could not start"
+            logger.w("transport.host", message)
+            bleService.stopAdvertising()
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                lastError = message,
+            )
+            refreshHostDiagnostics(streamState = PlaybackState.ERROR, sessionId = session.id)
+            return false
+        }
+
+        logger.i("transport.host", "Started host session ${session.id}")
+        diagnosticsStore.updateHost {
+            it.copy(
+                sessionId = session.id,
+                streamState = PlaybackState.STOPPED,
+                lastContactElapsedMs = SystemClock.elapsedRealtime(),
+                lastError = null,
+            )
+        }
+        _uiState.value = _uiState.value.copy(
+            hostState = HostLifecycleState.WAITING_FOR_LISTENERS,
+            discoveredSessions = listOf(session),
+            lastMessage = "Hosting ${session.name}",
+            lastError = null,
+        )
+        refreshHostDiagnostics()
+        return true
     }
 
     fun addDemoJoinRequest() {

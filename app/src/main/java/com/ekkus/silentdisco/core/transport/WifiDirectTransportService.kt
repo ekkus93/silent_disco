@@ -89,15 +89,16 @@ class WifiDirectTransportService(
         }
     }
 
-    override fun startHost(session: SessionInfo) {
+    override fun startHost(session: SessionInfo): TransportOperationResult {
         activeSession = session
         pendingConnectSession = null
         hosting = true
         stopClientChannels()
         ensureReceiver()
         if (manager == null || channel == null) {
-            fail("Wi-Fi Direct manager unavailable on this device", retryable = false)
-            return
+            val message = "Wi-Fi Direct manager unavailable on this device"
+            fail(message, retryable = false)
+            return TransportOperationResult.failed(message)
         }
         startHostSockets()
         recreateGroup()
@@ -107,6 +108,7 @@ class WifiDirectTransportService(
             lastError = null,
             hostAddressHint = null,
         )
+        return TransportOperationResult.Started
     }
 
     @SuppressLint("MissingPermission")
