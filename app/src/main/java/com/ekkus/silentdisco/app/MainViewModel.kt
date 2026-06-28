@@ -960,6 +960,7 @@ class MainViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             wifiDirectService.snapshot.collect { snapshot ->
                 refreshDiscoveredSessions()
+                handleTransportSnapshot(snapshot)
                 if (pendingJoinRequestMessage != null && snapshot.state == TransportConnectionState.CONNECTED) {
                     sendPendingJoinRequest()
                 }
@@ -977,6 +978,32 @@ class MainViewModel @JvmOverloads constructor(
                     }
                 }
             }
+        }
+    }
+
+    private fun handleTransportSnapshot(snapshot: com.ekkus.silentdisco.core.transport.TransportSnapshot) {
+        if (snapshot.state != TransportConnectionState.FAILED || snapshot.lastError == null) return
+        val errorMessage = snapshot.lastError.message
+        val hosting = _uiState.value.hostState in setOf(
+            HostLifecycleState.CREATING_SESSION,
+            HostLifecycleState.WAITING_FOR_LISTENERS,
+            HostLifecycleState.READY,
+            HostLifecycleState.STREAMING,
+        )
+        if (hosting) {
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                hostPlaybackState = if (_uiState.value.hostPlaybackState == PlaybackState.PLAYING) {
+                    PlaybackState.ERROR
+                } else {
+                    _uiState.value.hostPlaybackState
+                },
+                lastError = errorMessage,
+            )
+            diagnosticsStore.updateHost {
+                it.copy(lastError = errorMessage, metricsSummary = summarizeMetrics())
+            }
+            refreshHostDiagnostics()
         }
     }
 

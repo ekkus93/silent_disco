@@ -100,15 +100,26 @@ class WifiDirectTransportService(
             fail(message, retryable = false)
             return TransportOperationResult.failed(message)
         }
-        startHostSockets()
-        recreateGroup()
-        updateSnapshot(
-            state = TransportConnectionState.ADVERTISING,
-            peers = emptyList(),
-            lastError = null,
-            hostAddressHint = null,
-        )
-        return TransportOperationResult.Started
+        if (!hasWifiDirectPermission()) {
+            val message = "Missing nearby Wi-Fi permission"
+            fail(message, retryable = true)
+            return TransportOperationResult.failed(message)
+        }
+        return runCatching {
+            startHostSockets()
+            recreateGroup()
+            updateSnapshot(
+                state = TransportConnectionState.ADVERTISING,
+                peers = emptyList(),
+                lastError = null,
+                hostAddressHint = null,
+            )
+            TransportOperationResult.Started
+        }.getOrElse { error ->
+            val message = error.message ?: "Failed to start Wi-Fi Direct host"
+            fail(message, retryable = true)
+            TransportOperationResult.failed(message)
+        }
     }
 
     @SuppressLint("MissingPermission")
