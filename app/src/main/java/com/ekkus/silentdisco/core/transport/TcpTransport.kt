@@ -186,9 +186,19 @@ internal class TcpServerChannel<T>(
         }
     }
 
-    suspend fun sendAll(message: T) {
+    suspend fun sendAll(message: T): SendAllResult {
         val snapshot = peers.values.toList()
-        snapshot.forEach { peer -> peer.send(message) }
+        var success = 0
+        var failure = 0
+        snapshot.forEach { peer ->
+            runCatching { peer.send(message) }
+                .onSuccess { success += 1 }
+                .onFailure { error ->
+                    failure += 1
+                    logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                }
+        }
+        return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
     }
 
     fun connectionCount(): Int = peers.size

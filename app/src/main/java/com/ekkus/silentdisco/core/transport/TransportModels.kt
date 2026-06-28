@@ -51,6 +51,15 @@ data class TransportOperationResult(
     }
 }
 
+data class SendAllResult(
+    val peerCount: Int,
+    val successCount: Int,
+    val failureCount: Int,
+) {
+    val deliveredToAnyPeer: Boolean get() = successCount > 0
+    val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+}
+
 interface SessionTransport {
     val snapshot: StateFlow<TransportSnapshot>
     val controlMessages: SharedFlow<ControlMessage>
@@ -62,10 +71,10 @@ interface SessionTransport {
     fun discoverPeers()
     fun connectToSession(session: SessionInfo)
     suspend fun sendControlToHost(message: ControlMessage)
-    suspend fun broadcastControl(message: ControlMessage)
+    suspend fun broadcastControl(message: ControlMessage): SendAllResult
     suspend fun sendSyncRequestToHost(packet: SyncRequestPacket)
-    suspend fun broadcastSyncResponse(packet: SyncResponsePacket)
-    suspend fun broadcastAudio(packet: AudioPacket)
+    suspend fun broadcastSyncResponse(packet: SyncResponsePacket): SendAllResult
+    suspend fun broadcastAudio(packet: AudioPacket): SendAllResult
     fun recordHeartbeat()
     fun fail(message: String, retryable: Boolean)
     fun retry()

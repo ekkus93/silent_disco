@@ -188,10 +188,11 @@ class WifiDirectTransportService(
         updateByteCounts()
     }
 
-    override suspend fun broadcastControl(message: ControlMessage) {
-        controlServer?.sendAll(message) ?: error("Control server is not active")
+    override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+        val result = controlServer?.sendAll(message) ?: error("Control server is not active")
         recordHeartbeat()
         updateByteCounts()
+        return result
     }
 
     override suspend fun sendSyncRequestToHost(packet: SyncRequestPacket) {
@@ -200,16 +201,18 @@ class WifiDirectTransportService(
         updateByteCounts()
     }
 
-    override suspend fun broadcastSyncResponse(packet: SyncResponsePacket) {
-        syncResponseServer?.sendAll(packet) ?: error("Sync response server is not active")
+    override suspend fun broadcastSyncResponse(packet: SyncResponsePacket): SendAllResult {
+        val result = syncResponseServer?.sendAll(packet) ?: error("Sync response server is not active")
         recordHeartbeat()
         updateByteCounts()
+        return result
     }
 
-    override suspend fun broadcastAudio(packet: AudioPacket) {
-        audioServer?.sendAll(packet) ?: error("Audio server is not active")
+    override suspend fun broadcastAudio(packet: AudioPacket): SendAllResult {
+        val result = audioServer?.sendAll(packet) ?: error("Audio server is not active")
         recordHeartbeat()
         updateByteCounts()
+        return result
     }
 
     override fun recordHeartbeat() {
