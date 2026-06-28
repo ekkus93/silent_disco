@@ -153,12 +153,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun createHostSession(): Boolean {
-        val form = _uiState.value.hostForm
+    private fun validateHostForm(state: AppUiState): String? {
+        val form = state.hostForm
+
         if (form.sessionName.isBlank()) {
-            _uiState.value = _uiState.value.copy(lastError = "Session name is required")
+            return "Enter a session name before hosting."
+        }
+
+        if (form.selectedAudio == null) {
+            return "Choose an audio file before hosting."
+        }
+
+        if (
+            form.approvalMode == ApprovalMode.INVITE_CODE &&
+            form.inviteCode.isBlank()
+        ) {
+            return "Enter an invite code or choose a different approval mode."
+        }
+
+        return null
+    }
+
+    fun createHostSession(): Boolean {
+        val validationError = validateHostForm(_uiState.value)
+        if (validationError != null) {
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                lastError = validationError,
+            )
             return false
         }
+
         if (!hasHostTransportPermissions()) {
             val message = "Missing nearby connectivity permissions for advertising"
             wifiDirectService.fail(message, retryable = true)
@@ -169,6 +194,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshHostDiagnostics(streamState = PlaybackState.ERROR)
             return false
         }
+
+        _uiState.value = _uiState.value.copy(
+            hostState = HostLifecycleState.CREATING_SESSION,
+            lastError = null,
+            lastMessage = "Starting host session…",
+        )
+        val form = _uiState.value.hostForm
         currentSessionId = SessionId(UUID.randomUUID().toString())
         currentStreamId = StreamId("stream-${SystemClock.elapsedRealtime()}")
         val session = SessionInfo(
@@ -178,19 +210,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             approvalMode = form.approvalMode,
             inviteCodeRequired = form.approvalMode == ApprovalMode.INVITE_CODE,
         )
-        return runCatching {
-            bleService.startAdvertising(
-                BleAdvertisement(
-                    sessionId = session.id,
-                    sessionName = session.name,
-                    hostName = session.hostDeviceName,
-                    approvalRequired = true,
-                    inviteCodeRequired = session.inviteCodeRequired,
-                ),
+
+        val bleAdvertiseResult = bleService.startAdvertising(
+            BleAdvertisement(
+                sessionId = session.id,
+                sessionName = session.name,
+                hostName = session.hostDeviceName,
+                approvalRequired = true,
+                inviteCodeRequired = session.inviteCodeRequired,
+            ),
+        )
+        if (!bleAdvertiseResult.started) {
+            val message = bleAdvertiseResult.message ?: "BLE advertising could not start"
+            logger.w("transport.host", message)
+            _uiState.value = _uiState.value.copy(
+                hostState = HostLifecycleState.ERROR,
+                lastError = message,
             )
+            return false
+        }
+
+        return runCatching {
             wifiDirectService.startHost(session)
         }.onSuccess {
-            logger.i("transport.host", "Started BLE discovery bridge for ${session.id}")
+            logger.i("transport.host", "Started host session ${session.id}")
             diagnosticsStore.updateHost {
                 it.copy(
                     sessionId = session.id,

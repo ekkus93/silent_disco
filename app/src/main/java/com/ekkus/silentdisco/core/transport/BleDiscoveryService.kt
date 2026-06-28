@@ -60,16 +60,18 @@ class BleDiscoveryService(
     private var scanCallback: ScanCallback? = null
 
     @SuppressLint("MissingPermission")
-    fun startAdvertising(advertisement: BleAdvertisement) {
+    fun startAdvertising(advertisement: BleAdvertisement): BleOperationResult {
         _advertisement.value = advertisement
         stopAdvertising()
         if (!hasAdvertisePermission()) {
-            logger.w("ble.advertise", "Missing Bluetooth advertise permission")
-            return
+            val message = "Missing Bluetooth advertise permission"
+            logger.w("ble.advertise", message)
+            return BleOperationResult.failed(message)
         }
         val advertiser = advertiser ?: run {
-            logger.w("ble.advertise", "BLE advertiser unavailable on this device")
-            return
+            val message = "BLE advertiser unavailable on this device"
+            logger.w("ble.advertise", message)
+            return BleOperationResult.failed(message)
         }
         val serviceData = BleAdvertisementCodec.encode(advertisement)
         val callback = object : AdvertiseCallback() {
@@ -82,7 +84,7 @@ class BleDiscoveryService(
             }
         }
         advertiseCallback = callback
-        runCatching {
+        return runCatching {
             advertiser.startAdvertising(
                 AdvertiseSettings.Builder()
                     .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -98,9 +100,14 @@ class BleDiscoveryService(
                     .build(),
                 callback,
             )
-        }.onFailure { error ->
-            logger.w("ble.advertise", "BLE advertise start failed: ${error.message}")
-        }
+        }.fold(
+            onSuccess = { BleOperationResult.Started },
+            onFailure = { error ->
+                val message = error.message ?: "BLE advertise start failed"
+                logger.w("ble.advertise", message)
+                BleOperationResult.failed(message)
+            },
+        )
     }
 
     @SuppressLint("MissingPermission")
