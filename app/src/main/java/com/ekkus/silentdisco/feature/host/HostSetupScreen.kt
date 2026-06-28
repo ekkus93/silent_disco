@@ -95,10 +95,18 @@ fun HostSetupScreen(
                         label = { Text("Optional invite code") },
                     )
                     if (uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE) {
-                        Text(
-                            text = "Listeners will enter code: ${uiState.hostForm.inviteCode.ifBlank { "Auto-generated when hosting" }}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        if (uiState.hostForm.inviteCode.isBlank()) {
+                            Text(
+                                text = "An invite code is required before hosting can start.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        } else {
+                            Text(
+                                text = "Listeners will enter code: ${uiState.hostForm.inviteCode}",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -130,9 +138,12 @@ fun HostSetupScreen(
             val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION
             val nameBlank = uiState.hostForm.sessionName.isBlank()
             val noAudio = uiState.hostForm.selectedAudio == null
+            val inviteCodeMissing = uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE &&
+                uiState.hostForm.inviteCode.isBlank()
             val missingItems = buildList {
                 if (nameBlank) add("a session name")
                 if (noAudio) add("an audio file")
+                if (inviteCodeMissing) add("an invite code")
             }
             if (missingItems.isNotEmpty()) {
                 Text(
@@ -144,7 +155,7 @@ fun HostSetupScreen(
             Button(
                 onClick = onStartHosting,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isStarting && !nameBlank && !noAudio,
+                enabled = !isStarting && !nameBlank && !noAudio && !inviteCodeMissing,
             ) {
                 Text(if (isStarting) "Starting…" else "Start Hosting")
             }

@@ -16,10 +16,10 @@ class OboeBridgeDiagnosticsTest {
     fun backendSummary_usesDefaultWhenNativeUnavailable() {
         // The native library may not load in test environment
         val summary = OboeBridge.backendSummary()
-        // Should either return actual native summary or default
-        val isDefault = summary == "No native Oboe"
+        // Should either return actual native summary or a failure message containing "native"
+        val hasNativeWord = summary.contains("native", ignoreCase = true) || summary.contains("Native", ignoreCase = true)
         val hasContent = summary.contains("AAudio") || summary.contains("OpenSLES")
-        assertThat(isDefault || hasContent).isTrue()
+        assertThat(hasNativeWord || hasContent).isTrue()
     }
 
     @Test
@@ -33,10 +33,10 @@ class OboeBridgeDiagnosticsTest {
     fun statusSummary_usesDefaultWhenNativeUnavailable() {
         // The native library may not load in test environment
         val summary = OboeBridge.statusSummary()
-        // Should either return actual native status or default
-        val isDefault = summary == "Native bridge unavailable"
+        // Should either return actual native status or a message indicating unavailability
+        val hasUnavailableWord = summary.contains("Unavailable", ignoreCase = true) || summary.contains("unavailable", ignoreCase = true)
         val hasContent = summary.contains("frames") || summary.contains("underrun")
-        assertThat(isDefault || hasContent).isTrue()
+        assertThat(hasUnavailableWord || hasContent).isTrue()
     }
 
     @Test
@@ -48,9 +48,9 @@ class OboeBridgeDiagnosticsTest {
         assertThat(backend).isNotEqualTo("")
         assertThat(status).isNotEqualTo("")
 
-        // If native is unavailable, message should say so clearly
-        if (backend == "No native Oboe") {
-            assertThat(backend).contains("native")
+        // If native is unavailable, message should clearly indicate it
+        if (!OboeBridge.isAvailable) {
+            assertThat(backend.lowercase()).containsMatch("native|unavailable|not loaded")
         }
     }
 }

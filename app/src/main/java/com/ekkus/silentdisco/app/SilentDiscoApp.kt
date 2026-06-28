@@ -22,6 +22,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.ekkus.silentdisco.core.model.AppRole
+import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.feature.diagnostics.DiagnosticsScreen
 import com.ekkus.silentdisco.feature.home.HomeScreen
 import com.ekkus.silentdisco.feature.host.HostControlScreen
@@ -204,24 +205,5 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
     }
 }
 
-private fun requiredPermissions(): Array<String> = buildList {
-    val bluetoothScan = "android.permission.BLUETOOTH_SCAN"
-    val bluetoothConnect = "android.permission.BLUETOOTH_CONNECT"
-    val bluetoothAdvertise = "android.permission.BLUETOOTH_ADVERTISE"
-    val nearbyWifiDevices = "android.permission.NEARBY_WIFI_DEVICES"
-    add(Manifest.permission.ACCESS_FINE_LOCATION)
-    add(Manifest.permission.ACCESS_COARSE_LOCATION)
-    add(Manifest.permission.ACCESS_WIFI_STATE)
-    add(Manifest.permission.CHANGE_WIFI_STATE)
-    add(bluetoothScan)
-    add(bluetoothConnect)
-    add(bluetoothAdvertise)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        add(Manifest.permission.READ_MEDIA_AUDIO)
-    } else {
-        add(Manifest.permission.READ_EXTERNAL_STORAGE)
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        add(nearbyWifiDevices)
-    }
-}.toTypedArray()
+private fun requiredPermissions(): Array<String> =
+    PermissionCatalogue.requiredPermissions().map { it.androidPermission }.toTypedArray()

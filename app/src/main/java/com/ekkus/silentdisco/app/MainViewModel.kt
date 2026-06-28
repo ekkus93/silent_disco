@@ -127,16 +127,11 @@ class MainViewModel @JvmOverloads constructor(
         inviteCode: String = _uiState.value.hostForm.inviteCode,
         rememberApprovedDevices: Boolean = _uiState.value.hostForm.rememberApprovedDevices,
     ) {
-        val resolvedInviteCode = if (approvalMode == ApprovalMode.INVITE_CODE && inviteCode.isBlank()) {
-            generateInviteCode()
-        } else {
-            inviteCode
-        }
         _uiState.value = _uiState.value.copy(
             hostForm = _uiState.value.hostForm.copy(
                 sessionName = sessionName,
                 approvalMode = approvalMode,
-                inviteCode = resolvedInviteCode,
+                inviteCode = inviteCode,
                 rememberApprovedDevices = rememberApprovedDevices,
             ),
         )
@@ -381,13 +376,23 @@ class MainViewModel @JvmOverloads constructor(
             _uiState.value = _uiState.value.copy(lastError = "Choose an audio file before starting playback")
             return
         }
-        val sessionId = currentSessionId ?: SessionId(_uiState.value.hostDiagnostics.sessionId.ifBlank { UUID.randomUUID().toString() })
+        val sessionId = currentSessionId ?: run {
+            _uiState.value = _uiState.value.copy(lastError = "No active host session — create a session before starting playback")
+            return
+        }
         val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}")
         runCatching {
             latestDecodedAudio ?: decoder.decode(selectedAudio)
         }.onSuccess { decoded ->
             latestDecodedAudio = decoded
-            val combinedBytes = decoded.chunks.fold(ByteArray(0)) { acc, chunk -> acc + chunk.pcm16Le }
+            val totalBytes = decoded.chunks.sumOf { it.pcm16Le.size }
+            val combinedBytes = ByteArray(totalBytes).also { buf ->
+                var offset = 0
+                decoded.chunks.forEach { chunk ->
+                    chunk.pcm16Le.copyInto(buf, offset)
+                    offset += chunk.pcm16Le.size
+                }
+            }
             val packetizer = PcmPacketizer(
                 sessionId = sessionId,
                 streamId = streamId,
@@ -820,8 +825,17 @@ class MainViewModel @JvmOverloads constructor(
             return
         }
 
-        applySyncResponse(hostTimingService.createResponse(request))
-        _uiState.value = _uiState.value.copy(lastMessage = "Manual resync applied locally", lastError = null)
+        val selectedSession = state.selectedSession
+        val isDemoSession = BuildConfig.DEBUG && selectedSession?.id?.startsWith("demo-session-") == true
+        if (isDemoSession) {
+            applySyncResponse(hostTimingService.createResponse(request))
+            _uiState.value = _uiState.value.copy(lastMessage = "Manual resync applied locally (demo)", lastError = null)
+        } else {
+            val message = "Cannot resync: transport is not connected to host"
+            _uiState.value = _uiState.value.copy(lastError = message)
+            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            refreshListenerDiagnostics()
+        }
     }
 
     private fun simulateApprovalAndPlayback(sessionId: String, reject: Boolean) {
@@ -1755,14 +1769,12 @@ class MainViewModel @JvmOverloads constructor(
         _uiState.value.permissions.any { it.permission == permission && it.granted }
 
     private fun hasHostTransportPermissions(): Boolean =
-        hasPermission(AppPermission.NearbyWifiDevices) &&
-            hasPermission(AppPermission.ChangeWifiState) &&
-            hasPermission(AppPermission.BluetoothAdvertise)
+        PermissionCatalogue.wifiDirectPermissions().all { hasPermission(it) } &&
+            PermissionCatalogue.bluetoothPermissions().all { hasPermission(it) }
 
     private fun hasListenerTransportPermissions(): Boolean =
-        hasPermission(AppPermission.NearbyWifiDevices) &&
-            hasPermission(AppPermission.BluetoothScan) &&
-            hasPermission(AppPermission.BluetoothConnect)
+        PermissionCatalogue.wifiDirectPermissions().all { hasPermission(it) } &&
+            PermissionCatalogue.bluetoothPermissions().all { hasPermission(it) }
 
     private fun demoSessions(): List<SessionInfo> = listOf(
         SessionInfo(

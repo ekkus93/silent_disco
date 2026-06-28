@@ -62,8 +62,9 @@ fun DiagnosticsScreen(
         appendLine("Listener metrics: ${uiState.listenerDiagnostics.metricsSummary}")
         appendLine("Tuning: ${uiState.tuningSettings.summary()}")
         appendLine("Last error: ${uiState.lastError ?: "none"}")
-        appendLine("Audio backend: ${OboeBridge.backendSummary()}")
-        appendLine("Audio status: ${OboeBridge.statusSummary()}")
+        appendLine("Playback output: Android AudioTrack")
+        appendLine("Native bridge: ${OboeBridge.backendSummary()}")
+        appendLine("Native bridge status: ${OboeBridge.statusSummary()}")
     }
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -109,7 +110,7 @@ fun DiagnosticsScreen(
                 Text("Invalid packets: ${uiState.listenerDiagnostics.invalidPacketCount}")
                 Text("Concealed packets: ${uiState.listenerDiagnostics.concealedPacketCount}")
                 Text("Resync count: ${uiState.listenerDiagnostics.resyncCount}")
-                Text("Playback state: ${uiState.listenerDiagnostics.playbackState}")
+                Text("Playback state: ${uiState.listenerDiagnostics.playbackState.label()}")
                 Text("Playback position: ${uiState.listenerDiagnostics.playbackPositionMs} ms")
                 Text("Reached EOF: ${uiState.listenerDiagnostics.endOfStreamReached}")
                 Text("Metrics: ${uiState.listenerDiagnostics.metricsSummary}")
@@ -117,8 +118,14 @@ fun DiagnosticsScreen(
         }
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Audio engine", style = MaterialTheme.typography.titleMedium)
-                Text("Backend: ${OboeBridge.backendSummary()}")
+                Text("Playback output", style = MaterialTheme.typography.titleMedium)
+                Text("Output: Android AudioTrack")
+            }
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Native bridge", style = MaterialTheme.typography.titleMedium)
+                Text("Availability: ${OboeBridge.backendSummary()}")
                 Text("Status: ${OboeBridge.statusSummary()}")
             }
         }
