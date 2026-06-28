@@ -1401,7 +1401,8 @@ class MainViewModel @JvmOverloads constructor(
         hostStreamJob?.cancel()
         hostStreamJob = viewModelScope.launch {
             var previousSendElapsedMs: Long? = null
-            var consecutiveAudioFailures = 0
+            var consecutiveAudioSendFailures = 0
+            var zeroPeerBroadcastCount = 0
             val packetDurationMs = latestPackets.firstOrNull()?.let { it.samplesPerPacket * 1_000L / it.sampleRate } ?: 20L
             latestPackets.forEachIndexed { index, packet ->
                 val now = SystemClock.elapsedRealtime()
@@ -1439,37 +1440,58 @@ class MainViewModel @JvmOverloads constructor(
                 runCatching {
                     wifiDirectService.broadcastAudio(packet)
                 }.onSuccess { result ->
-                    if (result.failureCount > 0) {
-                        consecutiveAudioFailures += 1
-                        logger.w("transport.audio", "Partial send failure: ${result.failureCount}/${result.peerCount} peers failed for seq=${packet.sequenceNumber}")
-                    } else {
-                        consecutiveAudioFailures = 0
-                    }
-                    if (consecutiveAudioFailures >= 10) {
-                        val message = "Audio broadcast failed $consecutiveAudioFailures consecutive times — stopping stream"
-                        logger.e("transport.audio", message)
-                        _uiState.value = _uiState.value.copy(
-                            hostState = HostLifecycleState.ERROR,
-                            hostPlaybackState = PlaybackState.ERROR,
-                            lastError = message,
-                        )
-                        refreshHostDiagnostics(streamState = PlaybackState.ERROR)
-                        return@launch
+                    when {
+                        result.peerCount == 0 -> {
+                            zeroPeerBroadcastCount += 1
+                            consecutiveAudioSendFailures = 0
+                            val message = "No connected listeners for audio broadcast"
+                            diagnosticsStore.updateHost {
+                                it.copy(lastError = message, metricsSummary = summarizeMetrics())
+                            }
+                            refreshHostDiagnostics()
+                        }
+                        result.failureCount > 0 -> {
+                            consecutiveAudioSendFailures += 1
+                            val message = "Audio packet delivered to ${result.successCount}/${result.peerCount} listeners; ${result.failureCount} failed"
+                            logger.w("transport.audio", message)
+                            _uiState.value = _uiState.value.copy(lastError = message)
+                            diagnosticsStore.updateHost {
+                                it.copy(lastError = message, metricsSummary = summarizeMetrics())
+                            }
+                            refreshHostDiagnostics()
+                        }
+                        else -> {
+                            consecutiveAudioSendFailures = 0
+                            diagnosticsStore.updateHost { it.copy(lastError = null) }
+                        }
                     }
                 }.onFailure { error ->
-                    consecutiveAudioFailures += 1
-                    logger.w("transport.audio", "Failed to send packet ${packet.sequenceNumber}: ${error.message}")
-                    if (consecutiveAudioFailures >= 10) {
-                        val message = "Audio broadcast failed $consecutiveAudioFailures consecutive times — stopping stream"
-                        logger.e("transport.audio", message)
-                        _uiState.value = _uiState.value.copy(
-                            hostState = HostLifecycleState.ERROR,
-                            hostPlaybackState = PlaybackState.ERROR,
-                            lastError = message,
-                        )
-                        refreshHostDiagnostics(streamState = PlaybackState.ERROR)
-                        return@launch
+                    consecutiveAudioSendFailures += 1
+                    val message = error.message ?: "Failed to send audio packet"
+                    logger.w("transport.audio", "Failed to send packet ${packet.sequenceNumber}: $message")
+                    _uiState.value = _uiState.value.copy(lastError = message)
+                    diagnosticsStore.updateHost {
+                        it.copy(lastError = message, metricsSummary = summarizeMetrics())
                     }
+                    refreshHostDiagnostics()
+                }
+                if (consecutiveAudioSendFailures >= 10) {
+                    val message = "Audio transport failed repeatedly; stream stopped"
+                    hostStreamJob?.cancel()
+                    _uiState.value = _uiState.value.copy(
+                        hostState = HostLifecycleState.ERROR,
+                        hostPlaybackState = PlaybackState.ERROR,
+                        lastError = message,
+                    )
+                    diagnosticsStore.updateHost {
+                        it.copy(
+                            streamState = PlaybackState.ERROR,
+                            lastError = message,
+                            metricsSummary = summarizeMetrics(),
+                        )
+                    }
+                    refreshHostDiagnostics(streamState = PlaybackState.ERROR)
+                    return@launch
                 }
                 refreshHostDiagnostics()
                 previousSendElapsedMs = now
