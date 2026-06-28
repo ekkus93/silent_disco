@@ -56,6 +56,9 @@ import com.ekkus.silentdisco.core.sync.ListenerSyncController
 import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
 import com.ekkus.silentdisco.core.transport.BleAdvertisement
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
+import com.ekkus.silentdisco.core.transport.BroadcastDeliverySeverity
+import com.ekkus.silentdisco.core.transport.SendAllResult
+import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import java.util.UUID
 import kotlinx.coroutines.Job
@@ -293,31 +296,41 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun approveJoinRequest(request: JoinRequest) {
-        if (_uiState.value.hostForm.rememberApprovedDevices) {
-            trustListener(request.listenerId)
+        val sessionId = currentSessionId ?: run {
+            _uiState.value = _uiState.value.copy(lastError = "No active host session")
+            return
         }
-        logger.i("approval.approve", "Approved ${request.listenerName}")
-        _uiState.value = _uiState.value.copy(
-            pendingJoinRequests = _uiState.value.pendingJoinRequests - request,
-            approvedListeners = (_uiState.value.approvedListeners + request.toListenerInfo()).distinctBy { it.deviceId },
-            lastMessage = "${request.listenerName} approved",
-            lastError = null,
-        )
+        logger.i("approval.approve", "Approving ${request.listenerName}")
         viewModelScope.launch {
-            runCatching {
+            val delivered = runCatching {
                 wifiDirectService.broadcastControl(
                     ControlMessage.JoinApproval(
                         version = 1,
-                        sessionId = SessionId(request.sessionId),
+                        sessionId = sessionId,
                         listenerId = request.listenerId,
                         trustedForFuture = _uiState.value.hostForm.rememberApprovedDevices,
                     ),
                 )
-            }.onFailure { error ->
-                handleHostControlFailure("join approval", error)
+            }.map { result ->
+                reportHostBroadcastDelivery("send join approval", result, requireAnyPeer = true)
+            }.getOrElse { error ->
+                handleHostControlFailure("send join approval", error)
+                false
             }
+
+            if (!delivered) return@launch
+
+            if (_uiState.value.hostForm.rememberApprovedDevices) {
+                trustListener(request.listenerId)
+            }
+            _uiState.value = _uiState.value.copy(
+                pendingJoinRequests = _uiState.value.pendingJoinRequests.filterNot { it.requestId == request.requestId },
+                approvedListeners = (_uiState.value.approvedListeners + request.toListenerInfo()).distinctBy { it.deviceId },
+                lastMessage = "${request.listenerName} approved",
+                lastError = null,
+            )
+            refreshHostDiagnostics()
         }
-        refreshHostDiagnostics()
     }
 
     fun rejectJoinRequest(request: JoinRequest) {
@@ -343,8 +356,10 @@ class MainViewModel @JvmOverloads constructor(
                         reason = "Host rejected ${request.listenerName}",
                     ),
                 )
+            }.onSuccess { result ->
+                reportHostBroadcastDelivery("send join rejection", result, requireAnyPeer = true)
             }.onFailure { error ->
-                handleHostControlFailure("join rejection", error)
+                handleHostControlFailure("send join rejection", error)
             }
         }
         refreshHostDiagnostics()
@@ -455,8 +470,10 @@ class MainViewModel @JvmOverloads constructor(
                             samplesPerPacket = latestPackets.first().samplesPerPacket,
                         ),
                     )
+                }.onSuccess { result ->
+                    reportHostBroadcastDelivery("broadcast stream start", result, requireAnyPeer = false)
                 }.onFailure { error ->
-                    handleHostControlFailure("stream start", error)
+                    handleHostControlFailure("broadcast stream start", error)
                 }
             }
             refreshHostDiagnostics()
@@ -498,8 +515,10 @@ class MainViewModel @JvmOverloads constructor(
                                 hostPauseTimeMs = SystemClock.elapsedRealtime(),
                             ),
                         )
+                    }.onSuccess { result ->
+                        reportHostBroadcastDelivery("broadcast pause", result, requireAnyPeer = false)
                     }.onFailure { error ->
-                        handleHostControlFailure("pause", error)
+                        handleHostControlFailure("broadcast pause", error)
                     }
                 }
             }
@@ -535,8 +554,10 @@ class MainViewModel @JvmOverloads constructor(
                                 hostStopTimeMs = SystemClock.elapsedRealtime(),
                             ),
                         )
+                    }.onSuccess { result ->
+                        reportHostBroadcastDelivery("broadcast stop", result, requireAnyPeer = false)
                     }.onFailure { error ->
-                        handleHostControlFailure("stop", error)
+                        handleHostControlFailure("broadcast stop", error)
                     }
                 }
             }
@@ -556,8 +577,10 @@ class MainViewModel @JvmOverloads constructor(
                             reason = "Host ended the session",
                         ),
                     )
+                }.onSuccess { result ->
+                    reportHostBroadcastDelivery("broadcast session end", result, requireAnyPeer = false)
                 }.onFailure { error ->
-                    handleHostControlFailure("session end", error)
+                    handleHostControlFailure("broadcast session end", error)
                 }
             }
         }
@@ -909,10 +932,14 @@ class MainViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             wifiDirectService.syncRequests.collect { request ->
                 if (request.sessionId != currentSessionId) return@collect
-                runCatching {
-                    wifiDirectService.broadcastSyncResponse(hostTimingService.createResponse(request))
-                }.onFailure { error ->
-                    logger.w("transport.sync", "Failed to answer sync probe: ${error.message}")
+                viewModelScope.launch {
+                    runCatching {
+                        wifiDirectService.broadcastSyncResponse(hostTimingService.createResponse(request))
+                    }.onSuccess { result ->
+                        reportHostBroadcastDelivery("broadcast sync response", result, requireAnyPeer = true)
+                    }.onFailure { error ->
+                        handleHostControlFailure("broadcast sync response", error)
+                    }
                 }
             }
         }
@@ -1000,8 +1027,10 @@ class MainViewModel @JvmOverloads constructor(
                             reason = rejectionReason,
                         ),
                     )
+                }.onSuccess { result ->
+                    reportHostBroadcastDelivery("send join rejection", result, requireAnyPeer = true)
                 }.onFailure { error ->
-                    logger.w("listener.join.reject", "Failed to send rejection: ${error.message}")
+                    handleHostControlFailure("send join rejection", error)
                 }
             }
             diagnosticsStore.updateHost {
@@ -1469,8 +1498,10 @@ class MainViewModel @JvmOverloads constructor(
                                 hostStopTimeMs = SystemClock.elapsedRealtime(),
                             ),
                         )
+                    }.onSuccess { result ->
+                        reportHostBroadcastDelivery("broadcast stream stop", result, requireAnyPeer = false)
                     }.onFailure { error ->
-                        handleHostControlFailure("stream stop", error)
+                        handleHostControlFailure("broadcast stream stop", error)
                     }
                 }
             }
@@ -1505,6 +1536,23 @@ class MainViewModel @JvmOverloads constructor(
             )
         }
         refreshListenerDiagnostics()
+    }
+
+    private fun reportHostBroadcastDelivery(
+        action: String,
+        result: SendAllResult,
+        requireAnyPeer: Boolean = true,
+    ): Boolean {
+        val report = classifyBroadcastDelivery(action, result)
+        if (report.severity == BroadcastDeliverySeverity.OK) return true
+        val message = report.message ?: "$action delivery issue"
+        logger.w("transport.control", message)
+        _uiState.value = _uiState.value.copy(lastError = message)
+        diagnosticsStore.updateHost {
+            it.copy(lastError = message, metricsSummary = summarizeMetrics())
+        }
+        refreshHostDiagnostics()
+        return report.severity == BroadcastDeliverySeverity.ZERO_PEERS && !requireAnyPeer
     }
 
     private fun handleHostControlFailure(action: String, error: Throwable) {

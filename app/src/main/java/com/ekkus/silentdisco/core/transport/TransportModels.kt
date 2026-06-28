@@ -60,6 +60,29 @@ data class SendAllResult(
     val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
 }
 
+enum class BroadcastDeliverySeverity {
+    OK,
+    ZERO_PEERS,
+    PARTIAL_FAILURE,
+}
+
+data class BroadcastDeliveryReport(
+    val severity: BroadcastDeliverySeverity,
+    val message: String?,
+)
+
+fun classifyBroadcastDelivery(action: String, result: SendAllResult): BroadcastDeliveryReport = when {
+    result.peerCount == 0 -> BroadcastDeliveryReport(
+        BroadcastDeliverySeverity.ZERO_PEERS,
+        "$action was not delivered: no connected listeners",
+    )
+    result.failureCount > 0 -> BroadcastDeliveryReport(
+        BroadcastDeliverySeverity.PARTIAL_FAILURE,
+        "$action delivered to ${result.successCount}/${result.peerCount} listeners; ${result.failureCount} failed",
+    )
+    else -> BroadcastDeliveryReport(BroadcastDeliverySeverity.OK, null)
+}
+
 interface SessionTransport {
     val snapshot: StateFlow<TransportSnapshot>
     val controlMessages: SharedFlow<ControlMessage>
