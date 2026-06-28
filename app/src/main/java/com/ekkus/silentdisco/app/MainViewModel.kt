@@ -405,7 +405,10 @@ class MainViewModel @JvmOverloads constructor(
                     lastError = null,
                 )
             }
-            val backend = playbackEngine.start(decoded.format)
+            val backend = runCatching { playbackEngine.start(decoded.format) }.getOrElse { error ->
+                handleHostPlaybackEngineFailure(error)
+                return@onSuccess
+            }
             logger.i(
                 "stream.start",
                 "stream=${streamId.value} packets=${latestPackets.size} budget=${packetBudget.summary()}",
@@ -1006,7 +1009,8 @@ class MainViewModel @JvmOverloads constructor(
             lastMessage = "Host stream starting",
             lastError = null,
         )
-        startTransportListenerPlayback(message.sessionId, message.streamId)
+        val playbackFormat = AudioFormatSpec(sampleRate = message.sampleRate, channelCount = message.channels)
+        startTransportListenerPlayback(message.sessionId, message.streamId, playbackFormat)
     }
 
     private fun handleRemotePause(message: ControlMessage.Pause) {
@@ -1133,6 +1137,11 @@ class MainViewModel @JvmOverloads constructor(
             expectedStreamId = expectedStreamId,
         )
         packets.forEach { packet -> listenerScheduler?.let { recordIncomingPacket(it, packet) } }
+        val playbackFormat = latestDecodedAudio?.format ?: AudioFormatSpec()
+        runCatching { playbackEngine.start(playbackFormat) }.onFailure { error ->
+            handleListenerPlaybackEngineFailure(error)
+            return
+        }
         playbackJob?.cancel()
         playbackJob = viewModelScope.launch {
             var lastUnderrunCount = 0
@@ -1161,7 +1170,10 @@ class MainViewModel @JvmOverloads constructor(
                     return@launch
                 }
                 val frame = listenerScheduler?.poll() ?: break
-                playbackEngine.write(frame)
+                runCatching { playbackEngine.write(frame) }.onFailure { error ->
+                    handleListenerPlaybackEngineFailure(error)
+                    return@launch
+                }
                 val telemetry = listenerScheduler?.snapshot() ?: break
                 if (frame.concealed) {
                     logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
@@ -1205,7 +1217,7 @@ class MainViewModel @JvmOverloads constructor(
         startPeriodicResync()
     }
 
-    private fun startTransportListenerPlayback(sessionId: SessionId, streamId: StreamId) {
+    private fun startTransportListenerPlayback(sessionId: SessionId, streamId: StreamId, format: AudioFormatSpec = AudioFormatSpec()) {
         val mapper = HostTimeMapper(
             offsetMs = _uiState.value.listenerSyncState.offsetMs,
             skewPpm = _uiState.value.listenerSyncState.skewPpm,
@@ -1220,6 +1232,10 @@ class MainViewModel @JvmOverloads constructor(
             .filter { it.sessionId == sessionId && it.streamId == streamId }
             .forEach { packet -> listenerScheduler?.let { recordIncomingPacket(it, packet) } }
         pendingTransportPackets.clear()
+        runCatching { playbackEngine.start(format) }.onFailure { error ->
+            handleListenerPlaybackEngineFailure(error)
+            return
+        }
         playbackJob?.cancel()
         playbackJob = viewModelScope.launch {
             var started = false
@@ -1246,6 +1262,7 @@ class MainViewModel @JvmOverloads constructor(
                             connected = true,
                             approved = true,
                             synced = true,
+                            buffered = true,
                             playing = true,
                         ),
                     )
@@ -1255,7 +1272,10 @@ class MainViewModel @JvmOverloads constructor(
                     delay(10)
                     continue
                 }
-                playbackEngine.write(frame)
+                runCatching { playbackEngine.write(frame) }.onFailure { error ->
+                    handleListenerPlaybackEngineFailure(error)
+                    return@launch
+                }
                 val telemetry = scheduler.snapshot()
                 if (frame.concealed) {
                     logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
@@ -1314,12 +1334,17 @@ class MainViewModel @JvmOverloads constructor(
                         metricsSummary = summarizeMetrics(),
                     )
                 }
-                playbackEngine.write(
-                    PlaybackFrame(
-                        packet = packet,
-                        localDeadlineMs = packet.hostPresentationTimeMs,
-                    ),
-                )
+                runCatching {
+                    playbackEngine.write(
+                        PlaybackFrame(
+                            packet = packet,
+                            localDeadlineMs = packet.hostPresentationTimeMs,
+                        ),
+                    )
+                }.onFailure { error ->
+                    handleHostPlaybackEngineFailure(error)
+                    return@launch
+                }
                 runCatching {
                     wifiDirectService.broadcastAudio(packet)
                 }.onFailure { error ->
@@ -1401,6 +1426,48 @@ class MainViewModel @JvmOverloads constructor(
             )
         }
         refreshListenerDiagnostics()
+    }
+
+    private fun handleListenerPlaybackEngineFailure(error: Throwable) {
+        val message = error.message ?: "Playback engine failed"
+        logger.e("playback.listener", message, error)
+        playbackJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.ERROR,
+            listenerPlaybackState = PlaybackState.ERROR,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                buffered = false,
+                playing = false,
+            ),
+            lastError = message,
+        )
+        diagnosticsStore.updateListener {
+            it.copy(
+                playbackState = PlaybackState.ERROR,
+                lastError = message,
+                metricsSummary = summarizeMetrics(),
+            )
+        }
+        refreshListenerDiagnostics()
+    }
+
+    private fun handleHostPlaybackEngineFailure(error: Throwable) {
+        val message = error.message ?: "Host playback engine failed"
+        logger.e("playback.host", message, error)
+        hostStreamJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            hostState = HostLifecycleState.ERROR,
+            hostPlaybackState = PlaybackState.ERROR,
+            lastError = message,
+        )
+        diagnosticsStore.updateHost {
+            it.copy(
+                streamState = PlaybackState.ERROR,
+                lastError = message,
+                metricsSummary = summarizeMetrics(),
+            )
+        }
+        refreshHostDiagnostics(streamState = PlaybackState.ERROR)
     }
 
     private fun handleSyncFailure(message: String) {
