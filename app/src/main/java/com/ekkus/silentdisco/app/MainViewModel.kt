@@ -1805,6 +1805,10 @@ class MainViewModel @JvmOverloads constructor(
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.ERROR,
             listenerPlaybackState = PlaybackState.ERROR,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                buffered = false,
+                playing = false,
+            ),
             lastError = message,
         )
         diagnosticsStore.updateListener {
@@ -1819,10 +1823,21 @@ class MainViewModel @JvmOverloads constructor(
 
     private fun handleListenerDisconnect(message: String) {
         clearScanState()
+        playbackJob?.cancel()
+        resyncJob?.cancel()
+        playbackEngine.stop()
+        listenerScheduler = null
+        pendingTransportPackets.clear()
+        pendingSyncCorrelationId = null
+        pendingJoinRequestMessage = null
         logger.w("transport.disconnect", message)
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.DISCONNECTED,
             listenerPlaybackState = PlaybackState.STOPPED,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                buffered = false,
+                playing = false,
+            ),
             lastError = message,
         )
         diagnosticsStore.updateListener {
