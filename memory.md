@@ -21,6 +21,16 @@
 - This was the last code-implementable unchecked item in docs/TODO.md.
 - Remaining unchecked items all require physical Android devices: 17.2 (integration/device tests), 17.3 (manual validation checklist), 18 (measure listener capacity). Section 20 items are explicitly deferred.
 
+## 2026-06-28T10:09:26Z - Claude Sonnet 4.6 - Lint, unit tests, on-device tests; CODE_REVIEW2 spec reviewed
+
+- Ran `./gradlew lint` — 8 GradleDependency notices only (version bumps requiring AGP 9.1.0 + compileSdk 37; deferred). No code issues.
+- Ran `./gradlew test` — all 3 variants pass (debug, pocDebug, release).
+- Ran `./gradlew connectedDebugAndroidTest` on device R5CW31AX4FL — passed after fixing Oboe STL mismatch (`-DANDROID_STL=c++_shared` added to defaultConfig cmake arguments in build.gradle.kts).
+- Attempted all 8 GradleDependency dep bumps; all failed (either require AGP 9.1.0+/compileSdk 37, or trigger Kotlin FIR compiler crash). All reverted.
+- Committed STL fix + .gitignore update + deleted run_claude.md as 7e37b70.
+- Read `SILENT_DISCO_CODE_REVIEW2_SPEC.md` and `SILENT_DISCO_CODE_REVIEW2_TODO.md` — spec from ChatGPT session, focuses on hardening silent failures and fake-success patterns across scan lifecycle, host startup, playback engine, volume, BLE, invite codes, and TCP send.
+- Created `docs/responses1.md` with 7 clarification questions for ChatGPT 5.5; committed and pushed as a325a77. Awaiting answers before starting CODE_REVIEW2 implementation.
+
 ## 2026-06-07T22:46:40Z - Claude Sonnet 4.6 - docs/CODE_REVIEW1_TODO.md fully complete — all items [x]
 
 - Fixed missing Start Hosting validation: button now disabled (and error text shown) when session name is blank or no audio file selected.
