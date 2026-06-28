@@ -7,6 +7,7 @@ import android.os.SystemClock
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
@@ -662,7 +663,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lastError = null,
         )
         pendingJoinRequestMessage = request
-        val shouldSimulate = session.id.startsWith("demo-session-")
+        val shouldSimulate = BuildConfig.DEBUG && session.id.startsWith("demo-session-")
         if (shouldSimulate) {
             val shouldReject = session.inviteCodeRequired && request.inviteCode != "1234"
             simulateApprovalAndPlayback(session.id, shouldReject)
@@ -878,8 +879,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun joinRejectionReason(message: ControlMessage.JoinRequest): String? {
+        if (message.sessionId != currentSessionId) return "Session mismatch"
+        val form = _uiState.value.hostForm
+        if (form.approvalMode == ApprovalMode.INVITE_CODE) {
+            val expected = form.inviteCode.trim()
+            val actual = message.inviteCode?.trim().orEmpty()
+            if (expected.isBlank()) return "Host invite code is not configured"
+            if (actual != expected) return "Incorrect invite code"
+        }
+        return null
+    }
+
     private fun handleJoinRequestMessage(message: ControlMessage.JoinRequest) {
         if (message.sessionId != currentSessionId) return
+
+        val rejectionReason = joinRejectionReason(message)
+        if (rejectionReason != null) {
+            logger.w("listener.join.reject", rejectionReason)
+            viewModelScope.launch {
+                runCatching {
+                    wifiDirectService.broadcastControl(
+                        ControlMessage.JoinRejection(
+                            version = 1,
+                            sessionId = message.sessionId,
+                            listenerId = message.device.deviceId,
+                            reason = rejectionReason,
+                        ),
+                    )
+                }.onFailure { error ->
+                    logger.w("listener.join.reject", "Failed to send rejection: ${error.message}")
+                }
+            }
+            diagnosticsStore.updateHost {
+                it.copy(lastError = "Rejected ${message.device.displayName}: $rejectionReason")
+            }
+            refreshHostDiagnostics()
+            return
+        }
+
         val request = JoinRequest(
             requestId = "${message.device.deviceId}-${message.sessionId.value}",
             sessionId = message.sessionId.value,
