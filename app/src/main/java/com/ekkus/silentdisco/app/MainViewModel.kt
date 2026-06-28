@@ -743,23 +743,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun manualResync() {
-        val controller = listenerSyncController ?: _uiState.value.selectedSession?.let {
+        val state = _uiState.value
+        if (!state.canManualResync()) {
+            val message = "Join a session before requesting manual resync"
+            _uiState.value = _uiState.value.copy(lastError = message)
+            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            refreshListenerDiagnostics()
+            return
+        }
+
+        val controller = listenerSyncController ?: state.selectedSession?.let {
             createSyncController(SessionId(it.id))
-        } ?: return
+        }
+        if (controller == null) {
+            val message = "Manual resync is unavailable because sync has not been initialized."
+            _uiState.value = _uiState.value.copy(lastError = message)
+            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            refreshListenerDiagnostics()
+            return
+        }
+
         listenerSyncController = controller
         val request = controller.newProbe()
         pendingSyncCorrelationId = request.correlationId
+
         if (wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED) {
             viewModelScope.launch {
                 runCatching {
                     wifiDirectService.sendSyncRequestToHost(request)
+                }.onSuccess {
+                    _uiState.value = _uiState.value.copy(lastMessage = "Manual resync probe sent", lastError = null)
                 }.onFailure { error ->
                     handleSyncFailure(error.message ?: "Failed to send sync probe")
                 }
             }
             return
         }
+
         applySyncResponse(hostTimingService.createResponse(request))
+        _uiState.value = _uiState.value.copy(lastMessage = "Manual resync applied locally", lastError = null)
     }
 
     private fun simulateApprovalAndPlayback(sessionId: String, reject: Boolean) {

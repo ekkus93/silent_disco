@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.TuningField
+import com.ekkus.silentdisco.app.canManualResync
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.app.summary
 import com.ekkus.silentdisco.core.audio.OboeBridge
@@ -163,10 +164,22 @@ fun DiagnosticsScreen(
                 )
             }
         }
-        Button(onClick = onManualResync, modifier = Modifier.fillMaxWidth()) {
+        val canManualResync = uiState.canManualResync()
+        Button(
+            onClick = onManualResync,
+            enabled = canManualResync,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
             Spacer(Modifier.size(ButtonDefaults.IconSpacing))
             Text("Manual Resync")
+        }
+        if (!canManualResync) {
+            Text(
+                "Join a session before requesting manual resync.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Button(onClick = { onShare(shareText) }, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
