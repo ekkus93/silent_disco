@@ -33,7 +33,7 @@ pub const fn deterministic_smoke(input: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{core_version, deterministic_smoke, CoreVersion};
+    use super::{CoreVersion, core_version, deterministic_smoke};
 
     #[test]
     fn exposes_current_version() {
