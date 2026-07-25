@@ -10,7 +10,7 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new)
 
 
-def main() -> None:
+def patch_error_integrity() -> None:
     path = Path("rust/silent-disco-core/src/storage/error.rs")
     text = path.read_text()
     text = replace_once(
@@ -61,6 +61,95 @@ def main() -> None:
 """
     text = replace_once(text, marker, test + marker, "subsystem regression test marker")
     path.write_text(text)
+
+
+def patch_worker_admission() -> None:
+    path = Path("rust/silent-disco-core/src/storage/worker.rs")
+    text = path.read_text()
+    text = replace_once(
+        text,
+        """        atomic::{AtomicU32, Ordering},
+""",
+        """        atomic::{AtomicBool, AtomicU32, Ordering},
+""",
+        "worker atomic imports",
+    )
+    text = replace_once(
+        text,
+        """pub struct DatabaseClient {
+    sender: SyncSender<DatabaseCommand>,
+    schema_version: Arc<AtomicU32>,
+}
+""",
+        """pub struct DatabaseClient {
+    sender: SyncSender<DatabaseCommand>,
+    accepting_requests: Arc<AtomicBool>,
+    schema_version: Arc<AtomicU32>,
+}
+""",
+        "database client request admission field",
+    )
+    text = replace_once(
+        text,
+        """    ) -> Result<T, StorageError> {
+        let (reply_sender, reply_receiver) = sync_channel(1);
+""",
+        """    ) -> Result<T, StorageError> {
+        if !self.accepting_requests.load(Ordering::Acquire) {
+            return Err(StorageError::worker_stopped(
+                operation,
+                Some(self.schema_version.load(Ordering::Acquire)),
+            ));
+        }
+        let (reply_sender, reply_receiver) = sync_channel(1);
+""",
+        "request admission check",
+    )
+    text = replace_once(
+        text,
+        """    fn request_shutdown(&self) -> Result<(), StorageError> {
+        let (reply_sender, reply_receiver) = sync_channel(1);
+""",
+        """    fn request_shutdown(&self) -> Result<(), StorageError> {
+        if !self.accepting_requests.swap(false, Ordering::AcqRel) {
+            return Err(StorageError::shutdown_in_progress());
+        }
+        let (reply_sender, reply_receiver) = sync_channel(1);
+""",
+        "shutdown admission close",
+    )
+    text = replace_once(
+        text,
+        """        let schema_version = Arc::new(AtomicU32::new(0));
+        let thread_schema_version = Arc::clone(&schema_version);
+""",
+        """        let accepting_requests = Arc::new(AtomicBool::new(true));
+        let schema_version = Arc::new(AtomicU32::new(0));
+        let thread_schema_version = Arc::clone(&schema_version);
+""",
+        "worker admission state initialization",
+    )
+    text = replace_once(
+        text,
+        """                client: DatabaseClient {
+                    sender: command_sender,
+                    schema_version,
+                },
+""",
+        """                client: DatabaseClient {
+                    sender: command_sender,
+                    accepting_requests,
+                    schema_version,
+                },
+""",
+        "worker client admission state",
+    )
+    path.write_text(text)
+
+
+def main() -> None:
+    patch_error_integrity()
+    patch_worker_admission()
 
     Path(".github/scripts/apply_storage_error_integrity_fix.py").unlink()
     Path(".github/workflows/storage-error-integrity-fix.yml").unlink()
