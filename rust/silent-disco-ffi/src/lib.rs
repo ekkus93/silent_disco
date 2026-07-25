@@ -1,6 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use silent_disco_core::{core_version, deterministic_smoke, CoreVersion};
+use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
 
 /// Binding-facing version record. Domain version ownership remains in the core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub const fn ffi_deterministic_smoke(input: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ffi_core_version, ffi_deterministic_smoke, FfiCoreVersion};
+    use super::{FfiCoreVersion, ffi_core_version, ffi_deterministic_smoke};
 
     #[test]
     fn delegates_version_to_core() {
