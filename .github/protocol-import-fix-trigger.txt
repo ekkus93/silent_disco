@@ -1,1 +1,1 @@
-Trigger the assertion-checked, self-removing protocol header import workflow.
+Trigger the production-encoder protocol golden-vector workflow.
