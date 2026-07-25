@@ -4,20 +4,13 @@ on:
   push:
     branches:
       - master
-  pull_request:
-    branches:
-      - master
-    types:
-      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   complete:
-    if: >-
-      github.repository == 'ekkus93/silent_disco' &&
-      (github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/rust-domain-block4-validation')
+    if: github.repository == 'ekkus93/silent_disco'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -64,12 +57,13 @@ jobs:
           PY
 
           rm .github/workflows/complete-rust-domain-block4.yml
+          rm .github/block4-finalizer-trigger.txt
           git diff --check
 
       - name: Commit Block 4 completion
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md memory.md .github/workflows/complete-rust-domain-block4.yml
+          git add docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md memory.md .github/workflows/complete-rust-domain-block4.yml .github/block4-finalizer-trigger.txt
           git commit -m "Complete Rust domain types and structured errors"
           git push origin HEAD:master
