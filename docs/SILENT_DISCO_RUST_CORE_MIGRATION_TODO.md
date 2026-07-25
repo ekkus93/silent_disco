@@ -60,8 +60,8 @@ Instrumented tests are required when a block changes Android native loading, Obo
 
 ### 1.1 Capture current build and test results
 
-- [ ] Run `./gradlew test`.
-- [ ] Run `./gradlew lintDebug`.
+- [x] Run `./gradlew test`.
+- [x] Run `./gradlew lintDebug`.
 - [ ] Run the current connected Android test suite on an available physical device.
 - [ ] Record the exact commands, device model, Android version, pass/fail count, and relevant warnings in `memory.md`.
 - [ ] Confirm the current Android APK starts and reaches the Home screen.
@@ -70,18 +70,18 @@ Instrumented tests are required when a block changes Android native loading, Obo
 
 Create a section in `memory.md` listing the current Kotlin owner for each responsibility:
 
-- [ ] protocol models/serialization;
-- [ ] host and listener lifecycle;
-- [ ] join approval/rejection;
-- [ ] clock synchronization;
-- [ ] packetization;
-- [ ] jitter buffer/playback scheduling;
-- [ ] audio output;
-- [ ] BLE discovery;
-- [ ] Wi-Fi Direct establishment;
-- [ ] TCP channel transport;
-- [ ] settings/trusted-device persistence;
-- [ ] diagnostics.
+- [x] protocol models/serialization;
+- [x] host and listener lifecycle;
+- [x] join approval/rejection;
+- [x] clock synchronization;
+- [x] packetization;
+- [x] jitter buffer/playback scheduling;
+- [x] audio output;
+- [x] BLE discovery;
+- [x] Wi-Fi Direct establishment;
+- [x] TCP channel transport;
+- [x] settings/trusted-device persistence;
+- [x] diagnostics.
 
 This inventory is a migration checklist, not a new design document.
 
@@ -161,16 +161,16 @@ all = "deny"
 pedantic = "warn"
 ```
 
-- [ ] Pin an available stable Rust toolchain in `rust-toolchain.toml`.
-- [ ] Commit `Cargo.lock` because the workspace produces application libraries.
-- [ ] Set `unsafe_code = "deny"` for `silent-disco-core`.
-- [ ] Permit narrowly scoped unsafe code only in `silent-disco-ffi` with documented safety invariants.
+- [x] Pin an available stable Rust toolchain in `rust-toolchain.toml`.
+- [x] Commit `Cargo.lock` because the workspace produces application libraries.
+- [x] Set `unsafe_code = "deny"` for `silent-disco-core`.
+- [x] Permit narrowly scoped unsafe code only in `silent-disco-ffi` with documented safety invariants.
 
 ### 2.2 Add initial crate APIs
 
-- [ ] `silent-disco-core` exports a version record and one deterministic smoke function.
-- [ ] `silent-disco-ffi` depends on the core but contains no domain logic.
-- [ ] `silent-disco-test-support` provides fixture-loading helpers only.
+- [x] `silent-disco-core` exports a version record and one deterministic smoke function.
+- [x] `silent-disco-ffi` depends on the core but contains no domain logic.
+- [x] `silent-disco-test-support` provides fixture-loading helpers only.
 
 ### 2.3 Add quality scripts
 
@@ -183,15 +183,15 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-- [ ] The commands work from a clean checkout.
-- [ ] No script relies on an absolute path.
-- [ ] Failure returns nonzero status.
+- [x] The commands work from a clean checkout.
+- [x] No script relies on an absolute path.
+- [x] Failure returns nonzero status.
 
 ### 2.4 Update ignore/build metadata
 
-- [ ] Ignore Rust `target/` output.
-- [ ] Do not ignore generated artifacts that the selected binding policy requires to be checked in.
-- [ ] Document the Rust commands in the existing developer guidance (`CLAUDE.md` if appropriate).
+- [x] Ignore Rust `target/` output.
+- [x] Do not ignore generated artifacts that the selected binding policy requires to be checked in.
+- [x] Document the Rust commands in the existing developer guidance (`CLAUDE.md` if appropriate).
 
 **Acceptance:** Rust format, clippy, and tests pass; Android build/tests remain unchanged and passing.
 
