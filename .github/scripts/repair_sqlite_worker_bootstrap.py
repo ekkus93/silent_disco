@@ -61,6 +61,22 @@ def main() -> None:
 
     subprocess.run([sys.executable, str(bootstrap_path)], check=True)
 
+    database_path = Path("rust/silent-disco-core/src/storage/database.rs")
+    database_text = database_path.read_text()
+    database_path.write_text(
+        replace_once(
+            database_text,
+            """        assert_eq!(metadata.busy_timeout_ms, DEFAULT_BUSY_TIMEOUT_MS as u32);
+""",
+            """        assert_eq!(
+            u64::from(metadata.busy_timeout_ms),
+            DEFAULT_BUSY_TIMEOUT_MS
+        );
+""",
+            "busy timeout widening assertion",
+        )
+    )
+
     for temporary_path in (
         Path(".github/workflows/sqlite-worker-diagnostics.yml"),
         Path(".github/workflows/sqlite-worker-bootstrap-repair.yml"),
