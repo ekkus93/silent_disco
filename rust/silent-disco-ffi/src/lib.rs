@@ -1,4 +1,12 @@
+#![deny(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
+
+//! Binding shell for the shared Rust core.
+//!
+//! This crate contains no domain logic. Unsafe code is denied by default. A
+//! future module that must dereference foreign pointers may opt in only at the
+//! smallest module or function scope, and every unsafe operation must document
+//! its caller and lifetime invariants with a `# Safety` section.
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
 
