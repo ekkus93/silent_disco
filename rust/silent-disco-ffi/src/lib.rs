@@ -15,8 +15,8 @@ use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
 
 pub use android_abi::{CORE_ABI_VERSION, silent_disco_core_abi_version};
 pub use sync::{
-    FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange,
-    FfiSyncObservation, FfiSyncSnapshot,
+    FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange, FfiSyncObservation,
+    FfiSyncSnapshot,
 };
 
 /// Binding-facing version record. Domain version ownership remains in the core.
