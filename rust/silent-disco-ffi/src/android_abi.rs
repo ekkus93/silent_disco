@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, btree_map::Entry},
     sync::{Mutex, OnceLock},
 };
 
@@ -122,8 +122,11 @@ fn create_estimator(max_samples: i32, max_accepted_rtt_ms: f64) -> Result<i64, A
         .checked_add(1)
         .ok_or(AndroidSyncStatus::HandleExhausted)?;
     let jni_handle = i64::try_from(handle).map_err(|_| AndroidSyncStatus::HandleExhausted)?;
-    if registry.estimators.insert(handle, estimator).is_some() {
-        return Err(AndroidSyncStatus::HandleExhausted);
+    match registry.estimators.entry(handle) {
+        Entry::Vacant(entry) => {
+            entry.insert(estimator);
+        }
+        Entry::Occupied(_) => return Err(AndroidSyncStatus::HandleExhausted),
     }
     registry.next_handle = next_handle;
     Ok(jni_handle)
@@ -365,10 +368,9 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
     _receiver: *mut c_void,
     handle: i64,
 ) -> i32 {
-    snapshot(handle).map_or_else(
-        AndroidSyncStatus::code,
-        |value| i32::from(value.confidence_code),
-    )
+    snapshot(handle).map_or_else(AndroidSyncStatus::code, |value| {
+        i32::from(value.confidence_code)
+    })
 }
 
 /// Returns the accepted sample count after snapshot validation.
@@ -545,8 +547,14 @@ mod tests {
         assert_close(snapshot_offset(handle), 5.0);
         assert_eq!(snapshot_confidence(handle), 5);
         assert_eq!(snapshot_accepted_count(handle), 2);
-        assert_eq!(destroy_test_estimator(handle), AndroidSyncStatus::Accepted.code());
-        assert_eq!(destroy_test_estimator(handle), AndroidSyncStatus::InvalidHandle.code());
+        assert_eq!(
+            destroy_test_estimator(handle),
+            AndroidSyncStatus::Accepted.code()
+        );
+        assert_eq!(
+            destroy_test_estimator(handle),
+            AndroidSyncStatus::InvalidHandle.code()
+        );
     }
 
     #[test]
@@ -556,6 +564,9 @@ mod tests {
             observe_test_sample(handle, -1, 0, 0, 0),
             AndroidSyncStatus::NegativeTimestamp.code()
         );
-        assert_eq!(destroy_test_estimator(handle), AndroidSyncStatus::Accepted.code());
+        assert_eq!(
+            destroy_test_estimator(handle),
+            AndroidSyncStatus::Accepted.code()
+        );
     }
 }
