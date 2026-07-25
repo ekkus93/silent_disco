@@ -397,6 +397,15 @@ mod tests {
         sync::{HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId},
     };
 
+    const FLOAT_TOLERANCE: f64 = 1.0e-9;
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= FLOAT_TOLERANCE,
+            "expected {actual} to be within {FLOAT_TOLERANCE} of {expected}"
+        );
+    }
+
     fn observe(
         estimator: &mut ClockSyncEstimator,
         correlation: u64,
@@ -437,9 +446,9 @@ mod tests {
         );
 
         let snapshot = estimator.snapshot();
-        assert_eq!(snapshot.offset_ms, 5.0);
-        assert_eq!(snapshot.round_trip_time_ms, 20.0);
-        assert_eq!(snapshot.jitter_ms, 0.0);
+        assert_close(snapshot.offset_ms, 5.0);
+        assert_close(snapshot.round_trip_time_ms, 20.0);
+        assert_close(snapshot.jitter_ms, 0.0);
         assert_eq!(snapshot.confidence, SyncConfidence::Excellent);
         assert_eq!(snapshot.accepted_sample_count, 2);
     }

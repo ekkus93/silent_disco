@@ -18,6 +18,15 @@ struct FixtureSample {
     accepted: bool,
 }
 
+const FLOAT_TOLERANCE: f64 = 1.0e-9;
+
+fn assert_close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() <= FLOAT_TOLERANCE,
+        "expected {actual} to be within {FLOAT_TOLERANCE} of {expected}"
+    );
+}
+
 #[test]
 fn android_clock_sync_fixture_matches_rust_estimator() {
     let max_samples = parse_usize(ANDROID_CLOCK_SYNC_FIXTURE, "maxSamples");
@@ -61,19 +70,19 @@ fn android_clock_sync_fixture_matches_rust_estimator() {
                 LocalMonotonicMillis::new(fixture.t4),
             )
             .unwrap_or_else(|error| panic!("fixture observation failed: {error}"));
-        assert_eq!(
+        assert_close(
             observation.sample.round_trip_time_ms,
-            fixture.expected_rtt_ms
+            fixture.expected_rtt_ms,
         );
-        assert_eq!(observation.sample.offset_ms, fixture.expected_offset_ms);
+        assert_close(observation.sample.offset_ms, fixture.expected_offset_ms);
         assert_eq!(observation.accepted, fixture.accepted);
     }
 
     let expected = object_section(ANDROID_CLOCK_SYNC_FIXTURE, "expectedFinalState");
     let snapshot = estimator.snapshot();
-    assert_eq!(snapshot.offset_ms, parse_f64(expected, "offsetMs"));
-    assert_eq!(snapshot.round_trip_time_ms, parse_f64(expected, "rttMs"));
-    assert_eq!(snapshot.jitter_ms, parse_f64(expected, "jitterMs"));
+    assert_close(snapshot.offset_ms, parse_f64(expected, "offsetMs"));
+    assert_close(snapshot.round_trip_time_ms, parse_f64(expected, "rttMs"));
+    assert_close(snapshot.jitter_ms, parse_f64(expected, "jitterMs"));
     assert_eq!(
         snapshot.confidence,
         parse_confidence(expected, "confidence")

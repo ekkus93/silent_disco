@@ -198,6 +198,15 @@ mod tests {
         SyncTimestampError,
     };
 
+    const FLOAT_TOLERANCE: f64 = 1.0e-9;
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= FLOAT_TOLERANCE,
+            "expected {actual} to be within {FLOAT_TOLERANCE} of {expected}"
+        );
+    }
+
     fn exchange(t1: u64, t2: u64, t3: u64, t4: u64) -> SyncExchange {
         SyncExchange {
             correlation_id: SyncCorrelationId::new(7),
@@ -212,16 +221,16 @@ mod tests {
     fn calculates_kotlin_compatible_four_timestamp_sample() {
         let sample = SyncSample::from_exchange(exchange(2_000, 2_015, 2_017, 2_022))
             .expect("valid four-timestamp exchange");
-        assert_eq!(sample.round_trip_time_ms, 20.0);
-        assert_eq!(sample.offset_ms, 5.0);
+        assert_close(sample.round_trip_time_ms, 20.0);
+        assert_close(sample.offset_ms, 5.0);
     }
 
     #[test]
     fn preserves_half_millisecond_offset_without_integer_truncation() {
         let sample = SyncSample::from_exchange(exchange(3_000, 3_100, 3_101, 3_400))
             .expect("valid high-RTT exchange");
-        assert_eq!(sample.round_trip_time_ms, 399.0);
-        assert_eq!(sample.offset_ms, -99.5);
+        assert_close(sample.round_trip_time_ms, 399.0);
+        assert_close(sample.offset_ms, -99.5);
     }
 
     #[test]
@@ -233,8 +242,8 @@ mod tests {
             u64::MAX - 80,
         ))
         .expect("ordered near-limit exchange");
-        assert_eq!(sample.round_trip_time_ms, 19.0);
-        assert_eq!(sample.offset_ms, 0.5);
+        assert_close(sample.round_trip_time_ms, 19.0);
+        assert_close(sample.offset_ms, 0.5);
     }
 
     #[test]
