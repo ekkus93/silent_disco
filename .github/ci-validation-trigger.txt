@@ -1,0 +1,3 @@
+Temporary marker used only to validate the current master revision through pull-request CI.
+
+Rust Android integration validation: 1
