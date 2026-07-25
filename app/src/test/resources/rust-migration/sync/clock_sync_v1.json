@@ -1,0 +1,40 @@
+{
+  "fixtureVersion": 1,
+  "maxSamples": 12,
+  "maxAcceptedRttMs": 200.0,
+  "samples": [
+    {
+      "t1": 1000,
+      "t2": 1012,
+      "t3": 1014,
+      "t4": 1026,
+      "expectedRttMs": 24.0,
+      "expectedOffsetMs": 0.0,
+      "accepted": true
+    },
+    {
+      "t1": 2000,
+      "t2": 2015,
+      "t3": 2017,
+      "t4": 2022,
+      "expectedRttMs": 20.0,
+      "expectedOffsetMs": 5.0,
+      "accepted": true
+    },
+    {
+      "t1": 3000,
+      "t2": 3100,
+      "t3": 3101,
+      "t4": 3400,
+      "expectedRttMs": 399.0,
+      "expectedOffsetMs": -99.5,
+      "accepted": false
+    }
+  ],
+  "expectedFinalState": {
+    "offsetMs": 5.0,
+    "rttMs": 20.0,
+    "jitterMs": 0.0,
+    "confidence": "EXCELLENT"
+  }
+}
