@@ -29,8 +29,22 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.97.1
 
-      - name: Run Rust checks
-        run: bash scripts/check-rust.sh
+      - name: Check Rust formatting
+        run: |
+          cd rust
+          cargo fmt --all -- --check
+
+      - name: Run Rust clippy
+        if: always()
+        run: |
+          cd rust
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        if: always()
+        run: |
+          cd rust
+          cargo test --workspace --all-features
 
   android:
     name: Android unit tests and lint
@@ -51,7 +65,15 @@ jobs:
 
       - name: Install required Android SDK packages
         run: |
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
 
-      - name: Run Android unit tests and lint
-        run: ./gradlew test lintDebug --stacktrace
+      - name: Run Android unit tests
+        if: always()
+        run: ./gradlew test --stacktrace
+
+      - name: Run Android lint
+        if: always()
+        run: ./gradlew lintDebug --stacktrace
