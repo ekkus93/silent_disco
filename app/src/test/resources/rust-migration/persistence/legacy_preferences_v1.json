@@ -1,0 +1,49 @@
+{
+  "fixtureVersion": 1,
+  "preferencesFile": "silent-disco",
+  "tuning": [
+    {
+      "name": "syncSampleWindow",
+      "key": "tuning:syncSampleWindow",
+      "valueType": "int",
+      "exampleValue": 12
+    },
+    {
+      "name": "syncCadenceMs",
+      "key": "tuning:syncCadenceMs",
+      "valueType": "long",
+      "exampleValue": 2000
+    },
+    {
+      "name": "startupBufferMs",
+      "key": "tuning:startupBufferMs",
+      "valueType": "long",
+      "exampleValue": 400
+    },
+    {
+      "name": "latePacketThresholdMs",
+      "key": "tuning:latePacketThresholdMs",
+      "valueType": "long",
+      "exampleValue": 40
+    },
+    {
+      "name": "hardResyncThresholdMs",
+      "key": "tuning:hardResyncThresholdMs",
+      "valueType": "long",
+      "exampleValue": 120
+    },
+    {
+      "name": "syncDriftThresholdBits",
+      "key": "tuning:syncDriftThresholdBits",
+      "valueType": "doubleToRawLongBits",
+      "exampleDoubleValue": 18.0
+    }
+  ],
+  "trustedDevice": {
+    "deviceId": "listener-001",
+    "key": "trusted:listener-001",
+    "valueType": "boolean",
+    "exampleValue": true
+  },
+  "containsSecrets": false
+}
