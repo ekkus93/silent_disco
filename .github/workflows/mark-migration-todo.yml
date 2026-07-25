@@ -1,4 +1,4 @@
-name: Mark migration TODO progress
+name: Apply compatibility baseline plumbing
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  mark:
+  apply:
     if: >-
       github.repository == 'ekkus93/silent_disco' &&
       github.event.pull_request.head.ref == 'agent/rust-migration-ci-validation'
@@ -24,51 +24,55 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Mark only verified migration tasks
+      - name: Wire MainViewModel to the legacy preference contract
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md')
+          path = Path('app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt')
           text = path.read_text()
 
-          exact = {
-              '- [ ] Run `./gradlew test`.': '- [x] Run `./gradlew test`.',
-              '- [ ] Run `./gradlew lintDebug`.': '- [x] Run `./gradlew lintDebug`.',
+          import_anchor = 'import com.ekkus.silentdisco.core.permissions.PermissionState\n'
+          import_line = 'import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract\n'
+          if import_line not in text:
+              if text.count(import_anchor) != 1:
+                  raise SystemExit('permission import anchor changed')
+              text = text.replace(import_anchor, import_anchor + import_line, 1)
+
+          replacements = {
+              '"tuning:syncSampleWindow"': 'LegacyPreferencesContract.SYNC_SAMPLE_WINDOW',
+              '"tuning:syncCadenceMs"': 'LegacyPreferencesContract.SYNC_CADENCE_MS',
+              '"tuning:startupBufferMs"': 'LegacyPreferencesContract.STARTUP_BUFFER_MS',
+              '"tuning:latePacketThresholdMs"': 'LegacyPreferencesContract.LATE_PACKET_THRESHOLD_MS',
+              '"tuning:hardResyncThresholdMs"': 'LegacyPreferencesContract.HARD_RESYNC_THRESHOLD_MS',
+              '"tuning:syncDriftThresholdBits"': 'LegacyPreferencesContract.SYNC_DRIFT_THRESHOLD_BITS',
           }
-          for old, new in exact.items():
-              if text.count(old) != 1:
-                  raise SystemExit(f'expected exactly one occurrence: {old!r}')
-              text = text.replace(old, new, 1)
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count not in (0, 2):
+                  raise SystemExit(f'unexpected occurrence count for {old}: {count}')
+              text = text.replace(old, new)
 
-          start = text.index('### 1.2 Inventory current ownership')
-          end = text.index('This inventory is a migration checklist', start)
-          inventory = text[start:end]
-          if inventory.count('- [ ]') != 12:
-              raise SystemExit('ownership inventory no longer has exactly 12 unchecked items')
-          text = text[:start] + inventory.replace('- [ ]', '- [x]') + text[end:]
-
-          start = text.index('## Block 2 — Create the Rust workspace')
-          acceptance = '**Acceptance:** Rust format, clippy, and tests pass; Android build/tests remain unchanged and passing.'
-          end = text.index(acceptance, start)
-          block = text[start:end]
-          if block.count('- [ ]') != 13:
-              raise SystemExit('Block 2 no longer has exactly 13 unchecked items')
-          text = text[:start] + block.replace('- [ ]', '- [x]') + text[end:]
+          old = 'preferences.edit { putBoolean("trusted:$listenerId", true) }'
+          new = 'preferences.edit { putBoolean(LegacyPreferencesContract.trustedDeviceKey(listenerId), true) }'
+          count = text.count(old)
+          if count not in (0, 1):
+              raise SystemExit(f'unexpected trusted-device key occurrence count: {count}')
+          text = text.replace(old, new)
 
           path.write_text(text)
           PY
 
           git diff --check
 
-      - name: Commit verified progress
+      - name: Commit preference contract wiring
         run: |
           if git diff --quiet; then
-            echo "Migration TODO already marked"
+            echo "Preference contract already wired"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md
-          git commit -m "Mark completed Rust migration baseline tasks"
+          git add app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt
+          git commit -m "Use legacy preference contract in Android state owner"
           git push origin HEAD:master
