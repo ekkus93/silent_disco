@@ -15,6 +15,14 @@ def main() -> None:
     text = path.read_text()
     text = replace_once(
         text,
+        """    CoreError, CoreErrorCode, CoreSubsystem, ErrorContextEntry, ErrorSeverity,
+""",
+        """    CoreError, CoreErrorCode, ErrorContextEntry, ErrorSeverity,
+""",
+        "production CoreSubsystem import",
+    )
+    text = replace_once(
+        text,
         """            subsystem: CoreSubsystem::Storage,
 """,
         """            subsystem: self.kind.core_error_code().subsystem(),
