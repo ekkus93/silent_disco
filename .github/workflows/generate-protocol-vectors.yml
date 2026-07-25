@@ -1,0 +1,122 @@
+name: Generate Rust protocol golden vectors
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.repository == 'ekkus93/silent_disco'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+
+      - name: Prepare golden harness and generate fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          test_path = Path('rust/silent-disco-core/src/protocol/vector_tests.rs')
+          tests = test_path.read_text()
+          old_import = (
+              'use super::{\n'
+              '    DecodePolicy, MAX_AUDIO_DATAGRAM_BYTES, PacketSequence, ProtocolDecoder, ProtocolError,\n'
+              '    ProtocolFrame, crc32, decode_frame, encode_frame,\n'
+              '};\n'
+              'use crate::domain::SessionId;\n'
+          )
+          new_import = (
+              'use super::{\n'
+              '    DecodePolicy, MAX_AUDIO_DATAGRAM_BYTES, ProtocolDecoder, ProtocolError, ProtocolFrame,\n'
+              '    crc32, decode_frame, encode_frame,\n'
+              '};\n'
+              'use crate::domain::{PacketSequence, SessionId};\n'
+          )
+          if tests.count(old_import) != 1:
+              raise SystemExit('vector test imports changed unexpectedly')
+          tests = tests.replace(old_import, new_import)
+          old_error_assertion = (
+              '    if decoder.decode(bytes, policy).is_ok() {\n'
+              '        panic!("expected protocol fixture to fail");\n'
+              '    }\n'
+          )
+          new_error_assertion = (
+              '    assert!(\n'
+              '        decoder.decode(bytes, policy).is_err(),\n'
+              '        "expected protocol fixture to fail"\n'
+              '    );\n'
+          )
+          if tests.count(old_error_assertion) != 1:
+              raise SystemExit('vector error assertion changed unexpectedly')
+          test_path.write_text(tests.replace(old_error_assertion, new_error_assertion))
+
+          generator_path = Path('rust/silent-disco-core/examples/generate_protocol_vectors.rs')
+          generator = generator_path.read_text()
+          old_const = (
+              'const _: () = {\n'
+              '    assert!(FRAME_HEADER_LENGTH as usize == FRAME_HEADER_BYTES);\n'
+              '    assert!(PROTOCOL_MAGIC.len() == 4);\n'
+              '    assert!(PROTOCOL_VERSION == 2);\n'
+              '    assert!(MessageKind::Audio.code() == 200);\n'
+              '};\n'
+          )
+          new_const = (
+              'const _: () = {\n'
+              '    assert!(FRAME_HEADER_LENGTH == 16);\n'
+              '    assert!(FRAME_HEADER_BYTES == 16);\n'
+              '    assert!(PROTOCOL_MAGIC.len() == 4);\n'
+              '    assert!(PROTOCOL_VERSION == 2);\n'
+              '    assert!(MessageKind::Audio.code() == 200);\n'
+              '};\n'
+          )
+          if generator.count(old_const) != 1:
+              raise SystemExit('generator constant checks changed unexpectedly')
+          generator_path.write_text(generator.replace(old_const, new_const))
+          PY
+
+          cd rust
+          cargo run -p silent-disco-core --example generate_protocol_vectors
+          cd ..
+
+          python - <<'PY'
+          from pathlib import Path
+
+          module_path = Path('rust/silent-disco-core/src/protocol/mod.rs')
+          module = module_path.read_text()
+          declaration = '#[cfg(test)]\nmod vector_tests;\n\n'
+          if declaration in module:
+              raise SystemExit('golden vector tests are already active')
+          module_path.write_text(declaration + module)
+          PY
+
+          cd rust
+          cargo fmt --all
+          cargo test -p silent-disco-core --all-features
+          cd ..
+
+          rm rust/silent-disco-core/examples/generate_protocol_vectors.rs
+          rm .github/workflows/generate-protocol-vectors.yml
+          rm -f .github/protocol-import-fix-trigger.txt
+          git diff --check
+
+      - name: Commit executable vectors
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add executable Rust protocol golden vectors"
+          git push origin HEAD:master
