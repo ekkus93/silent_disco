@@ -64,9 +64,9 @@ jobs:
           cargo test --workspace --all-features
 
   android:
-    name: Android unit tests and lint
+    name: Android build, unit tests, and lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -87,6 +87,34 @@ jobs:
             "build-tools;36.0.0" \
             "ndk;28.2.13676358"
 
+      - name: Install pinned Rust toolchain for Android
+        run: rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Build Android APKs with Rust core
+        id: android-build
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug assemblePocDebug assembleRelease --stacktrace --console=plain \
+            2>&1 | tee android-rust-build.log
+
+      - name: Verify Rust libraries are packaged for every supported ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "$apk"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "$apk" "lib/$abi/libsilent_disco_ffi.so" | grep -Fx "lib/$abi/libsilent_disco_ffi.so"
+            done
+          done
+
       - name: Run Android unit tests
         id: android-tests
         if: always()
@@ -95,12 +123,13 @@ jobs:
           set -o pipefail
           ./gradlew test --stacktrace --console=plain 2>&1 | tee android-unit-tests.log
 
-      - name: Upload Android unit-test diagnostics
+      - name: Upload Android build and test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-unit-test-diagnostics
+          name: android-build-test-diagnostics
           path: |
+            android-rust-build.log
             android-unit-tests.log
             app/build/test-results/
             app/build/reports/tests/
