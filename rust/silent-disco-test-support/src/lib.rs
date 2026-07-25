@@ -18,10 +18,17 @@ impl fmt::Display for FixtureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRelativePath(path) => {
-                write!(formatter, "fixture path must be a safe relative path: {path}")
+                write!(
+                    formatter,
+                    "fixture path must be a safe relative path: {path}"
+                )
             }
             Self::Read { path, source } => {
-                write!(formatter, "failed to read fixture {}: {source}", path.display())
+                write!(
+                    formatter,
+                    "failed to read fixture {}: {source}",
+                    path.display()
+                )
             }
         }
     }
