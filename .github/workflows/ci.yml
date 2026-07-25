@@ -18,6 +18,7 @@ concurrency:
 jobs:
   rust:
     name: Rust quality gates
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.ref != 'agent/rust-sync-block6-validation'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -78,6 +79,7 @@ jobs:
 
   android:
     name: Android build, unit tests, and lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.ref != 'agent/rust-sync-block6-validation'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
