@@ -1,0 +1,53 @@
+#![deny(unsafe_op_in_unsafe_fn)]
+
+use silent_disco_core::{core_version, deterministic_smoke, CoreVersion};
+
+/// Binding-facing version record. Domain version ownership remains in the core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiCoreVersion {
+    pub major: u16,
+    pub minor: u16,
+    pub patch: u16,
+}
+
+impl From<CoreVersion> for FfiCoreVersion {
+    fn from(value: CoreVersion) -> Self {
+        Self {
+            major: value.major,
+            minor: value.minor,
+            patch: value.patch,
+        }
+    }
+}
+
+#[must_use]
+pub fn ffi_core_version() -> FfiCoreVersion {
+    core_version().into()
+}
+
+#[must_use]
+pub const fn ffi_deterministic_smoke(input: u64) -> u64 {
+    deterministic_smoke(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ffi_core_version, ffi_deterministic_smoke, FfiCoreVersion};
+
+    #[test]
+    fn delegates_version_to_core() {
+        assert_eq!(
+            ffi_core_version(),
+            FfiCoreVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn delegates_smoke_function_to_core() {
+        assert_eq!(ffi_deterministic_smoke(7), ffi_deterministic_smoke(7));
+    }
+}
