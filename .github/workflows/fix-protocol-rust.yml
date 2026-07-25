@@ -1,0 +1,243 @@
+name: Fix Rust protocol lint issues
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.repository == 'ekkus93/silent_disco'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Install pinned Rust formatter
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+
+      - name: Apply guarded protocol fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/silent-disco-core/src/protocol/codec.rs')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '    MAX_AUDIO_DATAGRAM_BYTES, MAX_CONTROL_PAYLOAD_BYTES, MAX_DISPLAY_NAME_BYTES,\n'
+                  '    MAX_INVITE_CODE_BYTES, MAX_PROTOCOL_STRING_BYTES, MAX_REASON_BYTES, MAX_SESSION_NAME_BYTES,\n',
+                  '    MAX_AUDIO_DATAGRAM_BYTES, MAX_DISPLAY_NAME_BYTES, MAX_INVITE_CODE_BYTES,\n'
+                  '    MAX_REASON_BYTES, MAX_SESSION_NAME_BYTES,\n',
+              ),
+              (
+                  '            Self::UnauthorizedSession => CoreErrorCode::TransportDeliveryFailed,\n'
+                  '            Self::StaleAudioSequence => CoreErrorCode::MalformedProtocolFrame,\n'
+                  '            _ => CoreErrorCode::MalformedProtocolFrame,\n',
+                  '            Self::UnauthorizedSession => CoreErrorCode::TransportDeliveryFailed,\n'
+                  '            _ => CoreErrorCode::MalformedProtocolFrame,\n',
+              ),
+              (
+                  '    pub fn decode(\n'
+                  '        &mut self,\n'
+                  '        bytes: &[u8],\n'
+                  "        policy: DecodePolicy<'_>,\n"
+                  '    ) -> Result<ProtocolFrame, ProtocolError> {\n',
+                  '    /// Decodes one complete frame and applies optional authorization/staleness policy.\n'
+                  '    ///\n'
+                  '    /// # Errors\n'
+                  '    ///\n'
+                  '    /// Returns [`ProtocolError`] when framing, payload validation, authorization,\n'
+                  '    /// or sequence policy fails. Every failure is counted by classification.\n'
+                  '    pub fn decode(\n'
+                  '        &mut self,\n'
+                  '        bytes: &[u8],\n'
+                  "        policy: DecodePolicy<'_>,\n"
+                  '    ) -> Result<ProtocolFrame, ProtocolError> {\n',
+              ),
+              (
+                  '            if let (ProtocolFrame::Audio(audio), Some(minimum)) =\n'
+                  '                (&frame, policy.minimum_audio_sequence)\n'
+                  '            {\n'
+                  '                if audio.sequence < minimum {\n'
+                  '                    return Err(ProtocolError::StaleAudioSequence);\n'
+                  '                }\n'
+                  '            }\n',
+                  '            if let (ProtocolFrame::Audio(audio), Some(minimum)) =\n'
+                  '                (&frame, policy.minimum_audio_sequence)\n'
+                  '                && audio.sequence < minimum\n'
+                  '            {\n'
+                  '                return Err(ProtocolError::StaleAudioSequence);\n'
+                  '            }\n',
+              ),
+              (
+                  '        match value {\n'
+                  '            Some(value) => {\n'
+                  '                self.put_u8(1);\n'
+                  '                self.put_string(field, value, maximum, secret)\n'
+                  '            }\n'
+                  '            None => {\n'
+                  '                self.put_u8(0);\n'
+                  '                Ok(())\n'
+                  '            }\n'
+                  '        }\n',
+                  '        if let Some(value) = value {\n'
+                  '            self.put_u8(1);\n'
+                  '            self.put_string(field, value, maximum, secret)\n'
+                  '        } else {\n'
+                  '            self.put_u8(0);\n'
+                  '            Ok(())\n'
+                  '        }\n',
+              ),
+              (
+                  'pub fn encode_frame(frame: &ProtocolFrame) -> Result<Vec<u8>, ProtocolError> {\n',
+                  '/// Encodes one canonical protocol-v2 frame.\n'
+                  '///\n'
+                  '/// # Errors\n'
+                  '///\n'
+                  '/// Returns [`ProtocolError`] when a field violates its bound, audio metadata\n'
+                  '/// is inconsistent, or the encoded payload exceeds the message-kind limit.\n'
+                  'pub fn encode_frame(frame: &ProtocolFrame) -> Result<Vec<u8>, ProtocolError> {\n',
+              ),
+              (
+                  'pub fn decode_header(bytes: &[u8]) -> Result<FrameHeader, ProtocolError> {\n',
+                  '/// Validates and decodes the fixed-width protocol-v2 header without allocating a payload.\n'
+                  '///\n'
+                  '/// # Errors\n'
+                  '///\n'
+                  '/// Returns [`ProtocolError`] for truncated input, invalid magic, unsupported\n'
+                  '/// versions/kinds/flags, invalid header length, or an oversized declared payload.\n'
+                  'pub fn decode_header(bytes: &[u8]) -> Result<FrameHeader, ProtocolError> {\n',
+              ),
+              (
+                  'pub fn decode_frame(bytes: &[u8]) -> Result<ProtocolFrame, ProtocolError> {\n',
+                  '/// Decodes exactly one complete canonical protocol-v2 frame.\n'
+                  '///\n'
+                  '/// # Errors\n'
+                  '///\n'
+                  '/// Returns [`ProtocolError`] when the frame header or payload is malformed,\n'
+                  '/// unsupported, oversized, truncated, non-canonical, or fails integrity checks.\n'
+                  'pub fn decode_frame(bytes: &[u8]) -> Result<ProtocolFrame, ProtocolError> {\n',
+              ),
+              (
+                  '        assert_eq!(\n'
+                  '            decode_frame(&bytes),\n'
+                  '            Err(ProtocolError::UnsupportedVersion { version: 3 })\n'
+                  '        );\n',
+                  '        assert!(matches!(\n'
+                  '            decode_frame(&bytes),\n'
+                  '            Err(ProtocolError::UnsupportedVersion { version: 3 })\n'
+                  '        ));\n',
+              ),
+              (
+                  '        assert_eq!(\n'
+                  '            decode_frame(&bytes),\n'
+                  '            Err(ProtocolError::UnsupportedMessageKind { kind: 999 })\n'
+                  '        );\n',
+                  '        assert!(matches!(\n'
+                  '            decode_frame(&bytes),\n'
+                  '            Err(ProtocolError::UnsupportedMessageKind { kind: 999 })\n'
+                  '        ));\n',
+              ),
+              (
+                  '        assert_eq!(\n'
+                  '            decode_frame(&bytes),\n'
+                  '            Err(ProtocolError::UnsupportedFlags { flags: 0x8000 })\n'
+                  '        );\n',
+                  '        assert!(matches!(\n'
+                  '            decode_frame(&bytes),\n'
+                  '            Err(ProtocolError::UnsupportedFlags { flags: 0x8000 })\n'
+                  '        ));\n',
+              ),
+              (
+                  '        assert_eq!(decode_frame(&trailing), Err(ProtocolError::TrailingBytes));\n',
+                  '        assert!(matches!(\n'
+                  '            decode_frame(&trailing),\n'
+                  '            Err(ProtocolError::TrailingBytes)\n'
+                  '        ));\n',
+              ),
+              (
+                  '        assert_eq!(decode_frame(&encoded), Err(ProtocolError::IntegrityMismatch));\n',
+                  '        assert!(matches!(\n'
+                  '            decode_frame(&encoded),\n'
+                  '            Err(ProtocolError::IntegrityMismatch)\n'
+                  '        ));\n',
+              ),
+              (
+                  '        assert_eq!(\n'
+                  '            decoder.decode(\n'
+                  '                &unauthorized_bytes,\n'
+                  '                DecodePolicy {\n'
+                  '                    expected_session_id: Some(&expected),\n'
+                  '                    minimum_audio_sequence: None,\n'
+                  '                },\n'
+                  '            ),\n'
+                  '            Err(ProtocolError::UnauthorizedSession)\n'
+                  '        );\n',
+                  '        assert!(matches!(\n'
+                  '            decoder.decode(\n'
+                  '                &unauthorized_bytes,\n'
+                  '                DecodePolicy {\n'
+                  '                    expected_session_id: Some(&expected),\n'
+                  '                    minimum_audio_sequence: None,\n'
+                  '                },\n'
+                  '            ),\n'
+                  '            Err(ProtocolError::UnauthorizedSession)\n'
+                  '        ));\n',
+              ),
+              (
+                  '        assert_eq!(\n'
+                  '            decoder.decode(\n'
+                  '                &stale_bytes,\n'
+                  '                DecodePolicy {\n'
+                  '                    expected_session_id: Some(&expected),\n'
+                  '                    minimum_audio_sequence: Some(PacketSequence::new(5)),\n'
+                  '                },\n'
+                  '            ),\n'
+                  '            Err(ProtocolError::StaleAudioSequence)\n'
+                  '        );\n',
+                  '        assert!(matches!(\n'
+                  '            decoder.decode(\n'
+                  '                &stale_bytes,\n'
+                  '                DecodePolicy {\n'
+                  '                    expected_session_id: Some(&expected),\n'
+                  '                    minimum_audio_sequence: Some(PacketSequence::new(5)),\n'
+                  '                },\n'
+                  '            ),\n'
+                  '            Err(ProtocolError::StaleAudioSequence)\n'
+                  '        ));\n',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'guarded replacement expected once, found {count}: {old[:80]!r}')
+              text = text.replace(old, new)
+
+          path.write_text(text)
+          PY
+
+          cd rust
+          cargo fmt --all
+          cd ..
+          rm .github/workflows/fix-protocol-rust.yml
+          git diff --check
+
+      - name: Commit exact fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/silent-disco-core/src/protocol/ .github/workflows/fix-protocol-rust.yml
+          git commit -m "Fix Rust protocol lint and test assertions"
+          git push origin HEAD:master
