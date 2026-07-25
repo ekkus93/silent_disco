@@ -1,1 +1,1 @@
-Temporary marker used only to execute the guarded maintenance job from PR CI. Do not merge.
+Temporary marker used only to execute the instrumented guarded maintenance job from PR CI. Do not merge.
