@@ -1,0 +1,112 @@
+{
+  "fixtureVersion": 1,
+  "messages": [
+    {
+      "name": "hello",
+      "wire": {
+        "type": "hello",
+        "version": 1,
+        "sessionId": "session-001",
+        "sessionName": "Night Lab",
+        "hostName": "Pixel Host",
+        "approvalRequired": true
+      }
+    },
+    {
+      "name": "join_request",
+      "wire": {
+        "type": "join_request",
+        "version": 1,
+        "sessionId": "session-001",
+        "device": {
+          "deviceId": "listener-001",
+          "displayName": "Listener One"
+        },
+        "inviteCode": "2468"
+      }
+    },
+    {
+      "name": "join_approval",
+      "wire": {
+        "type": "join_approval",
+        "version": 1,
+        "sessionId": "session-001",
+        "listenerId": "listener-001",
+        "trustedForFuture": true
+      }
+    },
+    {
+      "name": "join_rejection",
+      "wire": {
+        "type": "join_rejection",
+        "version": 1,
+        "sessionId": "session-001",
+        "listenerId": "listener-002",
+        "reason": "Invite code rejected"
+      }
+    },
+    {
+      "name": "heartbeat",
+      "wire": {
+        "type": "heartbeat",
+        "version": 1,
+        "sessionId": "session-001",
+        "listenerId": "listener-001",
+        "sentAtElapsedMs": 123456
+      }
+    },
+    {
+      "name": "stream_start",
+      "wire": {
+        "type": "stream_start",
+        "version": 1,
+        "sessionId": "session-001",
+        "streamId": "stream-001",
+        "hostStartTimeMs": 500000,
+        "sampleRate": 48000,
+        "channels": 2,
+        "samplesPerPacket": 960
+      }
+    },
+    {
+      "name": "pause",
+      "wire": {
+        "type": "pause",
+        "version": 1,
+        "sessionId": "session-001",
+        "streamId": "stream-001",
+        "hostPauseTimeMs": 510000
+      }
+    },
+    {
+      "name": "stop",
+      "wire": {
+        "type": "stop",
+        "version": 1,
+        "sessionId": "session-001",
+        "streamId": "stream-001",
+        "hostStopTimeMs": 520000
+      }
+    },
+    {
+      "name": "disconnect",
+      "wire": {
+        "type": "disconnect",
+        "version": 1,
+        "sessionId": "session-001",
+        "listenerId": "listener-001",
+        "reason": "Host ended session"
+      }
+    },
+    {
+      "name": "resync_notice",
+      "wire": {
+        "type": "resync_notice",
+        "version": 1,
+        "sessionId": "session-001",
+        "listenerId": "listener-001",
+        "reason": "Clock drift exceeded threshold"
+      }
+    }
+  ]
+}
