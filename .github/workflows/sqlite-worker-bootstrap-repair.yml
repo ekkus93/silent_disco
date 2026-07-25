@@ -26,7 +26,21 @@ jobs:
           rustup default 1.97.1
 
       - name: Repair and apply guarded bootstrap
-        run: python .github/scripts/repair_sqlite_worker_bootstrap.py
+        id: repair
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/repair_sqlite_worker_bootstrap.py \
+            2>&1 | tee sqlite-worker-bootstrap-repair.log
+
+      - name: Upload repair diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-worker-bootstrap-repair-diagnostics
+          path: sqlite-worker-bootstrap-repair.log
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Generate lockfile and format
         run: |
