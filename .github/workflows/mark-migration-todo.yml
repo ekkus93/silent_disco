@@ -1,4 +1,4 @@
-name: Apply compatibility baseline plumbing
+name: Fix compatibility fixture test labels
 
 on:
   pull_request:
@@ -24,55 +24,44 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Wire MainViewModel to the legacy preference contract
+      - name: Remove unsupported Truth labels without changing assertions
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt')
+          path = Path('app/src/test/java/com/ekkus/silentdisco/core/transport/RustMigrationCompatibilityFixtureTest.kt')
           text = path.read_text()
-
-          import_anchor = 'import com.ekkus.silentdisco.core.permissions.PermissionState\n'
-          import_line = 'import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract\n'
-          if import_line not in text:
-              if text.count(import_anchor) != 1:
-                  raise SystemExit('permission import anchor changed')
-              text = text.replace(import_anchor, import_anchor + import_line, 1)
-
-          replacements = {
-              '"tuning:syncSampleWindow"': 'LegacyPreferencesContract.SYNC_SAMPLE_WINDOW',
-              '"tuning:syncCadenceMs"': 'LegacyPreferencesContract.SYNC_CADENCE_MS',
-              '"tuning:startupBufferMs"': 'LegacyPreferencesContract.STARTUP_BUFFER_MS',
-              '"tuning:latePacketThresholdMs"': 'LegacyPreferencesContract.LATE_PACKET_THRESHOLD_MS',
-              '"tuning:hardResyncThresholdMs"': 'LegacyPreferencesContract.HARD_RESYNC_THRESHOLD_MS',
-              '"tuning:syncDriftThresholdBits"': 'LegacyPreferencesContract.SYNC_DRIFT_THRESHOLD_BITS',
-          }
-          for old, new in replacements.items():
-              count = text.count(old)
-              if count not in (0, 2):
-                  raise SystemExit(f'unexpected occurrence count for {old}: {count}')
-              text = text.replace(old, new)
-
-          old = 'preferences.edit { putBoolean("trusted:$listenerId", true) }'
-          new = 'preferences.edit { putBoolean(LegacyPreferencesContract.trustedDeviceKey(listenerId), true) }'
-          count = text.count(old)
-          if count not in (0, 1):
-              raise SystemExit(f'unexpected trusted-device key occurrence count: {count}')
-          text = text.replace(old, new)
-
-          path.write_text(text)
+          before = text.count('.named(')
+          if before == 0:
+              print('Truth labels already removed')
+          else:
+              lines = [line for line in text.splitlines() if not line.strip().startswith('.named(')]
+              text = '\n'.join(lines) + '\n'
+              inline = [
+                  '.named(name)',
+                  '.named("$name round trip")',
+                  '.named("sync probe $current")',
+                  '.named(entry.string("name"))',
+                  '.named("packet[$index].version")',
+              ]
+              for value in inline:
+                  text = text.replace(value, '')
+              if '.named(' in text:
+                  raise SystemExit('unhandled Truth .named call remains')
+              path.write_text(text)
+              print(f'removed {before} unsupported Truth labels')
           PY
 
           git diff --check
 
-      - name: Commit preference contract wiring
+      - name: Commit compatibility test correction
         run: |
           if git diff --quiet; then
-            echo "Preference contract already wired"
+            echo "Compatibility test labels already corrected"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt
-          git commit -m "Use legacy preference contract in Android state owner"
+          git add app/src/test/java/com/ekkus/silentdisco/core/transport/RustMigrationCompatibilityFixtureTest.kt
+          git commit -m "Fix Truth compatibility in migration fixture tests"
           git push origin HEAD:master
