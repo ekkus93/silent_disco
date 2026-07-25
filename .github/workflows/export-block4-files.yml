@@ -1,0 +1,25 @@
+name: Export Block 4 files
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: block4-files
+          path: |
+            docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md
+            memory.md
+            .github/workflows/ci.yml
+          if-no-files-found: error
+          retention-days: 1
