@@ -1,1 +1,3 @@
 Temporary marker for validating the formatted Block 4 Rust domain types and structured errors. Do not merge.
+
+Completion trigger: 2
