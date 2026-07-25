@@ -3,6 +3,7 @@
 pub mod domain;
 pub mod error;
 pub mod protocol;
+pub mod storage;
 pub mod sync;
 
 /// ABI-independent version information for the shared domain core.

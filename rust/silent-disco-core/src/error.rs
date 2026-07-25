@@ -109,6 +109,13 @@ pub enum CoreErrorCode {
     StorageIntegrityFailed = 6002,
     StorageReadFailed = 6003,
     StorageWriteFailed = 6004,
+    StoragePragmaFailed = 6005,
+    StorageTransactionFailed = 6006,
+    StorageConstraintViolation = 6007,
+    StorageBusy = 6008,
+    StorageCorrupt = 6009,
+    StorageCloseFailed = 6010,
+    StorageQueryFailed = 6011,
 
     PlatformOperationFailed = 7000,
     PermissionDenied = 7001,
@@ -160,7 +167,14 @@ impl CoreErrorCode {
             | Self::StorageMigrationFailed
             | Self::StorageIntegrityFailed
             | Self::StorageReadFailed
-            | Self::StorageWriteFailed => CoreSubsystem::Storage,
+            | Self::StorageWriteFailed
+            | Self::StoragePragmaFailed
+            | Self::StorageTransactionFailed
+            | Self::StorageConstraintViolation
+            | Self::StorageBusy
+            | Self::StorageCorrupt
+            | Self::StorageCloseFailed
+            | Self::StorageQueryFailed => CoreSubsystem::Storage,
             Self::PlatformOperationFailed
             | Self::PermissionDenied
             | Self::CapabilityUnavailable => CoreSubsystem::Platform,
@@ -205,6 +219,13 @@ impl CoreErrorCode {
             Self::StorageIntegrityFailed => "storage_integrity_failed",
             Self::StorageReadFailed => "storage_read_failed",
             Self::StorageWriteFailed => "storage_write_failed",
+            Self::StoragePragmaFailed => "storage_pragma_failed",
+            Self::StorageTransactionFailed => "storage_transaction_failed",
+            Self::StorageConstraintViolation => "storage_constraint_violation",
+            Self::StorageBusy => "storage_busy",
+            Self::StorageCorrupt => "storage_corrupt",
+            Self::StorageCloseFailed => "storage_close_failed",
+            Self::StorageQueryFailed => "storage_query_failed",
             Self::PlatformOperationFailed => "platform_operation_failed",
             Self::PermissionDenied => "permission_denied",
             Self::CapabilityUnavailable => "capability_unavailable",
