@@ -1,0 +1,1 @@
+Temporary marker used only to capture the exact Rust clippy diagnostic for the current master revision.
