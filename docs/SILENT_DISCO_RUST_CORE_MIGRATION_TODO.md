@@ -99,20 +99,20 @@ app/src/test/resources/rust-migration/
 └── persistence/
 ```
 
-- [ ] Add representative control-message fixtures for every existing message variant.
-- [ ] Add sync request/response samples with expected offset, RTT, and confidence outputs.
-- [ ] Add PCM packetization input and expected packet headers/payload hashes.
-- [ ] Add state-transition tables for host and listener workflows.
-- [ ] Add tuning normalization edge cases.
-- [ ] Add current settings/trust persistence examples.
-- [ ] Ensure fixtures contain no device secrets or private user information.
+- [x] Add representative control-message fixtures for every existing message variant.
+- [x] Add sync request/response samples with expected offset, RTT, and confidence outputs.
+- [x] Add PCM packetization input and expected packet headers/payload hashes.
+- [x] Add state-transition tables for host and listener workflows.
+- [x] Add tuning normalization edge cases.
+- [x] Add current settings/trust persistence examples.
+- [x] Ensure fixtures contain no device secrets or private user information.
 
 ### 1.4 Add JVM tests that verify the fixtures against current Kotlin behavior
 
-- [ ] Tests deserialize or construct production Kotlin models and compare them to the fixtures.
-- [ ] Tests use production sync and packetization functions.
-- [ ] Tests cover error/failure transitions, not only happy paths.
-- [ ] Tests fail clearly when a fixture changes.
+- [x] Tests deserialize or construct production Kotlin models and compare them to the fixtures.
+- [x] Tests use production sync and packetization functions.
+- [x] Tests cover error/failure transitions, not only happy paths.
+- [x] Tests fail clearly when a fixture changes.
 
 **Acceptance:** Existing Android behavior has an executable compatibility baseline before Rust code replaces it.
 

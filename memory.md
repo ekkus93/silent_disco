@@ -1,5 +1,14 @@
 # memory.md — `silent_disco`
 
+## 2026-07-25T16:56:06Z - GPT-5.6 Thinking - Rust migration compatibility baseline complete
+
+- Completed the code-verifiable Phase 1 baseline and Block 2 workspace scaffold from `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`.
+- Added versioned compatibility fixtures for every existing control-message variant, clock-sync samples and outlier rejection, PCM packetization headers/payload hashes, host/listener state decisions, tuning normalization, and legacy settings/trusted-device persistence.
+- Added `RustMigrationCompatibilityFixtureTest`, which exercises production Kotlin codecs, sync estimator, packetizer, binary audio codec, state helpers, tuning functions, and the production-owned `LegacyPreferencesContract`.
+- Added the Rust workspace pinned to Rust 1.97.1 with `silent-disco-core`, `silent-disco-ffi`, and `silent-disco-test-support`, plus `scripts/check-rust.sh` and permanent GitHub Actions CI.
+- CI run `30166034765` passed Android unit tests, Android `lintDebug`, Rust formatting, clippy with warnings denied, and all Rust workspace tests on the same revision.
+- Physical-device baseline checks, APK Home-screen launch, and connected Android tests remain unverified in this environment and remain unchecked.
+
 ## 2026-07-25T15:29:13Z - GPT-5.6 Thinking - Rust migration Block 1.2 ownership inventory
 
 The shared-Rust-core migration has started using `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`. The following Kotlin/Android components are the current authoritative owners and form the extraction checklist:
