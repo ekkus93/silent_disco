@@ -88,9 +88,25 @@ jobs:
             "ndk;28.2.13676358"
 
       - name: Run Android unit tests
+        id: android-tests
         if: always()
-        run: ./gradlew test --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew test --stacktrace --console=plain 2>&1 | tee android-unit-tests.log
+
+      - name: Upload Android unit-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-test-diagnostics
+          path: |
+            android-unit-tests.log
+            app/build/test-results/
+            app/build/reports/tests/
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Run Android lint
         if: always()
-        run: ./gradlew lintDebug --stacktrace
+        run: ./gradlew lintDebug --stacktrace --console=plain
