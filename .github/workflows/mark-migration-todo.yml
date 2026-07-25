@@ -28,6 +28,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('app/src/test/java/com/ekkus/silentdisco/core/transport/RustMigrationCompatibilityFixtureTest.kt')
           text = path.read_text()
@@ -35,21 +36,13 @@ jobs:
           if before == 0:
               print('Truth labels already removed')
           else:
-              lines = [line for line in text.splitlines() if not line.strip().startswith('.named(')]
-              text = '\n'.join(lines) + '\n'
-              inline = [
-                  '.named(name)',
-                  '.named("$name round trip")',
-                  '.named("sync probe $current")',
-                  '.named(entry.string("name"))',
-                  '.named("packet[$index].version")',
-              ]
-              for value in inline:
-                  text = text.replace(value, '')
-              if '.named(' in text:
-                  raise SystemExit('unhandled Truth .named call remains')
+              text, removed = re.subn(r'\.named\((?:[^()]|\([^()]*\))*\)', '', text)
+              if removed != before or '.named(' in text:
+                  raise SystemExit(
+                      f'expected to remove {before} Truth labels, removed {removed}; unhandled label remains'
+                  )
               path.write_text(text)
-              print(f'removed {before} unsupported Truth labels')
+              print(f'removed {removed} unsupported Truth labels')
           PY
 
           git diff --check
