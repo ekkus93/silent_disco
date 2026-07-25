@@ -1,19 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    DecodePolicy, MAX_AUDIO_DATAGRAM_BYTES, PacketSequence, ProtocolDecoder, ProtocolError,
-    ProtocolFrame, crc32, decode_frame, encode_frame,
+    DecodePolicy, MAX_AUDIO_DATAGRAM_BYTES, ProtocolDecoder, ProtocolError, ProtocolFrame, crc32,
+    decode_frame, encode_frame,
 };
-use crate::domain::SessionId;
+use crate::domain::{PacketSequence, SessionId};
 
-const CONTROL_VECTORS: &str =
-    include_str!("../../testdata/protocol/v2/control_vectors.txt");
+const CONTROL_VECTORS: &str = include_str!("../../testdata/protocol/v2/control_vectors.txt");
 const SYNC_VECTORS: &str = include_str!("../../testdata/protocol/v2/sync_vectors.txt");
 const AUDIO_VECTORS: &str = include_str!("../../testdata/protocol/v2/audio_vectors.txt");
-const BOUNDARY_VECTORS: &str =
-    include_str!("../../testdata/protocol/v2/boundary_vectors.txt");
-const MALFORMED_VECTORS: &str =
-    include_str!("../../testdata/protocol/v2/malformed_vectors.txt");
+const BOUNDARY_VECTORS: &str = include_str!("../../testdata/protocol/v2/boundary_vectors.txt");
+const MALFORMED_VECTORS: &str = include_str!("../../testdata/protocol/v2/malformed_vectors.txt");
 
 struct ValidVector {
     name: String,
@@ -192,20 +189,14 @@ fn decode_valid(bytes: &[u8]) -> ProtocolFrame {
     }
 }
 
-fn decode_expect_error(
-    decoder: &mut ProtocolDecoder,
-    bytes: &[u8],
-    policy: DecodePolicy<'_>,
-) {
-    if decoder.decode(bytes, policy).is_ok() {
-        panic!("expected protocol fixture to fail");
-    }
+fn decode_expect_error(decoder: &mut ProtocolDecoder, bytes: &[u8], policy: DecodePolicy<'_>) {
+    assert!(
+        decoder.decode(bytes, policy).is_err(),
+        "expected protocol fixture to fail"
+    );
 }
 
-fn required_valid<'a>(
-    vectors: &'a BTreeMap<String, ValidVector>,
-    name: &str,
-) -> &'a ValidVector {
+fn required_valid<'a>(vectors: &'a BTreeMap<String, ValidVector>, name: &str) -> &'a ValidVector {
     vectors
         .get(name)
         .unwrap_or_else(|| panic!("missing valid vector {name}"))
@@ -277,7 +268,10 @@ fn parse_hex_u32(value: &str) -> u32 {
 }
 
 fn parse_hex_bytes(value: &str) -> Vec<u8> {
-    assert!(value.len().is_multiple_of(2), "fixture hex length must be even");
+    assert!(
+        value.len().is_multiple_of(2),
+        "fixture hex length must be even"
+    );
     value
         .as_bytes()
         .chunks_exact(2)

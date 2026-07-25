@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod vector_tests;
+
 mod codec;
 mod types;
 
