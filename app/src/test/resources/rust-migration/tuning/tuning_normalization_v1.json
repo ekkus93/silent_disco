@@ -24,7 +24,7 @@
       }
     },
     {
-      "name": "late_threshold_keeps_twenty_ms_gap",
+      "name": "late_threshold_clamps_to_maximum",
       "operation": "adjust",
       "field": "LatePacketThresholdMs",
       "direction": 1,
@@ -33,7 +33,7 @@
         "hardResyncThresholdMs": 500
       },
       "expected": {
-        "latePacketThresholdMs": 480,
+        "latePacketThresholdMs": 250,
         "hardResyncThresholdMs": 500
       }
     },
