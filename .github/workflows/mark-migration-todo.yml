@@ -28,21 +28,51 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           path = Path('app/src/test/java/com/ekkus/silentdisco/core/transport/RustMigrationCompatibilityFixtureTest.kt')
           text = path.read_text()
           before = text.count('.named(')
-          if before == 0:
-              print('Truth labels already removed')
-          else:
-              text, removed = re.subn(r'\.named\((?:[^()]|\([^()]*\))*\)', '', text)
-              if removed != before or '.named(' in text:
-                  raise SystemExit(
-                      f'expected to remove {before} Truth labels, removed {removed}; unhandled label remains'
-                  )
-              path.write_text(text)
+
+          def remove_named_calls(line: str) -> tuple[str, int]:
+              removed = 0
+              while '.named(' in line:
+                  start = line.index('.named(')
+                  cursor = start + len('.named')
+                  depth = 0
+                  end = None
+                  for index in range(cursor, len(line)):
+                      char = line[index]
+                      if char == '(':
+                          depth += 1
+                      elif char == ')':
+                          depth -= 1
+                          if depth == 0:
+                              end = index
+                              break
+                  if end is None:
+                      raise SystemExit(f'unclosed Truth label call: {line!r}')
+                  line = line[:start] + line[end + 1:]
+                  removed += 1
+              return line, removed
+
+          output = []
+          removed = 0
+          for source_line in text.splitlines():
+              updated_line, line_removed = remove_named_calls(source_line)
+              removed += line_removed
+              if updated_line.strip():
+                  output.append(updated_line)
+              elif not source_line.strip().startswith('.named('):
+                  output.append(updated_line)
+
+          if before != removed or any('.named(' in line for line in output):
+              raise SystemExit(f'expected to remove {before} labels, removed {removed}')
+
+          if removed:
+              path.write_text('\n'.join(output) + '\n')
               print(f'removed {removed} unsupported Truth labels')
+          else:
+              print('Truth labels already removed')
           PY
 
           git diff --check
