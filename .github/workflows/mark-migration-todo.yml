@@ -1,0 +1,74 @@
+name: Mark migration TODO progress
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  mark:
+    if: >-
+      github.repository == 'ekkus93/silent_disco' &&
+      github.event.pull_request.head.ref == 'agent/rust-migration-ci-validation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Mark only verified migration tasks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md')
+          text = path.read_text()
+
+          exact = {
+              '- [ ] Run `./gradlew test`.': '- [x] Run `./gradlew test`.',
+              '- [ ] Run `./gradlew lintDebug`.': '- [x] Run `./gradlew lintDebug`.',
+          }
+          for old, new in exact.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f'expected exactly one occurrence: {old!r}')
+              text = text.replace(old, new, 1)
+
+          start = text.index('### 1.2 Inventory current ownership')
+          end = text.index('This inventory is a migration checklist', start)
+          inventory = text[start:end]
+          if inventory.count('- [ ]') != 12:
+              raise SystemExit('ownership inventory no longer has exactly 12 unchecked items')
+          text = text[:start] + inventory.replace('- [ ]', '- [x]') + text[end:]
+
+          start = text.index('## Block 2 — Create the Rust workspace')
+          acceptance = '**Acceptance:** Rust format, clippy, and tests pass; Android build/tests remain unchanged and passing.'
+          end = text.index(acceptance, start)
+          block = text[start:end]
+          if block.count('- [ ]') != 13:
+              raise SystemExit('Block 2 no longer has exactly 13 unchecked items')
+          text = text[:start] + block.replace('- [ ]', '- [x]') + text[end:]
+
+          path.write_text(text)
+          PY
+
+          git diff --check
+
+      - name: Commit verified progress
+        run: |
+          if git diff --quiet; then
+            echo "Migration TODO already marked"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md
+          git commit -m "Mark completed Rust migration baseline tasks"
+          git push origin HEAD:master
