@@ -30,9 +30,26 @@ jobs:
           rustup default 1.97.1
 
       - name: Check Rust formatting
+        id: rust-format
         run: |
           cd rust
           cargo fmt --all -- --check
+
+      - name: Generate Rust formatting patch
+        if: failure() && steps.rust-format.conclusion == 'failure'
+        run: |
+          cd rust
+          cargo fmt --all
+          git diff -- . > ../rustfmt.patch
+
+      - name: Upload Rust formatting patch
+        if: failure() && steps.rust-format.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustfmt-patch
+          path: rustfmt.patch
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Run Rust clippy
         if: always()
