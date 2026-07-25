@@ -1,0 +1,67 @@
+{
+  "fixtureVersion": 1,
+  "cases": [
+    {
+      "name": "normalize_scan_window_minimum",
+      "operation": "normalize",
+      "input": {
+        "scanWindowMs": 500
+      },
+      "expected": {
+        "scanWindowMs": 1000
+      }
+    },
+    {
+      "name": "startup_buffer_does_not_drop_below_minimum",
+      "operation": "adjust",
+      "field": "StartupBufferMs",
+      "direction": -1,
+      "input": {
+        "startupBufferMs": 100
+      },
+      "expected": {
+        "startupBufferMs": 100
+      }
+    },
+    {
+      "name": "late_threshold_keeps_twenty_ms_gap",
+      "operation": "adjust",
+      "field": "LatePacketThresholdMs",
+      "direction": 1,
+      "input": {
+        "latePacketThresholdMs": 490,
+        "hardResyncThresholdMs": 500
+      },
+      "expected": {
+        "latePacketThresholdMs": 480,
+        "hardResyncThresholdMs": 500
+      }
+    },
+    {
+      "name": "hard_resync_reduces_late_threshold_when_needed",
+      "operation": "adjust",
+      "field": "HardResyncThresholdMs",
+      "direction": -1,
+      "input": {
+        "latePacketThresholdMs": 120,
+        "hardResyncThresholdMs": 130
+      },
+      "expected": {
+        "latePacketThresholdMs": 90,
+        "hardResyncThresholdMs": 110
+      }
+    },
+    {
+      "name": "sample_window_stops_at_maximum",
+      "operation": "adjust",
+      "field": "SyncSampleWindow",
+      "direction": 1,
+      "input": {
+        "syncSampleWindow": 31
+      },
+      "expected": {
+        "syncSampleWindow": 32
+      }
+    }
+  ]
+}
