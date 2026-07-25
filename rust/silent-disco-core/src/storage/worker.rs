@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
@@ -38,6 +38,7 @@ enum DatabaseCommand {
 #[derive(Clone)]
 pub struct DatabaseClient {
     sender: SyncSender<DatabaseCommand>,
+    accepting_requests: Arc<AtomicBool>,
     schema_version: Arc<AtomicU32>,
 }
 
@@ -71,6 +72,12 @@ impl DatabaseClient {
         operation: StorageOperation,
         command: impl FnOnce(DatabaseReply<T>) -> DatabaseCommand,
     ) -> Result<T, StorageError> {
+        if !self.accepting_requests.load(Ordering::Acquire) {
+            return Err(StorageError::worker_stopped(
+                operation,
+                Some(self.schema_version.load(Ordering::Acquire)),
+            ));
+        }
         let (reply_sender, reply_receiver) = sync_channel(1);
         match self.sender.try_send(command(reply_sender)) {
             Ok(()) => {}
@@ -93,6 +100,9 @@ impl DatabaseClient {
     }
 
     fn request_shutdown(&self) -> Result<(), StorageError> {
+        if !self.accepting_requests.swap(false, Ordering::AcqRel) {
+            return Err(StorageError::shutdown_in_progress());
+        }
         let (reply_sender, reply_receiver) = sync_channel(1);
         self.sender
             .send(DatabaseCommand::Shutdown {
@@ -138,6 +148,7 @@ impl DatabaseWorker {
         config.validate()?;
         let (command_sender, command_receiver) = sync_channel(config.queue_capacity);
         let (startup_sender, startup_receiver) = sync_channel(1);
+        let accepting_requests = Arc::new(AtomicBool::new(true));
         let schema_version = Arc::new(AtomicU32::new(0));
         let thread_schema_version = Arc::clone(&schema_version);
         let join_handle = thread::Builder::new()
@@ -163,6 +174,7 @@ impl DatabaseWorker {
             Ok(Ok(metadata)) => Ok(Self {
                 client: DatabaseClient {
                     sender: command_sender,
+                    accepting_requests,
                     schema_version,
                 },
                 initial_metadata: metadata,

@@ -4,8 +4,8 @@ use std::error::Error;
 use rusqlite::{Error as SqliteError, ErrorCode};
 
 use crate::error::{
-    CoreError, CoreErrorCode, CoreSubsystem, ErrorContextEntry, ErrorSeverity,
-    MAX_ERROR_CONTEXT_VALUE_BYTES, MAX_ERROR_MESSAGE_BYTES,
+    CoreError, CoreErrorCode, ErrorContextEntry, ErrorSeverity, MAX_ERROR_CONTEXT_VALUE_BYTES,
+    MAX_ERROR_MESSAGE_BYTES,
 };
 
 /// Stable storage operations included in diagnostics and structured failures.
@@ -264,7 +264,7 @@ impl StorageError {
         CoreError {
             code: self.kind.core_error_code(),
             message: truncate_utf8(self.message.clone(), MAX_ERROR_MESSAGE_BYTES),
-            subsystem: CoreSubsystem::Storage,
+            subsystem: self.kind.core_error_code().subsystem(),
             severity: self.kind.severity(),
             retryable: self.retryable,
             operation_id: None,
@@ -435,6 +435,29 @@ mod tests {
                 .iter()
                 .any(|entry| { entry.key == "schema_version" && entry.value == "4" })
         );
+    }
+
+    #[test]
+    fn core_error_subsystem_always_matches_its_stable_code() {
+        let invalid_configuration = StorageError::new(
+            StorageErrorKind::InvalidConfiguration,
+            StorageOperation::ValidateConfiguration,
+            "invalid configuration",
+            None,
+        )
+        .to_core_error();
+        assert_eq!(invalid_configuration.code, CoreErrorCode::InvalidArgument);
+        assert_eq!(invalid_configuration.subsystem, CoreSubsystem::Validation);
+        assert_eq!(
+            invalid_configuration.subsystem,
+            invalid_configuration.code.subsystem()
+        );
+
+        let worker_stopped =
+            StorageError::worker_stopped(StorageOperation::ReadMetadata, Some(0)).to_core_error();
+        assert_eq!(worker_stopped.code, CoreErrorCode::WorkerStopped);
+        assert_eq!(worker_stopped.subsystem, CoreSubsystem::Runtime);
+        assert_eq!(worker_stopped.subsystem, worker_stopped.code.subsystem());
     }
 
     #[test]
