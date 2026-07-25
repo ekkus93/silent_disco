@@ -1,5 +1,29 @@
 # memory.md — `silent_disco`
 
+## 2026-07-25T15:29:13Z - GPT-5.6 Thinking - Rust migration Block 1.2 ownership inventory
+
+The shared-Rust-core migration has started using `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`. The following Kotlin/Android components are the current authoritative owners and form the extraction checklist:
+
+- **Protocol models:** `app/src/main/java/com/ekkus/silentdisco/core/protocol/ProtocolModels.kt`.
+- **Protocol serialization and TCP framing:** `app/src/main/java/com/ekkus/silentdisco/core/transport/TcpTransport.kt` (`JsonMessageCodec`, control/sync codecs, and `AudioPacketCodec`).
+- **Host and listener lifecycle:** `app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt`, with state records and presentation helpers in `app/src/main/java/com/ekkus/silentdisco/app/AppState.kt`.
+- **Join approval and rejection:** `MainViewModel.approveJoinRequest`, `rejectJoinRequest`, and incoming control-message handlers.
+- **Clock synchronization:** `app/src/main/java/com/ekkus/silentdisco/core/sync/ClockSync.kt`, `SyncMaintenance.kt`, and the synchronization orchestration in `MainViewModel.kt`.
+- **PCM packetization:** `app/src/main/java/com/ekkus/silentdisco/core/audio/AudioPipeline.kt` (`PcmPacketizer`).
+- **Jitter buffering and playback scheduling:** `AudioPipeline.kt` (`AudioPacketBuffer`) and `app/src/main/java/com/ekkus/silentdisco/core/audio/PlaybackScheduling.kt` (`ListenerPlaybackScheduler`).
+- **Audio output:** Kotlin `AudioTrackPlaybackEngine` in `PlaybackScheduling.kt`; the current C++/Oboe bridge is diagnostic rather than the production render engine.
+- **BLE discovery and advertisement:** `app/src/main/java/com/ekkus/silentdisco/core/transport/BleDiscoveryService.kt`.
+- **Wi-Fi Direct establishment:** `app/src/main/java/com/ekkus/silentdisco/core/transport/WifiDirectTransportService.kt`.
+- **TCP channel transport:** `app/src/main/java/com/ekkus/silentdisco/core/transport/TcpTransport.kt`, orchestrated by `WifiDirectTransportService.kt`.
+- **Settings and trusted-device persistence:** Android `SharedPreferences` owned directly by `MainViewModel.kt`.
+- **Diagnostics:** `app/src/main/java/com/ekkus/silentdisco/core/diagnostics/DiagnosticsStore.kt`, `core/logging/DiagnosticsMetrics.kt`, `core/logging/AppLogger.kt`, and orchestration in `MainViewModel.kt`.
+
+Execution constraints for this session:
+
+- The repository is writable through the connected GitHub integration, but the execution container has no GitHub network access, no authenticated `gh`, no Android device, and no installed Rust toolchain.
+- Fresh `./gradlew test`, `./gradlew lintDebug`, connected Android tests, and APK Home-screen validation could not be truthfully executed here. Those Block 1.1 checks remain incomplete and must not be marked complete based only on the older June 28 results below.
+- Continue committing only coherent sub-blocks whose contents can be verified without fabricating test or device results.
+
 ## 2026-06-28T21:26:27Z - Claude Sonnet 4.6 - FIX5 Ralph Loop: COMPLETE (9 blocks delivered)
 
 **FIX5 (correctness hardening pass) COMPLETE. All P0/P1/P2 items implemented and tested:**
