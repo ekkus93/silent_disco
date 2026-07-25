@@ -1,5 +1,16 @@
 # memory.md — `silent_disco`
 
+## 2026-07-25T23:27:11Z - GPT-5.6 Thinking - Rust SQLite worker Block 7 complete
+
+- Added a Rust-owned SQLite worker in `silent-disco-core`; one dedicated thread owns the only connection and callers receive typed control-plane operations rather than raw SQL or connection access.
+- The command queue is bounded with a default capacity of 32. Normal requests use nonblocking admission and return visible `StorageBusy` when full; accepted commands are tested to receive a result rather than being dropped.
+- Shutdown closes request admission before queuing the shutdown command, making post-stop clients reject deterministically instead of racing into `ReplyDisconnected`. The worker exposes explicit start, checkpoint, stop, close, and join behavior; dropping an unjoined worker is fail-visible rather than silently detaching it.
+- Pinned `rusqlite` 0.40.1 with bundled SQLite and committed the regenerated lockfile. Startup enables and verifies foreign keys, requires WAL, applies a 2,000 ms busy timeout, requires `synchronous=FULL`, records the SQLite library version and connection policy in diagnostics metadata, and fails initialization if any required policy cannot be established.
+- Added separate storage categories for open, pragma, migration, query, transaction, constraint, busy/queue-full, corruption, close, thread start, stopped worker, panic, reply disconnect, and shutdown state. `CoreError` conversion preserves operation/schema context and derives subsystem from the stable error code to prevent code/subsystem mismatch.
+- Tests use temporary database files and cover serialized thread ownership, bounded queue saturation, accepted-command completion, deterministic shutdown rejection, explicit stop/join, WAL-policy rejection, corruption detection, invalid configuration, SQLite error mapping, and stable error-subsystem integrity.
+- PR #28 merged as `32ca46b1062b0e85f477f03d54541502145f348a`. CI run `30179055667` passed Rust formatting, Clippy with warnings denied, all Rust tests, debug/PoC-debug/release APK builds, instrumentation-test APK compilation, four-ABI Rust packaging, Android unit tests, and Android lint.
+- Block 7 intentionally creates no schema or repository SQL. Ordered migrations, tables, repositories, and legacy Android data import remain Block 8 and later work.
+
 ## 2026-07-25T20:58:09Z - GPT-5.6 Thinking - Rust synchronization Block 6 code complete
 
 - Ported clock synchronization to Rust with distinct host/local monotonic timestamp types, checked four-timestamp RTT/offset arithmetic, bounded correlation tracking, bounded sample/drift history, low-RTT selection, confidence classification, skew estimation, and initial/periodic/drift decisions.
