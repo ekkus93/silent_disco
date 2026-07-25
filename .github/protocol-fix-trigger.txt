@@ -1,1 +1,0 @@
-Trigger the assertion-checked, self-removing Rust protocol lint and formatting workflow.

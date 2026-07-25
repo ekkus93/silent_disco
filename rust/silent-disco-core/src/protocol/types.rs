@@ -5,6 +5,7 @@ use crate::domain::{DeviceId, MonotonicMillis, PacketSequence, SampleIndex, Sess
 pub const PROTOCOL_MAGIC: [u8; 4] = *b"SDP2";
 pub const PROTOCOL_VERSION: u16 = 2;
 pub const FRAME_HEADER_BYTES: usize = 16;
+pub const FRAME_HEADER_LENGTH: u16 = 16;
 pub const MAX_CONTROL_PAYLOAD_BYTES: usize = 64 * 1024;
 pub const MAX_AUDIO_DATAGRAM_BYTES: usize = 4 * 1024;
 pub const MAX_PROTOCOL_STRING_BYTES: usize = 256;
@@ -129,7 +130,7 @@ impl FrameHeader {
             version: PROTOCOL_VERSION,
             kind,
             flags,
-            header_length: FRAME_HEADER_BYTES as u16,
+            header_length: FRAME_HEADER_LENGTH,
             payload_length,
         }
     }
