@@ -49,13 +49,16 @@ mod android_abi {
     use core::ffi::c_void;
 
     /// ABI contract implemented by the current native library.
-    pub const CORE_ABI_VERSION: u32 = 1;
+    ///
+    /// A `u16` keeps conversion to both the C `u32` result and JNI `i32` result
+    /// statically infallible.
+    pub const CORE_ABI_VERSION: u16 = 1;
 
     /// Returns the stable ABI contract version exposed to non-Rust callers.
     #[must_use]
     #[unsafe(no_mangle)]
     pub extern "C" fn silent_disco_core_abi_version() -> u32 {
-        CORE_ABI_VERSION
+        u32::from(CORE_ABI_VERSION)
     }
 
     /// JNI entry point used only by the Android platform bridge and smoke tests.
@@ -66,10 +69,7 @@ mod android_abi {
         _environment: *mut c_void,
         _class: *mut c_void,
     ) -> i32 {
-        match i32::try_from(silent_disco_core_abi_version()) {
-            Ok(version) => version,
-            Err(_) => -1,
-        }
+        i32::from(CORE_ABI_VERSION)
     }
 }
 
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn exports_stable_abi_version() {
-        assert_eq!(silent_disco_core_abi_version(), CORE_ABI_VERSION);
+        assert_eq!(silent_disco_core_abi_version(), u32::from(CORE_ABI_VERSION));
         assert_eq!(CORE_ABI_VERSION, 1);
     }
 }
