@@ -72,9 +72,8 @@ fn boundary_vectors_are_canonical_and_reach_declared_limits() {
 #[test]
 fn malformed_vectors_fail_with_the_declared_stable_category() {
     for vector in parse_malformed_vectors(MALFORMED_VECTORS) {
-        let error = match decode_frame(&vector.bytes) {
-            Ok(_) => panic!("malformed vector {} decoded successfully", vector.name),
-            Err(error) => error,
+        let Err(error) = decode_frame(&vector.bytes) else {
+            panic!("malformed vector {} decoded successfully", vector.name);
         };
         assert_eq!(error_tag(&error), vector.expected_error);
     }
