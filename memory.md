@@ -1,5 +1,19 @@
 # memory.md — `silent_disco`
 
+## 2026-07-25T19:51:20Z - GPT-5.6 Thinking - Rust migration Block 5 complete
+
+- Completed Block 5 while preserving all physical-device-only gates.
+- Established protocol v2 with `SDP2`, a fixed 16-byte network-order header, explicit version/kind/flags/length, a 64 KiB control limit, and a 4 KiB audio datagram limit.
+- Added canonical Rust control, synchronization, and PCM16 audio schemas; bounded parsing, exact-length validation, CRC32 integrity, authorization/staleness policy, and independent diagnostics.
+- Added production-encoder-generated executable vectors for every message kind, boundary sizes, deterministic hashes, and malformed/unsupported/integrity cases.
+- CI run `30170763626` passed Rust format, Clippy with warnings denied, Rust tests, all APK variants, four-ABI packaging, Android unit tests, and Android lint.
+
+## 2026-07-25T19:51:20Z - GPT-5.6 Thinking - Rust migration Block 4 complete
+
+- Completed validated Rust domain identifiers, stable domain enums, and structured errors while preserving the physical-device gate.
+- IDs are bounded and validated; enums have stable numeric/wire representations; `CoreError` has subsystem-specific codes, bounded context, severity, retryability, and operation correlation.
+- CI run `30168849005` passed Rust format, Clippy with warnings denied, Rust tests, all APK variants, four-ABI packaging, Android unit tests, and Android lint.
+
 ## 2026-07-25T17:45:29Z - GPT-5.6 Thinking - Block 3 Rust Android integration code complete
 
 - Added a Gradle-owned Rust Android build using pinned Rust 1.97.1, cargo-ndk 4.1.2, Android NDK 28.2.13676358, and minSdk/platform 29.

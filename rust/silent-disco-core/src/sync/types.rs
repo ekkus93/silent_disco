@@ -148,10 +148,24 @@ impl SyncSample {
         Ok(Self {
             correlation_id: exchange.correlation_id,
             local_receive_time: exchange.t4_local_receive,
-            round_trip_time_ms: network_round_trip as f64,
-            offset_ms: offset_twice as f64 / 2.0,
+            round_trip_time_ms: u64_to_f64(network_round_trip),
+            offset_ms: i128_to_f64(offset_twice) / 2.0,
         })
     }
+}
+
+// Monotonic millisecond values lose integer precision only above the exact f64
+// integer range. Practical RTTs are immediately filtered to a small configured
+// bound, while offset arithmetic retains sign and half-millisecond resolution
+// for mobile-runtime timestamp ranges.
+#[allow(clippy::cast_precision_loss)]
+fn u64_to_f64(value: u64) -> f64 {
+    value as f64
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn i128_to_f64(value: i128) -> f64 {
+    value as f64
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,9 +181,7 @@ impl fmt::Display for SyncTimestampError {
             Self::LocalClockMovedBackwards => {
                 "local monotonic receive time precedes local send time"
             }
-            Self::HostClockMovedBackwards => {
-                "host monotonic send time precedes host receive time"
-            }
+            Self::HostClockMovedBackwards => "host monotonic send time precedes host receive time",
             Self::HostProcessingExceedsRoundTrip => {
                 "host processing duration exceeds the measured local round trip"
             }

@@ -1,3 +1,0 @@
-Trigger assertion-checked completion bookkeeping for Rust migration Blocks 4 and 5.
-
-Retry trigger: 2

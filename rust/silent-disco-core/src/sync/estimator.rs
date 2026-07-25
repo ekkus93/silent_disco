@@ -111,15 +111,26 @@ pub enum SyncEstimatorError {
 impl fmt::Display for SyncEstimatorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidConfiguration => formatter.write_str("sync estimator configuration is invalid"),
+            Self::InvalidConfiguration => {
+                formatter.write_str("sync estimator configuration is invalid")
+            }
             Self::DuplicateCorrelationId { correlation_id } => {
-                write!(formatter, "sync correlation ID {correlation_id} is already pending")
+                write!(
+                    formatter,
+                    "sync correlation ID {correlation_id} is already pending"
+                )
             }
             Self::PendingProbeLimitReached { maximum } => {
-                write!(formatter, "sync pending-probe limit of {maximum} was reached")
+                write!(
+                    formatter,
+                    "sync pending-probe limit of {maximum} was reached"
+                )
             }
             Self::StaleCorrelationId { correlation_id } => {
-                write!(formatter, "sync correlation ID {correlation_id} is stale or unknown")
+                write!(
+                    formatter,
+                    "sync correlation ID {correlation_id} is stale or unknown"
+                )
             }
             Self::CorrelationTimestampMismatch { correlation_id } => write!(
                 formatter,
@@ -260,10 +271,8 @@ impl ClockSyncEstimator {
         }
 
         let mut selected: Vec<SyncSample> = self.accepted_samples.iter().copied().collect();
-        selected.sort_by(|left, right| {
-            left.round_trip_time_ms
-                .total_cmp(&right.round_trip_time_ms)
-        });
+        selected
+            .sort_by(|left, right| left.round_trip_time_ms.total_cmp(&right.round_trip_time_ms));
         selected.truncate((selected.len() / 2).max(1));
 
         let sample_count = selected.len();
@@ -411,15 +420,21 @@ mod tests {
     fn matches_kotlin_low_rtt_best_half_behavior() {
         let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
             .expect("default config is valid");
-        assert!(observe(&mut estimator, 1, 1_000, 1_012, 1_014, 1_026)
-            .expect("first sample")
-            .accepted);
-        assert!(observe(&mut estimator, 2, 2_000, 2_015, 2_017, 2_022)
-            .expect("second sample")
-            .accepted);
-        assert!(!observe(&mut estimator, 3, 3_000, 3_100, 3_101, 3_400)
-            .expect("high RTT sample is valid but rejected")
-            .accepted);
+        assert!(
+            observe(&mut estimator, 1, 1_000, 1_012, 1_014, 1_026)
+                .expect("first sample")
+                .accepted
+        );
+        assert!(
+            observe(&mut estimator, 2, 2_000, 2_015, 2_017, 2_022)
+                .expect("second sample")
+                .accepted
+        );
+        assert!(
+            !observe(&mut estimator, 3, 3_000, 3_100, 3_101, 3_400)
+                .expect("high RTT sample is valid but rejected")
+                .accepted
+        );
 
         let snapshot = estimator.snapshot();
         assert_eq!(snapshot.offset_ms, 5.0);
@@ -439,7 +454,9 @@ mod tests {
             .expect("first registration succeeds");
         assert_eq!(
             estimator.begin_probe(correlation, LocalMonotonicMillis::new(100)),
-            Err(SyncEstimatorError::DuplicateCorrelationId { correlation_id: correlation })
+            Err(SyncEstimatorError::DuplicateCorrelationId {
+                correlation_id: correlation
+            })
         );
         estimator
             .observe_response(
@@ -458,13 +475,17 @@ mod tests {
                 HostMonotonicMillis::new(111),
                 LocalMonotonicMillis::new(120),
             ),
-            Err(SyncEstimatorError::StaleCorrelationId { correlation_id: correlation })
+            Err(SyncEstimatorError::StaleCorrelationId {
+                correlation_id: correlation
+            })
         );
 
         for id in 0..MAX_PENDING_PROBES {
             estimator
                 .begin_probe(
-                    SyncCorrelationId::new(1_000 + id as u64),
+                    SyncCorrelationId::new(
+                        1_000 + u64::try_from(id).expect("pending-probe index fits u64"),
+                    ),
                     LocalMonotonicMillis::new(1_000),
                 )
                 .expect("pending capacity not reached");
@@ -494,7 +515,9 @@ mod tests {
                 HostMonotonicMillis::new(111),
                 LocalMonotonicMillis::new(120),
             ),
-            Err(SyncEstimatorError::CorrelationTimestampMismatch { correlation_id: correlation })
+            Err(SyncEstimatorError::CorrelationTimestampMismatch {
+                correlation_id: correlation
+            })
         );
         assert_eq!(estimator.pending_probe_count(), 0);
     }
@@ -524,7 +547,10 @@ mod tests {
 
     #[test]
     fn confidence_thresholds_match_android_baseline() {
-        assert_eq!(super::classify_confidence(20.0, 2.0), SyncConfidence::Excellent);
+        assert_eq!(
+            super::classify_confidence(20.0, 2.0),
+            SyncConfidence::Excellent
+        );
         assert_eq!(super::classify_confidence(50.0, 5.0), SyncConfidence::Good);
         assert_eq!(super::classify_confidence(90.0, 12.0), SyncConfidence::Fair);
         assert_eq!(super::classify_confidence(90.1, 0.0), SyncConfidence::Poor);
@@ -538,8 +564,8 @@ mod tests {
             estimator.decision(LocalMonotonicMillis::new(0), SyncSnapshot::default()),
             Ok(SyncDecision::InitialProbeRequired)
         );
-        let observation = observe(&mut estimator, 1, 1_000, 1_010, 1_011, 1_020)
-            .expect("accepted sample");
+        let observation =
+            observe(&mut estimator, 1, 1_000, 1_010, 1_011, 1_020).expect("accepted sample");
         assert_eq!(
             estimator.decision(LocalMonotonicMillis::new(2_000), observation.snapshot),
             Ok(SyncDecision::Wait)
@@ -564,19 +590,19 @@ mod tests {
 
     #[test]
     fn invalid_configuration_is_rejected_before_allocating() {
-        assert_eq!(
+        assert!(matches!(
             ClockSyncEstimator::new(SyncEstimatorConfig {
                 max_samples: 0,
                 ..SyncEstimatorConfig::default()
             }),
             Err(SyncEstimatorError::InvalidConfiguration)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             ClockSyncEstimator::new(SyncEstimatorConfig {
                 max_accepted_rtt_ms: f64::NAN,
                 ..SyncEstimatorConfig::default()
             }),
             Err(SyncEstimatorError::InvalidConfiguration)
-        );
+        ));
     }
 }

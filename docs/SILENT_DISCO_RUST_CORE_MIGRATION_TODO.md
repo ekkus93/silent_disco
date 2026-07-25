@@ -243,37 +243,37 @@ The final annotation must match the pinned Rust edition/toolchain.
 
 Create Rust newtypes for:
 
-- [ ] `SessionId`;
-- [ ] `StreamId`;
-- [ ] `DeviceId`;
-- [ ] `RequestId`;
-- [ ] `OperationId`;
-- [ ] `DiagnosticRunId`;
-- [ ] monotonic milliseconds;
-- [ ] packet sequence;
-- [ ] sample index.
+- [x] `SessionId`;
+- [x] `StreamId`;
+- [x] `DeviceId`;
+- [x] `RequestId`;
+- [x] `OperationId`;
+- [x] `DiagnosticRunId`;
+- [x] monotonic milliseconds;
+- [x] packet sequence;
+- [x] sample index.
 
 Requirements:
 
-- [ ] bounded string lengths;
-- [ ] validation on construction;
-- [ ] no implicit acceptance of blank IDs;
-- [ ] deterministic serialization;
-- [ ] useful `Display` without leaking secrets.
+- [x] bounded string lengths;
+- [x] validation on construction;
+- [x] no implicit acceptance of blank IDs;
+- [x] deterministic serialization;
+- [x] useful `Display` without leaking secrets.
 
 ### 4.2 Port domain enums
 
 Port and test semantic equivalents of:
 
-- [ ] application role;
-- [ ] approval mode;
-- [ ] host lifecycle;
-- [ ] listener lifecycle;
-- [ ] playback state;
-- [ ] transport state;
-- [ ] sync confidence;
-- [ ] trust state;
-- [ ] delivery severity.
+- [x] application role;
+- [x] approval mode;
+- [x] host lifecycle;
+- [x] listener lifecycle;
+- [x] playback state;
+- [x] transport state;
+- [x] sync confidence;
+- [x] trust state;
+- [x] delivery severity.
 
 Do not expose Kotlin/Compose labels from Rust.
 
@@ -294,10 +294,10 @@ pub struct CoreError {
 }
 ```
 
-- [ ] Add stable error codes for validation, protocol, transport, synchronization, audio, storage, platform, FFI, queue overflow, and shutdown.
-- [ ] Bound context entry count and key/value lengths.
-- [ ] Do not use one generic `Unknown` error for known failure paths.
-- [ ] Add tests for conversion without losing the original operation/subsystem.
+- [x] Add stable error codes for validation, protocol, transport, synchronization, audio, storage, platform, FFI, queue overflow, and shutdown.
+- [x] Bound context entry count and key/value lengths.
+- [x] Do not use one generic `Unknown` error for known failure paths.
+- [x] Add tests for conversion without losing the original operation/subsystem.
 
 **Acceptance:** Core domain types compile without Android dependencies and are comprehensively unit tested.
 
@@ -309,15 +309,15 @@ pub struct CoreError {
 
 The Rust protocol is authoritative. Define:
 
-- [ ] fixed magic;
-- [ ] protocol version field;
-- [ ] message-kind field;
-- [ ] flags;
-- [ ] payload length;
-- [ ] maximum control-frame size;
-- [ ] maximum audio datagram size;
-- [ ] maximum identifier/string sizes;
-- [ ] network byte order.
+- [x] fixed magic;
+- [x] protocol version field;
+- [x] message-kind field;
+- [x] flags;
+- [x] payload length;
+- [x] maximum control-frame size;
+- [x] maximum audio datagram size;
+- [x] maximum identifier/string sizes;
+- [x] network byte order.
 
 Do not silently reinterpret current Kotlin serialization as the permanent cross-platform format.
 
@@ -325,32 +325,32 @@ Do not silently reinterpret current Kotlin serialization as the permanent cross-
 
 Port semantic equivalents for:
 
-- [ ] hello/session announcement;
-- [ ] join request;
-- [ ] join approval;
-- [ ] join rejection;
-- [ ] heartbeat;
-- [ ] stream start;
-- [ ] pause;
-- [ ] stop;
-- [ ] disconnect;
-- [ ] resync notice.
+- [x] hello/session announcement;
+- [x] join request;
+- [x] join approval;
+- [x] join rejection;
+- [x] heartbeat;
+- [x] stream start;
+- [x] pause;
+- [x] stop;
+- [x] disconnect;
+- [x] resync notice.
 
 ### 5.3 Implement sync and audio headers
 
-- [ ] Sync request and response use fixed-width bounded fields.
-- [ ] Audio header includes session/stream identity, sequence, sample rate, channels, samples per packet, sample index, host presentation timestamp, payload length, and integrity field.
-- [ ] Payload length is checked before allocation/copy.
-- [ ] Unsupported codec/sample format fails explicitly.
+- [x] Sync request and response use fixed-width bounded fields.
+- [x] Audio header includes session/stream identity, sequence, sample rate, channels, samples per packet, sample index, host presentation timestamp, payload length, and integrity field.
+- [x] Payload length is checked before allocation/copy.
+- [x] Unsupported codec/sample format fails explicitly.
 
 ### 5.4 Add codec implementation
 
-- [ ] Select and pin the bounded control payload format.
-- [ ] Keep framing independent from the payload codec.
-- [ ] Parser reads the fixed header before allocating the payload.
-- [ ] Oversized frames fail before allocation.
-- [ ] Unknown versions and kinds fail with stable error codes.
-- [ ] Trailing bytes and truncated input fail.
+- [x] Select and pin the bounded control payload format.
+- [x] Keep framing independent from the payload codec.
+- [x] Parser reads the fixed header before allocating the payload.
+- [x] Oversized frames fail before allocation.
+- [x] Unknown versions and kinds fail with stable error codes.
+- [x] Trailing bytes and truncated input fail.
 
 ### 5.5 Add golden vectors
 
@@ -360,18 +360,18 @@ Create Rust-owned fixtures under:
 rust/silent-disco-core/testdata/protocol/v2/
 ```
 
-- [ ] One vector per message kind.
-- [ ] Boundary-size vectors.
-- [ ] Malformed/truncated/oversized vectors.
-- [ ] Deterministic payload hashes.
-- [ ] Tests decode and re-encode byte-identically where canonical encoding is required.
+- [x] One vector per message kind.
+- [x] Boundary-size vectors.
+- [x] Malformed/truncated/oversized vectors.
+- [x] Deterministic payload hashes.
+- [x] Tests decode and re-encode byte-identically where canonical encoding is required.
 
 ### 5.6 Add parser hardening
 
-- [ ] Property tests or fuzz targets for frame parsing.
-- [ ] No panic for arbitrary input.
-- [ ] Bounded memory usage.
-- [ ] Diagnostic counters distinguish malformed, unsupported, unauthorized, stale, and oversized frames.
+- [x] Property tests or fuzz targets for frame parsing.
+- [x] No panic for arbitrary input.
+- [x] Bounded memory usage.
+- [x] Diagnostic counters distinguish malformed, unsupported, unauthorized, stale, and oversized frames.
 
 **Acceptance:** Rust protocol tests pass and the wire format is fully specified by executable vectors.
 

@@ -4,9 +4,8 @@ use super::{
 };
 use crate::domain::SyncConfidence;
 
-const ANDROID_CLOCK_SYNC_FIXTURE: &str = include_str!(
-    "../../../../app/src/test/resources/rust-migration/sync/clock_sync_v1.json"
-);
+const ANDROID_CLOCK_SYNC_FIXTURE: &str =
+    include_str!("../../../../app/src/test/resources/rust-migration/sync/clock_sync_v1.json");
 
 #[derive(Debug, Clone, Copy)]
 struct FixtureSample {
@@ -45,7 +44,11 @@ fn android_clock_sync_fixture_matches_rust_estimator() {
     .unwrap_or_else(|error| panic!("Android fixture config must be valid: {error}"));
 
     for (index, fixture) in samples.iter().enumerate() {
-        let correlation = SyncCorrelationId::new(index as u64 + 1);
+        let correlation = SyncCorrelationId::new(
+            u64::try_from(index)
+                .expect("fixture sample index fits u64")
+                .saturating_add(1),
+        );
         estimator
             .begin_probe(correlation, LocalMonotonicMillis::new(fixture.t1))
             .unwrap_or_else(|error| panic!("fixture probe registration failed: {error}"));
@@ -58,7 +61,10 @@ fn android_clock_sync_fixture_matches_rust_estimator() {
                 LocalMonotonicMillis::new(fixture.t4),
             )
             .unwrap_or_else(|error| panic!("fixture observation failed: {error}"));
-        assert_eq!(observation.sample.round_trip_time_ms, fixture.expected_rtt_ms);
+        assert_eq!(
+            observation.sample.round_trip_time_ms,
+            fixture.expected_rtt_ms
+        );
         assert_eq!(observation.sample.offset_ms, fixture.expected_offset_ms);
         assert_eq!(observation.accepted, fixture.accepted);
     }
@@ -66,10 +72,7 @@ fn android_clock_sync_fixture_matches_rust_estimator() {
     let expected = object_section(ANDROID_CLOCK_SYNC_FIXTURE, "expectedFinalState");
     let snapshot = estimator.snapshot();
     assert_eq!(snapshot.offset_ms, parse_f64(expected, "offsetMs"));
-    assert_eq!(
-        snapshot.round_trip_time_ms,
-        parse_f64(expected, "rttMs")
-    );
+    assert_eq!(snapshot.round_trip_time_ms, parse_f64(expected, "rttMs"));
     assert_eq!(snapshot.jitter_ms, parse_f64(expected, "jitterMs"));
     assert_eq!(
         snapshot.confidence,
@@ -90,9 +93,7 @@ fn raw_value<'a>(source: &'a str, key: &str) -> &'a str {
         .find(':')
         .unwrap_or_else(|| panic!("fixture key {key} has no colon"));
     let value = after_key[colon + 1..].trim_start();
-    let end = value
-        .find([',', '\n', '}'])
-        .unwrap_or(value.len());
+    let end = value.find([',', '\n', '}']).unwrap_or(value.len());
     value[..end].trim()
 }
 
