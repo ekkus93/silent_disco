@@ -52,12 +52,14 @@ mod android_abi {
     pub const CORE_ABI_VERSION: u32 = 1;
 
     /// Returns the stable ABI contract version exposed to non-Rust callers.
+    #[must_use]
     #[unsafe(no_mangle)]
     pub extern "C" fn silent_disco_core_abi_version() -> u32 {
         CORE_ABI_VERSION
     }
 
     /// JNI entry point used only by the Android platform bridge and smoke tests.
+    #[must_use]
     #[allow(non_snake_case)]
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeAbiVersion(
