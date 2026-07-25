@@ -4,13 +4,20 @@ on:
   push:
     branches:
       - master
+  pull_request:
+    branches:
+      - master
+    types:
+      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   complete:
-    if: github.repository == 'ekkus93/silent_disco'
+    if: >-
+      github.repository == 'ekkus93/silent_disco' &&
+      (github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/rust-domain-block4-validation')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
