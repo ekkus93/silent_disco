@@ -201,11 +201,11 @@ cargo test --workspace --all-features
 
 ### 3.1 Select reproducible Android build integration
 
-- [ ] Build Rust for each Android ABI currently supported by the application.
-- [ ] Integrate the build through Gradle; no manual `.so` copying.
-- [ ] Reuse the repository's pinned Android NDK version.
-- [ ] Ensure debug and release variants select intentional Rust profiles.
-- [ ] Add a clean task that removes generated native output safely.
+- [x] Build Rust for each Android ABI currently supported by the application.
+- [x] Integrate the build through Gradle; no manual `.so` copying.
+- [x] Reuse the repository's pinned Android NDK version.
+- [x] Ensure debug and release variants select intentional Rust profiles.
+- [x] Add a clean task that removes generated native output safely.
 
 ### 3.2 Add minimal exported native version API
 
@@ -220,16 +220,16 @@ pub extern "C" fn silent_disco_core_abi_version() -> u32 {
 
 The final annotation must match the pinned Rust edition/toolchain.
 
-- [ ] Add a Kotlin/JNI or small C++ bridge call that reads the version.
-- [ ] Do not call this from the real-time path.
-- [ ] Fail visibly if the library cannot load or returns an unsupported version.
+- [x] Add a Kotlin/JNI or small C++ bridge call that reads the version.
+- [x] Do not call this from the real-time path.
+- [x] Fail visibly if the library cannot load or returns an unsupported version.
 
 ### 3.3 Add instrumented smoke test
 
 - [ ] Test loads the Rust library on a physical Android device.
 - [ ] Test verifies the ABI version.
-- [ ] Test reports the device ABI in failure output.
-- [ ] Remove any fallback that returns a hard-coded successful version when native loading fails.
+- [x] Test reports the device ABI in failure output.
+- [x] Remove any fallback that returns a hard-coded successful version when native loading fails.
 
 **Acceptance:** Android debug APK links and loads Rust on at least one physical device; existing tests still pass.
 

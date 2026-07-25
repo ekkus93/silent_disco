@@ -1,5 +1,14 @@
 # memory.md — `silent_disco`
 
+## 2026-07-25T17:45:29Z - GPT-5.6 Thinking - Block 3 Rust Android integration code complete
+
+- Added a Gradle-owned Rust Android build using pinned Rust 1.97.1, cargo-ndk 4.1.2, Android NDK 28.2.13676358, and minSdk/platform 29.
+- Explicitly builds and packages `libsilent_disco_ffi.so` for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64` in debug, PoC-debug, and release APKs. Generated libraries stay under `app/build/generated/rustJniLibs`; `cleanRustAndroid` deletes only that generated tree.
+- Added the Rust C ABI version export and direct JNI entry point, plus `RustCoreBridge` with explicit load/version exceptions and no hard-coded success fallback. The bridge is control-plane/startup-only and is not called from the real-time audio path.
+- Added JVM ABI validation tests and `RustCoreBridgeInstrumentedTest`, which includes `Build.SUPPORTED_ABIS` in failure output.
+- CI run `30167855172` passed Rust formatting, Clippy with warnings denied, Rust tests, all Android APK builds, four-ABI APK packaging checks, Android unit tests, and Android lint on the same revision.
+- The instrumented native-load/version test has not been executed here because no physical Android device is attached. The two physical-device tasks and Block 3 acceptance remain open. Run `./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.ekkus.silentdisco.core.rust.RustCoreBridgeInstrumentedTest` on a device and record the model, Android version, ABI, and result before proceeding past this gate.
+
 ## 2026-07-25T16:56:06Z - GPT-5.6 Thinking - Rust migration compatibility baseline complete
 
 - Completed the code-verifiable Phase 1 baseline and Block 2 workspace scaffold from `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`.
