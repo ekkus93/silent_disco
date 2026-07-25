@@ -1,10 +1,11 @@
 name: Finalize Block 4 completion
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - master
     types:
+      - opened
       - synchronize
 
 permissions:
@@ -14,11 +15,12 @@ jobs:
   finalize:
     if: >-
       github.repository == 'ekkus93/silent_disco' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'agent/block4-file-export'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out master
+      - name: Check out trusted master
         uses: actions/checkout@v4
         with:
           ref: master
