@@ -103,12 +103,18 @@ jobs:
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Build Android APKs with Rust core
+      - name: Build Android APKs and instrumentation test APK with Rust core
         id: android-build
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assembleDebug assemblePocDebug assembleRelease --stacktrace --console=plain \
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain \
             2>&1 | tee android-rust-build.log
 
       - name: Verify Rust libraries are packaged for every supported ABI
