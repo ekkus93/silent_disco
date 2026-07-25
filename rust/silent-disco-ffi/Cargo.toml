@@ -1,0 +1,19 @@
+[package]
+name = "silent-disco-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+silent-disco-core = { path = "../silent-disco-core" }
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
