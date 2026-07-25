@@ -1,0 +1,1 @@
+Temporary pull-request-only marker used to validate the Rust migration scaffold and Android baseline through GitHub Actions.
