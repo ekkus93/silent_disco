@@ -60,8 +60,8 @@ class RustMigrationCompatibilityFixtureTest {
             val encoded = codec.encode(message)
             val actualWire = json.parseToJsonElement(encoded.decodeToString())
 
-            assertThat(actualWire).named(name).isEqualTo(expectedWire)
-            assertThat(codec.decode(encoded)).named("$name round trip").isEqualTo(message)
+            assertThat(actualWire).isEqualTo(expectedWire)
+            assertThat(codec.decode(encoded)).isEqualTo(message)
         }
     }
 
@@ -82,18 +82,16 @@ class RustMigrationCompatibilityFixtureTest {
                 t4 = sampleFixture.long("t4"),
             )
             assertThat(sample.rttMs)
-                .named("sample[$index].rttMs")
                 .isWithin(0.000001)
                 .of(sampleFixture.double("expectedRttMs"))
             assertThat(sample.offsetMs)
-                .named("sample[$index].offsetMs")
                 .isWithin(0.000001)
                 .of(sampleFixture.double("expectedOffsetMs"))
 
             val before = estimator.snapshot()
             val after = estimator.observe(sample)
             if (!sampleFixture.boolean("accepted")) {
-                assertThat(after).named("rejected sample[$index]").isEqualTo(before)
+                assertThat(after).isEqualTo(before)
             }
         }
 
@@ -159,7 +157,7 @@ class RustMigrationCompatibilityFixtureTest {
             val case = caseElement.jsonObject
             val current = ListenerLifecycleState.valueOf(case.string("current"))
             val expected = ListenerLifecycleState.valueOf(case.string("expected"))
-            assertThat(nextStateForSyncProbe(current)).named("sync probe $current").isEqualTo(expected)
+            assertThat(nextStateForSyncProbe(current)).isEqualTo(expected)
         }
 
         fixture.getValue("transportFailureClassifications").jsonArray.forEach { caseElement ->
@@ -223,7 +221,6 @@ class RustMigrationCompatibilityFixtureTest {
         fixture.getValue("tuning").jsonArray.forEach { entryElement ->
             val entry = entryElement.jsonObject
             assertThat(entry.string("key"))
-                .named(entry.string("name"))
                 .isEqualTo(expectedKeys.getValue(entry.string("name")))
         }
 
@@ -234,7 +231,7 @@ class RustMigrationCompatibilityFixtureTest {
     }
 
     private fun assertPacket(index: Int, packet: AudioPacket, root: JsonObject, expected: JsonObject) {
-        assertThat(packet.version).named("packet[$index].version").isEqualTo(expected.int("version"))
+        assertThat(packet.version).isEqualTo(expected.int("version"))
         assertThat(packet.sessionId.value).isEqualTo(root.string("sessionId"))
         assertThat(packet.streamId.value).isEqualTo(root.string("streamId"))
         assertThat(packet.sequenceNumber).isEqualTo(expected.long("sequenceNumber"))
@@ -260,19 +257,19 @@ class RustMigrationCompatibilityFixtureTest {
     )
 
     private fun assertTuningFields(name: String, actual: TuningSettings, expected: JsonObject) {
-        expected["syncSampleWindow"]?.let { assertThat(actual.syncSampleWindow).named(name).isEqualTo(it.jsonPrimitive.int) }
-        expected["syncCadenceMs"]?.let { assertThat(actual.syncCadenceMs).named(name).isEqualTo(it.jsonPrimitive.long) }
-        expected["startupBufferMs"]?.let { assertThat(actual.startupBufferMs).named(name).isEqualTo(it.jsonPrimitive.long) }
+        expected["syncSampleWindow"]?.let { assertThat(actual.syncSampleWindow).isEqualTo(it.jsonPrimitive.int) }
+        expected["syncCadenceMs"]?.let { assertThat(actual.syncCadenceMs).isEqualTo(it.jsonPrimitive.long) }
+        expected["startupBufferMs"]?.let { assertThat(actual.startupBufferMs).isEqualTo(it.jsonPrimitive.long) }
         expected["latePacketThresholdMs"]?.let {
-            assertThat(actual.latePacketThresholdMs).named(name).isEqualTo(it.jsonPrimitive.long)
+            assertThat(actual.latePacketThresholdMs).isEqualTo(it.jsonPrimitive.long)
         }
         expected["hardResyncThresholdMs"]?.let {
-            assertThat(actual.hardResyncThresholdMs).named(name).isEqualTo(it.jsonPrimitive.long)
+            assertThat(actual.hardResyncThresholdMs).isEqualTo(it.jsonPrimitive.long)
         }
         expected["syncDriftThresholdMs"]?.let {
-            assertThat(actual.syncDriftThresholdMs).named(name).isWithin(0.000001).of(it.jsonPrimitive.double)
+            assertThat(actual.syncDriftThresholdMs).isWithin(0.000001).of(it.jsonPrimitive.double)
         }
-        expected["scanWindowMs"]?.let { assertThat(actual.scanWindowMs).named(name).isEqualTo(it.jsonPrimitive.long) }
+        expected["scanWindowMs"]?.let { assertThat(actual.scanWindowMs).isEqualTo(it.jsonPrimitive.long) }
     }
 
     private fun controlMessage(name: String, wire: JsonObject): ControlMessage {
