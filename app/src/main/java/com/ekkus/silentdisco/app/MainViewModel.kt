@@ -42,6 +42,7 @@ import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
+import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.DeviceIdentity
@@ -350,7 +351,7 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun trustListener(listenerId: String) {
-        preferences.edit { putBoolean("trusted:$listenerId", true) }
+        preferences.edit { putBoolean(LegacyPreferencesContract.trustedDeviceKey(listenerId), true) }
         _uiState.value = _uiState.value.copy(
             approvedListeners = _uiState.value.approvedListeners.map {
                 if (it.deviceId == listenerId) it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER) else it
@@ -1981,24 +1982,24 @@ class MainViewModel @JvmOverloads constructor(
         )
 
     private fun loadTuningSettings(): TuningSettings = TuningSettings(
-        syncSampleWindow = preferences.getInt("tuning:syncSampleWindow", 12),
-        syncCadenceMs = preferences.getLong("tuning:syncCadenceMs", 2_000L),
-        startupBufferMs = preferences.getLong("tuning:startupBufferMs", 400L),
-        latePacketThresholdMs = preferences.getLong("tuning:latePacketThresholdMs", 40L),
-        hardResyncThresholdMs = preferences.getLong("tuning:hardResyncThresholdMs", 120L),
+        syncSampleWindow = preferences.getInt(LegacyPreferencesContract.SYNC_SAMPLE_WINDOW, 12),
+        syncCadenceMs = preferences.getLong(LegacyPreferencesContract.SYNC_CADENCE_MS, 2_000L),
+        startupBufferMs = preferences.getLong(LegacyPreferencesContract.STARTUP_BUFFER_MS, 400L),
+        latePacketThresholdMs = preferences.getLong(LegacyPreferencesContract.LATE_PACKET_THRESHOLD_MS, 40L),
+        hardResyncThresholdMs = preferences.getLong(LegacyPreferencesContract.HARD_RESYNC_THRESHOLD_MS, 120L),
         syncDriftThresholdMs = java.lang.Double.longBitsToDouble(
-            preferences.getLong("tuning:syncDriftThresholdBits", java.lang.Double.doubleToLongBits(18.0)),
+            preferences.getLong(LegacyPreferencesContract.SYNC_DRIFT_THRESHOLD_BITS, java.lang.Double.doubleToLongBits(18.0)),
         ),
     )
 
     private fun persistTuningSettings(settings: TuningSettings) {
         preferences.edit {
-            putInt("tuning:syncSampleWindow", settings.syncSampleWindow)
-            putLong("tuning:syncCadenceMs", settings.syncCadenceMs)
-            putLong("tuning:startupBufferMs", settings.startupBufferMs)
-            putLong("tuning:latePacketThresholdMs", settings.latePacketThresholdMs)
-            putLong("tuning:hardResyncThresholdMs", settings.hardResyncThresholdMs)
-            putLong("tuning:syncDriftThresholdBits", java.lang.Double.doubleToLongBits(settings.syncDriftThresholdMs))
+            putInt(LegacyPreferencesContract.SYNC_SAMPLE_WINDOW, settings.syncSampleWindow)
+            putLong(LegacyPreferencesContract.SYNC_CADENCE_MS, settings.syncCadenceMs)
+            putLong(LegacyPreferencesContract.STARTUP_BUFFER_MS, settings.startupBufferMs)
+            putLong(LegacyPreferencesContract.LATE_PACKET_THRESHOLD_MS, settings.latePacketThresholdMs)
+            putLong(LegacyPreferencesContract.HARD_RESYNC_THRESHOLD_MS, settings.hardResyncThresholdMs)
+            putLong(LegacyPreferencesContract.SYNC_DRIFT_THRESHOLD_BITS, java.lang.Double.doubleToLongBits(settings.syncDriftThresholdMs))
         }
     }
 
