@@ -49,10 +49,24 @@ jobs:
           cargo fmt --all
 
       - name: Run strict Rust validation
+        id: strict
+        shell: bash
         run: |
+          set -o pipefail
           cd rust
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-features
+          {
+            cargo clippy --workspace --all-targets --all-features -- -D warnings
+            cargo test --workspace --all-features
+          } 2>&1 | tee ../sqlite-worker-strict-validation.log
+
+      - name: Upload strict validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-worker-strict-validation-diagnostics
+          path: sqlite-worker-strict-validation.log
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Verify patch hygiene
         run: git diff --check
