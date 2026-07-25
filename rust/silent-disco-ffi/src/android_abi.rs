@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange,
-    FfiSyncObservation, FfiSyncSnapshot,
+    FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange, FfiSyncObservation,
+    FfiSyncSnapshot,
 };
 
 /// ABI contract implemented by the current native library.
@@ -59,9 +59,7 @@ impl From<FfiSyncError> for AndroidSyncStatus {
             FfiSyncError::CorrelationTimestampMismatch => Self::CorrelationTimestampMismatch,
             FfiSyncError::LocalClockMovedBackwards => Self::LocalClockMovedBackwards,
             FfiSyncError::HostClockMovedBackwards => Self::HostClockMovedBackwards,
-            FfiSyncError::HostProcessingExceedsRoundTrip => {
-                Self::HostProcessingExceedsRoundTrip
-            }
+            FfiSyncError::HostProcessingExceedsRoundTrip => Self::HostProcessingExceedsRoundTrip,
         }
     }
 }
@@ -105,12 +103,9 @@ fn with_estimator<R>(
     action(estimator)
 }
 
-fn create_estimator(
-    max_samples: i32,
-    max_accepted_rtt_ms: f64,
-) -> Result<i64, AndroidSyncStatus> {
-    let max_samples = u32::try_from(max_samples)
-        .map_err(|_| AndroidSyncStatus::InvalidConfiguration)?;
+fn create_estimator(max_samples: i32, max_accepted_rtt_ms: f64) -> Result<i64, AndroidSyncStatus> {
+    let max_samples =
+        u32::try_from(max_samples).map_err(|_| AndroidSyncStatus::InvalidConfiguration)?;
     let estimator = FfiSyncEstimator::new(FfiSyncEstimatorConfig {
         max_samples,
         max_accepted_rtt_ms,
@@ -290,9 +285,10 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
     _receiver: *mut c_void,
     handle: i64,
 ) -> i64 {
-    last_observation(handle)
-        .map(|observation| f64_bits(observation.round_trip_time_ms))
-        .unwrap_or_else(|_| invalid_f64_bits())
+    last_observation(handle).map_or_else(
+        |_| invalid_f64_bits(),
+        |observation| f64_bits(observation.round_trip_time_ms),
+    )
 }
 
 /// Returns raw IEEE-754 bits after `nativeSyncEstimatorLastStatus` succeeds.
@@ -304,9 +300,10 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
     _receiver: *mut c_void,
     handle: i64,
 ) -> i64 {
-    last_observation(handle)
-        .map(|observation| f64_bits(observation.offset_ms))
-        .unwrap_or_else(|_| invalid_f64_bits())
+    last_observation(handle).map_or_else(
+        |_| invalid_f64_bits(),
+        |observation| f64_bits(observation.offset_ms),
+    )
 }
 
 /// Validates that the estimator snapshot can be represented by the FFI record.
@@ -368,9 +365,10 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
     _receiver: *mut c_void,
     handle: i64,
 ) -> i32 {
-    snapshot(handle)
-        .map(|value| i32::from(value.confidence_code))
-        .unwrap_or_else(|status| status.code())
+    snapshot(handle).map_or_else(
+        AndroidSyncStatus::code,
+        |value| i32::from(value.confidence_code),
+    )
 }
 
 /// Returns the accepted sample count after snapshot validation.
@@ -387,7 +385,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
             i32::try_from(value.accepted_sample_count)
                 .map_err(|_| AndroidSyncStatus::SampleCountOverflow)
         })
-        .unwrap_or_else(|status| status.code())
+        .unwrap_or_else(AndroidSyncStatus::code)
 }
 
 /// Destroys one estimator. Destroying an unknown or already-destroyed handle is
@@ -432,163 +430,132 @@ mod tests {
         );
     }
 
-    #[test]
-    fn static_jni_exports_drive_the_rust_estimator_without_fallbacks() {
-        let environment = core::ptr::null_mut();
-        let receiver = core::ptr::null_mut();
+    fn create_test_estimator() -> i64 {
         let handle = Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorCreate(
-            environment,
-            receiver,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
             12,
             200.0,
         );
         assert!(handle > 0);
+        handle
+    }
 
-        let first = Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorObserve(
-            environment,
-            receiver,
+    fn observe_test_sample(handle: i64, t1: i64, t2: i64, t3: i64, t4: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorObserve(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
             handle,
-            1_000,
-            1_012,
-            1_014,
-            1_026,
-        );
-        assert_eq!(first, AndroidSyncStatus::Accepted.code());
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastStatus(
-                environment,
-                receiver,
-                handle,
-            ),
-            AndroidSyncStatus::Accepted.code()
-        );
-        assert_close(
-            decode_f64(
-                Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastRttBits(
-                    environment,
-                    receiver,
-                    handle,
-                ),
-            ),
-            24.0,
-        );
-        assert_close(
-            decode_f64(
-                Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastOffsetBits(
-                    environment,
-                    receiver,
-                    handle,
-                ),
-            ),
-            0.0,
-        );
+            t1,
+            t2,
+            t3,
+            t4,
+        )
+    }
 
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorObserve(
-                environment,
-                receiver,
+    fn destroy_test_estimator(handle: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorDestroy(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    fn latest_status(handle: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastStatus(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    fn latest_rtt(handle: i64) -> f64 {
+        decode_f64(
+            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastRttBits(
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
                 handle,
-                2_000,
-                2_015,
-                2_017,
-                2_022,
             ),
+        )
+    }
+
+    fn latest_offset(handle: i64) -> f64 {
+        decode_f64(
+            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastOffsetBits(
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                handle,
+            ),
+        )
+    }
+
+    fn snapshot_status(handle: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotStatus(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    fn snapshot_offset(handle: i64) -> f64 {
+        decode_f64(
+            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotOffsetBits(
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                handle,
+            ),
+        )
+    }
+
+    fn snapshot_confidence(handle: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotConfidenceCode(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    fn snapshot_accepted_count(handle: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotAcceptedCount(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    #[test]
+    fn static_jni_exports_drive_the_rust_estimator_without_fallbacks() {
+        let handle = create_test_estimator();
+        assert_eq!(
+            observe_test_sample(handle, 1_000, 1_012, 1_014, 1_026),
+            AndroidSyncStatus::Accepted.code()
+        );
+        assert_eq!(latest_status(handle), AndroidSyncStatus::Accepted.code());
+        assert_close(latest_rtt(handle), 24.0);
+        assert_close(latest_offset(handle), 0.0);
+        assert_eq!(
+            observe_test_sample(handle, 2_000, 2_015, 2_017, 2_022),
             AndroidSyncStatus::Accepted.code()
         );
         assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorObserve(
-                environment,
-                receiver,
-                handle,
-                3_000,
-                3_100,
-                3_101,
-                3_400,
-            ),
+            observe_test_sample(handle, 3_000, 3_100, 3_101, 3_400),
             AndroidSyncStatus::Rejected.code()
         );
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotStatus(
-                environment,
-                receiver,
-                handle,
-            ),
-            AndroidSyncStatus::Accepted.code()
-        );
-        assert_close(
-            decode_f64(
-                Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotOffsetBits(
-                    environment,
-                    receiver,
-                    handle,
-                ),
-            ),
-            5.0,
-        );
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotConfidenceCode(
-                environment,
-                receiver,
-                handle,
-            ),
-            5
-        );
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotAcceptedCount(
-                environment,
-                receiver,
-                handle,
-            ),
-            2
-        );
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorDestroy(
-                environment,
-                receiver,
-                handle,
-            ),
-            AndroidSyncStatus::Accepted.code()
-        );
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorDestroy(
-                environment,
-                receiver,
-                handle,
-            ),
-            AndroidSyncStatus::InvalidHandle.code()
-        );
+        assert_eq!(snapshot_status(handle), AndroidSyncStatus::Accepted.code());
+        assert_close(snapshot_offset(handle), 5.0);
+        assert_eq!(snapshot_confidence(handle), 5);
+        assert_eq!(snapshot_accepted_count(handle), 2);
+        assert_eq!(destroy_test_estimator(handle), AndroidSyncStatus::Accepted.code());
+        assert_eq!(destroy_test_estimator(handle), AndroidSyncStatus::InvalidHandle.code());
     }
 
     #[test]
     fn static_jni_export_rejects_negative_timestamps_explicitly() {
-        let environment = core::ptr::null_mut();
-        let receiver = core::ptr::null_mut();
-        let handle = Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorCreate(
-            environment,
-            receiver,
-            12,
-            200.0,
-        );
-        assert!(handle > 0);
+        let handle = create_test_estimator();
         assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorObserve(
-                environment,
-                receiver,
-                handle,
-                -1,
-                0,
-                0,
-                0,
-            ),
+            observe_test_sample(handle, -1, 0, 0, 0),
             AndroidSyncStatus::NegativeTimestamp.code()
         );
-        assert_eq!(
-            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorDestroy(
-                environment,
-                receiver,
-                handle,
-            ),
-            AndroidSyncStatus::Accepted.code()
-        );
+        assert_eq!(destroy_test_estimator(handle), AndroidSyncStatus::Accepted.code());
     }
 }
