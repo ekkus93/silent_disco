@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "silent-disco-core",
+    "silent-disco-ffi",
+    "silent-disco-test-support",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.97.1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"
