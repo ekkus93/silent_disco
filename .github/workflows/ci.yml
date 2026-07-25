@@ -176,12 +176,26 @@ jobs:
           rustup default 1.97.1
 
       - name: Apply guarded maintenance
+        id: rust-migration-maintenance
+        shell: bash
         run: |
-          python .github/scripts/rust_migration_maintenance.py
-          cd rust
-          cargo fmt --all
-          cd ..
-          git diff --check
+          set -o pipefail
+          {
+            python .github/scripts/rust_migration_maintenance.py
+            cd rust
+            cargo fmt --all
+            cd ..
+            git diff --check
+          } 2>&1 | tee rust-migration-maintenance.log
+
+      - name: Upload maintenance diagnostics
+        if: failure() && steps.rust-migration-maintenance.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-migration-maintenance-diagnostics
+          path: rust-migration-maintenance.log
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Commit guarded maintenance
         run: |
