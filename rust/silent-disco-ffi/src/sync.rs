@@ -1,9 +1,9 @@
 use core::fmt;
 use std::error::Error;
 
-use silent_disco_core::{
-    ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncConfidence,
-    SyncCorrelationId, SyncEstimatorConfig, SyncEstimatorError, SyncTimestampError,
+use silent_disco_core::sync::{
+    ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
+    SyncEstimatorConfig, SyncEstimatorError, SyncSnapshot, SyncTimestampError,
 };
 
 /// Binding-facing synchronization configuration with fixed-width fields.
@@ -200,9 +200,7 @@ impl FfiSyncEstimator {
     }
 }
 
-fn convert_snapshot(
-    snapshot: silent_disco_core::SyncSnapshot,
-) -> Result<FfiSyncSnapshot, FfiSyncError> {
+fn convert_snapshot(snapshot: SyncSnapshot) -> Result<FfiSyncSnapshot, FfiSyncError> {
     let accepted_sample_count = u32::try_from(snapshot.accepted_sample_count)
         .map_err(|_| FfiSyncError::SampleCountOverflow)?;
     Ok(FfiSyncSnapshot {
