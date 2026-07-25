@@ -39,6 +39,12 @@ def main() -> None:
             f"single-line SQLite error arguments: expected 8, found {single_count}"
         )
     text = text.replace(", error)", ", &error)")
+    text = replace_once(
+        text,
+        "Err((_connection, &error))",
+        "Err((_connection, error))",
+        "SQLite close error ownership pattern",
+    )
     text, multiline_count = re.subn(
         r"(?m)^(\\s*)error,$",
         r"\\1&error,",
