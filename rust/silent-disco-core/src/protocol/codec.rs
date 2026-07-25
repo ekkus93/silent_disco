@@ -12,10 +12,9 @@ use crate::{
 use super::types::{
     AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, Disconnect, FLAG_PAYLOAD_INTEGRITY,
     FRAME_HEADER_BYTES, FrameHeader, Heartbeat, Hello, JoinApproval, JoinRejection, JoinRequest,
-    MAX_AUDIO_DATAGRAM_BYTES, MAX_CONTROL_PAYLOAD_BYTES, MAX_DISPLAY_NAME_BYTES,
-    MAX_INVITE_CODE_BYTES, MAX_PROTOCOL_STRING_BYTES, MAX_REASON_BYTES, MAX_SESSION_NAME_BYTES,
-    MessageKind, PROTOCOL_MAGIC, PROTOCOL_VERSION, Pause, ProtocolFrame, ResyncNotice, SUPPORTED_FRAME_FLAGS,
-    Stop, StreamStart, SyncRequest, SyncResponse,
+    MAX_AUDIO_DATAGRAM_BYTES, MAX_DISPLAY_NAME_BYTES, MAX_INVITE_CODE_BYTES, MAX_REASON_BYTES,
+    MAX_SESSION_NAME_BYTES, MessageKind, PROTOCOL_MAGIC, PROTOCOL_VERSION, Pause, ProtocolFrame,
+    ResyncNotice, SUPPORTED_FRAME_FLAGS, Stop, StreamStart, SyncRequest, SyncResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +81,6 @@ impl ProtocolError {
             Self::PayloadTooLarge { .. } => CoreErrorCode::ProtocolFrameTooLarge,
             Self::IntegrityMismatch => CoreErrorCode::IntegrityCheckFailed,
             Self::UnauthorizedSession => CoreErrorCode::TransportDeliveryFailed,
-            Self::StaleAudioSequence => CoreErrorCode::MalformedProtocolFrame,
             _ => CoreErrorCode::MalformedProtocolFrame,
         }
     }
@@ -198,6 +196,12 @@ impl ProtocolDecoder {
         self.counters
     }
 
+    /// Decodes one complete frame and applies optional authorization/staleness policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProtocolError`] when framing, payload validation, authorization,
+    /// or sequence policy fails. Every failure is counted by classification.
     pub fn decode(
         &mut self,
         bytes: &[u8],
@@ -212,10 +216,9 @@ impl ProtocolDecoder {
             }
             if let (ProtocolFrame::Audio(audio), Some(minimum)) =
                 (&frame, policy.minimum_audio_sequence)
+                && audio.sequence < minimum
             {
-                if audio.sequence < minimum {
-                    return Err(ProtocolError::StaleAudioSequence);
-                }
+                return Err(ProtocolError::StaleAudioSequence);
             }
             Ok(frame)
         });
@@ -270,8 +273,8 @@ impl Encoder {
         secret: bool,
     ) -> Result<(), ProtocolError> {
         validate_text(field, value, maximum, secret)?;
-        let length = u16::try_from(value.len())
-            .map_err(|_| ProtocolError::InvalidField { field })?;
+        let length =
+            u16::try_from(value.len()).map_err(|_| ProtocolError::InvalidField { field })?;
         self.put_u16(length);
         self.put_bytes(value.as_bytes());
         Ok(())
@@ -284,28 +287,40 @@ impl Encoder {
         maximum: usize,
         secret: bool,
     ) -> Result<(), ProtocolError> {
-        match value {
-            Some(value) => {
-                self.put_u8(1);
-                self.put_string(field, value, maximum, secret)
-            }
-            None => {
-                self.put_u8(0);
-                Ok(())
-            }
+        if let Some(value) = value {
+            self.put_u8(1);
+            self.put_string(field, value, maximum, secret)
+        } else {
+            self.put_u8(0);
+            Ok(())
         }
     }
 
     fn put_session_id(&mut self, value: &SessionId) -> Result<(), ProtocolError> {
-        self.put_string("session_id", value.as_str(), crate::domain::MAX_IDENTIFIER_BYTES, false)
+        self.put_string(
+            "session_id",
+            value.as_str(),
+            crate::domain::MAX_IDENTIFIER_BYTES,
+            false,
+        )
     }
 
     fn put_stream_id(&mut self, value: &StreamId) -> Result<(), ProtocolError> {
-        self.put_string("stream_id", value.as_str(), crate::domain::MAX_IDENTIFIER_BYTES, false)
+        self.put_string(
+            "stream_id",
+            value.as_str(),
+            crate::domain::MAX_IDENTIFIER_BYTES,
+            false,
+        )
     }
 
     fn put_device_id(&mut self, value: &DeviceId) -> Result<(), ProtocolError> {
-        self.put_string("device_id", value.as_str(), crate::domain::MAX_IDENTIFIER_BYTES, false)
+        self.put_string(
+            "device_id",
+            value.as_str(),
+            crate::domain::MAX_IDENTIFIER_BYTES,
+            false,
+        )
     }
 
     fn finish(self) -> Vec<u8> {
@@ -390,8 +405,8 @@ impl<'a> Reader<'a> {
                 maximum,
             });
         }
-        let value = core::str::from_utf8(self.take(length)?)
-            .map_err(|_| ProtocolError::InvalidUtf8)?;
+        let value =
+            core::str::from_utf8(self.take(length)?).map_err(|_| ProtocolError::InvalidUtf8)?;
         validate_text(field, value, maximum, secret)?;
         Ok(value.to_owned())
     }
@@ -410,29 +425,17 @@ impl<'a> Reader<'a> {
     }
 
     fn read_session_id(&mut self) -> Result<SessionId, ProtocolError> {
-        let value = self.read_string(
-            "session_id",
-            crate::domain::MAX_IDENTIFIER_BYTES,
-            false,
-        )?;
+        let value = self.read_string("session_id", crate::domain::MAX_IDENTIFIER_BYTES, false)?;
         SessionId::new(value).map_err(|_| ProtocolError::InvalidIdentifier)
     }
 
     fn read_stream_id(&mut self) -> Result<StreamId, ProtocolError> {
-        let value = self.read_string(
-            "stream_id",
-            crate::domain::MAX_IDENTIFIER_BYTES,
-            false,
-        )?;
+        let value = self.read_string("stream_id", crate::domain::MAX_IDENTIFIER_BYTES, false)?;
         StreamId::new(value).map_err(|_| ProtocolError::InvalidIdentifier)
     }
 
     fn read_device_id(&mut self) -> Result<DeviceId, ProtocolError> {
-        let value = self.read_string(
-            "device_id",
-            crate::domain::MAX_IDENTIFIER_BYTES,
-            false,
-        )?;
+        let value = self.read_string("device_id", crate::domain::MAX_IDENTIFIER_BYTES, false)?;
         DeviceId::new(value).map_err(|_| ProtocolError::InvalidIdentifier)
     }
 
@@ -575,11 +578,7 @@ fn decode_control(kind: MessageKind, payload: &[u8]) -> Result<ControlMessage, P
     let message = match kind {
         MessageKind::Hello => ControlMessage::Hello(Hello {
             session_id: input.read_session_id()?,
-            session_name: input.read_string(
-                "session_name",
-                MAX_SESSION_NAME_BYTES,
-                false,
-            )?,
+            session_name: input.read_string("session_name", MAX_SESSION_NAME_BYTES, false)?,
             host_name: input.read_string("host_name", MAX_DISPLAY_NAME_BYTES, false)?,
             approval_required: input.read_bool()?,
         }),
@@ -587,17 +586,9 @@ fn decode_control(kind: MessageKind, payload: &[u8]) -> Result<ControlMessage, P
             session_id: input.read_session_id()?,
             device: DeviceIdentity {
                 device_id: input.read_device_id()?,
-                display_name: input.read_string(
-                    "display_name",
-                    MAX_DISPLAY_NAME_BYTES,
-                    false,
-                )?,
+                display_name: input.read_string("display_name", MAX_DISPLAY_NAME_BYTES, false)?,
             },
-            invite_code: input.read_optional_string(
-                "invite_code",
-                MAX_INVITE_CODE_BYTES,
-                true,
-            )?,
+            invite_code: input.read_optional_string("invite_code", MAX_INVITE_CODE_BYTES, true)?,
         }),
         MessageKind::JoinApproval => ControlMessage::JoinApproval(JoinApproval {
             session_id: input.read_session_id()?,
@@ -714,12 +705,11 @@ fn encode_audio(value: &AudioDatagram) -> Result<Vec<u8>, ProtocolError> {
     output.put_u32(value.samples_per_packet);
     output.put_u64(value.first_sample_index.get());
     output.put_u64(value.host_presentation_time_ms.get());
-    let payload_length = u16::try_from(value.payload.len()).map_err(|_| {
-        ProtocolError::PayloadTooLarge {
+    let payload_length =
+        u16::try_from(value.payload.len()).map_err(|_| ProtocolError::PayloadTooLarge {
             actual: value.payload.len(),
             maximum: u16::MAX.into(),
-        }
-    })?;
+        })?;
     output.put_u16(payload_length);
     output.put_u32(crc32(&value.payload));
     output.put_bytes(&value.payload);
@@ -792,6 +782,12 @@ fn encode_payload(frame: &ProtocolFrame) -> Result<(Vec<u8>, u16), ProtocolError
     }
 }
 
+/// Encodes one canonical protocol-v2 frame.
+///
+/// # Errors
+///
+/// Returns [`ProtocolError`] when a field violates its bound, audio metadata
+/// is inconsistent, or the encoded payload exceeds the message-kind limit.
 pub fn encode_frame(frame: &ProtocolFrame) -> Result<Vec<u8>, ProtocolError> {
     let kind = frame.kind();
     let (payload, flags) = encode_payload(frame)?;
@@ -802,12 +798,11 @@ pub fn encode_frame(frame: &ProtocolFrame) -> Result<Vec<u8>, ProtocolError> {
             maximum,
         });
     }
-    let payload_length = u32::try_from(payload.len()).map_err(|_| {
-        ProtocolError::PayloadTooLarge {
+    let payload_length =
+        u32::try_from(payload.len()).map_err(|_| ProtocolError::PayloadTooLarge {
             actual: payload.len(),
             maximum,
-        }
-    })?;
+        })?;
     let header = FrameHeader::new(kind, flags, payload_length);
     let mut output = Encoder::with_capacity(FRAME_HEADER_BYTES + payload.len());
     output.put_bytes(&PROTOCOL_MAGIC);
@@ -820,6 +815,12 @@ pub fn encode_frame(frame: &ProtocolFrame) -> Result<Vec<u8>, ProtocolError> {
     Ok(output.finish())
 }
 
+/// Validates and decodes the fixed-width protocol-v2 header without allocating a payload.
+///
+/// # Errors
+///
+/// Returns [`ProtocolError`] for truncated input, invalid magic, unsupported
+/// versions/kinds/flags, invalid header length, or an oversized declared payload.
 pub fn decode_header(bytes: &[u8]) -> Result<FrameHeader, ProtocolError> {
     if bytes.len() < FRAME_HEADER_BYTES {
         return Err(ProtocolError::Truncated);
@@ -855,12 +856,11 @@ pub fn decode_header(bytes: &[u8]) -> Result<FrameHeader, ProtocolError> {
     }
     let payload_length = input.read_u32()?;
     input.finish()?;
-    let payload_length_usize = usize::try_from(payload_length).map_err(|_| {
-        ProtocolError::PayloadTooLarge {
+    let payload_length_usize =
+        usize::try_from(payload_length).map_err(|_| ProtocolError::PayloadTooLarge {
             actual: usize::MAX,
             maximum: kind.maximum_payload_bytes(),
-        }
-    })?;
+        })?;
     let maximum = kind.maximum_payload_bytes();
     if payload_length_usize > maximum {
         return Err(ProtocolError::PayloadTooLarge {
@@ -877,20 +877,26 @@ pub fn decode_header(bytes: &[u8]) -> Result<FrameHeader, ProtocolError> {
     })
 }
 
+/// Decodes exactly one complete canonical protocol-v2 frame.
+///
+/// # Errors
+///
+/// Returns [`ProtocolError`] when the frame header or payload is malformed,
+/// unsupported, oversized, truncated, non-canonical, or fails integrity checks.
 pub fn decode_frame(bytes: &[u8]) -> Result<ProtocolFrame, ProtocolError> {
     let header = decode_header(bytes)?;
-    let payload_length = usize::try_from(header.payload_length).map_err(|_| {
-        ProtocolError::PayloadTooLarge {
-            actual: usize::MAX,
-            maximum: header.kind.maximum_payload_bytes(),
-        }
-    })?;
-    let expected_total = FRAME_HEADER_BYTES
-        .checked_add(payload_length)
-        .ok_or(ProtocolError::PayloadTooLarge {
+    let payload_length =
+        usize::try_from(header.payload_length).map_err(|_| ProtocolError::PayloadTooLarge {
             actual: usize::MAX,
             maximum: header.kind.maximum_payload_bytes(),
         })?;
+    let expected_total =
+        FRAME_HEADER_BYTES
+            .checked_add(payload_length)
+            .ok_or(ProtocolError::PayloadTooLarge {
+                actual: usize::MAX,
+                maximum: header.kind.maximum_payload_bytes(),
+            })?;
     match bytes.len().cmp(&expected_total) {
         core::cmp::Ordering::Less => {
             return Err(ProtocolError::LengthMismatch {
@@ -905,9 +911,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<ProtocolFrame, ProtocolError> {
     match header.kind {
         kind if kind.is_control() => decode_control(kind, payload).map(ProtocolFrame::Control),
         MessageKind::SyncRequest => decode_sync_request(payload).map(ProtocolFrame::SyncRequest),
-        MessageKind::SyncResponse => {
-            decode_sync_response(payload).map(ProtocolFrame::SyncResponse)
-        }
+        MessageKind::SyncResponse => decode_sync_response(payload).map(ProtocolFrame::SyncResponse),
         MessageKind::Audio => decode_audio(payload).map(ProtocolFrame::Audio),
         kind => Err(ProtocolError::UnsupportedMessageKind { kind: kind.code() }),
     }
@@ -935,9 +939,9 @@ mod tests {
     use crate::{
         domain::{DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId},
         protocol::{
-            AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, Hello, JoinRequest,
-            MessageKind, ProtocolFrame, SyncRequest, SyncResponse, FRAME_HEADER_BYTES,
-            MAX_CONTROL_PAYLOAD_BYTES, PROTOCOL_MAGIC, PROTOCOL_VERSION,
+            AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, FRAME_HEADER_BYTES, Hello,
+            JoinRequest, MAX_CONTROL_PAYLOAD_BYTES, MessageKind, PROTOCOL_MAGIC, PROTOCOL_VERSION,
+            ProtocolFrame, SyncRequest, SyncResponse,
         },
     };
 
@@ -966,7 +970,10 @@ mod tests {
     fn header_is_fixed_width_and_network_ordered() {
         let encoded = encode_frame(&hello_frame()).expect("hello frame encodes");
         assert_eq!(&encoded[..4], &PROTOCOL_MAGIC);
-        assert_eq!(u16::from_be_bytes([encoded[4], encoded[5]]), PROTOCOL_VERSION);
+        assert_eq!(
+            u16::from_be_bytes([encoded[4], encoded[5]]),
+            PROTOCOL_VERSION
+        );
         assert_eq!(
             u16::from_be_bytes([encoded[6], encoded[7]]),
             MessageKind::Hello.code()
@@ -1029,32 +1036,35 @@ mod tests {
     fn rejects_unknown_version_kind_flags_and_oversized_length_from_header_only() {
         let mut bytes = encode_frame(&hello_frame()).expect("hello frame encodes");
         bytes[4..6].copy_from_slice(&3_u16.to_be_bytes());
-        assert_eq!(
+        assert!(matches!(
             decode_frame(&bytes),
             Err(ProtocolError::UnsupportedVersion { version: 3 })
-        );
+        ));
 
         let mut bytes = encode_frame(&hello_frame()).expect("hello frame encodes");
         bytes[6..8].copy_from_slice(&999_u16.to_be_bytes());
-        assert_eq!(
+        assert!(matches!(
             decode_frame(&bytes),
             Err(ProtocolError::UnsupportedMessageKind { kind: 999 })
-        );
+        ));
 
         let mut bytes = encode_frame(&hello_frame()).expect("hello frame encodes");
         bytes[8..10].copy_from_slice(&0x8000_u16.to_be_bytes());
-        assert_eq!(
+        assert!(matches!(
             decode_frame(&bytes),
             Err(ProtocolError::UnsupportedFlags { flags: 0x8000 })
-        );
+        ));
 
         let mut header_only = [0_u8; FRAME_HEADER_BYTES];
         header_only[..4].copy_from_slice(&PROTOCOL_MAGIC);
         header_only[4..6].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
         header_only[6..8].copy_from_slice(&MessageKind::Hello.code().to_be_bytes());
         header_only[10..12].copy_from_slice(&(FRAME_HEADER_BYTES as u16).to_be_bytes());
-        header_only[12..16]
-            .copy_from_slice(&u32::try_from(MAX_CONTROL_PAYLOAD_BYTES + 1).expect("test length").to_be_bytes());
+        header_only[12..16].copy_from_slice(
+            &u32::try_from(MAX_CONTROL_PAYLOAD_BYTES + 1)
+                .expect("test length")
+                .to_be_bytes(),
+        );
         assert!(matches!(
             decode_frame(&header_only),
             Err(ProtocolError::PayloadTooLarge { .. })
@@ -1070,7 +1080,10 @@ mod tests {
         ));
         let mut trailing = encoded.clone();
         trailing.push(0);
-        assert_eq!(decode_frame(&trailing), Err(ProtocolError::TrailingBytes));
+        assert!(matches!(
+            decode_frame(&trailing),
+            Err(ProtocolError::TrailingBytes)
+        ));
 
         let audio = ProtocolFrame::Audio(AudioDatagram {
             session_id: session_id(),
@@ -1087,7 +1100,10 @@ mod tests {
         let mut encoded = encode_frame(&audio).expect("audio frame encodes");
         let last = encoded.len() - 1;
         encoded[last] ^= 0xff;
-        assert_eq!(decode_frame(&encoded), Err(ProtocolError::IntegrityMismatch));
+        assert!(matches!(
+            decode_frame(&encoded),
+            Err(ProtocolError::IntegrityMismatch)
+        ));
     }
 
     #[test]
@@ -1102,7 +1118,7 @@ mod tests {
         }));
         let mut decoder = ProtocolDecoder::default();
         let unauthorized_bytes = encode_frame(&unauthorized).expect("unauthorized frame encodes");
-        assert_eq!(
+        assert!(matches!(
             decoder.decode(
                 &unauthorized_bytes,
                 DecodePolicy {
@@ -1111,7 +1127,7 @@ mod tests {
                 },
             ),
             Err(ProtocolError::UnauthorizedSession)
-        );
+        ));
 
         let stale = ProtocolFrame::Audio(AudioDatagram {
             session_id: expected.clone(),
@@ -1126,7 +1142,7 @@ mod tests {
             payload: vec![0, 0],
         });
         let stale_bytes = encode_frame(&stale).expect("stale frame encodes");
-        assert_eq!(
+        assert!(matches!(
             decoder.decode(
                 &stale_bytes,
                 DecodePolicy {
@@ -1135,11 +1151,14 @@ mod tests {
                 },
             ),
             Err(ProtocolError::StaleAudioSequence)
-        );
+        ));
 
         assert_eq!(decoder.counters().unauthorized, 1);
         assert_eq!(decoder.counters().stale, 1);
-        assert_eq!(ProtocolError::StaleAudioSequence.classification(), ParseFailureClass::Stale);
+        assert_eq!(
+            ProtocolError::StaleAudioSequence.classification(),
+            ParseFailureClass::Stale
+        );
     }
 
     #[test]
