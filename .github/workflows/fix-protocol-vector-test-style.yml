@@ -1,0 +1,64 @@
+name: Fix protocol vector test style
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.repository == 'ekkus93/silent_disco'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Install pinned Rust formatter
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+
+      - name: Apply guarded let-else rewrite
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/silent-disco-core/src/protocol/vector_tests.rs')
+          text = path.read_text()
+          old = (
+              '        let error = match decode_frame(&vector.bytes) {\n'
+              '            Ok(_) => panic!("malformed vector {} decoded successfully", vector.name),\n'
+              '            Err(error) => error,\n'
+              '        };\n'
+          )
+          new = (
+              '        let Err(error) = decode_frame(&vector.bytes) else {\n'
+              '            panic!("malformed vector {} decoded successfully", vector.name);\n'
+              '        };\n'
+          )
+          if text.count(old) != 1:
+              raise SystemExit('malformed-vector match changed unexpectedly')
+          path.write_text(text.replace(old, new))
+          PY
+
+          cd rust
+          cargo fmt --all
+          cargo test -p silent-disco-core --all-features
+          cd ..
+          rm .github/workflows/fix-protocol-vector-test-style.yml
+          git diff --check
+
+      - name: Commit final style fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Use let-else in protocol vector failure test"
+          git push origin HEAD:master
