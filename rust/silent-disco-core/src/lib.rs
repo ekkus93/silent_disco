@@ -3,6 +3,7 @@
 pub mod domain;
 pub mod error;
 pub mod protocol;
+pub mod sync;
 
 /// ABI-independent version information for the shared domain core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
