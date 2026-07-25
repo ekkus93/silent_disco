@@ -253,7 +253,7 @@ impl ErrorContextEntry {
     }
 }
 
-/// Stable transfer record for future UniFFI and persistence conversions.
+/// Stable transfer record for future `UniFFI` and persistence conversions.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreErrorRecord {
@@ -309,10 +309,7 @@ impl CoreError {
     ///
     /// Returns [`CoreErrorBuildError::ContextLimitExceeded`] after the bounded
     /// context capacity is reached.
-    pub fn with_context(
-        mut self,
-        entry: ErrorContextEntry,
-    ) -> Result<Self, CoreErrorBuildError> {
+    pub fn with_context(mut self, entry: ErrorContextEntry) -> Result<Self, CoreErrorBuildError> {
         if self.context.len() >= MAX_ERROR_CONTEXT_ENTRIES {
             return Err(CoreErrorBuildError::ContextLimitExceeded {
                 maximum_entries: MAX_ERROR_CONTEXT_ENTRIES,
@@ -559,21 +556,45 @@ fn validate_context_value(value: &str) -> Result<(), CoreErrorBuildError> {
 mod tests {
     use super::{
         CoreError, CoreErrorBuildError, CoreErrorCode, CoreErrorRecord, CoreSubsystem,
-        ErrorContextEntry, ErrorSeverity, MAX_ERROR_CONTEXT_ENTRIES,
-        MAX_ERROR_CONTEXT_KEY_BYTES, MAX_ERROR_CONTEXT_VALUE_BYTES, MAX_ERROR_MESSAGE_BYTES,
+        ErrorContextEntry, ErrorSeverity, MAX_ERROR_CONTEXT_ENTRIES, MAX_ERROR_CONTEXT_KEY_BYTES,
+        MAX_ERROR_CONTEXT_VALUE_BYTES, MAX_ERROR_MESSAGE_BYTES,
     };
     use crate::domain::{OperationId, SessionId};
 
     #[test]
     fn stable_codes_cover_every_required_subsystem_without_unknown() {
         let representatives = [
-            (CoreErrorCode::InvalidArgument, CoreSubsystem::Validation, 1001),
-            (CoreErrorCode::MalformedProtocolFrame, CoreSubsystem::Protocol, 2001),
-            (CoreErrorCode::TransportConnectionFailed, CoreSubsystem::Transport, 3001),
-            (CoreErrorCode::SynchronizationTimeout, CoreSubsystem::Synchronization, 4001),
+            (
+                CoreErrorCode::InvalidArgument,
+                CoreSubsystem::Validation,
+                1001,
+            ),
+            (
+                CoreErrorCode::MalformedProtocolFrame,
+                CoreSubsystem::Protocol,
+                2001,
+            ),
+            (
+                CoreErrorCode::TransportConnectionFailed,
+                CoreSubsystem::Transport,
+                3001,
+            ),
+            (
+                CoreErrorCode::SynchronizationTimeout,
+                CoreSubsystem::Synchronization,
+                4001,
+            ),
             (CoreErrorCode::AudioOutputFailed, CoreSubsystem::Audio, 5002),
-            (CoreErrorCode::StorageMigrationFailed, CoreSubsystem::Storage, 6001),
-            (CoreErrorCode::PlatformOperationFailed, CoreSubsystem::Platform, 7000),
+            (
+                CoreErrorCode::StorageMigrationFailed,
+                CoreSubsystem::Storage,
+                6001,
+            ),
+            (
+                CoreErrorCode::PlatformOperationFailed,
+                CoreSubsystem::Platform,
+                7000,
+            ),
             (CoreErrorCode::FfiPanicContained, CoreSubsystem::Ffi, 8002),
             (CoreErrorCode::QueueOverflow, CoreSubsystem::Runtime, 9000),
             (CoreErrorCode::ShutdownFailed, CoreSubsystem::Runtime, 9002),
@@ -677,9 +698,7 @@ mod tests {
             Some(operation_id.clone()),
         )
         .expect("valid storage error")
-        .with_context(
-            ErrorContextEntry::new("repository", "settings").expect("valid context"),
-        )
+        .with_context(ErrorContextEntry::new("repository", "settings").expect("valid context"))
         .expect("context fits");
 
         let record = CoreErrorRecord::from(&error);
@@ -691,18 +710,22 @@ mod tests {
 
     #[test]
     fn identifier_conversion_does_not_leak_rejected_value() {
-        let identifier_error = SessionId::new(" secret-session ")
-            .expect_err("surrounding whitespace must fail");
-        let operation_id = OperationId::new("validate-session").expect("valid operation identifier");
-        let error = CoreError::from_identifier_validation(
-            &identifier_error,
-            Some(operation_id.clone()),
-        );
+        let identifier_error =
+            SessionId::new(" secret-session ").expect_err("surrounding whitespace must fail");
+        let operation_id =
+            OperationId::new("validate-session").expect("valid operation identifier");
+        let error =
+            CoreError::from_identifier_validation(&identifier_error, Some(operation_id.clone()));
 
         assert_eq!(error.code, CoreErrorCode::InvalidIdentifier);
         assert_eq!(error.subsystem, CoreSubsystem::Validation);
         assert_eq!(error.operation_id, Some(operation_id));
         assert!(!error.to_string().contains("secret-session"));
-        assert!(error.context.iter().all(|entry| !entry.value.contains("secret-session")));
+        assert!(
+            error
+                .context
+                .iter()
+                .all(|entry| !entry.value.contains("secret-session"))
+        );
     }
 }

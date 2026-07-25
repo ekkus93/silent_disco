@@ -106,9 +106,7 @@ impl Error for IdValidationError {}
 /// Canonical-byte decoding failure for an opaque domain identifier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdDecodeError {
-    InvalidUtf8 {
-        identifier_kind: IdentifierKind,
-    },
+    InvalidUtf8 { identifier_kind: IdentifierKind },
     InvalidIdentifier(IdValidationError),
 }
 
@@ -159,7 +157,10 @@ fn validate_identifier(
         });
     }
 
-    if let Some((byte_index, _)) = value.char_indices().find(|(_, character)| character.is_control()) {
+    if let Some((byte_index, _)) = value
+        .char_indices()
+        .find(|(_, character)| character.is_control())
+    {
         return Err(IdValidationError {
             identifier_kind,
             reason: IdValidationReason::ControlCharacter { byte_index },
@@ -210,9 +211,10 @@ macro_rules! define_string_identifier {
             /// Returns [`IdDecodeError`] for invalid UTF-8 or any identifier
             /// value that fails normal construction validation.
             pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, IdDecodeError> {
-                let value = core::str::from_utf8(bytes).map_err(|_| IdDecodeError::InvalidUtf8 {
-                    identifier_kind: $kind,
-                })?;
+                let value =
+                    core::str::from_utf8(bytes).map_err(|_| IdDecodeError::InvalidUtf8 {
+                        identifier_kind: $kind,
+                    })?;
                 Self::new(value).map_err(IdDecodeError::from)
             }
         }
@@ -319,18 +321,32 @@ define_u64_identifier!(SampleIndex);
 #[cfg(test)]
 mod tests {
     use super::{
-        DeviceId, DiagnosticRunId, IdDecodeError, IdValidationReason, MonotonicMillis,
-        OperationId, PacketSequence, RequestId, SampleIndex, SessionId, StreamId,
-        MAX_IDENTIFIER_BYTES,
+        DeviceId, DiagnosticRunId, IdDecodeError, IdValidationReason, MAX_IDENTIFIER_BYTES,
+        MonotonicMillis, OperationId, PacketSequence, RequestId, SampleIndex, SessionId, StreamId,
     };
 
     #[test]
     fn every_string_identifier_accepts_a_normal_value() {
-        assert_eq!(SessionId::new("session-1").map(|id| id.to_string()), Ok("session-1".into()));
-        assert_eq!(StreamId::new("stream-1").map(|id| id.to_string()), Ok("stream-1".into()));
-        assert_eq!(DeviceId::new("device-1").map(|id| id.to_string()), Ok("device-1".into()));
-        assert_eq!(RequestId::new("request-1").map(|id| id.to_string()), Ok("request-1".into()));
-        assert_eq!(OperationId::new("operation-1").map(|id| id.to_string()), Ok("operation-1".into()));
+        assert_eq!(
+            SessionId::new("session-1").map(|id| id.to_string()),
+            Ok("session-1".into())
+        );
+        assert_eq!(
+            StreamId::new("stream-1").map(|id| id.to_string()),
+            Ok("stream-1".into())
+        );
+        assert_eq!(
+            DeviceId::new("device-1").map(|id| id.to_string()),
+            Ok("device-1".into())
+        );
+        assert_eq!(
+            RequestId::new("request-1").map(|id| id.to_string()),
+            Ok("request-1".into())
+        );
+        assert_eq!(
+            OperationId::new("operation-1").map(|id| id.to_string()),
+            Ok("operation-1".into())
+        );
         assert_eq!(
             DiagnosticRunId::new("diagnostic-1").map(|id| id.to_string()),
             Ok("diagnostic-1".into())
@@ -343,9 +359,12 @@ mod tests {
         assert_eq!(blank.reason(), &IdValidationReason::Empty);
         assert!(!blank.to_string().contains("   "));
 
-        let surrounded = SessionId::new(" session-1 ")
-            .expect_err("surrounding whitespace must fail");
-        assert_eq!(surrounded.reason(), &IdValidationReason::SurroundingWhitespace);
+        let surrounded =
+            SessionId::new(" session-1 ").expect_err("surrounding whitespace must fail");
+        assert_eq!(
+            surrounded.reason(),
+            &IdValidationReason::SurroundingWhitespace
+        );
         assert!(!surrounded.to_string().contains("session-1"));
     }
 

@@ -4,13 +4,8 @@ use std::error::Error;
 /// Failure to decode a stable domain-enum representation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnumDecodeError {
-    UnsupportedWireName {
-        enum_name: &'static str,
-    },
-    UnsupportedStableCode {
-        enum_name: &'static str,
-        code: u16,
-    },
+    UnsupportedWireName { enum_name: &'static str },
+    UnsupportedStableCode { enum_name: &'static str, code: u16 },
 }
 
 impl fmt::Display for EnumDecodeError {
@@ -117,7 +112,7 @@ macro_rules! define_stable_enum {
         impl TryFrom<u16> for $name {
             type Error = EnumDecodeError;
 
-            fn try_from(value: u16) -> Result<Self, Self::Error> {
+            fn try_from(value: u16) -> Result<Self, EnumDecodeError> {
                 Self::from_stable_code(value)
             }
         }
@@ -234,21 +229,27 @@ define_stable_enum! {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppRole, ApprovalMode, DeliverySeverity, EnumDecodeError, HostLifecycle,
-        ListenerLifecycle, PlaybackState, SyncConfidence, TransportState, TrustState,
+        AppRole, ApprovalMode, DeliverySeverity, EnumDecodeError, HostLifecycle, ListenerLifecycle,
+        PlaybackState, SyncConfidence, TransportState, TrustState,
     };
 
     #[test]
     fn preserves_semantic_equivalence_with_current_android_states() {
         assert_eq!(AppRole::Host.wire_name(), "host");
         assert_eq!(ApprovalMode::TrustedDevices.wire_name(), "trusted_devices");
-        assert_eq!(HostLifecycle::WaitingForListeners.wire_name(), "waiting_for_listeners");
+        assert_eq!(
+            HostLifecycle::WaitingForListeners.wire_name(),
+            "waiting_for_listeners"
+        );
         assert_eq!(ListenerLifecycle::SyncingClock.wire_name(), "syncing_clock");
         assert_eq!(PlaybackState::Underrun.wire_name(), "underrun");
         assert_eq!(TransportState::Retrying.wire_name(), "retrying");
         assert_eq!(SyncConfidence::Excellent.wire_name(), "excellent");
         assert_eq!(TrustState::SessionOnly.wire_name(), "session_only");
-        assert_eq!(DeliverySeverity::PartialFailure.wire_name(), "partial_failure");
+        assert_eq!(
+            DeliverySeverity::PartialFailure.wire_name(),
+            "partial_failure"
+        );
     }
 
     #[test]
@@ -288,8 +289,14 @@ mod tests {
 
     #[test]
     fn domain_names_are_not_localized_presentation_labels() {
-        assert_eq!(HostLifecycle::CreatingSession.to_string(), "creating_session");
-        assert_ne!(HostLifecycle::CreatingSession.to_string(), "Creating session…");
+        assert_eq!(
+            HostLifecycle::CreatingSession.to_string(),
+            "creating_session"
+        );
+        assert_ne!(
+            HostLifecycle::CreatingSession.to_string(),
+            "Creating session…"
+        );
         assert_eq!(ApprovalMode::InviteCode.to_string(), "invite_code");
         assert_ne!(ApprovalMode::InviteCode.to_string(), "Invite code");
     }
