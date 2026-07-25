@@ -1,9 +1,20 @@
+import org.gradle.api.tasks.Delete
+import org.gradle.api.tasks.Exec
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+val rustAndroidAbis = setOf(
+    "armeabi-v7a",
+    "arm64-v8a",
+    "x86",
+    "x86_64",
+)
+val rustGeneratedJniRoot = layout.buildDirectory.dir("generated/rustJniLibs")
 
 android {
     namespace = "com.ekkus.silentdisco"
@@ -16,6 +27,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        ndk {
+            abiFilters += rustAndroidAbis
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -42,6 +57,12 @@ android {
             versionNameSuffix = "-poc"
             matchingFallbacks += listOf("debug")
         }
+    }
+
+    sourceSets {
+        getByName("debug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
+        getByName("pocDebug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
+        getByName("release").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("release") })
     }
 
     compileOptions {
@@ -73,6 +94,56 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+fun registerRustAndroidBuildTask(
+    taskName: String,
+    profile: String,
+) = tasks.register<Exec>(taskName) {
+    group = "rust"
+    description = "Builds the Rust core for all supported Android ABIs using the $profile profile."
+
+    val outputDirectory = rustGeneratedJniRoot.map { it.dir(profile) }
+    inputs.file(rootProject.file("scripts/build-rust-android.sh"))
+    inputs.files(rootProject.fileTree("rust") { exclude("target/**") })
+    outputs.dir(outputDirectory)
+
+    workingDir(rootProject.projectDir)
+    commandLine(
+        "bash",
+        rootProject.file("scripts/build-rust-android.sh").absolutePath,
+        profile,
+        outputDirectory.get().asFile.absolutePath,
+    )
+}
+
+val buildRustAndroidDebug = registerRustAndroidBuildTask(
+    taskName = "buildRustAndroidDebug",
+    profile = "debug",
+)
+val buildRustAndroidRelease = registerRustAndroidBuildTask(
+    taskName = "buildRustAndroidRelease",
+    profile = "release",
+)
+
+// Rust must be built before Android packages generated JNI libraries.
+tasks.matching { it.name == "mergeDebugJniLibFolders" }.configureEach {
+    dependsOn(buildRustAndroidDebug)
+}
+tasks.matching { it.name == "mergePocDebugJniLibFolders" }.configureEach {
+    dependsOn(buildRustAndroidDebug)
+}
+tasks.matching { it.name == "mergeReleaseJniLibFolders" }.configureEach {
+    dependsOn(buildRustAndroidRelease)
+}
+
+val cleanRustAndroid = tasks.register<Delete>("cleanRustAndroid") {
+    group = "rust"
+    description = "Deletes only generated Rust Android JNI libraries."
+    delete(rustGeneratedJniRoot)
+}
+tasks.matching { it.name == "clean" }.configureEach {
+    dependsOn(cleanRustAndroid)
 }
 
 dependencies {
