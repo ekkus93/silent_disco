@@ -1,1 +1,3 @@
 Trigger the assertion-checked, self-removing synchronization formatting and validation workflow.
+
+Retry trigger: 2
