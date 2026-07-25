@@ -63,6 +63,7 @@ android {
         getByName("debug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
         getByName("pocDebug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
         getByName("release").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("release") })
+        getByName("androidTest").assets.srcDir("src/test/resources")
     }
 
     compileOptions {

@@ -29,4 +29,31 @@ class RustCoreBridgeTest {
         assertThat(error.actualVersion).isEqualTo(2)
         assertThat(error.message).contains("Unsupported Rust core ABI version 2")
     }
+
+    @Test
+    fun stableSynchronizationConfidenceCodesDecodeWithoutPresentationLabels() {
+        assertThat(RustSyncConfidence.fromStableCode(1)).isEqualTo(RustSyncConfidence.UNKNOWN)
+        assertThat(RustSyncConfidence.fromStableCode(5)).isEqualTo(RustSyncConfidence.EXCELLENT)
+    }
+
+    @Test
+    fun unknownSynchronizationConfidenceFailsExplicitly() {
+        val error = assertThrows(RustSyncBridgeProtocolException::class.java) {
+            RustSyncConfidence.fromStableCode(99)
+        }
+
+        assertThat(error.message).contains("unsupported confidence code 99")
+    }
+
+    @Test
+    fun nonFiniteNativeDoubleFailsInsteadOfBecomingAStateValue() {
+        val error = assertThrows(RustSyncBridgeProtocolException::class.java) {
+            decodeFiniteNativeDouble(
+                fieldName = "test offset",
+                bits = Double.NaN.toBits(),
+            )
+        }
+
+        assertThat(error.message).contains("non-finite test offset")
+    }
 }
