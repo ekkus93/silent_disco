@@ -1,0 +1,101 @@
+name: Fix protocol header width
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.repository == 'ekkus93/silent_disco'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Install pinned Rust formatter
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+
+      - name: Apply guarded header-width fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          types_path = Path('rust/silent-disco-core/src/protocol/types.rs')
+          types = types_path.read_text()
+          replacements = [
+              (
+                  'pub const FRAME_HEADER_BYTES: usize = 16;\n',
+                  'pub const FRAME_HEADER_BYTES: usize = 16;\n'
+                  'pub const FRAME_HEADER_LENGTH: u16 = 16;\n',
+              ),
+              (
+                  '            header_length: FRAME_HEADER_BYTES as u16,\n',
+                  '            header_length: FRAME_HEADER_LENGTH,\n',
+              ),
+          ]
+          for old, new in replacements:
+              if types.count(old) != 1:
+                  raise SystemExit(f'types replacement count changed: {old!r}')
+              types = types.replace(old, new)
+          types_path.write_text(types)
+
+          codec_path = Path('rust/silent-disco-core/src/protocol/codec.rs')
+          codec = codec_path.read_text()
+          old_import = (
+              '    FRAME_HEADER_BYTES, FrameHeader, Heartbeat, Hello, JoinApproval, JoinRejection, JoinRequest,\n'
+          )
+          new_import = (
+              '    FRAME_HEADER_BYTES, FRAME_HEADER_LENGTH, FrameHeader, Heartbeat, Hello, JoinApproval,\n'
+              '    JoinRejection, JoinRequest,\n'
+          )
+          if codec.count(old_import) != 1:
+              raise SystemExit('codec header import changed unexpectedly')
+          codec = codec.replace(old_import, new_import)
+          old_test = (
+              '        header_only[10..12].copy_from_slice(&(FRAME_HEADER_BYTES as u16).to_be_bytes());\n'
+          )
+          new_test = (
+              '        header_only[10..12].copy_from_slice(&FRAME_HEADER_LENGTH.to_be_bytes());\n'
+          )
+          if codec.count(old_test) != 1:
+              raise SystemExit('codec header-length test changed unexpectedly')
+          codec_path.write_text(codec.replace(old_test, new_test))
+
+          mod_path = Path('rust/silent-disco-core/src/protocol/mod.rs')
+          module = mod_path.read_text()
+          old_export = (
+              '    FRAME_HEADER_BYTES, FrameHeader, Heartbeat, Hello, JoinApproval, JoinRejection, JoinRequest,\n'
+          )
+          new_export = (
+              '    FRAME_HEADER_BYTES, FRAME_HEADER_LENGTH, FrameHeader, Heartbeat, Hello, JoinApproval,\n'
+              '    JoinRejection, JoinRequest,\n'
+          )
+          if module.count(old_export) != 1:
+              raise SystemExit('protocol module export changed unexpectedly')
+          mod_path.write_text(module.replace(old_export, new_export))
+          PY
+
+          cd rust
+          cargo fmt --all
+          cd ..
+          rm .github/workflows/fix-protocol-header-width.yml
+          rm -f .github/protocol-fix-trigger.txt
+          git diff --check
+
+      - name: Commit typed header fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Use typed protocol header length constant"
+          git push origin HEAD:master
