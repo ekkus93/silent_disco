@@ -443,27 +443,29 @@ enum DatabaseCommand {
 
 The exact channel type may differ.
 
-- [ ] Queue is bounded.
-- [ ] Full queue returns visible `StorageBusy`; no command is dropped.
-- [ ] Worker has explicit start, stop, and join lifecycle.
-- [ ] Database connection never crosses into the audio callback.
+- [x] Queue is bounded.
+- [x] Full queue returns visible `StorageBusy`; no command is dropped.
+- [x] Worker has explicit start, stop, and join lifecycle.
+- [x] Database connection never crosses into the audio callback.
 
 ### 7.2 Configure SQLite explicitly
 
-- [ ] Enable and verify foreign keys.
-- [ ] Request and verify WAL mode where supported.
-- [ ] Set bounded busy timeout.
-- [ ] Select and document synchronous policy.
-- [ ] Record SQLite library version in diagnostics.
-- [ ] Fail initialization if required durability settings cannot be established.
+- [x] Enable and verify foreign keys.
+- [x] Request and verify WAL mode where supported.
+- [x] Set bounded busy timeout.
+- [x] Select and document synchronous policy.
+- [x] Record SQLite library version in diagnostics.
+- [x] Fail initialization if required durability settings cannot be established.
 
 ### 7.3 Add structured storage errors
 
-- [ ] Map open, pragma, migration, query, transaction, constraint, busy, corruption, and close errors separately.
-- [ ] Preserve operation and schema version context.
-- [ ] No `unwrap` or `expect` on production database results.
+- [x] Map open, pragma, migration, query, transaction, constraint, busy, corruption, and close errors separately.
+- [x] Preserve operation and schema version context.
+- [x] No `unwrap` or `expect` on production database results.
 
 **Acceptance:** Database worker tests prove serialized ownership, bounded queue behavior, close/join, and explicit failure mapping.
+
+**Implementation status:** Complete. Block 7 provides worker infrastructure and connection policy only. Schema migrations, tables, repositories, and Android data import remain deferred to Block 8 and later blocks.
 
 ---
 
