@@ -4,6 +4,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// Failure while validating or reading a versioned compatibility fixture.
 #[derive(Debug)]
 pub enum FixtureError {
     InvalidRelativePath(String),
@@ -35,12 +36,22 @@ impl std::error::Error for FixtureError {
     }
 }
 
+/// Resolves a fixture path beneath `root` without permitting absolute paths or
+/// parent-directory traversal.
+///
+/// # Errors
+///
+/// Returns [`FixtureError::InvalidRelativePath`] when `relative` is empty,
+/// absolute, rooted, prefixed, or contains a parent-directory component.
 pub fn fixture_path(root: &Path, relative: &Path) -> Result<PathBuf, FixtureError> {
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
     {
         return Err(FixtureError::InvalidRelativePath(
             relative.display().to_string(),
@@ -50,6 +61,12 @@ pub fn fixture_path(root: &Path, relative: &Path) -> Result<PathBuf, FixtureErro
     Ok(root.join(relative))
 }
 
+/// Reads one validated fixture as bytes.
+///
+/// # Errors
+///
+/// Returns [`FixtureError::InvalidRelativePath`] for an unsafe relative path or
+/// [`FixtureError::Read`] when the validated fixture cannot be read.
 pub fn read_fixture(root: &Path, relative: &Path) -> Result<Vec<u8>, FixtureError> {
     let path = fixture_path(root, relative)?;
     fs::read(&path).map_err(|source| FixtureError::Read { path, source })
