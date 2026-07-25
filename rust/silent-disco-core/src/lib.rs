@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+pub mod domain;
+pub mod error;
+
 /// ABI-independent version information for the shared domain core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CoreVersion {
