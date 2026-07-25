@@ -156,7 +156,9 @@ jobs:
   # BEGIN RUST MIGRATION MAINTENANCE
   rust-migration-maintenance:
     name: Apply guarded Rust migration maintenance
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/rust-sync-block6-validation')
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -173,182 +175,9 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt
           rustup default 1.97.1
 
-      - name: Apply guarded code and bookkeeping changes
+      - name: Apply guarded maintenance
         run: |
-          python - <<'PY'
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          types_path = Path('rust/silent-disco-core/src/sync/types.rs')
-          types = types_path.read_text()
-          old_sample = '''        Ok(Self {
-              correlation_id: exchange.correlation_id,
-              local_receive_time: exchange.t4_local_receive,
-              round_trip_time_ms: network_round_trip as f64,
-              offset_ms: offset_twice as f64 / 2.0,
-          })
-      }
-  }
-'''
-          new_sample = '''        Ok(Self {
-              correlation_id: exchange.correlation_id,
-              local_receive_time: exchange.t4_local_receive,
-              round_trip_time_ms: u64_to_f64(network_round_trip),
-              offset_ms: i128_to_f64(offset_twice) / 2.0,
-          })
-      }
-  }
-
-  // Monotonic millisecond values lose sub-millisecond integer precision only above
-  // the exact f64 integer range. The estimator immediately filters practical RTTs
-  // to a small configured bound, while offset arithmetic retains its sign and
-  // half-millisecond resolution for all mobile-runtime timestamp ranges.
-  #[allow(clippy::cast_precision_loss)]
-  fn u64_to_f64(value: u64) -> f64 {
-      value as f64
-  }
-
-  #[allow(clippy::cast_precision_loss)]
-  fn i128_to_f64(value: i128) -> f64 {
-      value as f64
-  }
-'''
-          if types.count(old_sample) != 1:
-              raise SystemExit('sync sample conversion block changed unexpectedly')
-          types_path.write_text(types.replace(old_sample, new_sample))
-
-          estimator_path = Path('rust/silent-disco-core/src/sync/estimator.rs')
-          estimator = estimator_path.read_text()
-          old_invalid = '''        assert_eq!(
-              ClockSyncEstimator::new(SyncEstimatorConfig {
-                  max_samples: 0,
-                  ..SyncEstimatorConfig::default()
-              }),
-              Err(SyncEstimatorError::InvalidConfiguration)
-          );
-          assert_eq!(
-              ClockSyncEstimator::new(SyncEstimatorConfig {
-                  max_accepted_rtt_ms: f64::NAN,
-                  ..SyncEstimatorConfig::default()
-              }),
-              Err(SyncEstimatorError::InvalidConfiguration)
-          );
-'''
-          new_invalid = '''        assert!(matches!(
-              ClockSyncEstimator::new(SyncEstimatorConfig {
-                  max_samples: 0,
-                  ..SyncEstimatorConfig::default()
-              }),
-              Err(SyncEstimatorError::InvalidConfiguration)
-          ));
-          assert!(matches!(
-              ClockSyncEstimator::new(SyncEstimatorConfig {
-                  max_accepted_rtt_ms: f64::NAN,
-                  ..SyncEstimatorConfig::default()
-              }),
-              Err(SyncEstimatorError::InvalidConfiguration)
-          ));
-'''
-          if estimator.count(old_invalid) != 1:
-              raise SystemExit('invalid configuration assertions changed unexpectedly')
-          old_pending_id = '                    SyncCorrelationId::new(1_000 + id as u64),\n'
-          new_pending_id = '''                    SyncCorrelationId::new(
-                          1_000 + u64::try_from(id).expect("pending-probe index fits u64"),
-                      ),
-'''
-          if estimator.count(old_pending_id) != 1:
-              raise SystemExit('pending-probe index conversion changed unexpectedly')
-          estimator_path.write_text(
-              estimator.replace(old_invalid, new_invalid).replace(old_pending_id, new_pending_id)
-          )
-
-          fixture_path = Path('rust/silent-disco-core/src/sync/fixture_tests.rs')
-          fixture = fixture_path.read_text()
-          old_fixture_id = '        let correlation = SyncCorrelationId::new(index as u64 + 1);\n'
-          new_fixture_id = '''        let correlation = SyncCorrelationId::new(
-              u64::try_from(index)
-                  .expect("fixture sample index fits u64")
-                  .saturating_add(1),
-          );
-'''
-          if fixture.count(old_fixture_id) != 1:
-              raise SystemExit('fixture correlation conversion changed unexpectedly')
-          fixture_path.write_text(fixture.replace(old_fixture_id, new_fixture_id))
-
-          todo_path = Path('docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md')
-          todo = todo_path.read_text()
-          block4_start = todo.index('## Block 4 — Implement Rust domain IDs, enums, and structured errors')
-          block4_end = todo.index('**Acceptance:** Core domain types compile without Android dependencies', block4_start)
-          block4 = todo[block4_start:block4_end]
-          if block4.count('- [ ]') != 27:
-              raise SystemExit('Block 4 no longer has exactly 27 unchecked tasks')
-          todo = todo[:block4_start] + block4.replace('- [ ]', '- [x]') + todo[block4_end:]
-
-          block5_start = todo.index('## Block 5 — Implement Rust protocol framing and golden vectors')
-          block5_end = todo.index('**Acceptance:** Rust protocol tests pass and the wire format is fully specified by executable vectors.', block5_start)
-          block5 = todo[block5_start:block5_end]
-          if block5.count('- [ ]') != 38:
-              raise SystemExit('Block 5 no longer has exactly 38 unchecked tasks')
-          todo = todo[:block5_start] + block5.replace('- [ ]', '- [x]') + todo[block5_end:]
-
-          for physical_task in (
-              '- [ ] Run the current connected Android test suite on an available physical device.',
-              '- [ ] Test loads the Rust library on a physical Android device.',
-              '- [ ] Test verifies the ABI version.',
-          ):
-              if physical_task not in todo:
-                  raise SystemExit(f'physical-device task changed unexpectedly: {physical_task}')
-          todo_path.write_text(todo)
-
-          memory_path = Path('memory.md')
-          memory = memory_path.read_text()
-          prefix = '# memory.md — `silent_disco`\n\n'
-          if not memory.startswith(prefix):
-              raise SystemExit('memory.md header changed unexpectedly')
-          if 'Rust migration Block 4 complete' in memory or 'Rust migration Block 5 complete' in memory:
-              raise SystemExit('Block 4 or Block 5 memory entry already exists')
-          timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-          entries = f'''## {timestamp} - GPT-5.6 Thinking - Rust migration Block 5 complete
-
-  - Completed Block 5 of `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`; physical-device-only checks remain open.
-  - Established protocol version 2 with `SDP2`, a fixed 16-byte network-order header, explicit version/kind/flags/length, a 64 KiB control limit, and a 4 KiB audio datagram limit.
-  - Added canonical Rust schemas for all control, synchronization, and PCM16 audio messages; bounded parsing, exact-length checks, CRC32 audio integrity, authorization/staleness policy, and independent diagnostic counters.
-  - Added production-encoder-generated executable vectors for every message kind, exact boundary sizes, deterministic hashes, and malformed/unsupported/integrity cases.
-  - CI run `30170763626` passed Rust format, Clippy with warnings denied, Rust tests, all APK variants, four-ABI packaging checks, Android unit tests, and Android lint.
-
-  ## {timestamp} - GPT-5.6 Thinking - Rust migration Block 4 complete
-
-  - Completed validated Rust domain identifiers, stable domain enums, and structured errors while preserving the physical-device gate.
-  - IDs are bounded and validated; enums have stable numeric/wire representations; `CoreError` has subsystem-specific codes, bounded context, severity, retryability, and operation correlation.
-  - CI run `30168849005` passed Rust format, Clippy with warnings denied, Rust tests, all APK variants, four-ABI packaging checks, Android unit tests, and Android lint.
-
-  '''
-          memory_path.write_text(prefix + entries + memory[len(prefix):])
-
-          ci_path = Path('.github/workflows/ci.yml')
-          ci = ci_path.read_text()
-          start_marker = '  # BEGIN RUST MIGRATION MAINTENANCE\n'
-          end_marker = '  # END RUST MIGRATION MAINTENANCE\n'
-          if ci.count(start_marker) != 1 or ci.count(end_marker) != 1:
-              raise SystemExit('maintenance markers changed unexpectedly')
-          start = ci.index(start_marker)
-          end = ci.index(end_marker, start) + len(end_marker)
-          ci_path.write_text(ci[:start] + ci[end:])
-
-          for helper in (
-              '.github/workflows/fix-sync-core.yml',
-              '.github/sync-core-fix-trigger.txt',
-              '.github/workflows/complete-rust-blocks-4-5.yml',
-              '.github/rust-blocks-4-5-completion-trigger.txt',
-              '.github/protocol-vector-style-trigger.txt',
-              '.github/protocol-import-fix-trigger.txt',
-              '.github/protocol-fix-trigger.txt',
-          ):
-              path = Path(helper)
-              if path.exists():
-                  path.unlink()
-          PY
-
+          python .github/scripts/rust_migration_maintenance.py
           cd rust
           cargo fmt --all
           cd ..
