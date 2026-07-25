@@ -1,0 +1,1 @@
+Temporary marker used only for final all-green Rust Android integration validation.
