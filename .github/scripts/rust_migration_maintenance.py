@@ -190,13 +190,23 @@ def prepend_memory() -> None:
 def remove_maintenance_from_ci() -> None:
     ci_path = Path(".github/workflows/ci.yml")
     ci = ci_path.read_text()
+    temporary_skip = (
+        "    if: github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.ref != "
+        "'agent/rust-migration-maintenance-diagnostics'\n"
+    )
+    if ci.count(temporary_skip) != 2:
+        raise SystemExit("temporary maintenance branch skips changed unexpectedly")
+    ci = ci.replace(temporary_skip, "")
+
     start_marker = "  # BEGIN RUST MIGRATION MAINTENANCE\n"
     end_marker = "  # END RUST MIGRATION MAINTENANCE\n"
     if ci.count(start_marker) != 1 or ci.count(end_marker) != 1:
         raise SystemExit("maintenance markers changed unexpectedly")
     start = ci.index(start_marker)
     end = ci.index(end_marker, start) + len(end_marker)
-    ci_path.write_text(ci[:start] + ci[end:])
+    cleaned = ci[:start] + ci[end:]
+    ci_path.write_text(cleaned.rstrip() + "\n")
 
 
 def remove_helpers() -> None:
