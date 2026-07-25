@@ -52,10 +52,23 @@ jobs:
           retention-days: 1
 
       - name: Run Rust clippy
+        id: rust-clippy
         if: always()
+        shell: bash
         run: |
+          set -o pipefail
           cd rust
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings \
+            2>&1 | tee ../rust-clippy.log
+
+      - name: Upload Rust clippy diagnostics
+        if: failure() && steps.rust-clippy.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-clippy-diagnostics
+          path: rust-clippy.log
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Run Rust tests
         if: always()
