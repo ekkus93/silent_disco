@@ -34,9 +34,9 @@ def main() -> None:
         )
 '''
     new = '''    single_count = text.count(", error)")
-    if single_count != 7:
+    if single_count != 8:
         raise SystemExit(
-            f"single-line SQLite error arguments: expected 7, found {single_count}"
+            f"single-line SQLite error arguments: expected 8, found {single_count}"
         )
     text = text.replace(", error)", ", &error)")
     text, multiline_count = re.subn(
