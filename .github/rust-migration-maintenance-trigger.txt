@@ -1,0 +1,1 @@
+Trigger the assertion-checked maintenance job in the registered permanent CI workflow.
