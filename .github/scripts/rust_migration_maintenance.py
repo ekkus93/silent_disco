@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -215,12 +216,22 @@ def remove_helpers() -> None:
             path.unlink()
 
 
+def run_step(label: str, action: Callable[[], None]) -> None:
+    print(f"BEGIN {label}", flush=True)
+    try:
+        action()
+    except BaseException as error:
+        print(f"FAILED {label}: {error!r}", flush=True)
+        raise
+    print(f"DONE {label}", flush=True)
+
+
 def main() -> None:
-    fix_sync_source()
-    complete_validated_blocks()
-    prepend_memory()
-    remove_maintenance_from_ci()
-    remove_helpers()
+    run_step("fix_sync_source", fix_sync_source)
+    run_step("complete_validated_blocks", complete_validated_blocks)
+    run_step("prepend_memory", prepend_memory)
+    run_step("remove_maintenance_from_ci", remove_maintenance_from_ci)
+    run_step("remove_helpers", remove_helpers)
 
 
 if __name__ == "__main__":
