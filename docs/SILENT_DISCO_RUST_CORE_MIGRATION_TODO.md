@@ -381,37 +381,39 @@ rust/silent-disco-core/testdata/protocol/v2/
 
 ### 6.1 Implement monotonic time types
 
-- [ ] Separate host and local monotonic timestamp types where helpful.
-- [ ] Reject impossible timestamp orderings.
-- [ ] Avoid wall-clock time in scheduling calculations.
+- [x] Separate host and local monotonic timestamp types where helpful.
+- [x] Reject impossible timestamp orderings.
+- [x] Avoid wall-clock time in scheduling calculations.
 
 ### 6.2 Port estimator behavior
 
 Implement and test:
 
-- [ ] four-timestamp offset calculation;
-- [ ] RTT calculation;
-- [ ] correlation-ID matching;
-- [ ] sample history window;
-- [ ] outlier rejection;
-- [ ] low-RTT preference;
-- [ ] confidence classification;
-- [ ] drift threshold;
-- [ ] initial-sync and periodic-sync decisions.
+- [x] four-timestamp offset calculation;
+- [x] RTT calculation;
+- [x] correlation-ID matching;
+- [x] sample history window;
+- [x] outlier rejection;
+- [x] low-RTT preference;
+- [x] confidence classification;
+- [x] drift threshold;
+- [x] initial-sync and periodic-sync decisions.
 
 ### 6.3 Verify Kotlin compatibility fixtures
 
-- [ ] Run Kotlin baseline fixtures through Rust.
-- [ ] Differences require either a Rust fix or an explicitly documented intentional behavior change in `memory.md`.
-- [ ] Add edge cases for overflow, duplicate response, stale correlation ID, high RTT, and negative/invalid ordering.
+- [x] Run Kotlin baseline fixtures through Rust.
+- [x] Differences require either a Rust fix or an explicitly documented intentional behavior change in `memory.md`.
+- [x] Add edge cases for overflow, duplicate response, stale correlation ID, high RTT, and negative/invalid ordering.
 
 ### 6.4 Expose pure FFI sync smoke API
 
-- [ ] Add temporary or permanent UniFFI-friendly sync records.
-- [ ] Kotlin test invokes Rust estimator with a fixture.
-- [ ] Do not maintain a new Kotlin estimator wrapper that duplicates calculations.
+- [x] Add temporary or permanent UniFFI-friendly sync records.
+- [x] Kotlin test invokes Rust estimator with a fixture.
+- [x] Do not maintain a new Kotlin estimator wrapper that duplicates calculations.
 
 **Acceptance:** Rust produces approved sync results and all estimator tests pass on host and Android.
+
+**Physical-device status:** Host tests, JVM tests, Android builds, four-ABI packaging, and compilation of the Android instrumentation-test APK pass. Execution of `RustSyncEstimatorInstrumentedTest` on a physical Android device is **NOT RUN**; Block 6 physical-Android acceptance remains open until that test is executed and recorded.
 
 ---
 

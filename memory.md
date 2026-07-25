@@ -1,5 +1,15 @@
 # memory.md — `silent_disco`
 
+## 2026-07-25T20:58:09Z - GPT-5.6 Thinking - Rust synchronization Block 6 code complete
+
+- Ported clock synchronization to Rust with distinct host/local monotonic timestamp types, checked four-timestamp RTT/offset arithmetic, bounded correlation tracking, bounded sample/drift history, low-RTT selection, confidence classification, skew estimation, and initial/periodic/drift decisions.
+- Added tests for near-`u64` arithmetic, impossible orderings, duplicate and stale responses, mismatched echoed timestamps, pending-probe capacity, high-RTT rejection, history bounds, confidence thresholds, and decision behavior.
+- Added binding-friendly Rust synchronization records and static JNI exports with bounded positive handles, stable explicit error statuses, collision-safe registry insertion, explicit destruction, and no JNI pointer dereferences.
+- Added a synchronized Kotlin bridge that consumes every native status immediately and performs no estimator calculations. Non-finite values, unknown confidence codes, invalid handles, load/link failures, and impossible timestamps fail visibly.
+- Added `RustSyncEstimatorInstrumentedTest`, which loads the existing Kotlin compatibility JSON fixture and invokes the Rust estimator. Permanent CI now compiles/packages the instrumentation-test APK.
+- PR #24 merged as `929ec82a24e6e817e0e9a6a40c07558739b9222a`. Pre-merge CI run `30174145493` passed Rust formatting, Clippy with warnings denied, all Rust tests, debug/PoC-debug/release APKs, instrumentation-test APK compilation, four-ABI Rust packaging, Android unit tests, and Android lint.
+- Physical execution of `RustSyncEstimatorInstrumentedTest` was **NOT RUN** because no physical Android device is attached. Block 6 physical-Android acceptance remains open; do not claim device validation until the command and device details are recorded.
+
 ## 2026-07-25T19:51:20Z - GPT-5.6 Thinking - Rust migration Block 5 complete
 
 - Completed Block 5 while preserving all physical-device-only gates.
