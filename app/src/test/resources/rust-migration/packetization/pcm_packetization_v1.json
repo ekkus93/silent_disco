@@ -1,0 +1,45 @@
+{
+  "fixtureVersion": 1,
+  "sessionId": "session-packet",
+  "streamId": "stream-packet",
+  "format": {
+    "sampleRate": 100,
+    "channelCount": 1,
+    "bytesPerSample": 2
+  },
+  "packetDurationMs": 20,
+  "chunk": {
+    "pcm16LeHex": "0001020304050607",
+    "firstSampleIndex": 40,
+    "frameCount": 4
+  },
+  "hostPresentationStartMs": 9000,
+  "expectedPackets": [
+    {
+      "version": 1,
+      "sequenceNumber": 0,
+      "codec": "pcm16le",
+      "sampleRate": 100,
+      "channelCount": 1,
+      "samplesPerPacket": 2,
+      "firstSampleIndex": 40,
+      "hostPresentationTimeMs": 9000,
+      "payloadHex": "00010203",
+      "payloadSha256": "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8",
+      "checksum": -1950775789
+    },
+    {
+      "version": 1,
+      "sequenceNumber": 1,
+      "codec": "pcm16le",
+      "sampleRate": 100,
+      "channelCount": 1,
+      "samplesPerPacket": 2,
+      "firstSampleIndex": 42,
+      "hostPresentationTimeMs": 9020,
+      "payloadHex": "04050607",
+      "payloadSha256": "c6d44cf418f610e3fe9e1d9294ff43def81c6cdcad6cbb1820cff48d3aa4355d",
+      "checksum": 1624488069
+    }
+  ]
+}
