@@ -4,11 +4,20 @@
 //! Binding shell for the shared Rust core.
 //!
 //! This crate contains no domain logic. Unsafe code is denied by default. A
-//! module that requires an unsafe export attribute may opt in only at the
+//! module that requires unsafe export attributes may opt in only at the
 //! smallest scope, while unsafe blocks and foreign-pointer dereferences remain
 //! prohibited unless their invariants are documented explicitly.
 
+mod android_abi;
+mod sync;
+
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
+
+pub use android_abi::{CORE_ABI_VERSION, silent_disco_core_abi_version};
+pub use sync::{
+    FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange,
+    FfiSyncObservation, FfiSyncSnapshot,
+};
 
 /// Binding-facing version record. Domain version ownership remains in the core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,43 +46,6 @@ pub fn ffi_core_version() -> FfiCoreVersion {
 pub const fn ffi_deterministic_smoke(input: u64) -> u64 {
     deterministic_smoke(input)
 }
-
-/// Native symbols consumed by Android before generated bindings are introduced.
-///
-/// Rust 2024 requires `no_mangle` to be declared as an unsafe attribute. This
-/// module permits only those attributes. The functions do not dereference JNI
-/// handles, access Java state, allocate, block, or run on the audio render path.
-mod android_abi {
-    #![allow(unsafe_code)]
-
-    use core::ffi::c_void;
-
-    /// ABI contract implemented by the current native library.
-    ///
-    /// A `u16` keeps conversion to both the C `u32` result and JNI `i32` result
-    /// statically infallible.
-    pub const CORE_ABI_VERSION: u16 = 1;
-
-    /// Returns the stable ABI contract version exposed to non-Rust callers.
-    #[must_use]
-    #[unsafe(no_mangle)]
-    pub extern "C" fn silent_disco_core_abi_version() -> u32 {
-        u32::from(CORE_ABI_VERSION)
-    }
-
-    /// JNI entry point used only by the Android platform bridge and smoke tests.
-    #[must_use]
-    #[allow(non_snake_case)]
-    #[unsafe(no_mangle)]
-    pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeAbiVersion(
-        _environment: *mut c_void,
-        _class: *mut c_void,
-    ) -> i32 {
-        i32::from(CORE_ABI_VERSION)
-    }
-}
-
-pub use android_abi::{CORE_ABI_VERSION, silent_disco_core_abi_version};
 
 #[cfg(test)]
 mod tests {
