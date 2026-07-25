@@ -1,0 +1,68 @@
+{
+  "fixtureVersion": 1,
+  "syncProbeTransitions": [
+    {
+      "current": "APPROVED",
+      "expected": "SYNCING_CLOCK"
+    },
+    {
+      "current": "CONNECTING",
+      "expected": "SYNCING_CLOCK"
+    },
+    {
+      "current": "PLAYING",
+      "expected": "PLAYING"
+    },
+    {
+      "current": "DESYNCED",
+      "expected": "DESYNCED"
+    }
+  ],
+  "transportFailureClassifications": [
+    {
+      "hostState": "STREAMING",
+      "listenerState": "IDLE",
+      "expected": "HOST_FAILURE"
+    },
+    {
+      "hostState": "IDLE",
+      "listenerState": "CONNECTING",
+      "expected": "LISTENER_FAILURE"
+    },
+    {
+      "hostState": "IDLE",
+      "listenerState": "IDLE",
+      "expected": "IGNORE"
+    }
+  ],
+  "sessionSelection": [
+    {
+      "listenerState": "CONNECTING",
+      "selectedSessionId": "session-a",
+      "candidateSessionId": "session-b",
+      "expectedAllowed": false
+    },
+    {
+      "listenerState": "CONNECTING",
+      "selectedSessionId": "session-a",
+      "candidateSessionId": "session-a",
+      "expectedAllowed": true
+    },
+    {
+      "listenerState": "SESSION_SELECTED",
+      "selectedSessionId": "session-a",
+      "candidateSessionId": "session-b",
+      "expectedAllowed": true
+    }
+  ],
+  "hostPlaybackIdentity": [
+    {
+      "sessionId": null,
+      "expectedError": "Start a host session before starting playback"
+    },
+    {
+      "sessionId": "session-a",
+      "expectedError": null
+    }
+  ]
+}
