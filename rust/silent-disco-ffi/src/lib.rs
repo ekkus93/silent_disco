@@ -8,7 +8,11 @@
 //! smallest module or function scope, and every unsafe operation must document
 //! its caller and lifetime invariants with a `# Safety` section.
 
+use core::ffi::c_void;
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
+
+/// ABI contract implemented by the current native library.
+pub const CORE_ABI_VERSION: u32 = 1;
 
 /// Binding-facing version record. Domain version ownership remains in the core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,9 +42,35 @@ pub const fn ffi_deterministic_smoke(input: u64) -> u64 {
     deterministic_smoke(input)
 }
 
+/// Returns the stable ABI contract version exposed to non-Rust callers.
+#[unsafe(no_mangle)]
+pub extern "C" fn silent_disco_core_abi_version() -> u32 {
+    CORE_ABI_VERSION
+}
+
+/// JNI entry point used only by the Android platform bridge and smoke tests.
+///
+/// The raw JNI handles are intentionally ignored because this function neither
+/// reads Java state nor allocates. It delegates to the C ABI function above and
+/// does not execute on the real-time audio path.
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeAbiVersion(
+    _environment: *mut c_void,
+    _class: *mut c_void,
+) -> i32 {
+    match i32::try_from(silent_disco_core_abi_version()) {
+        Ok(version) => version,
+        Err(_) => -1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FfiCoreVersion, ffi_core_version, ffi_deterministic_smoke};
+    use super::{
+        CORE_ABI_VERSION, FfiCoreVersion, ffi_core_version, ffi_deterministic_smoke,
+        silent_disco_core_abi_version,
+    };
 
     #[test]
     fn delegates_version_to_core() {
@@ -57,5 +87,11 @@ mod tests {
     #[test]
     fn delegates_smoke_function_to_core() {
         assert_eq!(ffi_deterministic_smoke(7), ffi_deterministic_smoke(7));
+    }
+
+    #[test]
+    fn exports_stable_abi_version() {
+        assert_eq!(silent_disco_core_abi_version(), CORE_ABI_VERSION);
+        assert_eq!(CORE_ABI_VERSION, 1);
     }
 }
