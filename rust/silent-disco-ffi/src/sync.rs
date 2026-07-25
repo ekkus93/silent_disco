@@ -104,9 +104,9 @@ impl From<SyncEstimatorError> for FfiSyncError {
             SyncEstimatorError::Timestamp(SyncTimestampError::HostClockMovedBackwards) => {
                 Self::HostClockMovedBackwards
             }
-            SyncEstimatorError::Timestamp(
-                SyncTimestampError::HostProcessingExceedsRoundTrip,
-            ) => Self::HostProcessingExceedsRoundTrip,
+            SyncEstimatorError::Timestamp(SyncTimestampError::HostProcessingExceedsRoundTrip) => {
+                Self::HostProcessingExceedsRoundTrip
+            }
         }
     }
 }
@@ -127,8 +127,8 @@ impl FfiSyncEstimator {
     /// Returns [`FfiSyncError::InvalidConfiguration`] when the sample count or
     /// RTT threshold is outside the core's validated limits.
     pub fn new(config: FfiSyncEstimatorConfig) -> Result<Self, FfiSyncError> {
-        let max_samples = usize::try_from(config.max_samples)
-            .map_err(|_| FfiSyncError::InvalidConfiguration)?;
+        let max_samples =
+            usize::try_from(config.max_samples).map_err(|_| FfiSyncError::InvalidConfiguration)?;
         let estimator = ClockSyncEstimator::new(SyncEstimatorConfig {
             max_samples,
             max_accepted_rtt_ms: config.max_accepted_rtt_ms,
@@ -215,7 +215,7 @@ fn convert_snapshot(snapshot: SyncSnapshot) -> Result<FfiSyncSnapshot, FfiSyncEr
 
 #[cfg(test)]
 mod tests {
-    use super::{FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncError, FfiSyncExchange};
+    use super::{FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange};
 
     const TOLERANCE: f64 = 1.0e-9;
 
