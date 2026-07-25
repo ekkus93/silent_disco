@@ -18,7 +18,6 @@ concurrency:
 jobs:
   rust:
     name: Rust quality gates
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.ref != 'feature/rust-sqlite-worker'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -79,7 +78,6 @@ jobs:
 
   android:
     name: Android build, unit tests, and lint
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.ref != 'feature/rust-sqlite-worker'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -160,50 +158,3 @@ jobs:
       - name: Run Android lint
         if: always()
         run: ./gradlew lintDebug --stacktrace --console=plain
-
-  # BEGIN SQLITE WORKER BOOTSTRAP
-  sqlite-worker-bootstrap:
-    name: Bootstrap Rust SQLite worker
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'feature/rust-sqlite-worker'
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Check out feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: feature/rust-sqlite-worker
-          fetch-depth: 0
-
-      - name: Install pinned Rust toolchain
-        run: |
-          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
-          rustup default 1.97.1
-
-      - name: Apply guarded source patches and remove bootstrap job
-        run: python .github/scripts/bootstrap_sqlite_worker.py
-
-      - name: Generate lockfile and format
-        run: |
-          cd rust
-          cargo generate-lockfile
-          cargo fmt --all
-
-      - name: Run strict Rust validation
-        run: |
-          cd rust
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-features
-
-      - name: Verify patch hygiene
-        run: git diff --check
-
-      - name: Commit generated and formatted worker
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Finalize Rust SQLite worker bootstrap"
-          git push origin HEAD:feature/rust-sqlite-worker
-  # END SQLITE WORKER BOOTSTRAP

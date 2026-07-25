@@ -216,10 +216,7 @@ impl StorageError {
     }
 
     #[must_use]
-    pub(crate) fn worker_stopped(
-        operation: StorageOperation,
-        schema_version: Option<u32>,
-    ) -> Self {
+    pub(crate) fn worker_stopped(operation: StorageOperation, schema_version: Option<u32>) -> Self {
         Self::new(
             StorageErrorKind::WorkerStopped,
             operation,
@@ -229,10 +226,7 @@ impl StorageError {
     }
 
     #[must_use]
-    pub(crate) fn reply_disconnected(
-        operation: StorageOperation,
-        schema_version: u32,
-    ) -> Self {
+    pub(crate) fn reply_disconnected(operation: StorageOperation, schema_version: u32) -> Self {
         Self::new(
             StorageErrorKind::ReplyDisconnected,
             operation,
@@ -318,14 +312,12 @@ impl Error for StorageError {}
 pub(crate) fn map_sqlite_error(
     operation: StorageOperation,
     schema_version: Option<u32>,
-    error: SqliteError,
+    error: &SqliteError,
 ) -> StorageError {
     let kind = match error.sqlite_error_code() {
         Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StorageErrorKind::Busy,
         Some(ErrorCode::ConstraintViolation) => StorageErrorKind::Constraint,
-        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => {
-            StorageErrorKind::Corruption
-        }
+        Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => StorageErrorKind::Corruption,
         _ => operation.default_error_kind(),
     };
     StorageError::new(
@@ -367,7 +359,7 @@ mod tests {
             map_sqlite_error(
                 StorageOperation::Query,
                 Some(7),
-                sqlite_failure(ffi::SQLITE_BUSY),
+                &sqlite_failure(ffi::SQLITE_BUSY),
             )
             .kind,
             StorageErrorKind::Busy
@@ -376,7 +368,7 @@ mod tests {
             map_sqlite_error(
                 StorageOperation::Transaction,
                 Some(7),
-                sqlite_failure(ffi::SQLITE_CONSTRAINT),
+                &sqlite_failure(ffi::SQLITE_CONSTRAINT),
             )
             .kind,
             StorageErrorKind::Constraint
@@ -385,7 +377,7 @@ mod tests {
             map_sqlite_error(
                 StorageOperation::Query,
                 Some(7),
-                sqlite_failure(ffi::SQLITE_CORRUPT),
+                &sqlite_failure(ffi::SQLITE_CORRUPT),
             )
             .kind,
             StorageErrorKind::Corruption
@@ -394,7 +386,7 @@ mod tests {
             map_sqlite_error(
                 StorageOperation::Migration,
                 Some(7),
-                sqlite_failure(ffi::SQLITE_ERROR),
+                &sqlite_failure(ffi::SQLITE_ERROR),
             )
             .kind,
             StorageErrorKind::Migration
@@ -403,7 +395,7 @@ mod tests {
             map_sqlite_error(
                 StorageOperation::Transaction,
                 Some(7),
-                sqlite_failure(ffi::SQLITE_ERROR),
+                &sqlite_failure(ffi::SQLITE_ERROR),
             )
             .kind,
             StorageErrorKind::Transaction
@@ -412,7 +404,7 @@ mod tests {
             map_sqlite_error(
                 StorageOperation::CloseDatabase,
                 Some(7),
-                sqlite_failure(ffi::SQLITE_ERROR),
+                &sqlite_failure(ffi::SQLITE_ERROR),
             )
             .kind,
             StorageErrorKind::Close
@@ -431,12 +423,18 @@ mod tests {
 
         assert_eq!(error.code, CoreErrorCode::StorageConstraintViolation);
         assert_eq!(error.subsystem, CoreSubsystem::Storage);
-        assert!(error.context.iter().any(|entry| {
-            entry.key == "storage_operation" && entry.value == "transaction"
-        }));
-        assert!(error.context.iter().any(|entry| {
-            entry.key == "schema_version" && entry.value == "4"
-        }));
+        assert!(
+            error
+                .context
+                .iter()
+                .any(|entry| { entry.key == "storage_operation" && entry.value == "transaction" })
+        );
+        assert!(
+            error
+                .context
+                .iter()
+                .any(|entry| { entry.key == "schema_version" && entry.value == "4" })
+        );
     }
 
     #[test]

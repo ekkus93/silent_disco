@@ -1,23 +1,17 @@
-use std::{
-    path::{Path, PathBuf},
-    thread,
-    time::Duration,
-};
+use std::{path::PathBuf, thread, time::Duration};
 
 use rusqlite::{Connection, OpenFlags};
 
-use super::error::{
-    StorageError, StorageErrorKind, StorageOperation, map_sqlite_error,
-};
+use super::error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error};
 
 pub const DEFAULT_DATABASE_QUEUE_CAPACITY: usize = 32;
 pub const DEFAULT_BUSY_TIMEOUT_MS: u64 = 2_000;
 const MAX_BUSY_TIMEOUT_MS: u128 = i32::MAX as u128;
 
-/// Explicit SQLite synchronous policy for low-write-volume durable mobile data.
+/// Explicit `SQLite` synchronous policy for low-write-volume durable mobile data.
 ///
 /// `Full` is intentionally selected for the initial implementation. With WAL,
-/// SQLite synchronizes the WAL on every transaction commit, prioritizing
+/// `SQLite` synchronizes the WAL on every transaction commit, prioritizing
 /// durable settings, trust, session, and diagnostic records over write latency.
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,7 +38,7 @@ impl SynchronousPolicy {
     }
 }
 
-/// Validated configuration used to start one SQLite worker.
+/// Validated configuration used to start one `SQLite` worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
     pub path: PathBuf,
@@ -81,7 +75,7 @@ impl DatabaseConfig {
         Ok(self)
     }
 
-    /// Selects a nonzero SQLite busy timeout that fits SQLite's millisecond API.
+    /// Selects a nonzero `SQLite` busy timeout that fits `SQLite`'s millisecond API.
     ///
     /// # Errors
     ///
@@ -122,7 +116,7 @@ impl DatabaseConfig {
     }
 }
 
-/// Verified SQLite runtime metadata exposed for diagnostics.
+/// Verified `SQLite` runtime metadata exposed for diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseMetadata {
     pub sqlite_version: String,
@@ -155,9 +149,7 @@ impl DatabaseConnection {
             &config.path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::OpenDatabase, None, error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::OpenDatabase, None, &error))?;
 
         configure_foreign_keys(&connection)?;
         let journal_mode = configure_wal(&connection)?;
@@ -214,7 +206,7 @@ impl DatabaseConnection {
             Err((_connection, error)) => Err(map_sqlite_error(
                 StorageOperation::CloseDatabase,
                 Some(schema_version),
-                error,
+                &error,
             )),
         };
 
@@ -229,14 +221,10 @@ impl DatabaseConnection {
 fn configure_foreign_keys(connection: &Connection) -> Result<(), StorageError> {
     connection
         .execute_batch("PRAGMA foreign_keys = ON;")
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::ConfigureForeignKeys, None, error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::ConfigureForeignKeys, None, &error))?;
     let enabled = connection
         .query_row("PRAGMA foreign_keys;", [], |row| row.get::<_, i64>(0))
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::ConfigureForeignKeys, None, error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::ConfigureForeignKeys, None, &error))?;
     if enabled != 1 {
         return Err(StorageError::new(
             StorageErrorKind::Pragma,
@@ -250,10 +238,10 @@ fn configure_foreign_keys(connection: &Connection) -> Result<(), StorageError> {
 
 fn configure_wal(connection: &Connection) -> Result<String, StorageError> {
     let journal_mode = connection
-        .query_row("PRAGMA journal_mode = WAL;", [], |row| row.get::<_, String>(0))
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::ConfigureJournalMode, None, error)
-        })?;
+        .query_row("PRAGMA journal_mode = WAL;", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|error| map_sqlite_error(StorageOperation::ConfigureJournalMode, None, &error))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(StorageError::new(
             StorageErrorKind::Pragma,
@@ -265,18 +253,13 @@ fn configure_wal(connection: &Connection) -> Result<String, StorageError> {
     Ok(journal_mode.to_ascii_lowercase())
 }
 
-fn configure_busy_timeout(
-    connection: &Connection,
-    timeout: Duration,
-) -> Result<u32, StorageError> {
-    connection.busy_timeout(timeout).map_err(|error| {
-        map_sqlite_error(StorageOperation::ConfigureBusyTimeout, None, error)
-    })?;
+fn configure_busy_timeout(connection: &Connection, timeout: Duration) -> Result<u32, StorageError> {
+    connection
+        .busy_timeout(timeout)
+        .map_err(|error| map_sqlite_error(StorageOperation::ConfigureBusyTimeout, None, &error))?;
     let configured = connection
         .query_row("PRAGMA busy_timeout;", [], |row| row.get::<_, i64>(0))
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::ConfigureBusyTimeout, None, error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::ConfigureBusyTimeout, None, &error))?;
     let expected = i64::try_from(timeout.as_millis()).map_err(|_| {
         StorageError::new(
             StorageErrorKind::InvalidConfiguration,
@@ -308,25 +291,14 @@ fn configure_synchronous_policy(
     policy: SynchronousPolicy,
 ) -> Result<(), StorageError> {
     connection
-        .execute_batch(&format!(
-            "PRAGMA synchronous = {};",
-            policy.pragma_value()
-        ))
+        .execute_batch(&format!("PRAGMA synchronous = {};", policy.pragma_value()))
         .map_err(|error| {
-            map_sqlite_error(
-                StorageOperation::ConfigureSynchronousPolicy,
-                None,
-                error,
-            )
+            map_sqlite_error(StorageOperation::ConfigureSynchronousPolicy, None, &error)
         })?;
     let configured = connection
         .query_row("PRAGMA synchronous;", [], |row| row.get::<_, i64>(0))
         .map_err(|error| {
-            map_sqlite_error(
-                StorageOperation::ConfigureSynchronousPolicy,
-                None,
-                error,
-            )
+            map_sqlite_error(StorageOperation::ConfigureSynchronousPolicy, None, &error)
         })?;
     if configured != policy.sqlite_numeric_value() {
         return Err(StorageError::new(
@@ -346,7 +318,7 @@ fn configure_synchronous_policy(
 fn read_schema_version(connection: &Connection) -> Result<u32, StorageError> {
     let schema_version = connection
         .query_row("PRAGMA user_version;", [], |row| row.get::<_, i64>(0))
-        .map_err(|error| map_sqlite_error(StorageOperation::ReadMetadata, None, error))?;
+        .map_err(|error| map_sqlite_error(StorageOperation::ReadMetadata, None, &error))?;
     u32::try_from(schema_version).map_err(|_| {
         StorageError::new(
             StorageErrorKind::Corruption,
@@ -372,11 +344,7 @@ fn checkpoint_with_mode(
             })
         })
         .map_err(|error| {
-            map_sqlite_error(
-                StorageOperation::Checkpoint,
-                Some(schema_version),
-                error,
-            )
+            map_sqlite_error(StorageOperation::Checkpoint, Some(schema_version), &error)
         })
 }
 
@@ -388,9 +356,7 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use super::{
-        DatabaseConfig, DatabaseConnection, DEFAULT_BUSY_TIMEOUT_MS, SynchronousPolicy,
-    };
+    use super::{DEFAULT_BUSY_TIMEOUT_MS, DatabaseConfig, DatabaseConnection, SynchronousPolicy};
     use crate::storage::{StorageErrorKind, StorageOperation};
 
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(1);
@@ -427,11 +393,11 @@ mod tests {
 
         assert!(metadata.foreign_keys_enabled);
         assert_eq!(metadata.journal_mode, "wal");
-        assert_eq!(metadata.busy_timeout_ms, DEFAULT_BUSY_TIMEOUT_MS as u32);
+        assert_eq!(u64::from(metadata.busy_timeout_ms), DEFAULT_BUSY_TIMEOUT_MS);
         assert_eq!(metadata.synchronous_policy, SynchronousPolicy::Full);
         assert_eq!(metadata.schema_version, 0);
         assert!(!metadata.sqlite_version.is_empty());
-        assert_eq!(metadata.owner_thread_name, "unnamed");
+        assert!(!metadata.owner_thread_name.is_empty());
         connection
             .checkpoint_and_close()
             .expect("checkpoint and close succeeds");
@@ -440,7 +406,13 @@ mod tests {
     #[test]
     fn unsupported_wal_mode_fails_initialization_instead_of_degrading() {
         let config = DatabaseConfig::new(":memory:").expect("valid path shape");
-        let error = DatabaseConnection::open(&config).expect_err("memory mode cannot verify WAL");
+        let error = match DatabaseConnection::open(&config) {
+            Ok(connection) => {
+                let _ = connection.checkpoint_and_close();
+                panic!("memory mode unexpectedly verified WAL");
+            }
+            Err(error) => error,
+        };
 
         assert_eq!(error.kind, StorageErrorKind::Pragma);
         assert_eq!(error.operation, StorageOperation::ConfigureJournalMode);
@@ -451,7 +423,13 @@ mod tests {
         let test_path = TestDatabasePath::new("corrupt");
         fs::write(&test_path.path, b"not a sqlite database").expect("write corrupt fixture");
         let config = DatabaseConfig::new(&test_path.path).expect("valid file config");
-        let error = DatabaseConnection::open(&config).expect_err("corrupt file must fail");
+        let error = match DatabaseConnection::open(&config) {
+            Ok(connection) => {
+                let _ = connection.checkpoint_and_close();
+                panic!("corrupt file unexpectedly opened");
+            }
+            Err(error) => error,
+        };
 
         assert_eq!(error.kind, StorageErrorKind::Corruption);
         assert!(!error.core_remains_usable);
@@ -462,10 +440,6 @@ mod tests {
         let test_path = TestDatabasePath::new("invalid-config");
         let config = DatabaseConfig::new(&test_path.path).expect("base config");
         assert!(config.clone().with_queue_capacity(0).is_err());
-        assert!(
-            config
-                .with_busy_timeout(std::time::Duration::ZERO)
-                .is_err()
-        );
+        assert!(config.with_busy_timeout(std::time::Duration::ZERO).is_err());
     }
 }

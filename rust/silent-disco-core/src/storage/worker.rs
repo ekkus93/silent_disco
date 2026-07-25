@@ -42,7 +42,7 @@ pub struct DatabaseClient {
 }
 
 impl DatabaseClient {
-    /// Returns verified SQLite diagnostics from the worker-owned connection.
+    /// Returns verified `SQLite` diagnostics from the worker-owned connection.
     ///
     /// # Errors
     ///
@@ -59,7 +59,7 @@ impl DatabaseClient {
     ///
     /// # Errors
     ///
-    /// Returns a visible queue, SQLite, or worker lifecycle error.
+    /// Returns a visible queue, `SQLite`, or worker lifecycle error.
     pub fn checkpoint(&self) -> Result<DatabaseCheckpoint, StorageError> {
         self.request(StorageOperation::Checkpoint, |reply| {
             DatabaseCommand::Checkpoint { reply }
@@ -88,10 +88,7 @@ impl DatabaseClient {
             }
         }
         reply_receiver.recv().map_err(|_| {
-            StorageError::reply_disconnected(
-                operation,
-                self.schema_version.load(Ordering::Acquire),
-            )
+            StorageError::reply_disconnected(operation, self.schema_version.load(Ordering::Acquire))
         })?
     }
 
@@ -116,7 +113,7 @@ impl DatabaseClient {
     }
 }
 
-/// Lifecycle owner for one dedicated SQLite worker thread.
+/// Lifecycle owner for one dedicated `SQLite` worker thread.
 ///
 /// The worker must be stopped and joined explicitly. `Drop` is a fail-visible
 /// safety net that performs the same shutdown and panics if clean shutdown is
@@ -130,7 +127,7 @@ pub struct DatabaseWorker {
 }
 
 impl DatabaseWorker {
-    /// Starts a worker and does not return until SQLite is open and every
+    /// Starts a worker and does not return until `SQLite` is open and every
     /// required connection setting has been verified.
     ///
     /// # Errors
@@ -147,10 +144,10 @@ impl DatabaseWorker {
             .name("silent-disco-database".into())
             .spawn(move || {
                 run_database_worker(
-                    config,
-                    command_receiver,
-                    startup_sender,
-                    thread_schema_version,
+                    &config,
+                    &command_receiver,
+                    &startup_sender,
+                    &thread_schema_version,
                 )
             })
             .map_err(|error| {
@@ -202,7 +199,7 @@ impl DatabaseWorker {
     ///
     /// # Errors
     ///
-    /// Returns a visible shutdown or SQLite close/checkpoint failure.
+    /// Returns a visible shutdown or `SQLite` close/checkpoint failure.
     pub fn stop(&mut self) -> Result<(), StorageError> {
         if self.stop_result.is_some() {
             return Err(StorageError::shutdown_in_progress());
@@ -248,8 +245,7 @@ impl DatabaseWorker {
             .join()
             .map_err(|_| StorageError::worker_panicked())?;
         match (stop_result, thread_result) {
-            (Err(error), _) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
+            (Err(error), _) | (Ok(()), Err(error)) => Err(error),
             (Ok(()), Ok(())) => Ok(()),
         }
     }
@@ -273,12 +269,21 @@ impl Drop for DatabaseWorker {
 }
 
 fn run_database_worker(
-    config: DatabaseConfig,
-    command_receiver: Receiver<DatabaseCommand>,
-    startup_sender: SyncSender<Result<DatabaseMetadata, StorageError>>,
-    schema_version: Arc<AtomicU32>,
+    config: &DatabaseConfig,
+    command_receiver: &Receiver<DatabaseCommand>,
+    startup_sender: &SyncSender<Result<DatabaseMetadata, StorageError>>,
+    schema_version: &Arc<AtomicU32>,
 ) -> Result<(), StorageError> {
-    let connection = match DatabaseConnection::open(&config) {
+    let connection = open_and_report_startup(config, startup_sender, schema_version)?;
+    run_database_commands(connection, command_receiver, schema_version)
+}
+
+fn open_and_report_startup(
+    config: &DatabaseConfig,
+    startup_sender: &SyncSender<Result<DatabaseMetadata, StorageError>>,
+    schema_version: &Arc<AtomicU32>,
+) -> Result<DatabaseConnection, StorageError> {
+    let connection = match DatabaseConnection::open(config) {
         Ok(connection) => connection,
         Err(error) => {
             let _ = startup_sender.send(Err(error.clone()));
@@ -297,17 +302,21 @@ fn run_database_worker(
             Err(error) => Err(error),
         };
     }
+    Ok(connection)
+}
 
+fn run_database_commands(
+    connection: DatabaseConnection,
+    command_receiver: &Receiver<DatabaseCommand>,
+    schema_version: &Arc<AtomicU32>,
+) -> Result<(), StorageError> {
     let mut connection = Some(connection);
     loop {
-        let command = match command_receiver.recv() {
-            Ok(command) => command,
-            Err(_) => {
-                return close_after_channel_disconnect(
-                    connection.take(),
-                    schema_version.load(Ordering::Acquire),
-                );
-            }
+        let Ok(command) = command_receiver.recv() else {
+            return close_after_channel_disconnect(
+                connection.take(),
+                schema_version.load(Ordering::Acquire),
+            );
         };
         match command {
             DatabaseCommand::ReadMetadata { reply } => {
@@ -358,8 +367,7 @@ fn run_database_worker(
                     },
                     DatabaseConnection::checkpoint_and_close,
                 );
-                let send_failed = reply.send(result.clone()).is_err();
-                if send_failed {
+                if reply.send(result.clone()).is_err() {
                     return match result {
                         Ok(()) => Err(StorageError::reply_disconnected(
                             StorageOperation::StopWorker,
@@ -506,7 +514,10 @@ mod tests {
                 reply: queued_reply_sender,
             })
             .expect("one command fills queue");
-        let overflow = worker.client.metadata().expect_err("queue must reject overflow");
+        let overflow = worker
+            .client
+            .metadata()
+            .expect_err("queue must reject overflow");
         assert_eq!(overflow.kind, StorageErrorKind::QueueFull);
 
         release_sender.send(()).expect("release worker");
@@ -525,7 +536,9 @@ mod tests {
         let client = worker.client();
 
         worker.stop().expect("stop checkpoints and closes");
-        let error = client.metadata().expect_err("stopped worker rejects requests");
+        let error = client
+            .metadata()
+            .expect_err("stopped worker rejects requests");
         assert_eq!(error.kind, StorageErrorKind::WorkerStopped);
         worker.join().expect("join succeeds");
     }
@@ -535,7 +548,13 @@ mod tests {
         let test_path = TestDatabasePath::new("missing-parent");
         let missing = test_path.path.join("missing").join("database.sqlite3");
         let config = DatabaseConfig::new(missing).expect("valid path shape");
-        let error = DatabaseWorker::start(config).expect_err("open must fail");
+        let error = match DatabaseWorker::start(config) {
+            Ok(worker) => {
+                let _ = worker.stop_and_join();
+                panic!("database in a missing directory unexpectedly opened");
+            }
+            Err(error) => error,
+        };
 
         assert_eq!(error.kind, StorageErrorKind::Open);
     }
