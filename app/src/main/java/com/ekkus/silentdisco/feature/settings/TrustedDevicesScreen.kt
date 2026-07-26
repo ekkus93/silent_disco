@@ -180,7 +180,7 @@ fun TrustedDevicesScreen(
         visible = device != null,
         title = "Remove this approved device?",
         detail = device?.let {
-            "${it.displayName} will need approval before joining a future session."
+            "${trustedDeviceDisplayName(it)} will need approval before joining a future session."
         }.orEmpty(),
         safeActionLabel = "Keep approved",
         destructiveActionLabel = "Remove approval",
@@ -210,7 +210,7 @@ private fun TrustedDeviceCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                device.displayName,
+                trustedDeviceDisplayName(device),
                 modifier = Modifier.semantics { heading() },
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -248,6 +248,15 @@ private fun TrustedDeviceCard(
                 }
             }
         }
+    }
+}
+
+internal fun trustedDeviceDisplayName(device: RustTrustedDevice): String {
+    val displayName = device.displayName.trim()
+    return if (displayName.isBlank() || displayName == device.deviceId) {
+        "Approved phone"
+    } else {
+        displayName
     }
 }
 
