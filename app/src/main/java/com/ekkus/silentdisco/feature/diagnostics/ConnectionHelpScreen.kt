@@ -24,8 +24,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.SessionHealthLevel
@@ -33,8 +36,17 @@ import com.ekkus.silentdisco.app.canManualResync
 import com.ekkus.silentdisco.app.hostSessionHealthSummary
 import com.ekkus.silentdisco.app.listenerConnectionHealthSummary
 import com.ekkus.silentdisco.core.model.AppRole
+import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.ui.components.StatusBadge
+import com.ekkus.silentdisco.ui.components.StatusTone
+
+internal data class ConnectionIndicator(
+    val label: String,
+    val value: String,
+    val tone: StatusTone,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +64,7 @@ fun ConnectionHelpScreen(
     } else {
         uiState.listenerConnectionHealthSummary()
     }
+    val indicators = connectionHelpIndicators(uiState, hostContext)
 
     Column(
         modifier = Modifier
@@ -76,9 +89,18 @@ fun ConnectionHelpScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(summary.title, style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        summary.title,
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                    StatusBadge(
+                        text = summary.title,
+                        tone = summary.level.toStatusTone(),
+                        semanticLabel = "Overall status: ${summary.title}",
+                    )
                     Text(summary.detail, style = MaterialTheme.typography.bodyLarge)
                 }
             }
@@ -88,62 +110,13 @@ fun ConnectionHelpScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("Status", style = MaterialTheme.typography.titleMedium)
-                    if (hostContext) {
-                        StatusRow(
-                            "Session",
-                            if (uiState.hostState.name == "ERROR") "Problem" else "Active",
-                        )
-                        StatusRow(
-                            "Listeners",
-                            if (uiState.hostDiagnostics.desyncedListenerCount > 0) {
-                                "${uiState.hostDiagnostics.desyncedListenerCount} need attention"
-                            } else {
-                                "${uiState.hostDiagnostics.connectedListenerCount} connected"
-                            },
-                        )
-                        StatusRow(
-                            "Playback",
-                            when (uiState.hostPlaybackState) {
-                                PlaybackState.ERROR -> "Problem"
-                                PlaybackState.PLAYING -> "Playing"
-                                PlaybackState.PAUSED -> "Paused"
-                                PlaybackState.BUFFERING -> "Preparing"
-                                else -> "Stopped"
-                            },
-                        )
-                    } else {
-                        StatusRow(
-                            "Connection",
-                            when (uiState.listenerState) {
-                                ListenerLifecycleState.DISCONNECTED -> "Lost"
-                                ListenerLifecycleState.RECONNECTING -> "Recovering"
-                                ListenerLifecycleState.ERROR -> "Problem"
-                                ListenerLifecycleState.PLAYING -> "Good"
-                                else -> "Updating"
-                            },
-                        )
-                        StatusRow(
-                            "Synchronization",
-                            when (uiState.listenerState) {
-                                ListenerLifecycleState.DESYNCED -> "Out of sync"
-                                ListenerLifecycleState.SYNCING_CLOCK,
-                                ListenerLifecycleState.BUFFERING,
-                                -> "Synchronizing"
-                                ListenerLifecycleState.PLAYING -> "Good"
-                                else -> "Updating"
-                            },
-                        )
-                        StatusRow(
-                            "Audio",
-                            when (uiState.listenerPlaybackState) {
-                                PlaybackState.ERROR -> "Problem"
-                                PlaybackState.BUFFERING -> "Buffering"
-                                PlaybackState.PLAYING -> "Playing"
-                                PlaybackState.PAUSED -> "Paused"
-                                else -> "Stopped"
-                            },
-                        )
+                    Text(
+                        "Status",
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    indicators.forEach { indicator ->
+                        StatusRow(indicator)
                     }
                 }
             }
@@ -208,16 +181,125 @@ fun ConnectionHelpScreen(
 }
 
 @Composable
-private fun StatusRow(label: String, value: String) {
+private fun StatusRow(indicator: ConnectionIndicator) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge)
-        Text(
-            value,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
+        Text(indicator.label, style = MaterialTheme.typography.bodyLarge)
+        StatusBadge(
+            text = indicator.value,
+            tone = indicator.tone,
+            semanticLabel = "${indicator.label}: ${indicator.value}",
         )
     }
+}
+
+internal fun connectionHelpIndicators(
+    uiState: AppUiState,
+    hostContext: Boolean,
+): List<ConnectionIndicator> = if (hostContext) {
+    listOf(
+        ConnectionIndicator(
+            label = "Session",
+            value = if (uiState.hostState == HostLifecycleState.ERROR) "Problem" else "Active",
+            tone = if (uiState.hostState == HostLifecycleState.ERROR) StatusTone.CRITICAL else StatusTone.POSITIVE,
+        ),
+        ConnectionIndicator(
+            label = "Listeners",
+            value = if (uiState.hostDiagnostics.desyncedListenerCount > 0) {
+                "${uiState.hostDiagnostics.desyncedListenerCount} need attention"
+            } else {
+                "${uiState.hostDiagnostics.connectedListenerCount} connected"
+            },
+            tone = if (uiState.hostDiagnostics.desyncedListenerCount > 0) {
+                StatusTone.ATTENTION
+            } else {
+                StatusTone.POSITIVE
+            },
+        ),
+        ConnectionIndicator(
+            label = "Playback",
+            value = when (uiState.hostPlaybackState) {
+                PlaybackState.ERROR -> "Problem"
+                PlaybackState.PLAYING -> "Playing"
+                PlaybackState.PAUSED -> "Paused"
+                PlaybackState.BUFFERING -> "Preparing"
+                else -> "Stopped"
+            },
+            tone = when (uiState.hostPlaybackState) {
+                PlaybackState.ERROR -> StatusTone.CRITICAL
+                PlaybackState.PLAYING -> StatusTone.POSITIVE
+                PlaybackState.BUFFERING -> StatusTone.IN_PROGRESS
+                PlaybackState.PAUSED,
+                PlaybackState.STOPPED,
+                PlaybackState.READY,
+                PlaybackState.UNDERRUN -> StatusTone.NEUTRAL
+            },
+        ),
+    )
+} else {
+    listOf(
+        ConnectionIndicator(
+            label = "Connection",
+            value = when (uiState.listenerState) {
+                ListenerLifecycleState.DISCONNECTED -> "Lost"
+                ListenerLifecycleState.RECONNECTING -> "Recovering"
+                ListenerLifecycleState.ERROR -> "Problem"
+                ListenerLifecycleState.PLAYING -> "Good"
+                else -> "Updating"
+            },
+            tone = when (uiState.listenerState) {
+                ListenerLifecycleState.DISCONNECTED,
+                ListenerLifecycleState.ERROR -> StatusTone.CRITICAL
+                ListenerLifecycleState.RECONNECTING -> StatusTone.IN_PROGRESS
+                ListenerLifecycleState.PLAYING -> StatusTone.POSITIVE
+                else -> StatusTone.NEUTRAL
+            },
+        ),
+        ConnectionIndicator(
+            label = "Synchronization",
+            value = when (uiState.listenerState) {
+                ListenerLifecycleState.DESYNCED -> "Out of sync"
+                ListenerLifecycleState.SYNCING_CLOCK,
+                ListenerLifecycleState.BUFFERING -> "Synchronizing"
+                ListenerLifecycleState.PLAYING -> "Good"
+                else -> "Updating"
+            },
+            tone = when (uiState.listenerState) {
+                ListenerLifecycleState.DESYNCED -> StatusTone.ATTENTION
+                ListenerLifecycleState.SYNCING_CLOCK,
+                ListenerLifecycleState.BUFFERING -> StatusTone.IN_PROGRESS
+                ListenerLifecycleState.PLAYING -> StatusTone.POSITIVE
+                else -> StatusTone.NEUTRAL
+            },
+        ),
+        ConnectionIndicator(
+            label = "Audio",
+            value = when (uiState.listenerPlaybackState) {
+                PlaybackState.ERROR -> "Problem"
+                PlaybackState.BUFFERING -> "Buffering"
+                PlaybackState.PLAYING -> "Playing"
+                PlaybackState.PAUSED -> "Paused"
+                else -> "Stopped"
+            },
+            tone = when (uiState.listenerPlaybackState) {
+                PlaybackState.ERROR -> StatusTone.CRITICAL
+                PlaybackState.BUFFERING -> StatusTone.IN_PROGRESS
+                PlaybackState.PLAYING -> StatusTone.POSITIVE
+                PlaybackState.PAUSED,
+                PlaybackState.STOPPED,
+                PlaybackState.READY,
+                PlaybackState.UNDERRUN -> StatusTone.NEUTRAL
+            },
+        ),
+    )
+}
+
+private fun SessionHealthLevel.toStatusTone(): StatusTone = when (this) {
+    SessionHealthLevel.GOOD -> StatusTone.POSITIVE
+    SessionHealthLevel.ATTENTION -> StatusTone.ATTENTION
+    SessionHealthLevel.CRITICAL -> StatusTone.CRITICAL
+    SessionHealthLevel.UNKNOWN -> StatusTone.NEUTRAL
 }
