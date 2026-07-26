@@ -524,41 +524,43 @@ Implement tables required by the spec:
 
 Create `AndroidDatabasePathProvider` that:
 
-- [ ] selects an application-private database path;
-- [ ] creates only the parent directory;
-- [ ] returns the complete path to Rust;
-- [ ] never opens SQLite from Kotlin;
-- [ ] applies Android backup policy intentionally.
+- [x] selects an application-private database path;
+- [x] creates only the parent directory;
+- [x] returns the complete path to Rust;
+- [x] never opens SQLite from Kotlin;
+- [x] applies Android backup policy intentionally.
 
 ### 9.2 Add one-time legacy import
 
 Current tuning/trust data in `SharedPreferences` must be handled explicitly.
 
-- [ ] Define a versioned `LegacyAndroidImport` record.
-- [ ] Kotlin reads only the known legacy keys.
-- [ ] Kotlin passes typed legacy values to Rust once.
-- [ ] Rust validates and imports them transactionally.
-- [ ] Rust records import completion in SQLite.
-- [ ] Kotlin deletes legacy domain keys only after Rust reports committed success.
-- [ ] Failure leaves legacy data intact and surfaces an error.
-- [ ] Repeated startup is idempotent.
+- [x] Define a versioned `LegacyAndroidImport` record.
+- [x] Kotlin reads only the known legacy keys.
+- [x] Kotlin passes typed legacy values to Rust once.
+- [x] Rust validates and imports them transactionally.
+- [x] Rust records import completion in SQLite.
+- [x] Kotlin deletes legacy domain keys only after Rust reports committed success.
+- [x] Failure leaves legacy data intact and surfaces an error.
+- [x] Repeated startup is idempotent.
 
 ### 9.3 Remove direct domain persistence
 
-- [ ] `MainViewModel` no longer writes tuning/trusted-device domain state to `SharedPreferences` after successful migration.
-- [ ] Platform-only preferences may remain if documented.
-- [ ] No silent fallback to old preferences if Rust database fails.
+- [x] `MainViewModel` no longer writes tuning/trusted-device domain state to `SharedPreferences` after successful migration.
+- [x] Platform-only preferences may remain if documented.
+- [x] No silent fallback to old preferences if Rust database fails.
 
 ### 9.4 Add Android instrumentation tests
 
-- [ ] First run creates database.
-- [ ] Legacy settings import.
-- [ ] Legacy trust import.
-- [ ] Import failure preserves legacy values.
-- [ ] Reopen loads Rust values.
-- [ ] Database migration failure displays fatal/recoverable state.
+- [x] First run creates database.
+- [x] Legacy settings import.
+- [x] Legacy trust import.
+- [x] Import failure preserves legacy values.
+- [x] Reopen loads Rust values.
+- [x] Database migration failure displays fatal/recoverable state.
 
 **Acceptance:** All SQLite domain access is Rust-owned; Android has no production SQL and no duplicate domain persistence.
+
+**Implementation status:** Complete. PR #35 merged as `5fc5ae966b1157b2cd5887c10d3522da81856f8f`. Permanent CI run `30187155765` passed Rust formatting, strict Clippy, all Rust tests, Android debug/PoC-debug/release and instrumentation-APK builds, four-ABI JNI packaging, Android unit tests, and Android lint. `AndroidRustDomainStoreInstrumentedTest` is compiled and packaged but physical-device execution is **NOT RUN**; device acceptance remains open until its command and device details are recorded.
 
 ---
 
