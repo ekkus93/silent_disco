@@ -56,7 +56,6 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
     var showEndSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showLeaveSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showInviteDialog by rememberSaveable { mutableStateOf(false) }
-    var approvalInFlightRequestId by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun shareSupportReport() {
         val report = uiState.buildSupportReport(
@@ -71,6 +70,15 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             "Share support report",
         )
         context.startActivity(shareIntent)
+    }
+
+    fun openSystemSettings() {
+        context.startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:${context.packageName}"),
+            ),
+        )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -116,13 +124,6 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
     LaunchedEffect(uiState.lastMessage) {
         uiState.lastMessage?.takeIf(String::isNotBlank)?.let {
             snackbarHostState.showSnackbar(it)
-        }
-    }
-
-    LaunchedEffect(uiState.pendingJoinRequests, uiState.approvedListeners) {
-        val inFlight = approvalInFlightRequestId ?: return@LaunchedEffect
-        if (uiState.pendingJoinRequests.none { it.requestId == inFlight }) {
-            approvalInFlightRequestId = null
         }
     }
 
@@ -224,8 +225,6 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     onBackRequest = { showEndSessionConfirmation = true },
                     onInvite = { showInviteDialog = true },
                     onApproval = { request, action ->
-                        if (approvalInFlightRequestId != null) return@HostDashboardScreen
-                        approvalInFlightRequestId = request.requestId
                         when (action) {
                             JoinApprovalAction.REJECT -> viewModel.rejectJoinRequest(request)
                             JoinApprovalAction.APPROVE_ONCE -> {
@@ -301,6 +300,8 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     onCancel = cancelJoin,
                     onRetry = viewModel::retryJoin,
                     onReturnToSessions = cancelJoin,
+                    onOpenSettings = ::openSystemSettings,
+                    onShareSupportReport = ::shareSupportReport,
                 )
             }
 
@@ -345,14 +346,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     uiState = uiState,
                     trustedDeviceManagementAvailable = false,
                     onBack = { navController.popBackStack() },
-                    onOpenSystemSettings = {
-                        context.startActivity(
-                            Intent(
-                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.parse("package:${context.packageName}"),
-                            ),
-                        )
-                    },
+                    onOpenSystemSettings = ::openSystemSettings,
                     onOpenTrustedDevices = {},
                     onOpenAdvancedDiagnostics = {
                         navController.navigateSingleTop(AppRoutes.AdvancedDiagnostics)
