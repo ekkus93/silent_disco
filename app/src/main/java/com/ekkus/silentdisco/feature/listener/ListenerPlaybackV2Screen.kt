@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -22,12 +24,16 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.SessionHealthLevel
 import com.ekkus.silentdisco.app.listenerConnectionHealthSummary
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.ui.components.StatusBadge
+import com.ekkus.silentdisco.ui.components.StatusTone
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,6 +47,7 @@ fun ListenerPlaybackV2Screen(
 ) {
     val health = uiState.listenerConnectionHealthSummary()
     val actionUseful = health.level in setOf(SessionHealthLevel.ATTENTION, SessionHealthLevel.CRITICAL)
+    val status = listenerPlaybackStatus(uiState)
 
     Column(
         modifier = Modifier
@@ -58,6 +65,7 @@ fun ListenerPlaybackV2Screen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -79,21 +87,28 @@ fun ListenerPlaybackV2Screen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics {
+                        contentDescription = "$status. ${health.detail}"
+                    }
                     .testTag("listener-playback-health"),
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (
                         uiState.listenerPlaybackState == PlaybackState.BUFFERING ||
                         uiState.listenerState == ListenerLifecycleState.RECONNECTING
                     ) {
-                        CircularProgressIndicator()
+                        CircularProgressIndicator(
+                            modifier = Modifier.semantics {
+                                contentDescription = status
+                            },
+                        )
                     }
-                    Text(
-                        listenerPlaybackStatus(uiState),
-                        style = MaterialTheme.typography.headlineSmall,
+                    StatusBadge(
+                        text = status,
+                        tone = listenerPlaybackTone(uiState),
                     )
                     Text(
                         health.detail,
@@ -115,7 +130,11 @@ fun ListenerPlaybackV2Screen(
                 value = uiState.localVolume,
                 onValueChange = onVolumeChanged,
                 valueRange = 0f..1f,
-                modifier = Modifier.testTag("listener-volume"),
+                modifier = Modifier
+                    .semantics {
+                        contentDescription = "Local playback volume"
+                    }
+                    .testTag("listener-volume"),
             )
 
             if (actionUseful) {
@@ -143,15 +162,29 @@ fun ListenerPlaybackV2Screen(
     }
 }
 
-private fun listenerPlaybackStatus(uiState: AppUiState): String = when {
+internal fun listenerPlaybackStatus(uiState: AppUiState): String = when {
     uiState.listenerPlaybackState == PlaybackState.ERROR -> "Playback problem"
     uiState.listenerState == ListenerLifecycleState.DISCONNECTED -> "Connection lost"
     uiState.listenerState == ListenerLifecycleState.DESYNCED -> "Audio is out of sync"
-    uiState.listenerState == ListenerLifecycleState.RECONNECTING -> "Reconnecting…"
-    uiState.listenerPlaybackState == PlaybackState.BUFFERING -> "Buffering…"
+    uiState.listenerState == ListenerLifecycleState.RECONNECTING -> "Reconnecting"
+    uiState.listenerPlaybackState == PlaybackState.BUFFERING -> "Buffering"
     uiState.listenerPlaybackState == PlaybackState.PAUSED -> "Playback paused"
     uiState.listenerPlaybackState == PlaybackState.STOPPED -> "Playback stopped"
     uiState.listenerState == ListenerLifecycleState.PLAYING &&
         uiState.listenerPlaybackState == PlaybackState.PLAYING -> "Playing in sync"
     else -> "Connection status is updating"
+}
+
+internal fun listenerPlaybackTone(uiState: AppUiState): StatusTone = when {
+    uiState.listenerPlaybackState == PlaybackState.ERROR ||
+        uiState.listenerState == ListenerLifecycleState.DISCONNECTED -> StatusTone.CRITICAL
+
+    uiState.listenerState == ListenerLifecycleState.DESYNCED -> StatusTone.ATTENTION
+    uiState.listenerState == ListenerLifecycleState.RECONNECTING ||
+        uiState.listenerPlaybackState == PlaybackState.BUFFERING -> StatusTone.IN_PROGRESS
+
+    uiState.listenerState == ListenerLifecycleState.PLAYING &&
+        uiState.listenerPlaybackState == PlaybackState.PLAYING -> StatusTone.POSITIVE
+
+    else -> StatusTone.NEUTRAL
 }
