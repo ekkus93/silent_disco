@@ -1,8 +1,6 @@
 package com.ekkus.silentdisco.app
 
-import com.ekkus.silentdisco.core.rust.RustCoreUnavailableException
 import com.ekkus.silentdisco.core.rust.RustDatabaseException
-import com.ekkus.silentdisco.core.rust.UnsupportedRustCoreAbiException
 
 enum class StorageInitializationState {
     INITIALIZING,
@@ -26,12 +24,10 @@ internal fun classifyStorageInitializationFailure(error: Throwable): StorageFail
         .take(16)
         .toList()
     val databaseError = causes.filterIsInstance<RustDatabaseException>().firstOrNull()
-    val state = when {
-        databaseError != null && databaseError.statusCode in recoverableDatabaseStatuses ->
-            StorageInitializationState.RECOVERABLE_FAILURE
-        causes.any { it is RustCoreUnavailableException || it is UnsupportedRustCoreAbiException } ->
-            StorageInitializationState.FATAL_FAILURE
-        else -> StorageInitializationState.FATAL_FAILURE
+    val state = if (databaseError?.statusCode in recoverableDatabaseStatuses) {
+        StorageInitializationState.RECOVERABLE_FAILURE
+    } else {
+        StorageInitializationState.FATAL_FAILURE
     }
     val detail = databaseError?.message
         ?: error.message?.takeIf(String::isNotBlank)
@@ -42,8 +38,8 @@ internal fun classifyStorageInitializationFailure(error: Throwable): StorageFail
         StorageInitializationState.FATAL_FAILURE ->
             "Fatal persistent storage failure"
         StorageInitializationState.INITIALIZING,
-        StorageInitializationState.READY,
-        -> error("A successful storage state cannot describe an initialization failure")
+        StorageInitializationState.READY ->
+            error("A successful storage state cannot describe an initialization failure")
     }
     return StorageFailurePresentation(
         state = state,
