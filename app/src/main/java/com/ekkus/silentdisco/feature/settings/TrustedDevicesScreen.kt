@@ -154,9 +154,8 @@ fun TrustedDevicesScreen(
         destructiveActionLabel = "Remove approval",
         onDismiss = { pendingDelete = null },
         onConfirm = {
-            val deviceId = device?.deviceId ?: return@ConfirmationSheet
+            device?.deviceId?.let(onDelete)
             pendingDelete = null
-            onDelete(deviceId)
         },
         testTag = "remove-trusted-device-confirmation",
     )
