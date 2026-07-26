@@ -183,11 +183,6 @@ private fun TrustedDeviceCard(
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                "Device ID: ${device.deviceId}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
                 trustedDeviceLastSeenLabel(device.lastSeenMs),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
