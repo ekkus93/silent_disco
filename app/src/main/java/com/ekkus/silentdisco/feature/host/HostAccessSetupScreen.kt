@@ -27,11 +27,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.isValidInviteCode
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
+import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
 
 private data class AccessOption(
     val mode: ApprovalMode,
@@ -66,6 +69,8 @@ fun HostAccessSetupScreen(
     onInviteCodeChanged: (String) -> Unit,
     onGenerateCode: () -> Unit,
     onStartSession: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onShareSupportReport: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -97,6 +102,14 @@ fun HostAccessSetupScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .semantics {
+                            contentDescription = buildString {
+                                append(option.title)
+                                append(". ")
+                                append(option.detail)
+                                if (selected) append(" Selected.")
+                            }
+                        }
                         .clickable(
                             role = Role.RadioButton,
                             onClick = { onApprovalModeChanged(option.mode) },
@@ -179,6 +192,28 @@ fun HostAccessSetupScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+
+            if (uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()) {
+                val permissionFailure = uiState.lastError.contains("permission", ignoreCase = true)
+                PrimaryProblemCard(
+                    title = if (permissionFailure) {
+                        "Nearby-device access is required"
+                    } else {
+                        "The session could not be started"
+                    },
+                    detail = if (permissionFailure) {
+                        "Allow nearby-device access in Settings, then start the session again."
+                    } else {
+                        "Check that nearby connections are available and try again."
+                    },
+                    primaryActionLabel = if (permissionFailure) "Open Settings" else "Retry",
+                    onPrimaryAction = if (permissionFailure) onOpenSettings else onStartSession,
+                    secondaryActionLabel = "Share support report",
+                    onSecondaryAction = onShareSupportReport,
+                    modifier = Modifier.testTag("host-start-problem"),
+                )
+            }
+
             Button(
                 onClick = onStartSession,
                 enabled = !invalid && !isStarting,
