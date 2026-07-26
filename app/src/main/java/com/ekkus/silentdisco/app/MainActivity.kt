@@ -8,14 +8,18 @@ import androidx.activity.viewModels
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 
 class MainActivity : ComponentActivity() {
-    private val viewModel by viewModels<MainViewModel>()
+    private val mainViewModel by viewModels<MainViewModel>()
+    private val workflowViewModel by viewModels<WorkflowViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             SilentDiscoTheme {
-                SilentDiscoApp(viewModel = viewModel)
+                SilentDiscoApp(
+                    viewModel = mainViewModel,
+                    workflowViewModel = workflowViewModel,
+                )
             }
         }
     }
