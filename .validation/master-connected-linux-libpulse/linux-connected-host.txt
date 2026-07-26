@@ -1,5 +1,0 @@
-Linux runnervmvrwv9 6.17.0-1020-azure #20~24.04.1-Ubuntu SMP Fri Jun 19 20:09:14 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
-uid=1001(runner) gid=1001(runner) groups=1001(runner),4(adm),100(users),118(docker),999(systemd-journal)
-crw-rw-rw- 1 root kvm 10, 232 Jul 26 14:28 /dev/kvm
-	libpulse.so.0 (libc6,x86-64) => /lib/x86_64-linux-gnu/libpulse.so.0
-	libGL.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libGL.so.1
