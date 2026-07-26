@@ -17,9 +17,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.PermissionRequestContext
 import com.ekkus.silentdisco.app.UserProblemAction
 import com.ekkus.silentdisco.app.derivedPersistentProblem
+import com.ekkus.silentdisco.app.missingPermissions
 import com.ekkus.silentdisco.app.persistentFeaturesEnabled
+import com.ekkus.silentdisco.core.model.AppRole
 import com.ekkus.silentdisco.ui.components.AttentionBanner
 import com.ekkus.silentdisco.ui.components.RoleActionCard
 
@@ -71,6 +74,23 @@ fun RoleFirstHomeScreen(
                     actionLabel = if (problem.primaryAction == UserProblemAction.RETRY) "Retry" else null,
                     onAction = if (problem.primaryAction == UserProblemAction.RETRY) onRetryStorage else null,
                     modifier = Modifier.testTag("home-attention"),
+                )
+            }
+
+            val deniedContext = when (uiState.selectedRole) {
+                AppRole.HOST -> PermissionRequestContext.HOST_NEARBY
+                AppRole.LISTENER -> PermissionRequestContext.LISTENER_NEARBY
+                null -> null
+            }?.takeIf { context ->
+                uiState.permissions.isNotEmpty() && uiState.missingPermissions(context).isNotEmpty()
+            }
+            if (deniedContext != null) {
+                AttentionBanner(
+                    title = "Nearby device access is required",
+                    detail = deniedContext.explanation,
+                    actionLabel = "Open Settings",
+                    onAction = onSettingsClick,
+                    modifier = Modifier.testTag("home-permission-attention"),
                 )
             }
 
