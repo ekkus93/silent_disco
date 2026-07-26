@@ -28,11 +28,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.canSelectSession
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.SessionInfo
+import com.ekkus.silentdisco.ui.components.EmptyState
+import com.ekkus.silentdisco.ui.components.LoadingState
+import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
+import com.ekkus.silentdisco.ui.components.StatusBadge
+import com.ekkus.silentdisco.ui.components.StatusTone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,103 +74,45 @@ fun NearbySessionsScreen(
         )
 
         when {
-            permissionRequired -> PermissionRequiredState(onRequestPermission)
-            uiState.isScanning && uiState.discoveredSessions.isEmpty() -> ScanningState()
-            uiState.discoveredSessions.isEmpty() && !uiState.lastError.isNullOrBlank() -> ScanFailureState(
-                detail = uiState.lastError,
-                onRetry = onRefresh,
+            permissionRequired -> EmptyState(
+                title = "Allow nearby device access",
+                detail = "This lets your phone find Silent Disco sessions near you.",
+                actionLabel = "Continue",
+                onAction = onRequestPermission,
+                modifier = Modifier.testTag("nearby-permission-required"),
             )
-            uiState.discoveredSessions.isEmpty() -> EmptySessionsState(onRefresh)
+
+            uiState.isScanning && uiState.discoveredSessions.isEmpty() -> LoadingState(
+                title = "Looking for nearby sessions",
+                detail = "Sessions will appear as nearby hosts become available.",
+                modifier = Modifier.testTag("nearby-scanning"),
+            )
+
+            uiState.discoveredSessions.isEmpty() && !uiState.lastError.isNullOrBlank() ->
+                PrimaryProblemCard(
+                    title = "Couldn’t look for sessions",
+                    detail = "Check nearby-device access and try again.",
+                    primaryActionLabel = "Retry",
+                    onPrimaryAction = onRefresh,
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .testTag("nearby-scan-failure"),
+                )
+
+            uiState.discoveredSessions.isEmpty() -> EmptyState(
+                title = "No nearby sessions found",
+                detail = "Ask the host to start their session, then try again.",
+                actionLabel = "Look again",
+                onAction = onRefresh,
+                modifier = Modifier.testTag("nearby-empty"),
+            )
+
             else -> SessionResults(
                 uiState = uiState,
                 onRefresh = onRefresh,
                 onSelectSession = onSelectSession,
             )
         }
-    }
-}
-
-@Composable
-private fun PermissionRequiredState(onRequestPermission: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .testTag("nearby-permission-required"),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("Allow nearby device access", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "This lets your phone find Silent Disco sessions near you.",
-            modifier = Modifier.padding(vertical = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onRequestPermission) { Text("Continue") }
-    }
-}
-
-@Composable
-private fun ScanningState() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .testTag("nearby-scanning"),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        CircularProgressIndicator()
-        Text(
-            "Looking for nearby sessions…",
-            modifier = Modifier.padding(top = 16.dp),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            "Sessions will appear as nearby hosts become available.",
-            modifier = Modifier.padding(top = 8.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun ScanFailureState(detail: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .testTag("nearby-scan-failure"),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("Couldn’t look for sessions", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            detail,
-            modifier = Modifier.padding(vertical = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onRetry) { Text("Retry") }
-    }
-}
-
-@Composable
-private fun EmptySessionsState(onRefresh: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .testTag("nearby-empty"),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("No nearby sessions found", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "Ask the host to start their session, then try again.",
-            modifier = Modifier.padding(vertical = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onRefresh) { Text("Look again") }
     }
 }
 
@@ -192,8 +141,15 @@ private fun SessionResults(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (uiState.isScanning) CircularProgressIndicator()
-                else TextButton(onClick = onRefresh) { Text("Refresh") }
+                if (uiState.isScanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.semantics {
+                            contentDescription = "Refreshing nearby sessions"
+                        },
+                    )
+                } else {
+                    TextButton(onClick = onRefresh) { Text("Refresh") }
+                }
             }
         }
         items(
@@ -217,9 +173,20 @@ private fun NearbySessionCard(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val badgeText = sessionAccessLabel(session)
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .semantics {
+                contentDescription = buildString {
+                    append(session.name)
+                    append(", hosted by ")
+                    append(session.hostDeviceName)
+                    append(", ")
+                    append(badgeText)
+                    if (!enabled) append(", unavailable while another join is active")
+                }
+            }
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
     ) {
         Column(
@@ -231,16 +198,21 @@ private fun NearbySessionCard(
                 "Hosted by ${session.hostDeviceName}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                when (session.approvalMode) {
-                    ApprovalMode.MANUAL -> "Approval required"
-                    ApprovalMode.INVITE_CODE -> "Invite code required"
-                    ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER -> "Approved devices only"
+            StatusBadge(
+                text = badgeText,
+                tone = when (session.approvalMode) {
+                    ApprovalMode.MANUAL -> StatusTone.ATTENTION
+                    ApprovalMode.INVITE_CODE -> StatusTone.NEUTRAL
+                    ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER -> StatusTone.POSITIVE
                 },
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
             )
-            Button(onClick = onClick, enabled = enabled) { Text("Join") }
+            Button(
+                onClick = onClick,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Join")
+            }
             if (!enabled) {
                 Text(
                     "Finish or cancel the current join attempt before choosing another session.",
@@ -250,4 +222,10 @@ private fun NearbySessionCard(
             }
         }
     }
+}
+
+internal fun sessionAccessLabel(session: SessionInfo): String = when (session.approvalMode) {
+    ApprovalMode.MANUAL -> "Approval required"
+    ApprovalMode.INVITE_CODE -> "Invite code required"
+    ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER -> "Approved devices only"
 }
