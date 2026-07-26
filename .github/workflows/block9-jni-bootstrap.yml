@@ -27,7 +27,7 @@ jobs:
         run: |
           set -o pipefail
           cd rust
-          cargo update -p jni --precise 0.21.1 2>&1 | tee ../block9-jni-validation.log
+          cargo generate-lockfile 2>&1 | tee ../block9-jni-validation.log
           cargo fmt --all 2>&1 | tee -a ../block9-jni-validation.log
           cargo fmt --all -- --check 2>&1 | tee -a ../block9-jni-validation.log
           cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee -a ../block9-jni-validation.log
