@@ -24,6 +24,8 @@ fun PrimaryProblemCard(
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    primaryActionModifier: Modifier = Modifier,
+    secondaryActionModifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
@@ -39,7 +41,7 @@ fun PrimaryProblemCard(
             if (primaryActionLabel != null && onPrimaryAction != null) {
                 Button(
                     onClick = onPrimaryAction,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = primaryActionModifier.fillMaxWidth(),
                 ) {
                     Text(primaryActionLabel)
                 }
@@ -47,7 +49,7 @@ fun PrimaryProblemCard(
             if (secondaryActionLabel != null && onSecondaryAction != null) {
                 OutlinedButton(
                     onClick = onSecondaryAction,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = secondaryActionModifier.fillMaxWidth(),
                 ) {
                     Text(secondaryActionLabel)
                 }
