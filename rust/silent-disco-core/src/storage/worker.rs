@@ -12,10 +12,10 @@ use crate::domain::{DeviceId, SessionId};
 use super::{
     database::{DatabaseCheckpoint, DatabaseConfig, DatabaseConnection, DatabaseMetadata},
     error::{StorageError, StorageErrorKind, StorageOperation},
-    legacy_import::{LegacyAndroidImport, LegacyImportOutcome},
     models::{
         DiagnosticExport, DiagnosticExportRequest, DiagnosticQuery, DiagnosticRunSummary,
-        SessionEnd, SessionHistory, SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
+        LegacyAndroidImport, LegacyImportOutcome, SessionEnd, SessionHistory, SessionStart,
+        SessionUpdate, StoredSettings, TrustedDevice,
     },
 };
 
@@ -25,8 +25,8 @@ enum DatabaseCommand {
     ReadMetadata {
         reply: DatabaseReply<DatabaseMetadata>,
     },
-    ImportLegacyAndroidData {
-        import: LegacyAndroidImport,
+    ImportLegacyAndroid {
+        value: LegacyAndroidImport,
         reply: DatabaseReply<LegacyImportOutcome>,
     },
     LoadSettings {
@@ -115,19 +115,18 @@ impl DatabaseClient {
         })
     }
 
-    /// Atomically imports the typed legacy Android persistence record once.
+    /// Transactionally imports known Android legacy values exactly once.
     ///
     /// # Errors
     ///
-    /// Returns a visible validation, queue, migration, transaction, constraint,
-    /// corruption, or worker lifecycle error. A failure commits no partial data.
-    pub fn import_legacy_android_data(
+    /// Returns a visible validation, queue, transaction, corruption, or worker error.
+    pub fn import_legacy_android(
         &self,
-        import: &LegacyAndroidImport,
+        value: &LegacyAndroidImport,
     ) -> Result<LegacyImportOutcome, StorageError> {
-        let import = import.clone();
-        self.request(StorageOperation::ImportLegacyData, |reply| {
-            DatabaseCommand::ImportLegacyAndroidData { import, reply }
+        let value = value.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::ImportLegacyAndroid { value, reply }
         })
     }
 
@@ -589,8 +588,8 @@ fn process_command(
         DatabaseCommand::ReadMetadata { reply } => {
             process_read_metadata(&reply, connection, version)?;
         }
-        DatabaseCommand::ImportLegacyAndroidData { import, reply } => {
-            process_import_legacy_android_data(&reply, &import, connection, version)?;
+        DatabaseCommand::ImportLegacyAndroid { value, reply } => {
+            process_import_legacy_android(&reply, &value, connection, version)?;
         }
         DatabaseCommand::LoadSettings { reply } => {
             process_load_settings(&reply, connection, version)?;
@@ -665,23 +664,19 @@ fn process_read_metadata(
     )
 }
 
-fn process_import_legacy_android_data(
+fn process_import_legacy_android(
     reply: &DatabaseReply<LegacyImportOutcome>,
-    import: &LegacyAndroidImport,
+    value: &LegacyAndroidImport,
     connection: &mut Option<DatabaseConnection>,
     schema_version: u32,
 ) -> Result<(), StorageError> {
-    let result = connection_mut(
-        connection,
-        StorageOperation::ImportLegacyData,
-        schema_version,
-    )
-    .and_then(|database| database.import_legacy_android_data(import));
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.import_legacy_android(value));
     send_reply(
         reply,
         result,
         connection,
-        StorageOperation::ImportLegacyData,
+        StorageOperation::Transaction,
         schema_version,
     )
 }

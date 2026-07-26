@@ -105,6 +105,14 @@ CREATE INDEX idx_diagnostic_runs_session
     ON diagnostic_runs(session_id, started_at_ms DESC, run_id);
 ";
 
+const MIGRATION_V2_SQL: &str = r"
+CREATE TABLE legacy_imports (
+    source          TEXT PRIMARY KEY CHECK (source = 'android_shared_preferences'),
+    import_version  INTEGER NOT NULL CHECK (import_version > 0),
+    imported_at_ms  INTEGER NOT NULL CHECK (imported_at_ms >= 0)
+) STRICT;
+";
+
 #[derive(Debug, Clone, Copy)]
 struct Migration {
     version: u32,
@@ -116,16 +124,6 @@ impl Migration {
         format!("fnv1a64:{:016x}", fnv1a64(self.sql.as_bytes()))
     }
 }
-
-const MIGRATION_V2_SQL: &str = r"
-CREATE TABLE legacy_imports (
-    source               TEXT PRIMARY KEY CHECK (length(source) BETWEEN 1 AND 64),
-    import_version       INTEGER NOT NULL CHECK (import_version > 0),
-    completed_at_ms      INTEGER NOT NULL CHECK (completed_at_ms >= 0),
-    settings_imported    INTEGER NOT NULL CHECK (settings_imported IN (0, 1)),
-    trusted_device_count INTEGER NOT NULL CHECK (trusted_device_count >= 0)
-) STRICT;
-";
 
 const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -436,10 +434,7 @@ THIS IS NOT VALID SQL;
         let mut connection = Connection::open(test_path.path()).expect("open temporary database");
         let first = run_migrations(&mut connection).expect("empty database migrates");
         assert_eq!(first.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(
-            first.records.len(),
-            usize::try_from(LATEST_SCHEMA_VERSION).expect("schema version fits usize")
-        );
+        assert_eq!(first.records.len(), 2);
         drop(connection);
 
         let mut reopened = Connection::open(test_path.path()).expect("reopen temporary database");
