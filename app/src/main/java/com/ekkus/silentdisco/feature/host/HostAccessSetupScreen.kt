@@ -29,7 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
-import com.ekkus.silentdisco.app.label
+import com.ekkus.silentdisco.app.isValidInviteCode
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 
@@ -122,6 +122,7 @@ fun HostAccessSetupScreen(
             }
 
             val inviteCodeRequired = uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE
+            val inviteCodeValid = !inviteCodeRequired || isValidInviteCode(uiState.hostForm.inviteCode)
             if (inviteCodeRequired) {
                 OutlinedTextField(
                     value = uiState.hostForm.inviteCode,
@@ -130,9 +131,19 @@ fun HostAccessSetupScreen(
                         .fillMaxWidth()
                         .testTag("host-invite-code"),
                     label = { Text("Invite code") },
-                    supportingText = { Text("Share this exact code with listeners.") },
+                    supportingText = {
+                        Text(
+                            if (uiState.hostForm.inviteCode.isBlank()) {
+                                "Enter a 4-digit code or generate one."
+                            } else if (!inviteCodeValid) {
+                                "Invite codes must contain exactly 4 digits."
+                            } else {
+                                "Share this exact code with listeners."
+                            },
+                        )
+                    },
                     singleLine = true,
-                    isError = uiState.hostForm.inviteCode.isBlank(),
+                    isError = !inviteCodeValid,
                 )
                 TextButton(
                     onClick = onGenerateCode,
@@ -159,7 +170,7 @@ fun HostAccessSetupScreen(
 
             val invalid = uiState.hostForm.sessionName.isBlank() ||
                 uiState.hostForm.selectedAudio == null ||
-                (inviteCodeRequired && uiState.hostForm.inviteCode.isBlank())
+                !inviteCodeValid
             val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION
             if (invalid) {
                 Text(
