@@ -61,7 +61,11 @@ class AndroidRustDomainStore internal constructor(
                 database = opened
                 settings
             } catch (error: Throwable) {
-                runCatching { opened.close() }
+                try {
+                    opened.close()
+                } catch (closeError: Throwable) {
+                    error.addSuppressed(closeError)
+                }
                 throw error
             }
         }
@@ -106,11 +110,20 @@ class AndroidRustDomainStore internal constructor(
 
     private fun readLegacySnapshot(): LegacySnapshot {
         val now = System.currentTimeMillis()
-        val trustedKeys = preferences.all
+        val trustedEntries = preferences.all
             .asSequence()
             .mapNotNull { (key, value) ->
                 val deviceId = LegacyPreferencesContract.trustedDeviceId(key)
-                if (deviceId != null && value == true) key to deviceId else null
+                    ?: return@mapNotNull null
+                val trusted = value as? Boolean
+                    ?: throw AndroidRustDomainStoreException(
+                        "Legacy trusted-device key '$key' does not contain a Boolean value",
+                    )
+                LegacyTrustEntry(
+                    key = key,
+                    deviceId = deviceId,
+                    trusted = trusted,
+                )
             }
             .toList()
         val settings = RustStoredTuningSettings(
@@ -145,8 +158,11 @@ class AndroidRustDomainStore internal constructor(
         )
         return LegacySnapshot(
             settings = settings,
-            trustedDeviceIds = trustedKeys.map { it.second },
-            keysToDelete = LegacyPreferencesContract.tuningKeys + trustedKeys.map { it.first },
+            trustedDeviceIds = trustedEntries
+                .filter(LegacyTrustEntry::trusted)
+                .map(LegacyTrustEntry::deviceId),
+            keysToDelete = LegacyPreferencesContract.tuningKeys +
+                trustedEntries.map(LegacyTrustEntry::key),
         )
     }
 
@@ -175,6 +191,12 @@ class AndroidRustDomainStore internal constructor(
         val settings: RustStoredTuningSettings,
         val trustedDeviceIds: List<String>,
         val keysToDelete: Set<String>,
+    )
+
+    private data class LegacyTrustEntry(
+        val key: String,
+        val deviceId: String,
+        val trusted: Boolean,
     )
 
     companion object {
