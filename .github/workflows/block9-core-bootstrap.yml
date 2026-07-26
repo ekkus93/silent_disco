@@ -1,0 +1,68 @@
+name: Block 9 Rust import core
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.event.pull_request.head.ref == 'agent/rust-android-storage-block9'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out Block 9 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/rust-android-storage-block9
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.97.1
+
+      - name: Apply Rust legacy-import slice
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/apply_block9_core.py 2>&1 | tee block9-core-apply.log
+
+      - name: Format and validate Rust workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee ../block9-core-clippy.log
+          cargo test --workspace --all-features 2>&1 | tee ../block9-core-tests.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block9-core-diagnostics
+          path: |
+            block9-core-apply.log
+            block9-core-clippy.log
+            block9-core-tests.log
+            rust/silent-disco-core/src/storage/legacy_import.rs
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Verify patch hygiene
+        run: git diff --check
+
+      - name: Commit validated Rust slice
+        run: |
+          rm .github/workflows/block9-core-bootstrap.yml
+          rm .github/scripts/apply_block9_core.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add atomic Android legacy data import"
+          git push origin HEAD:agent/rust-android-storage-block9
