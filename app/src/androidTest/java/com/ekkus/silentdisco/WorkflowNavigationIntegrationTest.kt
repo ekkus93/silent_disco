@@ -2,6 +2,7 @@ package com.ekkus.silentdisco
 
 import android.content.Context
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
@@ -40,7 +41,11 @@ class WorkflowNavigationIntegrationTest {
             ) {
                 workflowRoutes.forEach { route ->
                     composable(route) {
-                        Box(modifier = Modifier.testTag(routeTag(route)))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag(routeTag(route)),
+                        )
                     }
                 }
             }
