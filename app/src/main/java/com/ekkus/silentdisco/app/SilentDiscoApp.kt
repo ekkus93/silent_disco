@@ -289,9 +289,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     permissionRequired = permissionRequired,
                     onBack = { navController.popBackStack() },
                     onRequestPermission = {
-                        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
-                            viewModel.scanForSessions()
-                        }
+                        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {}
                     },
                     onRefresh = viewModel::scanForSessions,
                     onSelectSession = { session ->
