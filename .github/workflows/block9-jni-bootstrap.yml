@@ -21,8 +21,10 @@ jobs:
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
-      - name: Apply exact JNI lint repair
-        run: python .github/scripts/repair_block9_jni.py
+      - name: Apply exact JNI lint repairs
+        run: |
+          python .github/scripts/repair_block9_jni.py
+          python .github/scripts/repair_block9_jni_copy.py
       - name: Validate JNI bridge and update lockfile
         id: validate
         shell: bash
@@ -47,6 +49,7 @@ jobs:
       - name: Remove bootstrap files
         run: |
           rm .github/scripts/repair_block9_jni.py
+          rm .github/scripts/repair_block9_jni_copy.py
           rm .github/workflows/block9-jni-bootstrap.yml
       - name: Commit validated JNI bridge
         run: |
