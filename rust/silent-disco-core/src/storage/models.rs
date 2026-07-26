@@ -34,6 +34,52 @@ impl StoredSettings {
     }
 }
 
+/// Current version of the typed Android `SharedPreferences` import contract.
+pub const LEGACY_ANDROID_IMPORT_VERSION: u32 = 1;
+
+/// Stable source identifier recorded after the one-time Android import commits.
+pub const LEGACY_ANDROID_IMPORT_SOURCE: &str = "android_shared_preferences";
+
+/// Typed legacy Android values accepted by the Rust database exactly once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegacyAndroidImport {
+    pub version: u32,
+    pub settings: StoredSettings,
+    pub trusted_devices: Vec<TrustedDevice>,
+    pub imported_at_ms: u64,
+}
+
+impl LegacyAndroidImport {
+    /// Validates the import before any transaction begins.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable model-validation error for an unsupported version,
+    /// invalid settings/device data, duplicate device IDs, or invalid timestamp.
+    pub fn validate(&self) -> Result<(), StorageModelValidationError> {
+        if self.version != LEGACY_ANDROID_IMPORT_VERSION {
+            return Err(StorageModelValidationError::LegacyImportVersion);
+        }
+        self.settings.validate()?;
+        validate_sql_millis(self.imported_at_ms, StorageModelValidationError::Timestamp)?;
+        let mut ids = std::collections::BTreeSet::new();
+        for device in &self.trusted_devices {
+            device.validate()?;
+            if !ids.insert(device.device_id.as_str()) {
+                return Err(StorageModelValidationError::DuplicateLegacyDevice);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Result of the idempotent one-time Android import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyImportOutcome {
+    Imported,
+    AlreadyImported,
+}
+
 /// Persisted trusted-device metadata. Private key bytes are never stored here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedDevice {
@@ -342,6 +388,8 @@ pub enum StorageModelValidationError {
     DiagnosticSummary,
     DiagnosticQueryLimit,
     DiagnosticExportLimit,
+    LegacyImportVersion,
+    DuplicateLegacyDevice,
 }
 
 impl fmt::Display for StorageModelValidationError {
@@ -365,6 +413,8 @@ impl fmt::Display for StorageModelValidationError {
             Self::DiagnosticExportLimit => {
                 "diagnostic export page limit is outside the supported range"
             }
+            Self::LegacyImportVersion => "legacy Android import version is unsupported",
+            Self::DuplicateLegacyDevice => "legacy Android import contains a duplicate device ID",
         })
     }
 }

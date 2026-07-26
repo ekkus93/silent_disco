@@ -1,22 +1,15 @@
-from pathlib import Path
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-path = Path("rust/silent-disco-core/src/storage/legacy_import_repository.rs")
-text = path.read_text()
-text = text.replace(
-    "use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};",
-    "use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};",
-)
-text = text.replace(
-    "    repository_support::{invalid_model, to_sql_i64},",
-    "    repository_support::invalid_model,",
-)
-text = text.replace(
-    "        LEGACY_ANDROID_IMPORT_SOURCE, LegacyAndroidImport, LegacyImportOutcome,\n",
-    "        LEGACY_ANDROID_IMPORT_SOURCE, LegacyAndroidImport, LegacyImportOutcome, StoredSettings,\n        TrustedDevice,\n",
-)
-start = text.index("pub(crate) fn import(")
-end = text.index("fn invalid_range", start)
-replacement = r'''pub(crate) fn import(
+use super::{
+    error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error},
+    models::{
+        LEGACY_ANDROID_IMPORT_SOURCE, LegacyAndroidImport, LegacyImportOutcome, StoredSettings,
+        TrustedDevice,
+    },
+    repository_support::invalid_model,
+};
+
+pub(crate) fn import(
     connection: &mut Connection,
     value: &LegacyAndroidImport,
     schema_version: u32,
@@ -54,9 +47,7 @@ fn existing_import_version(
             |row| row.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))
 }
 
 fn finish_existing_import(
@@ -88,8 +79,8 @@ fn write_settings(
     schema_version: u32,
 ) -> Result<(), StorageError> {
     let tuning = &settings.tuning;
-    let updated_at_ms = i64::try_from(settings.updated_at_ms)
-        .map_err(|_| invalid_range(schema_version))?;
+    let updated_at_ms =
+        i64::try_from(settings.updated_at_ms).map_err(|_| invalid_range(schema_version))?;
     transaction
         .execute(
             "INSERT INTO app_settings (
@@ -109,7 +100,8 @@ fn write_settings(
             params![
                 i64::from(tuning.sync_sample_window),
                 i64::try_from(tuning.sync_cadence_ms).map_err(|_| invalid_range(schema_version))?,
-                i64::try_from(tuning.startup_buffer_ms).map_err(|_| invalid_range(schema_version))?,
+                i64::try_from(tuning.startup_buffer_ms)
+                    .map_err(|_| invalid_range(schema_version))?,
                 i64::try_from(tuning.late_packet_threshold_ms)
                     .map_err(|_| invalid_range(schema_version))?,
                 i64::try_from(tuning.hard_resync_threshold_ms)
@@ -130,12 +122,12 @@ fn write_trusted_device(
     device: &TrustedDevice,
     schema_version: u32,
 ) -> Result<(), StorageError> {
-    let first_seen_ms = i64::try_from(device.first_seen_ms)
-        .map_err(|_| invalid_range(schema_version))?;
-    let last_seen_ms = i64::try_from(device.last_seen_ms)
-        .map_err(|_| invalid_range(schema_version))?;
-    let updated_at_ms = i64::try_from(device.updated_at_ms)
-        .map_err(|_| invalid_range(schema_version))?;
+    let first_seen_ms =
+        i64::try_from(device.first_seen_ms).map_err(|_| invalid_range(schema_version))?;
+    let last_seen_ms =
+        i64::try_from(device.last_seen_ms).map_err(|_| invalid_range(schema_version))?;
+    let updated_at_ms =
+        i64::try_from(device.updated_at_ms).map_err(|_| invalid_range(schema_version))?;
     transaction
         .execute(
             "INSERT INTO trusted_devices (
@@ -171,8 +163,8 @@ fn write_import_marker(
     value: &LegacyAndroidImport,
     schema_version: u32,
 ) -> Result<(), StorageError> {
-    let imported_at_ms = i64::try_from(value.imported_at_ms)
-        .map_err(|_| invalid_range(schema_version))?;
+    let imported_at_ms =
+        i64::try_from(value.imported_at_ms).map_err(|_| invalid_range(schema_version))?;
     transaction
         .execute(
             "INSERT INTO legacy_imports(source, import_version, imported_at_ms)
@@ -189,9 +181,82 @@ fn write_import_marker(
         })
 }
 
-'''
-text = text[:start] + replacement + text[end:]
-text = text.replace("DatabaseConfig::new(&path.path)", "DatabaseConfig::new(path.path())")
-if "&path.path" in text:
-    raise SystemExit("private TestDatabasePath field reference remains")
-path.write_text(text)
+fn invalid_range(schema_version: u32) -> StorageError {
+    StorageError::new(
+        StorageErrorKind::InvalidConfiguration,
+        StorageOperation::Transaction,
+        "legacy Android import contains a timestamp or tuning value outside SQLite range",
+        Some(schema_version),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        domain::{DeviceId, TrustState, TuningSettings},
+        storage::{
+            DatabaseConfig, DatabaseWorker, LEGACY_ANDROID_IMPORT_VERSION, LegacyAndroidImport,
+            LegacyImportOutcome, StoredSettings, TrustedDevice, test_support::TestDatabasePath,
+        },
+    };
+
+    fn import_value(now: u64) -> LegacyAndroidImport {
+        LegacyAndroidImport {
+            version: LEGACY_ANDROID_IMPORT_VERSION,
+            settings: StoredSettings {
+                tuning: TuningSettings::default(),
+                updated_at_ms: now,
+            },
+            trusted_devices: vec![TrustedDevice {
+                device_id: DeviceId::new("legacy-listener").expect("valid id"),
+                display_name: "Legacy Listener".into(),
+                public_key: None,
+                private_key_ref: None,
+                trust_state: TrustState::Trusted,
+                first_seen_ms: now,
+                last_seen_ms: now,
+                updated_at_ms: now,
+            }],
+            imported_at_ms: now,
+        }
+    }
+
+    #[test]
+    fn import_is_transactional_and_idempotent() {
+        let path = TestDatabasePath::new("legacy-import");
+        let worker = DatabaseWorker::start(DatabaseConfig::new(path.path()).expect("config"))
+            .expect("worker");
+        let client = worker.client();
+        let value = import_value(10);
+        assert_eq!(
+            client.import_legacy_android(&value),
+            Ok(LegacyImportOutcome::Imported)
+        );
+        assert_eq!(
+            client.import_legacy_android(&value),
+            Ok(LegacyImportOutcome::AlreadyImported)
+        );
+        assert_eq!(client.load_settings(), Ok(Some(value.settings)));
+        assert!(
+            client
+                .get_trusted_device(&DeviceId::new("legacy-listener").expect("id"))
+                .expect("query")
+                .is_some()
+        );
+        worker.stop_and_join().expect("close");
+    }
+
+    #[test]
+    fn invalid_import_leaves_no_marker_or_partial_rows() {
+        let path = TestDatabasePath::new("legacy-import-invalid");
+        let worker = DatabaseWorker::start(DatabaseConfig::new(path.path()).expect("config"))
+            .expect("worker");
+        let client = worker.client();
+        let mut value = import_value(20);
+        value.settings.tuning.sync_sample_window = 0;
+        assert!(client.import_legacy_android(&value).is_err());
+        assert_eq!(client.load_settings(), Ok(None));
+        assert!(client.list_trusted_devices().expect("query").is_empty());
+        worker.stop_and_join().expect("close");
+    }
+}

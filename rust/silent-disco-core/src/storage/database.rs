@@ -5,10 +5,11 @@ use rusqlite::{Connection, OpenFlags};
 use super::{
     diagnostics_repository,
     error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error},
-    migrations,
+    legacy_import_repository, migrations,
     models::{
         DiagnosticExport, DiagnosticExportRequest, DiagnosticQuery, DiagnosticRunSummary,
-        SessionEnd, SessionHistory, SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
+        LegacyAndroidImport, LegacyImportOutcome, SessionEnd, SessionHistory, SessionStart,
+        SessionUpdate, StoredSettings, TrustedDevice,
     },
     session_read_repository, session_write_repository, settings_repository,
     trusted_device_repository,
@@ -192,6 +193,13 @@ impl DatabaseConnection {
 
     pub(crate) fn metadata(&self) -> DatabaseMetadata {
         self.metadata.clone()
+    }
+
+    pub(crate) fn import_legacy_android(
+        &mut self,
+        value: &LegacyAndroidImport,
+    ) -> Result<LegacyImportOutcome, StorageError> {
+        legacy_import_repository::import(&mut self.connection, value, self.metadata.schema_version)
     }
 
     pub(crate) fn load_settings(&self) -> Result<Option<StoredSettings>, StorageError> {
@@ -472,7 +480,7 @@ mod tests {
         assert_eq!(u64::from(metadata.busy_timeout_ms), DEFAULT_BUSY_TIMEOUT_MS);
         assert_eq!(metadata.synchronous_policy, SynchronousPolicy::Full);
         assert_eq!(metadata.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(metadata.applied_migrations.len(), 1);
+        assert_eq!(metadata.applied_migrations.len(), 2);
         assert_eq!(metadata.integrity_check, "ok");
         assert!(!metadata.owner_thread_name.is_empty());
         connection
