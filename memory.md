@@ -1,5 +1,17 @@
 # memory.md — `silent_disco`
 
+## 2026-07-26T04:17:33Z - GPT-5.6 Thinking - Rust-owned Android persistence Block 9 complete
+
+- Added `AndroidDatabasePathProvider`, which uses `noBackupFilesDir/domain/silent-disco.sqlite3`, creates only the parent directory, returns the complete path to Rust, never opens SQLite, and intentionally excludes the domain database from Android backup.
+- Added schema migration v2 and the `legacy_imports` marker. `LegacyAndroidImport` is versioned, validated before transaction start, imports tuning/trust atomically, records committed completion, rejects conflicting marker versions, rolls back invalid input, and is idempotent on repeated startup.
+- Added a pinned `jni` 0.21.1 control-plane bridge for database open/close, typed legacy import, settings load/save, and trusted-device upsert/query. Rust owns all SQL, migrations, connection state, and worker lifecycle; Kotlin receives stable explicit status codes and no raw SQL surface.
+- Added `AndroidRustDomainStore`. It reads only documented tuning keys and the documented dynamic `trusted:` namespace, rejects malformed known values visibly, preserves legacy values on failure, deletes legacy domain keys only after Rust reports committed import success, and retries cleanup after a failed Android preference commit.
+- Removed direct tuning and trust persistence from `MainViewModel`. Persistence-dependent host, scan, join, tuning, and trust actions are blocked until Rust initialization succeeds. A database failure is shown as persistent-storage unavailable; there is no fallback to legacy preferences.
+- Database shutdown is explicit and fail-visible. Initialization retains a database-close failure as a suppressed exception rather than dropping it, and `MainViewModel.onCleared()` does not convert close failure into log-only success.
+- Added Android instrumentation source covering first-run database creation, tuning/trust import, reopen from Rust values, invalid import preservation, malformed trust preservation, and corrupt-database visibility. Legacy trust preferences contained only device IDs/booleans, so imported display names intentionally use the device ID until richer metadata is learned later.
+- PR #35 merged as `5fc5ae966b1157b2cd5887c10d3522da81856f8f`. Permanent CI run `30187155765` passed Rust formatting, Clippy with warnings denied, all Rust tests, Android debug/PoC-debug/release and instrumentation-APK builds, four-ABI Rust/JNI packaging, Android unit tests, and Android lint.
+- Physical execution of `AndroidRustDomainStoreInstrumentedTest` is **NOT RUN** because no Android device is attached. Do not claim device validation until the exact command, device model, Android version, ABI, and result are recorded.
+
 ## 2026-07-26T02:32:00Z - GPT-5.6 Thinking - Rust schema and migrations Block 8 complete
 
 - Added ordered immutable Rust migrations with explicit versions and SHA-256 checksums. `schema_migrations` records version, application timestamp, and checksum; checksum mismatch, unsupported newer schemas, and failed transactional migrations are fatal and never trigger automatic delete/recreate behavior.
