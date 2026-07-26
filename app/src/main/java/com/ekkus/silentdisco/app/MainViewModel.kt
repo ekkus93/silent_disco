@@ -2096,11 +2096,7 @@ class MainViewModel @JvmOverloads constructor(
     override fun onCleared() {
         bleService.stop()
         wifiDirectService.stop()
-        runCatching {
-            runBlocking(Dispatchers.IO) { domainStore.close() }
-        }.onFailure { error ->
-            logger.e("storage.close", error.message ?: "Failed to close Rust database", error)
-        }
+        runBlocking(Dispatchers.IO) { domainStore.close() }
         super.onCleared()
     }
 }

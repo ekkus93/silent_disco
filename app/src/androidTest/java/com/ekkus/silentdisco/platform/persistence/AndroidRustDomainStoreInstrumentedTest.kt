@@ -101,6 +101,36 @@ class AndroidRustDomainStoreInstrumentedTest {
     }
 
     @Test
+    fun malformedLegacyTrustValueIsVisibleAndPreserved() {
+        val suffix = System.nanoTime().toString()
+        val preferencesName = "block9-malformed-trust-$suffix"
+        val provider = AndroidDatabasePathProvider(
+            context,
+            "block9-malformed-trust-$suffix.sqlite3",
+        )
+        val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val malformedKey = LegacyPreferencesContract.trustedDeviceKey("listener-$suffix")
+        preferences.edit()
+            .putString(malformedKey, "not-a-boolean")
+            .commit()
+        val store = AndroidRustDomainStore(
+            context = context,
+            pathProvider = provider,
+            preferencesName = preferencesName,
+        )
+        try {
+            val error = assertThrows(AndroidRustDomainStoreException::class.java) {
+                runBlocking { store.initialize() }
+            }
+            assertTrue(error.message.orEmpty().contains("does not contain a Boolean"))
+            assertEquals("not-a-boolean", preferences.getString(malformedKey, null))
+        } finally {
+            runBlocking { store.close() }
+            cleanup(preferencesName, provider.databasePath())
+        }
+    }
+
+    @Test
     fun corruptDatabaseFailureIsVisibleAndLeavesLegacyValuesIntact() {
         val suffix = System.nanoTime().toString()
         val preferencesName = "block9-corrupt-$suffix"
