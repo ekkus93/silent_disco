@@ -33,8 +33,8 @@ jobs:
           end = todo.index(end_marker)
           block = todo[start:end]
           unchecked = block.count("- [ ]")
-          if unchecked != 26:
-              raise RuntimeError(f"expected 26 unchecked Block 8 tasks, found {unchecked}")
+          if unchecked != 27:
+              raise RuntimeError(f"expected 27 unchecked Block 8 tasks, found {unchecked}")
           block = block.replace("- [ ]", "- [x]")
           acceptance = "**Acceptance:** All database tests pass using temporary files, not only `:memory:` databases."
           status = (
