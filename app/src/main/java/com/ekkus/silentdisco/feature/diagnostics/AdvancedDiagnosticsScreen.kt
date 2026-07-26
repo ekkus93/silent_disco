@@ -1,0 +1,262 @@
+package com.ekkus.silentdisco.feature.diagnostics
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.TuningField
+import com.ekkus.silentdisco.app.label
+import com.ekkus.silentdisco.app.summary
+import com.ekkus.silentdisco.core.audio.OboeBridge
+import com.ekkus.silentdisco.core.model.AppRole
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdvancedDiagnosticsScreen(
+    uiState: AppUiState,
+    onBack: () -> Unit,
+    onAdjustTuning: (TuningField, Int) -> Unit,
+    onResetTuning: () -> Unit,
+    onShareSupportReport: () -> Unit,
+) {
+    var expertExpanded by rememberSaveable { mutableStateOf(false) }
+    var expertEnabled by rememberSaveable { mutableStateOf(false) }
+    val showHost = uiState.selectedRole == AppRole.HOST || uiState.hostDiagnostics.sessionId.isNotBlank()
+    val showListener = uiState.selectedRole == AppRole.LISTENER || uiState.listenerDiagnostics.sessionId.isNotBlank()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("advanced-diagnostics-screen"),
+    ) {
+        TopAppBar(
+            title = { Text("Advanced diagnostics") },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                "Technical connection, synchronization, and playback details for troubleshooting.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (showHost) {
+                DiagnosticCard("Host") {
+                    DiagnosticValue("Session ID", uiState.hostDiagnostics.sessionId)
+                    DiagnosticValue("Listener count", uiState.hostDiagnostics.listenerCount.toString())
+                    DiagnosticValue("Pending requests", uiState.hostDiagnostics.pendingJoinCount.toString())
+                    DiagnosticValue("Connected listeners", uiState.hostDiagnostics.connectedListenerCount.toString())
+                    DiagnosticValue("Desynced listeners", uiState.hostDiagnostics.desyncedListenerCount.toString())
+                    DiagnosticValue("Packet send count", uiState.hostDiagnostics.packetSendCount.toString())
+                    DiagnosticValue("Send rate", "${uiState.hostDiagnostics.packetSendRatePerSecond} pkt/s")
+                    DiagnosticValue("Packet budget", uiState.hostDiagnostics.packetBudgetSummary)
+                    DiagnosticValue("Stream state", uiState.hostDiagnostics.streamState.label())
+                    DiagnosticValue("Last contact", "${uiState.hostDiagnostics.lastContactElapsedMs ?: -1} ms")
+                    DiagnosticValue("Metrics", uiState.hostDiagnostics.metricsSummary)
+                    DiagnosticValue("Last error", uiState.hostDiagnostics.lastError ?: "none")
+                }
+            }
+
+            if (showListener) {
+                DiagnosticCard("Listener") {
+                    DiagnosticValue("Session ID", uiState.listenerDiagnostics.sessionId)
+                    DiagnosticValue("Offset estimate", "${uiState.listenerDiagnostics.hostOffsetMs} ms")
+                    DiagnosticValue("RTT", "${uiState.listenerDiagnostics.rttMs} ms")
+                    DiagnosticValue("Jitter", "${uiState.listenerDiagnostics.jitterMs} ms")
+                    DiagnosticValue("Buffer depth", "${uiState.listenerDiagnostics.bufferDepthMs} ms")
+                    DiagnosticValue("Packet loss", uiState.listenerDiagnostics.packetLossCount.toString())
+                    DiagnosticValue("Late drops", uiState.listenerDiagnostics.lateDropCount.toString())
+                    DiagnosticValue("Underruns", uiState.listenerDiagnostics.underrunCount.toString())
+                    DiagnosticValue("Invalid packets", uiState.listenerDiagnostics.invalidPacketCount.toString())
+                    DiagnosticValue("Concealed packets", uiState.listenerDiagnostics.concealedPacketCount.toString())
+                    DiagnosticValue("Reconnect count", uiState.listenerDiagnostics.reconnectCount.toString())
+                    DiagnosticValue("Resync count", uiState.listenerDiagnostics.resyncCount.toString())
+                    DiagnosticValue("Playback state", uiState.listenerDiagnostics.playbackState.label())
+                    DiagnosticValue("Playback position", "${uiState.listenerDiagnostics.playbackPositionMs} ms")
+                    DiagnosticValue("Reached EOF", uiState.listenerDiagnostics.endOfStreamReached.toString())
+                    DiagnosticValue("Metrics", uiState.listenerDiagnostics.metricsSummary)
+                    DiagnosticValue("Last error", uiState.listenerDiagnostics.lastError ?: "none")
+                }
+            }
+
+            DiagnosticCard("Playback output") {
+                DiagnosticValue("Output", "Android AudioTrack")
+                DiagnosticValue("Native bridge availability", OboeBridge.backendSummary())
+                DiagnosticValue("Native bridge status", OboeBridge.statusSummary())
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    TextButton(
+                        onClick = { expertExpanded = !expertExpanded },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            if (expertExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null,
+                        )
+                        Text("Expert tuning")
+                    }
+                    if (expertExpanded) {
+                        Text(
+                            "Changing these values can make synchronization worse.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text("Current: ${uiState.tuningSettings.summary()}")
+                        if (!expertEnabled) {
+                            Button(
+                                onClick = { expertEnabled = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("enable-expert-tuning"),
+                            ) {
+                                Text("Enable expert controls")
+                            }
+                        }
+                        TuningRow(
+                            "Sync sample window",
+                            "${uiState.tuningSettings.syncSampleWindow} samples",
+                            expertEnabled,
+                            { onAdjustTuning(TuningField.SyncSampleWindow, -1) },
+                            { onAdjustTuning(TuningField.SyncSampleWindow, 1) },
+                        )
+                        TuningRow(
+                            "Sync cadence",
+                            "${uiState.tuningSettings.syncCadenceMs} ms",
+                            expertEnabled,
+                            { onAdjustTuning(TuningField.SyncCadenceMs, -1) },
+                            { onAdjustTuning(TuningField.SyncCadenceMs, 1) },
+                        )
+                        TuningRow(
+                            "Startup buffer",
+                            "${uiState.tuningSettings.startupBufferMs} ms",
+                            expertEnabled,
+                            { onAdjustTuning(TuningField.StartupBufferMs, -1) },
+                            { onAdjustTuning(TuningField.StartupBufferMs, 1) },
+                        )
+                        TuningRow(
+                            "Late packet threshold",
+                            "${uiState.tuningSettings.latePacketThresholdMs} ms",
+                            expertEnabled,
+                            { onAdjustTuning(TuningField.LatePacketThresholdMs, -1) },
+                            { onAdjustTuning(TuningField.LatePacketThresholdMs, 1) },
+                        )
+                        TuningRow(
+                            "Hard resync threshold",
+                            "${uiState.tuningSettings.hardResyncThresholdMs} ms",
+                            expertEnabled,
+                            { onAdjustTuning(TuningField.HardResyncThresholdMs, -1) },
+                            { onAdjustTuning(TuningField.HardResyncThresholdMs, 1) },
+                        )
+                        TuningRow(
+                            "Sync drift threshold",
+                            "${"%.1f".format(uiState.tuningSettings.syncDriftThresholdMs)} ms",
+                            expertEnabled,
+                            { onAdjustTuning(TuningField.SyncDriftThresholdMs, -1) },
+                            { onAdjustTuning(TuningField.SyncDriftThresholdMs, 1) },
+                        )
+                        OutlinedButton(
+                            onClick = onResetTuning,
+                            enabled = expertEnabled,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Reset tuning to defaults")
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = onShareSupportReport,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Filled.Share, contentDescription = null)
+                Text("Share support report")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticValue(label: String, value: String) {
+    Text("$label: ${value.ifBlank { "not available" }}", style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+private fun TuningRow(
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Button(onClick = onDecrease, enabled = enabled) { Text("−") }
+        Button(onClick = onIncrease, enabled = enabled) { Text("+") }
+    }
+}
