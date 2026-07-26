@@ -7,6 +7,10 @@ text = text.replace(
     "use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};",
 )
 text = text.replace(
+    "    repository_support::{invalid_model, to_sql_i64},",
+    "    repository_support::invalid_model,",
+)
+text = text.replace(
     "        LEGACY_ANDROID_IMPORT_SOURCE, LegacyAndroidImport, LegacyImportOutcome,\n",
     "        LEGACY_ANDROID_IMPORT_SOURCE, LegacyAndroidImport, LegacyImportOutcome, StoredSettings,\n        TrustedDevice,\n",
 )
