@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -17,6 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.StorageInitializationState
@@ -30,6 +35,7 @@ fun StartupGateScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp)
             .testTag("startup-screen"),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -60,10 +66,15 @@ fun StartupGateScreen(
 
 @Composable
 private fun StartupLoading() {
-    CircularProgressIndicator(modifier = Modifier.testTag("startup-loading"))
+    CircularProgressIndicator(
+        modifier = Modifier
+            .semantics { contentDescription = "Opening local app data" }
+            .testTag("startup-loading"),
+    )
     Spacer(Modifier.height(24.dp))
     Text(
         text = "Getting Silent Disco ready…",
+        modifier = Modifier.semantics { heading() },
         style = MaterialTheme.typography.headlineSmall,
     )
     Spacer(Modifier.height(8.dp))
@@ -76,10 +87,15 @@ private fun StartupLoading() {
 
 @Composable
 private fun StartupReady() {
-    CircularProgressIndicator(modifier = Modifier.testTag("startup-ready"))
+    CircularProgressIndicator(
+        modifier = Modifier
+            .semantics { contentDescription = "Startup complete" }
+            .testTag("startup-ready"),
+    )
     Spacer(Modifier.height(24.dp))
     Text(
         text = "Silent Disco is ready",
+        modifier = Modifier.semantics { heading() },
         style = MaterialTheme.typography.headlineSmall,
     )
 }
@@ -102,7 +118,11 @@ private fun StartupFailure(
             modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.headlineSmall)
+            Text(
+                title,
+                modifier = Modifier.semantics { heading() },
+                style = MaterialTheme.typography.headlineSmall,
+            )
             Text(detail, style = MaterialTheme.typography.bodyLarge)
             technicalDetail?.takeIf(String::isNotBlank)?.let {
                 Text(
