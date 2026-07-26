@@ -117,7 +117,7 @@ class AndroidRustDomainStore internal constructor(
                     ?: return@mapNotNull null
                 val trusted = value as? Boolean
                     ?: throw AndroidRustDomainStoreException(
-                        "Legacy trusted-device key '$key' does not contain a Boolean value",
+                        "A legacy trusted-device key does not contain a Boolean value",
                     )
                 LegacyTrustEntry(
                     key = key,
