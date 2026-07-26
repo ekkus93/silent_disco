@@ -157,6 +157,10 @@ This file records implementation status without changing unchecked acceptance it
 - Settings ready/error/permission states and conditional approved-device entry.
 - Confirmation safe-focus and duplicate-submit behavior.
 - Home behavior at 200% font scale.
+- Host Music and Host Access primary-action reachability at 200% font scale.
+- Listener playback recovery and leave-action reachability in a 320 x 480 dp window at 200% font scale.
+- Nearby Sessions and Connection Help action reachability in a 640 x 360 dp landscape window.
+- Settings troubleshooting reachability at an 840 dp tablet width.
 
 ## Added Compose preview coverage
 
@@ -182,7 +186,7 @@ This file records implementation status without changing unchecked acceptance it
 5. Add authoritative Rust/JNI trusted-device list/delete APIs before enabling management UI.
 6. Add an explicit scan cancellation/release operation for destination exit.
 7. Add full navigation/integration tests with a controllable fake ViewModel or workflow state holder.
-8. Add broader 200% font, landscape, tablet, and small-window tests.
+8. Extend adaptive-layout coverage to Host Dashboard, Session Join, Advanced Diagnostics, and startup failure states.
 9. Add explicit preview seams for tab-selected Host Dashboard and enabled Expert tuning states only if they do not duplicate production state ownership.
 10. Complete physical two-device host/listener acceptance testing.
 11. Remove obsolete screens only after replacement workflows pass the complete validation matrix.
