@@ -43,12 +43,16 @@ import com.ekkus.silentdisco.feature.settings.SettingsScreen
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import java.time.Instant
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.receiveAsFlow
 
 @Composable
 fun SilentDiscoApp(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
+    val uiEffects = remember { Channel<AppUiEffect>(capacity = Channel.BUFFERED) }
     val context = LocalContext.current
 
     var pendingPermissionContext by remember { mutableStateOf<PermissionRequestContext?>(null) }
@@ -121,6 +125,26 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
         }
     }
 
+    LaunchedEffect(uiEffects, navController) {
+        uiEffects.receiveAsFlow().collect { effect ->
+            when (effect) {
+                AppUiEffect.NavigateHome -> navController.navigateHomeAndClearWorkflow()
+                AppUiEffect.NavigateHostDashboard -> {
+                    navController.navigate(AppRoutes.HostDashboard) {
+                        popUpTo(AppRoutes.HostMusicSetup) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+                AppUiEffect.NavigateListenerPlayback -> {
+                    navController.navigateSingleTop(AppRoutes.ListenerPlayback)
+                }
+                AppUiEffect.ShowEndSessionConfirmation -> showEndSessionConfirmation = true
+                AppUiEffect.ShowLeaveSessionConfirmation -> showLeaveSessionConfirmation = true
+                is AppUiEffect.ShowTransientMessage -> snackbarHostState.showSnackbar(effect.message)
+            }
+        }
+    }
+
     LaunchedEffect(uiState.lastMessage) {
         uiState.lastMessage?.takeIf(String::isNotBlank)?.let {
             snackbarHostState.showSnackbar(it)
@@ -138,15 +162,9 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             composable(AppRoutes.Startup) {
                 var startupNavigationConsumed by rememberSaveable { mutableStateOf(false) }
                 LaunchedEffect(uiState.storageState) {
-                    if (
-                        uiState.storageState == StorageInitializationState.READY &&
-                        !startupNavigationConsumed
-                    ) {
+                    if (shouldNavigateHomeAfterStartup(uiState, startupNavigationConsumed)) {
                         startupNavigationConsumed = true
-                        navController.navigate(AppRoutes.Home) {
-                            popUpTo(AppRoutes.Startup) { inclusive = true }
-                            launchSingleTop = true
-                        }
+                        uiEffects.send(AppUiEffect.NavigateHome)
                     }
                 }
                 StartupGateScreen(
@@ -209,20 +227,17 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     },
                     onStartSession = {
                         if (viewModel.createHostSession()) {
-                            navController.navigate(AppRoutes.HostDashboard) {
-                                popUpTo(AppRoutes.HostMusicSetup) { inclusive = true }
-                                launchSingleTop = true
-                            }
+                            uiEffects.trySend(AppUiEffect.NavigateHostDashboard)
                         }
                     },
                 )
             }
 
             composable(AppRoutes.HostDashboard) {
-                BackHandler { showEndSessionConfirmation = true }
+                BackHandler { uiEffects.trySend(AppUiEffect.ShowEndSessionConfirmation) }
                 HostDashboardScreen(
                     uiState = uiState,
-                    onBackRequest = { showEndSessionConfirmation = true },
+                    onBackRequest = { uiEffects.trySend(AppUiEffect.ShowEndSessionConfirmation) },
                     onInvite = { showInviteDialog = true },
                     onApproval = { request, action ->
                         when (action) {
@@ -246,7 +261,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                         }
                     },
                     onStop = viewModel::stopHostPlayback,
-                    onEndSessionRequest = { showEndSessionConfirmation = true },
+                    onEndSessionRequest = { uiEffects.trySend(AppUiEffect.ShowEndSessionConfirmation) },
                     onOpenConnectionHelp = {
                         navController.navigateSingleTop(AppRoutes.ConnectionHelp)
                     },
@@ -279,13 +294,9 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             composable(AppRoutes.SessionJoin) {
                 var playbackNavigationConsumed by rememberSaveable { mutableStateOf(false) }
                 LaunchedEffect(uiState.listenerState, uiState.listenerPlaybackState) {
-                    if (
-                        uiState.listenerState == com.ekkus.silentdisco.core.model.ListenerLifecycleState.PLAYING &&
-                        uiState.listenerPlaybackState == PlaybackState.PLAYING &&
-                        !playbackNavigationConsumed
-                    ) {
+                    if (shouldNavigateToListenerPlayback(uiState, playbackNavigationConsumed)) {
                         playbackNavigationConsumed = true
-                        navController.navigateSingleTop(AppRoutes.ListenerPlayback)
+                        uiEffects.send(AppUiEffect.NavigateListenerPlayback)
                     }
                 }
                 val cancelJoin: () -> Unit = {
@@ -306,15 +317,15 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             }
 
             composable(AppRoutes.ListenerPlayback) {
-                BackHandler { showLeaveSessionConfirmation = true }
+                BackHandler { uiEffects.trySend(AppUiEffect.ShowLeaveSessionConfirmation) }
                 ListenerPlaybackV2Screen(
                     uiState = uiState,
-                    onBackRequest = { showLeaveSessionConfirmation = true },
+                    onBackRequest = { uiEffects.trySend(AppUiEffect.ShowLeaveSessionConfirmation) },
                     onVolumeChanged = viewModel::setLocalVolume,
                     onFixConnection = {
                         navController.navigateSingleTop(AppRoutes.ConnectionHelp)
                     },
-                    onLeaveRequest = { showLeaveSessionConfirmation = true },
+                    onLeaveRequest = { uiEffects.trySend(AppUiEffect.ShowLeaveSessionConfirmation) },
                 )
             }
 
@@ -396,7 +407,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
         onConfirm = {
             showEndSessionConfirmation = false
             viewModel.endSession()
-            navController.navigateHomeAndClearWorkflow()
+            uiEffects.trySend(AppUiEffect.NavigateHome)
         },
         testTag = "end-session-confirmation",
     )
@@ -411,7 +422,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
         onConfirm = {
             showLeaveSessionConfirmation = false
             viewModel.leaveSession()
-            navController.navigateHomeAndClearWorkflow()
+            uiEffects.trySend(AppUiEffect.NavigateHome)
         },
         testTag = "leave-session-confirmation",
     )
