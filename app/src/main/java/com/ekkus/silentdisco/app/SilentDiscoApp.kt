@@ -239,7 +239,7 @@ fun SilentDiscoApp(
             }
 
             composable(AppRoutes.HostDashboard) {
-                BackHandler(workflowViewModel::requestEndSessionConfirmation)
+                BackHandler(onBack = workflowViewModel::requestEndSessionConfirmation)
                 HostDashboardScreen(
                     uiState = uiState,
                     onBackRequest = workflowViewModel::requestEndSessionConfirmation,
@@ -303,7 +303,7 @@ fun SilentDiscoApp(
             }
 
             composable(AppRoutes.ListenerPlayback) {
-                BackHandler(workflowViewModel::requestLeaveSessionConfirmation)
+                BackHandler(onBack = workflowViewModel::requestLeaveSessionConfirmation)
                 ListenerPlaybackV2Screen(
                     uiState = uiState,
                     onBackRequest = workflowViewModel::requestLeaveSessionConfirmation,
