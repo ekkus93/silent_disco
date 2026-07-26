@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.TuningField
+import com.ekkus.silentdisco.app.TuningSettings
 import com.ekkus.silentdisco.app.canManualResync
 import com.ekkus.silentdisco.app.hostSessionHealthSummary
 import com.ekkus.silentdisco.app.label
@@ -243,6 +244,15 @@ fun DiagnosticsScreen(
                             { onAdjustTuning(TuningField.SyncDriftThresholdMs, -1) },
                             { onAdjustTuning(TuningField.SyncDriftThresholdMs, 1) },
                         )
+                        OutlinedButton(
+                            onClick = { onAdjustTuning(TuningField.ResetDefaults, 1) },
+                            enabled = expertEnabled && uiState.tuningSettings != TuningSettings(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("reset-tuning-defaults"),
+                        ) {
+                            Text("Reset tuning to defaults")
+                        }
                     }
                 }
             }
