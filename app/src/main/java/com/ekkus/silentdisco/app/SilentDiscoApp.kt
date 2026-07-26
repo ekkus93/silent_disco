@@ -47,16 +47,16 @@ import com.ekkus.silentdisco.feature.settings.SettingsScreen
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import java.time.Instant
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.receiveAsFlow
 
 @Composable
-fun SilentDiscoApp(viewModel: MainViewModel) {
+fun SilentDiscoApp(
+    viewModel: MainViewModel,
+    workflowViewModel: WorkflowViewModel,
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
-    val uiEffects = remember { Channel<AppUiEffect>(capacity = Channel.BUFFERED) }
     val context = LocalContext.current
 
     var pendingPermissionContext by remember { mutableStateOf<PermissionRequestContext?>(null) }
@@ -133,8 +133,12 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
         }
     }
 
-    LaunchedEffect(uiEffects, navController) {
-        uiEffects.receiveAsFlow().collect { effect ->
+    LaunchedEffect(uiState) {
+        workflowViewModel.onUiStateChanged(uiState)
+    }
+
+    LaunchedEffect(workflowViewModel, navController) {
+        workflowViewModel.effects.collect { effect ->
             when (effect) {
                 AppUiEffect.NavigateHome -> navController.navigateHomeAndClearWorkflow()
                 AppUiEffect.NavigateHostDashboard -> {
@@ -168,13 +172,6 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             modifier = Modifier.padding(paddingValues),
         ) {
             composable(AppRoutes.Startup) {
-                var startupNavigationConsumed by rememberSaveable { mutableStateOf(false) }
-                LaunchedEffect(uiState.storageState) {
-                    if (shouldNavigateHomeAfterStartup(uiState, startupNavigationConsumed)) {
-                        startupNavigationConsumed = true
-                        uiEffects.send(AppUiEffect.NavigateHome)
-                    }
-                }
                 StartupGateScreen(
                     uiState = uiState,
                     onRetry = viewModel::retryDomainPersistence,
@@ -234,9 +231,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                         viewModel.updateHostForm(inviteCode = generateInviteCode())
                     },
                     onStartSession = {
-                        if (viewModel.createHostSession()) {
-                            uiEffects.trySend(AppUiEffect.NavigateHostDashboard)
-                        }
+                        workflowViewModel.onHostSessionCreationResult(viewModel.createHostSession())
                     },
                     onOpenSettings = ::openSystemSettings,
                     onShareSupportReport = ::shareSupportReport,
@@ -244,23 +239,13 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             }
 
             composable(AppRoutes.HostDashboard) {
-                BackHandler { uiEffects.trySend(AppUiEffect.ShowEndSessionConfirmation) }
+                BackHandler(workflowViewModel::requestEndSessionConfirmation)
                 HostDashboardScreen(
                     uiState = uiState,
-                    onBackRequest = { uiEffects.trySend(AppUiEffect.ShowEndSessionConfirmation) },
+                    onBackRequest = workflowViewModel::requestEndSessionConfirmation,
                     onInvite = { showInviteDialog = true },
                     onApproval = { request, action ->
-                        when (action) {
-                            JoinApprovalAction.REJECT -> viewModel.rejectJoinRequest(request)
-                            JoinApprovalAction.APPROVE_ONCE -> {
-                                viewModel.updateHostForm(rememberApprovedDevices = false)
-                                viewModel.approveJoinRequest(request)
-                            }
-                            JoinApprovalAction.ALWAYS_ALLOW -> {
-                                viewModel.updateHostForm(rememberApprovedDevices = true)
-                                viewModel.approveJoinRequest(request)
-                            }
-                        }
+                        workflowViewModel.handleJoinApproval(viewModel, request, action)
                     },
                     onRemoveListener = viewModel::removeListener,
                     onPlayPause = {
@@ -271,7 +256,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                         }
                     },
                     onStop = viewModel::stopHostPlayback,
-                    onEndSessionRequest = { uiEffects.trySend(AppUiEffect.ShowEndSessionConfirmation) },
+                    onEndSessionRequest = workflowViewModel::requestEndSessionConfirmation,
                     onOpenConnectionHelp = {
                         navController.navigateSingleTop(AppRoutes.ConnectionHelp)
                     },
@@ -300,13 +285,6 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             }
 
             composable(AppRoutes.SessionJoin) {
-                var playbackNavigationConsumed by rememberSaveable { mutableStateOf(false) }
-                LaunchedEffect(uiState.listenerState, uiState.listenerPlaybackState) {
-                    if (shouldNavigateToListenerPlayback(uiState, playbackNavigationConsumed)) {
-                        playbackNavigationConsumed = true
-                        uiEffects.send(AppUiEffect.NavigateListenerPlayback)
-                    }
-                }
                 val cancelJoin: () -> Unit = {
                     viewModel.cancelJoin()
                     val returned = navController.popBackStack(AppRoutes.NearbySessions, inclusive = false)
@@ -325,15 +303,15 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             }
 
             composable(AppRoutes.ListenerPlayback) {
-                BackHandler { uiEffects.trySend(AppUiEffect.ShowLeaveSessionConfirmation) }
+                BackHandler(workflowViewModel::requestLeaveSessionConfirmation)
                 ListenerPlaybackV2Screen(
                     uiState = uiState,
-                    onBackRequest = { uiEffects.trySend(AppUiEffect.ShowLeaveSessionConfirmation) },
+                    onBackRequest = workflowViewModel::requestLeaveSessionConfirmation,
                     onVolumeChanged = viewModel::setLocalVolume,
                     onFixConnection = {
                         navController.navigateSingleTop(AppRoutes.ConnectionHelp)
                     },
-                    onLeaveRequest = { uiEffects.trySend(AppUiEffect.ShowLeaveSessionConfirmation) },
+                    onLeaveRequest = workflowViewModel::requestLeaveSessionConfirmation,
                 )
             }
 
@@ -415,7 +393,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
         onConfirm = {
             showEndSessionConfirmation = false
             viewModel.endSession()
-            uiEffects.trySend(AppUiEffect.NavigateHome)
+            workflowViewModel.navigateHome()
         },
         testTag = "end-session-confirmation",
     )
@@ -430,7 +408,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
         onConfirm = {
             showLeaveSessionConfirmation = false
             viewModel.leaveSession()
-            uiEffects.trySend(AppUiEffect.NavigateHome)
+            workflowViewModel.navigateHome()
         },
         testTag = "leave-session-confirmation",
     )
@@ -442,7 +420,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
             onCopyCode = { code ->
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("Silent Disco invite code", code))
-                uiEffects.trySend(AppUiEffect.ShowTransientMessage("Invite code copied"))
+                workflowViewModel.showTransientMessage("Invite code copied")
             },
             onShareInstructions = { instructions ->
                 sharePlainText("Share Silent Disco invitation", instructions)
