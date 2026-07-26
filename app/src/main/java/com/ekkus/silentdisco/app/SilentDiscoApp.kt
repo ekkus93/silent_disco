@@ -1,5 +1,8 @@
 package com.ekkus.silentdisco.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -36,6 +39,7 @@ import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
 import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
 import com.ekkus.silentdisco.feature.host.HostDashboardScreen
 import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
+import com.ekkus.silentdisco.feature.host.InviteSessionSheet
 import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
 import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
@@ -61,19 +65,23 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
     var showLeaveSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showInviteDialog by rememberSaveable { mutableStateOf(false) }
 
+    fun sharePlainText(title: String, text: String) {
+        val shareIntent = Intent.createChooser(
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+            },
+            title,
+        )
+        context.startActivity(shareIntent)
+    }
+
     fun shareSupportReport() {
         val report = uiState.buildSupportReport(
             appVersion = BuildConfig.VERSION_NAME,
             generatedAt = Instant.now().toString(),
         )
-        val shareIntent = Intent.createChooser(
-            Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, report)
-            },
-            "Share support report",
-        )
-        context.startActivity(shareIntent)
+        sharePlainText("Share support report", report)
     }
 
     fun openSystemSettings() {
@@ -428,24 +436,16 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
     )
 
     if (showInviteDialog) {
-        AlertDialog(
-            onDismissRequest = { showInviteDialog = false },
-            title = { Text("Invite listeners") },
-            text = {
-                Text(
-                    buildString {
-                        appendLine(uiState.hostForm.sessionName)
-                        appendLine("Ask listeners to open Silent Disco and find this nearby session.")
-                        if (uiState.hostForm.inviteCode.isNotBlank()) {
-                            append("Invite code: ${uiState.hostForm.inviteCode}")
-                        }
-                    },
-                )
+        InviteSessionSheet(
+            uiState = uiState,
+            onDismiss = { showInviteDialog = false },
+            onCopyCode = { code ->
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Silent Disco invite code", code))
+                uiEffects.trySend(AppUiEffect.ShowTransientMessage("Invite code copied"))
             },
-            confirmButton = {
-                TextButton(onClick = { showInviteDialog = false }) {
-                    Text("Done")
-                }
+            onShareInstructions = { instructions ->
+                sharePlainText("Share Silent Disco invitation", instructions)
             },
         )
     }
