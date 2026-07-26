@@ -1,0 +1,182 @@
+name: One-time master connected diagnostic
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-time-master-connected-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 666 /dev/kvm
+
+      - name: Install Android SDK, NDK, emulator, and API 35 image
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "system-images;android-35;google_apis;x86_64"
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Run connected tests and capture diagnostics
+        id: connected
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p connected-diagnostic
+          echo no | "${ANDROID_HOME}/cmdline-tools/latest/bin/avdmanager" create avd \
+            --force \
+            --name silent-disco-api35 \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device pixel_6 \
+            > connected-diagnostic/avd-create.log 2>&1
+
+          "${ANDROID_HOME}/emulator/emulator" \
+            -avd silent-disco-api35 \
+            -no-window \
+            -gpu auto \
+            -no-snapshot \
+            -wipe-data \
+            -noaudio \
+            -no-boot-anim \
+            -no-metrics \
+            -camera-back none \
+            > connected-diagnostic/emulator.log 2>&1 &
+          emulator_pid=$!
+          cleanup() {
+            adb emu kill >/dev/null 2>&1 || true
+            kill "${emulator_pid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          adb start-server
+          timeout 180 adb wait-for-device
+          deadline=$((SECONDS + 600))
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            if ! kill -0 "${emulator_pid}" 2>/dev/null; then
+              tail -n 300 connected-diagnostic/emulator.log
+              exit 121
+            fi
+            completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+            if [ "${completed}" = "1" ]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb devices -l > connected-diagnostic/adb-devices.txt
+
+          set +e
+          ./gradlew connectedDebugAndroidTest --stacktrace --console=plain \
+            2>&1 | tee connected-diagnostic/connected-tests.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          find app/build/outputs/androidTest-results -type f -name '*.xml' -print \
+            > connected-diagnostic/xml-files.txt 2>/dev/null || true
+          if [ -d app/build/outputs/androidTest-results ]; then
+            tar -czf connected-diagnostic/android-test-results.tar.gz \
+              app/build/outputs/androidTest-results
+          fi
+          if [ -d app/build/reports/androidTests ]; then
+            tar -czf connected-diagnostic/android-test-reports.tar.gz \
+              app/build/reports/androidTests
+          fi
+          exit "${status}"
+
+      - name: Record diagnostic and remove one-time workflow
+        if: always()
+        shell: bash
+        env:
+          CONNECTED: ${{ steps.connected.outcome }}
+        run: |
+          set -euo pipefail
+          git fetch origin master
+          remote_head="$(git rev-parse origin/master)"
+          master_moved=0
+          if [ "${remote_head}" != "${GITHUB_SHA}" ]; then
+            master_moved=1
+          fi
+
+          rm -f .github/workflows/master-connected-diagnostic-once.yml
+          rm -rf .validation/master-full-validation
+          rm -rf .validation/master-connected-diagnostic
+
+          failed=0
+          if [ "${CONNECTED}" != "success" ] || [ "${master_moved}" -ne 0 ]; then
+            failed=1
+            mkdir -p .validation/master-connected-diagnostic
+            {
+              printf 'run_id=%s\n' "${GITHUB_RUN_ID}"
+              printf 'tested_sha=%s\n' "${GITHUB_SHA}"
+              printf 'connected=%s\n' "${CONNECTED}"
+              printf 'master_moved=%s\n' "${master_moved}"
+            } > .validation/master-connected-diagnostic/result.txt
+            if [ -f connected-diagnostic/connected-tests.log ]; then
+              tail -n 1500 connected-diagnostic/connected-tests.log \
+                > .validation/master-connected-diagnostic/connected-tests-tail.log
+            fi
+            if [ -f connected-diagnostic/emulator.log ]; then
+              tail -n 500 connected-diagnostic/emulator.log \
+                > .validation/master-connected-diagnostic/emulator-tail.log
+            fi
+            cp connected-diagnostic/*.txt .validation/master-connected-diagnostic/ 2>/dev/null || true
+            cp connected-diagnostic/*.tar.gz .validation/master-connected-diagnostic/ 2>/dev/null || true
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git add -f .validation/master-connected-diagnostic 2>/dev/null || true
+          if [ "${failed}" -eq 0 ]; then
+            git commit -m "Complete connected tests on master"
+          else
+            git commit -m "Record connected test diagnostics on master"
+          fi
+          git push origin HEAD:master
+          exit "${failed}"
