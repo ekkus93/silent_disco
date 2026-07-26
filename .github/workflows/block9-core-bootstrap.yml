@@ -29,7 +29,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python .github/scripts/apply_block9_core.py 2>&1 | tee block9-core-apply.log
+          {
+            python .github/scripts/apply_block9_core.py
+            python .github/scripts/fix_block9_core.py
+          } 2>&1 | tee block9-core-apply.log
 
       - name: Format and validate Rust workspace
         shell: bash
@@ -61,6 +64,7 @@ jobs:
         run: |
           rm .github/workflows/block9-core-bootstrap.yml
           rm .github/scripts/apply_block9_core.py
+          rm .github/scripts/fix_block9_core.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
