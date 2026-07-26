@@ -77,8 +77,7 @@ enum class JoinApprovalAction {
 fun AppUiState.joinUiStep(): JoinUiStep = when (listenerState) {
     ListenerLifecycleState.IDLE,
     ListenerLifecycleState.SCANNING,
-    ListenerLifecycleState.SESSION_SELECTED,
-    -> JoinUiStep.FINDING_HOST
+    ListenerLifecycleState.SESSION_SELECTED -> JoinUiStep.FINDING_HOST
 
     ListenerLifecycleState.JOIN_REQUESTED -> JoinUiStep.REQUESTING_ACCESS
     ListenerLifecycleState.AWAITING_APPROVAL -> JoinUiStep.WAITING_FOR_APPROVAL
@@ -87,13 +86,11 @@ fun AppUiState.joinUiStep(): JoinUiStep = when (listenerState) {
     ListenerLifecycleState.CONNECTING,
     ListenerLifecycleState.RECONNECTING,
     ListenerLifecycleState.DISCONNECTED,
-    ListenerLifecycleState.ERROR,
-    -> JoinUiStep.CONNECTING
+    ListenerLifecycleState.ERROR -> JoinUiStep.CONNECTING
 
     ListenerLifecycleState.SYNCING_CLOCK,
     ListenerLifecycleState.BUFFERING,
-    ListenerLifecycleState.DESYNCED,
-    -> JoinUiStep.SYNCING_AUDIO
+    ListenerLifecycleState.DESYNCED -> JoinUiStep.SYNCING_AUDIO
 
     ListenerLifecycleState.PLAYING -> JoinUiStep.COMPLETE
 }
@@ -227,8 +224,7 @@ fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
             technicalDetail = storageError,
         )
         StorageInitializationState.INITIALIZING,
-        StorageInitializationState.READY,
-        -> Unit
+        StorageInitializationState.READY -> Unit
     }
 
     if (listenerState == ListenerLifecycleState.DISCONNECTED) {
