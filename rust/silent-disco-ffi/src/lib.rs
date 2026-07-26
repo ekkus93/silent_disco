@@ -9,6 +9,7 @@
 //! prohibited unless their invariants are documented explicitly.
 
 mod android_abi;
+mod android_storage;
 mod sync;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};

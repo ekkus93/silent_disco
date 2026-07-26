@@ -1,19 +1,6 @@
-from pathlib import Path
-
-
-def replace_exact(path: str, old: str, new: str) -> None:
-    file_path = Path(path)
-    text = file_path.read_text(encoding="utf-8")
-    count = text.count(old)
-    if count != 1:
-        raise RuntimeError(f"{path}: expected one match, found {count}: {old[:100]!r}")
-    file_path.write_text(text.replace(old, new), encoding="utf-8")
-
-
-source = r'''#![allow(unsafe_code)]
+#![allow(unsafe_code)]
 #![allow(clippy::too_many_lines)]
 
-use core::ffi::c_void;
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     panic::{AssertUnwindSafe, catch_unwind},
@@ -29,22 +16,19 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use silent_disco_core::{
     domain::{DeviceId, TrustState, TuningSettings},
     storage::{
-        ANDROID_LEGACY_IMPORT_VERSION, DatabaseClient, DatabaseConfig, DatabaseWorker,
-        LegacyAndroidImport, LegacyImportDisposition, LegacyImportOutcome, StorageError,
-        StoredSettings, TrustedDevice,
+        DatabaseClient, DatabaseConfig, DatabaseWorker, LegacyAndroidImport,
+        LegacyImportDisposition, LegacyImportOutcome, StorageError, StoredSettings, TrustedDevice,
     },
 };
 
 const MAX_STORAGE_HANDLE: u64 = i64::MAX as u64;
 const SERIALIZATION_FAILURE: &str = r#"{"ok":false,"result":null,"error":{"code":"bridge_serialization_failed","operation":"serialize_response","message":"Rust storage bridge could not serialize its response","retryable":false,"coreRemainsUsable":false,"schemaVersion":null}}"#;
 
-#[derive(Debug)]
 struct StorageEntry {
     worker: DatabaseWorker,
     client: DatabaseClient,
 }
 
-#[derive(Debug)]
 struct StorageRegistry {
     next_handle: u64,
     entries: BTreeMap<u64, StorageEntry>,
@@ -131,13 +115,7 @@ impl BridgeFailure {
     }
 
     fn invalid_request(operation: &str, message: impl Into<String>) -> Self {
-        Self::bridge(
-            "bridge_invalid_request",
-            operation,
-            message,
-            false,
-            true,
-        )
+        Self::bridge("bridge_invalid_request", operation, message, false, true)
     }
 
     fn invalid_handle(operation: &str) -> Self {
@@ -246,7 +224,10 @@ struct TrustedDeviceDto {
 impl TrustedDeviceDto {
     fn into_model(self, operation: &str) -> Result<TrustedDevice, BridgeFailure> {
         let device_id = DeviceId::new(self.device_id).map_err(|error| {
-            BridgeFailure::invalid_request(operation, format!("device identifier is invalid: {error}"))
+            BridgeFailure::invalid_request(
+                operation,
+                format!("device identifier is invalid: {error}"),
+            )
         })?;
         let trust_state = TrustState::from_wire_name(&self.trust_state).map_err(|error| {
             BridgeFailure::invalid_request(operation, format!("trust state is invalid: {error}"))
@@ -404,12 +385,9 @@ fn open_storage(path: String) -> Result<StorageOpenResultDto, BridgeFailure> {
     let worker = DatabaseWorker::start(config).map_err(BridgeFailure::from)?;
     let client = worker.client();
     let schema_version = worker.initial_metadata().schema_version;
-    let mut registry = match storage_registry().lock() {
-        Ok(registry) => registry,
-        Err(_) => {
-            let shutdown = worker.stop_and_join().map_err(BridgeFailure::from);
-            return shutdown.and(Err(BridgeFailure::registry_poisoned("open_storage")));
-        }
+    let Ok(mut registry) = storage_registry().lock() else {
+        let shutdown = worker.stop_and_join().map_err(BridgeFailure::from);
+        return shutdown.and(Err(BridgeFailure::registry_poisoned("open_storage")));
     };
     let handle = match registry.reserve_handle() {
         Ok(handle) => handle,
@@ -553,15 +531,21 @@ fn read_jstring(
     value: &JString<'_>,
     operation: &str,
 ) -> Result<String, BridgeFailure> {
-    environment.get_string(value).map(Into::into).map_err(|error| {
-        BridgeFailure::invalid_request(operation, format!("JNI string could not be read: {error}"))
-    })
+    environment
+        .get_string(value)
+        .map(Into::into)
+        .map_err(|error| {
+            BridgeFailure::invalid_request(
+                operation,
+                format!("JNI string could not be read: {error}"),
+            )
+        })
 }
 
 fn write_response(environment: &mut JNIEnv<'_>, response: String) -> jstring {
     environment
         .new_string(response)
-        .map_or(core::ptr::null_mut(), jni::objects::JObject::into_raw)
+        .map_or(core::ptr::null_mut(), jni::objects::JString::into_raw)
 }
 
 #[allow(non_snake_case)]
@@ -571,7 +555,8 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustStorageNativeBri
     _receiver: JClass<'_>,
     path: JString<'_>,
 ) -> jstring {
-    let response = execute(|| read_jstring(&mut environment, &path, "open_storage").and_then(open_storage));
+    let response =
+        execute(|| read_jstring(&mut environment, &path, "open_storage").and_then(open_storage));
     write_response(&mut environment, response)
 }
 
@@ -644,14 +629,19 @@ handle_only_export!(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::atomic::{AtomicU64, Ordering}};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     use serde_json::Value;
+    use silent_disco_core::storage::ANDROID_LEGACY_IMPORT_VERSION;
 
     use super::{
-        ANDROID_LEGACY_IMPORT_VERSION, LegacyImportDto, SettingsDto, TrustedDeviceDto,
-        close_storage, decode_request, execute, import_legacy, list_trusted_devices, load_settings,
-        open_storage, save_settings, upsert_trusted_device,
+        LegacyImportDto, SettingsDto, TrustedDeviceDto, close_storage, decode_request, execute,
+        import_legacy, list_trusted_devices, load_settings, open_storage, save_settings,
+        upsert_trusted_device,
     };
 
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(1);
@@ -716,7 +706,8 @@ mod tests {
             "settings": settings(2_250, 10_000),
             "trustedDevices": [trusted_device(10_000)],
         });
-        let imported = import_legacy(opened.handle, &import.to_string()).expect("import legacy data");
+        let imported =
+            import_legacy(opened.handle, &import.to_string()).expect("import legacy data");
         assert_eq!(imported.disposition, "imported");
         assert_eq!(
             load_settings(opened.handle).expect("load settings"),
@@ -770,23 +761,3 @@ mod tests {
         assert_eq!(envelope["error"]["coreRemainsUsable"], true);
     }
 }
-'''
-Path("rust/silent-disco-ffi/src/android_storage.rs").write_text(source, encoding="utf-8")
-
-replace_exact(
-    "rust/silent-disco-ffi/src/lib.rs",
-    "mod android_abi;\nmod sync;",
-    "mod android_abi;\nmod android_storage;\nmod sync;",
-)
-replace_exact(
-    "rust/silent-disco-ffi/Cargo.toml",
-    '''[dependencies]
-silent-disco-core = { path = "../silent-disco-core" }
-''',
-    '''[dependencies]
-jni = "0.21.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-silent-disco-core = { path = "../silent-disco-core" }
-''',
-)
