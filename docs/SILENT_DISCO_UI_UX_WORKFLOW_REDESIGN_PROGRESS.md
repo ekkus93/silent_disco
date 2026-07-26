@@ -30,7 +30,7 @@ This file records implementation status without changing unchecked acceptance it
 
 ### Remaining permission/discovery limitation
 
-- Scan-resource release when navigating away still requires an authoritative public ViewModel/transport cancellation operation.
+- `SessionTransport.cancelDiscovery()` now has an authoritative teardown contract and BLE scanning exposes an explicit stop operation. Wiring destination exit and join cancellation through a public ViewModel operation remains open.
 
 ## Implemented navigation and destructive safety
 
@@ -161,6 +161,11 @@ This file records implementation status without changing unchecked acceptance it
 - Listener playback recovery and leave-action reachability in a 320 x 480 dp window at 200% font scale.
 - Nearby Sessions and Connection Help action reachability in a 640 x 360 dp landscape window.
 - Settings troubleshooting reachability at an 840 dp tablet width.
+- Host Dashboard approval-action reachability at 200% font scale in a 320 x 480 dp window.
+- Session Join recovery-action reachability at 200% font scale in a 320 x 480 dp window.
+- Advanced Diagnostics actions in a 640 x 360 dp landscape window.
+- Recoverable and fatal startup actions at 200% font scale in a 320 x 480 dp window.
+- Production route helpers for single-top navigation, clearing the host workflow on Home return, and listener recovery back navigation.
 
 ## Added Compose preview coverage
 
@@ -172,10 +177,9 @@ This file records implementation status without changing unchecked acceptance it
 - Added Now Playing previews for healthy, buffering, reconnecting, and desynchronized states.
 - Added healthy and actionable Connection Help previews.
 - Added end-session and leave-session confirmation previews.
-
-### Remaining preview limitation
-
-- Host Dashboard tab selection and the enabled Expert tuning state remain interaction-driven internal Compose state. The previews expose the corresponding data and default UI, but do not force those internal controls into a selected or enabled state.
+- Added explicit previews for the Host Dashboard Connected and Needs attention tabs.
+- Added an explicit Advanced Diagnostics preview with expert controls expanded and enabled.
+- Added deterministic Compose tests for the selected-tab and expert-enabled preview seams.
 
 ## Remaining major work
 
@@ -184,9 +188,7 @@ This file records implementation status without changing unchecked acceptance it
 3. Move one-shot effects into `MainViewModel` when a safe targeted edit path is available.
 4. Add one atomic Rust-persisted tuning-reset operation.
 5. Add authoritative Rust/JNI trusted-device list/delete APIs before enabling management UI.
-6. Add an explicit scan cancellation/release operation for destination exit.
-7. Add full navigation/integration tests with a controllable fake ViewModel or workflow state holder.
-8. Extend adaptive-layout coverage to Host Dashboard, Session Join, Advanced Diagnostics, and startup failure states.
-9. Add explicit preview seams for tab-selected Host Dashboard and enabled Expert tuning states only if they do not duplicate production state ownership.
-10. Complete physical two-device host/listener acceptance testing.
-11. Remove obsolete screens only after replacement workflows pass the complete validation matrix.
+6. Wire destination exit and join cancellation through a public ViewModel operation that invokes the new authoritative discovery teardown contract.
+7. Add end-to-end workflow navigation tests with a controllable fake ViewModel or workflow state holder; production route-helper integration is now covered.
+8. Complete physical two-device host/listener acceptance testing.
+9. Remove obsolete screens only after replacement workflows pass the complete validation matrix.
