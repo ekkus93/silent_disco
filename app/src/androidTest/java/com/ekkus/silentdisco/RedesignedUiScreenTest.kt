@@ -1,5 +1,7 @@
 package com.ekkus.silentdisco
 
+import android.net.Uri
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -129,9 +131,10 @@ class RedesignedUiScreenTest {
                         hostForm = HostFormState(
                             sessionName = "Phillip’s Silent Disco",
                             selectedAudio = SelectedAudioFile(
-                                uri = "content://test/audio",
+                                uri = Uri.parse("content://test/audio"),
                                 displayName = "music.flac",
                                 mimeType = "audio/flac",
+                                sizeBytes = 1024L,
                             ),
                         ),
                     ),
