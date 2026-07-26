@@ -26,10 +26,14 @@ jobs:
           rustup default 1.97.1
 
       - name: Apply guarded Block 8 sources
+        shell: bash
         run: |
-          python .github/scripts/fix_block8_migrations.py
-          python .github/scripts/apply_block8_storage.py
-          python .github/scripts/fix_block8_clippy.py
+          set -o pipefail
+          {
+            python .github/scripts/fix_block8_migrations.py
+            python .github/scripts/apply_block8_storage.py
+            python .github/scripts/fix_block8_clippy.py
+          } 2>&1 | tee block8-apply.log
 
       - name: Format and validate Rust storage layer
         shell: bash
@@ -41,12 +45,14 @@ jobs:
           cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee ../block8-rust-validation.log
           cargo test --workspace --all-features 2>&1 | tee -a ../block8-rust-validation.log
 
-      - name: Upload validation diagnostics
+      - name: Upload bootstrap diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: block8-rust-validation
-          path: block8-rust-validation.log
+          name: block8-bootstrap-diagnostics
+          path: |
+            block8-apply.log
+            block8-rust-validation.log
           if-no-files-found: warn
           retention-days: 1
 
