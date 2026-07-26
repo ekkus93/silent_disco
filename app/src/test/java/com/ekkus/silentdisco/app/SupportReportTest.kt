@@ -5,17 +5,21 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 
 class SupportReportTest {
     @Test
     fun reportOmitsInviteCodeAndInternalIdentifiers() {
+        val audioUri = mock<Uri>()
+        whenever(audioUri.toString()).thenReturn("content://private/audio/42")
         val state = AppUiState(
             hostForm = HostFormState(
                 sessionName = "Test Session",
                 approvalMode = ApprovalMode.INVITE_CODE,
                 inviteCode = "4827",
                 selectedAudio = SelectedAudioFile(
-                    uri = Uri.parse("content://private/audio/42"),
+                    uri = audioUri,
                     displayName = "audio.flac",
                     mimeType = "audio/flac",
                     sizeBytes = 1024L,
