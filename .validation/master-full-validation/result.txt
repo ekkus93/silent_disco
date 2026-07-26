@@ -1,3 +1,0 @@
-run_id=30204674696
-tested_sha=50633887660af9ad510510fe28e991b41f1ea518
-connected=failure

@@ -1,0 +1,4 @@
+run_id=30205050789
+tested_sha=d2df0241323aa43ff943ca307ebad94ab7276f48
+connected=failure
+master_moved=0
