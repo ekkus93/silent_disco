@@ -95,6 +95,19 @@ class WorkflowNavigationIntegrationTest {
         assertCurrentRoute(AppRoutes.ListenerPlayback)
     }
 
+    @Test
+    fun approvedDevicesReturnsToSettings() {
+        navigateSingleTop(AppRoutes.Home)
+        navigateSingleTop(AppRoutes.Settings)
+        navigateSingleTop(AppRoutes.TrustedDevices)
+
+        assertCurrentRoute(AppRoutes.TrustedDevices)
+        val popped = composeRule.runOnIdle { navController.popBackStack() }
+
+        assertThat(popped).isTrue()
+        assertCurrentRoute(AppRoutes.Settings)
+    }
+
     private fun navigateSingleTop(route: String) {
         composeRule.runOnIdle { navController.navigateSingleTop(route) }
         assertCurrentRoute(route)
@@ -123,6 +136,7 @@ class WorkflowNavigationIntegrationTest {
             AppRoutes.ConnectionHelp,
             AppRoutes.AdvancedDiagnostics,
             AppRoutes.Settings,
+            AppRoutes.TrustedDevices,
         )
     }
 }
