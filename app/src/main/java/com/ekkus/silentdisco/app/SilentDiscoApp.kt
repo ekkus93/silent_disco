@@ -87,6 +87,7 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                     onRequestPermissions = {
                         permissionLauncher.launch(requiredPermissions())
                     },
+                    onRetryStorage = viewModel::retryDomainPersistence,
                     onHostClick = {
                         viewModel.selectRole(AppRole.HOST)
                         navController.navigate(Routes.HostSetup)

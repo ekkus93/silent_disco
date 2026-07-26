@@ -109,8 +109,6 @@ class MainViewModel @JvmOverloads constructor(
     private var pendingSyncCorrelationId: Long? = null
     private var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
     private val localListenerDeviceId = "listener-device"
-    @Volatile
-    private var persistenceReady = false
 
     init {
         initializeDomainPersistence()
@@ -291,34 +289,64 @@ class MainViewModel @JvmOverloads constructor(
         }
         logger.i("approval.approve", "Approving ${request.listenerName}")
         viewModelScope.launch {
-            val delivered = runCatching {
-                wifiDirectService.broadcastControl(
-                    ControlMessage.JoinApproval(
-                        version = 1,
-                        sessionId = sessionId,
-                        listenerId = request.listenerId,
-                        trustedForFuture = _uiState.value.hostForm.rememberApprovedDevices,
-                    ),
-                )
-            }.map { result ->
-                reportHostBroadcastDelivery("send join approval", result, requireAnyPeer = true)
-            }.getOrElse { error ->
-                handleHostControlFailure("send join approval", error)
-                false
+            val outcome = executeJoinApproval(
+                rememberForFuture = _uiState.value.hostForm.rememberApprovedDevices,
+                persistTrust = {
+                    persistTrustedListenerRecord(request.listenerId, request.listenerName)
+                },
+                sendApproval = { trustedForFuture ->
+                    runCatching {
+                        wifiDirectService.broadcastControl(
+                            ControlMessage.JoinApproval(
+                                version = 1,
+                                sessionId = sessionId,
+                                listenerId = request.listenerId,
+                                trustedForFuture = trustedForFuture,
+                            ),
+                        )
+                    }.map { result ->
+                        reportHostBroadcastDelivery(
+                            "send join approval",
+                            result,
+                            requireAnyPeer = true,
+                        )
+                    }.getOrElse { error ->
+                        handleHostControlFailure("send join approval", error)
+                        false
+                    }
+                },
+            )
+
+            if (!outcome.delivered) {
+                outcome.persistenceError?.let { error ->
+                    logger.e(
+                        "storage.trust",
+                        "Trusted-device persistence also failed before approval delivery",
+                        error,
+                    )
+                }
+                return@launch
             }
 
-            if (!delivered) return@launch
-
-            val trustPersisted = if (_uiState.value.hostForm.rememberApprovedDevices) {
-                persistTrustedListener(request.listenerId, request.listenerName)
-            } else {
-                true
+            val persistenceMessage = outcome.persistenceError
+                ?.let(::trustedListenerPersistenceMessage)
+            outcome.persistenceError?.let { error ->
+                logger.e("storage.trust", persistenceMessage.orEmpty(), error)
             }
             _uiState.value = _uiState.value.copy(
-                pendingJoinRequests = _uiState.value.pendingJoinRequests.filterNot { it.requestId == request.requestId },
-                approvedListeners = (_uiState.value.approvedListeners + request.toListenerInfo()).distinctBy { it.deviceId },
-                lastMessage = "${request.listenerName} approved",
-                lastError = if (trustPersisted) null else _uiState.value.lastError,
+                pendingJoinRequests = _uiState.value.pendingJoinRequests.filterNot {
+                    it.requestId == request.requestId
+                },
+                approvedListeners = (
+                    _uiState.value.approvedListeners +
+                        request.toListenerInfo(outcome.trustState)
+                ).distinctBy { it.deviceId },
+                lastMessage = if (persistenceMessage == null) {
+                    "${request.listenerName} approved"
+                } else {
+                    "${request.listenerName} approved for this session only"
+                },
+                lastError = persistenceMessage,
             )
             refreshHostDiagnostics()
         }
@@ -363,41 +391,51 @@ class MainViewModel @JvmOverloads constructor(
             ?.displayName
             ?: listenerId
         viewModelScope.launch {
-            persistTrustedListener(listenerId, displayName)
+            persistTrustedListenerRecord(listenerId, displayName).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(
+                        approvedListeners = _uiState.value.approvedListeners.map {
+                            if (it.deviceId == listenerId) {
+                                it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER)
+                            } else {
+                                it
+                            }
+                        },
+                        lastMessage = "Trusted listener ${listenerId.take(6)}",
+                        lastError = null,
+                    )
+                    refreshHostDiagnostics()
+                },
+                onFailure = ::reportTrustedListenerPersistenceFailure,
+            )
         }
     }
 
-    private suspend fun persistTrustedListener(
+    private suspend fun persistTrustedListenerRecord(
         listenerId: String,
         displayName: String,
-    ): Boolean {
-        if (!requirePersistenceReady("trust a listener")) return false
+    ): Result<Unit> {
+        if (_uiState.value.storageState != StorageInitializationState.READY) {
+            return Result.failure(
+                IllegalStateException(
+                    "Rust storage is not ready to persist trusted-device state",
+                ),
+            )
+        }
         return runCatching {
             domainStore.trustDevice(listenerId, displayName)
-        }.fold(
-            onSuccess = {
-                _uiState.value = _uiState.value.copy(
-                    approvedListeners = _uiState.value.approvedListeners.map {
-                        if (it.deviceId == listenerId) {
-                            it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER)
-                        } else {
-                            it
-                        }
-                    },
-                    lastMessage = "Trusted listener ${listenerId.take(6)}",
-                    lastError = null,
-                )
-                refreshHostDiagnostics()
-                true
-            },
-            onFailure = { error ->
-                val message = error.message ?: "Failed to persist trusted listener"
-                logger.e("storage.trust", message, error)
-                _uiState.value = _uiState.value.copy(lastError = message)
-                refreshHostDiagnostics()
-                false
-            },
-        )
+        }
+    }
+
+    private fun trustedListenerPersistenceMessage(error: Throwable): String =
+        "Could not remember listener; approval remains session-only: " +
+            (error.message ?: "trusted-device persistence failed")
+
+    private fun reportTrustedListenerPersistenceFailure(error: Throwable) {
+        val message = trustedListenerPersistenceMessage(error)
+        logger.e("storage.trust", message, error)
+        _uiState.value = _uiState.value.copy(lastError = message)
+        refreshHostDiagnostics()
     }
 
     fun removeListener(listenerId: String) {
@@ -1235,14 +1273,13 @@ class MainViewModel @JvmOverloads constructor(
                 approved = true,
                 connected = true,
             ),
-            lastMessage = "Join approved",
+            lastMessage = if (message.trustedForFuture) {
+                "Join approved; host remembered this device"
+            } else {
+                "Join approved"
+            },
             lastError = null,
         )
-        if (message.trustedForFuture) {
-            viewModelScope.launch {
-                persistTrustedListener(message.listenerId, "This Android Listener")
-            }
-        }
         refreshListenerDiagnostics()
         requestListenerSyncProbe(source = "Initial clock sync")
     }
@@ -2036,31 +2073,39 @@ class MainViewModel @JvmOverloads constructor(
         )
 
     private fun initializeDomainPersistence() {
+        _uiState.value = _uiState.value.copy(
+            storageState = StorageInitializationState.INITIALIZING,
+            storageError = null,
+            lastMessage = "Initializing persistent storage",
+            lastError = null,
+        )
         viewModelScope.launch {
             runCatching {
                 domainStore.initialize()
             }.onSuccess { stored ->
-                persistenceReady = true
                 val tuning = stored.toAppTuningSettings()
                 _uiState.value = _uiState.value.copy(
                     tuningSettings = tuning,
+                    storageState = StorageInitializationState.READY,
+                    storageError = null,
                     lastMessage = "Persistent settings loaded",
                     lastError = null,
                 )
             }.onFailure { error ->
-                persistenceReady = false
-                val message = error.message ?: "Rust domain persistence failed to initialize"
-                logger.e("storage.initialize", message, error)
-                _uiState.value = _uiState.value.copy(
-                    lastError = "Persistent storage unavailable: $message",
-                )
+                logger.e("storage.initialize", error.message.orEmpty(), error)
+                _uiState.value = _uiState.value.withStorageInitializationFailure(error)
             }
         }
     }
 
+    fun retryDomainPersistence() {
+        if (!_uiState.value.canRetryStorageInitialization()) return
+        initializeDomainPersistence()
+    }
+
     private fun requirePersistenceReady(action: String): Boolean {
-        if (persistenceReady) return true
-        val message = "Persistent storage is not ready; cannot $action."
+        if (_uiState.value.persistentFeaturesEnabled()) return true
+        val message = "${_uiState.value.storageStatusLabel()}; cannot $action."
         _uiState.value = _uiState.value.copy(lastError = message)
         return false
     }
