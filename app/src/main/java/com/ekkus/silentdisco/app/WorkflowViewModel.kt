@@ -42,12 +42,10 @@ class WorkflowViewModel : ViewModel() {
         when (action) {
             JoinApprovalAction.REJECT -> mainViewModel.rejectJoinRequest(request)
             JoinApprovalAction.APPROVE_ONCE -> {
-                mainViewModel.updateHostForm(rememberApprovedDevices = false)
-                mainViewModel.approveJoinRequest(request)
+                mainViewModel.dispatchJoinApproval(request, rememberForFuture = false)
             }
             JoinApprovalAction.ALWAYS_ALLOW -> {
-                mainViewModel.updateHostForm(rememberApprovedDevices = true)
-                mainViewModel.approveJoinRequest(request)
+                mainViewModel.dispatchJoinApproval(request, rememberForFuture = true)
             }
         }
     }
