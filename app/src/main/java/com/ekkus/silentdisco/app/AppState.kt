@@ -39,6 +39,7 @@ enum class TuningField {
     HardResyncThresholdMs,
     SyncDriftThresholdMs,
     ScanWindowMs,
+    ResetDefaults,
 }
 
 data class HostFormState(
@@ -139,6 +140,7 @@ fun JoinRequest.toListenerInfo(
 )
 
 fun TuningSettings.adjust(field: TuningField, direction: Int): TuningSettings {
+    if (field == TuningField.ResetDefaults) return TuningSettings()
     val step = when {
         direction > 0 -> 1
         direction < 0 -> -1
@@ -153,6 +155,7 @@ fun TuningSettings.adjust(field: TuningField, direction: Int): TuningSettings {
         TuningField.HardResyncThresholdMs -> copy(hardResyncThresholdMs = (hardResyncThresholdMs + (step * 20L)).coerceIn(40L, 500L))
         TuningField.SyncDriftThresholdMs -> copy(syncDriftThresholdMs = (syncDriftThresholdMs + (step * 2.0)).coerceIn(4.0, 100.0))
         TuningField.ScanWindowMs -> copy(scanWindowMs = (scanWindowMs + (step * 500L)).coerceIn(1_000L, 10_000L))
+        TuningField.ResetDefaults -> error("ResetDefaults is handled before incremental tuning")
     }
     val lateThreshold = updated.latePacketThresholdMs.coerceAtMost(updated.hardResyncThresholdMs - 20L)
     return updated.copy(
