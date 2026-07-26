@@ -13,6 +13,20 @@ internal object LegacyPreferencesContract {
     const val LATE_PACKET_THRESHOLD_MS = "tuning:latePacketThresholdMs"
     const val HARD_RESYNC_THRESHOLD_MS = "tuning:hardResyncThresholdMs"
     const val SYNC_DRIFT_THRESHOLD_BITS = "tuning:syncDriftThresholdBits"
+    private const val TRUSTED_DEVICE_PREFIX = "trusted:"
 
-    fun trustedDeviceKey(deviceId: String): String = "trusted:$deviceId"
+    val tuningKeys: Set<String> = setOf(
+        SYNC_SAMPLE_WINDOW,
+        SYNC_CADENCE_MS,
+        STARTUP_BUFFER_MS,
+        LATE_PACKET_THRESHOLD_MS,
+        HARD_RESYNC_THRESHOLD_MS,
+        SYNC_DRIFT_THRESHOLD_BITS,
+    )
+
+    fun trustedDeviceKey(deviceId: String): String = "$TRUSTED_DEVICE_PREFIX$deviceId"
+
+    fun trustedDeviceId(key: String): String? = key
+        .takeIf { it.startsWith(TRUSTED_DEVICE_PREFIX) }
+        ?.removePrefix(TRUSTED_DEVICE_PREFIX)
 }
