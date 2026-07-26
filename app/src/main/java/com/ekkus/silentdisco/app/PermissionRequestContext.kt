@@ -17,8 +17,8 @@ enum class PermissionRequestContext(
         explanation = "This lets your phone find Silent Disco sessions near you.",
     ),
     AUDIO_FILE(
-        title = "Allow audio access",
-        explanation = "This lets you choose the music file for your session.",
+        title = "Choose an audio file",
+        explanation = "Android’s file picker will grant Silent Disco access only to the file you choose.",
     ),
 }
 
@@ -37,7 +37,9 @@ fun PermissionRequestContext.requiredPermissions(
             }
         ).distinct()
 
-    PermissionRequestContext.AUDIO_FILE -> listOf(AppPermission.ReadMediaAudio)
+    // ACTION_OPEN_DOCUMENT grants scoped access to the selected URI. Requesting
+    // READ_MEDIA_AUDIO here would expose the broader media library unnecessarily.
+    PermissionRequestContext.AUDIO_FILE -> emptyList()
 }
 
 fun PermissionRequestContext.androidPermissions(
