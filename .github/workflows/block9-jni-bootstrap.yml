@@ -1,0 +1,53 @@
+name: Block 9 JNI Bootstrap
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-commit:
+    if: github.event.pull_request.head.ref == 'agent/rust-storage-block9'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/rust-storage-block9
+          fetch-depth: 0
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Validate JNI bridge and update lockfile
+        id: validate
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo update -p jni --precise 0.21.1 2>&1 | tee ../block9-jni-validation.log
+          cargo fmt --all 2>&1 | tee -a ../block9-jni-validation.log
+          cargo fmt --all -- --check 2>&1 | tee -a ../block9-jni-validation.log
+          cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee -a ../block9-jni-validation.log
+          cargo test --workspace --all-features 2>&1 | tee -a ../block9-jni-validation.log
+      - name: Upload JNI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block9-jni-validation
+          path: block9-jni-validation.log
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Ensure patch hygiene
+        run: git diff --check
+      - name: Remove bootstrap workflow
+        run: rm .github/workflows/block9-jni-bootstrap.yml
+      - name: Commit validated JNI bridge
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add typed Android database JNI bridge'
+          git push origin HEAD:agent/rust-storage-block9
