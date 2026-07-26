@@ -12,6 +12,7 @@ jobs:
   resolve:
     if: github.event.pull_request.head.ref == 'agent/rust-android-storage-block9'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out Block 9 branch
         uses: actions/checkout@v4
