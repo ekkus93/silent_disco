@@ -30,7 +30,7 @@ class TrustedDevicesViewModelTest {
     }
 
     @Test
-    fun refreshLoadsAuthoritativeRustList() = runTest(dispatcher.scheduler) {
+    fun refreshLoadsAuthoritativeRustList() = runTest(dispatcher) {
         val device = RustTrustedDevice("listener-1", "Alex's phone", 100L)
         val store = FakeTrustedDeviceStore(devices = mutableListOf(device))
         val viewModel = TrustedDevicesViewModel(mock<Application>(), store)
@@ -45,7 +45,7 @@ class TrustedDevicesViewModelTest {
     }
 
     @Test
-    fun deletionReloadsRustListBeforeRemovingRowFromState() = runTest(dispatcher.scheduler) {
+    fun deletionReloadsRustListBeforeRemovingRowFromState() = runTest(dispatcher) {
         val removed = RustTrustedDevice("listener-1", "Alex's phone", 100L)
         val remaining = RustTrustedDevice("listener-2", "Riley's phone", 200L)
         val store = FakeTrustedDeviceStore(devices = mutableListOf(removed, remaining))
@@ -65,7 +65,7 @@ class TrustedDevicesViewModelTest {
     }
 
     @Test
-    fun deleteFailureRetainsLastAuthoritativeListAndShowsError() = runTest(dispatcher.scheduler) {
+    fun deleteFailureRetainsLastAuthoritativeListAndShowsError() = runTest(dispatcher) {
         val device = RustTrustedDevice("listener-1", "Alex's phone", 100L)
         val store = FakeTrustedDeviceStore(
             devices = mutableListOf(device),
