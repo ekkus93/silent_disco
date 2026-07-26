@@ -1,0 +1,51 @@
+name: Block 8 record formatting
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.event.pull_request.head.ref == 'docs/rust-storage-block8-record'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out documentation branch
+        uses: actions/checkout@v4
+        with:
+          ref: docs/rust-storage-block8-record
+          fetch-depth: 0
+
+      - name: Normalize memory entry spacing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("memory.md")
+          text = path.read_text(encoding="utf-8")
+          top_old = "# memory.md — `silent_disco`\n\n\n## 2026-07-26T02:32:00Z"
+          top_new = "# memory.md — `silent_disco`\n\n## 2026-07-26T02:32:00Z"
+          separator_old = "explicit Block 9 work with no fallback to duplicate Kotlin persistence.\n## 2026-07-25T23:27:11Z"
+          separator_new = "explicit Block 9 work with no fallback to duplicate Kotlin persistence.\n\n## 2026-07-25T23:27:11Z"
+          if text.count(top_old) != 1:
+              raise RuntimeError("top spacing marker did not match exactly")
+          if text.count(separator_old) != 1:
+              raise RuntimeError("section separator marker did not match exactly")
+          path.write_text(
+              text.replace(top_old, top_new).replace(separator_old, separator_new),
+              encoding="utf-8",
+          )
+          PY
+          git diff --check
+
+      - name: Remove workflow and commit formatting fix
+        run: |
+          rm .github/workflows/block8-record-format.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Block 8 memory record spacing"
+          git push origin HEAD:docs/rust-storage-block8-record
