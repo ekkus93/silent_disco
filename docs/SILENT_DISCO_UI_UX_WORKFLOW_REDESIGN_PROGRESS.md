@@ -56,10 +56,7 @@ This record distinguishes implemented behavior and deterministic source coverage
 - Duplicate actions are disabled while a request operation is active, and reported failures unlock retry.
 - Connected-listener Disconnect is placed in an overflow menu.
 - Durable trust remains persist-before-advertise and visibly downgrades to session-only approval on persistence failure.
-
-### Remaining approval API refinement
-
-- `WorkflowViewModel` still stages the requested approval lifetime through `HostFormState` before invoking `MainViewModel.approveJoinRequest`. The next production-code slice should make approval lifetime an explicit argument captured by the approval command itself, so concurrent requests cannot depend on shared mutable form state.
+- Approval lifetime now travels through an explicit main-thread approval command. The command scopes the legacy form flag to one synchronous dispatch and restores the previous presentation value in `finally`, including the exception path.
 
 ## Implemented discovery and listener join flow
 
@@ -89,18 +86,21 @@ This record distinguishes implemented behavior and deterministic source coverage
 - Resynchronize audio is enabled only when valid.
 - Recent operation failures, including tuning persistence failures, remain visible.
 - Support reports redact invite codes, session identifiers, device identifiers, and selected-file URIs.
-- Reset tuning to defaults is implemented as one complete default `TuningSettings` value persisted through the Rust-owned store before UI state is updated.
-- The reset control is enabled only when expert controls are enabled and the current settings differ from defaults.
+- Reset tuning to defaults persists one complete default `TuningSettings` record through the Rust-owned store before updating UI state.
+- The reset control is enabled only when expert controls are enabled and current settings differ from defaults.
 
 ## Implemented Settings and approved-device management
 
 - Settings shows nearby-device readiness, local app-data readiness, troubleshooting, Advanced Diagnostics, and version/build information.
 - Readiness uses text and icons rather than color alone.
 - Raw storage errors are not shown on the normal Settings screen.
-- Rust/JNI now exposes authoritative trusted-device list and delete operations.
+- Rust/JNI exposes authoritative trusted-device list and delete operations with cache invalidation after writes.
 - Kotlin decodes those results through the Android Rust domain store.
-- A lifecycle-owned approved-device state holder loads, removes, refreshes, and surfaces failures.
-- Settings enables an approved-device management destination backed by the authoritative Rust store.
+- A lifecycle-owned approved-device state holder loads, removes, refreshes, preserves coroutine cancellation, and surfaces actual failures.
+- Settings provides an approved-device management destination backed by the authoritative Rust store.
+- Approved-device removal requires confirmation and reloads the authoritative Rust list before changing displayed rows.
+- Internal device IDs are not displayed. Legacy records whose stored display name equals the internal key render as `Approved phone` in both the list and confirmation.
+- Loading, empty, error, populated, and deleting states are scrollable and adaptive below the app bar.
 
 ## Implemented invitation and reusable components
 
@@ -119,10 +119,11 @@ This record distinguishes implemented behavior and deterministic source coverage
 - Invite-code generation and validation.
 - Contextual permission selection.
 - Approval progress and waiting-duration labels.
+- Scoped approval-lifetime order and restoration, including failure restoration.
 - Playback and Connection Help mappings.
 - Diagnostics/support-report redaction.
 - Atomic tuning reset command and UI callback behavior.
-- Approved-device state-holder loading and removal behavior.
+- Approved-device state-holder loading, removal, failure, and cancellation behavior.
 
 ### Compose and navigation tests
 
@@ -132,18 +133,31 @@ This record distinguishes implemented behavior and deterministic source coverage
 - Host-start permission and transport failures.
 - Dashboard approval progress and duplicate-action disabling.
 - Discovery, playback, Connection Help, diagnostics, Settings, and confirmation states.
-- Production route helpers for single-top navigation, clearing workflows, and recovery back navigation.
+- Production route helpers for single-top navigation, clearing workflows, recovery back navigation, and Settings → Approved devices → Settings.
 - A controllable effect holder driving the real navigation helpers, confirmations, and transient messages.
-- Adaptive coverage for Home, Host Music, Host Access, Host Dashboard, Session Join, listener playback, Nearby Sessions, Connection Help, Advanced Diagnostics, Settings, and startup failures across 200% font, small-window, landscape, and tablet cases.
+- Approved-device identifier redaction, legacy-name sanitization, confirmation, and internal-key callback behavior.
+- Adaptive coverage for Home, Host Music, Host Access, Host Dashboard, Session Join, listener playback, Nearby Sessions, Connection Help, Advanced Diagnostics, Settings, Approved devices, and startup failures across 200% font, small-window, landscape, and tablet cases.
 
 ### Compose previews
 
-- Startup, Home, host setup, Host Dashboard tabs/states, discovery, join states, listener playback, Connection Help, Advanced Diagnostics, Settings, and destructive confirmations.
+- Startup, Home, host setup, Host Dashboard tabs/states, discovery, join states, listener playback, Connection Help, Advanced Diagnostics, Settings, Approved devices, and destructive confirmations.
+- Approved-device previews cover loading, empty, populated, deleting, and failure states.
 - Explicit preview seams cover selected Host Dashboard tabs and enabled expert tuning without duplicating production state ownership.
+
+## Post-validation cleanup candidates
+
+The following legacy PoC composables have no production imports and are candidates for deletion only after the replacement workflow passes the complete CI matrix:
+
+- `feature/home/HomeScreen.kt`
+- `feature/host/HostSetupScreen.kt`
+- `feature/host/HostControlScreen.kt`
+- `feature/listener/DiscoverSessionsScreen.kt`
+- `feature/listener/JoinProgressScreen.kt`
+- `feature/listener/ListenerPlaybackScreen.kt`
+- `feature/diagnostics/AdvancedDiagnosticsScreen.kt`
 
 ## Remaining major work
 
-1. Observe the complete permanent Rust/Android CI matrix for the latest `master` revision and fix any reported compile, lint, unit-test, packaging, or instrumentation-APK failure.
-2. Pass approval lifetime directly into `MainViewModel.approveJoinRequest` instead of staging it through mutable host-form state.
-3. Complete physical two-device host/listener acceptance testing, including discovery cancellation, approval modes, playback, recovery, and destructive exits.
-4. Remove obsolete proof-of-concept screens only after the replacement workflow passes the complete validation matrix.
+1. Observe the complete permanent Rust/Android CI matrix for the latest `master` revision and fix any compile, lint, unit-test, packaging, or instrumentation-APK failure.
+2. Complete physical two-device host/listener acceptance testing, including discovery cancellation, approval modes, playback, recovery, approved-device removal, and destructive exits.
+3. Delete the cataloged obsolete proof-of-concept screens only after the replacement workflow passes the complete validation matrix.
