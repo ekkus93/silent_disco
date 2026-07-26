@@ -1,0 +1,154 @@
+name: Block 9 full validation
+
+on:
+  push:
+    branches:
+      - agent/fix-block9-trust-storage-state
+
+permissions:
+  contents: write
+
+concurrency:
+  group: block9-full-validation
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-block9-trust-storage-state
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK and NDK packages
+        shell: bash
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.97.1
+
+      - name: Check Rust formatting
+        run: |
+          cd rust
+          cargo fmt --all -- --check
+
+      - name: Run strict Rust Clippy
+        run: |
+          cd rust
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run all Rust tests
+        run: |
+          cd rust
+          cargo test --workspace --all-features
+
+      - name: Build every Android variant and instrumentation APK
+        run: |
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain
+
+      - name: Verify JNI packaging for every supported ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "$apk"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "$apk" "lib/$abi/libsilent_disco_ffi.so" \
+                | grep -Fx "lib/$abi/libsilent_disco_ffi.so"
+            done
+          done
+
+      - name: Run all Android unit tests
+        run: ./gradlew test --stacktrace --console=plain
+
+      - name: Run Android lint
+        run: ./gradlew lintDebug --stacktrace --console=plain
+
+      - name: Run connected Android instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: ./gradlew connectedDebugAndroidTest --stacktrace --console=plain
+
+      - name: Record successful validation and remove temporary workflow
+        shell: bash
+        env:
+          VALIDATION_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          run_id = os.environ["VALIDATION_RUN_ID"]
+          timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+          memory_path = Path("memory.md")
+          memory = memory_path.read_text(encoding="utf-8")
+          heading = "# memory.md — `silent_disco`\n\n"
+          if not memory.startswith(heading):
+              raise RuntimeError("memory.md heading changed unexpectedly")
+          entry = f'''## {timestamp} - GPT-5.6 Thinking - Block 9 persistence correctness repaired
+
+          - Corrected the host approval sequence so Rust durable trust commits before `trustedForFuture = true` can be sent. A failed write is surfaced and the current approval is explicitly downgraded to session-only.
+          - The approved-listener UI model now reflects the committed trust result, and listener devices no longer persist themselves in their own trusted-device database when a host remembers them.
+          - Added explicit initializing, ready, recoverable-failure, and fatal-failure storage states. Home displays the state, disables Host/Join until ready, and offers retry only for recoverable failures.
+          - Added unit tests for trust ordering/downgrade and storage classification. Added a connected instrumentation test that tampers a real migration checksum and verifies native status `-103` becomes a fatal visible UI state.
+          - Full validation run `{run_id}` passed Rust formatting, strict Clippy, all Rust tests, Android debug/PoC-debug/release and instrumentation builds, four-ABI JNI packaging, all Android unit tests, Android lint, and `connectedDebugAndroidTest` on an API 35 x86_64 emulator.
+          - Physical-device execution remains **NOT RUN**. Emulator validation does not satisfy the physical-device acceptance gate.
+
+          '''
+          memory_path.write_text(heading + entry + memory[len(heading):], encoding="utf-8")
+
+          todo_path = Path("docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md")
+          todo = todo_path.read_text(encoding="utf-8")
+          old = "**Implementation status:** Complete. PR #35 merged as `5fc5ae966b1157b2cd5887c10d3522da81856f8f`. Permanent CI run `30187155765` passed Rust formatting, strict Clippy, all Rust tests, Android debug/PoC-debug/release and instrumentation-APK builds, four-ABI JNI packaging, Android unit tests, and Android lint. `AndroidRustDomainStoreInstrumentedTest` is compiled and packaged but physical-device execution is **NOT RUN**; device acceptance remains open until its command and device details are recorded."
+          new = f"**Implementation status:** Complete after corrective audit PR #37. The original implementation merged in PR #35 as `5fc5ae966b1157b2cd5887c10d3522da81856f8f`; the audit found and repaired premature durable-trust reporting, contradictory listener trust state, listener-side self-persistence, and missing fatal/recoverable storage presentation. Full validation run `{run_id}` passed Rust formatting, strict Clippy, all Rust tests, Android debug/PoC-debug/release and instrumentation-APK builds, four-ABI JNI packaging, all Android unit tests, Android lint, and `connectedDebugAndroidTest` on an API 35 x86_64 emulator. Physical-device execution is **NOT RUN**; device acceptance remains open until its command and device details are recorded."
+          if todo.count(old) != 1:
+              raise RuntimeError("Block 9 implementation status changed unexpectedly")
+          todo_path.write_text(todo.replace(old, new, 1), encoding="utf-8")
+          PY
+
+          rm .github/workflows/block9-full-validation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memory.md docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md \
+            .github/workflows/block9-full-validation.yml
+          git commit -m "Record complete Block 9 validation"
+          git push origin HEAD:agent/fix-block9-trust-storage-state
