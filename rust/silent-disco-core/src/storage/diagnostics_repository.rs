@@ -93,12 +93,10 @@ pub(crate) fn export(
              FROM diagnostic_runs
              ORDER BY started_at_ms ASC, run_id ASC",
         )
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
-    let rows = statement.query_map([], read_raw).map_err(|error| {
-        map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-    })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map([], read_raw)
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     let runs = collect_rows(rows, schema_version)?;
     Ok(DiagnosticExport {
         schema_version,
@@ -115,9 +113,7 @@ fn verify_json(
         .query_row("SELECT json_valid(?1)", [summary_json], |row| {
             row.get::<_, i64>(0)
         })
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     if valid != 1 {
         return Err(invalid_model(
             StorageOperation::Transaction,
@@ -142,14 +138,10 @@ fn query_for_session(
              ORDER BY started_at_ms DESC, run_id ASC
              LIMIT ?2",
         )
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     let rows = statement
         .query_map(params![session_id.as_str(), i64::from(limit)], read_raw)
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     collect_rows(rows, schema_version)
 }
 
@@ -165,14 +157,10 @@ fn query_all_with_limit(
              ORDER BY started_at_ms DESC, run_id ASC
              LIMIT ?1",
         )
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     let rows = statement
         .query_map([i64::from(limit)], read_raw)
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     collect_rows(rows, schema_version)
 }
 
@@ -203,7 +191,10 @@ fn read_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawDiagnosticRun> {
     })
 }
 
-fn decode(raw: RawDiagnosticRun, schema_version: u32) -> Result<DiagnosticRunSummary, StorageError> {
+fn decode(
+    raw: RawDiagnosticRun,
+    schema_version: u32,
+) -> Result<DiagnosticRunSummary, StorageError> {
     let run_id = DiagnosticRunId::new(raw.run_id).map_err(|error| {
         corrupt_row(
             StorageOperation::Query,

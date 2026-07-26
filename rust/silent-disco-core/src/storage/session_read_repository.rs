@@ -43,9 +43,7 @@ pub(crate) fn get(
             read_raw,
         )
         .optional()
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     raw.map(|value| decode(value, schema_version)).transpose()
 }
 

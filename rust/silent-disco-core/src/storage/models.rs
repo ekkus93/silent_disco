@@ -1,9 +1,7 @@
 use core::{fmt, str::FromStr};
 use std::error::Error;
 
-use crate::domain::{
-    AppRole, DeviceId, DiagnosticRunId, SessionId, TrustState, TuningSettings,
-};
+use crate::domain::{AppRole, DeviceId, DiagnosticRunId, SessionId, TrustState, TuningSettings};
 
 pub const MAX_DISPLAY_NAME_BYTES: usize = 256;
 pub const MAX_PRIVATE_KEY_REFERENCE_BYTES: usize = 512;
@@ -56,15 +54,15 @@ impl TrustedDevice {
     /// Returns a stable model-validation failure for unsupported values.
     pub fn validate(&self) -> Result<(), StorageModelValidationError> {
         validate_human_name(&self.display_name, MAX_DISPLAY_NAME_BYTES)
-            .map_err(|_| StorageModelValidationError::DisplayName)?;
-        if let Some(public_key) = &self.public_key {
-            if public_key.is_empty() || public_key.len() > MAX_PUBLIC_KEY_BYTES {
-                return Err(StorageModelValidationError::PublicKey);
-            }
+            .map_err(|()| StorageModelValidationError::DisplayName)?;
+        if let Some(public_key) = &self.public_key
+            && (public_key.is_empty() || public_key.len() > MAX_PUBLIC_KEY_BYTES)
+        {
+            return Err(StorageModelValidationError::PublicKey);
         }
         if let Some(reference) = &self.private_key_ref {
             validate_reference(reference, MAX_PRIVATE_KEY_REFERENCE_BYTES)
-                .map_err(|_| StorageModelValidationError::PrivateKeyReference)?;
+                .map_err(|()| StorageModelValidationError::PrivateKeyReference)?;
         }
         validate_sql_millis(self.first_seen_ms, StorageModelValidationError::Timestamp)?;
         validate_sql_millis(self.last_seen_ms, StorageModelValidationError::Timestamp)?;
@@ -144,7 +142,7 @@ impl SessionStart {
     /// Returns a stable model-validation failure for unsupported values.
     pub fn validate(&self) -> Result<(), StorageModelValidationError> {
         validate_human_name(&self.session_name, MAX_SESSION_NAME_BYTES)
-            .map_err(|_| StorageModelValidationError::SessionName)?;
+            .map_err(|()| StorageModelValidationError::SessionName)?;
         validate_sql_millis(self.started_at_ms, StorageModelValidationError::Timestamp)
     }
 }
@@ -185,10 +183,10 @@ impl SessionEnd {
                     .as_deref()
                     .ok_or(StorageModelValidationError::FailureCode)?;
                 validate_reference(code, MAX_FAILURE_CODE_BYTES)
-                    .map_err(|_| StorageModelValidationError::FailureCode)?;
+                    .map_err(|()| StorageModelValidationError::FailureCode)?;
                 if let Some(message) = &self.failure_message {
                     validate_bounded_text(message, MAX_FAILURE_MESSAGE_BYTES)
-                        .map_err(|_| StorageModelValidationError::FailureMessage)?;
+                        .map_err(|()| StorageModelValidationError::FailureMessage)?;
                 }
             }
             SessionOutcome::Completed | SessionOutcome::Cancelled => {
@@ -332,9 +330,7 @@ pub(crate) fn validate_sql_millis(
 }
 
 fn validate_human_name(value: &str, maximum_bytes: usize) -> Result<(), ()> {
-    if value.trim().is_empty()
-        || value.len() > maximum_bytes
-        || value.chars().any(char::is_control)
+    if value.trim().is_empty() || value.len() > maximum_bytes || value.chars().any(char::is_control)
     {
         return Err(());
     }

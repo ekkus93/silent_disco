@@ -6,7 +6,7 @@ use super::error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_
 
 pub const LATEST_SCHEMA_VERSION: u32 = 1;
 
-const MIGRATION_V1_SQL: &str = r#"
+const MIGRATION_V1_SQL: &str = r"
 CREATE TABLE schema_migrations (
     version       INTEGER PRIMARY KEY CHECK (version > 0),
     applied_at_ms INTEGER NOT NULL CHECK (applied_at_ms >= 0),
@@ -103,7 +103,7 @@ CREATE INDEX idx_session_history_outcome
 
 CREATE INDEX idx_diagnostic_runs_session
     ON diagnostic_runs(session_id, started_at_ms DESC, run_id);
-"#;
+";
 
 #[derive(Debug, Clone, Copy)]
 struct Migration {
@@ -136,9 +136,7 @@ pub(crate) struct MigrationReport {
     pub records: Vec<MigrationRecord>,
 }
 
-pub(crate) fn run_migrations(
-    connection: &mut Connection,
-) -> Result<MigrationReport, StorageError> {
+pub(crate) fn run_migrations(connection: &mut Connection) -> Result<MigrationReport, StorageError> {
     run_migration_catalog(connection, MIGRATIONS)
 }
 
@@ -205,10 +203,7 @@ fn validate_catalog(migrations: &[Migration]) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn apply_migration(
-    connection: &mut Connection,
-    migration: Migration,
-) -> Result<(), StorageError> {
+fn apply_migration(connection: &mut Connection, migration: Migration) -> Result<(), StorageError> {
     let applied_at_ms = current_unix_millis()?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -252,11 +247,7 @@ fn apply_migration(
             )
         })?;
     transaction.commit().map_err(|error| {
-        map_sqlite_error(
-            StorageOperation::Migration,
-            Some(migration.version),
-            &error,
-        )
+        map_sqlite_error(StorageOperation::Migration, Some(migration.version), &error)
     })
 }
 
@@ -314,11 +305,7 @@ fn read_migration_records(
              ORDER BY version ASC",
         )
         .map_err(|error| {
-            map_sqlite_error(
-                StorageOperation::Migration,
-                Some(schema_version),
-                &error,
-            )
+            map_sqlite_error(StorageOperation::Migration, Some(schema_version), &error)
         })?;
     let rows = statement
         .query_map([], |row| {
@@ -329,21 +316,13 @@ fn read_migration_records(
             ))
         })
         .map_err(|error| {
-            map_sqlite_error(
-                StorageOperation::Migration,
-                Some(schema_version),
-                &error,
-            )
+            map_sqlite_error(StorageOperation::Migration, Some(schema_version), &error)
         })?;
 
     let mut records = Vec::new();
     for row in rows {
         let (version, applied_at_ms, checksum) = row.map_err(|error| {
-            map_sqlite_error(
-                StorageOperation::Migration,
-                Some(schema_version),
-                &error,
-            )
+            map_sqlite_error(StorageOperation::Migration, Some(schema_version), &error)
         })?;
         let version = u32::try_from(version).map_err(|_| {
             migration_failure(
@@ -371,10 +350,7 @@ fn read_user_version(connection: &Connection) -> Result<u32, StorageError> {
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| map_sqlite_error(StorageOperation::Migration, None, &error))?;
     u32::try_from(version).map_err(|_| {
-        migration_failure(
-            "database user_version is outside the supported range",
-            None,
-        )
+        migration_failure("database user_version is outside the supported range", None)
     })
 }
 
@@ -393,10 +369,7 @@ fn current_unix_millis() -> Result<i64, StorageError> {
     })
 }
 
-fn migration_failure(
-    message: impl Into<String>,
-    schema_version: Option<u32>,
-) -> StorageError {
+fn migration_failure(message: impl Into<String>, schema_version: Option<u32>) -> StorageError {
     StorageError::new(
         StorageErrorKind::Migration,
         StorageOperation::Migration,
@@ -405,7 +378,7 @@ fn migration_failure(
     )
 }
 
-const fn fnv1a64(bytes: &[u8]) -> u64 {
+fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     let mut index = 0;
     while index < bytes.len() {
@@ -426,12 +399,12 @@ mod tests {
     };
     use crate::storage::{StorageErrorKind, test_support::TestDatabasePath};
 
-    const BAD_MIGRATION_SQL: &str = r#"
+    const BAD_MIGRATION_SQL: &str = r"
 CREATE TABLE should_rollback (
     id INTEGER PRIMARY KEY
 ) STRICT;
 THIS IS NOT VALID SQL;
-"#;
+";
 
     #[test]
     fn compiled_catalog_matches_the_declared_latest_version() {
@@ -488,7 +461,9 @@ THIS IS NOT VALID SQL;
             .expect("query schema");
         assert_eq!(rolled_back, None);
         let migration_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .expect("count migration rows");
         assert_eq!(migration_count, 1);
     }

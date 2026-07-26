@@ -65,9 +65,7 @@ impl TuningSettings {
     ///
     /// Returns a stable validation error when any field is unsupported.
     pub fn validate(&self) -> Result<(), TuningSettingsValidationError> {
-        if !(MIN_SYNC_SAMPLE_WINDOW..=MAX_SYNC_SAMPLE_WINDOW)
-            .contains(&self.sync_sample_window)
-        {
+        if !(MIN_SYNC_SAMPLE_WINDOW..=MAX_SYNC_SAMPLE_WINDOW).contains(&self.sync_sample_window) {
             return Err(TuningSettingsValidationError::SyncSampleWindow);
         }
         if !(MIN_SYNC_CADENCE_MS..=MAX_SYNC_CADENCE_MS).contains(&self.sync_cadence_ms) {

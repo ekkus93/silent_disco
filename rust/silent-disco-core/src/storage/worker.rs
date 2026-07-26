@@ -7,9 +7,15 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use crate::domain::{DeviceId, SessionId};
+
 use super::{
     database::{DatabaseCheckpoint, DatabaseConfig, DatabaseConnection, DatabaseMetadata},
     error::{StorageError, StorageErrorKind, StorageOperation},
+    models::{
+        DiagnosticExport, DiagnosticQuery, DiagnosticRunSummary, SessionEnd, SessionHistory,
+        SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
+    },
 };
 
 type DatabaseReply<T> = SyncSender<Result<T, StorageError>>;
@@ -17,6 +23,55 @@ type DatabaseReply<T> = SyncSender<Result<T, StorageError>>;
 enum DatabaseCommand {
     ReadMetadata {
         reply: DatabaseReply<DatabaseMetadata>,
+    },
+    LoadSettings {
+        reply: DatabaseReply<Option<StoredSettings>>,
+    },
+    SaveSettings {
+        settings: StoredSettings,
+        reply: DatabaseReply<()>,
+    },
+    ListTrustedDevices {
+        reply: DatabaseReply<Vec<TrustedDevice>>,
+    },
+    GetTrustedDevice {
+        device_id: DeviceId,
+        reply: DatabaseReply<Option<TrustedDevice>>,
+    },
+    UpsertTrustedDevice {
+        device: TrustedDevice,
+        reply: DatabaseReply<()>,
+    },
+    DeleteTrustedDevice {
+        device_id: DeviceId,
+        reply: DatabaseReply<bool>,
+    },
+    BeginSession {
+        session: SessionStart,
+        reply: DatabaseReply<()>,
+    },
+    UpdateSession {
+        update: SessionUpdate,
+        reply: DatabaseReply<bool>,
+    },
+    EndSession {
+        end: SessionEnd,
+        reply: DatabaseReply<bool>,
+    },
+    GetSession {
+        session_id: SessionId,
+        reply: DatabaseReply<Option<SessionHistory>>,
+    },
+    InsertDiagnosticRun {
+        run: DiagnosticRunSummary,
+        reply: DatabaseReply<()>,
+    },
+    QueryDiagnosticRuns {
+        query: DiagnosticQuery,
+        reply: DatabaseReply<Vec<DiagnosticRunSummary>>,
+    },
+    ExportDiagnosticRuns {
+        reply: DatabaseReply<DiagnosticExport>,
     },
     Checkpoint {
         reply: DatabaseReply<DatabaseCheckpoint>,
@@ -47,12 +102,174 @@ impl DatabaseClient {
     ///
     /// # Errors
     ///
-    /// Returns `StorageBusy` when the bounded queue is full and a worker error
-    /// when the request cannot be processed. A rejected request is never dropped
-    /// after being reported as accepted.
+    /// Returns a visible queue, query, or worker lifecycle error.
     pub fn metadata(&self) -> Result<DatabaseMetadata, StorageError> {
         self.request(StorageOperation::ReadMetadata, |reply| {
             DatabaseCommand::ReadMetadata { reply }
+        })
+    }
+
+    /// Loads persisted settings when the singleton settings row exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, query, corruption, or worker lifecycle error.
+    pub fn load_settings(&self) -> Result<Option<StoredSettings>, StorageError> {
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::LoadSettings { reply }
+        })
+    }
+
+    /// Validates and transactionally saves the singleton settings row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, transaction, constraint, or worker error.
+    pub fn save_settings(&self, settings: &StoredSettings) -> Result<(), StorageError> {
+        let settings = settings.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::SaveSettings { settings, reply }
+        })
+    }
+
+    /// Lists trusted devices in deterministic display-name order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, query, corruption, or worker lifecycle error.
+    pub fn list_trusted_devices(&self) -> Result<Vec<TrustedDevice>, StorageError> {
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::ListTrustedDevices { reply }
+        })
+    }
+
+    /// Loads one trusted device by validated identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, query, corruption, or worker lifecycle error.
+    pub fn get_trusted_device(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<Option<TrustedDevice>, StorageError> {
+        let device_id = device_id.clone();
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::GetTrustedDevice { device_id, reply }
+        })
+    }
+
+    /// Validates and transactionally inserts or updates trusted-device metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, transaction, constraint, or worker error.
+    pub fn upsert_trusted_device(&self, device: &TrustedDevice) -> Result<(), StorageError> {
+        let device = device.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::UpsertTrustedDevice { device, reply }
+        })
+    }
+
+    /// Deletes one trusted-device row and reports whether it existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, transaction, or worker lifecycle error.
+    pub fn delete_trusted_device(&self, device_id: &DeviceId) -> Result<bool, StorageError> {
+        let device_id = device_id.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::DeleteTrustedDevice { device_id, reply }
+        })
+    }
+
+    /// Begins a new active session-history record.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, transaction, constraint, or worker error.
+    pub fn begin_session(&self, session: &SessionStart) -> Result<(), StorageError> {
+        let session = session.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::BeginSession { session, reply }
+        })
+    }
+
+    /// Updates mutable counters for an active session.
+    ///
+    /// Returns `false` when no active session has the requested identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, transaction, or worker lifecycle error.
+    pub fn update_session(&self, update: &SessionUpdate) -> Result<bool, StorageError> {
+        let update = update.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::UpdateSession { update, reply }
+        })
+    }
+
+    /// Ends one active session and reports whether an active row was updated.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, transaction, constraint, or worker error.
+    pub fn end_session(&self, end: &SessionEnd) -> Result<bool, StorageError> {
+        let end = end.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::EndSession { end, reply }
+        })
+    }
+
+    /// Loads one session-history row by identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, query, corruption, or worker lifecycle error.
+    pub fn get_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<SessionHistory>, StorageError> {
+        let session_id = session_id.clone();
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::GetSession { session_id, reply }
+        })
+    }
+
+    /// Validates and transactionally inserts one summarized diagnostic run.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, transaction, constraint, or worker error.
+    pub fn insert_diagnostic_run(&self, run: &DiagnosticRunSummary) -> Result<(), StorageError> {
+        let run = run.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::InsertDiagnosticRun { run, reply }
+        })
+    }
+
+    /// Queries a bounded set of diagnostic summaries.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, query, corruption, or worker error.
+    pub fn query_diagnostic_runs(
+        &self,
+        query: &DiagnosticQuery,
+    ) -> Result<Vec<DiagnosticRunSummary>, StorageError> {
+        let query = query.clone();
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::QueryDiagnosticRuns { query, reply }
+        })
+    }
+
+    /// Exports every diagnostic summary in deterministic chronological order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, query, corruption, or worker lifecycle error.
+    pub fn export_diagnostic_runs(&self) -> Result<DiagnosticExport, StorageError> {
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::ExportDiagnosticRuns { reply }
         })
     }
 
@@ -137,13 +354,13 @@ pub struct DatabaseWorker {
 }
 
 impl DatabaseWorker {
-    /// Starts a worker and does not return until `SQLite` is open and every
-    /// required connection setting has been verified.
+    /// Starts a worker and does not return until `SQLite` is open, migrations
+    /// are complete, and every required connection setting has been verified.
     ///
     /// # Errors
     ///
-    /// Returns a structured configuration, thread-start, open, pragma, or
-    /// corruption failure. Failed initialization never produces a usable client.
+    /// Returns a structured configuration, thread-start, open, pragma, migration,
+    /// integrity, or corruption failure. Failed initialization produces no client.
     pub fn start(config: DatabaseConfig) -> Result<Self, StorageError> {
         config.validate()?;
         let (command_sender, command_receiver) = sync_channel(config.queue_capacity);
@@ -330,79 +547,410 @@ fn run_database_commands(
                 schema_version.load(Ordering::Acquire),
             );
         };
-        match command {
-            DatabaseCommand::ReadMetadata { reply } => {
-                let result = connection
-                    .as_ref()
-                    .map(DatabaseConnection::metadata)
-                    .ok_or_else(|| {
-                        StorageError::worker_stopped(
-                            StorageOperation::ReadMetadata,
-                            Some(schema_version.load(Ordering::Acquire)),
-                        )
-                    });
-                if reply.send(result.clone()).is_err() {
-                    return close_after_reply_failure(
-                        connection.take(),
-                        result.err(),
-                        StorageOperation::ReadMetadata,
-                        schema_version.load(Ordering::Acquire),
-                    );
-                }
-            }
-            DatabaseCommand::Checkpoint { reply } => {
-                let result = connection
-                    .as_ref()
-                    .ok_or_else(|| {
-                        StorageError::worker_stopped(
-                            StorageOperation::Checkpoint,
-                            Some(schema_version.load(Ordering::Acquire)),
-                        )
-                    })
-                    .and_then(DatabaseConnection::checkpoint);
-                if reply.send(result.clone()).is_err() {
-                    return close_after_reply_failure(
-                        connection.take(),
-                        result.err(),
-                        StorageOperation::Checkpoint,
-                        schema_version.load(Ordering::Acquire),
-                    );
-                }
-            }
-            DatabaseCommand::Shutdown { reply } => {
-                let result = connection.take().map_or_else(
-                    || {
-                        Err(StorageError::worker_stopped(
-                            StorageOperation::StopWorker,
-                            Some(schema_version.load(Ordering::Acquire)),
-                        ))
-                    },
-                    DatabaseConnection::checkpoint_and_close,
-                );
-                if reply.send(result.clone()).is_err() {
-                    return match result {
-                        Ok(()) => Err(StorageError::reply_disconnected(
-                            StorageOperation::StopWorker,
-                            schema_version.load(Ordering::Acquire),
-                        )),
-                        Err(error) => Err(error),
-                    };
-                }
-                return result;
-            }
-            #[cfg(test)]
-            DatabaseCommand::BlockForQueueTest { entered, release } => {
-                if entered.send(()).is_err() || release.recv().is_err() {
-                    return close_after_reply_failure(
-                        connection.take(),
-                        None,
-                        StorageOperation::Query,
-                        schema_version.load(Ordering::Acquire),
-                    );
-                }
-            }
+        if process_command(command, &mut connection, schema_version)? {
+            return Ok(());
         }
     }
+}
+
+fn process_command(
+    command: DatabaseCommand,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: &Arc<AtomicU32>,
+) -> Result<bool, StorageError> {
+    let version = schema_version.load(Ordering::Acquire);
+    match command {
+        DatabaseCommand::ReadMetadata { reply } => {
+            process_read_metadata(&reply, connection, version)?;
+        }
+        DatabaseCommand::LoadSettings { reply } => {
+            process_load_settings(&reply, connection, version)?;
+        }
+        DatabaseCommand::SaveSettings { settings, reply } => {
+            process_save_settings(&reply, &settings, connection, version)?;
+        }
+        DatabaseCommand::ListTrustedDevices { reply } => {
+            process_list_trusted_devices(&reply, connection, version)?;
+        }
+        DatabaseCommand::GetTrustedDevice { device_id, reply } => {
+            process_get_trusted_device(&reply, &device_id, connection, version)?;
+        }
+        DatabaseCommand::UpsertTrustedDevice { device, reply } => {
+            process_upsert_trusted_device(&reply, &device, connection, version)?;
+        }
+        DatabaseCommand::DeleteTrustedDevice { device_id, reply } => {
+            process_delete_trusted_device(&reply, &device_id, connection, version)?;
+        }
+        DatabaseCommand::BeginSession { session, reply } => {
+            process_begin_session(&reply, &session, connection, version)?;
+        }
+        DatabaseCommand::UpdateSession { update, reply } => {
+            process_update_session(&reply, &update, connection, version)?;
+        }
+        DatabaseCommand::EndSession { end, reply } => {
+            process_end_session(&reply, &end, connection, version)?;
+        }
+        DatabaseCommand::GetSession { session_id, reply } => {
+            process_get_session(&reply, &session_id, connection, version)?;
+        }
+        DatabaseCommand::InsertDiagnosticRun { run, reply } => {
+            process_insert_diagnostic_run(&reply, &run, connection, version)?;
+        }
+        DatabaseCommand::QueryDiagnosticRuns { query, reply } => {
+            process_query_diagnostic_runs(&reply, &query, connection, version)?;
+        }
+        DatabaseCommand::ExportDiagnosticRuns { reply } => {
+            process_export_diagnostic_runs(&reply, connection, version)?;
+        }
+        DatabaseCommand::Checkpoint { reply } => {
+            process_checkpoint(&reply, connection, version)?;
+        }
+        DatabaseCommand::Shutdown { reply } => {
+            return process_shutdown(&reply, connection, version);
+        }
+        #[cfg(test)]
+        DatabaseCommand::BlockForQueueTest { entered, release } => {
+            process_queue_test_barrier(&entered, &release, connection, version)?;
+        }
+    }
+    Ok(false)
+}
+
+fn process_read_metadata(
+    reply: &DatabaseReply<DatabaseMetadata>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(
+        connection.as_ref(),
+        StorageOperation::ReadMetadata,
+        schema_version,
+    )
+    .map(DatabaseConnection::metadata);
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::ReadMetadata,
+        schema_version,
+    )
+}
+
+fn process_load_settings(
+    reply: &DatabaseReply<Option<StoredSettings>>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(DatabaseConnection::load_settings);
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_save_settings(
+    reply: &DatabaseReply<()>,
+    settings: &StoredSettings,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.save_settings(settings));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_list_trusted_devices(
+    reply: &DatabaseReply<Vec<TrustedDevice>>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(DatabaseConnection::list_trusted_devices);
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_get_trusted_device(
+    reply: &DatabaseReply<Option<TrustedDevice>>,
+    device_id: &DeviceId,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(|database| database.get_trusted_device(device_id));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_upsert_trusted_device(
+    reply: &DatabaseReply<()>,
+    device: &TrustedDevice,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.upsert_trusted_device(device));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_delete_trusted_device(
+    reply: &DatabaseReply<bool>,
+    device_id: &DeviceId,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.delete_trusted_device(device_id));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_begin_session(
+    reply: &DatabaseReply<()>,
+    session: &SessionStart,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.begin_session(session));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_update_session(
+    reply: &DatabaseReply<bool>,
+    update: &SessionUpdate,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.update_session(update));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_end_session(
+    reply: &DatabaseReply<bool>,
+    end: &SessionEnd,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.end_session(end));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_get_session(
+    reply: &DatabaseReply<Option<SessionHistory>>,
+    session_id: &SessionId,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(|database| database.get_session(session_id));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_insert_diagnostic_run(
+    reply: &DatabaseReply<()>,
+    run: &DiagnosticRunSummary,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.insert_diagnostic_run(run));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_query_diagnostic_runs(
+    reply: &DatabaseReply<Vec<DiagnosticRunSummary>>,
+    query: &DiagnosticQuery,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(|database| database.query_diagnostic_runs(query));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_export_diagnostic_runs(
+    reply: &DatabaseReply<DiagnosticExport>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(DatabaseConnection::export_diagnostic_runs);
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_checkpoint(
+    reply: &DatabaseReply<DatabaseCheckpoint>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(
+        connection.as_ref(),
+        StorageOperation::Checkpoint,
+        schema_version,
+    )
+    .and_then(DatabaseConnection::checkpoint);
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Checkpoint,
+        schema_version,
+    )
+}
+
+fn process_shutdown(
+    reply: &DatabaseReply<()>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<bool, StorageError> {
+    let result = connection.take().map_or_else(
+        || {
+            Err(StorageError::worker_stopped(
+                StorageOperation::StopWorker,
+                Some(schema_version),
+            ))
+        },
+        DatabaseConnection::checkpoint_and_close,
+    );
+    if reply.send(result.clone()).is_err() {
+        return result.map_or_else(Err, |()| {
+            Err(StorageError::reply_disconnected(
+                StorageOperation::StopWorker,
+                schema_version,
+            ))
+        });
+    }
+    result.map(|()| true)
+}
+
+#[cfg(test)]
+fn process_queue_test_barrier(
+    entered: &SyncSender<()>,
+    release: &Receiver<()>,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    if entered.send(()).is_err() || release.recv().is_err() {
+        return close_after_reply_failure(
+            connection.take(),
+            None,
+            StorageOperation::Query,
+            schema_version,
+        );
+    }
+    Ok(())
+}
+
+fn connection_ref(
+    connection: Option<&DatabaseConnection>,
+    operation: StorageOperation,
+    schema_version: u32,
+) -> Result<&DatabaseConnection, StorageError> {
+    connection.ok_or_else(|| StorageError::worker_stopped(operation, Some(schema_version)))
+}
+
+fn connection_mut(
+    connection: &mut Option<DatabaseConnection>,
+    operation: StorageOperation,
+    schema_version: u32,
+) -> Result<&mut DatabaseConnection, StorageError> {
+    connection
+        .as_mut()
+        .ok_or_else(|| StorageError::worker_stopped(operation, Some(schema_version)))
+}
+
+fn send_reply<T: Clone>(
+    reply: &DatabaseReply<T>,
+    result: Result<T, StorageError>,
+    connection: &mut Option<DatabaseConnection>,
+    operation: StorageOperation,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    if reply.send(result.clone()).is_err() {
+        return close_after_reply_failure(
+            connection.take(),
+            result.err(),
+            operation,
+            schema_version,
+        );
+    }
+    Ok(())
 }
 
 fn close_after_channel_disconnect(
@@ -435,48 +983,24 @@ fn close_after_reply_failure(
 #[cfg(test)]
 mod tests {
     use std::{
-        fs,
-        path::PathBuf,
-        sync::{
-            Arc,
-            atomic::{AtomicU64, Ordering},
-            mpsc::sync_channel,
-        },
+        sync::{Arc, mpsc::sync_channel},
         thread,
     };
 
     use super::{DatabaseCommand, DatabaseWorker};
-    use crate::storage::{DatabaseConfig, StorageErrorKind};
-
-    static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(1);
-
-    struct TestDatabasePath {
-        path: PathBuf,
-    }
-
-    impl TestDatabasePath {
-        fn new(label: &str) -> Self {
-            let unique = NEXT_TEST_PATH.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "silent-disco-worker-{label}-{}-{unique}.sqlite3",
-                std::process::id()
-            ));
-            Self { path }
-        }
-    }
-
-    impl Drop for TestDatabasePath {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.path);
-            let _ = fs::remove_file(PathBuf::from(format!("{}-wal", self.path.display())));
-            let _ = fs::remove_file(PathBuf::from(format!("{}-shm", self.path.display())));
-        }
-    }
+    use crate::{
+        domain::{AppRole, DeviceId, DiagnosticRunId, SessionId, TrustState, TuningSettings},
+        storage::{
+            DatabaseConfig, DiagnosticQuery, DiagnosticRunSummary, SessionEnd, SessionOutcome,
+            SessionStart, SessionUpdate, StorageErrorKind, StoredSettings, TrustedDevice,
+            test_support::TestDatabasePath,
+        },
+    };
 
     #[test]
     fn one_worker_thread_owns_every_connection_operation() {
-        let test_path = TestDatabasePath::new("ownership");
-        let config = DatabaseConfig::new(&test_path.path)
+        let test_path = TestDatabasePath::new("worker-ownership");
+        let config = DatabaseConfig::new(test_path.path())
             .and_then(|config| config.with_queue_capacity(16))
             .expect("valid worker config");
         let worker = DatabaseWorker::start(config).expect("worker starts");
@@ -501,8 +1025,8 @@ mod tests {
 
     #[test]
     fn full_queue_rejects_visibly_without_dropping_accepted_command() {
-        let test_path = TestDatabasePath::new("queue");
-        let config = DatabaseConfig::new(&test_path.path)
+        let test_path = TestDatabasePath::new("worker-queue");
+        let config = DatabaseConfig::new(test_path.path())
             .and_then(|config| config.with_queue_capacity(1))
             .expect("valid worker config");
         let worker = DatabaseWorker::start(config).expect("worker starts");
@@ -541,9 +1065,187 @@ mod tests {
     }
 
     #[test]
-    fn explicit_stop_then_join_closes_worker_and_disconnects_clients() {
-        let test_path = TestDatabasePath::new("lifecycle");
-        let config = DatabaseConfig::new(&test_path.path).expect("valid worker config");
+    fn typed_repositories_round_trip_domain_records() {
+        let test_path = TestDatabasePath::new("worker-repositories");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(test_path.path()).expect("valid worker config"),
+        )
+        .expect("worker starts");
+        let client = worker.client();
+        assert_eq!(client.load_settings().expect("load settings"), None);
+
+        let settings = StoredSettings {
+            tuning: TuningSettings::default(),
+            updated_at_ms: 100,
+        };
+        client.save_settings(&settings).expect("save settings");
+        assert_eq!(
+            client.load_settings().expect("reload settings"),
+            Some(settings)
+        );
+
+        let device = sample_device();
+        client
+            .upsert_trusted_device(&device)
+            .expect("upsert trusted device");
+        assert_eq!(
+            client
+                .get_trusted_device(&device.device_id)
+                .expect("get trusted device"),
+            Some(device.clone())
+        );
+        assert_eq!(
+            client.list_trusted_devices().expect("list trusted devices"),
+            vec![device]
+        );
+
+        let session = sample_session_start();
+        client.begin_session(&session).expect("begin session");
+        assert!(
+            client
+                .update_session(&SessionUpdate {
+                    session_id: session.session_id.clone(),
+                    listener_count: 3,
+                })
+                .expect("update session")
+        );
+        assert!(
+            client
+                .end_session(&SessionEnd {
+                    session_id: session.session_id.clone(),
+                    ended_at_ms: 250,
+                    listener_count: 3,
+                    outcome: SessionOutcome::Completed,
+                    failure_code: None,
+                    failure_message: None,
+                })
+                .expect("end session")
+        );
+
+        let diagnostic = sample_diagnostic(&session.session_id);
+        client
+            .insert_diagnostic_run(&diagnostic)
+            .expect("insert diagnostic run");
+        let query = DiagnosticQuery {
+            session_id: Some(session.session_id.clone()),
+            limit: 10,
+        };
+        assert_eq!(
+            client
+                .query_diagnostic_runs(&query)
+                .expect("query diagnostics"),
+            vec![diagnostic.clone()]
+        );
+        assert_eq!(
+            client
+                .export_diagnostic_runs()
+                .expect("export diagnostics")
+                .runs,
+            vec![diagnostic]
+        );
+        worker.stop_and_join().expect("worker closes and joins");
+    }
+
+    #[test]
+    fn duplicate_session_maps_to_constraint_violation() {
+        let test_path = TestDatabasePath::new("worker-constraint");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(test_path.path()).expect("valid worker config"),
+        )
+        .expect("worker starts");
+        let client = worker.client();
+        let session = sample_session_start();
+        client
+            .begin_session(&session)
+            .expect("first insert succeeds");
+        let error = client
+            .begin_session(&session)
+            .expect_err("duplicate primary key must fail");
+        assert_eq!(error.kind, StorageErrorKind::Constraint);
+        worker.stop_and_join().expect("worker closes and joins");
+    }
+
+    #[test]
+    fn queued_write_order_is_serialized_by_the_worker() {
+        let test_path = TestDatabasePath::new("worker-ordering");
+        let config = DatabaseConfig::new(test_path.path())
+            .and_then(|config| config.with_queue_capacity(4))
+            .expect("valid worker config");
+        let worker = DatabaseWorker::start(config).expect("worker starts");
+        let (entered_sender, entered_receiver) = sync_channel(1);
+        let (release_sender, release_receiver) = sync_channel(1);
+        worker
+            .client
+            .sender
+            .send(DatabaseCommand::BlockForQueueTest {
+                entered: entered_sender,
+                release: release_receiver,
+            })
+            .expect("barrier command accepted");
+        entered_receiver.recv().expect("worker entered barrier");
+
+        let first = StoredSettings {
+            tuning: TuningSettings {
+                scan_window_ms: 4_000,
+                ..TuningSettings::default()
+            },
+            updated_at_ms: 1,
+        };
+        let second = StoredSettings {
+            tuning: TuningSettings {
+                scan_window_ms: 5_000,
+                ..TuningSettings::default()
+            },
+            updated_at_ms: 2,
+        };
+        let (first_sender, first_receiver) = sync_channel(1);
+        let (second_sender, second_receiver) = sync_channel(1);
+        let (load_sender, load_receiver) = sync_channel(1);
+        worker
+            .client
+            .sender
+            .send(DatabaseCommand::SaveSettings {
+                settings: first,
+                reply: first_sender,
+            })
+            .expect("first save queued");
+        worker
+            .client
+            .sender
+            .send(DatabaseCommand::SaveSettings {
+                settings: second.clone(),
+                reply: second_sender,
+            })
+            .expect("second save queued");
+        worker
+            .client
+            .sender
+            .send(DatabaseCommand::LoadSettings { reply: load_sender })
+            .expect("load queued");
+        release_sender.send(()).expect("release worker");
+
+        first_receiver
+            .recv()
+            .expect("first reply received")
+            .expect("first save succeeds");
+        second_receiver
+            .recv()
+            .expect("second reply received")
+            .expect("second save succeeds");
+        assert_eq!(
+            load_receiver
+                .recv()
+                .expect("load reply received")
+                .expect("load succeeds"),
+            Some(second)
+        );
+        worker.stop_and_join().expect("worker closes and joins");
+    }
+
+    #[test]
+    fn explicit_stop_then_join_rejects_cloned_clients_deterministically() {
+        let test_path = TestDatabasePath::new("worker-lifecycle");
+        let config = DatabaseConfig::new(test_path.path()).expect("valid worker config");
         let mut worker = DatabaseWorker::start(config).expect("worker starts");
         let client = worker.client();
 
@@ -555,19 +1257,35 @@ mod tests {
         worker.join().expect("join succeeds");
     }
 
-    #[test]
-    fn startup_open_failure_is_returned_without_a_client() {
-        let test_path = TestDatabasePath::new("missing-parent");
-        let missing = test_path.path.join("missing").join("database.sqlite3");
-        let config = DatabaseConfig::new(missing).expect("valid path shape");
-        let error = match DatabaseWorker::start(config) {
-            Ok(worker) => {
-                let _ = worker.stop_and_join();
-                panic!("database in a missing directory unexpectedly opened");
-            }
-            Err(error) => error,
-        };
+    fn sample_device() -> TrustedDevice {
+        TrustedDevice {
+            device_id: DeviceId::new("listener-東京").expect("valid device identifier"),
+            display_name: "Zoë 🎧 東京".into(),
+            public_key: Some(vec![0, 1, 2, 0xff, 0]),
+            private_key_ref: Some("keystore:listener-1".into()),
+            trust_state: TrustState::Trusted,
+            first_seen_ms: 10,
+            last_seen_ms: 20,
+            updated_at_ms: 30,
+        }
+    }
 
-        assert_eq!(error.kind, StorageErrorKind::Open);
+    fn sample_session_start() -> SessionStart {
+        SessionStart {
+            session_id: SessionId::new("session-1").expect("valid session identifier"),
+            role: AppRole::Host,
+            session_name: "Noche silenciosa 東京".into(),
+            started_at_ms: 100,
+        }
+    }
+
+    fn sample_diagnostic(session_id: &SessionId) -> DiagnosticRunSummary {
+        DiagnosticRunSummary {
+            run_id: DiagnosticRunId::new("diagnostic-1").expect("valid diagnostic identifier"),
+            session_id: Some(session_id.clone()),
+            started_at_ms: 110,
+            ended_at_ms: Some(240),
+            summary_json: r#"{"listeners":3,"quality":"good"}"#.into(),
+        }
     }
 }

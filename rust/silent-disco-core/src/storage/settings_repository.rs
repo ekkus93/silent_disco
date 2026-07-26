@@ -8,6 +8,7 @@ use super::{
     repository_support::{corrupt_row, from_sql_u16, from_sql_u64, invalid_model, to_sql_i64},
 };
 
+#[derive(Clone, Copy)]
 struct RawSettings {
     sync_sample_window: i64,
     sync_cadence_ms: i64,
@@ -51,9 +52,7 @@ pub(crate) fn load(
             },
         )
         .optional()
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     raw.map(|value| decode(value, schema_version)).transpose()
 }
 

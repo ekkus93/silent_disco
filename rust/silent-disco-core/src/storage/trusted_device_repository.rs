@@ -37,12 +37,10 @@ pub(crate) fn list(
              FROM trusted_devices
              ORDER BY display_name COLLATE NOCASE ASC, device_id ASC",
         )
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
-    let rows = statement.query_map([], read_raw).map_err(|error| {
-        map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-    })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map([], read_raw)
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     let mut devices = Vec::new();
     for row in rows {
         let raw = row.map_err(|error| {
@@ -75,9 +73,7 @@ pub(crate) fn get(
             read_raw,
         )
         .optional()
-        .map_err(|error| {
-            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
-        })?;
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     raw.map(|value| decode(value, schema_version)).transpose()
 }
 
