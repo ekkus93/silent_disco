@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app
 
+import androidx.annotation.MainThread
 import androidx.lifecycle.ViewModel
 import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
@@ -34,6 +35,7 @@ class WorkflowViewModel : ViewModel() {
         if (started) emit(AppUiEffect.NavigateHostDashboard)
     }
 
+    @MainThread
     fun handleJoinApproval(
         mainViewModel: MainViewModel,
         request: JoinRequest,
