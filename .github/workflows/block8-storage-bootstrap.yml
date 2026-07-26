@@ -25,8 +25,10 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.97.1
 
-      - name: Apply guarded database and worker sources
-        run: python .github/scripts/apply_block8_storage.py
+      - name: Apply guarded Block 8 sources
+        run: |
+          python .github/scripts/fix_block8_migrations.py
+          python .github/scripts/apply_block8_storage.py
 
       - name: Format and validate Rust storage layer
         shell: bash
