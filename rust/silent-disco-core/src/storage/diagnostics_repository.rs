@@ -4,7 +4,10 @@ use crate::domain::{DiagnosticRunId, SessionId};
 
 use super::{
     error::{StorageError, StorageOperation, map_sqlite_error},
-    models::{DiagnosticExport, DiagnosticQuery, DiagnosticRunSummary},
+    models::{
+        DiagnosticExport, DiagnosticExportCursor, DiagnosticExportRequest, DiagnosticQuery,
+        DiagnosticRunSummary,
+    },
     repository_support::{corrupt_row, from_sql_u64, invalid_model, to_sql_i64},
 };
 
@@ -85,23 +88,26 @@ pub(crate) fn query(
 
 pub(crate) fn export(
     connection: &Connection,
+    request: &DiagnosticExportRequest,
     schema_version: u32,
 ) -> Result<DiagnosticExport, StorageError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT run_id, session_id, started_at_ms, ended_at_ms, summary_json
-             FROM diagnostic_runs
-             ORDER BY started_at_ms ASC, run_id ASC",
-        )
-        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
-    let rows = statement
-        .query_map([], read_raw)
-        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
-    let runs = collect_rows(rows, schema_version)?;
-    Ok(DiagnosticExport {
-        schema_version,
-        runs,
-    })
+    request
+        .validate()
+        .map_err(|error| invalid_model(StorageOperation::Query, schema_version, error))?;
+    let fetch_limit = i64::from(request.limit) + 1;
+    let runs = match (&request.session_id, &request.cursor) {
+        (Some(session_id), Some(cursor)) => {
+            export_for_session_after(connection, session_id, cursor, fetch_limit, schema_version)?
+        }
+        (Some(session_id), None) => {
+            export_for_session(connection, session_id, fetch_limit, schema_version)?
+        }
+        (None, Some(cursor)) => {
+            export_all_after(connection, cursor, fetch_limit, schema_version)?
+        }
+        (None, None) => export_all(connection, fetch_limit, schema_version)?,
+    };
+    build_export_page(runs, request.limit, schema_version)
 }
 
 fn verify_json(
@@ -162,6 +168,148 @@ fn query_all_with_limit(
         .query_map([i64::from(limit)], read_raw)
         .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     collect_rows(rows, schema_version)
+}
+
+fn export_for_session_after(
+    connection: &Connection,
+    session_id: &SessionId,
+    cursor: &DiagnosticExportCursor,
+    limit: i64,
+    schema_version: u32,
+) -> Result<Vec<DiagnosticRunSummary>, StorageError> {
+    let started_at_ms = to_sql_i64(
+        cursor.started_at_ms,
+        StorageOperation::Query,
+        schema_version,
+        "diagnostic export cursor timestamp",
+    )?;
+    let mut statement = connection
+        .prepare(
+            "SELECT run_id, session_id, started_at_ms, ended_at_ms, summary_json
+             FROM diagnostic_runs
+             WHERE session_id = ?1
+               AND (
+                   started_at_ms > ?2
+                   OR (started_at_ms = ?2 AND run_id > ?3)
+               )
+             ORDER BY started_at_ms ASC, run_id ASC
+             LIMIT ?4",
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map(
+            params![
+                session_id.as_str(),
+                started_at_ms,
+                cursor.run_id.as_str(),
+                limit
+            ],
+            read_raw,
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    collect_rows(rows, schema_version)
+}
+
+fn export_for_session(
+    connection: &Connection,
+    session_id: &SessionId,
+    limit: i64,
+    schema_version: u32,
+) -> Result<Vec<DiagnosticRunSummary>, StorageError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT run_id, session_id, started_at_ms, ended_at_ms, summary_json
+             FROM diagnostic_runs
+             WHERE session_id = ?1
+             ORDER BY started_at_ms ASC, run_id ASC
+             LIMIT ?2",
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map(params![session_id.as_str(), limit], read_raw)
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    collect_rows(rows, schema_version)
+}
+
+fn export_all_after(
+    connection: &Connection,
+    cursor: &DiagnosticExportCursor,
+    limit: i64,
+    schema_version: u32,
+) -> Result<Vec<DiagnosticRunSummary>, StorageError> {
+    let started_at_ms = to_sql_i64(
+        cursor.started_at_ms,
+        StorageOperation::Query,
+        schema_version,
+        "diagnostic export cursor timestamp",
+    )?;
+    let mut statement = connection
+        .prepare(
+            "SELECT run_id, session_id, started_at_ms, ended_at_ms, summary_json
+             FROM diagnostic_runs
+             WHERE started_at_ms > ?1
+                OR (started_at_ms = ?1 AND run_id > ?2)
+             ORDER BY started_at_ms ASC, run_id ASC
+             LIMIT ?3",
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map(
+            params![started_at_ms, cursor.run_id.as_str(), limit],
+            read_raw,
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    collect_rows(rows, schema_version)
+}
+
+fn export_all(
+    connection: &Connection,
+    limit: i64,
+    schema_version: u32,
+) -> Result<Vec<DiagnosticRunSummary>, StorageError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT run_id, session_id, started_at_ms, ended_at_ms, summary_json
+             FROM diagnostic_runs
+             ORDER BY started_at_ms ASC, run_id ASC
+             LIMIT ?1",
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map([limit], read_raw)
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    collect_rows(rows, schema_version)
+}
+
+fn build_export_page(
+    mut runs: Vec<DiagnosticRunSummary>,
+    limit: u32,
+    schema_version: u32,
+) -> Result<DiagnosticExport, StorageError> {
+    let limit = usize::try_from(limit).map_err(|_| {
+        invalid_model(
+            StorageOperation::Query,
+            schema_version,
+            "diagnostic export limit does not fit memory limits",
+        )
+    })?;
+    let has_more = runs.len() > limit;
+    if has_more {
+        runs.truncate(limit);
+    }
+    let next_cursor = if has_more {
+        runs.last().map(|run| DiagnosticExportCursor {
+            started_at_ms: run.started_at_ms,
+            run_id: run.run_id.clone(),
+        })
+    } else {
+        None
+    };
+    Ok(DiagnosticExport {
+        schema_version,
+        runs,
+        next_cursor,
+    })
 }
 
 fn collect_rows<F>(
