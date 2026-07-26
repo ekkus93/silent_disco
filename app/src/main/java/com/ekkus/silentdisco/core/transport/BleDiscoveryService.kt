@@ -228,7 +228,7 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    private fun stopScanning() {
+    fun stopScanning() {
         val callback = scanCallback ?: return
         if (hasScanPermission()) {
             runCatching { scanner?.stopScan(callback) }
