@@ -14,12 +14,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.canRetryStorageInitialization
 import com.ekkus.silentdisco.app.permissionSummary
+import com.ekkus.silentdisco.app.persistentFeaturesEnabled
+import com.ekkus.silentdisco.app.storageStatusLabel
 
 @Composable
 fun HomeScreen(
     uiState: AppUiState,
     onRequestPermissions: () -> Unit,
+    onRetryStorage: () -> Unit,
     onHostClick: () -> Unit,
     onJoinClick: () -> Unit,
 ) {
@@ -37,6 +41,21 @@ fun HomeScreen(
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Persistent storage", style = MaterialTheme.typography.titleMedium)
+                Text(uiState.storageStatusLabel())
+                uiState.storageError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error)
+                }
+                if (uiState.canRetryStorageInitialization()) {
+                    Button(onClick = onRetryStorage) {
+                        Text("Retry Storage")
+                    }
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Permissions", style = MaterialTheme.typography.titleMedium)
                 Text(uiState.permissionSummary())
                 Button(onClick = onRequestPermissions) {
@@ -46,10 +65,18 @@ fun HomeScreen(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onHostClick, modifier = Modifier.weight(1f)) {
+            Button(
+                onClick = onHostClick,
+                enabled = uiState.persistentFeaturesEnabled(),
+                modifier = Modifier.weight(1f),
+            ) {
                 Text("Host a Session")
             }
-            Button(onClick = onJoinClick, modifier = Modifier.weight(1f)) {
+            Button(
+                onClick = onJoinClick,
+                enabled = uiState.persistentFeaturesEnabled(),
+                modifier = Modifier.weight(1f),
+            ) {
                 Text("Join a Session")
             }
         }
