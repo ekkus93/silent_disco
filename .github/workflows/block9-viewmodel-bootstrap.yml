@@ -1,0 +1,123 @@
+name: Block 9 application persistence integration
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.event.pull_request.head.ref == 'agent/rust-android-storage-block9'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Check out Block 9 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/rust-android-storage-block9
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Apply application persistence integration
+        shell: bash
+        run: |
+          set -o pipefail
+          python .github/scripts/apply_block9_viewmodel.py 2>&1 | tee block9-viewmodel-apply.log
+
+      - name: Build Android variants and instrumentation APK
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain \
+            2>&1 | tee block9-viewmodel-build.log
+
+      - name: Verify Rust JNI libraries in all APK ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "$apk"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "$apk" "lib/$abi/libsilent_disco_ffi.so" | grep -Fx "lib/$abi/libsilent_disco_ffi.so"
+            done
+          done
+
+      - name: Run Android unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew test --stacktrace --console=plain \
+            2>&1 | tee block9-viewmodel-tests.log
+
+      - name: Run Android lint
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace --console=plain \
+            2>&1 | tee block9-viewmodel-lint.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block9-viewmodel-diagnostics
+          path: |
+            block9-viewmodel-apply.log
+            block9-viewmodel-build.log
+            block9-viewmodel-tests.log
+            block9-viewmodel-lint.log
+            app/build/test-results/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Verify patch hygiene
+        run: |
+          git diff --check
+          ! grep -R "LegacyPreferencesContract" app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt
+          ! grep -R "getSharedPreferences\|preferences.edit" app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt
+
+      - name: Commit validated application integration
+        run: |
+          rm .github/workflows/block9-viewmodel-bootstrap.yml
+          rm .github/scripts/apply_block9_viewmodel.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Make Rust storage authoritative in Android"
+          git push origin HEAD:agent/rust-android-storage-block9
