@@ -31,12 +31,7 @@ fun ConfirmationSheet(
     val safeActionFocusRequester = remember(testTag) { FocusRequester() }
 
     LaunchedEffect(visible) {
-        if (visible) {
-            confirming = false
-            safeActionFocusRequester.requestFocus()
-        } else {
-            confirming = false
-        }
+        if (!visible) confirming = false
     }
 
     if (!visible) return
@@ -49,6 +44,12 @@ fun ConfirmationSheet(
         title = { Text(title) },
         text = { Text(detail) },
         dismissButton = {
+            LaunchedEffect(visible) {
+                if (visible) {
+                    confirming = false
+                    safeActionFocusRequester.requestFocus()
+                }
+            }
             TextButton(
                 onClick = onDismiss,
                 enabled = !confirming,
