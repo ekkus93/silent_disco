@@ -25,3 +25,5 @@ fun inviteCodeValidationError(value: String): String? {
         else -> null
     }
 }
+
+fun isValidInviteCode(value: String): Boolean = inviteCodeValidationError(value) == null
