@@ -25,6 +25,8 @@ jobs:
         run: python .github/scripts/apply_block9_core.py
       - name: Repair generated core patch
         run: python .github/scripts/repair_block9_core.py
+      - name: Update migration-count tests
+        run: python .github/scripts/repair_block9_tests.py
       - name: Validate Rust
         id: validate
         shell: bash
@@ -49,6 +51,7 @@ jobs:
         run: |
           rm .github/scripts/apply_block9_core.py
           rm .github/scripts/repair_block9_core.py
+          rm .github/scripts/repair_block9_tests.py
           rm .github/workflows/block9-core-bootstrap.yml
           rm -f .github/block9-core-trigger*.txt
       - name: Commit validated core import
