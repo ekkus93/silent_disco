@@ -53,6 +53,10 @@ jobs:
           path: |
             block8-apply.log
             block8-rust-validation.log
+            rust/silent-disco-core/src/storage/database.rs
+            rust/silent-disco-core/src/storage/worker.rs
+            rust/silent-disco-core/src/storage/models.rs
+            rust/silent-disco-core/src/storage/settings_repository.rs
           if-no-files-found: warn
           retention-days: 1
 
