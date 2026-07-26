@@ -18,6 +18,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.model.AppRole
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.core.transport.DiscoveryLifecycleController
 import com.ekkus.silentdisco.feature.diagnostics.ConnectionHelpScreen
 import com.ekkus.silentdisco.feature.diagnostics.DiagnosticsScreen
 import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
@@ -58,6 +60,7 @@ fun SilentDiscoApp(
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val discoveryLifecycleController = remember(context) { DiscoveryLifecycleController(context) }
 
     var pendingPermissionContext by remember { mutableStateOf<PermissionRequestContext?>(null) }
     var pendingPermissionContinuation by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -265,6 +268,11 @@ fun SilentDiscoApp(
             }
 
             composable(AppRoutes.NearbySessions) {
+                DisposableEffect(discoveryLifecycleController) {
+                    onDispose {
+                        discoveryLifecycleController.stopDiscovery(workflowViewModel::showTransientMessage)
+                    }
+                }
                 val permissionRequired = !uiState.hasPermissions(PermissionRequestContext.LISTENER_NEARBY)
                 LaunchedEffect(permissionRequired) {
                     if (!permissionRequired) viewModel.scanForSessions()
@@ -286,6 +294,7 @@ fun SilentDiscoApp(
 
             composable(AppRoutes.SessionJoin) {
                 val cancelJoin: () -> Unit = {
+                    discoveryLifecycleController.cancelJoinTransport(workflowViewModel::showTransientMessage)
                     viewModel.cancelJoin()
                     val returned = navController.popBackStack(AppRoutes.NearbySessions, inclusive = false)
                     if (!returned) navController.navigateSingleTop(AppRoutes.NearbySessions)
@@ -407,6 +416,7 @@ fun SilentDiscoApp(
         onDismiss = { showLeaveSessionConfirmation = false },
         onConfirm = {
             showLeaveSessionConfirmation = false
+            discoveryLifecycleController.cancelJoinTransport(workflowViewModel::showTransientMessage)
             viewModel.leaveSession()
             workflowViewModel.navigateHome()
         },
