@@ -1,0 +1,14 @@
+/home/runner/work/silent_disco/silent_disco
+/usr/local/lib/android/sdk/emulator/emulator
+11
+/usr/local/lib/android/sdk/emulator/emulator
+-port
+5554
+-avd
+test
+-no-window
+-gpu
+swiftshader_indirect
+-no-snapshot
+-noaudio
+-no-boot-anim
