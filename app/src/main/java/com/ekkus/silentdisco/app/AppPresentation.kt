@@ -74,25 +74,40 @@ enum class JoinApprovalAction {
     REJECT,
 }
 
-fun AppUiState.joinUiStep(): JoinUiStep = when (listenerState) {
-    ListenerLifecycleState.IDLE,
-    ListenerLifecycleState.SCANNING,
-    ListenerLifecycleState.SESSION_SELECTED -> JoinUiStep.FINDING_HOST
+/**
+ * Maps domain progress to the smaller set of user-facing join steps.
+ *
+ * Progress flags take precedence over the coarse lifecycle enum because the
+ * transport can enter CONNECTING before host approval has been received.
+ */
+fun AppUiState.joinUiStep(): JoinUiStep = when {
+    listenerState == ListenerLifecycleState.PLAYING || connectionProgress.playing ->
+        JoinUiStep.COMPLETE
 
-    ListenerLifecycleState.JOIN_REQUESTED -> JoinUiStep.REQUESTING_ACCESS
-    ListenerLifecycleState.AWAITING_APPROVAL -> JoinUiStep.WAITING_FOR_APPROVAL
+    listenerState in setOf(
+        ListenerLifecycleState.SYNCING_CLOCK,
+        ListenerLifecycleState.BUFFERING,
+        ListenerLifecycleState.DESYNCED,
+    ) || connectionProgress.synced || connectionProgress.buffered ->
+        JoinUiStep.SYNCING_AUDIO
 
-    ListenerLifecycleState.APPROVED,
-    ListenerLifecycleState.CONNECTING,
-    ListenerLifecycleState.RECONNECTING,
-    ListenerLifecycleState.DISCONNECTED,
-    ListenerLifecycleState.ERROR -> JoinUiStep.CONNECTING
+    connectionProgress.approved || listenerState == ListenerLifecycleState.APPROVED ->
+        JoinUiStep.CONNECTING
 
-    ListenerLifecycleState.SYNCING_CLOCK,
-    ListenerLifecycleState.BUFFERING,
-    ListenerLifecycleState.DESYNCED -> JoinUiStep.SYNCING_AUDIO
+    connectionProgress.requested && !connectionProgress.approved ->
+        JoinUiStep.WAITING_FOR_APPROVAL
 
-    ListenerLifecycleState.PLAYING -> JoinUiStep.COMPLETE
+    listenerState == ListenerLifecycleState.JOIN_REQUESTED ->
+        JoinUiStep.REQUESTING_ACCESS
+
+    listenerState in setOf(
+        ListenerLifecycleState.CONNECTING,
+        ListenerLifecycleState.RECONNECTING,
+        ListenerLifecycleState.DISCONNECTED,
+        ListenerLifecycleState.ERROR,
+    ) -> JoinUiStep.CONNECTING
+
+    else -> JoinUiStep.FINDING_HOST
 }
 
 fun AppUiState.hostSessionHealthSummary(): SessionHealthSummary {
@@ -152,8 +167,8 @@ fun AppUiState.listenerConnectionHealthSummary(): SessionHealthSummary {
     ) {
         return SessionHealthSummary(
             level = SessionHealthLevel.CRITICAL,
-            title = "Playback problem",
-            detail = "Silent Disco could not continue playback.",
+            title = "Playback or connection problem",
+            detail = "Silent Disco could not continue the listener workflow.",
             affectedListenerCount = 1,
         )
     }
@@ -215,6 +230,7 @@ fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
             secondaryAction = UserProblemAction.SHARE_SUPPORT_REPORT,
             technicalDetail = storageError,
         )
+
         StorageInitializationState.FATAL_FAILURE -> return UserFacingProblem(
             id = "storage-fatal",
             kind = UserProblemKind.STORAGE_FATAL,
@@ -223,6 +239,7 @@ fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
             primaryAction = UserProblemAction.SHARE_SUPPORT_REPORT,
             technicalDetail = storageError,
         )
+
         StorageInitializationState.INITIALIZING,
         StorageInitializationState.READY -> Unit
     }
@@ -259,6 +276,24 @@ fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
             detail = "Silent Disco could not start or continue audio playback.",
             primaryAction = UserProblemAction.RETRY,
             secondaryAction = UserProblemAction.SHARE_SUPPORT_REPORT,
+            technicalDetail = lastError,
+        )
+    }
+
+    if (listenerState == ListenerLifecycleState.ERROR) {
+        val rejected = lastError?.contains("reject", ignoreCase = true) == true ||
+            lastError?.contains("invite code", ignoreCase = true) == true
+        return UserFacingProblem(
+            id = if (rejected) "join-rejected" else "listener-connection-error",
+            kind = if (rejected) UserProblemKind.JOIN_REJECTED else UserProblemKind.CONNECTION_LOST,
+            title = if (rejected) "The host did not approve this request" else "Could not connect to the host",
+            detail = if (rejected) {
+                "Check the invite code or choose another nearby session."
+            } else {
+                "The host may have ended the session or moved out of range."
+            },
+            primaryAction = UserProblemAction.RETRY,
+            secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
             technicalDetail = lastError,
         )
     }
