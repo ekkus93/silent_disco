@@ -21,6 +21,8 @@ jobs:
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
+      - name: Apply exact JNI lint repair
+        run: python .github/scripts/repair_block9_jni.py
       - name: Validate JNI bridge and update lockfile
         id: validate
         shell: bash
@@ -42,8 +44,10 @@ jobs:
           retention-days: 1
       - name: Ensure patch hygiene
         run: git diff --check
-      - name: Remove bootstrap workflow
-        run: rm .github/workflows/block9-jni-bootstrap.yml
+      - name: Remove bootstrap files
+        run: |
+          rm .github/scripts/repair_block9_jni.py
+          rm .github/workflows/block9-jni-bootstrap.yml
       - name: Commit validated JNI bridge
         run: |
           git config user.name 'github-actions[bot]'
