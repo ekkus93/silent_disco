@@ -6,6 +6,7 @@ import com.ekkus.silentdisco.core.model.HostDiagnosticsSnapshot
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.JoinApprovalState
 import com.ekkus.silentdisco.core.model.TransportConnectionState
+import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerDiagnosticsSnapshot
 import com.ekkus.silentdisco.core.model.ListenerInfo
@@ -75,6 +76,8 @@ data class AppUiState(
     val listenerPlaybackState: PlaybackState = PlaybackState.STOPPED,
     val listenerSyncState: SyncState = SyncState(),
     val tuningSettings: TuningSettings = TuningSettings(),
+    val storageState: StorageInitializationState = StorageInitializationState.INITIALIZING,
+    val storageError: String? = null,
     val hostDiagnostics: HostDiagnosticsSnapshot = HostDiagnosticsSnapshot(),
     val listenerDiagnostics: ListenerDiagnosticsSnapshot = ListenerDiagnosticsSnapshot(),
     val localVolume: Float = 1.0f,
@@ -123,12 +126,14 @@ fun AppUiState.listenerStateLabel(): String = when (listenerState) {
     ListenerLifecycleState.ERROR -> "Error"
 }
 
-fun JoinRequest.toListenerInfo(): ListenerInfo = ListenerInfo(
+fun JoinRequest.toListenerInfo(
+    trustState: TrustState = TrustState.SESSION_ONLY,
+): ListenerInfo = ListenerInfo(
     deviceId = listenerId,
     displayName = listenerName,
     joinState = JoinApprovalState.REQUESTED,
-    trustState = com.ekkus.silentdisco.core.model.TrustState.SESSION_ONLY,
-    connectionState = com.ekkus.silentdisco.core.model.TransportConnectionState.CONNECTING,
+    trustState = trustState,
+    connectionState = TransportConnectionState.CONNECTING,
     listenerState = ListenerLifecycleState.CONNECTING,
     syncQuality = SyncQualityBadge.UNKNOWN,
 )
