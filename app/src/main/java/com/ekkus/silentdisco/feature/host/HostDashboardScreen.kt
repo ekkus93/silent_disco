@@ -58,7 +58,7 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 import kotlinx.coroutines.delay
 
-private enum class HostListenerTab(val title: String) {
+internal enum class HostDashboardTab(val title: String) {
     REQUESTS("Requests"),
     CONNECTED("Connected"),
     NEEDS_ATTENTION("Needs attention"),
@@ -77,8 +77,9 @@ fun HostDashboardScreen(
     onEndSessionRequest: () -> Unit,
     onOpenConnectionHelp: () -> Unit,
     onAddDemoJoinRequest: () -> Unit,
+    initialTab: HostDashboardTab = HostDashboardTab.REQUESTS,
 ) {
-    var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTabIndex by rememberSaveable(initialTab) { mutableIntStateOf(initialTab.ordinal) }
     var overflowOpen by remember { mutableStateOf(false) }
     var approvalInFlightRequestId by rememberSaveable { mutableStateOf<String?>(null) }
     var approvalInFlightAction by rememberSaveable { mutableStateOf<JoinApprovalAction?>(null) }
@@ -249,11 +250,11 @@ fun HostDashboardScreen(
 
             item {
                 PrimaryTabRow(selectedTabIndex = selectedTabIndex) {
-                    HostListenerTab.entries.forEachIndexed { index, tab ->
+                    HostDashboardTab.entries.forEachIndexed { index, tab ->
                         val count = when (tab) {
-                            HostListenerTab.REQUESTS -> uiState.pendingJoinRequests.size
-                            HostListenerTab.CONNECTED -> uiState.approvedListeners.size
-                            HostListenerTab.NEEDS_ATTENTION -> troubledListeners.size
+                            HostDashboardTab.REQUESTS -> uiState.pendingJoinRequests.size
+                            HostDashboardTab.CONNECTED -> uiState.approvedListeners.size
+                            HostDashboardTab.NEEDS_ATTENTION -> troubledListeners.size
                         }
                         Tab(
                             selected = selectedTabIndex == index,
@@ -264,8 +265,8 @@ fun HostDashboardScreen(
                 }
             }
 
-            when (HostListenerTab.entries[selectedTabIndex]) {
-                HostListenerTab.REQUESTS -> {
+            when (HostDashboardTab.entries[selectedTabIndex]) {
+                HostDashboardTab.REQUESTS -> {
                     if (uiState.pendingJoinRequests.isEmpty()) {
                         item { EmptyListenerSection("No one is waiting to join.") }
                     } else {
@@ -282,7 +283,7 @@ fun HostDashboardScreen(
                     }
                 }
 
-                HostListenerTab.CONNECTED -> {
+                HostDashboardTab.CONNECTED -> {
                     if (uiState.approvedListeners.isEmpty()) {
                         item { EmptyListenerSection("No listeners are connected yet.") }
                     } else {
@@ -292,7 +293,7 @@ fun HostDashboardScreen(
                     }
                 }
 
-                HostListenerTab.NEEDS_ATTENTION -> {
+                HostDashboardTab.NEEDS_ATTENTION -> {
                     if (troubledListeners.isEmpty()) {
                         item { EmptyListenerSection("No listeners need attention.") }
                     } else {
