@@ -8,12 +8,15 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.ConnectionProgressState
 import com.ekkus.silentdisco.app.HostFormState
 import com.ekkus.silentdisco.app.StorageInitializationState
+import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
+import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
 import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
@@ -169,11 +172,54 @@ class RedesignedUiScreenTest {
                     onCancel = {},
                     onRetry = {},
                     onReturnToSessions = {},
+                    onOpenSettings = {},
+                    onShareSupportReport = {},
                 )
             }
         }
 
         composeRule.onNodeWithTag("session-join-progress").assertIsDisplayed()
         composeRule.onNodeWithText("Waiting for host approval").assertIsDisplayed()
+    }
+
+    @Test
+    fun invalidInviteCodeCanBeEditedWithoutLeavingJoinScreen() {
+        val session = SessionInfo(
+            id = "session-1",
+            name = "Kitchen Disco",
+            hostDeviceName = "Host phone",
+            approvalMode = ApprovalMode.INVITE_CODE,
+            inviteCodeRequired = true,
+        )
+        composeRule.setContent {
+            SilentDiscoTheme {
+                SessionJoinScreen(
+                    uiState = AppUiState(
+                        storageState = StorageInitializationState.READY,
+                        selectedSession = session,
+                        discoveredSessions = listOf(session),
+                        listenerState = ListenerLifecycleState.ERROR,
+                        connectionProgress = ConnectionProgressState(
+                            currentState = ListenerLifecycleState.ERROR,
+                            discovered = true,
+                            requested = true,
+                            inviteCode = "1111",
+                        ),
+                        lastError = "Incorrect invite code",
+                    ),
+                    onInviteCodeChanged = {},
+                    onJoin = {},
+                    onCancel = {},
+                    onRetry = {},
+                    onReturnToSessions = {},
+                    onOpenSettings = {},
+                    onShareSupportReport = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Edit invite code").performClick()
+        composeRule.onNodeWithTag("session-join-code").assertIsDisplayed()
+        composeRule.onNodeWithText("Request again").assertIsDisplayed()
     }
 }
