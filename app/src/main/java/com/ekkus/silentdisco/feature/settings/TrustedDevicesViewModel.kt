@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.rust.RustTrustedDevice
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +79,8 @@ class TrustedDevicesViewModel(
                 store.initialize()
                 val devices = store.listTrustedDevices()
                 _uiState.value = TrustedDevicesUiState(devices = devices)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 logger.e("trusted-devices.load", "Could not load approved devices", error)
                 _uiState.update {
@@ -113,6 +116,8 @@ class TrustedDevicesViewModel(
                         "That phone was already removed. The list has been refreshed."
                     },
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 logger.e("trusted-devices.delete", "Could not remove approved device", error)
                 _uiState.update {
