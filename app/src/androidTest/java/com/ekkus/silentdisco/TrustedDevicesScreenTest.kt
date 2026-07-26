@@ -42,6 +42,31 @@ class TrustedDevicesScreenTest {
     }
 
     @Test
+    fun legacyRecordWhoseNameEqualsItsInternalKeyUsesGenericCopy() {
+        val legacyDevice = RustTrustedDevice(
+            deviceId = "legacy-internal-device-key",
+            displayName = "legacy-internal-device-key",
+            lastSeenMs = 0L,
+        )
+        composeRule.setContent {
+            SilentDiscoTheme {
+                TrustedDevicesScreen(
+                    uiState = TrustedDevicesUiState(devices = listOf(legacyDevice)),
+                    onBack = {},
+                    onRefresh = {},
+                    onDelete = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Approved phone").assertIsDisplayed()
+        composeRule.onNodeWithText("legacy-internal-device-key").assertDoesNotExist()
+        composeRule.onNodeWithTag("trusted-device-remove-legacy-internal-device-key").performClick()
+        composeRule.onNodeWithText("Approved phone will need approval before joining a future session.")
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun removalRequiresConfirmationAndReturnsOnlyTheInternalKey() {
         var deletedDeviceId: String? = null
         composeRule.setContent {
