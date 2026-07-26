@@ -92,7 +92,7 @@ interface SessionTransport {
 
     fun startHost(session: SessionInfo): TransportOperationResult
     fun discoverPeers()
-    fun cancelDiscovery()
+    fun cancelDiscovery() = stop()
     fun connectToSession(session: SessionInfo)
     suspend fun sendControlToHost(message: ControlMessage)
     suspend fun broadcastControl(message: ControlMessage): SendAllResult
