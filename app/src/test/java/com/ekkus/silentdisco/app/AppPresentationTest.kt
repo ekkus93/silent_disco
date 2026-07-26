@@ -108,7 +108,7 @@ class AppPresentationTest {
     }
 
     @Test
-    fun rejectedJoinProducesPersistentActionableProblem() {
+    fun invalidInviteCodeProducesEditCodeAction() {
         val state = AppUiState(
             storageState = StorageInitializationState.READY,
             listenerState = ListenerLifecycleState.ERROR,
@@ -117,7 +117,50 @@ class AppPresentationTest {
 
         val problem = state.derivedPersistentProblem()
 
-        assertThat(problem?.kind).isEqualTo(UserProblemKind.JOIN_REJECTED)
+        assertThat(problem?.kind).isEqualTo(UserProblemKind.INVALID_INVITE_CODE)
+        assertThat(problem?.primaryAction).isEqualTo(UserProblemAction.EDIT_CODE)
+        assertThat(problem?.secondaryAction).isEqualTo(UserProblemAction.RETURN_TO_SESSIONS)
+    }
+
+    @Test
+    fun permissionFailureRoutesToSettings() {
+        val state = AppUiState(
+            storageState = StorageInitializationState.READY,
+            listenerState = ListenerLifecycleState.ERROR,
+            lastError = "Missing nearby connectivity permissions for discovery",
+        )
+
+        val problem = state.derivedPersistentProblem()
+
+        assertThat(problem?.kind).isEqualTo(UserProblemKind.PERMISSION_REQUIRED)
+        assertThat(problem?.primaryAction).isEqualTo(UserProblemAction.OPEN_SETTINGS)
+    }
+
+    @Test
+    fun hostEndedSessionRoutesBackToSessions() {
+        val state = AppUiState(
+            storageState = StorageInitializationState.READY,
+            listenerState = ListenerLifecycleState.DISCONNECTED,
+            lastError = "Host ended the session",
+        )
+
+        val problem = state.derivedPersistentProblem()
+
+        assertThat(problem?.kind).isEqualTo(UserProblemKind.HOST_ENDED)
+        assertThat(problem?.primaryAction).isEqualTo(UserProblemAction.RETURN_TO_SESSIONS)
+    }
+
+    @Test
+    fun transportFailureProvidesRetryAndReturnActions() {
+        val state = AppUiState(
+            storageState = StorageInitializationState.READY,
+            listenerState = ListenerLifecycleState.ERROR,
+            lastError = "Wi-Fi Direct transport connection failed",
+        )
+
+        val problem = state.derivedPersistentProblem()
+
+        assertThat(problem?.kind).isEqualTo(UserProblemKind.TRANSPORT)
         assertThat(problem?.primaryAction).isEqualTo(UserProblemAction.RETRY)
         assertThat(problem?.secondaryAction).isEqualTo(UserProblemAction.RETURN_TO_SESSIONS)
     }
