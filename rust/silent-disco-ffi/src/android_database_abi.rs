@@ -3,13 +3,14 @@
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     path::PathBuf,
+    ptr::null_mut,
     sync::{Arc, Mutex, OnceLock},
 };
 
 use jni::{
     JNIEnv,
     objects::{JObject, JObjectArray, JString},
-    sys::{jdouble, jint, jlong},
+    sys::{jdouble, jint, jlong, jstring},
 };
 use silent_disco_core::{
     domain::{DeviceId, TrustState, TuningSettings},
@@ -43,6 +44,7 @@ enum AndroidDatabaseStatus {
     HandleExhausted = -112,
     JniConversionFailed = -113,
     CachedSettingsUnavailable = -114,
+    CachedTrustedDevicesUnavailable = -115,
 }
 
 impl AndroidDatabaseStatus {
@@ -75,6 +77,7 @@ fn map_storage_error(error: &StorageError) -> AndroidDatabaseStatus {
 struct DatabaseEntry {
     worker: Option<DatabaseWorker>,
     cached_settings: Option<StoredSettings>,
+    cached_trusted_devices: Option<Vec<TrustedDevice>>,
 }
 
 #[derive(Default)]
@@ -102,6 +105,7 @@ fn open_database(path: PathBuf) -> Result<i64, AndroidDatabaseStatus> {
     let entry = Arc::new(Mutex::new(DatabaseEntry {
         worker: Some(worker),
         cached_settings: None,
+        cached_trusted_devices: None,
     }));
     let mut registry = registry()
         .lock()
@@ -149,6 +153,57 @@ fn with_database_entry<T>(
         return Err(AndroidDatabaseStatus::InvalidHandle);
     }
     action(&mut entry)
+}
+
+fn load_trusted_devices(handle: i64) -> Result<(), AndroidDatabaseStatus> {
+    with_database_entry(handle, |entry| {
+        let devices = entry
+            .worker
+            .as_ref()
+            .ok_or(AndroidDatabaseStatus::InvalidHandle)?
+            .client()
+            .list_trusted_devices()
+            .map_err(|error| map_storage_error(&error))?;
+        entry.cached_trusted_devices = Some(devices);
+        Ok(())
+    })
+}
+
+fn cached_trusted_devices(handle: i64) -> Result<Vec<TrustedDevice>, AndroidDatabaseStatus> {
+    with_database_entry(handle, |entry| {
+        entry
+            .cached_trusted_devices
+            .clone()
+            .ok_or(AndroidDatabaseStatus::CachedTrustedDevicesUnavailable)
+    })
+}
+
+fn cached_trusted_device(
+    handle: i64,
+    index: jint,
+) -> Result<TrustedDevice, AndroidDatabaseStatus> {
+    let index = usize::try_from(index).map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
+    cached_trusted_devices(handle)?
+        .get(index)
+        .cloned()
+        .ok_or(AndroidDatabaseStatus::InvalidArgument)
+}
+
+fn delete_trusted_device(
+    handle: i64,
+    device_id: DeviceId,
+) -> Result<bool, AndroidDatabaseStatus> {
+    with_database_entry(handle, |entry| {
+        let deleted = entry
+            .worker
+            .as_ref()
+            .ok_or(AndroidDatabaseStatus::InvalidHandle)?
+            .client()
+            .delete_trusted_device(&device_id)
+            .map_err(|error| map_storage_error(&error))?;
+        entry.cached_trusted_devices = None;
+        Ok(deleted)
+    })
 }
 
 fn close_database(handle: i64) -> Result<(), AndroidDatabaseStatus> {
@@ -531,10 +586,109 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
                 .ok_or(AndroidDatabaseStatus::InvalidHandle)?
                 .client()
                 .upsert_trusted_device(&device)
-                .map_err(|error| map_storage_error(&error))
+                .map_err(|error| map_storage_error(&error))?;
+            entry.cached_trusted_devices = None;
+            Ok(())
         })
     })();
     status_code(result)
+}
+
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseLoadTrustedDevicesStatus(
+    _env: JNIEnv<'_>,
+    _receiver: JObject<'_>,
+    handle: jlong,
+) -> jint {
+    status_code(load_trusted_devices(handle))
+}
+
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseCachedTrustedDeviceCount(
+    _env: JNIEnv<'_>,
+    _receiver: JObject<'_>,
+    handle: jlong,
+) -> jint {
+    match cached_trusted_devices(handle).and_then(|devices| {
+        i32::try_from(devices.len()).map_err(|_| AndroidDatabaseStatus::InvalidArgument)
+    }) {
+        Ok(count) => count,
+        Err(status) => status.code(),
+    }
+}
+
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseCachedTrustedDeviceId(
+    mut env: JNIEnv<'_>,
+    _receiver: JObject<'_>,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    cached_trusted_device(handle, index)
+        .and_then(|device| {
+            env.new_string(device.device_id.as_str())
+                .map_err(|_| AndroidDatabaseStatus::JniConversionFailed)
+        })
+        .map_or_else(|_| null_mut(), JString::into_raw)
+}
+
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseCachedTrustedDisplayName(
+    mut env: JNIEnv<'_>,
+    _receiver: JObject<'_>,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    cached_trusted_device(handle, index)
+        .and_then(|device| {
+            env.new_string(device.display_name)
+                .map_err(|_| AndroidDatabaseStatus::JniConversionFailed)
+        })
+        .map_or_else(|_| null_mut(), JString::into_raw)
+}
+
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseCachedTrustedLastSeenMs(
+    _env: JNIEnv<'_>,
+    _receiver: JObject<'_>,
+    handle: jlong,
+    index: jint,
+) -> jlong {
+    match cached_trusted_device(handle, index).and_then(|device| {
+        i64::try_from(device.last_seen_ms).map_err(|_| AndroidDatabaseStatus::InvalidArgument)
+    }) {
+        Ok(value) => value,
+        Err(status) => i64::from(status.code()),
+    }
+}
+
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseDeleteTrusted(
+    mut env: JNIEnv<'_>,
+    _receiver: JObject<'_>,
+    handle: jlong,
+    device_id: JString<'_>,
+) -> jint {
+    let result = java_string(&mut env, &device_id)
+        .and_then(|value| DeviceId::new(value).map_err(|_| AndroidDatabaseStatus::InvalidArgument))
+        .and_then(|device_id| delete_trusted_device(handle, device_id));
+    match result {
+        Ok(true) => AndroidDatabaseStatus::Success.code(),
+        Ok(false) => AndroidDatabaseStatus::NotFound.code(),
+        Err(status) => status.code(),
+    }
 }
 
 #[must_use]
@@ -571,11 +725,15 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
 
 #[cfg(test)]
 mod tests {
-    use super::{AndroidDatabaseStatus, close_database, open_database, with_database_entry};
+    use super::{
+        AndroidDatabaseStatus, cached_trusted_device, cached_trusted_devices, close_database,
+        delete_trusted_device, load_trusted_devices, open_database, with_database_entry,
+    };
     use silent_disco_core::{
-        domain::TuningSettings,
+        domain::{DeviceId, TrustState, TuningSettings},
         storage::{
             LEGACY_ANDROID_IMPORT_VERSION, LegacyAndroidImport, LegacyImportOutcome, StoredSettings,
+            TrustedDevice,
         },
     };
     use std::{
@@ -628,6 +786,54 @@ mod tests {
             close_database(handle),
             Err(AndroidDatabaseStatus::InvalidHandle)
         );
+        remove_database(&path);
+    }
+
+    #[test]
+    fn trusted_device_cache_lists_and_deletes_authoritatively() {
+        let path = test_path();
+        let handle = open_database(path.clone()).expect("database opens");
+        let device = TrustedDevice {
+            device_id: DeviceId::new("listener-cache").expect("valid device id"),
+            display_name: "Listener phone".to_owned(),
+            public_key: None,
+            private_key_ref: None,
+            trust_state: TrustState::Trusted,
+            first_seen_ms: 10,
+            last_seen_ms: 20,
+            updated_at_ms: 20,
+        };
+        with_database_entry(handle, |entry| {
+            entry
+                .worker
+                .as_ref()
+                .expect("worker present")
+                .client()
+                .upsert_trusted_device(&device)
+                .map_err(|error| super::map_storage_error(&error))
+        })
+        .expect("device stored");
+
+        load_trusted_devices(handle).expect("trusted devices load");
+        assert_eq!(cached_trusted_devices(handle), Ok(vec![device.clone()]));
+        assert_eq!(cached_trusted_device(handle, 0), Ok(device.clone()));
+        assert_eq!(
+            cached_trusted_device(handle, 1),
+            Err(AndroidDatabaseStatus::InvalidArgument)
+        );
+
+        assert_eq!(
+            delete_trusted_device(handle, device.device_id.clone()),
+            Ok(true)
+        );
+        assert_eq!(
+            cached_trusted_devices(handle),
+            Err(AndroidDatabaseStatus::CachedTrustedDevicesUnavailable)
+        );
+        load_trusted_devices(handle).expect("empty trusted devices reload");
+        assert!(cached_trusted_devices(handle).expect("cache present").is_empty());
+
+        close_database(handle).expect("database closes");
         remove_database(&path);
     }
 }
