@@ -15,6 +15,7 @@ object AppRoutes {
     const val ConnectionHelp = "connection_help"
     const val AdvancedDiagnostics = "advanced_diagnostics"
     const val Settings = "settings"
+    const val TrustedDevices = "trusted_devices"
 }
 
 fun NavHostController.navigateSingleTop(route: String) {
