@@ -39,6 +39,10 @@ enum class UserProblemKind {
     PERMISSION_REQUIRED,
     HOST_SESSION,
     JOIN_REJECTED,
+    INVALID_INVITE_CODE,
+    HOST_ENDED,
+    HOST_UNREACHABLE,
+    TRANSPORT,
     CONNECTION_LOST,
     SYNCHRONIZATION,
     PLAYBACK,
@@ -72,6 +76,17 @@ enum class JoinApprovalAction {
     APPROVE_ONCE,
     ALWAYS_ALLOW,
     REJECT,
+}
+
+fun UserProblemAction.label(): String = when (this) {
+    UserProblemAction.RETRY -> "Retry"
+    UserProblemAction.EDIT_CODE -> "Edit invite code"
+    UserProblemAction.RETURN_TO_SESSIONS -> "Return to sessions"
+    UserProblemAction.OPEN_SETTINGS -> "Open Settings"
+    UserProblemAction.RESYNCHRONIZE -> "Resynchronize audio"
+    UserProblemAction.RECONNECT -> "Reconnect"
+    UserProblemAction.SHARE_SUPPORT_REPORT -> "Share support report"
+    UserProblemAction.DISMISS -> "Dismiss"
 }
 
 /**
@@ -219,6 +234,105 @@ fun AppUiState.listenerConnectionHealthSummary(): SessionHealthSummary {
     )
 }
 
+private fun String?.normalizedProblemText(): String = orEmpty().lowercase()
+
+private fun AppUiState.listenerErrorProblem(): UserFacingProblem {
+    val errorText = lastError.normalizedProblemText()
+    return when {
+        "permission" in errorText -> UserFacingProblem(
+            id = "listener-permission",
+            kind = UserProblemKind.PERMISSION_REQUIRED,
+            title = "Nearby-device access is required",
+            detail = "Allow nearby-device access in Settings, then try again.",
+            primaryAction = UserProblemAction.OPEN_SETTINGS,
+            secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            technicalDetail = lastError,
+        )
+
+        "invite code" in errorText || "incorrect code" in errorText -> UserFacingProblem(
+            id = "invalid-invite-code",
+            kind = UserProblemKind.INVALID_INVITE_CODE,
+            title = "The invite code was not accepted",
+            detail = "Check the code with the host and enter it again.",
+            primaryAction = UserProblemAction.EDIT_CODE,
+            secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            technicalDetail = lastError,
+        )
+
+        "reject" in errorText || "did not approve" in errorText -> UserFacingProblem(
+            id = "join-rejected",
+            kind = UserProblemKind.JOIN_REJECTED,
+            title = "The host did not approve this request",
+            detail = "Ask the host to approve this phone or choose another session.",
+            primaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            secondaryAction = UserProblemAction.RETRY,
+            technicalDetail = lastError,
+        )
+
+        "host ended" in errorText || "session ended" in errorText -> UserFacingProblem(
+            id = "host-ended-session",
+            kind = UserProblemKind.HOST_ENDED,
+            title = "The host ended the session",
+            detail = "Return to nearby sessions to look for another host.",
+            primaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            technicalDetail = lastError,
+        )
+
+        "sync" in errorText || "clock" in errorText -> UserFacingProblem(
+            id = "listener-sync-failure",
+            kind = UserProblemKind.SYNCHRONIZATION,
+            title = "Audio could not be synchronized",
+            detail = "Retry the connection or return to nearby sessions.",
+            primaryAction = UserProblemAction.RETRY,
+            secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            technicalDetail = lastError,
+        )
+
+        "playback" in errorText || "audio output" in errorText || "audio track" in errorText ->
+            UserFacingProblem(
+                id = "listener-playback",
+                kind = UserProblemKind.PLAYBACK,
+                title = "Playback could not start",
+                detail = "Retry the session. A support report may help if the problem continues.",
+                primaryAction = UserProblemAction.RETRY,
+                secondaryAction = UserProblemAction.SHARE_SUPPORT_REPORT,
+                technicalDetail = lastError,
+            )
+
+        "transport" in errorText || "wi-fi" in errorText || "bluetooth" in errorText ->
+            UserFacingProblem(
+                id = "listener-transport",
+                kind = UserProblemKind.TRANSPORT,
+                title = "The nearby connection failed",
+                detail = "Move closer to the host and retry the connection.",
+                primaryAction = UserProblemAction.RETRY,
+                secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+                technicalDetail = lastError,
+            )
+
+        "disappeared" in errorText || "unreachable" in errorText || "out of range" in errorText ->
+            UserFacingProblem(
+                id = "host-unreachable",
+                kind = UserProblemKind.HOST_UNREACHABLE,
+                title = "The host is no longer reachable",
+                detail = "The host may have moved out of range or stopped advertising.",
+                primaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+                secondaryAction = UserProblemAction.RETRY,
+                technicalDetail = lastError,
+            )
+
+        else -> UserFacingProblem(
+            id = "listener-connection-error",
+            kind = UserProblemKind.CONNECTION_LOST,
+            title = "Could not connect to the host",
+            detail = "Move closer to the host, retry, or choose another nearby session.",
+            primaryAction = UserProblemAction.RETRY,
+            secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            technicalDetail = lastError,
+        )
+    }
+}
+
 fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
     when (storageState) {
         StorageInitializationState.RECOVERABLE_FAILURE -> return UserFacingProblem(
@@ -245,6 +359,17 @@ fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
     }
 
     if (listenerState == ListenerLifecycleState.DISCONNECTED) {
+        val errorText = lastError.normalizedProblemText()
+        if ("host ended" in errorText || "session ended" in errorText) {
+            return UserFacingProblem(
+                id = "host-ended-session",
+                kind = UserProblemKind.HOST_ENDED,
+                title = "The host ended the session",
+                detail = "Return to nearby sessions to look for another host.",
+                primaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+                technicalDetail = lastError,
+            )
+        }
         return UserFacingProblem(
             id = "listener-disconnected",
             kind = UserProblemKind.CONNECTION_LOST,
@@ -281,21 +406,7 @@ fun AppUiState.derivedPersistentProblem(): UserFacingProblem? {
     }
 
     if (listenerState == ListenerLifecycleState.ERROR) {
-        val rejected = lastError?.contains("reject", ignoreCase = true) == true ||
-            lastError?.contains("invite code", ignoreCase = true) == true
-        return UserFacingProblem(
-            id = if (rejected) "join-rejected" else "listener-connection-error",
-            kind = if (rejected) UserProblemKind.JOIN_REJECTED else UserProblemKind.CONNECTION_LOST,
-            title = if (rejected) "The host did not approve this request" else "Could not connect to the host",
-            detail = if (rejected) {
-                "Check the invite code or choose another nearby session."
-            } else {
-                "The host may have ended the session or moved out of range."
-            },
-            primaryAction = UserProblemAction.RETRY,
-            secondaryAction = UserProblemAction.RETURN_TO_SESSIONS,
-            technicalDetail = lastError,
-        )
+        return listenerErrorProblem()
     }
 
     if (hostState == HostLifecycleState.ERROR || hostPlaybackState == PlaybackState.ERROR) {
