@@ -1,0 +1,2 @@
+machine=arm64
+abi=arm64-v8a
