@@ -1,9 +1,14 @@
 package com.ekkus.silentdisco.platform.persistence
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.StorageInitializationState
+import com.ekkus.silentdisco.app.withStorageInitializationFailure
 import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
+import com.ekkus.silentdisco.core.rust.RustDatabaseException
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -157,6 +162,57 @@ class AndroidRustDomainStoreInstrumentedTest {
         } finally {
             runBlocking { store.close() }
             cleanup(preferencesName, provider.databasePath())
+        }
+    }
+
+    @Test
+    fun migrationChecksumFailureProducesFatalVisibleStorageState() {
+        val suffix = System.nanoTime().toString()
+        val preferencesName = "block9-migration-$suffix"
+        val provider = AndroidDatabasePathProvider(
+            context,
+            "block9-migration-$suffix.sqlite3",
+        )
+        val firstOpen = AndroidRustDomainStore(
+            context = context,
+            pathProvider = provider,
+            preferencesName = preferencesName,
+        )
+        runBlocking {
+            firstOpen.initialize()
+            firstOpen.close()
+        }
+
+        val databasePath = provider.databasePath()
+        SQLiteDatabase.openDatabase(
+            databasePath,
+            null,
+            SQLiteDatabase.OPEN_READWRITE,
+        ).use { database ->
+            database.execSQL(
+                "UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 1",
+            )
+        }
+
+        val reopened = AndroidRustDomainStore(
+            context = context,
+            pathProvider = provider,
+            preferencesName = preferencesName,
+        )
+        try {
+            val error = assertThrows(RustDatabaseException::class.java) {
+                runBlocking { reopened.initialize() }
+            }
+            assertEquals(-103, error.statusCode)
+            val visibleState = AppUiState().withStorageInitializationFailure(error)
+            assertEquals(StorageInitializationState.FATAL_FAILURE, visibleState.storageState)
+            assertTrue(
+                visibleState.storageError.orEmpty().contains("Fatal persistent storage failure"),
+            )
+            assertEquals(visibleState.storageError, visibleState.lastError)
+        } finally {
+            runBlocking { reopened.close() }
+            cleanup(preferencesName, databasePath)
         }
     }
 
