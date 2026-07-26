@@ -30,6 +30,12 @@ data class TuningSettings(
         copy(scanWindowMs = scanWindowMs.coerceIn(1_000L, 10_000L))
 }
 
+enum class StorageInitializationState {
+    INITIALIZING,
+    READY,
+    FAILED,
+}
+
 enum class TuningField {
     SyncSampleWindow,
     SyncCadenceMs,
@@ -61,6 +67,8 @@ data class ConnectionProgressState(
 )
 
 data class AppUiState(
+    val storageState: StorageInitializationState = StorageInitializationState.INITIALIZING,
+    val storageSchemaVersion: Int? = null,
     val selectedRole: AppRole? = null,
     val permissions: List<PermissionState> = emptyList(),
     val hostForm: HostFormState = HostFormState(),

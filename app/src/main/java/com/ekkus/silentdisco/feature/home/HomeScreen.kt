@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.StorageInitializationState
 import com.ekkus.silentdisco.app.permissionSummary
 
 @Composable
@@ -23,6 +24,7 @@ fun HomeScreen(
     onHostClick: () -> Unit,
     onJoinClick: () -> Unit,
 ) {
+    val storageReady = uiState.storageState == StorageInitializationState.READY
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -37,6 +39,21 @@ fun HomeScreen(
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Persistent storage", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when (uiState.storageState) {
+                        StorageInitializationState.INITIALIZING -> "Opening the Rust-owned private database…"
+                        StorageInitializationState.READY ->
+                            "Ready — schema ${uiState.storageSchemaVersion ?: "unknown"}"
+                        StorageInitializationState.FAILED ->
+                            uiState.lastError ?: "Persistent storage failed to initialize"
+                    },
+                )
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Permissions", style = MaterialTheme.typography.titleMedium)
                 Text(uiState.permissionSummary())
                 Button(onClick = onRequestPermissions) {
@@ -46,10 +63,18 @@ fun HomeScreen(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onHostClick, modifier = Modifier.weight(1f)) {
+            Button(
+                onClick = onHostClick,
+                enabled = storageReady,
+                modifier = Modifier.weight(1f),
+            ) {
                 Text("Host a Session")
             }
-            Button(onClick = onJoinClick, modifier = Modifier.weight(1f)) {
+            Button(
+                onClick = onJoinClick,
+                enabled = storageReady,
+                modifier = Modifier.weight(1f),
+            ) {
                 Text("Join a Session")
             }
         }

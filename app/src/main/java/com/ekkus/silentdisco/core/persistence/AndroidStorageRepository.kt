@@ -1,7 +1,6 @@
 package com.ekkus.silentdisco.core.persistence
 
 import android.content.Context
-import com.ekkus.silentdisco.core.rust.LEGACY_ANDROID_IMPORT_VERSION
 import com.ekkus.silentdisco.core.rust.RustLegacyImportOutcome
 import com.ekkus.silentdisco.core.rust.RustStorageBridge
 import com.ekkus.silentdisco.core.rust.RustStorageSession
@@ -17,6 +16,14 @@ data class AndroidStorageSnapshot(
     val legacyImport: RustLegacyImportOutcome,
 )
 
+interface AppStorageRepository : AutoCloseable {
+    fun initialize(): AndroidStorageSnapshot
+    fun saveSettings(settings: RustStoredSettings): RustStoredSettings
+    fun upsertTrustedDevice(device: RustTrustedDevice): RustTrustedDevice
+    fun deleteTrustedDevice(deviceId: String): Boolean
+    fun listTrustedDevices(): List<RustTrustedDevice>
+}
+
 /**
  * Android control-plane owner for one process-lifetime Rust storage session.
  *
@@ -29,22 +36,17 @@ class AndroidStorageRepository(
     private val context: Context,
     private val clock: () -> Long = System::currentTimeMillis,
     private val legacyReader: LegacyAndroidImportReader = LegacyAndroidImportReader(clock),
-) : AutoCloseable {
+) : AppStorageRepository {
     private var session: RustStorageSession? = null
+    private var committedImportOutcome: RustLegacyImportOutcome? = null
 
     @Synchronized
-    fun initialize(): AndroidStorageSnapshot {
+    override fun initialize(): AndroidStorageSnapshot {
         session?.let { existing ->
-            return readCurrentSnapshot(
-                existing,
-                RustLegacyImportOutcome(
-                    disposition = "already_initialized",
-                    importVersion = LEGACY_ANDROID_IMPORT_VERSION,
-                    completedAtMs = clock(),
-                    settingsImported = existing.loadSettings() != null,
-                    trustedDeviceCount = existing.listTrustedDevices().size,
-                ),
+            val outcome = committedImportOutcome ?: throw AndroidStorageInitializationException(
+                "Rust storage session exists without its committed import outcome",
             )
+            return readCurrentSnapshot(existing, outcome)
         }
         val databaseFile = AndroidDatabasePathProvider.resolve(context)
         val candidate = RustStorageBridge.open(databaseFile.absolutePath)
@@ -66,6 +68,7 @@ class AndroidStorageRepository(
                 legacyImport = importOutcome,
             )
             session = candidate
+            committedImportOutcome = importOutcome
             return snapshot
         } catch (error: Throwable) {
             runCatching(candidate::close).exceptionOrNull()?.let(error::addSuppressed)
@@ -74,19 +77,19 @@ class AndroidStorageRepository(
     }
 
     @Synchronized
-    fun saveSettings(settings: RustStoredSettings): RustStoredSettings =
+    override fun saveSettings(settings: RustStoredSettings): RustStoredSettings =
         requireSession().saveSettings(settings)
 
     @Synchronized
-    fun upsertTrustedDevice(device: RustTrustedDevice): RustTrustedDevice =
+    override fun upsertTrustedDevice(device: RustTrustedDevice): RustTrustedDevice =
         requireSession().upsertTrustedDevice(device)
 
     @Synchronized
-    fun deleteTrustedDevice(deviceId: String): Boolean =
+    override fun deleteTrustedDevice(deviceId: String): Boolean =
         requireSession().deleteTrustedDevice(deviceId)
 
     @Synchronized
-    fun listTrustedDevices(): List<RustTrustedDevice> =
+    override fun listTrustedDevices(): List<RustTrustedDevice> =
         requireSession().listTrustedDevices()
 
     @Synchronized
@@ -94,6 +97,7 @@ class AndroidStorageRepository(
         val current = session ?: return
         current.close()
         session = null
+        committedImportOutcome = null
     }
 
     private fun readCurrentSnapshot(
