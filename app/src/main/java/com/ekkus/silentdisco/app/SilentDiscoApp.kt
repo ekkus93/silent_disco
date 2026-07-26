@@ -238,6 +238,8 @@ fun SilentDiscoApp(viewModel: MainViewModel) {
                             uiEffects.trySend(AppUiEffect.NavigateHostDashboard)
                         }
                     },
+                    onOpenSettings = ::openSystemSettings,
+                    onShareSupportReport = ::shareSupportReport,
                 )
             }
 
