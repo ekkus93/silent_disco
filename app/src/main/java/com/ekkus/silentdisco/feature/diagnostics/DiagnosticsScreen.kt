@@ -52,12 +52,14 @@ fun DiagnosticsScreen(
     onManualResync: () -> Unit,
     onAdjustTuning: (TuningField, Int) -> Unit,
     onShare: (String) -> Unit,
+    initialExpertExpanded: Boolean = false,
+    initialExpertEnabled: Boolean = false,
 ) {
     var hostExpanded by rememberSaveable { mutableStateOf(false) }
     var listenerExpanded by rememberSaveable { mutableStateOf(false) }
     var outputExpanded by rememberSaveable { mutableStateOf(false) }
-    var expertExpanded by rememberSaveable { mutableStateOf(false) }
-    var expertEnabled by rememberSaveable { mutableStateOf(false) }
+    var expertExpanded by rememberSaveable(initialExpertExpanded) { mutableStateOf(initialExpertExpanded) }
+    var expertEnabled by rememberSaveable(initialExpertEnabled) { mutableStateOf(initialExpertEnabled) }
     val showHost = uiState.selectedRole == AppRole.HOST || uiState.hostDiagnostics.sessionId.isNotBlank()
     val showListener = uiState.selectedRole == AppRole.LISTENER || uiState.listenerDiagnostics.sessionId.isNotBlank()
     val hostHealth = uiState.hostSessionHealthSummary()
