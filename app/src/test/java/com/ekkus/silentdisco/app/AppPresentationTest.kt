@@ -27,6 +27,36 @@ class AppPresentationTest {
     }
 
     @Test
+    fun requestedButNotApprovedMapsToWaitingForHostApproval() {
+        val state = AppUiState(
+            listenerState = ListenerLifecycleState.CONNECTING,
+            connectionProgress = ConnectionProgressState(
+                currentState = ListenerLifecycleState.CONNECTING,
+                discovered = true,
+                requested = true,
+                approved = false,
+            ),
+        )
+
+        assertThat(state.joinUiStep()).isEqualTo(JoinUiStep.WAITING_FOR_APPROVAL)
+    }
+
+    @Test
+    fun approvedConnectionMapsToConnecting() {
+        val state = AppUiState(
+            listenerState = ListenerLifecycleState.CONNECTING,
+            connectionProgress = ConnectionProgressState(
+                currentState = ListenerLifecycleState.CONNECTING,
+                discovered = true,
+                requested = true,
+                approved = true,
+            ),
+        )
+
+        assertThat(state.joinUiStep()).isEqualTo(JoinUiStep.CONNECTING)
+    }
+
+    @Test
     fun hostErrorCanNeverProduceGoodHealth() {
         val state = AppUiState(
             hostState = HostLifecycleState.ERROR,
@@ -75,5 +105,20 @@ class AppPresentationTest {
 
         assertThat(problem?.kind).isEqualTo(UserProblemKind.STORAGE_FATAL)
         assertThat(problem?.technicalDetail).contains("checksum mismatch")
+    }
+
+    @Test
+    fun rejectedJoinProducesPersistentActionableProblem() {
+        val state = AppUiState(
+            storageState = StorageInitializationState.READY,
+            listenerState = ListenerLifecycleState.ERROR,
+            lastError = "Incorrect invite code; join rejected",
+        )
+
+        val problem = state.derivedPersistentProblem()
+
+        assertThat(problem?.kind).isEqualTo(UserProblemKind.JOIN_REJECTED)
+        assertThat(problem?.primaryAction).isEqualTo(UserProblemAction.RETRY)
+        assertThat(problem?.secondaryAction).isEqualTo(UserProblemAction.RETURN_TO_SESSIONS)
     }
 }
