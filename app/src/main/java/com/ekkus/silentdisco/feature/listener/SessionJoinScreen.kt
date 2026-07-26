@@ -17,19 +17,27 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.JoinUiStep
+import com.ekkus.silentdisco.app.UserFacingProblem
+import com.ekkus.silentdisco.app.UserProblemAction
 import com.ekkus.silentdisco.app.derivedPersistentProblem
 import com.ekkus.silentdisco.app.joinUiStep
+import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,9 +49,13 @@ fun SessionJoinScreen(
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     onReturnToSessions: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onShareSupportReport: () -> Unit,
 ) {
     val session = uiState.selectedSession
-    val requestStarted = uiState.listenerState !in setOf(
+    val problem = uiState.derivedPersistentProblem()
+    var editingInviteCode by rememberSaveable { mutableStateOf(false) }
+    val requestStarted = !editingInviteCode && uiState.listenerState !in setOf(
         ListenerLifecycleState.IDLE,
         ListenerLifecycleState.SCANNING,
         ListenerLifecycleState.SESSION_SELECTED,
@@ -96,55 +108,93 @@ fun SessionJoinScreen(
                             .fillMaxWidth()
                             .testTag("session-join-code"),
                         label = { Text("Invite code") },
+                        supportingText = if (editingInviteCode) {
+                            { Text("Check the exact code with the host before trying again.") }
+                        } else {
+                            null
+                        },
                         singleLine = true,
                     )
                 }
                 Button(
-                    onClick = onJoin,
+                    onClick = {
+                        editingInviteCode = false
+                        onJoin()
+                    },
                     enabled = session != null &&
                         (!session.inviteCodeRequired || uiState.connectionProgress.inviteCode.isNotBlank()),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("session-request-join"),
                 ) {
-                    Text("Request to join")
+                    Text(if (editingInviteCode) "Request again" else "Request to join")
                 }
             } else {
                 JoinProgressCard(uiState.joinUiStep())
             }
 
-            uiState.derivedPersistentProblem()?.let { problem ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("session-join-problem"),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(problem.title, style = MaterialTheme.typography.titleMedium)
-                        Text(problem.detail)
-                        problem.technicalDetail?.takeIf(String::isNotBlank)?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+            if (problem != null && !editingInviteCode) {
+                JoinProblemCard(
+                    problem = problem,
+                    onAction = { action ->
+                        when (action) {
+                            UserProblemAction.RETRY,
+                            UserProblemAction.RECONNECT,
+                            UserProblemAction.RESYNCHRONIZE -> onRetry()
+
+                            UserProblemAction.EDIT_CODE -> editingInviteCode = true
+                            UserProblemAction.RETURN_TO_SESSIONS -> onReturnToSessions()
+                            UserProblemAction.OPEN_SETTINGS -> onOpenSettings()
+                            UserProblemAction.SHARE_SUPPORT_REPORT -> onShareSupportReport()
+                            UserProblemAction.DISMISS -> Unit
                         }
-                        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
-                            Text("Retry")
-                        }
-                        TextButton(onClick = onReturnToSessions, modifier = Modifier.fillMaxWidth()) {
-                            Text("Return to sessions")
-                        }
-                    }
-                }
+                    },
+                )
             }
 
             if (uiState.listenerState != ListenerLifecycleState.PLAYING) {
                 TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
                     Text("Cancel")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun JoinProblemCard(
+    problem: UserFacingProblem,
+    onAction: (UserProblemAction) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("session-join-problem"),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(problem.title, style = MaterialTheme.typography.titleMedium)
+            Text(problem.detail)
+            problem.primaryAction?.let { action ->
+                Button(
+                    onClick = { onAction(action) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("session-problem-primary"),
+                ) {
+                    Text(action.label())
+                }
+            }
+            problem.secondaryAction?.let { action ->
+                OutlinedButton(
+                    onClick = { onAction(action) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("session-problem-secondary"),
+                ) {
+                    Text(action.label())
                 }
             }
         }
@@ -188,6 +238,7 @@ private fun JoinProgressCard(activeStep: JoinUiStep) {
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.titleMedium,
                         )
+
                         active -> CircularProgressIndicator()
                         else -> Text(
                             "○",
