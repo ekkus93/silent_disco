@@ -1,3 +1,0 @@
-status=125
-run_id=30197697590
-head_sha=4376860797f366c03c5bd4a229d3c0f6a670d6ae
