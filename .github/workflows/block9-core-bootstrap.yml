@@ -1,0 +1,45 @@
+name: Block 9 Rust Import Bootstrap
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.ref == 'agent/rust-storage-block9'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/rust-storage-block9
+          fetch-depth: 0
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+      - name: Apply guarded core patch
+        run: python .github/scripts/apply_block9_core.py
+      - name: Validate Rust
+        run: |
+          cd rust
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+      - name: Ensure patch hygiene
+        run: git diff --check
+      - name: Remove bootstrap files
+        run: |
+          rm .github/scripts/apply_block9_core.py
+          rm .github/workflows/block9-core-bootstrap.yml
+      - name: Commit validated core import
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add transactional Android legacy import backend'
+          git push origin HEAD:agent/rust-storage-block9
