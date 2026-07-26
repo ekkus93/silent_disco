@@ -19,10 +19,10 @@ import com.ekkus.silentdisco.app.AppUiEffect
 import com.ekkus.silentdisco.app.navigateHomeAndClearWorkflow
 import com.ekkus.silentdisco.app.navigateSingleTop
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.receiveAsFlow
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -55,8 +55,7 @@ class WorkflowEffectIntegrationTest {
                         }
                         AppUiEffect.ShowEndSessionConfirmation,
                         AppUiEffect.ShowLeaveSessionConfirmation,
-                        is AppUiEffect.ShowTransientMessage,
-                        -> Unit
+                        is AppUiEffect.ShowTransientMessage -> Unit
                     }
                 }
             }
@@ -133,11 +132,11 @@ class WorkflowEffectIntegrationTest {
     private fun routeTag(route: String): String = "effect-route-$route"
 
     private class FakeWorkflowStateHolder {
-        private val _effects = MutableSharedFlow<AppUiEffect>(extraBufferCapacity = 8)
-        val effects: SharedFlow<AppUiEffect> = _effects.asSharedFlow()
+        private val channel = Channel<AppUiEffect>(capacity = Channel.BUFFERED)
+        val effects: Flow<AppUiEffect> = channel.receiveAsFlow()
 
         fun emit(effect: AppUiEffect) {
-            check(_effects.tryEmit(effect)) { "Failed to emit workflow effect $effect" }
+            check(channel.trySend(effect).isSuccess) { "Failed to emit workflow effect $effect" }
         }
     }
 
