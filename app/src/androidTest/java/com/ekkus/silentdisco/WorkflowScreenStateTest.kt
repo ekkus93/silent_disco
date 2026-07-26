@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -70,7 +71,7 @@ class WorkflowScreenStateTest {
     }
 
     @Test
-    fun discoveryShowsPermissionScanningEmptyAndResultStates() {
+    fun discoveryShowsPermissionRequiredState() {
         composeRule.setContent {
             SilentDiscoTheme {
                 NearbySessionsScreen(
@@ -83,8 +84,12 @@ class WorkflowScreenStateTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("nearby-permission-required").assertIsDisplayed()
 
+        composeRule.onNodeWithTag("nearby-permission-required").assertIsDisplayed()
+    }
+
+    @Test
+    fun discoveryShowsScanningState() {
         composeRule.setContent {
             SilentDiscoTheme {
                 NearbySessionsScreen(
@@ -100,8 +105,12 @@ class WorkflowScreenStateTest {
                 )
             }
         }
-        composeRule.onNodeWithTag("nearby-scanning").assertIsDisplayed()
 
+        composeRule.onNodeWithTag("nearby-scanning").assertIsDisplayed()
+    }
+
+    @Test
+    fun discoveryShowsPlainLanguageResultBadge() {
         val session = SessionInfo(
             id = "session-1",
             name = "Kitchen Disco",
@@ -124,12 +133,13 @@ class WorkflowScreenStateTest {
                 )
             }
         }
+
         composeRule.onNodeWithTag("nearby-results").assertIsDisplayed()
         composeRule.onNodeWithText("Approval required").assertIsDisplayed()
     }
 
     @Test
-    fun healthyPlaybackHidesRecoveryWhileDesyncShowsIt() {
+    fun healthyPlaybackHidesRecoveryAction() {
         val healthy = AppUiState(
             storageState = StorageInitializationState.READY,
             listenerState = ListenerLifecycleState.PLAYING,
@@ -147,13 +157,21 @@ class WorkflowScreenStateTest {
                 )
             }
         }
+
         composeRule.onNodeWithText("Playing in sync").assertIsDisplayed()
         composeRule.onNodeWithTag("listener-fix-connection").assertDoesNotExist()
+    }
 
+    @Test
+    fun desynchronizedPlaybackShowsRecoveryAction() {
         composeRule.setContent {
             SilentDiscoTheme {
                 ListenerPlaybackV2Screen(
-                    uiState = healthy.copy(listenerState = ListenerLifecycleState.DESYNCED),
+                    uiState = AppUiState(
+                        storageState = StorageInitializationState.READY,
+                        listenerState = ListenerLifecycleState.DESYNCED,
+                        listenerPlaybackState = PlaybackState.PLAYING,
+                    ),
                     onBackRequest = {},
                     onVolumeChanged = {},
                     onFixConnection = {},
@@ -161,6 +179,7 @@ class WorkflowScreenStateTest {
                 )
             }
         }
+
         composeRule.onNodeWithText("Audio is out of sync").assertIsDisplayed()
         composeRule.onNodeWithTag("listener-fix-connection").assertIsDisplayed()
     }
@@ -210,8 +229,8 @@ class WorkflowScreenStateTest {
 
         composeRule.onNodeWithTag("expert-tuning-toggle").performClick()
         composeRule.onNodeWithText("Changing these values can make synchronization worse.").assertIsDisplayed()
-        composeRule.onNodeWithText("−", useUnmergedTree = true).assertIsNotEnabled()
+        composeRule.onAllNodesWithText("−", useUnmergedTree = true)[0].assertIsNotEnabled()
         composeRule.onNodeWithTag("enable-expert-tuning").performClick()
-        composeRule.onNodeWithText("−", useUnmergedTree = true).assertIsEnabled()
+        composeRule.onAllNodesWithText("−", useUnmergedTree = true)[0].assertIsEnabled()
     }
 }
