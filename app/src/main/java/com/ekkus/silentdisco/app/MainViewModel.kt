@@ -1,10 +1,8 @@
 package com.ekkus.silentdisco.app
 
 import android.app.Application
-import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
-import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
@@ -42,7 +40,7 @@ import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
-import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
+import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.DeviceIdentity
@@ -62,17 +60,21 @@ import com.ekkus.silentdisco.core.transport.BroadcastDeliverySeverity
 import com.ekkus.silentdisco.core.transport.SendAllResult
 import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
+import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class MainViewModel @JvmOverloads constructor(
     application: Application,
     private val playbackEngine: PlaybackEngine = AudioTrackPlaybackEngine(),
+    private val domainStore: AndroidRustDomainStore = AndroidRustDomainStore(application),
 ) : AndroidViewModel(application) {
     private val logger = AppLogger()
     private val diagnosticsStore = DiagnosticsStore()
@@ -81,7 +83,6 @@ class MainViewModel @JvmOverloads constructor(
     private val bleService = BleDiscoveryService(application)
     private val wifiDirectService = WifiDirectTransportService(application, logger)
     private val hostTimingService = HostTimingService()
-    private val preferences = application.getSharedPreferences("silent-disco", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(
         AppUiState(
@@ -89,7 +90,7 @@ class MainViewModel @JvmOverloads constructor(
                 PermissionState(permission = it, granted = false)
             },
             discoveredSessions = emptyList(),
-            tuningSettings = loadTuningSettings(),
+            tuningSettings = TuningSettings(),
         ),
     )
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
@@ -108,8 +109,11 @@ class MainViewModel @JvmOverloads constructor(
     private var pendingSyncCorrelationId: Long? = null
     private var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
     private val localListenerDeviceId = "listener-device"
+    @Volatile
+    private var persistenceReady = false
 
     init {
+        initializeDomainPersistence()
         observeTransport()
         observeDiscovery()
         observeBleFailures()
@@ -161,6 +165,7 @@ class MainViewModel @JvmOverloads constructor(
     private fun validateHostForm(state: AppUiState): String? = HostSessionValidator.validate(state.hostForm)
 
     fun createHostSession(): Boolean {
+        if (!requirePersistenceReady("start a host session")) return false
         val validationError = validateHostForm(_uiState.value)
         if (validationError != null) {
             _uiState.value = _uiState.value.copy(
@@ -304,14 +309,16 @@ class MainViewModel @JvmOverloads constructor(
 
             if (!delivered) return@launch
 
-            if (_uiState.value.hostForm.rememberApprovedDevices) {
-                trustListener(request.listenerId)
+            val trustPersisted = if (_uiState.value.hostForm.rememberApprovedDevices) {
+                persistTrustedListener(request.listenerId, request.listenerName)
+            } else {
+                true
             }
             _uiState.value = _uiState.value.copy(
                 pendingJoinRequests = _uiState.value.pendingJoinRequests.filterNot { it.requestId == request.requestId },
                 approvedListeners = (_uiState.value.approvedListeners + request.toListenerInfo()).distinctBy { it.deviceId },
                 lastMessage = "${request.listenerName} approved",
-                lastError = null,
+                lastError = if (trustPersisted) null else _uiState.value.lastError,
             )
             refreshHostDiagnostics()
         }
@@ -351,14 +358,46 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun trustListener(listenerId: String) {
-        preferences.edit { putBoolean(LegacyPreferencesContract.trustedDeviceKey(listenerId), true) }
-        _uiState.value = _uiState.value.copy(
-            approvedListeners = _uiState.value.approvedListeners.map {
-                if (it.deviceId == listenerId) it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER) else it
+        val displayName = _uiState.value.approvedListeners
+            .firstOrNull { it.deviceId == listenerId }
+            ?.displayName
+            ?: listenerId
+        viewModelScope.launch {
+            persistTrustedListener(listenerId, displayName)
+        }
+    }
+
+    private suspend fun persistTrustedListener(
+        listenerId: String,
+        displayName: String,
+    ): Boolean {
+        if (!requirePersistenceReady("trust a listener")) return false
+        return runCatching {
+            domainStore.trustDevice(listenerId, displayName)
+        }.fold(
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(
+                    approvedListeners = _uiState.value.approvedListeners.map {
+                        if (it.deviceId == listenerId) {
+                            it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER)
+                        } else {
+                            it
+                        }
+                    },
+                    lastMessage = "Trusted listener ${listenerId.take(6)}",
+                    lastError = null,
+                )
+                refreshHostDiagnostics()
+                true
             },
-            lastMessage = "Trusted listener ${listenerId.take(6)}",
+            onFailure = { error ->
+                val message = error.message ?: "Failed to persist trusted listener"
+                logger.e("storage.trust", message, error)
+                _uiState.value = _uiState.value.copy(lastError = message)
+                refreshHostDiagnostics()
+                false
+            },
         )
-        refreshHostDiagnostics()
     }
 
     fun removeListener(listenerId: String) {
@@ -625,6 +664,7 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun scanForSessions() {
+        if (!requirePersistenceReady("scan for sessions")) return
         logger.i("listener.scan", "Scanning for nearby sessions")
         scanJob?.cancel()
 
@@ -718,6 +758,7 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun requestJoin() {
+        if (!requirePersistenceReady("join a session")) return
         val session = _uiState.value.selectedSession ?: run {
             _uiState.value = _uiState.value.copy(lastError = "Select a session before joining")
             return
@@ -805,16 +846,27 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun adjustTuning(field: TuningField, direction: Int) {
+        if (!requirePersistenceReady("update tuning")) return
         val updated = _uiState.value.tuningSettings.adjust(field, direction)
-        persistTuningSettings(updated)
-        listenerSyncController = _uiState.value.selectedSession?.let { createSyncController(SessionId(it.id)) }
-        _uiState.value = _uiState.value.copy(
-            tuningSettings = updated,
-            lastMessage = "Updated tuning: ${updated.summary()}",
-            lastError = null,
-        )
-        if (resyncJob?.isActive == true) {
-            startPeriodicListenerResync()
+        viewModelScope.launch {
+            runCatching {
+                domainStore.saveTuning(updated.toRustStoredSettings())
+            }.onSuccess {
+                listenerSyncController = _uiState.value.selectedSession
+                    ?.let { createSyncController(SessionId(it.id)) }
+                _uiState.value = _uiState.value.copy(
+                    tuningSettings = updated,
+                    lastMessage = "Updated tuning: ${updated.summary()}",
+                    lastError = null,
+                )
+                if (resyncJob?.isActive == true) {
+                    startPeriodicListenerResync()
+                }
+            }.onFailure { error ->
+                val message = error.message ?: "Failed to persist tuning settings"
+                logger.e("storage.settings", message, error)
+                _uiState.value = _uiState.value.copy(lastError = message)
+            }
         }
     }
 
@@ -1187,7 +1239,9 @@ class MainViewModel @JvmOverloads constructor(
             lastError = null,
         )
         if (message.trustedForFuture) {
-            preferences.edit { putBoolean("trusted:${message.listenerId}", true) }
+            viewModelScope.launch {
+                persistTrustedListener(message.listenerId, "This Android Listener")
+            }
         }
         refreshListenerDiagnostics()
         requestListenerSyncProbe(source = "Initial clock sync")
@@ -1981,26 +2035,34 @@ class MainViewModel @JvmOverloads constructor(
             ListenerLifecycleState.DESYNCED,
         )
 
-    private fun loadTuningSettings(): TuningSettings = TuningSettings(
-        syncSampleWindow = preferences.getInt(LegacyPreferencesContract.SYNC_SAMPLE_WINDOW, 12),
-        syncCadenceMs = preferences.getLong(LegacyPreferencesContract.SYNC_CADENCE_MS, 2_000L),
-        startupBufferMs = preferences.getLong(LegacyPreferencesContract.STARTUP_BUFFER_MS, 400L),
-        latePacketThresholdMs = preferences.getLong(LegacyPreferencesContract.LATE_PACKET_THRESHOLD_MS, 40L),
-        hardResyncThresholdMs = preferences.getLong(LegacyPreferencesContract.HARD_RESYNC_THRESHOLD_MS, 120L),
-        syncDriftThresholdMs = java.lang.Double.longBitsToDouble(
-            preferences.getLong(LegacyPreferencesContract.SYNC_DRIFT_THRESHOLD_BITS, java.lang.Double.doubleToLongBits(18.0)),
-        ),
-    )
-
-    private fun persistTuningSettings(settings: TuningSettings) {
-        preferences.edit {
-            putInt(LegacyPreferencesContract.SYNC_SAMPLE_WINDOW, settings.syncSampleWindow)
-            putLong(LegacyPreferencesContract.SYNC_CADENCE_MS, settings.syncCadenceMs)
-            putLong(LegacyPreferencesContract.STARTUP_BUFFER_MS, settings.startupBufferMs)
-            putLong(LegacyPreferencesContract.LATE_PACKET_THRESHOLD_MS, settings.latePacketThresholdMs)
-            putLong(LegacyPreferencesContract.HARD_RESYNC_THRESHOLD_MS, settings.hardResyncThresholdMs)
-            putLong(LegacyPreferencesContract.SYNC_DRIFT_THRESHOLD_BITS, java.lang.Double.doubleToLongBits(settings.syncDriftThresholdMs))
+    private fun initializeDomainPersistence() {
+        viewModelScope.launch {
+            runCatching {
+                domainStore.initialize()
+            }.onSuccess { stored ->
+                persistenceReady = true
+                val tuning = stored.toAppTuningSettings()
+                _uiState.value = _uiState.value.copy(
+                    tuningSettings = tuning,
+                    lastMessage = "Persistent settings loaded",
+                    lastError = null,
+                )
+            }.onFailure { error ->
+                persistenceReady = false
+                val message = error.message ?: "Rust domain persistence failed to initialize"
+                logger.e("storage.initialize", message, error)
+                _uiState.value = _uiState.value.copy(
+                    lastError = "Persistent storage unavailable: $message",
+                )
+            }
         }
+    }
+
+    private fun requirePersistenceReady(action: String): Boolean {
+        if (persistenceReady) return true
+        val message = "Persistent storage is not ready; cannot $action."
+        _uiState.value = _uiState.value.copy(lastError = message)
+        return false
     }
 
     private fun hasPermission(permission: AppPermission): Boolean =
@@ -2034,9 +2096,36 @@ class MainViewModel @JvmOverloads constructor(
     override fun onCleared() {
         bleService.stop()
         wifiDirectService.stop()
+        runCatching {
+            runBlocking(Dispatchers.IO) { domainStore.close() }
+        }.onFailure { error ->
+            logger.e("storage.close", error.message ?: "Failed to close Rust database", error)
+        }
         super.onCleared()
     }
 }
+
+private fun RustStoredTuningSettings.toAppTuningSettings(): TuningSettings = TuningSettings(
+    syncSampleWindow = syncSampleWindow,
+    syncCadenceMs = syncCadenceMs,
+    startupBufferMs = startupBufferMs,
+    latePacketThresholdMs = latePacketThresholdMs,
+    hardResyncThresholdMs = hardResyncThresholdMs,
+    syncDriftThresholdMs = syncDriftThresholdMs,
+    scanWindowMs = scanWindowMs,
+)
+
+private fun TuningSettings.toRustStoredSettings(): RustStoredTuningSettings =
+    RustStoredTuningSettings(
+        syncSampleWindow = syncSampleWindow,
+        syncCadenceMs = syncCadenceMs,
+        startupBufferMs = startupBufferMs,
+        latePacketThresholdMs = latePacketThresholdMs,
+        hardResyncThresholdMs = hardResyncThresholdMs,
+        syncDriftThresholdMs = syncDriftThresholdMs,
+        scanWindowMs = scanWindowMs,
+        updatedAtMs = System.currentTimeMillis(),
+    )
 
 internal fun requireHostSessionForPlayback(currentSessionId: SessionId?): String? =
     if (currentSessionId == null) "Start a host session before starting playback" else null
