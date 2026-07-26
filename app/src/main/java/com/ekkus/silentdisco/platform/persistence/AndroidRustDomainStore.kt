@@ -7,6 +7,7 @@ import com.ekkus.silentdisco.core.rust.RustDatabase
 import com.ekkus.silentdisco.core.rust.RustDatabaseBridge
 import com.ekkus.silentdisco.core.rust.RustLegacyImportOutcome
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
+import com.ekkus.silentdisco.core.rust.RustTrustedDevice
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -84,6 +85,18 @@ class AndroidRustDomainStore internal constructor(
     ) = withContext(ioDispatcher) {
         mutex.withLock {
             requireDatabase().trustDevice(deviceId, displayName, observedAtMs)
+        }
+    }
+
+    suspend fun listTrustedDevices(): List<RustTrustedDevice> = withContext(ioDispatcher) {
+        mutex.withLock {
+            requireDatabase().listTrustedDevices()
+        }
+    }
+
+    suspend fun deleteTrustedDevice(deviceId: String): Boolean = withContext(ioDispatcher) {
+        mutex.withLock {
+            requireDatabase().deleteTrustedDevice(deviceId)
         }
     }
 
