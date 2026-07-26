@@ -2,7 +2,6 @@
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
-    fs,
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -16,7 +15,7 @@ use silent_disco_core::{
     domain::{DeviceId, TrustState, TuningSettings},
     storage::{
         DatabaseConfig, DatabaseWorker, LegacyAndroidImport, LegacyImportOutcome, StorageError,
-        StorageErrorKind, StoredSettings, TrustedDevice, LEGACY_ANDROID_IMPORT_VERSION,
+        StorageErrorKind, StoredSettings, TrustedDevice,
     },
 };
 
@@ -205,7 +204,8 @@ fn java_string_array(
     Ok(decoded)
 }
 
-fn settings_from_jni(
+#[derive(Clone, Copy)]
+struct JniSettingsFields {
     sync_sample_window: jint,
     sync_cadence_ms: jlong,
     startup_buffer_ms: jlong,
@@ -214,24 +214,26 @@ fn settings_from_jni(
     sync_drift_threshold_ms: jdouble,
     scan_window_ms: jlong,
     updated_at_ms: jlong,
-) -> Result<StoredSettings, AndroidDatabaseStatus> {
+}
+
+fn settings_from_jni(fields: JniSettingsFields) -> Result<StoredSettings, AndroidDatabaseStatus> {
     Ok(StoredSettings {
         tuning: TuningSettings {
-            sync_sample_window: u16::try_from(sync_sample_window)
+            sync_sample_window: u16::try_from(fields.sync_sample_window)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
-            sync_cadence_ms: u64::try_from(sync_cadence_ms)
+            sync_cadence_ms: u64::try_from(fields.sync_cadence_ms)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
-            startup_buffer_ms: u64::try_from(startup_buffer_ms)
+            startup_buffer_ms: u64::try_from(fields.startup_buffer_ms)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
-            late_packet_threshold_ms: u64::try_from(late_packet_threshold_ms)
+            late_packet_threshold_ms: u64::try_from(fields.late_packet_threshold_ms)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
-            hard_resync_threshold_ms: u64::try_from(hard_resync_threshold_ms)
+            hard_resync_threshold_ms: u64::try_from(fields.hard_resync_threshold_ms)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
-            sync_drift_threshold_ms,
-            scan_window_ms: u64::try_from(scan_window_ms)
+            sync_drift_threshold_ms: fields.sync_drift_threshold_ms,
+            scan_window_ms: u64::try_from(fields.scan_window_ms)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
         },
-        updated_at_ms: u64::try_from(updated_at_ms)
+        updated_at_ms: u64::try_from(fields.updated_at_ms)
             .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
     })
 }
@@ -286,7 +288,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
     imported_at_ms: jlong,
 ) -> jint {
     let result = (|| {
-        let settings = settings_from_jni(
+        let settings = settings_from_jni(JniSettingsFields {
             sync_sample_window,
             sync_cadence_ms,
             startup_buffer_ms,
@@ -294,15 +296,15 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
             hard_resync_threshold_ms,
             sync_drift_threshold_ms,
             scan_window_ms,
-            imported_at_ms,
-        )?;
-        let imported_at_ms = u64::try_from(imported_at_ms)
-            .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
+            updated_at_ms: imported_at_ms,
+        })?;
+        let imported_at_ms =
+            u64::try_from(imported_at_ms).map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
         let trusted_devices = java_string_array(&mut env, &trusted_device_ids)?
             .into_iter()
             .map(|value| {
-                let device_id = DeviceId::new(value)
-                    .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
+                let device_id =
+                    DeviceId::new(value).map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
                 Ok(TrustedDevice {
                     display_name: device_id.as_str().to_owned(),
                     device_id,
@@ -356,7 +358,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
         let settings = client
             .load_settings()
             .map_err(|error| map_storage_error(&error))?;
-        entry.cached_settings = settings.clone();
+        entry.cached_settings.clone_from(&settings);
         Ok(settings.is_some())
     });
     match result {
@@ -428,9 +430,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
     _receiver: JObject<'_>,
     handle: jlong,
 ) -> jint {
-    cached_settings(handle)
-        .map(|settings| i32::from(settings.tuning.sync_sample_window))
-        .unwrap_or(-1)
+    cached_settings(handle).map_or(-1, |settings| i32::from(settings.tuning.sync_sample_window))
 }
 
 #[must_use]
@@ -441,9 +441,18 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
     _receiver: JObject<'_>,
     handle: jlong,
 ) -> jlong {
-    cached_settings(handle)
-        .map(|settings| i64::from_ne_bytes(settings.tuning.sync_drift_threshold_ms.to_bits().to_ne_bytes()))
-        .unwrap_or_else(|_| i64::from_ne_bytes(f64::NAN.to_bits().to_ne_bytes()))
+    cached_settings(handle).map_or_else(
+        |_| i64::from_ne_bytes(f64::NAN.to_bits().to_ne_bytes()),
+        |settings| {
+            i64::from_ne_bytes(
+                settings
+                    .tuning
+                    .sync_drift_threshold_ms
+                    .to_bits()
+                    .to_ne_bytes(),
+            )
+        },
+    )
 }
 
 #[must_use]
@@ -462,7 +471,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
     scan_window_ms: jlong,
     updated_at_ms: jlong,
 ) -> jint {
-    let result = settings_from_jni(
+    let result = settings_from_jni(JniSettingsFields {
         sync_sample_window,
         sync_cadence_ms,
         startup_buffer_ms,
@@ -471,7 +480,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
         sync_drift_threshold_ms,
         scan_window_ms,
         updated_at_ms,
-    )
+    })
     .and_then(|settings| {
         with_database_entry(handle, |entry| {
             let client = entry
@@ -503,8 +512,8 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
     let result = (|| {
         let device_id = DeviceId::new(java_string(&mut env, &device_id)?)
             .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
-        let observed_at_ms = u64::try_from(observed_at_ms)
-            .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
+        let observed_at_ms =
+            u64::try_from(observed_at_ms).map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
         let device = TrustedDevice {
             device_id,
             display_name: java_string(&mut env, &display_name)?,
@@ -538,9 +547,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
     device_id: JString<'_>,
 ) -> jint {
     let result = java_string(&mut env, &device_id)
-        .and_then(|value| {
-            DeviceId::new(value).map_err(|_| AndroidDatabaseStatus::InvalidArgument)
-        })
+        .and_then(|value| DeviceId::new(value).map_err(|_| AndroidDatabaseStatus::InvalidArgument))
         .and_then(|device_id| {
             with_database_entry(handle, |entry| {
                 entry
@@ -568,11 +575,14 @@ mod tests {
     use silent_disco_core::{
         domain::TuningSettings,
         storage::{
-            LegacyAndroidImport, LegacyImportOutcome, StoredSettings,
-            LEGACY_ANDROID_IMPORT_VERSION,
+            LEGACY_ANDROID_IMPORT_VERSION, LegacyAndroidImport, LegacyImportOutcome, StoredSettings,
         },
     };
-    use std::{fs, path::PathBuf, sync::atomic::{AtomicU64, Ordering}};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     static NEXT_PATH: AtomicU64 = AtomicU64::new(1);
 
@@ -614,7 +624,10 @@ mod tests {
         });
         assert_eq!(outcome, Ok(LegacyImportOutcome::Imported));
         close_database(handle).expect("database closes");
-        assert_eq!(close_database(handle), Err(AndroidDatabaseStatus::InvalidHandle));
+        assert_eq!(
+            close_database(handle),
+            Err(AndroidDatabaseStatus::InvalidHandle)
+        );
         remove_database(&path);
     }
 }
