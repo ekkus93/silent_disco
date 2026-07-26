@@ -1,0 +1,269 @@
+name: One-time master full validation
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-time-master-full-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 666 /dev/kvm
+
+      - name: Install Android SDK, NDK, emulator, and API 35 image
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "system-images;android-35;google_apis;x86_64"
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.97.1
+
+      - name: Check Rust formatting
+        id: rustfmt
+        continue-on-error: true
+        run: cd rust && cargo fmt --all -- --check
+
+      - name: Run strict Rust Clippy
+        id: clippy
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo clippy --workspace --all-targets --all-features -- -D warnings \
+            2>&1 | tee ../master-validation-rust-clippy.log
+
+      - name: Run all Rust tests
+        id: rusttests
+        continue-on-error: true
+        run: cd rust && cargo test --workspace --all-features
+
+      - name: Build every Android variant and instrumentation APK
+        id: androidbuild
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain \
+            2>&1 | tee master-validation-android-build.log
+
+      - name: Verify every packaged Rust ABI
+        id: abis
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "$apk"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "$apk" "lib/$abi/libsilent_disco_ffi.so" \
+                | grep -Fx "lib/$abi/libsilent_disco_ffi.so"
+            done
+          done
+
+      - name: Run all Android unit tests
+        id: androidtests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew test --stacktrace --console=plain \
+            2>&1 | tee master-validation-android-tests.log
+
+      - name: Run Android lint
+        id: androidlint
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace --console=plain \
+            2>&1 | tee master-validation-android-lint.log
+
+      - name: Run all connected Android instrumentation tests
+        id: connected
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p master-validation-emulator
+          echo no | "${ANDROID_HOME}/cmdline-tools/latest/bin/avdmanager" create avd \
+            --force \
+            --name silent-disco-api35 \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device pixel_6 \
+            > master-validation-emulator/avd-create.log 2>&1
+
+          "${ANDROID_HOME}/emulator/emulator" \
+            -avd silent-disco-api35 \
+            -no-window \
+            -gpu auto \
+            -no-snapshot \
+            -wipe-data \
+            -noaudio \
+            -no-boot-anim \
+            -no-metrics \
+            -camera-back none \
+            > master-validation-emulator/emulator.log 2>&1 &
+          emulator_pid=$!
+          cleanup() {
+            adb emu kill >/dev/null 2>&1 || true
+            kill "${emulator_pid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          adb start-server
+          if ! timeout 180 adb wait-for-device; then
+            tail -n 200 master-validation-emulator/emulator.log || true
+            exit 120
+          fi
+
+          deadline=$((SECONDS + 600))
+          booted=0
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            if ! kill -0 "${emulator_pid}" 2>/dev/null; then
+              tail -n 200 master-validation-emulator/emulator.log || true
+              exit 121
+            fi
+            completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+            if [ "${completed}" = "1" ]; then
+              booted=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "${booted}" -ne 1 ]; then
+            adb devices -l || true
+            tail -n 200 master-validation-emulator/emulator.log || true
+            exit 122
+          fi
+
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb devices -l | tee master-validation-emulator/adb-devices.txt
+
+          set +e
+          ./gradlew connectedDebugAndroidTest --stacktrace --console=plain \
+            2>&1 | tee master-validation-connected-tests.log
+          test_status=${PIPESTATUS[0]}
+          set -e
+          exit "${test_status}"
+
+      - name: Record result and remove one-time workflow
+        if: always()
+        shell: bash
+        env:
+          RUSTFMT: ${{ steps.rustfmt.outcome }}
+          CLIPPY: ${{ steps.clippy.outcome }}
+          RUSTTESTS: ${{ steps.rusttests.outcome }}
+          ANDROIDBUILD: ${{ steps.androidbuild.outcome }}
+          ABIS: ${{ steps.abis.outcome }}
+          ANDROIDTESTS: ${{ steps.androidtests.outcome }}
+          ANDROIDLINT: ${{ steps.androidlint.outcome }}
+          CONNECTED: ${{ steps.connected.outcome }}
+        run: |
+          set -euo pipefail
+          failures=()
+          for item in \
+            "rustfmt=${RUSTFMT}" \
+            "clippy=${CLIPPY}" \
+            "rusttests=${RUSTTESTS}" \
+            "androidbuild=${ANDROIDBUILD}" \
+            "abis=${ABIS}" \
+            "androidtests=${ANDROIDTESTS}" \
+            "androidlint=${ANDROIDLINT}" \
+            "connected=${CONNECTED}"; do
+            name="${item%%=*}"
+            outcome="${item#*=}"
+            if [ "${outcome}" != "success" ]; then
+              failures+=("${name}=${outcome}")
+            fi
+          done
+
+          git fetch origin master
+          remote_head="$(git rev-parse origin/master)"
+          if [ "${remote_head}" != "${GITHUB_SHA}" ]; then
+            failures+=("master_moved=${remote_head}")
+          fi
+
+          rm -f .github/workflows/master-full-validation-once.yml
+          rm -rf .validation/master-full-validation
+          if [ "${#failures[@]}" -ne 0 ]; then
+            mkdir -p .validation/master-full-validation
+            {
+              printf 'run_id=%s\n' "${GITHUB_RUN_ID}"
+              printf 'tested_sha=%s\n' "${GITHUB_SHA}"
+              printf '%s\n' "${failures[@]}"
+            } > .validation/master-full-validation/result.txt
+            cp master-validation-*.log .validation/master-full-validation/ 2>/dev/null || true
+            cp -R master-validation-emulator .validation/master-full-validation/ 2>/dev/null || true
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if [ "${#failures[@]}" -eq 0 ]; then
+            git commit -m "Complete full validation on master"
+          else
+            git commit -m "Record failed full validation on master"
+          fi
+          git push origin HEAD:master
+
+          if [ "${#failures[@]}" -ne 0 ]; then
+            exit 1
+          fi
