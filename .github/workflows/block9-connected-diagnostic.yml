@@ -44,7 +44,7 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Run connected tests and preserve complete diagnostics
+      - name: Run each Android instrumentation class separately
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -54,26 +54,52 @@ jobs:
           disable-animations: true
           script: |
             set +e
-            ./gradlew connectedDebugAndroidTest --stacktrace --console=plain 2>&1 | tee block9-connected.log
-            status=${PIPESTATUS[0]}
-            echo "${status}" > block9-connected.status
+            mkdir -p block9-connected-logs
+            overall=0
+            classes=(
+              com.ekkus.silentdisco.core.rust.RustCoreBridgeInstrumentedTest
+              com.ekkus.silentdisco.core.rust.RustSyncEstimatorInstrumentedTest
+              com.ekkus.silentdisco.core.transport.BleDiscoveryServiceInstrumentedTest
+              com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStoreInstrumentedTest
+            )
+            for class_name in "${classes[@]}"; do
+              log_name="${class_name//./_}.log"
+              ./gradlew connectedDebugAndroidTest \
+                -Pandroid.testInstrumentationRunnerArguments.class="${class_name}" \
+                --stacktrace --console=plain \
+                > "block9-connected-logs/${log_name}" 2>&1
+              status=$?
+              printf '%s=%s\n' "${class_name}" "${status}" \
+                | tee -a block9-connected-statuses.txt
+              if [ "${status}" -ne 0 ]; then
+                overall=1
+              fi
+            done
+            echo "${overall}" > block9-connected.status
             exit 0
 
       - name: Commit diagnostics and remove temporary workflow
+        if: always()
         shell: bash
         run: |
-          status="$(cat block9-connected.status)"
-          mkdir -p .validation
-          cp block9-connected.log .validation/block9-connected.log
+          mkdir -p .validation/block9-connected
+          if [ -d block9-connected-logs ]; then
+            cp block9-connected-logs/*.log .validation/block9-connected/ 2>/dev/null || true
+          fi
+          if [ -f block9-connected-statuses.txt ]; then
+            cp block9-connected-statuses.txt .validation/block9-connected/statuses.txt
+          else
+            printf 'instrumentation_action=125\n' > .validation/block9-connected/statuses.txt
+          fi
+          status="$(cat block9-connected.status 2>/dev/null || printf '125')"
           printf 'status=%s\nrun_id=%s\nhead_sha=%s\n' \
-            "$status" "${GITHUB_RUN_ID}" "${GITHUB_SHA}" \
-            > .validation/block9-connected-result.txt
+            "${status}" "${GITHUB_RUN_ID}" "${GITHUB_SHA}" \
+            > .validation/block9-connected/result.txt
           rm -f .github/workflows/block9-connected-diagnostic.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .validation/block9-connected.log \
-            .validation/block9-connected-result.txt \
+          git add .validation/block9-connected \
             .github/workflows/block9-connected-diagnostic.yml
-          git commit -m "Record Block 9 connected test diagnostics"
+          git commit -m "Record isolated Block 9 connected test diagnostics"
           git push origin HEAD:agent/fix-block9-trust-storage-state
-          exit "$status"
+          exit "${status}"
