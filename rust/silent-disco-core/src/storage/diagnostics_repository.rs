@@ -102,9 +102,7 @@ pub(crate) fn export(
         (Some(session_id), None) => {
             export_for_session(connection, session_id, fetch_limit, schema_version)?
         }
-        (None, Some(cursor)) => {
-            export_all_after(connection, cursor, fetch_limit, schema_version)?
-        }
+        (None, Some(cursor)) => export_all_after(connection, cursor, fetch_limit, schema_version)?,
         (None, None) => export_all(connection, fetch_limit, schema_version)?,
     };
     build_export_page(runs, request.limit, schema_version)

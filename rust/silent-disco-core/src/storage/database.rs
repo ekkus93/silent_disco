@@ -7,8 +7,8 @@ use super::{
     error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error},
     migrations,
     models::{
-        DiagnosticExport, DiagnosticQuery, DiagnosticRunSummary, SessionEnd, SessionHistory,
-        SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
+        DiagnosticExport, DiagnosticExportRequest, DiagnosticQuery, DiagnosticRunSummary,
+        SessionEnd, SessionHistory, SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
     },
     session_read_repository, session_write_repository, settings_repository,
     trusted_device_repository,
@@ -268,8 +268,11 @@ impl DatabaseConnection {
         diagnostics_repository::query(&self.connection, query, self.metadata.schema_version)
     }
 
-    pub(crate) fn export_diagnostic_runs(&self) -> Result<DiagnosticExport, StorageError> {
-        diagnostics_repository::export(&self.connection, self.metadata.schema_version)
+    pub(crate) fn export_diagnostic_runs(
+        &self,
+        request: &DiagnosticExportRequest,
+    ) -> Result<DiagnosticExport, StorageError> {
+        diagnostics_repository::export(&self.connection, request, self.metadata.schema_version)
     }
 
     pub(crate) fn checkpoint(&self) -> Result<DatabaseCheckpoint, StorageError> {

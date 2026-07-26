@@ -86,7 +86,7 @@ CREATE TABLE diagnostic_runs (
         ended_at_ms IS NULL OR ended_at_ms >= started_at_ms
     ),
     summary_json       TEXT NOT NULL CHECK (
-        length(summary_json) BETWEEN 1 AND 1048576 AND json_valid(summary_json)
+        length(summary_json) BETWEEN 1 AND 262144 AND json_valid(summary_json)
     ),
     FOREIGN KEY(session_id) REFERENCES session_history(session_id)
         ON UPDATE CASCADE ON DELETE SET NULL

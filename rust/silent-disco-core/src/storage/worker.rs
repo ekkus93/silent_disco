@@ -13,8 +13,8 @@ use super::{
     database::{DatabaseCheckpoint, DatabaseConfig, DatabaseConnection, DatabaseMetadata},
     error::{StorageError, StorageErrorKind, StorageOperation},
     models::{
-        DiagnosticExport, DiagnosticQuery, DiagnosticRunSummary, SessionEnd, SessionHistory,
-        SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
+        DiagnosticExport, DiagnosticExportRequest, DiagnosticQuery, DiagnosticRunSummary,
+        SessionEnd, SessionHistory, SessionStart, SessionUpdate, StoredSettings, TrustedDevice,
     },
 };
 
@@ -71,6 +71,7 @@ enum DatabaseCommand {
         reply: DatabaseReply<Vec<DiagnosticRunSummary>>,
     },
     ExportDiagnosticRuns {
+        request: DiagnosticExportRequest,
         reply: DatabaseReply<DiagnosticExport>,
     },
     Checkpoint {
@@ -267,9 +268,13 @@ impl DatabaseClient {
     /// # Errors
     ///
     /// Returns a visible queue, query, corruption, or worker lifecycle error.
-    pub fn export_diagnostic_runs(&self) -> Result<DiagnosticExport, StorageError> {
+    pub fn export_diagnostic_runs(
+        &self,
+        request: &DiagnosticExportRequest,
+    ) -> Result<DiagnosticExport, StorageError> {
+        let request = request.clone();
         self.request(StorageOperation::Query, |reply| {
-            DatabaseCommand::ExportDiagnosticRuns { reply }
+            DatabaseCommand::ExportDiagnosticRuns { request, reply }
         })
     }
 
@@ -599,8 +604,8 @@ fn process_command(
         DatabaseCommand::QueryDiagnosticRuns { query, reply } => {
             process_query_diagnostic_runs(&reply, &query, connection, version)?;
         }
-        DatabaseCommand::ExportDiagnosticRuns { reply } => {
-            process_export_diagnostic_runs(&reply, connection, version)?;
+        DatabaseCommand::ExportDiagnosticRuns { request, reply } => {
+            process_export_diagnostic_runs(&reply, &request, connection, version)?;
         }
         DatabaseCommand::Checkpoint { reply } => {
             process_checkpoint(&reply, connection, version)?;
@@ -840,11 +845,12 @@ fn process_query_diagnostic_runs(
 
 fn process_export_diagnostic_runs(
     reply: &DatabaseReply<DiagnosticExport>,
+    request: &DiagnosticExportRequest,
     connection: &mut Option<DatabaseConnection>,
     schema_version: u32,
 ) -> Result<(), StorageError> {
     let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
-        .and_then(DatabaseConnection::export_diagnostic_runs);
+        .and_then(|database| database.export_diagnostic_runs(request));
     send_reply(
         reply,
         result,
@@ -935,22 +941,19 @@ fn connection_mut(
         .ok_or_else(|| StorageError::worker_stopped(operation, Some(schema_version)))
 }
 
-fn send_reply<T: Clone>(
+fn send_reply<T>(
     reply: &DatabaseReply<T>,
     result: Result<T, StorageError>,
     connection: &mut Option<DatabaseConnection>,
     operation: StorageOperation,
     schema_version: u32,
 ) -> Result<(), StorageError> {
-    if reply.send(result.clone()).is_err() {
-        return close_after_reply_failure(
-            connection.take(),
-            result.err(),
-            operation,
-            schema_version,
-        );
+    match reply.send(result) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            close_after_reply_failure(connection.take(), error.0.err(), operation, schema_version)
+        }
     }
-    Ok(())
 }
 
 fn close_after_channel_disconnect(
@@ -991,9 +994,9 @@ mod tests {
     use crate::{
         domain::{AppRole, DeviceId, DiagnosticRunId, SessionId, TrustState, TuningSettings},
         storage::{
-            DatabaseConfig, DiagnosticQuery, DiagnosticRunSummary, SessionEnd, SessionOutcome,
-            SessionStart, SessionUpdate, StorageErrorKind, StoredSettings, TrustedDevice,
-            test_support::TestDatabasePath,
+            DatabaseConfig, DiagnosticExportRequest, DiagnosticQuery, DiagnosticRunSummary,
+            SessionEnd, SessionOutcome, SessionStart, SessionUpdate, StorageErrorKind,
+            StoredSettings, TrustedDevice, test_support::TestDatabasePath,
         },
     };
 
@@ -1136,13 +1139,61 @@ mod tests {
                 .expect("query diagnostics"),
             vec![diagnostic.clone()]
         );
-        assert_eq!(
+        let export = client
+            .export_diagnostic_runs(&DiagnosticExportRequest {
+                session_id: None,
+                cursor: None,
+                limit: 10,
+            })
+            .expect("export diagnostics");
+        assert_eq!(export.runs, vec![diagnostic]);
+        assert_eq!(export.next_cursor, None);
+        worker.stop_and_join().expect("worker closes and joins");
+    }
+
+    #[test]
+    fn diagnostic_export_is_bounded_and_cursor_paginated() {
+        let test_path = TestDatabasePath::new("worker-export-pagination");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(test_path.path()).expect("valid worker config"),
+        )
+        .expect("worker starts");
+        let client = worker.client();
+        let session = sample_session_start();
+        client.begin_session(&session).expect("begin session");
+
+        for (suffix, started_at_ms) in [("a", 110), ("b", 120), ("c", 130)] {
             client
-                .export_diagnostic_runs()
-                .expect("export diagnostics")
-                .runs,
-            vec![diagnostic]
-        );
+                .insert_diagnostic_run(&DiagnosticRunSummary {
+                    run_id: DiagnosticRunId::new(format!("diagnostic-{suffix}"))
+                        .expect("valid diagnostic identifier"),
+                    session_id: Some(session.session_id.clone()),
+                    started_at_ms,
+                    ended_at_ms: Some(started_at_ms + 1),
+                    summary_json: format!(r#"{{"run":"{suffix}"}}"#),
+                })
+                .expect("insert diagnostic run");
+        }
+
+        let first = client
+            .export_diagnostic_runs(&DiagnosticExportRequest {
+                session_id: Some(session.session_id.clone()),
+                cursor: None,
+                limit: 2,
+            })
+            .expect("first export page");
+        assert_eq!(first.runs.len(), 2);
+        let cursor = first.next_cursor.expect("more rows remain");
+
+        let second = client
+            .export_diagnostic_runs(&DiagnosticExportRequest {
+                session_id: Some(session.session_id),
+                cursor: Some(cursor),
+                limit: 2,
+            })
+            .expect("second export page");
+        assert_eq!(second.runs.len(), 1);
+        assert_eq!(second.next_cursor, None);
         worker.stop_and_join().expect("worker closes and joins");
     }
 

@@ -9,8 +9,9 @@ pub const MAX_PUBLIC_KEY_BYTES: usize = 4_096;
 pub const MAX_SESSION_NAME_BYTES: usize = 256;
 pub const MAX_FAILURE_CODE_BYTES: usize = 128;
 pub const MAX_FAILURE_MESSAGE_BYTES: usize = 512;
-pub const MAX_DIAGNOSTIC_SUMMARY_BYTES: usize = 1_048_576;
-pub const MAX_DIAGNOSTIC_QUERY_LIMIT: u32 = 1_000;
+pub const MAX_DIAGNOSTIC_SUMMARY_BYTES: usize = 262_144;
+pub const MAX_DIAGNOSTIC_QUERY_LIMIT: u32 = 32;
+pub const MAX_DIAGNOSTIC_EXPORT_LIMIT: u32 = 32;
 
 /// Persisted tuning values and their wall-clock update timestamp.
 #[derive(Debug, Clone, PartialEq)]
@@ -273,11 +274,55 @@ impl DiagnosticQuery {
     }
 }
 
-/// Deterministic typed diagnostic export.
+/// Stable exclusive cursor for deterministic diagnostic export pagination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticExportCursor {
+    pub started_at_ms: u64,
+    pub run_id: DiagnosticRunId,
+}
+
+impl DiagnosticExportCursor {
+    /// Validates the cursor timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable model-validation failure when the timestamp cannot be stored.
+    pub fn validate(&self) -> Result<(), StorageModelValidationError> {
+        validate_sql_millis(self.started_at_ms, StorageModelValidationError::Timestamp)
+    }
+}
+
+/// Bounded request for one deterministic diagnostic export page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticExportRequest {
+    pub session_id: Option<SessionId>,
+    pub cursor: Option<DiagnosticExportCursor>,
+    pub limit: u32,
+}
+
+impl DiagnosticExportRequest {
+    /// Validates the page limit and optional cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable model-validation failure for an invalid page request.
+    pub fn validate(&self) -> Result<(), StorageModelValidationError> {
+        if self.limit == 0 || self.limit > MAX_DIAGNOSTIC_EXPORT_LIMIT {
+            return Err(StorageModelValidationError::DiagnosticExportLimit);
+        }
+        if let Some(cursor) = &self.cursor {
+            cursor.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// One bounded deterministic diagnostic export page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticExport {
     pub schema_version: u32,
     pub runs: Vec<DiagnosticRunSummary>,
+    pub next_cursor: Option<DiagnosticExportCursor>,
 }
 
 /// Stable validation failures for persisted domain models.
@@ -296,6 +341,7 @@ pub enum StorageModelValidationError {
     TimestampOrder,
     DiagnosticSummary,
     DiagnosticQueryLimit,
+    DiagnosticExportLimit,
 }
 
 impl fmt::Display for StorageModelValidationError {
@@ -316,6 +362,9 @@ impl fmt::Display for StorageModelValidationError {
             Self::TimestampOrder => "timestamps are not in chronological order",
             Self::DiagnosticSummary => "diagnostic summary is empty or exceeds the supported size",
             Self::DiagnosticQueryLimit => "diagnostic query limit is outside the supported range",
+            Self::DiagnosticExportLimit => {
+                "diagnostic export page limit is outside the supported range"
+            }
         })
     }
 }

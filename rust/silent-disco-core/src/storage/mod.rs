@@ -27,7 +27,8 @@ pub use database::{
 pub use error::{StorageError, StorageErrorKind, StorageOperation};
 pub use migrations::{LATEST_SCHEMA_VERSION, MigrationRecord};
 pub use models::{
-    DiagnosticExport, DiagnosticQuery, DiagnosticRunSummary, MAX_DIAGNOSTIC_QUERY_LIMIT,
+    DiagnosticExport, DiagnosticExportCursor, DiagnosticExportRequest, DiagnosticQuery,
+    DiagnosticRunSummary, MAX_DIAGNOSTIC_EXPORT_LIMIT, MAX_DIAGNOSTIC_QUERY_LIMIT,
     MAX_DIAGNOSTIC_SUMMARY_BYTES, MAX_DISPLAY_NAME_BYTES, MAX_FAILURE_CODE_BYTES,
     MAX_FAILURE_MESSAGE_BYTES, MAX_PRIVATE_KEY_REFERENCE_BYTES, MAX_PUBLIC_KEY_BYTES,
     MAX_SESSION_NAME_BYTES, SessionEnd, SessionHistory, SessionOutcome, SessionStart,
