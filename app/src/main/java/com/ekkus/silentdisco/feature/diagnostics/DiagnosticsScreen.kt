@@ -42,6 +42,7 @@ import com.ekkus.silentdisco.app.listenerConnectionHealthSummary
 import com.ekkus.silentdisco.app.summary
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.model.AppRole
+import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +62,7 @@ fun DiagnosticsScreen(
     val showListener = uiState.selectedRole == AppRole.LISTENER || uiState.listenerDiagnostics.sessionId.isNotBlank()
     val hostHealth = uiState.hostSessionHealthSummary()
     val listenerHealth = uiState.listenerConnectionHealthSummary()
+    val shareSummary = diagnosticsShareSummary(uiState)
 
     Column(
         modifier = Modifier
@@ -87,6 +89,16 @@ fun DiagnosticsScreen(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            uiState.lastError?.takeIf(String::isNotBlank)?.let { error ->
+                PrimaryProblemCard(
+                    title = "A recent operation failed",
+                    detail = error,
+                    primaryActionLabel = "Share support report",
+                    onPrimaryAction = { onShare(shareSummary) },
+                    modifier = Modifier.testTag("advanced-persistent-problem"),
+                )
+            }
 
             if (showHost) {
                 SummaryCard(
@@ -253,7 +265,7 @@ fun DiagnosticsScreen(
             }
 
             OutlinedButton(
-                onClick = { onShare(diagnosticsShareSummary(uiState)) },
+                onClick = { onShare(shareSummary) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("advanced-share-report"),
