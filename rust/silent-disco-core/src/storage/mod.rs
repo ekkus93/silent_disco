@@ -2,7 +2,8 @@
 //!
 //! The `SQLite` connection is private to one dedicated thread. Public callers
 //! receive typed control-plane operations only; raw SQL and the connection
-//! object never cross this module boundary.
+//! object never cross this module boundary. Schema and repository internals
+//! remain private; callers interact through [`DatabaseClient`].
 
 mod database;
 mod diagnostics_repository;
