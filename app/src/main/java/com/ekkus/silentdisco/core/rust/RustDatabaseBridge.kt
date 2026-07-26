@@ -31,6 +31,12 @@ data class RustStoredTuningSettings(
     val updatedAtMs: Long,
 )
 
+data class RustTrustedDevice(
+    val deviceId: String,
+    val displayName: String,
+    val lastSeenMs: Long,
+)
+
 enum class RustLegacyImportOutcome {
     IMPORTED,
     ALREADY_IMPORTED,
@@ -52,6 +58,7 @@ private fun databaseStatusDescription(statusCode: Int): String = when (statusCod
     -112 -> "native database handle space was exhausted"
     -113 -> "JNI value conversion failed"
     -114 -> "cached settings are unavailable"
+    -115 -> "cached trusted-device list is unavailable"
     else -> "unknown native database status"
 }
 
@@ -152,6 +159,47 @@ class RustDatabase internal constructor(
             ),
             "persist trusted device",
         )
+    }
+
+    @Synchronized
+    fun listTrustedDevices(): List<RustTrustedDevice> {
+        val currentHandle = requireOpenHandle()
+        requireDatabaseSuccess(
+            RustDatabaseBridge.loadTrustedDevicesStatus(currentHandle),
+            "load trusted devices",
+        )
+        val count = RustDatabaseBridge.cachedTrustedDeviceCount(currentHandle)
+        if (count < 0) {
+            throw RustDatabaseException(count, "read trusted-device count")
+        }
+        return List(count) { index ->
+            val deviceId = RustDatabaseBridge.cachedTrustedDeviceId(currentHandle, index)
+                ?: throw RustDatabaseBridgeProtocolException(
+                    "Rust database returned no device ID for trusted-device index $index",
+                )
+            val displayName = RustDatabaseBridge.cachedTrustedDisplayName(currentHandle, index)
+                ?: throw RustDatabaseBridgeProtocolException(
+                    "Rust database returned no display name for trusted-device index $index",
+                )
+            RustTrustedDevice(
+                deviceId = deviceId,
+                displayName = displayName,
+                lastSeenMs = requireNonNegative(
+                    "trusted-device last-seen time",
+                    RustDatabaseBridge.cachedTrustedLastSeenMs(currentHandle, index),
+                ),
+            )
+        }
+    }
+
+    @Synchronized
+    fun deleteTrustedDevice(deviceId: String): Boolean {
+        require(deviceId.isNotBlank()) { "Trusted device ID must not be blank" }
+        return when (val status = RustDatabaseBridge.deleteTrusted(requireOpenHandle(), deviceId)) {
+            DATABASE_SUCCESS -> true
+            DATABASE_NOT_FOUND -> false
+            else -> throw RustDatabaseException(status, "delete trusted device")
+        }
     }
 
     @Synchronized
@@ -275,6 +323,30 @@ object RustDatabaseBridge {
         observedAtMs: Long,
     ): Int
 
+    private external fun nativeDatabaseLoadTrustedDevicesStatus(handle: Long): Int
+
+    private external fun nativeDatabaseCachedTrustedDeviceCount(handle: Long): Int
+
+    private external fun nativeDatabaseCachedTrustedDeviceId(
+        handle: Long,
+        index: Int,
+    ): String?
+
+    private external fun nativeDatabaseCachedTrustedDisplayName(
+        handle: Long,
+        index: Int,
+    ): String?
+
+    private external fun nativeDatabaseCachedTrustedLastSeenMs(
+        handle: Long,
+        index: Int,
+    ): Long
+
+    private external fun nativeDatabaseDeleteTrusted(
+        handle: Long,
+        deviceId: String,
+    ): Int
+
     private external fun nativeDatabaseIsTrusted(
         handle: Long,
         deviceId: String,
@@ -372,6 +444,40 @@ object RustDatabaseBridge {
         observedAtMs: Long,
     ): Int = invokeNative("persist trusted device") {
         nativeDatabaseUpsertTrusted(handle, deviceId, displayName, observedAtMs)
+    }
+
+    internal fun loadTrustedDevicesStatus(handle: Long): Int =
+        invokeNative("load trusted devices") { nativeDatabaseLoadTrustedDevicesStatus(handle) }
+
+    internal fun cachedTrustedDeviceCount(handle: Long): Int =
+        invokeNative("read trusted-device count") { nativeDatabaseCachedTrustedDeviceCount(handle) }
+
+    internal fun cachedTrustedDeviceId(
+        handle: Long,
+        index: Int,
+    ): String? = invokeNative("read trusted-device ID") {
+        nativeDatabaseCachedTrustedDeviceId(handle, index)
+    }
+
+    internal fun cachedTrustedDisplayName(
+        handle: Long,
+        index: Int,
+    ): String? = invokeNative("read trusted-device display name") {
+        nativeDatabaseCachedTrustedDisplayName(handle, index)
+    }
+
+    internal fun cachedTrustedLastSeenMs(
+        handle: Long,
+        index: Int,
+    ): Long = invokeNative("read trusted-device last-seen time") {
+        nativeDatabaseCachedTrustedLastSeenMs(handle, index)
+    }
+
+    internal fun deleteTrusted(
+        handle: Long,
+        deviceId: String,
+    ): Int = invokeNative("delete trusted device") {
+        nativeDatabaseDeleteTrusted(handle, deviceId)
     }
 
     internal fun isTrusted(
