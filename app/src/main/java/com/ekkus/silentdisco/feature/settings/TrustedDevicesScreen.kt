@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -67,33 +68,64 @@ fun TrustedDevicesScreen(
         )
 
         when {
-            uiState.isLoading && uiState.devices.isEmpty() -> LoadingState(
-                title = "Loading approved devices",
-                detail = "Reading the authoritative device list from local app data.",
-                modifier = Modifier.testTag("trusted-devices-loading"),
-            )
-
-            uiState.error != null && uiState.devices.isEmpty() -> PrimaryProblemCard(
-                title = "Approved devices are unavailable",
-                detail = uiState.error,
-                primaryActionLabel = "Try again",
-                onPrimaryAction = onRefresh,
+            uiState.isLoading && uiState.devices.isEmpty() -> LazyColumn(
                 modifier = Modifier
-                    .padding(16.dp)
-                    .testTag("trusted-devices-error"),
-                primaryActionModifier = Modifier.testTag("trusted-devices-retry"),
-            )
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp),
+            ) {
+                item {
+                    LoadingState(
+                        title = "Loading approved devices",
+                        detail = "Loading phones approved for future sessions.",
+                        modifier = Modifier
+                            .fillParentMaxSize()
+                            .testTag("trusted-devices-loading"),
+                    )
+                }
+            }
 
-            uiState.devices.isEmpty() -> EmptyState(
-                title = "No approved devices",
-                detail = "Phones approved with Always allow will appear here.",
-                actionLabel = "Refresh",
-                onAction = onRefresh,
-                modifier = Modifier.testTag("trusted-devices-empty"),
-            )
+            uiState.error != null && uiState.devices.isEmpty() -> LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp),
+            ) {
+                item {
+                    PrimaryProblemCard(
+                        title = "Approved devices are unavailable",
+                        detail = uiState.error,
+                        primaryActionLabel = "Try again",
+                        onPrimaryAction = onRefresh,
+                        modifier = Modifier.testTag("trusted-devices-error"),
+                        primaryActionModifier = Modifier.testTag("trusted-devices-retry"),
+                    )
+                }
+            }
+
+            uiState.devices.isEmpty() -> LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(16.dp),
+            ) {
+                item {
+                    EmptyState(
+                        title = "No approved devices",
+                        detail = "Phones approved with Always allow will appear here.",
+                        actionLabel = "Refresh",
+                        onAction = onRefresh,
+                        modifier = Modifier
+                            .fillParentMaxSize()
+                            .testTag("trusted-devices-empty"),
+                    )
+                }
+            }
 
             else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
