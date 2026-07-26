@@ -29,6 +29,7 @@ jobs:
         run: |
           python .github/scripts/fix_block8_migrations.py
           python .github/scripts/apply_block8_storage.py
+          python .github/scripts/fix_block8_clippy.py
 
       - name: Format and validate Rust storage layer
         shell: bash
