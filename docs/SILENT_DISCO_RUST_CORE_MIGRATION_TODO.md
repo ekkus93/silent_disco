@@ -473,46 +473,48 @@ The exact channel type may differ.
 
 ### 8.1 Add migration framework
 
-- [ ] Ordered immutable migrations compiled into Rust.
-- [ ] Each migration has version and checksum.
-- [ ] Migration table records version, timestamp, and checksum.
-- [ ] Entire migration runs transactionally.
-- [ ] Checksum mismatch is fatal.
-- [ ] Newer unsupported schema is fatal.
-- [ ] Failed migration rolls back.
-- [ ] No automatic delete/recreate.
+- [x] Ordered immutable migrations compiled into Rust.
+- [x] Each migration has version and checksum.
+- [x] Migration table records version, timestamp, and checksum.
+- [x] Entire migration runs transactionally.
+- [x] Checksum mismatch is fatal.
+- [x] Newer unsupported schema is fatal.
+- [x] Failed migration rolls back.
+- [x] No automatic delete/recreate.
 
 ### 8.2 Create initial schema
 
 Implement tables required by the spec:
 
-- [ ] `schema_migrations`;
-- [ ] `app_settings`;
-- [ ] `trusted_devices`;
-- [ ] `session_history`;
-- [ ] `diagnostic_runs`;
-- [ ] required indexes and foreign keys.
+- [x] `schema_migrations`;
+- [x] `app_settings`;
+- [x] `trusted_devices`;
+- [x] `session_history`;
+- [x] `diagnostic_runs`;
+- [x] required indexes and foreign keys.
 
 ### 8.3 Implement repositories
 
-- [ ] Settings load/save with Rust validation.
-- [ ] Trusted-device list/get/upsert/delete.
-- [ ] Session begin/end/update.
-- [ ] Diagnostic summary insert/query/export.
-- [ ] No raw SQL crosses FFI.
+- [x] Settings load/save with Rust validation.
+- [x] Trusted-device list/get/upsert/delete.
+- [x] Session begin/end/update.
+- [x] Diagnostic summary insert/query/export.
+- [x] No raw SQL crosses FFI.
 
 ### 8.4 Add migration tests
 
-- [ ] Empty database to latest.
-- [ ] Reopen latest database.
-- [ ] Failed migration rollback.
-- [ ] Checksum mismatch.
-- [ ] Newer schema rejection.
-- [ ] Constraint violation mapping.
-- [ ] Concurrent request ordering through worker.
-- [ ] Integrity of Unicode names and binary public keys.
+- [x] Empty database to latest.
+- [x] Reopen latest database.
+- [x] Failed migration rollback.
+- [x] Checksum mismatch.
+- [x] Newer schema rejection.
+- [x] Constraint violation mapping.
+- [x] Concurrent request ordering through worker.
+- [x] Integrity of Unicode names and binary public keys.
 
 **Acceptance:** All database tests pass using temporary files, not only `:memory:` databases.
+
+**Implementation status:** Complete. PR #31 merged as `4dd2de7c54942f047d4fd47ca8c73ae73721fabe`. Guarded validation run `30184437336` passed Rust formatting, strict Clippy, all Rust tests, Android debug/PoC-debug/release/instrumentation builds, four-ABI JNI packaging, Android unit tests, and Android lint. Android database path selection and legacy `SharedPreferences` import remain Block 9.
 
 ---
 

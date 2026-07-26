@@ -1,5 +1,14 @@
 # memory.md — `silent_disco`
 
+
+## 2026-07-26T02:32:00Z - GPT-5.6 Thinking - Rust schema and migrations Block 8 complete
+
+- Added ordered immutable Rust migrations with explicit versions and SHA-256 checksums. `schema_migrations` records version, application timestamp, and checksum; checksum mismatch, unsupported newer schemas, and failed transactional migrations are fatal and never trigger automatic delete/recreate behavior.
+- Added the strict initial SQLite schema for application settings, trusted devices, session history, and diagnostic runs, including required constraints, indexes, and foreign keys.
+- Added typed repositories for settings, trusted devices, session lifecycle records, and diagnostic summaries. Raw SQL and the SQLite connection remain private to the Rust storage worker and never cross FFI.
+- Added temporary-file database tests for empty-to-latest migration, reopen, rollback, checksum mismatch, newer-schema rejection, constraint mapping, worker request ordering, Unicode names, and binary public keys.
+- PR #31 merged as `4dd2de7c54942f047d4fd47ca8c73ae73721fabe`. Guarded validation run `30184437336` passed Rust formatting, Clippy with warnings denied, all Rust tests, debug/PoC-debug/release and instrumentation APK builds, four-ABI Rust packaging checks, Android unit tests, and Android lint.
+- Block 8 does not select the Android database path or import legacy `SharedPreferences`; those remain explicit Block 9 work with no fallback to duplicate Kotlin persistence.
 ## 2026-07-25T23:27:11Z - GPT-5.6 Thinking - Rust SQLite worker Block 7 complete
 
 - Added a Rust-owned SQLite worker in `silent-disco-core`; one dedicated thread owns the only connection and callers receive typed control-plane operations rather than raw SQL or connection access.
