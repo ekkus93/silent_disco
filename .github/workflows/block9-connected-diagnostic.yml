@@ -16,7 +16,7 @@ jobs:
   diagnose:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - name: Check out fix branch
         uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Run each Android instrumentation class separately
+      - name: Run migration-checksum instrumentation test
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -54,28 +54,12 @@ jobs:
           disable-animations: true
           script: |
             set +e
-            mkdir -p block9-connected-logs
-            overall=0
-            classes=(
-              com.ekkus.silentdisco.core.rust.RustCoreBridgeInstrumentedTest
-              com.ekkus.silentdisco.core.rust.RustSyncEstimatorInstrumentedTest
-              com.ekkus.silentdisco.core.transport.BleDiscoveryServiceInstrumentedTest
-              com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStoreInstrumentedTest
-            )
-            for class_name in "${classes[@]}"; do
-              log_name="${class_name//./_}.log"
-              ./gradlew connectedDebugAndroidTest \
-                -Pandroid.testInstrumentationRunnerArguments.class="${class_name}" \
-                --stacktrace --console=plain \
-                > "block9-connected-logs/${log_name}" 2>&1
-              status=$?
-              printf '%s=%s\n' "${class_name}" "${status}" \
-                | tee -a block9-connected-statuses.txt
-              if [ "${status}" -ne 0 ]; then
-                overall=1
-              fi
-            done
-            echo "${overall}" > block9-connected.status
+            ./gradlew connectedDebugAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.class=com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStoreInstrumentedTest#migrationChecksumFailureProducesFatalVisibleStorageState \
+              --stacktrace --console=plain \
+              > block9-connected.log 2>&1
+            status=$?
+            echo "${status}" > block9-connected.status
             exit 0
 
       - name: Commit diagnostics and remove temporary workflow
@@ -83,23 +67,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p .validation/block9-connected
-          if [ -d block9-connected-logs ]; then
-            cp block9-connected-logs/*.log .validation/block9-connected/ 2>/dev/null || true
-          fi
-          if [ -f block9-connected-statuses.txt ]; then
-            cp block9-connected-statuses.txt .validation/block9-connected/statuses.txt
-          else
-            printf 'instrumentation_action=125\n' > .validation/block9-connected/statuses.txt
-          fi
+          cp block9-connected.log .validation/block9-connected/migration-checksum.log 2>/dev/null || true
           status="$(cat block9-connected.status 2>/dev/null || printf '125')"
-          printf 'status=%s\nrun_id=%s\nhead_sha=%s\n' \
+          printf 'migration_checksum_test=%s\nrun_id=%s\nhead_sha=%s\n' \
             "${status}" "${GITHUB_RUN_ID}" "${GITHUB_SHA}" \
-            > .validation/block9-connected/result.txt
+            > .validation/block9-connected/statuses.txt
           rm -f .github/workflows/block9-connected-diagnostic.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .validation/block9-connected \
             .github/workflows/block9-connected-diagnostic.yml
-          git commit -m "Record isolated Block 9 connected test diagnostics"
+          git commit -m "Record migration-checksum connected test diagnostics"
           git push origin HEAD:agent/fix-block9-trust-storage-state
           exit "${status}"
