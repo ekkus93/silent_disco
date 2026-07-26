@@ -1,4 +1,0 @@
-run_id=30205845616
-tested_sha=58923b3fe393d0da171e0cbfe2cec11d248764f2
-connected=failure
-remote_head=58923b3fe393d0da171e0cbfe2cec11d248764f2
