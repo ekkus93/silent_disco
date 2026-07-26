@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.SessionInfo
+import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -73,6 +74,10 @@ class BleDiscoveryService(
     private val seenSessions = linkedMapOf<String, SessionInfo>()
     private var advertiseCallback: AdvertiseCallback? = null
     private var scanCallback: ScanCallback? = null
+
+    init {
+        activeInstance = WeakReference(this)
+    }
 
     @SuppressLint("MissingPermission")
     fun startAdvertising(advertisement: BleAdvertisement): BleOperationResult {
@@ -230,10 +235,26 @@ class BleDiscoveryService(
     @SuppressLint("MissingPermission")
     fun stopScanning() {
         val callback = scanCallback ?: return
-        if (hasScanPermission()) {
-            runCatching { scanner?.stopScan(callback) }
+        if (!hasScanPermission()) {
+            val message = "Missing Bluetooth scan permission while stopping discovery"
+            logger.w("ble.scan", message)
+            _failures.tryEmit(BleOperationFailure(BleOperation.SCAN, message))
+            return
         }
-        scanCallback = null
+        val scanner = scanner
+        if (scanner == null) {
+            val message = "BLE scanner became unavailable while stopping discovery"
+            logger.w("ble.scan", message)
+            _failures.tryEmit(BleOperationFailure(BleOperation.SCAN, message))
+            return
+        }
+        runCatching { scanner.stopScan(callback) }
+            .onSuccess { scanCallback = null }
+            .onFailure { error ->
+                val message = error.message ?: "BLE scan could not be stopped"
+                logger.w("ble.scan", message)
+                _failures.tryEmit(BleOperationFailure(BleOperation.SCAN, message))
+            }
     }
 
     @SuppressLint("MissingPermission")
@@ -253,6 +274,15 @@ class BleDiscoveryService(
     private fun hasConnectPermission(): Boolean =
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) true
         else ContextCompat.checkSelfPermission(appContext, "android.permission.BLUETOOTH_CONNECT") == PackageManager.PERMISSION_GRANTED
+
+    companion object {
+        @Volatile
+        private var activeInstance: WeakReference<BleDiscoveryService>? = null
+
+        fun cancelActiveScan() {
+            activeInstance?.get()?.stopScanning()
+        }
+    }
 }
 
 internal object BleAdvertisementCodec {
