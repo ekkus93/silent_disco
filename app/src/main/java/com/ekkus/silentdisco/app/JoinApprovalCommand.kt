@@ -3,6 +3,11 @@ package com.ekkus.silentdisco.app
 import androidx.annotation.MainThread
 import com.ekkus.silentdisco.core.model.JoinRequest
 
+/**
+ * Dispatches one approval with an immutable lifetime choice without leaving that choice in shared
+ * host-form state. [MainViewModel.approveJoinRequest] starts on the immediate main dispatcher and
+ * captures the scoped value before this function restores the previous presentation state.
+ */
 @MainThread
 internal fun MainViewModel.dispatchJoinApproval(
     request: JoinRequest,
