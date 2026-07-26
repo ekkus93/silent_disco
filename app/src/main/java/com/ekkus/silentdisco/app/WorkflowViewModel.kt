@@ -13,6 +13,7 @@ class WorkflowViewModel : ViewModel() {
 
     private var startupNavigationConsumed = false
     private var playbackNavigationConsumed = false
+    private var cleared = false
 
     fun onUiStateChanged(state: AppUiState) {
         if (shouldNavigateHomeAfterStartup(state, startupNavigationConsumed)) {
@@ -69,12 +70,14 @@ class WorkflowViewModel : ViewModel() {
     }
 
     private fun emit(effect: AppUiEffect) {
-        check(effectChannel.trySend(effect).isSuccess) {
+        val result = effectChannel.trySend(effect)
+        check(result.isSuccess || cleared) {
             "Unable to enqueue workflow effect $effect"
         }
     }
 
     override fun onCleared() {
+        cleared = true
         effectChannel.close()
         super.onCleared()
     }
