@@ -46,6 +46,7 @@ jobs:
           {
             python .github/scripts/apply_block9_android_storage.py
             python .github/scripts/fix_block9_android_storage_compile.py
+            python .github/scripts/fix_block9_android_storage_tests.py
           } 2>&1 | tee block9-android-storage-apply.log
 
       - name: Build Android variants and instrumentation APK
@@ -117,6 +118,7 @@ jobs:
           rm .github/workflows/block9-android-storage-bootstrap.yml
           rm .github/scripts/apply_block9_android_storage.py
           rm .github/scripts/fix_block9_android_storage_compile.py
+          rm .github/scripts/fix_block9_android_storage_tests.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
