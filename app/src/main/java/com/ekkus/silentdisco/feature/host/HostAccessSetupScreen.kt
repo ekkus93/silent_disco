@@ -23,6 +23,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -72,6 +77,26 @@ fun HostAccessSetupScreen(
     onOpenSettings: () -> Unit,
     onShareSupportReport: () -> Unit,
 ) {
+    var startSubmissionInFlight by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.hostState, uiState.lastError) {
+        if (
+            uiState.hostState == HostLifecycleState.ERROR ||
+            uiState.hostState !in setOf(
+                HostLifecycleState.IDLE,
+                HostLifecycleState.CREATING_SESSION,
+            )
+        ) {
+            startSubmissionInFlight = false
+        }
+    }
+
+    fun requestStart() {
+        if (startSubmissionInFlight) return
+        startSubmissionInFlight = true
+        onStartSession()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -184,7 +209,8 @@ fun HostAccessSetupScreen(
             val invalid = uiState.hostForm.sessionName.isBlank() ||
                 uiState.hostForm.selectedAudio == null ||
                 !inviteCodeValid
-            val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION
+            val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION ||
+                startSubmissionInFlight
             val startFailed = uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()
             if (invalid) {
                 Text(
@@ -208,14 +234,14 @@ fun HostAccessSetupScreen(
                         "Check that nearby connections are available and try again."
                     },
                     primaryActionLabel = if (permissionFailure) "Open Settings" else "Retry",
-                    onPrimaryAction = if (permissionFailure) onOpenSettings else onStartSession,
+                    onPrimaryAction = if (permissionFailure) onOpenSettings else ::requestStart,
                     secondaryActionLabel = if (permissionFailure) "Retry" else "Share support report",
-                    onSecondaryAction = if (permissionFailure) onStartSession else onShareSupportReport,
+                    onSecondaryAction = if (permissionFailure) ::requestStart else onShareSupportReport,
                     modifier = Modifier.testTag("host-start-problem"),
                 )
             } else {
                 Button(
-                    onClick = onStartSession,
+                    onClick = ::requestStart,
                     enabled = !invalid && !isStarting,
                     modifier = Modifier
                         .fillMaxWidth()
