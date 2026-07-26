@@ -152,3 +152,25 @@ jobs:
             .github/workflows/block9-full-validation.yml
           git commit -m "Record complete Block 9 validation"
           git push origin HEAD:agent/fix-block9-trust-storage-state
+
+      - name: Record failed validation and remove temporary workflow
+        if: failure()
+        shell: bash
+        env:
+          VALIDATION_RUN_ID: ${{ github.run_id }}
+          VALIDATION_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          mkdir -p .validation
+          cat > .validation/block9-validation-failure.txt <<EOF
+          Block 9 full validation failed.
+          run_id=${VALIDATION_RUN_ID}
+          run_attempt=${VALIDATION_RUN_ATTEMPT}
+          head_sha=${GITHUB_SHA}
+          EOF
+          rm -f .github/workflows/block9-full-validation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .validation/block9-validation-failure.txt \
+            .github/workflows/block9-full-validation.yml
+          git commit -m "Record failed Block 9 validation"
+          git push origin HEAD:agent/fix-block9-trust-storage-state
