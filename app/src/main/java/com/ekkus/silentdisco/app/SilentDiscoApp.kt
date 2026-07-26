@@ -46,6 +46,8 @@ import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
 import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.feature.settings.SettingsScreen
+import com.ekkus.silentdisco.feature.settings.TrustedDevicesScreen
+import com.ekkus.silentdisco.feature.settings.TrustedDevicesViewModel
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import java.time.Instant
@@ -55,8 +57,10 @@ import kotlinx.coroutines.flow.collect
 fun SilentDiscoApp(
     viewModel: MainViewModel,
     workflowViewModel: WorkflowViewModel,
+    trustedDevicesViewModel: TrustedDevicesViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val trustedDevicesUiState by trustedDevicesViewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -350,13 +354,27 @@ fun SilentDiscoApp(
             composable(AppRoutes.Settings) {
                 SettingsScreen(
                     uiState = uiState,
-                    trustedDeviceManagementAvailable = false,
+                    trustedDeviceManagementAvailable = true,
                     onBack = { navController.popBackStack() },
                     onOpenSystemSettings = ::openSystemSettings,
-                    onOpenTrustedDevices = {},
+                    onOpenTrustedDevices = {
+                        navController.navigateSingleTop(AppRoutes.TrustedDevices)
+                    },
                     onOpenAdvancedDiagnostics = {
                         navController.navigateSingleTop(AppRoutes.AdvancedDiagnostics)
                     },
+                )
+            }
+
+            composable(AppRoutes.TrustedDevices) {
+                LaunchedEffect(Unit) {
+                    trustedDevicesViewModel.refresh()
+                }
+                TrustedDevicesScreen(
+                    uiState = trustedDevicesUiState,
+                    onBack = { navController.popBackStack() },
+                    onRefresh = trustedDevicesViewModel::refresh,
+                    onDelete = trustedDevicesViewModel::deleteDevice,
                 )
             }
         }
