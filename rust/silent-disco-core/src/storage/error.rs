@@ -27,6 +27,7 @@ pub enum StorageOperation {
     CloseDatabase = 13,
     StopWorker = 14,
     JoinWorker = 15,
+    ImportLegacyData = 16,
 }
 
 impl StorageOperation {
@@ -48,6 +49,7 @@ impl StorageOperation {
             Self::CloseDatabase => "close_database",
             Self::StopWorker => "stop_worker",
             Self::JoinWorker => "join_worker",
+            Self::ImportLegacyData => "import_legacy_data",
         }
     }
 
@@ -62,7 +64,7 @@ impl StorageOperation {
             | Self::ConfigureSynchronousPolicy => StorageErrorKind::Pragma,
             Self::Migration => StorageErrorKind::Migration,
             Self::ReadMetadata | Self::Checkpoint | Self::Query => StorageErrorKind::Query,
-            Self::Transaction => StorageErrorKind::Transaction,
+            Self::Transaction | Self::ImportLegacyData => StorageErrorKind::Transaction,
             Self::CloseDatabase => StorageErrorKind::Close,
             Self::StopWorker | Self::JoinWorker => StorageErrorKind::WorkerStopped,
         }

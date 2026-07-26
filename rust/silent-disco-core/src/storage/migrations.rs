@@ -4,7 +4,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error};
 
-pub const LATEST_SCHEMA_VERSION: u32 = 1;
+pub const LATEST_SCHEMA_VERSION: u32 = 2;
 
 const MIGRATION_V1_SQL: &str = r"
 CREATE TABLE schema_migrations (
@@ -117,10 +117,26 @@ impl Migration {
     }
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: MIGRATION_V1_SQL,
-}];
+const MIGRATION_V2_SQL: &str = r"
+CREATE TABLE legacy_imports (
+    source               TEXT PRIMARY KEY CHECK (length(source) BETWEEN 1 AND 64),
+    import_version       INTEGER NOT NULL CHECK (import_version > 0),
+    completed_at_ms      INTEGER NOT NULL CHECK (completed_at_ms >= 0),
+    settings_imported    INTEGER NOT NULL CHECK (settings_imported IN (0, 1)),
+    trusted_device_count INTEGER NOT NULL CHECK (trusted_device_count >= 0)
+) STRICT;
+";
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: MIGRATION_V1_SQL,
+    },
+    Migration {
+        version: 2,
+        sql: MIGRATION_V2_SQL,
+    },
+];
 
 /// One migration row persisted in `schema_migrations`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,7 +436,10 @@ THIS IS NOT VALID SQL;
         let mut connection = Connection::open(test_path.path()).expect("open temporary database");
         let first = run_migrations(&mut connection).expect("empty database migrates");
         assert_eq!(first.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(first.records.len(), 1);
+        assert_eq!(
+            first.records.len(),
+            usize::try_from(LATEST_SCHEMA_VERSION).expect("schema version fits usize")
+        );
         drop(connection);
 
         let mut reopened = Connection::open(test_path.path()).expect("reopen temporary database");

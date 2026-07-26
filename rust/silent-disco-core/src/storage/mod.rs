@@ -8,6 +8,7 @@
 mod database;
 mod diagnostics_repository;
 mod error;
+mod legacy_import;
 mod migrations;
 mod models;
 mod repository_support;
@@ -25,6 +26,11 @@ pub use database::{
     DatabaseMetadata, SynchronousPolicy,
 };
 pub use error::{StorageError, StorageErrorKind, StorageOperation};
+pub use legacy_import::{
+    ANDROID_LEGACY_IMPORT_SOURCE, ANDROID_LEGACY_IMPORT_VERSION, LegacyAndroidImport,
+    LegacyImportDisposition, LegacyImportOutcome, LegacyImportValidationError,
+    MAX_LEGACY_TRUSTED_DEVICE_COUNT,
+};
 pub use migrations::{LATEST_SCHEMA_VERSION, MigrationRecord};
 pub use models::{
     DiagnosticExport, DiagnosticExportCursor, DiagnosticExportRequest, DiagnosticQuery,

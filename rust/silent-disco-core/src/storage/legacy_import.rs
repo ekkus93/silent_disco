@@ -1,31 +1,119 @@
-from pathlib import Path
+use std::collections::BTreeSet;
 
-path = Path("rust/silent-disco-core/src/storage/legacy_import.rs")
-text = path.read_text(encoding="utf-8")
-text = text.replace(
-    "/// Stable Android SharedPreferences import contract version.",
-    "/// Stable Android `SharedPreferences` import contract version.",
-)
-text = text.replace(
-    "/// Stable source identifier recorded in SQLite after a committed import.",
-    "/// Stable source identifier recorded in `SQLite` after a committed import.",
-)
-text = text.replace(
-    "/// Typed values read from the pre-Rust Android SharedPreferences store.",
-    "/// Typed values read from the pre-Rust Android `SharedPreferences` store.",
-)
-text = text.replace("let mut worker = DatabaseWorker::start(", "let worker = DatabaseWorker::start(")
-text = text.replace(
-    "use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};",
-    "use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};",
-)
-start_marker = "pub(crate) fn import_android("
-end_marker = "fn corrupt_import_marker"
-if text.count(start_marker) != 1 or text.count(end_marker) != 1:
-    raise RuntimeError("legacy import function markers did not match exactly")
-start = text.index(start_marker)
-end = text.index(end_marker)
-replacement = r'''pub(crate) fn import_android(
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+
+use crate::domain::TrustState;
+
+use super::{
+    error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error},
+    models::{StoredSettings, TrustedDevice},
+    repository_support::{invalid_model, to_sql_i64},
+};
+
+/// Stable Android `SharedPreferences` import contract version.
+pub const ANDROID_LEGACY_IMPORT_VERSION: u32 = 1;
+/// Stable source identifier recorded in `SQLite` after a committed import.
+pub const ANDROID_LEGACY_IMPORT_SOURCE: &str = "android_shared_preferences";
+/// Defensive upper bound for one legacy trust import.
+pub const MAX_LEGACY_TRUSTED_DEVICE_COUNT: usize = 1_024;
+
+/// Typed values read from the pre-Rust Android `SharedPreferences` store.
+///
+/// Kotlin may read only the known legacy keys. Rust validates this complete
+/// record and commits settings, trusted devices, and the completion marker in
+/// one transaction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegacyAndroidImport {
+    pub version: u32,
+    pub imported_at_ms: u64,
+    pub settings: Option<StoredSettings>,
+    pub trusted_devices: Vec<TrustedDevice>,
+}
+
+impl LegacyAndroidImport {
+    /// Validates the complete import before any transaction begins.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable validation error for an unsupported version, invalid
+    /// timestamp, duplicate device, excessive device count, invalid model, or
+    /// non-trusted legacy record.
+    pub fn validate(&self) -> Result<(), LegacyImportValidationError> {
+        if self.version != ANDROID_LEGACY_IMPORT_VERSION {
+            return Err(LegacyImportValidationError::UnsupportedVersion);
+        }
+        i64::try_from(self.imported_at_ms).map_err(|_| LegacyImportValidationError::Timestamp)?;
+        if self.trusted_devices.len() > MAX_LEGACY_TRUSTED_DEVICE_COUNT {
+            return Err(LegacyImportValidationError::DeviceCount);
+        }
+        if let Some(settings) = &self.settings {
+            settings
+                .validate()
+                .map_err(|_| LegacyImportValidationError::Settings)?;
+        }
+        let mut identifiers = BTreeSet::new();
+        for device in &self.trusted_devices {
+            device
+                .validate()
+                .map_err(|_| LegacyImportValidationError::TrustedDevice)?;
+            if device.trust_state != TrustState::Trusted {
+                return Err(LegacyImportValidationError::TrustState);
+            }
+            if !identifiers.insert(device.device_id.as_str()) {
+                return Err(LegacyImportValidationError::DuplicateDevice);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether a valid import was newly committed or had already completed.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LegacyImportDisposition {
+    Imported = 1,
+    AlreadyCompleted = 2,
+}
+
+/// Durable result of the one-time Android legacy import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LegacyImportOutcome {
+    pub disposition: LegacyImportDisposition,
+    pub import_version: u32,
+    pub completed_at_ms: u64,
+    pub settings_imported: bool,
+    pub trusted_device_count: u32,
+}
+
+/// Stable validation failures for [`LegacyAndroidImport`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyImportValidationError {
+    UnsupportedVersion,
+    Timestamp,
+    DeviceCount,
+    Settings,
+    TrustedDevice,
+    TrustState,
+    DuplicateDevice,
+}
+
+impl core::fmt::Display for LegacyImportValidationError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(match self {
+            Self::UnsupportedVersion => "legacy Android import version is unsupported",
+            Self::Timestamp => "legacy Android import timestamp exceeds the SQLite integer range",
+            Self::DeviceCount => "legacy Android import contains too many trusted devices",
+            Self::Settings => "legacy Android import settings are invalid",
+            Self::TrustedDevice => "legacy Android import contains invalid trusted-device metadata",
+            Self::TrustState => "legacy Android import contains a device that is not trusted",
+            Self::DuplicateDevice => "legacy Android import contains duplicate device identifiers",
+        })
+    }
+}
+
+impl std::error::Error for LegacyImportValidationError {}
+
+pub(crate) fn import_android(
     connection: &mut Connection,
     import: &LegacyAndroidImport,
     schema_version: u32,
@@ -52,12 +140,7 @@ replacement = r'''pub(crate) fn import_android(
     for device in &import.trusted_devices {
         save_import_device(&transaction, device, schema_version)?;
     }
-    record_import_marker(
-        &transaction,
-        import,
-        trusted_device_count,
-        schema_version,
-    )?;
+    record_import_marker(&transaction, import, trusted_device_count, schema_version)?;
     transaction
         .commit()
         .map_err(|error| map_import_sqlite(schema_version, &error))?;
@@ -303,5 +386,143 @@ fn map_import_sqlite(schema_version: u32, error: &rusqlite::Error) -> StorageErr
     )
 }
 
-'''
-path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+fn corrupt_import_marker(schema_version: u32, message: &str) -> StorageError {
+    StorageError::new(
+        StorageErrorKind::Corruption,
+        StorageOperation::ImportLegacyData,
+        message,
+        Some(schema_version),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        domain::{DeviceId, TrustState, TuningSettings},
+        storage::{
+            DatabaseConfig, DatabaseWorker, LegacyAndroidImport, LegacyImportDisposition,
+            StoredSettings, TrustedDevice, test_support::TestDatabasePath,
+        },
+    };
+
+    fn trusted_device(identifier: &str, timestamp: u64) -> TrustedDevice {
+        TrustedDevice {
+            device_id: DeviceId::new(identifier).expect("valid device identifier"),
+            display_name: identifier.to_owned(),
+            public_key: None,
+            private_key_ref: None,
+            trust_state: TrustState::Trusted,
+            first_seen_ms: timestamp,
+            last_seen_ms: timestamp,
+            updated_at_ms: timestamp,
+        }
+    }
+
+    #[test]
+    fn imports_settings_and_devices_once_through_the_worker() {
+        let path = TestDatabasePath::new("legacy-import-success");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(path.path()).expect("valid database configuration"),
+        )
+        .expect("start database worker");
+        let client = worker.client();
+        let import = LegacyAndroidImport {
+            version: super::ANDROID_LEGACY_IMPORT_VERSION,
+            imported_at_ms: 10_000,
+            settings: Some(StoredSettings {
+                tuning: TuningSettings {
+                    sync_cadence_ms: 2_250,
+                    ..TuningSettings::default()
+                },
+                updated_at_ms: 10_000,
+            }),
+            trusted_devices: vec![trusted_device("legacy-device", 10_000)],
+        };
+
+        let first = client
+            .import_legacy_android_data(&import)
+            .expect("first import succeeds");
+        assert_eq!(first.disposition, LegacyImportDisposition::Imported);
+        assert!(first.settings_imported);
+        assert_eq!(first.trusted_device_count, 1);
+        assert_eq!(
+            client
+                .load_settings()
+                .expect("load settings")
+                .expect("settings exist")
+                .tuning
+                .sync_cadence_ms,
+            2_250
+        );
+        assert_eq!(
+            client.list_trusted_devices().expect("list trusted devices"),
+            import.trusted_devices
+        );
+
+        let changed = LegacyAndroidImport {
+            settings: Some(StoredSettings {
+                tuning: TuningSettings {
+                    sync_cadence_ms: 4_000,
+                    ..TuningSettings::default()
+                },
+                updated_at_ms: 20_000,
+            }),
+            imported_at_ms: 20_000,
+            ..import
+        };
+        let second = client
+            .import_legacy_android_data(&changed)
+            .expect("repeat import is idempotent");
+        assert_eq!(
+            second.disposition,
+            LegacyImportDisposition::AlreadyCompleted
+        );
+        assert_eq!(second.completed_at_ms, 10_000);
+        assert_eq!(
+            client
+                .load_settings()
+                .expect("load settings")
+                .expect("settings exist")
+                .tuning
+                .sync_cadence_ms,
+            2_250
+        );
+        worker.stop_and_join().expect("stop worker");
+    }
+
+    #[test]
+    fn invalid_import_leaves_no_partial_settings_or_devices() {
+        let path = TestDatabasePath::new("legacy-import-rollback");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(path.path()).expect("valid database configuration"),
+        )
+        .expect("start database worker");
+        let client = worker.client();
+        let duplicate = trusted_device("duplicate", 5_000);
+        let import = LegacyAndroidImport {
+            version: super::ANDROID_LEGACY_IMPORT_VERSION,
+            imported_at_ms: 5_000,
+            settings: Some(StoredSettings {
+                tuning: TuningSettings::default(),
+                updated_at_ms: 5_000,
+            }),
+            trusted_devices: vec![duplicate.clone(), duplicate],
+        };
+
+        let error = client
+            .import_legacy_android_data(&import)
+            .expect_err("duplicate import must fail before commit");
+        assert_eq!(
+            error.operation,
+            crate::storage::StorageOperation::ImportLegacyData
+        );
+        assert_eq!(client.load_settings().expect("load settings"), None);
+        assert!(
+            client
+                .list_trusted_devices()
+                .expect("list trusted devices")
+                .is_empty()
+        );
+        worker.stop_and_join().expect("stop worker");
+    }
+}
