@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.feature.host
 
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,12 +32,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -50,6 +56,7 @@ import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
+import kotlinx.coroutines.delay
 
 private enum class HostListenerTab(val title: String) {
     REQUESTS("Requests"),
@@ -73,8 +80,32 @@ fun HostDashboardScreen(
 ) {
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var overflowOpen by remember { mutableStateOf(false) }
+    var approvalInFlightRequestId by rememberSaveable { mutableStateOf<String?>(null) }
+    var approvalInFlightAction by rememberSaveable { mutableStateOf<JoinApprovalAction?>(null) }
+    var approvalBaselineSignature by rememberSaveable { mutableStateOf("") }
     val health = uiState.hostSessionHealthSummary()
     val troubledListeners = uiState.approvedListeners.filter(::listenerNeedsAttention)
+    val currentProblemSignature = "${uiState.lastMessage.orEmpty()}|${uiState.lastError.orEmpty()}"
+
+    LaunchedEffect(uiState.pendingJoinRequests, uiState.approvedListeners, currentProblemSignature) {
+        val inFlight = approvalInFlightRequestId ?: return@LaunchedEffect
+        val requestCompleted = uiState.pendingJoinRequests.none { it.requestId == inFlight }
+        val operationReportedFailure = uiState.lastError?.isNotBlank() == true &&
+            currentProblemSignature != approvalBaselineSignature
+        if (requestCompleted || operationReportedFailure) {
+            approvalInFlightRequestId = null
+            approvalInFlightAction = null
+            approvalBaselineSignature = ""
+        }
+    }
+
+    fun submitApproval(request: JoinRequest, action: JoinApprovalAction) {
+        if (approvalInFlightRequestId != null) return
+        approvalInFlightRequestId = request.requestId
+        approvalInFlightAction = action
+        approvalBaselineSignature = currentProblemSignature
+        onApproval(request, action)
+    }
 
     Column(
         modifier = Modifier
@@ -239,10 +270,18 @@ fun HostDashboardScreen(
                         item { EmptyListenerSection("No one is waiting to join.") }
                     } else {
                         items(uiState.pendingJoinRequests, key = JoinRequest::requestId) { request ->
-                            ListenerRequestCard(request = request, onApproval = onApproval)
+                            ListenerRequestCard(
+                                request = request,
+                                approvalLocked = approvalInFlightRequestId != null,
+                                inFlightAction = approvalInFlightAction.takeIf {
+                                    approvalInFlightRequestId == request.requestId
+                                },
+                                onApproval = ::submitApproval,
+                            )
                         }
                     }
                 }
+
                 HostListenerTab.CONNECTED -> {
                     if (uiState.approvedListeners.isEmpty()) {
                         item { EmptyListenerSection("No listeners are connected yet.") }
@@ -252,6 +291,7 @@ fun HostDashboardScreen(
                         }
                     }
                 }
+
                 HostListenerTab.NEEDS_ATTENTION -> {
                     if (troubledListeners.isEmpty()) {
                         item { EmptyListenerSection("No listeners need attention.") }
@@ -269,8 +309,20 @@ fun HostDashboardScreen(
 @Composable
 private fun ListenerRequestCard(
     request: JoinRequest,
+    approvalLocked: Boolean,
+    inFlightAction: JoinApprovalAction?,
     onApproval: (JoinRequest, JoinApprovalAction) -> Unit,
 ) {
+    var elapsedSeconds by remember(request.requestId) {
+        mutableLongStateOf(((SystemClock.elapsedRealtime() - request.requestedAtMs) / 1_000L).coerceAtLeast(0L))
+    }
+    LaunchedEffect(request.requestId) {
+        while (true) {
+            elapsedSeconds = ((SystemClock.elapsedRealtime() - request.requestedAtMs) / 1_000L).coerceAtLeast(0L)
+            delay(1_000L)
+        }
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -278,24 +330,44 @@ private fun ListenerRequestCard(
         ) {
             Text(request.listenerName, style = MaterialTheme.typography.titleMedium)
             Text(
+                waitingDurationLabel(elapsedSeconds),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
                 "Choose whether this phone is approved once or remembered for future sessions.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (inFlightAction != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("approval-progress-${request.requestId}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    Text(approvalProgressLabel(inFlightAction))
+                }
+            }
             Button(
                 onClick = { onApproval(request, JoinApprovalAction.APPROVE_ONCE) },
+                enabled = !approvalLocked,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Approve once")
             }
             Button(
                 onClick = { onApproval(request, JoinApprovalAction.ALWAYS_ALLOW) },
+                enabled = !approvalLocked,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Always allow")
             }
             TextButton(
                 onClick = { onApproval(request, JoinApprovalAction.REJECT) },
+                enabled = !approvalLocked,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Reject", color = MaterialTheme.colorScheme.error)
@@ -309,12 +381,34 @@ private fun ConnectedListenerCard(
     listener: ListenerInfo,
     onRemoveListener: (String) -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Text(listener.displayName, style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(listener.displayName, style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Listener actions")
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Disconnect", color = MaterialTheme.colorScheme.error) },
+                        onClick = {
+                            menuOpen = false
+                            onRemoveListener(listener.deviceId)
+                        },
+                    )
+                }
+            }
             Text("Connection: ${listener.connectionState.label()}")
             Text("Synchronization: ${listener.syncQuality.label()}")
             Text(
@@ -324,9 +418,6 @@ private fun ConnectedListenerCard(
                 },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = { onRemoveListener(listener.deviceId) }) {
-                Text("Disconnect", color = MaterialTheme.colorScheme.error)
-            }
         }
     }
 }
@@ -341,6 +432,21 @@ private fun EmptyListenerSection(message: String) {
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+internal fun approvalProgressLabel(action: JoinApprovalAction): String = when (action) {
+    JoinApprovalAction.APPROVE_ONCE -> "Sending session approval…"
+    JoinApprovalAction.ALWAYS_ALLOW -> "Remembering this phone, then sending approval…"
+    JoinApprovalAction.REJECT -> "Sending rejection…"
+}
+
+internal fun waitingDurationLabel(elapsedSeconds: Long): String = when {
+    elapsedSeconds < 5L -> "Just requested"
+    elapsedSeconds < 60L -> "Waiting ${elapsedSeconds}s"
+    else -> {
+        val minutes = elapsedSeconds / 60L
+        "Waiting ${minutes}m"
+    }
 }
 
 private fun listenerNeedsAttention(listener: ListenerInfo): Boolean =
