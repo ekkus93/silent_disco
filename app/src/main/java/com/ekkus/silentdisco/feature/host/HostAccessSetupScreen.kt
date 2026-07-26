@@ -185,6 +185,7 @@ fun HostAccessSetupScreen(
                 uiState.hostForm.selectedAudio == null ||
                 !inviteCodeValid
             val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION
+            val startFailed = uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()
             if (invalid) {
                 Text(
                     text = "Complete the required session details before starting.",
@@ -193,7 +194,7 @@ fun HostAccessSetupScreen(
                 )
             }
 
-            if (uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()) {
+            if (startFailed) {
                 val permissionFailure = uiState.lastError.contains("permission", ignoreCase = true)
                 PrimaryProblemCard(
                     title = if (permissionFailure) {
@@ -208,20 +209,20 @@ fun HostAccessSetupScreen(
                     },
                     primaryActionLabel = if (permissionFailure) "Open Settings" else "Retry",
                     onPrimaryAction = if (permissionFailure) onOpenSettings else onStartSession,
-                    secondaryActionLabel = "Share support report",
-                    onSecondaryAction = onShareSupportReport,
+                    secondaryActionLabel = if (permissionFailure) "Retry" else "Share support report",
+                    onSecondaryAction = if (permissionFailure) onStartSession else onShareSupportReport,
                     modifier = Modifier.testTag("host-start-problem"),
                 )
-            }
-
-            Button(
-                onClick = onStartSession,
-                enabled = !invalid && !isStarting,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("host-start-session"),
-            ) {
-                Text(if (isStarting) "Starting…" else "Start session")
+            } else {
+                Button(
+                    onClick = onStartSession,
+                    enabled = !invalid && !isStarting,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("host-start-session"),
+                ) {
+                    Text(if (isStarting) "Starting…" else "Start session")
+                }
             }
         }
     }
