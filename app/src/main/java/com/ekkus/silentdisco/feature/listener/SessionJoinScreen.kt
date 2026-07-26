@@ -17,7 +17,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,15 +29,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.JoinUiStep
-import com.ekkus.silentdisco.app.UserFacingProblem
 import com.ekkus.silentdisco.app.UserProblemAction
 import com.ekkus.silentdisco.app.derivedPersistentProblem
 import com.ekkus.silentdisco.app.joinUiStep
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +61,20 @@ fun SessionJoinScreen(
         ListenerLifecycleState.SCANNING,
         ListenerLifecycleState.SESSION_SELECTED,
     )
+
+    fun handleProblemAction(action: UserProblemAction) {
+        when (action) {
+            UserProblemAction.RETRY,
+            UserProblemAction.RECONNECT,
+            UserProblemAction.RESYNCHRONIZE -> onRetry()
+
+            UserProblemAction.EDIT_CODE -> editingInviteCode = true
+            UserProblemAction.RETURN_TO_SESSIONS -> onReturnToSessions()
+            UserProblemAction.OPEN_SETTINGS -> onOpenSettings()
+            UserProblemAction.SHARE_SUPPORT_REPORT -> onShareSupportReport()
+            UserProblemAction.DISMISS -> Unit
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -134,67 +149,26 @@ fun SessionJoinScreen(
             }
 
             if (problem != null && !editingInviteCode) {
-                JoinProblemCard(
-                    problem = problem,
-                    onAction = { action ->
-                        when (action) {
-                            UserProblemAction.RETRY,
-                            UserProblemAction.RECONNECT,
-                            UserProblemAction.RESYNCHRONIZE -> onRetry()
-
-                            UserProblemAction.EDIT_CODE -> editingInviteCode = true
-                            UserProblemAction.RETURN_TO_SESSIONS -> onReturnToSessions()
-                            UserProblemAction.OPEN_SETTINGS -> onOpenSettings()
-                            UserProblemAction.SHARE_SUPPORT_REPORT -> onShareSupportReport()
-                            UserProblemAction.DISMISS -> Unit
-                        }
+                PrimaryProblemCard(
+                    title = problem.title,
+                    detail = problem.detail,
+                    primaryActionLabel = problem.primaryAction?.label(),
+                    onPrimaryAction = problem.primaryAction?.let { action ->
+                        { handleProblemAction(action) }
                     },
+                    secondaryActionLabel = problem.secondaryAction?.label(),
+                    onSecondaryAction = problem.secondaryAction?.let { action ->
+                        { handleProblemAction(action) }
+                    },
+                    modifier = Modifier.testTag("session-join-problem"),
+                    primaryActionModifier = Modifier.testTag("session-problem-primary"),
+                    secondaryActionModifier = Modifier.testTag("session-problem-secondary"),
                 )
             }
 
             if (uiState.listenerState != ListenerLifecycleState.PLAYING) {
                 TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
                     Text("Cancel")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun JoinProblemCard(
-    problem: UserFacingProblem,
-    onAction: (UserProblemAction) -> Unit,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("session-join-problem"),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(problem.title, style = MaterialTheme.typography.titleMedium)
-            Text(problem.detail)
-            problem.primaryAction?.let { action ->
-                Button(
-                    onClick = { onAction(action) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("session-problem-primary"),
-                ) {
-                    Text(action.label())
-                }
-            }
-            problem.secondaryAction?.let { action ->
-                OutlinedButton(
-                    onClick = { onAction(action) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("session-problem-secondary"),
-                ) {
-                    Text(action.label())
                 }
             }
         }
@@ -235,13 +209,24 @@ private fun JoinProgressCard(activeStep: JoinUiStep) {
                     when {
                         complete -> Text(
                             "✓",
+                            modifier = Modifier.semantics {
+                                contentDescription = "$label complete"
+                            },
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.titleMedium,
                         )
 
-                        active -> CircularProgressIndicator()
+                        active -> CircularProgressIndicator(
+                            modifier = Modifier.semantics {
+                                contentDescription = "$label in progress"
+                            },
+                        )
+
                         else -> Text(
                             "○",
+                            modifier = Modifier.semantics {
+                                contentDescription = "$label pending"
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.titleMedium,
                         )
