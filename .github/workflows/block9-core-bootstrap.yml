@@ -24,18 +24,30 @@ jobs:
       - name: Apply guarded core patch
         run: python .github/scripts/apply_block9_core.py
       - name: Validate Rust
+        id: validate
+        shell: bash
         run: |
+          set -o pipefail
           cd rust
-          cargo fmt --all
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-features
+          cargo fmt --all 2>&1 | tee ../block9-core-validation.log
+          cargo fmt --all -- --check 2>&1 | tee -a ../block9-core-validation.log
+          cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee -a ../block9-core-validation.log
+          cargo test --workspace --all-features 2>&1 | tee -a ../block9-core-validation.log
+      - name: Upload patched Rust diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block9-core-validation
+          path: block9-core-validation.log
+          if-no-files-found: warn
+          retention-days: 1
       - name: Ensure patch hygiene
         run: git diff --check
       - name: Remove bootstrap files
         run: |
           rm .github/scripts/apply_block9_core.py
           rm .github/workflows/block9-core-bootstrap.yml
+          rm -f .github/block9-core-trigger*.txt
       - name: Commit validated core import
         run: |
           git config user.name 'github-actions[bot]'
