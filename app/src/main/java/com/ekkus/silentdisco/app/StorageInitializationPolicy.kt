@@ -24,7 +24,9 @@ internal fun classifyStorageInitializationFailure(error: Throwable): StorageFail
         .take(16)
         .toList()
     val databaseError = causes.filterIsInstance<RustDatabaseException>().firstOrNull()
-    val state = if (databaseError?.statusCode in recoverableDatabaseStatuses) {
+    val state = if (
+        databaseError != null && databaseError.statusCode in recoverableDatabaseStatuses
+    ) {
         StorageInitializationState.RECOVERABLE_FAILURE
     } else {
         StorageInitializationState.FATAL_FAILURE
