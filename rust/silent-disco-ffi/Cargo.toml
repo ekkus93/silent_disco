@@ -9,6 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+jni = "=0.21.1"
 silent-disco-core = { path = "../silent-disco-core" }
 
 [lints]
