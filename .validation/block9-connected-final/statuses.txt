@@ -1,0 +1,3 @@
+avd_status=0
+boot_status=124
+test_status=125
