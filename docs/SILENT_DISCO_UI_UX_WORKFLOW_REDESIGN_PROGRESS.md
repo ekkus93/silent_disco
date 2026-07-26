@@ -158,6 +158,21 @@ This file records implementation status without changing unchecked acceptance it
 - Confirmation safe-focus and duplicate-submit behavior.
 - Home behavior at 200% font scale.
 
+## Added Compose preview coverage
+
+- Added Android Studio previews for startup loading, recoverable failure, and fatal failure.
+- Added ready-state previews for Home, Host Music, Host Access, Advanced Diagnostics, and Settings.
+- Added Host Dashboard previews for no listeners, a pending request, connected listeners, and a listener needing attention.
+- Added Nearby Sessions previews for scanning, empty, and results states.
+- Added Session Join previews for before-request, waiting-for-approval, rejected-invite-code, and connection-failure states.
+- Added Now Playing previews for healthy, buffering, reconnecting, and desynchronized states.
+- Added healthy and actionable Connection Help previews.
+- Added end-session and leave-session confirmation previews.
+
+### Remaining preview limitation
+
+- Host Dashboard tab selection and the enabled Expert tuning state remain interaction-driven internal Compose state. The previews expose the corresponding data and default UI, but do not force those internal controls into a selected or enabled state.
+
 ## Remaining major work
 
 1. Run and observe the complete permanent CI matrix for the current `master` revision.
@@ -168,6 +183,6 @@ This file records implementation status without changing unchecked acceptance it
 6. Add an explicit scan cancellation/release operation for destination exit.
 7. Add full navigation/integration tests with a controllable fake ViewModel or workflow state holder.
 8. Add broader 200% font, landscape, tablet, and small-window tests.
-9. Add previews for major ready/loading/empty/error states.
+9. Add explicit preview seams for tab-selected Host Dashboard and enabled Expert tuning states only if they do not duplicate production state ownership.
 10. Complete physical two-device host/listener acceptance testing.
 11. Remove obsolete screens only after replacement workflows pass the complete validation matrix.
