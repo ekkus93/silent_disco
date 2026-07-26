@@ -3,6 +3,7 @@ package com.ekkus.silentdisco.feature.settings
 import android.app.Application
 import com.ekkus.silentdisco.core.rust.RustTrustedDevice
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -41,6 +42,20 @@ class TrustedDevicesViewModelTest {
         assertThat(store.initializeCalls).isEqualTo(1)
         assertThat(store.listCalls).isEqualTo(1)
         assertThat(viewModel.uiState.value.devices).containsExactly(device)
+        assertThat(viewModel.uiState.value.error).isNull()
+    }
+
+    @Test
+    fun refreshCancellationIsNotConvertedIntoAUserFacingFailure() = runTest(dispatcher) {
+        val store = FakeTrustedDeviceStore(
+            devices = mutableListOf(),
+            listFailure = CancellationException("view model cleared"),
+        )
+        val viewModel = TrustedDevicesViewModel(mock<Application>(), store)
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
         assertThat(viewModel.uiState.value.error).isNull()
     }
 
@@ -85,6 +100,7 @@ class TrustedDevicesViewModelTest {
 
     private class FakeTrustedDeviceStore(
         val devices: MutableList<RustTrustedDevice>,
+        private val listFailure: Throwable? = null,
         private val deleteFailure: Throwable? = null,
     ) : TrustedDeviceStore {
         var initializeCalls = 0
@@ -97,6 +113,7 @@ class TrustedDevicesViewModelTest {
 
         override suspend fun listTrustedDevices(): List<RustTrustedDevice> {
             listCalls += 1
+            listFailure?.let { throw it }
             return devices.toList()
         }
 
