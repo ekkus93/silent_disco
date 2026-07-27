@@ -40,6 +40,7 @@ fun SettingsScreen(
     onOpenSystemSettings: () -> Unit,
     onOpenTrustedDevices: () -> Unit,
     onOpenAdvancedDiagnostics: () -> Unit,
+    onOpenTrustedHosts: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -105,13 +106,23 @@ fun SettingsScreen(
 
             if (trustedDeviceManagementAvailable) {
                 SettingsCard(
-                    title = "Approved devices",
+                    title = "Approved listener devices",
                     modifier = Modifier.testTag("settings-approved-devices"),
                 ) {
-                    Text("Review phones that are always allowed to join your sessions.")
+                    Text("Review listener phones that are always allowed to join sessions you host.")
                     TextButton(onClick = onOpenTrustedDevices) {
                         Text("Manage approved devices")
                     }
+                }
+            }
+
+            SettingsCard(
+                title = "Trusted hosts",
+                modifier = Modifier.testTag("settings-trusted-hosts"),
+            ) {
+                Text("Review host public keys that were verified from signed QR invitations.")
+                TextButton(onClick = onOpenTrustedHosts) {
+                    Text("Manage trusted hosts")
                 }
             }
 
