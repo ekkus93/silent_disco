@@ -43,6 +43,7 @@ data class P2UiState(
     val rejoinTarget: P2RecentSession? = null,
     val recentAvailability: RecentAvailability = RecentAvailability.IDLE,
     val validatedInvitation: P2ValidatedInvitation? = null,
+    val lastVerifiedInvitation: P2ValidatedInvitation? = null,
     val hostQrPayload: String? = null,
     val lastMessage: String? = null,
     val lastError: String? = null,
@@ -51,11 +52,18 @@ data class P2UiState(
 
     fun validatedHostIsTrusted(): Boolean {
         val invitation = validatedInvitation ?: return false
-        return trustedHosts.any {
-            it.fingerprint == invitation.hostFingerprint &&
-                it.publicKeyDer.contentEquals(invitation.hostPublicKeyDer)
-        }
+        return trustedHosts.matches(invitation)
     }
+
+    fun trustedVerifiedSessionIds(): Set<String> {
+        val invitation = lastVerifiedInvitation ?: return emptySet()
+        return if (trustedHosts.matches(invitation)) setOf(invitation.sessionId) else emptySet()
+    }
+}
+
+private fun List<P2TrustedHost>.matches(invitation: P2ValidatedInvitation): Boolean = any {
+    it.fingerprint == invitation.hostFingerprint &&
+        it.publicKeyDer.contentEquals(invitation.hostPublicKeyDer)
 }
 
 class P2ViewModel @JvmOverloads constructor(
@@ -179,6 +187,7 @@ class P2ViewModel @JvmOverloads constructor(
                 .onSuccess { invitation ->
                     _uiState.value = _uiState.value.copy(
                         validatedInvitation = invitation,
+                        lastVerifiedInvitation = invitation,
                         lastMessage = "Verified QR signature from ${invitation.hostName}",
                         lastError = null,
                     )
@@ -292,7 +301,7 @@ class P2ViewModel @JvmOverloads constructor(
                 role = P2SessionRole.LISTENER,
                 sessionName = selected.name,
                 hostName = selected.hostDeviceName,
-                hostFingerprint = _uiState.value.validatedInvitation
+                hostFingerprint = _uiState.value.lastVerifiedInvitation
                     ?.takeIf { it.sessionId == selected.id }
                     ?.hostFingerprint,
                 startedAtMs = System.currentTimeMillis(),
