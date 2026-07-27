@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.StorageInitializationState
 import com.ekkus.silentdisco.app.TuningSettings
@@ -64,9 +65,11 @@ class WorkflowScreenStateTest {
         }
 
         composeRule.onNodeWithText("Always allow").performClick()
-        composeRule.onNodeWithText("Remembering this phone, then sending approval…").assertIsDisplayed()
-        composeRule.onNodeWithText("Approve once").assertIsNotEnabled()
-        composeRule.onNodeWithText("Reject").assertIsNotEnabled()
+        composeRule.onNodeWithText("Remembering this phone, then sending approval…")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Approve once").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("Reject").performScrollTo().assertIsNotEnabled()
     }
 
     @Test
@@ -227,9 +230,10 @@ class WorkflowScreenStateTest {
         }
 
         composeRule.onNodeWithTag("expert-tuning-toggle").performClick()
-        composeRule.onNodeWithText("Changing these values can make synchronization worse.").assertIsDisplayed()
-        composeRule.onAllNodesWithText("−", useUnmergedTree = true)[0].assertIsNotEnabled()
-        composeRule.onNodeWithTag("enable-expert-tuning").performClick()
-        composeRule.onAllNodesWithText("−", useUnmergedTree = true)[0].assertIsEnabled()
+        composeRule.onNodeWithText("Changing these values can make synchronization worse.")
+            .assertIsDisplayed()
+        composeRule.onAllNodesWithText("−")[0].performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithTag("enable-expert-tuning").performScrollTo().performClick()
+        composeRule.onAllNodesWithText("−")[0].performScrollTo().assertIsEnabled()
     }
 }
