@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
@@ -51,6 +52,7 @@ fun NearbySessionsScreen(
     onRefresh: () -> Unit,
     onSelectSession: (SessionInfo) -> Unit,
     onScanQr: (() -> Unit)? = null,
+    trustedVerifiedSessionIds: Set<String> = emptySet(),
 ) {
     Column(
         modifier = Modifier
@@ -118,6 +120,7 @@ fun NearbySessionsScreen(
 
             else -> SessionResults(
                 uiState = uiState,
+                trustedVerifiedSessionIds = trustedVerifiedSessionIds,
                 onRefresh = onRefresh,
                 onSelectSession = onSelectSession,
             )
@@ -128,9 +131,15 @@ fun NearbySessionsScreen(
 @Composable
 private fun SessionResults(
     uiState: AppUiState,
+    trustedVerifiedSessionIds: Set<String>,
     onRefresh: () -> Unit,
     onSelectSession: (SessionInfo) -> Unit,
 ) {
+    val sorted = uiState.discoveredSessions.sortedWith(
+        compareBy(String.CASE_INSENSITIVE_ORDER) { it.name },
+    )
+    val trusted = sorted.filter { it.id in trustedVerifiedSessionIds }
+    val other = sorted.filterNot { it.id in trustedVerifiedSessionIds }
     LazyColumn(
         modifier = Modifier.testTag("nearby-results"),
         contentPadding = PaddingValues(16.dp),
@@ -161,17 +170,43 @@ private fun SessionResults(
                 }
             }
         }
-        items(
-            items = uiState.discoveredSessions.sortedWith(
-                compareBy(String.CASE_INSENSITIVE_ORDER) { it.name },
-            ),
-            key = SessionInfo::id,
-        ) { session ->
-            NearbySessionCard(
-                session = session,
-                enabled = uiState.canSelectSession(session),
-                onClick = { onSelectSession(session) },
-            )
+        if (trusted.isNotEmpty()) {
+            item {
+                Text(
+                    "Trusted hosts",
+                    modifier = Modifier
+                        .semantics { heading() }
+                        .testTag("nearby-trusted-hosts-heading"),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            items(trusted, key = SessionInfo::id) { session ->
+                NearbySessionCard(
+                    session = session,
+                    enabled = uiState.canSelectSession(session),
+                    verifiedTrustedHost = true,
+                    onClick = { onSelectSession(session) },
+                )
+            }
+        }
+        if (other.isNotEmpty()) {
+            if (trusted.isNotEmpty()) {
+                item {
+                    Text(
+                        "Other nearby sessions",
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+            items(other, key = SessionInfo::id) { session ->
+                NearbySessionCard(
+                    session = session,
+                    enabled = uiState.canSelectSession(session),
+                    verifiedTrustedHost = false,
+                    onClick = { onSelectSession(session) },
+                )
+            }
         }
     }
 }
@@ -180,6 +215,7 @@ private fun SessionResults(
 private fun NearbySessionCard(
     session: SessionInfo,
     enabled: Boolean,
+    verifiedTrustedHost: Boolean,
     onClick: () -> Unit,
 ) {
     val badgeText = sessionAccessLabel(session)
@@ -193,6 +229,7 @@ private fun NearbySessionCard(
                     append(session.hostDeviceName)
                     append(", ")
                     append(badgeText)
+                    if (verifiedTrustedHost) append(", verified trusted host key")
                     if (!enabled) append(", unavailable while another join is active")
                 }
             }
@@ -207,6 +244,13 @@ private fun NearbySessionCard(
                 "Hosted by ${session.hostDeviceName}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (verifiedTrustedHost) {
+                StatusBadge(
+                    text = "Trusted host key verified",
+                    tone = StatusTone.POSITIVE,
+                    semanticLabel = "Trusted host public key verified from a signed QR invitation",
+                )
+            }
             StatusBadge(
                 text = badgeText,
                 tone = when (session.approvalMode) {
