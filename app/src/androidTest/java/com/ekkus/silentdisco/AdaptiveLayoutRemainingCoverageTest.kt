@@ -79,7 +79,7 @@ class AdaptiveLayoutRemainingCoverageTest {
 
         composeRule.onNode(hasScrollAction()).performScrollToIndex(4)
         composeRule.onNodeWithText("Always allow").assertIsDisplayed()
-        composeRule.onNodeWithText("Reject").assertIsDisplayed()
+        composeRule.onNodeWithText("Reject").performScrollTo().assertIsDisplayed()
     }
 
     @Test
