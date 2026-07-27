@@ -125,7 +125,7 @@ fun VerifiedQrInvitationDialog(
                         .fillMaxWidth()
                         .testTag("verified-qr-trust-join"),
                 ) {
-                    Text(if (alreadyTrusted) "Join trusted host" else "Trust host and join")
+                    Text(if (alreadyTrusted) "Join trusted host" else "Trust host")
                 }
             }
         },
