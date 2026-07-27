@@ -50,20 +50,18 @@ private class AndroidTrustedDeviceStore(
     }
 }
 
-class TrustedDevicesViewModel(
+class TrustedDevicesViewModel internal constructor(
     application: Application,
+    private val store: TrustedDeviceStore,
 ) : AndroidViewModel(application) {
-    private var store: TrustedDeviceStore = AndroidTrustedDeviceStore(application)
+    constructor(application: Application) : this(
+        application = application,
+        store = AndroidTrustedDeviceStore(application),
+    )
+
     private val logger = AppLogger()
     private val _uiState = MutableStateFlow(TrustedDevicesUiState())
     val uiState: StateFlow<TrustedDevicesUiState> = _uiState.asStateFlow()
-
-    internal constructor(
-        application: Application,
-        trustedDeviceStore: TrustedDeviceStore,
-    ) : this(application) {
-        store = trustedDeviceStore
-    }
 
     fun refresh() {
         if (_uiState.value.isLoading || _uiState.value.deletingDeviceId != null) return
