@@ -11,6 +11,8 @@ import com.ekkus.silentdisco.app.P2StorageState
 import com.ekkus.silentdisco.app.P2UiState
 import com.ekkus.silentdisco.app.RecentAvailability
 import com.ekkus.silentdisco.app.StorageInitializationState
+import com.ekkus.silentdisco.core.model.ApprovalMode
+import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.rust.P2RecentSession
 import com.ekkus.silentdisco.core.rust.P2SessionOutcome
 import com.ekkus.silentdisco.core.rust.P2TrustedHost
@@ -72,6 +74,41 @@ class P2UiTest {
 
         composeRule.onNodeWithTag("nearby-scan-qr").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertThat(scans).isEqualTo(1) }
+    }
+
+    @Test
+    fun trustedGroupingRequiresExactVerifiedSessionId() {
+        val trustedSession = SessionInfo(
+            id = "trusted-session",
+            name = "Trusted Disco",
+            hostDeviceName = "Verified host",
+            approvalMode = ApprovalMode.MANUAL,
+            inviteCodeRequired = false,
+        )
+        val sameNameUnverifiedSession = trustedSession.copy(
+            id = "unverified-session",
+            name = "Other Disco",
+        )
+        composeRule.setContent {
+            SilentDiscoTheme {
+                NearbySessionsScreen(
+                    uiState = AppUiState(
+                        storageState = StorageInitializationState.READY,
+                        discoveredSessions = listOf(trustedSession, sameNameUnverifiedSession),
+                    ),
+                    permissionRequired = false,
+                    onBack = {},
+                    onRequestPermission = {},
+                    onRefresh = {},
+                    onSelectSession = {},
+                    trustedVerifiedSessionIds = setOf(trustedSession.id),
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("nearby-trusted-hosts-heading").assertIsDisplayed()
+        composeRule.onNodeWithText("Trusted host key verified").assertIsDisplayed()
+        composeRule.onNodeWithText("Other nearby sessions").assertIsDisplayed()
     }
 
     @Test
