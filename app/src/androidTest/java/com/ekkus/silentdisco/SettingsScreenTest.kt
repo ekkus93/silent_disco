@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.StorageInitializationState
 import com.ekkus.silentdisco.core.permissions.AppPermission
@@ -40,7 +41,9 @@ class SettingsScreenTest {
         composeRule.onNodeWithTag("settings-storage").assertIsDisplayed()
         composeRule.onNodeWithText("Available").assertIsDisplayed()
         composeRule.onNodeWithText("Open system settings").assertIsDisplayed()
-        composeRule.onNodeWithText("Advanced diagnostics").assertIsDisplayed()
+        composeRule.onNodeWithText("Advanced diagnostics")
+            .performScrollTo()
+            .assertIsDisplayed()
         composeRule.onNodeWithText("Manage approved devices").assertDoesNotExist()
     }
 
