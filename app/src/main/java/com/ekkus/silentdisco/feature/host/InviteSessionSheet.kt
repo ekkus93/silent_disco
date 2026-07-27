@@ -5,11 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,6 +27,7 @@ fun InviteSessionSheet(
     onDismiss: () -> Unit,
     onCopyCode: (String) -> Unit,
     onShareInstructions: (String) -> Unit,
+    onShowSignedQr: (() -> Unit)? = null,
 ) {
     val instructions = inviteInstructions(uiState)
     val inviteCode = uiState.hostForm.inviteCode.takeIf {
@@ -57,7 +60,23 @@ fun InviteSessionSheet(
                         Text("Copy code")
                     }
                 }
-                Button(
+                if (onShowSignedQr != null) {
+                    Button(
+                        onClick = onShowSignedQr,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("invite-show-qr"),
+                    ) {
+                        Icon(Icons.Filled.QrCode, contentDescription = null)
+                        Text("Show signed QR code")
+                    }
+                    Text(
+                        "The QR invitation verifies this host phone's public key and expires after five minutes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(
                     onClick = { onShareInstructions(instructions) },
                     modifier = Modifier
                         .fillMaxWidth()
