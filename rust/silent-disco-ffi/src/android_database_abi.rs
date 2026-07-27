@@ -178,10 +178,7 @@ fn cached_trusted_devices(handle: i64) -> Result<Vec<TrustedDevice>, AndroidData
     })
 }
 
-fn cached_trusted_device(
-    handle: i64,
-    index: jint,
-) -> Result<TrustedDevice, AndroidDatabaseStatus> {
+fn cached_trusted_device(handle: i64, index: jint) -> Result<TrustedDevice, AndroidDatabaseStatus> {
     let index = usize::try_from(index).map_err(|_| AndroidDatabaseStatus::InvalidArgument)?;
     cached_trusted_devices(handle)?
         .get(index)
@@ -189,17 +186,14 @@ fn cached_trusted_device(
         .ok_or(AndroidDatabaseStatus::InvalidArgument)
 }
 
-fn delete_trusted_device(
-    handle: i64,
-    device_id: DeviceId,
-) -> Result<bool, AndroidDatabaseStatus> {
+fn delete_trusted_device(handle: i64, device_id: &DeviceId) -> Result<bool, AndroidDatabaseStatus> {
     with_database_entry(handle, |entry| {
         let deleted = entry
             .worker
             .as_ref()
             .ok_or(AndroidDatabaseStatus::InvalidHandle)?
             .client()
-            .delete_trusted_device(&device_id)
+            .delete_trusted_device(device_id)
             .map_err(|error| map_storage_error(&error))?;
         entry.cached_trusted_devices = None;
         Ok(deleted)
@@ -625,7 +619,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseCachedTrustedDeviceId(
-    mut env: JNIEnv<'_>,
+    env: JNIEnv<'_>,
     _receiver: JObject<'_>,
     handle: jlong,
     index: jint,
@@ -642,7 +636,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_nativeDatabaseCachedTrustedDisplayName(
-    mut env: JNIEnv<'_>,
+    env: JNIEnv<'_>,
     _receiver: JObject<'_>,
     handle: jlong,
     index: jint,
@@ -683,7 +677,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustDatabaseBridge_n
 ) -> jint {
     let result = java_string(&mut env, &device_id)
         .and_then(|value| DeviceId::new(value).map_err(|_| AndroidDatabaseStatus::InvalidArgument))
-        .and_then(|device_id| delete_trusted_device(handle, device_id));
+        .and_then(|device_id| delete_trusted_device(handle, &device_id));
     match result {
         Ok(true) => AndroidDatabaseStatus::Success.code(),
         Ok(false) => AndroidDatabaseStatus::NotFound.code(),
@@ -732,8 +726,8 @@ mod tests {
     use silent_disco_core::{
         domain::{DeviceId, TrustState, TuningSettings},
         storage::{
-            LEGACY_ANDROID_IMPORT_VERSION, LegacyAndroidImport, LegacyImportOutcome, StoredSettings,
-            TrustedDevice,
+            LEGACY_ANDROID_IMPORT_VERSION, LegacyAndroidImport, LegacyImportOutcome,
+            StoredSettings, TrustedDevice,
         },
     };
     use std::{
@@ -822,16 +816,17 @@ mod tests {
             Err(AndroidDatabaseStatus::InvalidArgument)
         );
 
-        assert_eq!(
-            delete_trusted_device(handle, device.device_id.clone()),
-            Ok(true)
-        );
+        assert_eq!(delete_trusted_device(handle, &device.device_id), Ok(true));
         assert_eq!(
             cached_trusted_devices(handle),
             Err(AndroidDatabaseStatus::CachedTrustedDevicesUnavailable)
         );
         load_trusted_devices(handle).expect("empty trusted devices reload");
-        assert!(cached_trusted_devices(handle).expect("cache present").is_empty());
+        assert!(
+            cached_trusted_devices(handle)
+                .expect("cache present")
+                .is_empty()
+        );
 
         close_database(handle).expect("database closes");
         remove_database(&path);

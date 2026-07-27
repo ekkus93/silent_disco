@@ -58,7 +58,7 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 import kotlinx.coroutines.delay
 
-internal enum class HostDashboardTab(val title: String) {
+enum class HostDashboardTab(val title: String) {
     REQUESTS("Requests"),
     CONNECTED("Connected"),
     NEEDS_ATTENTION("Needs attention"),
