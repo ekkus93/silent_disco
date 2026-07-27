@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.HostFormState
 import com.ekkus.silentdisco.app.StorageInitializationState
@@ -56,9 +57,9 @@ class HostAccessFailureTest {
             }
         }
 
-        composeRule.onNodeWithTag("host-start-problem").assertIsDisplayed()
-        composeRule.onNodeWithText("Open Settings").assertIsDisplayed()
-        composeRule.onNodeWithText("Retry").assertIsDisplayed()
+        composeRule.onNodeWithTag("host-start-problem").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Open Settings").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Retry").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("host-start-session").assertDoesNotExist()
     }
 
@@ -84,9 +85,11 @@ class HostAccessFailureTest {
             }
         }
 
-        composeRule.onNodeWithText("The session could not be started").assertIsDisplayed()
-        composeRule.onNodeWithText("Retry").assertIsDisplayed()
-        composeRule.onNodeWithText("Share support report").assertIsDisplayed()
+        composeRule.onNodeWithText("The session could not be started")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Retry").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Share support report").performScrollTo().assertIsDisplayed()
     }
 
     @Test
