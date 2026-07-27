@@ -206,7 +206,7 @@ jobs:
           disable-animations: true
           emulator-options: >-
             -no-window
-            -gpu swiftshader_indirect
+            -gpu software
             -no-snapshot
             -noaudio
             -no-boot-anim
