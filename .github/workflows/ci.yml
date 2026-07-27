@@ -195,27 +195,16 @@ jobs:
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Run connected instrumentation suite
-        id: connected-tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 29
-          target: default
-          arch: x86_64
-          profile: pixel_2
-          disable-animations: true
-          emulator-options: >-
-            -no-window
-            -gpu software
-            -no-snapshot
-            -noaudio
-            -no-boot-anim
-            -camera-back none
-            -camera-front none
-          script: |
-            set -o pipefail
-            ./gradlew connectedDebugAndroidTest --stacktrace --console=plain \
-              2>&1 | tee android-instrumentation-tests.log
+      - name: Run Gradle-managed instrumentation suite
+        id: managed-tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew pixel2api29DebugAndroidTest \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=software \
+            --stacktrace \
+            --console=plain \
+            2>&1 | tee android-instrumentation-tests.log
 
       - name: Upload instrumentation diagnostics
         if: always()
@@ -224,7 +213,8 @@ jobs:
           name: android-instrumentation-diagnostics
           path: |
             android-instrumentation-tests.log
-            app/build/outputs/androidTest-results/connected/
-            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/managedDevice/
+            app/build/reports/androidTests/managedDevice/
+            app/build/outputs/managed_device_android_test_additional_output/
           if-no-files-found: warn
           retention-days: 1
