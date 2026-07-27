@@ -98,11 +98,20 @@ class WorkflowNavigationIntegrationTest {
 
     @Test
     fun approvedDevicesReturnsToSettings() {
+        assertSettingsChildReturns(AppRoutes.TrustedDevices)
+    }
+
+    @Test
+    fun trustedHostsReturnsToSettings() {
+        assertSettingsChildReturns(AppRoutes.TrustedHosts)
+    }
+
+    private fun assertSettingsChildReturns(childRoute: String) {
         navigateSingleTop(AppRoutes.Home)
         navigateSingleTop(AppRoutes.Settings)
-        navigateSingleTop(AppRoutes.TrustedDevices)
+        navigateSingleTop(childRoute)
 
-        assertCurrentRoute(AppRoutes.TrustedDevices)
+        assertCurrentRoute(childRoute)
         val popped = composeRule.runOnIdle { navController.popBackStack() }
 
         assertThat(popped).isTrue()
@@ -138,6 +147,7 @@ class WorkflowNavigationIntegrationTest {
             AppRoutes.AdvancedDiagnostics,
             AppRoutes.Settings,
             AppRoutes.TrustedDevices,
+            AppRoutes.TrustedHosts,
         )
     }
 }
