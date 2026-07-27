@@ -125,6 +125,9 @@ class WorkflowEffectIntegrationTest {
     }
 
     private fun assertNoPreviousDestination() {
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            navController.previousBackStackEntry == null
+        }
         val previousRoute = composeRule.runOnIdle {
             navController.previousBackStackEntry?.destination?.route
         }
