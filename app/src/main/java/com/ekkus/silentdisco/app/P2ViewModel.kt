@@ -69,8 +69,6 @@ class P2ViewModel @JvmOverloads constructor(
     private var activeHost: ObservedSession? = null
     private var activeListener: ObservedSession? = null
     private var rejoinScanObserved = false
-    private var lastObservedHostState = HostLifecycleState.IDLE
-    private var lastObservedListenerState = ListenerLifecycleState.IDLE
 
     init {
         viewModelScope.launch {
@@ -96,8 +94,6 @@ class P2ViewModel @JvmOverloads constructor(
         observeHostSession(appState)
         observeListenerSession(appState)
         observeDiscovery(appState.discoveredSessions, appState.isScanning)
-        lastObservedHostState = appState.hostState
-        lastObservedListenerState = appState.listenerState
     }
 
     fun requestRecentSessionCheck(session: P2RecentSession) {
@@ -121,7 +117,9 @@ class P2ViewModel @JvmOverloads constructor(
     fun prepareHostQr(appState: AppUiState) {
         val sessionId = appState.hostDiagnostics.sessionId.takeIf(String::isNotBlank)
             ?: run {
-                _uiState.value = _uiState.value.copy(lastError = "Start a host session before creating a QR invitation")
+                _uiState.value = _uiState.value.copy(
+                    lastError = "Start a host session before creating a QR invitation",
+                )
                 return
             }
         val session = appState.discoveredSessions.firstOrNull { it.id == sessionId }
@@ -222,7 +220,11 @@ class P2ViewModel @JvmOverloads constructor(
                 .onSuccess { (deleted, trusted) ->
                     _uiState.value = _uiState.value.copy(
                         trustedHosts = trusted,
-                        lastMessage = if (deleted) "Trusted host removed" else "Trusted host was already absent",
+                        lastMessage = if (deleted) {
+                            "Trusted host removed"
+                        } else {
+                            "Trusted host was already absent"
+                        },
                         lastError = null,
                     )
                 }
@@ -279,7 +281,9 @@ class P2ViewModel @JvmOverloads constructor(
 
     private fun observeListenerSession(appState: AppUiState) {
         val selected = appState.selectedSession
-        if (appState.listenerState == ListenerLifecycleState.PLAYING && selected != null &&
+        if (
+            appState.listenerState == ListenerLifecycleState.PLAYING &&
+            selected != null &&
             activeListener?.sessionId != selected.id
         ) {
             activeListener?.let { finishSession(it, P2SessionOutcome.FAILED) }
@@ -303,7 +307,9 @@ class P2ViewModel @JvmOverloads constructor(
         val selectedChanged = selected?.id != previous.sessionId
         if (terminalState || selectedChanged) {
             val outcome = when (appState.listenerState) {
-                ListenerLifecycleState.ERROR, ListenerLifecycleState.DISCONNECTED -> P2SessionOutcome.FAILED
+                ListenerLifecycleState.ERROR,
+                ListenerLifecycleState.DISCONNECTED,
+                -> P2SessionOutcome.FAILED
                 else -> P2SessionOutcome.COMPLETED
             }
             activeListener = null
@@ -313,24 +319,27 @@ class P2ViewModel @JvmOverloads constructor(
 
     private fun observeDiscovery(sessions: List<SessionInfo>, scanning: Boolean) {
         val target = _uiState.value.rejoinTarget ?: return
-        if (scanning) rejoinScanObserved = true
+        if (scanning) {
+            rejoinScanObserved = true
+            return
+        }
+        if (!rejoinScanObserved || _uiState.value.recentAvailability != RecentAvailability.CHECKING) {
+            return
+        }
+        rejoinScanObserved = false
         val available = sessions.any { it.id == target.sessionId }
-        when {
-            available -> {
-                _uiState.value = _uiState.value.copy(
-                    recentAvailability = RecentAvailability.AVAILABLE,
-                    lastMessage = "${target.sessionName} is available nearby",
-                    lastError = null,
-                )
-            }
-            rejoinScanObserved && !scanning &&
-                _uiState.value.recentAvailability == RecentAvailability.CHECKING -> {
-                _uiState.value = _uiState.value.copy(
-                    recentAvailability = RecentAvailability.UNAVAILABLE,
-                    lastMessage = null,
-                    lastError = "${target.sessionName} is not currently nearby",
-                )
-            }
+        _uiState.value = if (available) {
+            _uiState.value.copy(
+                recentAvailability = RecentAvailability.AVAILABLE,
+                lastMessage = "${target.sessionName} is available nearby",
+                lastError = null,
+            )
+        } else {
+            _uiState.value.copy(
+                recentAvailability = RecentAvailability.UNAVAILABLE,
+                lastMessage = null,
+                lastError = "${target.sessionName} is not currently nearby",
+            )
         }
     }
 
