@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -31,7 +32,13 @@ fun ConfirmationSheet(
     val safeActionFocusRequester = remember(testTag) { FocusRequester() }
 
     LaunchedEffect(visible) {
-        if (!visible) confirming = false
+        confirming = false
+        if (visible) {
+            // AlertDialog content is attached in a separate window. Wait for that window to
+            // complete a frame before requesting focus so the safe action wins deterministically.
+            withFrameNanos { }
+            safeActionFocusRequester.requestFocus()
+        }
     }
 
     if (!visible) return
@@ -44,12 +51,6 @@ fun ConfirmationSheet(
         title = { Text(title) },
         text = { Text(detail) },
         dismissButton = {
-            LaunchedEffect(visible) {
-                if (visible) {
-                    confirming = false
-                    safeActionFocusRequester.requestFocus()
-                }
-            }
             TextButton(
                 onClick = onDismiss,
                 enabled = !confirming,
