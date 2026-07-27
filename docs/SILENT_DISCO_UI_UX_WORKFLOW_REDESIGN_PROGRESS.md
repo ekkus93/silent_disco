@@ -4,149 +4,73 @@
 **Target branch:** `master`  
 **Source TODO:** `docs/SILENT_DISCO_UI_UX_WORKFLOW_REDESIGN_TODO.md`
 
-This record distinguishes implemented behavior and deterministic source coverage from checks that still require an observed CI or physical-device run. It does not convert unobserved acceptance criteria into success claims.
+This record distinguishes implemented behavior and deterministic automated coverage from checks that still require an observed CI or physical-device run. It does not convert unobserved acceptance criteria into success claims.
 
 ## Implemented workflow foundation
 
 - Added presentation models for host setup, listener join stages, host/listener health, approval progress, and structured user-facing problems.
-- Added safe classifications and actions for permission denial, invalid invite code, host rejection, host-ended sessions, unreachable hosts, transport failures, synchronization failures, and playback failures.
 - Centralized route names and back-stack helpers.
-- Moved one-shot startup, host-dashboard, listener-playback, return-home, confirmation, and transient-message effects out of root Compose state into a lifecycle-owned `WorkflowViewModel`.
-- Added consumption guards so startup and playback navigation are not repeated by recomposition or repeated state delivery.
-- Added late-callback handling so a cleared workflow state holder does not turn a lifecycle race into an application crash.
+- Moved one-shot startup, host-dashboard, listener-playback, return-home, confirmation, and transient-message effects into a lifecycle-owned `WorkflowViewModel`.
+- Added consumption guards and lifecycle-clear handling so effects do not repeat or crash after teardown.
 
-## Implemented startup, permissions, and discovery lifecycle
+## Implemented startup, permissions, and transport lifecycle
 
-- Startup is the navigation graph entry point.
-- Storage initialization, recoverable failure, fatal failure, retry, and support-report states are persistent and fail-visible.
-- Home cannot be reached before storage is ready.
-- Host and listener nearby-device permissions are requested contextually.
-- Audio selection uses Android's document picker without broad media-library access.
-- Listener discovery has one automatic scan trigger after permission state becomes ready.
-- BLE discovery exposes authoritative active-scan cancellation and reports teardown failures.
-- Wi-Fi Direct discovery and pending join transport teardown use explicit success/failure callbacks.
-- Leaving Nearby Sessions, cancelling a join, and leaving playback invoke the discovery/transport lifecycle controller.
+- Startup is the navigation graph entry point and blocks Home until Rust-owned storage is ready.
+- Recoverable and fatal storage failures are persistent and fail-visible.
+- Nearby-device permissions are contextual; audio selection uses the Android document picker.
+- BLE and Wi-Fi Direct discovery teardown is explicit and failure-visible.
+- Leaving discovery, cancelling a join, and leaving playback release discovery or pending connection resources.
 
 ## Implemented navigation and destructive safety
 
-- Host and listener workflows use centralized destinations.
+- Host and listener workflows use centralized destinations and predictable back-stack rules.
 - Returning Home clears the active workflow stack.
-- Android back and top-app-bar back are intercepted for active hosting and playback.
-- End-session and leave-session dialogs describe the impact of the action.
-- Safe actions receive initial focus.
-- Destructive actions are visually distinct and guarded against duplicate submission.
+- Active hosting and playback intercept Android and app-bar back navigation.
+- End-session, leave-session, and approved-device removal require confirmation.
+- Safe actions receive initial focus and destructive actions reject duplicate submission.
 
-## Implemented Home and host setup
+## Implemented Home and host workflow
 
-- Home is role-first and does not display healthy storage or generic permission dashboards.
-- Home and startup content remain scrollable at large font scales.
+- Home is role-first and hides healthy storage and generic permission dashboards.
 - Host setup is split into Music and Access destinations.
-- Audio and session name are required before continuing.
-- Invite codes are normalized, generated, and validated as four digits.
-- Access choices have radio semantics and coherent screen-reader descriptions.
-- Permission and transport failures remain visible on Host Access with appropriate Settings, Retry, and support-report actions.
-
-## Implemented host dashboard and approvals
-
-- Dashboard emphasizes session state, listener count, selected audio, playback, and health.
-- Requests, Connected, and Needs attention are separated into tabs with counts and empty states.
-- Listener requests show elapsed waiting time.
-- Approve once, Always allow, and Reject explain approval lifetime.
-- Per-request progress remains visible while approval, rejection, or durable-trust persistence is active.
-- Duplicate actions are disabled while a request operation is active, and reported failures unlock retry.
-- Connected-listener Disconnect is placed in an overflow menu.
+- Audio and session name are required; invite codes are normalized and validated.
+- Host failures remain visible with contextual Settings, Retry, and support-report actions.
+- Dashboard separates Requests, Connected, and Needs attention.
+- Approve once, Always allow, and Reject explain and enforce approval lifetime.
+- Approval lifetime travels through an explicit main-thread command that restores prior presentation state even when dispatch fails.
 - Durable trust remains persist-before-advertise and visibly downgrades to session-only approval on persistence failure.
-- Approval lifetime now travels through an explicit main-thread approval command. The command scopes the legacy form flag to one synchronous dispatch and restores the previous presentation value in `finally`, including the exception path.
 
-## Implemented discovery and listener join flow
+## Implemented listener workflow
 
 - Nearby Sessions represents permission-required, scanning, results, empty, refresh, and failure states.
-- Results remain visible during safe refreshes and use stable name sorting.
-- Session cards use plain-language access badges and accessible whole-card semantics.
-- Session details and progress are one continuous destination.
-- Join progress uses five user-facing stages with complete, active, and pending accessibility descriptions.
-- Playback navigation occurs only when listener lifecycle and playback are both actually Playing.
-- Invalid invite codes can be edited in place and requested again.
-- Persistent failures expose context-specific Retry, Edit code, Return to sessions, Settings, Reconnect, Resynchronize, and support-report actions.
-- Raw technical errors remain outside the normal join presentation.
+- Join details and progress are one continuous destination with five user-facing stages.
+- Playback navigation occurs only when listener lifecycle and playback are both Playing.
+- Invite-code, connection, synchronization, playback, and host-ended failures expose contextual recovery actions.
+- Now Playing prioritizes session identity, host-controlled playback, audio state, and local volume.
+- Connection Help exposes Reconnect or Resynchronize only when valid.
 
-## Implemented listener playback and Connection Help
+## Implemented diagnostics and settings
 
-- Now Playing prioritizes session/host identity, host-controlled playback, audio status, and local volume.
-- Statuses cover Playing in sync, Buffering, Reconnecting, Audio out of sync, Playback stopped, Connection lost, and Playback problem.
-- Healthy playback hides Fix connection; troubled playback routes to Connection Help.
-- Playback remains scrollable at large font scales.
-- Connection Help uses icon-and-text status badges and shows Reconnect or Resynchronize only when valid.
+- Advanced Diagnostics uses progressive disclosure and keeps user-facing summaries ahead of raw metrics.
+- Expert tuning is opt-in; Reset tuning to defaults persists one complete default record through the Rust-owned store before updating UI state.
+- Support reports redact invite codes, session IDs, device IDs, and selected-file URIs.
+- Settings exposes readiness, troubleshooting, Advanced Diagnostics, version/build information, and approved-device management.
+- Rust/JNI provides authoritative trusted-device list/delete operations with cache invalidation.
+- Approved-device removal reloads the Rust list before changing displayed rows.
+- Internal IDs are hidden; legacy records whose display name equals the internal key render as `Approved phone`.
+- Approved-device loading, empty, error, populated, and deleting states are scrollable and adaptive.
 
-## Implemented Advanced Diagnostics and tuning reset
+## Deterministic automated coverage
 
-- Advanced Diagnostics uses progressive disclosure and keeps user-facing health summaries ahead of raw metrics.
-- Raw host, listener, and output metrics are collapsed by default.
-- Expert tuning is collapsed and disabled until explicitly enabled.
-- Resynchronize audio is enabled only when valid.
-- Recent operation failures, including tuning persistence failures, remain visible.
-- Support reports redact invite codes, session identifiers, device identifiers, and selected-file URIs.
-- Reset tuning to defaults persists one complete default `TuningSettings` record through the Rust-owned store before updating UI state.
-- The reset control is enabled only when expert controls are enabled and current settings differ from defaults.
+- Unit tests cover workflow mappings, failure classifications, health summaries, effect ordering, approval progress, scoped approval lifetime, tuning reset, redaction, and approved-device state transitions/cancellation.
+- Compose tests cover startup, Home, host setup/dashboard, discovery, join, playback, Connection Help, diagnostics, Settings, approved devices, confirmations, accessibility, and failure states.
+- Navigation tests cover single-top behavior, workflow clearing, recovery back navigation, effect-driven transitions, and Settings → Approved devices → Settings.
+- Adaptive tests cover 200% font scale, small windows, landscape, and tablet layouts.
+- Compose previews cover normal, empty, loading, failure, destructive-confirmation, selected-tab, and enabled-expert states.
 
-## Implemented Settings and approved-device management
+## Completed cleanup
 
-- Settings shows nearby-device readiness, local app-data readiness, troubleshooting, Advanced Diagnostics, and version/build information.
-- Readiness uses text and icons rather than color alone.
-- Raw storage errors are not shown on the normal Settings screen.
-- Rust/JNI exposes authoritative trusted-device list and delete operations with cache invalidation after writes.
-- Kotlin decodes those results through the Android Rust domain store.
-- A lifecycle-owned approved-device state holder loads, removes, refreshes, preserves coroutine cancellation, and surfaces actual failures.
-- Settings provides an approved-device management destination backed by the authoritative Rust store.
-- Approved-device removal requires confirmation and reloads the authoritative Rust list before changing displayed rows.
-- Internal device IDs are not displayed. Legacy records whose stored display name equals the internal key render as `Approved phone` in both the list and confirmation.
-- Loading, empty, error, populated, and deleting states are scrollable and adaptive below the app bar.
-
-## Implemented invitation and reusable components
-
-- Added reusable status, problem, empty, loading, role-action, attention, and confirmation components.
-- Hosts can copy the invite code and share plain-language Android instructions.
-- Invite payloads omit internal session IDs and do not invent unsupported QR behavior.
-
-## Added deterministic source coverage
-
-### Unit and presentation tests
-
-- Domain-to-presentation workflow mappings and unknown-state safety.
-- Structured listener failure classifications and actions.
-- Host/listener health summaries.
-- Workflow effect order, no-duplicate behavior, and lifecycle-clear handling.
-- Invite-code generation and validation.
-- Contextual permission selection.
-- Approval progress and waiting-duration labels.
-- Scoped approval-lifetime order and restoration, including failure restoration.
-- Playback and Connection Help mappings.
-- Diagnostics/support-report redaction.
-- Atomic tuning reset command and UI callback behavior.
-- Approved-device state-holder loading, removal, failure, and cancellation behavior.
-
-### Compose and navigation tests
-
-- Startup loading, recoverable, and fatal states.
-- Role-first Home and host setup validation.
-- Invalid invite-code editing and actionable join failures.
-- Host-start permission and transport failures.
-- Dashboard approval progress and duplicate-action disabling.
-- Discovery, playback, Connection Help, diagnostics, Settings, and confirmation states.
-- Production route helpers for single-top navigation, clearing workflows, recovery back navigation, and Settings → Approved devices → Settings.
-- A controllable effect holder driving the real navigation helpers, confirmations, and transient messages.
-- Approved-device identifier redaction, legacy-name sanitization, confirmation, and internal-key callback behavior.
-- Adaptive coverage for Home, Host Music, Host Access, Host Dashboard, Session Join, listener playback, Nearby Sessions, Connection Help, Advanced Diagnostics, Settings, Approved devices, and startup failures across 200% font, small-window, landscape, and tablet cases.
-
-### Compose previews
-
-- Startup, Home, host setup, Host Dashboard tabs/states, discovery, join states, listener playback, Connection Help, Advanced Diagnostics, Settings, Approved devices, and destructive confirmations.
-- Approved-device previews cover loading, empty, populated, deleting, and failure states.
-- Explicit preview seams cover selected Host Dashboard tabs and enabled expert tuning without duplicating production state ownership.
-
-## Post-validation cleanup candidates
-
-The following legacy PoC composables have no production imports and are candidates for deletion only after the replacement workflow passes the complete CI matrix:
+The following obsolete proof-of-concept composables had no production or test imports and have been deleted:
 
 - `feature/home/HomeScreen.kt`
 - `feature/host/HostSetupScreen.kt`
@@ -156,8 +80,17 @@ The following legacy PoC composables have no production imports and are candidat
 - `feature/listener/ListenerPlaybackScreen.kt`
 - `feature/diagnostics/AdvancedDiagnosticsScreen.kt`
 
+## Permanent CI coverage
+
+The permanent workflow now includes:
+
+- Rust formatting, Clippy with warnings denied, and workspace tests.
+- Android debug, PoC debug, release, and instrumentation-APK builds with the Rust core.
+- ABI packaging verification for every supported APK and ABI.
+- Android JVM tests and Android lint.
+- A hardware-accelerated API 29 emulator job that executes `connectedDebugAndroidTest` and uploads instrumentation logs and reports.
+
 ## Remaining major work
 
-1. Observe the complete permanent Rust/Android CI matrix for the latest `master` revision and fix any compile, lint, unit-test, packaging, or instrumentation-APK failure.
+1. Observe the complete permanent CI matrix for the latest `master` revision and fix any reported build, lint, unit-test, packaging, or emulator instrumentation failure.
 2. Complete physical two-device host/listener acceptance testing, including discovery cancellation, approval modes, playback, recovery, approved-device removal, and destructive exits.
-3. Delete the cataloged obsolete proof-of-concept screens only after the replacement workflow passes the complete validation matrix.
