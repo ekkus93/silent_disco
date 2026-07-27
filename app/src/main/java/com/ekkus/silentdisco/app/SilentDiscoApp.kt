@@ -1,9 +1,11 @@
 package com.ekkus.silentdisco.app
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -27,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -81,6 +84,8 @@ fun SilentDiscoApp(
     var showVerifiedQrDialog by rememberSaveable { mutableStateOf(false) }
     var pendingQrJoin by rememberSaveable { mutableStateOf(false) }
     var qrJoinScanObserved by rememberSaveable { mutableStateOf(false) }
+    var showCameraRationale by rememberSaveable { mutableStateOf(false) }
+    var showCameraDenied by rememberSaveable { mutableStateOf(false) }
 
     fun sharePlainText(title: String, text: String) {
         val shareIntent = Intent.createChooser(
@@ -108,6 +113,13 @@ fun SilentDiscoApp(
                 Uri.parse("package:${context.packageName}"),
             ),
         )
+    }
+
+    fun qrScanOptions(): ScanOptions = ScanOptions().apply {
+        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+        setPrompt("Scan a signed Silent Disco invitation")
+        setBeepEnabled(false)
+        setOrientationLocked(false)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -147,15 +159,25 @@ fun SilentDiscoApp(
         }
     }
 
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            qrScannerLauncher.launch(qrScanOptions())
+        } else {
+            showCameraDenied = true
+        }
+    }
+
     fun launchQrScanner() {
-        qrScannerLauncher.launch(
-            ScanOptions().apply {
-                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                setPrompt("Scan a signed Silent Disco invitation")
-                setBeepEnabled(false)
-                setOrientationLocked(false)
-            },
-        )
+        if (
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            qrScannerLauncher.launch(qrScanOptions())
+        } else {
+            showCameraRationale = true
+        }
     }
 
     fun requestPermissionThen(
@@ -224,7 +246,10 @@ fun SilentDiscoApp(
         }
     }
 
-    LaunchedEffect(p2UiState.validatedInvitation?.sessionId) {
+    LaunchedEffect(
+        p2UiState.validatedInvitation?.sessionId,
+        p2UiState.validatedInvitation?.expiresAtMs,
+    ) {
         showVerifiedQrDialog = p2UiState.validatedInvitation != null
     }
 
@@ -246,19 +271,22 @@ fun SilentDiscoApp(
 
     LaunchedEffect(pendingQrJoin, uiState.isScanning, uiState.discoveredSessions) {
         if (!pendingQrJoin) return@LaunchedEffect
-        if (uiState.isScanning) qrJoinScanObserved = true
+        if (uiState.isScanning) {
+            qrJoinScanObserved = true
+            return@LaunchedEffect
+        }
+        if (!qrJoinScanObserved) return@LaunchedEffect
         val invitation = p2UiState.validatedInvitation ?: return@LaunchedEffect
+        qrJoinScanObserved = false
         val live = uiState.discoveredSessions.firstOrNull { it.id == invitation.sessionId }
         if (live != null) {
             pendingQrJoin = false
-            qrJoinScanObserved = false
             viewModel.selectDiscoveredSession(live)
             viewModel.updateInviteCode(invitation.inviteCode.orEmpty())
             p2ViewModel.dismissValidatedInvitation()
             navController.navigateSingleTop(AppRoutes.SessionJoin)
-        } else if (qrJoinScanObserved && !uiState.isScanning) {
+        } else {
             pendingQrJoin = false
-            qrJoinScanObserved = false
             p2ViewModel.dismissValidatedInvitation()
             snackbarHostState.showSnackbar(
                 "The signed invitation is valid, but that exact session is not currently nearby.",
@@ -397,6 +425,7 @@ fun SilentDiscoApp(
                         navController.navigateSingleTop(AppRoutes.SessionJoin)
                     },
                     onScanQr = ::launchQrScanner,
+                    trustedVerifiedSessionIds = p2UiState.trustedVerifiedSessionIds(),
                 )
             }
 
@@ -518,6 +547,54 @@ fun SilentDiscoApp(
                     },
                 ) {
                     Text("Continue")
+                }
+            },
+        )
+    }
+
+    if (showCameraRationale) {
+        AlertDialog(
+            onDismissRequest = { showCameraRationale = false },
+            title = { Text("Use the camera to scan a signed invitation") },
+            text = {
+                Text(
+                    "Silent Disco uses the camera only while scanning a QR code. The image is decoded on this phone and is not saved.",
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showCameraRationale = false }) { Text("Not now") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCameraRationale = false
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    },
+                ) {
+                    Text("Continue")
+                }
+            },
+        )
+    }
+
+    if (showCameraDenied) {
+        AlertDialog(
+            onDismissRequest = { showCameraDenied = false },
+            title = { Text("Camera access is required") },
+            text = {
+                Text("Allow camera access in system settings to scan signed QR invitations.")
+            },
+            dismissButton = {
+                TextButton(onClick = { showCameraDenied = false }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCameraDenied = false
+                        openSystemSettings()
+                    },
+                ) {
+                    Text("Open Settings")
                 }
             },
         )
