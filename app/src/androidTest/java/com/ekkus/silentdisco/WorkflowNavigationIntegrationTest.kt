@@ -75,9 +75,10 @@ class WorkflowNavigationIntegrationTest {
         composeRule.runOnIdle { navController.navigateHomeAndClearWorkflow() }
 
         assertCurrentRoute(AppRoutes.Home)
-        val popped = composeRule.runOnIdle { navController.popBackStack() }
-        assertThat(popped).isFalse()
-        assertCurrentRoute(AppRoutes.Home)
+        val previousRoute = composeRule.runOnIdle {
+            navController.previousBackStackEntry?.destination?.route
+        }
+        assertThat(previousRoute).isNull()
     }
 
     @Test
