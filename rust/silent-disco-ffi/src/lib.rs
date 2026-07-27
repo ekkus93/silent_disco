@@ -10,6 +10,7 @@
 
 mod android_abi;
 mod android_database_abi;
+mod android_p2_abi;
 mod sync;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
