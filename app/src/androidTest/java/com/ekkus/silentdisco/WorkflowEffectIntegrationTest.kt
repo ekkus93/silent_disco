@@ -87,8 +87,7 @@ class WorkflowEffectIntegrationTest {
         workflow.emit(AppUiEffect.NavigateHome)
 
         assertCurrentRoute(AppRoutes.Home)
-        val popped = composeRule.runOnIdle { navController.popBackStack() }
-        assertThat(popped).isFalse()
+        assertNoPreviousDestination()
     }
 
     @Test
@@ -102,8 +101,7 @@ class WorkflowEffectIntegrationTest {
 
         workflow.emit(AppUiEffect.NavigateHome)
         assertCurrentRoute(AppRoutes.Home)
-        val popped = composeRule.runOnIdle { navController.popBackStack() }
-        assertThat(popped).isFalse()
+        assertNoPreviousDestination()
     }
 
     @Test
@@ -124,6 +122,13 @@ class WorkflowEffectIntegrationTest {
     private fun navigateDirectly(route: String) {
         composeRule.runOnIdle { navController.navigateSingleTop(route) }
         assertCurrentRoute(route)
+    }
+
+    private fun assertNoPreviousDestination() {
+        val previousRoute = composeRule.runOnIdle {
+            navController.previousBackStackEntry?.destination?.route
+        }
+        assertThat(previousRoute).isNull()
     }
 
     private fun assertCurrentRoute(route: String) {
