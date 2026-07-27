@@ -19,10 +19,12 @@ import com.ekkus.silentdisco.app.AppUiEffect
 import com.ekkus.silentdisco.app.navigateHomeAndClearWorkflow
 import com.ekkus.silentdisco.app.navigateSingleTop
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.withContext
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -46,11 +48,13 @@ class WorkflowEffectIntegrationTest {
             LaunchedEffect(workflow) {
                 workflow.effects.collect { effect ->
                     when (effect) {
-                        AppUiEffect.NavigateHome -> navController.navigateHomeAndClearWorkflow()
-                        AppUiEffect.NavigateHostDashboard -> {
+                        AppUiEffect.NavigateHome -> withContext(Dispatchers.Main.immediate) {
+                            navController.navigateHomeAndClearWorkflow()
+                        }
+                        AppUiEffect.NavigateHostDashboard -> withContext(Dispatchers.Main.immediate) {
                             navController.navigateSingleTop(AppRoutes.HostDashboard)
                         }
-                        AppUiEffect.NavigateListenerPlayback -> {
+                        AppUiEffect.NavigateListenerPlayback -> withContext(Dispatchers.Main.immediate) {
                             navController.navigateSingleTop(AppRoutes.ListenerPlayback)
                         }
                         AppUiEffect.ShowEndSessionConfirmation,
