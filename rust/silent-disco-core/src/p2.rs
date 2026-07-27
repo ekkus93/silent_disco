@@ -2,7 +2,7 @@
 //!
 //! This module deliberately keeps recent-session history, trusted-host keys, and
 //! consumed invitation nonces out of Kotlin-owned state. The store uses a
-//! dedicated app-private SQLite file so it never opens or competes for the
+//! dedicated app-private `SQLite` file so it never opens or competes for the
 //! existing domain database connection.
 
 use std::{
@@ -51,7 +51,9 @@ impl RecentSessionRole {
         match value {
             "host" => Ok(Self::Host),
             "listener" => Ok(Self::Listener),
-            _ => Err(P2Error::CorruptStore("unknown recent-session role".to_owned())),
+            _ => Err(P2Error::CorruptStore(
+                "unknown recent-session role".to_owned(),
+            )),
         }
     }
 }
@@ -78,7 +80,9 @@ impl RecentSessionOutcome {
             "completed" => Ok(Self::Completed),
             "cancelled" => Ok(Self::Cancelled),
             "failed" => Ok(Self::Failed),
-            _ => Err(P2Error::CorruptStore("unknown recent-session outcome".to_owned())),
+            _ => Err(P2Error::CorruptStore(
+                "unknown recent-session outcome".to_owned(),
+            )),
         }
     }
 }
@@ -239,10 +243,16 @@ impl fmt::Display for P2Error {
             Self::InvalidArgument(message) => write!(formatter, "invalid P2 argument: {message}"),
             Self::Storage(message) => write!(formatter, "P2 storage failure: {message}"),
             Self::CorruptStore(message) => write!(formatter, "P2 storage is corrupt: {message}"),
-            Self::InvalidQr(message) => write!(formatter, "invalid Silent Disco QR invitation: {message}"),
+            Self::InvalidQr(message) => {
+                write!(formatter, "invalid Silent Disco QR invitation: {message}")
+            }
             Self::ExpiredQr => formatter.write_str("Silent Disco QR invitation has expired"),
-            Self::ReplayedQr => formatter.write_str("Silent Disco QR invitation was already used on this phone"),
-            Self::InvalidSignature => formatter.write_str("Silent Disco QR invitation signature is invalid"),
+            Self::ReplayedQr => {
+                formatter.write_str("Silent Disco QR invitation was already used on this phone")
+            }
+            Self::InvalidSignature => {
+                formatter.write_str("Silent Disco QR invitation signature is invalid")
+            }
         }
     }
 }
@@ -254,25 +264,34 @@ pub struct P2Store {
 }
 
 impl P2Store {
+    /// Opens the dedicated P2 store, applies migrations, and verifies database integrity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path is invalid, the database cannot be created or opened,
+    /// a migration fails, or the integrity check detects corruption.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, P2Error> {
         let path = path.as_ref();
         if path.as_os_str().is_empty() {
-            return Err(P2Error::InvalidArgument("database path is empty".to_owned()));
+            return Err(P2Error::InvalidArgument(
+                "database path is empty".to_owned(),
+            ));
         }
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| P2Error::Storage(format!("cannot create database directory: {error}")))?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                P2Error::Storage(format!("cannot create database directory: {error}"))
+            })?;
         }
-        let mut connection = Connection::open(path).map_err(storage_error)?;
+        let mut connection = Connection::open(path).map_err(|error| storage_error(&error))?;
         connection
             .execute_batch(
                 "PRAGMA foreign_keys = ON;\nPRAGMA journal_mode = WAL;\nPRAGMA synchronous = FULL;",
             )
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         migrate(&mut connection)?;
         let quick_check: String = connection
             .query_row("PRAGMA quick_check;", [], |row| row.get(0))
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         if quick_check != "ok" {
             return Err(P2Error::CorruptStore(format!(
                 "SQLite quick_check returned {quick_check}"
@@ -281,12 +300,17 @@ impl P2Store {
         Ok(Self { connection })
     }
 
+    /// Persists or updates one authoritative recent-session record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the record is invalid or the transaction cannot be committed.
     pub fn record_session(&mut self, value: &RecentSessionRecord) -> Result<(), P2Error> {
         value.validate()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         transaction
             .execute(
                 "INSERT INTO recent_sessions (
@@ -311,10 +335,16 @@ impl P2Store {
                     value.outcome.wire_name(),
                 ],
             )
-            .map_err(storage_error)?;
-        transaction.commit().map_err(storage_error)
+            .map_err(|error| storage_error(&error))?;
+        transaction.commit().map_err(|error| storage_error(&error))
     }
 
+    /// Returns bounded listener-session history after deleting expired records.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the query bounds are invalid, cleanup fails, stored rows are
+    /// corrupt, or the database query cannot be completed.
     pub fn list_recent_listener_sessions(
         &mut self,
         now_ms: u64,
@@ -338,7 +368,7 @@ impl P2Store {
                  ORDER BY ended_at_ms DESC, session_id ASC
                  LIMIT ?2",
             )
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         let rows = statement
             .query_map(params![to_sql_millis(cutoff)?, i64::from(limit)], |row| {
                 Ok((
@@ -352,11 +382,19 @@ impl P2Store {
                     row.get::<_, String>(7)?,
                 ))
             })
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         let mut values = Vec::new();
         for row in rows {
-            let (session_id, role, session_name, host_name, host_fingerprint, started, ended, outcome) =
-                row.map_err(storage_error)?;
+            let (
+                session_id,
+                role,
+                session_name,
+                host_name,
+                host_fingerprint,
+                started,
+                ended,
+                outcome,
+            ) = row.map_err(|error| storage_error(&error))?;
             let record = RecentSessionRecord {
                 session_id,
                 role: RecentSessionRole::parse(&role)?,
@@ -373,12 +411,17 @@ impl P2Store {
         Ok(values)
     }
 
+    /// Persists a cryptographically verified host identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the host record is invalid or the transaction cannot be committed.
     pub fn trust_host(&mut self, host: &TrustedHostRecord) -> Result<(), P2Error> {
         host.validate()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         transaction
             .execute(
                 "INSERT INTO trusted_hosts (
@@ -397,10 +440,15 @@ impl P2Store {
                     to_sql_millis(host.last_verified_ms)?,
                 ],
             )
-            .map_err(storage_error)?;
-        transaction.commit().map_err(storage_error)
+            .map_err(|error| storage_error(&error))?;
+        transaction.commit().map_err(|error| storage_error(&error))
     }
 
+    /// Returns all trusted host identities in deterministic display order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database query fails or a persisted host record is corrupt.
     pub fn list_trusted_hosts(&self) -> Result<Vec<TrustedHostRecord>, P2Error> {
         let mut statement = self
             .connection
@@ -409,7 +457,7 @@ impl P2Store {
                  FROM trusted_hosts
                  ORDER BY display_name COLLATE NOCASE ASC, fingerprint ASC",
             )
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         let rows = statement
             .query_map([], |row| {
                 Ok((
@@ -420,11 +468,11 @@ impl P2Store {
                     row.get::<_, i64>(4)?,
                 ))
             })
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         let mut values = Vec::new();
         for row in rows {
             let (fingerprint, display_name, public_key_der, first_verified, last_verified) =
-                row.map_err(storage_error)?;
+                row.map_err(|error| storage_error(&error))?;
             let host = TrustedHostRecord {
                 fingerprint,
                 display_name,
@@ -438,6 +486,11 @@ impl P2Store {
         Ok(values)
     }
 
+    /// Deletes the trusted host identified by the exact public-key fingerprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the fingerprint is invalid or the transaction cannot be committed.
     pub fn delete_trusted_host(&mut self, fingerprint: &str) -> Result<bool, P2Error> {
         validate_fingerprint(Some(fingerprint))?;
         let affected = self
@@ -446,10 +499,16 @@ impl P2Store {
                 "DELETE FROM trusted_hosts WHERE fingerprint = ?1",
                 [fingerprint],
             )
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         Ok(affected == 1)
     }
 
+    /// Validates a signed invitation and atomically consumes its replay-protection nonce.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed, expired, replayed, or incorrectly signed invitations,
+    /// and when replay-ledger persistence fails.
     pub fn validate_and_consume_qr(
         &mut self,
         payload: &str,
@@ -468,14 +527,17 @@ impl P2Store {
             .decode(unsigned.pk.as_bytes())
             .map_err(|_| P2Error::InvalidQr("host public key is not valid base64url".to_owned()))?;
         if public_key_der.is_empty() || public_key_der.len() > MAX_PUBLIC_KEY_BYTES {
-            return Err(P2Error::InvalidQr("host public key size is unsupported".to_owned()));
+            return Err(P2Error::InvalidQr(
+                "host public key size is unsupported".to_owned(),
+            ));
         }
         let verifying_key = VerifyingKey::from_public_key_der(&public_key_der)
             .map_err(|_| P2Error::InvalidQr("host public key is not a P-256 key".to_owned()))?;
         let signature_der = URL_SAFE_NO_PAD
             .decode(signature_text.as_bytes())
             .map_err(|_| P2Error::InvalidQr("signature is not valid base64url".to_owned()))?;
-        let signature = Signature::from_der(&signature_der).map_err(|_| P2Error::InvalidSignature)?;
+        let signature =
+            Signature::from_der(&signature_der).map_err(|_| P2Error::InvalidSignature)?;
         verifying_key
             .verify(canonical.as_bytes(), &signature)
             .map_err(|_| P2Error::InvalidSignature)?;
@@ -483,13 +545,13 @@ impl P2Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         transaction
             .execute(
                 "DELETE FROM consumed_qr_nonces WHERE expires_at_ms < ?1",
                 [to_sql_millis(now_ms)?],
             )
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         let already_used = transaction
             .query_row(
                 "SELECT 1 FROM consumed_qr_nonces WHERE nonce = ?1",
@@ -497,7 +559,7 @@ impl P2Store {
                 |_| Ok(()),
             )
             .optional()
-            .map_err(storage_error)?
+            .map_err(|error| storage_error(&error))?
             .is_some();
         if already_used {
             return Err(P2Error::ReplayedQr);
@@ -512,8 +574,8 @@ impl P2Store {
                     to_sql_millis(unsigned.exp)?,
                 ],
             )
-            .map_err(storage_error)?;
-        transaction.commit().map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
+        transaction.commit().map_err(|error| storage_error(&error))?;
 
         Ok(ValidatedQrInvitation {
             session_id: unsigned.sid,
@@ -529,40 +591,60 @@ impl P2Store {
         })
     }
 
+    /// Deletes expired recent sessions and consumed invitation nonces.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the cleanup bounds are invalid or the transaction fails.
     pub fn cleanup(&mut self, now_ms: u64, recent_max_age_ms: u64) -> Result<(), P2Error> {
         if now_ms == 0 || recent_max_age_ms == 0 {
-            return Err(P2Error::InvalidArgument("cleanup bounds are invalid".to_owned()));
+            return Err(P2Error::InvalidArgument(
+                "cleanup bounds are invalid".to_owned(),
+            ));
         }
         let cutoff = now_ms.saturating_sub(recent_max_age_ms);
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         transaction
             .execute(
                 "DELETE FROM recent_sessions WHERE ended_at_ms < ?1",
                 [to_sql_millis(cutoff)?],
             )
-            .map_err(storage_error)?;
+            .map_err(|error| storage_error(&error))?;
         transaction
             .execute(
                 "DELETE FROM consumed_qr_nonces WHERE expires_at_ms < ?1",
                 [to_sql_millis(now_ms)?],
             )
-            .map_err(storage_error)?;
-        transaction.commit().map_err(storage_error)
+            .map_err(|error| storage_error(&error))?;
+        transaction.commit().map_err(|error| storage_error(&error))
     }
 }
 
+/// Builds the canonical unsigned `JSON` document that the host must sign.
+///
+/// # Errors
+///
+/// Returns an error when any invitation field is invalid or canonical serialization fails.
 pub fn prepare_unsigned_qr(input: &QrInvitationInput) -> Result<String, P2Error> {
     let document = unsigned_document(input)?;
     validate_unsigned(&document, input.issued_at_ms)?;
     canonical_unsigned(&document)
 }
 
+/// Attaches a `DER`-encoded `ES256` signature to a canonical unsigned invitation.
+///
+/// # Errors
+///
+/// Returns an error when the unsigned document is noncanonical or malformed, or when the
+/// signature is not valid unpadded base64url containing a `DER` `ECDSA` signature.
 pub fn finalize_qr(unsigned_json: &str, signature_base64url: &str) -> Result<String, P2Error> {
     if unsigned_json.is_empty() || unsigned_json.len() > MAX_QR_PAYLOAD_BYTES {
-        return Err(P2Error::InvalidQr("unsigned payload size is unsupported".to_owned()));
+        return Err(P2Error::InvalidQr(
+            "unsigned payload size is unsupported".to_owned(),
+        ));
     }
     let unsigned: UnsignedQrDocument = serde_json::from_str(unsigned_json)
         .map_err(|error| P2Error::InvalidQr(error.to_string()))?;
@@ -587,12 +669,21 @@ pub fn finalize_qr(unsigned_json: &str, signature_base64url: &str) -> Result<Str
 
 #[must_use]
 pub fn public_key_fingerprint(public_key_der: &[u8]) -> String {
+    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
     let digest = Sha256::digest(public_key_der);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut fingerprint = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        fingerprint.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
+        fingerprint.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
+    }
+    fingerprint
 }
 
 fn unsigned_document(input: &QrInvitationInput) -> Result<UnsignedQrDocument, P2Error> {
-    if input.host_public_key_der.is_empty() || input.host_public_key_der.len() > MAX_PUBLIC_KEY_BYTES {
+    if input.host_public_key_der.is_empty()
+        || input.host_public_key_der.len() > MAX_PUBLIC_KEY_BYTES
+    {
         return Err(P2Error::InvalidArgument(
             "host public key has an unsupported size".to_owned(),
         ));
@@ -624,7 +715,10 @@ fn validate_unsigned(document: &UnsignedQrDocument, now_ms: u64) -> Result<(), P
         .map_err(|error| P2Error::InvalidQr(error.to_string()))?;
     validate_name(&document.hn, "host name")
         .map_err(|error| P2Error::InvalidQr(error.to_string()))?;
-    if !matches!(document.am.as_str(), "manual" | "invite_code" | "approved_devices") {
+    if !matches!(
+        document.am.as_str(),
+        "manual" | "invite_code" | "approved_devices"
+    ) {
         return Err(P2Error::InvalidQr("approval mode is invalid".to_owned()));
     }
     match document.am.as_str() {
@@ -648,7 +742,9 @@ fn validate_unsigned(document: &UnsignedQrDocument, now_ms: u64) -> Result<(), P
         || document.exp <= document.iat
         || document.exp - document.iat > MAX_QR_LIFETIME_MS
     {
-        return Err(P2Error::InvalidQr("invitation lifetime is invalid".to_owned()));
+        return Err(P2Error::InvalidQr(
+            "invitation lifetime is invalid".to_owned(),
+        ));
     }
     if now_ms.saturating_add(QR_CLOCK_SKEW_MS) < document.iat {
         return Err(P2Error::InvalidQr(
@@ -687,7 +783,11 @@ fn json_string(value: &str) -> Result<String, P2Error> {
 }
 
 fn validate_name(value: &str, field: &str) -> Result<(), P2Error> {
-    if value.trim() != value || value.is_empty() || value.len() > MAX_NAME_BYTES || value.contains('\0') {
+    if value.trim() != value
+        || value.is_empty()
+        || value.len() > MAX_NAME_BYTES
+        || value.contains('\0')
+    {
         return Err(P2Error::InvalidArgument(format!("{field} is invalid")));
     }
     Ok(())
@@ -708,8 +808,14 @@ fn validate_fingerprint(value: Option<&str>) -> Result<(), P2Error> {
     let Some(value) = value else {
         return Ok(());
     };
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
-        return Err(P2Error::InvalidArgument("host fingerprint is invalid".to_owned()));
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(P2Error::InvalidArgument(
+            "host fingerprint is invalid".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -717,12 +823,12 @@ fn validate_fingerprint(value: Option<&str>) -> Result<(), P2Error> {
 fn migrate(connection: &mut Connection) -> Result<(), P2Error> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(storage_error)?;
+        .map_err(|error| storage_error(&error))?;
     match version {
         0 => {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(storage_error)?;
+                .map_err(|error| storage_error(&error))?;
             transaction
                 .execute_batch(
                     "CREATE TABLE recent_sessions (
@@ -752,11 +858,11 @@ fn migrate(connection: &mut Connection) -> Result<(), P2Error> {
                      ) STRICT;
                      CREATE INDEX idx_consumed_qr_expiry ON consumed_qr_nonces(expires_at_ms);",
                 )
-                .map_err(storage_error)?;
+                .map_err(|error| storage_error(&error))?;
             transaction
                 .pragma_update(None, "user_version", P2_SCHEMA_VERSION)
-                .map_err(storage_error)?;
-            transaction.commit().map_err(storage_error)
+                .map_err(|error| storage_error(&error))?;
+            transaction.commit().map_err(|error| storage_error(&error))
         }
         value if value == i64::from(P2_SCHEMA_VERSION) => Ok(()),
         value => Err(P2Error::CorruptStore(format!(
@@ -765,7 +871,7 @@ fn migrate(connection: &mut Connection) -> Result<(), P2Error> {
     }
 }
 
-fn storage_error(error: rusqlite::Error) -> P2Error {
+fn storage_error(error: &rusqlite::Error) -> P2Error {
     P2Error::Storage(error.to_string())
 }
 
@@ -781,7 +887,9 @@ fn from_sql_millis(value: i64) -> Result<u64, P2Error> {
 pub fn current_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 #[cfg(test)]
@@ -829,8 +937,11 @@ mod tests {
         })
         .expect("unsigned payload");
         let signature: Signature = signing_key.sign(unsigned.as_bytes());
-        let payload = finalize_qr(&unsigned, &URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes()))
-            .expect("signed payload");
+        let payload = finalize_qr(
+            &unsigned,
+            &URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes()),
+        )
+        .expect("signed payload");
         (payload, public_key)
     }
 
@@ -839,7 +950,10 @@ mod tests {
         let path = test_path("recent");
         let mut store = P2Store::open(&path).expect("open");
         let now = 2_000_000_000_u64;
-        for (index, age) in [1_000_u64, DEFAULT_RECENT_MAX_AGE_MS + 1].into_iter().enumerate() {
+        for (index, age) in [1_000_u64, DEFAULT_RECENT_MAX_AGE_MS + 1]
+            .into_iter()
+            .enumerate()
+        {
             store
                 .record_session(&RecentSessionRecord {
                     session_id: format!("550e8400-e29b-41d4-a716-44665544000{index}"),
@@ -898,7 +1012,10 @@ mod tests {
         let validated = store
             .validate_and_consume_qr(&payload, now + 1_000)
             .expect("validate");
-        assert_eq!(validated.host_fingerprint, public_key_fingerprint(&public_key));
+        assert_eq!(
+            validated.host_fingerprint,
+            public_key_fingerprint(&public_key)
+        );
         assert_eq!(
             store.validate_and_consume_qr(&payload, now + 2_000),
             Err(P2Error::ReplayedQr)
@@ -911,7 +1028,10 @@ mod tests {
             Err(P2Error::InvalidSignature)
         );
         assert_eq!(
-            store.validate_and_consume_qr(&another, now + MAX_QR_LIFETIME_MS + QR_CLOCK_SKEW_MS + 20_000),
+            store.validate_and_consume_qr(
+                &another,
+                now + MAX_QR_LIFETIME_MS + QR_CLOCK_SKEW_MS + 20_000
+            ),
             Err(P2Error::ExpiredQr)
         );
         drop(store);
