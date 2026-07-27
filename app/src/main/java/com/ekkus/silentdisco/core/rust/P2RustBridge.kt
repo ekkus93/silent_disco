@@ -1,5 +1,17 @@
 package com.ekkus.silentdisco.core.rust
 
+import java.util.Base64
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+
 private const val P2_SUCCESS = 0
 private const val P2_NOT_FOUND = 1
 
@@ -18,15 +30,15 @@ enum class P2SessionRole(val nativeCode: Int) {
     LISTENER(2),
 }
 
-enum class P2SessionOutcome(val nativeCode: Int) {
-    COMPLETED(1),
-    CANCELLED(2),
-    FAILED(3),
+enum class P2SessionOutcome(val nativeCode: Int, val wireName: String) {
+    COMPLETED(1, "completed"),
+    CANCELLED(2, "cancelled"),
+    FAILED(3, "failed"),
     ;
 
     companion object {
-        fun fromNative(code: Int): P2SessionOutcome = entries.firstOrNull { it.nativeCode == code }
-            ?: throw P2RustProtocolException("Rust returned unknown recent-session outcome $code")
+        fun fromWire(value: String): P2SessionOutcome = entries.firstOrNull { it.wireName == value }
+            ?: throw P2RustProtocolException("Rust returned unknown recent-session outcome $value")
     }
 }
 
@@ -113,40 +125,11 @@ class P2Database internal constructor(nativeHandle: Long) : AutoCloseable {
         maxAgeMs: Long = 30L * 24L * 60L * 60L * 1_000L,
         limit: Int = 10,
     ): List<P2RecentSession> {
-        val current = requireOpenHandle()
-        requireP2Success(
-            P2RustBridge.loadRecentStatus(current, nowMs, maxAgeMs, limit),
+        val value = P2RustBridge.envelopeValue(
+            P2RustBridge.listRecentJson(requireOpenHandle(), nowMs, maxAgeMs, limit),
             "load recent sessions",
-        )
-        val count = P2RustBridge.cachedRecentCount(current)
-        if (count < 0) throw P2RustException(count, "read recent-session count")
-        return List(count) { index ->
-            val sessionId = P2RustBridge.cachedRecentSessionId(current, index)
-                ?: throw P2RustProtocolException("Rust omitted recent-session ID at index $index")
-            val sessionName = P2RustBridge.cachedRecentSessionName(current, index)
-                ?: throw P2RustProtocolException("Rust omitted recent-session name at index $index")
-            val hostName = P2RustBridge.cachedRecentHostName(current, index)
-                ?: throw P2RustProtocolException("Rust omitted recent host name at index $index")
-            val fingerprint = P2RustBridge.cachedRecentHostFingerprint(current, index)
-                ?.takeIf(String::isNotBlank)
-            val startedAtMs = requireNonNegativeP2(
-                "recent-session start time",
-                P2RustBridge.cachedRecentStartedAtMs(current, index),
-            )
-            val endedAtMs = requireNonNegativeP2(
-                "recent-session end time",
-                P2RustBridge.cachedRecentEndedAtMs(current, index),
-            )
-            P2RecentSession(
-                sessionId = sessionId,
-                sessionName = sessionName,
-                hostName = hostName,
-                hostFingerprint = fingerprint,
-                startedAtMs = startedAtMs,
-                endedAtMs = endedAtMs,
-                outcome = P2SessionOutcome.fromNative(P2RustBridge.cachedRecentOutcome(current, index)),
-            )
-        }
+        ).jsonArray
+        return value.mapIndexed { index, element -> parseRecent(element.jsonObject, index) }
     }
 
     @Synchronized
@@ -154,31 +137,11 @@ class P2Database internal constructor(nativeHandle: Long) : AutoCloseable {
         payload: String,
         nowMs: Long = System.currentTimeMillis(),
     ): P2ValidatedInvitation {
-        val current = requireOpenHandle()
-        requireP2Success(P2RustBridge.validateQr(current, payload, nowMs), "validate QR invitation")
-        return P2ValidatedInvitation(
-            sessionId = P2RustBridge.validatedSessionId(current)
-                ?: throw P2RustProtocolException("Rust omitted validated session ID"),
-            sessionName = P2RustBridge.validatedSessionName(current)
-                ?: throw P2RustProtocolException("Rust omitted validated session name"),
-            hostName = P2RustBridge.validatedHostName(current)
-                ?: throw P2RustProtocolException("Rust omitted validated host name"),
-            hostFingerprint = P2RustBridge.validatedFingerprint(current)
-                ?: throw P2RustProtocolException("Rust omitted validated host fingerprint"),
-            hostPublicKeyDer = P2RustBridge.validatedPublicKeyDer(current)
-                ?: throw P2RustProtocolException("Rust omitted validated host public key"),
-            approvalMode = P2RustBridge.validatedApprovalMode(current)
-                ?: throw P2RustProtocolException("Rust omitted validated approval mode"),
-            inviteCode = P2RustBridge.validatedInviteCode(current)?.takeIf(String::isNotBlank),
-            issuedAtMs = requireNonNegativeP2(
-                "validated invitation issue time",
-                P2RustBridge.validatedIssuedAtMs(current),
-            ),
-            expiresAtMs = requireNonNegativeP2(
-                "validated invitation expiry time",
-                P2RustBridge.validatedExpiresAtMs(current),
-            ),
-        )
+        val value = P2RustBridge.envelopeValue(
+            P2RustBridge.validateQrJson(requireOpenHandle(), payload, nowMs),
+            "validate QR invitation",
+        ).jsonObject
+        return parseInvitation(value)
     }
 
     @Synchronized
@@ -191,24 +154,11 @@ class P2Database internal constructor(nativeHandle: Long) : AutoCloseable {
 
     @Synchronized
     fun loadTrustedHosts(): List<P2TrustedHost> {
-        val current = requireOpenHandle()
-        requireP2Success(P2RustBridge.loadTrustedStatus(current), "load trusted hosts")
-        val count = P2RustBridge.cachedTrustedCount(current)
-        if (count < 0) throw P2RustException(count, "read trusted-host count")
-        return List(count) { index ->
-            P2TrustedHost(
-                fingerprint = P2RustBridge.cachedTrustedFingerprint(current, index)
-                    ?: throw P2RustProtocolException("Rust omitted trusted-host fingerprint at index $index"),
-                displayName = P2RustBridge.cachedTrustedDisplayName(current, index)
-                    ?: throw P2RustProtocolException("Rust omitted trusted-host name at index $index"),
-                publicKeyDer = P2RustBridge.cachedTrustedPublicKeyDer(current, index)
-                    ?: throw P2RustProtocolException("Rust omitted trusted-host key at index $index"),
-                lastVerifiedMs = requireNonNegativeP2(
-                    "trusted-host verification time",
-                    P2RustBridge.cachedTrustedLastVerifiedMs(current, index),
-                ),
-            )
-        }
+        val value = P2RustBridge.envelopeValue(
+            P2RustBridge.listTrustedJson(requireOpenHandle()),
+            "load trusted hosts",
+        ).jsonArray
+        return value.mapIndexed { index, element -> parseTrusted(element.jsonObject, index) }
     }
 
     @Synchronized
@@ -231,6 +181,43 @@ class P2Database internal constructor(nativeHandle: Long) : AutoCloseable {
         if (handle <= 0L) throw P2DatabaseClosedException()
         return handle
     }
+
+    private fun parseRecent(value: JsonObject, index: Int): P2RecentSession = P2RecentSession(
+        sessionId = value.requiredString("sessionId", "recent session $index"),
+        sessionName = value.requiredString("sessionName", "recent session $index"),
+        hostName = value.requiredString("hostName", "recent session $index"),
+        hostFingerprint = value.optionalString("hostFingerprint"),
+        startedAtMs = value.requiredLong("startedAtMs", "recent session $index"),
+        endedAtMs = value.requiredLong("endedAtMs", "recent session $index"),
+        outcome = P2SessionOutcome.fromWire(
+            value.requiredString("outcome", "recent session $index"),
+        ),
+    )
+
+    private fun parseTrusted(value: JsonObject, index: Int): P2TrustedHost = P2TrustedHost(
+        fingerprint = value.requiredString("fingerprint", "trusted host $index"),
+        displayName = value.requiredString("displayName", "trusted host $index"),
+        publicKeyDer = decodeStandardBase64(
+            value.requiredString("publicKeyDer", "trusted host $index"),
+            "trusted host public key $index",
+        ),
+        lastVerifiedMs = value.requiredLong("lastVerifiedMs", "trusted host $index"),
+    )
+
+    private fun parseInvitation(value: JsonObject): P2ValidatedInvitation = P2ValidatedInvitation(
+        sessionId = value.requiredString("sessionId", "validated invitation"),
+        sessionName = value.requiredString("sessionName", "validated invitation"),
+        hostName = value.requiredString("hostName", "validated invitation"),
+        hostFingerprint = value.requiredString("hostFingerprint", "validated invitation"),
+        hostPublicKeyDer = decodeStandardBase64(
+            value.requiredString("hostPublicKeyDer", "validated invitation"),
+            "validated host public key",
+        ),
+        approvalMode = value.requiredString("approvalMode", "validated invitation"),
+        inviteCode = value.optionalString("inviteCode"),
+        issuedAtMs = value.requiredLong("issuedAtMs", "validated invitation"),
+        expiresAtMs = value.requiredLong("expiresAtMs", "validated invitation"),
+    )
 }
 
 object P2RustBridge {
@@ -247,16 +234,13 @@ object P2RustBridge {
         endedAtMs: Long,
         outcome: Int,
     ): Int
-    private external fun nativeP2LoadRecentStatus(handle: Long, nowMs: Long, maxAgeMs: Long, limit: Int): Int
-    private external fun nativeP2CachedRecentCount(handle: Long): Int
-    private external fun nativeP2CachedRecentSessionId(handle: Long, index: Int): String?
-    private external fun nativeP2CachedRecentSessionName(handle: Long, index: Int): String?
-    private external fun nativeP2CachedRecentHostName(handle: Long, index: Int): String?
-    private external fun nativeP2CachedRecentHostFingerprint(handle: Long, index: Int): String?
-    private external fun nativeP2CachedRecentStartedAtMs(handle: Long, index: Int): Long
-    private external fun nativeP2CachedRecentEndedAtMs(handle: Long, index: Int): Long
-    private external fun nativeP2CachedRecentOutcome(handle: Long, index: Int): Int
-    private external fun nativeP2PrepareUnsignedQr(
+    private external fun nativeP2ListRecentJson(
+        handle: Long,
+        nowMs: Long,
+        maxAgeMs: Long,
+        limit: Int,
+    ): String
+    private external fun nativeP2PrepareUnsignedQrJson(
         sessionId: String,
         sessionName: String,
         hostName: String,
@@ -266,26 +250,12 @@ object P2RustBridge {
         issuedAtMs: Long,
         expiresAtMs: Long,
         nonce: String,
-    ): String?
-    private external fun nativeP2FinalizeQr(unsignedJson: String, signatureBase64url: String): String?
-    private external fun nativeP2Fingerprint(publicKeyDer: ByteArray): String?
-    private external fun nativeP2ValidateQr(handle: Long, payload: String, nowMs: Long): Int
-    private external fun nativeP2ValidatedSessionId(handle: Long): String?
-    private external fun nativeP2ValidatedSessionName(handle: Long): String?
-    private external fun nativeP2ValidatedHostName(handle: Long): String?
-    private external fun nativeP2ValidatedFingerprint(handle: Long): String?
-    private external fun nativeP2ValidatedPublicKeyDer(handle: Long): ByteArray?
-    private external fun nativeP2ValidatedApprovalMode(handle: Long): String?
-    private external fun nativeP2ValidatedInviteCode(handle: Long): String?
-    private external fun nativeP2ValidatedIssuedAtMs(handle: Long): Long
-    private external fun nativeP2ValidatedExpiresAtMs(handle: Long): Long
+    ): String
+    private external fun nativeP2FinalizeQrJson(unsignedJson: String, signatureBase64url: String): String
+    private external fun nativeP2FingerprintJson(publicKeyDer: ByteArray): String
+    private external fun nativeP2ValidateQrJson(handle: Long, payload: String, nowMs: Long): String
     private external fun nativeP2TrustValidatedHost(handle: Long, verifiedAtMs: Long): Int
-    private external fun nativeP2LoadTrustedStatus(handle: Long): Int
-    private external fun nativeP2CachedTrustedCount(handle: Long): Int
-    private external fun nativeP2CachedTrustedFingerprint(handle: Long, index: Int): String?
-    private external fun nativeP2CachedTrustedDisplayName(handle: Long, index: Int): String?
-    private external fun nativeP2CachedTrustedPublicKeyDer(handle: Long, index: Int): ByteArray?
-    private external fun nativeP2CachedTrustedLastVerifiedMs(handle: Long, index: Int): Long
+    private external fun nativeP2ListTrustedJson(handle: Long): String
     private external fun nativeP2DeleteTrusted(handle: Long, fingerprint: String): Int
 
     fun open(path: String): P2Database {
@@ -305,30 +275,34 @@ object P2RustBridge {
         issuedAtMs: Long,
         expiresAtMs: Long,
         nonce: String,
-    ): String = invokeP2Native("prepare QR invitation") {
-        nativeP2PrepareUnsignedQr(
-            sessionId,
-            sessionName,
-            hostName,
-            publicKeyDer,
-            approvalMode,
-            inviteCode,
-            issuedAtMs,
-            expiresAtMs,
-            nonce,
-        ) ?: throw P2RustProtocolException("Rust did not return an unsigned QR payload")
-    }
+    ): String = envelopeValue(
+        invokeP2Native("prepare QR invitation") {
+            nativeP2PrepareUnsignedQrJson(
+                sessionId,
+                sessionName,
+                hostName,
+                publicKeyDer,
+                approvalMode,
+                inviteCode,
+                issuedAtMs,
+                expiresAtMs,
+                nonce,
+            )
+        },
+        "prepare QR invitation",
+    ).jsonPrimitive.content
 
-    fun finalizeQr(unsignedJson: String, signatureBase64url: String): String =
+    fun finalizeQr(unsignedJson: String, signatureBase64url: String): String = envelopeValue(
         invokeP2Native("finalize QR invitation") {
-            nativeP2FinalizeQr(unsignedJson, signatureBase64url)
-                ?: throw P2RustProtocolException("Rust did not return a signed QR payload")
-        }
+            nativeP2FinalizeQrJson(unsignedJson, signatureBase64url)
+        },
+        "finalize QR invitation",
+    ).jsonPrimitive.content
 
-    fun fingerprint(publicKeyDer: ByteArray): String = invokeP2Native("fingerprint host public key") {
-        nativeP2Fingerprint(publicKeyDer)
-            ?: throw P2RustProtocolException("Rust did not return a host fingerprint")
-    }
+    fun fingerprint(publicKeyDer: ByteArray): String = envelopeValue(
+        invokeP2Native("fingerprint host public key") { nativeP2FingerprintJson(publicKeyDer) },
+        "fingerprint host public key",
+    ).jsonPrimitive.content
 
     internal fun recordSession(
         handle: Long,
@@ -354,39 +328,37 @@ object P2RustBridge {
         )
     }
 
-    internal fun loadRecentStatus(handle: Long, nowMs: Long, maxAgeMs: Long, limit: Int): Int =
-        invokeP2Native("load recent sessions") { nativeP2LoadRecentStatus(handle, nowMs, maxAgeMs, limit) }
-    internal fun cachedRecentCount(handle: Long): Int = nativeP2CachedRecentCount(handle)
-    internal fun cachedRecentSessionId(handle: Long, index: Int): String? = nativeP2CachedRecentSessionId(handle, index)
-    internal fun cachedRecentSessionName(handle: Long, index: Int): String? = nativeP2CachedRecentSessionName(handle, index)
-    internal fun cachedRecentHostName(handle: Long, index: Int): String? = nativeP2CachedRecentHostName(handle, index)
-    internal fun cachedRecentHostFingerprint(handle: Long, index: Int): String? = nativeP2CachedRecentHostFingerprint(handle, index)
-    internal fun cachedRecentStartedAtMs(handle: Long, index: Int): Long = nativeP2CachedRecentStartedAtMs(handle, index)
-    internal fun cachedRecentEndedAtMs(handle: Long, index: Int): Long = nativeP2CachedRecentEndedAtMs(handle, index)
-    internal fun cachedRecentOutcome(handle: Long, index: Int): Int = nativeP2CachedRecentOutcome(handle, index)
-    internal fun validateQr(handle: Long, payload: String, nowMs: Long): Int =
-        invokeP2Native("validate QR invitation") { nativeP2ValidateQr(handle, payload, nowMs) }
-    internal fun validatedSessionId(handle: Long): String? = nativeP2ValidatedSessionId(handle)
-    internal fun validatedSessionName(handle: Long): String? = nativeP2ValidatedSessionName(handle)
-    internal fun validatedHostName(handle: Long): String? = nativeP2ValidatedHostName(handle)
-    internal fun validatedFingerprint(handle: Long): String? = nativeP2ValidatedFingerprint(handle)
-    internal fun validatedPublicKeyDer(handle: Long): ByteArray? = nativeP2ValidatedPublicKeyDer(handle)
-    internal fun validatedApprovalMode(handle: Long): String? = nativeP2ValidatedApprovalMode(handle)
-    internal fun validatedInviteCode(handle: Long): String? = nativeP2ValidatedInviteCode(handle)
-    internal fun validatedIssuedAtMs(handle: Long): Long = nativeP2ValidatedIssuedAtMs(handle)
-    internal fun validatedExpiresAtMs(handle: Long): Long = nativeP2ValidatedExpiresAtMs(handle)
+    internal fun listRecentJson(handle: Long, nowMs: Long, maxAgeMs: Long, limit: Int): String =
+        invokeP2Native("load recent sessions") {
+            nativeP2ListRecentJson(handle, nowMs, maxAgeMs, limit)
+        }
+
+    internal fun validateQrJson(handle: Long, payload: String, nowMs: Long): String =
+        invokeP2Native("validate QR invitation") { nativeP2ValidateQrJson(handle, payload, nowMs) }
+
     internal fun trustValidatedHost(handle: Long, verifiedAtMs: Long): Int =
         invokeP2Native("persist trusted host") { nativeP2TrustValidatedHost(handle, verifiedAtMs) }
-    internal fun loadTrustedStatus(handle: Long): Int =
-        invokeP2Native("load trusted hosts") { nativeP2LoadTrustedStatus(handle) }
-    internal fun cachedTrustedCount(handle: Long): Int = nativeP2CachedTrustedCount(handle)
-    internal fun cachedTrustedFingerprint(handle: Long, index: Int): String? = nativeP2CachedTrustedFingerprint(handle, index)
-    internal fun cachedTrustedDisplayName(handle: Long, index: Int): String? = nativeP2CachedTrustedDisplayName(handle, index)
-    internal fun cachedTrustedPublicKeyDer(handle: Long, index: Int): ByteArray? = nativeP2CachedTrustedPublicKeyDer(handle, index)
-    internal fun cachedTrustedLastVerifiedMs(handle: Long, index: Int): Long = nativeP2CachedTrustedLastVerifiedMs(handle, index)
+
+    internal fun listTrustedJson(handle: Long): String = invokeP2Native("load trusted hosts") {
+        nativeP2ListTrustedJson(handle)
+    }
+
     internal fun deleteTrusted(handle: Long, fingerprint: String): Int =
         invokeP2Native("delete trusted host") { nativeP2DeleteTrusted(handle, fingerprint) }
-    internal fun close(handle: Long): Int = invokeP2Native("close P2 database") { nativeP2Close(handle) }
+
+    internal fun close(handle: Long): Int = invokeP2Native("close P2 database") {
+        nativeP2Close(handle)
+    }
+
+    internal fun envelopeValue(raw: String, operation: String): JsonElement {
+        val envelope = runCatching { Json.parseToJsonElement(raw).jsonObject }
+            .getOrElse { throw P2RustProtocolException("Rust returned malformed JSON for $operation") }
+        val status = envelope["status"]?.jsonPrimitive?.content?.toIntOrNull()
+            ?: throw P2RustProtocolException("Rust omitted status for $operation")
+        if (status != P2_SUCCESS) throw P2RustException(status, operation)
+        return envelope["value"]
+            ?: throw P2RustProtocolException("Rust omitted result value for $operation")
+    }
 
     private inline fun <T> invokeP2Native(operation: String, call: () -> T): T = try {
         call()
@@ -398,7 +370,25 @@ object P2RustBridge {
     }
 }
 
-private fun requireNonNegativeP2(field: String, value: Long): Long {
-    if (value < 0L) throw P2RustProtocolException("Rust returned negative $field")
+private fun JsonObject.requiredString(field: String, context: String): String =
+    this[field]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+        ?: throw P2RustProtocolException("Rust omitted $field for $context")
+
+private fun JsonObject.optionalString(field: String): String? {
+    val value = this[field] ?: return null
+    if (value is JsonNull) return null
+    return value.jsonPrimitive.contentOrNull?.takeIf(String::isNotBlank)
+}
+
+private fun JsonObject.requiredLong(field: String, context: String): Long {
+    val value = this[field]?.jsonPrimitive?.long
+        ?: throw P2RustProtocolException("Rust omitted $field for $context")
+    if (value < 0L) throw P2RustProtocolException("Rust returned negative $field for $context")
     return value
+}
+
+private fun decodeStandardBase64(value: String, context: String): ByteArray = runCatching {
+    Base64.getDecoder().decode(value)
+}.getOrElse {
+    throw P2RustProtocolException("Rust returned invalid base64 for $context")
 }
