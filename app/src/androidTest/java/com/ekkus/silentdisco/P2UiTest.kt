@@ -1,11 +1,12 @@
 package com.ekkus.silentdisco
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.P2StorageState
 import com.ekkus.silentdisco.app.P2UiState
@@ -50,8 +51,9 @@ class P2UiTest {
 
         composeRule.onNodeWithTag("home-recent-session").assertIsDisplayed()
         composeRule.onNodeWithTag("home-recent-availability")
-            .assertTextContains("Availability has not been checked")
-        composeRule.onNodeWithTag("home-check-recent").performClick()
+            .performScrollTo()
+            .assertTextEquals("Availability has not been checked.")
+        composeRule.onNodeWithTag("home-check-recent").performScrollTo().performClick()
         composeRule.runOnIdle { assertThat(checks).isEqualTo(1) }
     }
 
