@@ -175,6 +175,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.google.oboe:oboe:1.10.0")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)
