@@ -1,7 +1,6 @@
 package com.ekkus.silentdisco.platform.persistence
 
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ekkus.silentdisco.app.AppUiState
@@ -10,6 +9,7 @@ import com.ekkus.silentdisco.app.withStorageInitializationFailure
 import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
 import com.ekkus.silentdisco.core.rust.RustDatabaseException
 import java.io.File
+import java.io.RandomAccessFile
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -184,15 +184,7 @@ class AndroidRustDomainStoreInstrumentedTest {
         }
 
         val databasePath = provider.databasePath()
-        SQLiteDatabase.openDatabase(
-            databasePath,
-            null,
-            SQLiteDatabase.OPEN_READWRITE,
-        ).use { database ->
-            database.execSQL(
-                "UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 1",
-            )
-        }
+        tamperFirstMigrationChecksum(databasePath)
 
         val reopened = AndroidRustDomainStore(
             context = context,
@@ -216,6 +208,46 @@ class AndroidRustDomainStoreInstrumentedTest {
         }
     }
 
+    private fun tamperFirstMigrationChecksum(databasePath: String) {
+        val marker = "fnv1a64:".encodeToByteArray()
+        val checksumLength = marker.size + 16
+        val replacement = "tampered".padEnd(checksumLength, '!').encodeToByteArray()
+        check(replacement.size == checksumLength)
+
+        val candidates = listOf(
+            File(databasePath),
+            File("$databasePath-wal"),
+        )
+        candidates.forEach { candidate ->
+            if (!candidate.isFile) return@forEach
+            val offset = candidate.readBytes().indexOfSequence(marker)
+            if (offset >= 0) {
+                RandomAccessFile(candidate, "rw").use { file ->
+                    file.seek(offset.toLong())
+                    file.write(replacement)
+                    file.fd.sync()
+                }
+                return
+            }
+        }
+        error("Could not locate a persisted migration checksum to corrupt")
+    }
+
+    private fun ByteArray.indexOfSequence(sequence: ByteArray): Int {
+        if (sequence.isEmpty() || sequence.size > size) return -1
+        for (start in 0..size - sequence.size) {
+            var matches = true
+            for (offset in sequence.indices) {
+                if (this[start + offset] != sequence[offset]) {
+                    matches = false
+                    break
+                }
+            }
+            if (matches) return start
+        }
+        return -1
+    }
+
     private fun cleanup(
         preferencesName: String,
         databasePath: String,
@@ -225,6 +257,7 @@ class AndroidRustDomainStoreInstrumentedTest {
             databasePath,
             "$databasePath-wal",
             "$databasePath-shm",
+            "$databasePath-journal",
         ).forEach { File(it).delete() }
     }
 }
