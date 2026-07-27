@@ -64,8 +64,9 @@ class WorkflowScreenStateTest {
             }
         }
 
-        composeRule.onNodeWithText("Always allow").performClick()
-        composeRule.onNodeWithText("Remembering this phone, then sending approval…")
+        composeRule.onNodeWithText("Always allow").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("approval-progress-request-1")
             .performScrollTo()
             .assertIsDisplayed()
         composeRule.onNodeWithText("Approve once").performScrollTo().assertIsNotEnabled()
