@@ -45,11 +45,16 @@ import com.ekkus.silentdisco.feature.host.InviteSessionSheet
 import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
 import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
+import com.ekkus.silentdisco.feature.p2.QrHostInvitationDialog
+import com.ekkus.silentdisco.feature.p2.TrustedHostsScreen
+import com.ekkus.silentdisco.feature.p2.VerifiedQrInvitationDialog
 import com.ekkus.silentdisco.feature.settings.SettingsScreen
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesScreen
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesViewModel
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import java.time.Instant
 import kotlinx.coroutines.flow.collect
 
@@ -58,9 +63,11 @@ fun SilentDiscoApp(
     viewModel: MainViewModel,
     workflowViewModel: WorkflowViewModel,
     trustedDevicesViewModel: TrustedDevicesViewModel,
+    p2ViewModel: P2ViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val trustedDevicesUiState by trustedDevicesViewModel.uiState.collectAsStateWithLifecycle()
+    val p2UiState by p2ViewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -71,6 +78,9 @@ fun SilentDiscoApp(
     var showEndSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showLeaveSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showInviteDialog by rememberSaveable { mutableStateOf(false) }
+    var showVerifiedQrDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingQrJoin by rememberSaveable { mutableStateOf(false) }
+    var qrJoinScanObserved by rememberSaveable { mutableStateOf(false) }
 
     fun sharePlainText(title: String, text: String) {
         val shareIntent = Intent.createChooser(
@@ -128,6 +138,26 @@ fun SilentDiscoApp(
         )
     }
 
+    val qrScannerLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val payload = result.contents
+        if (payload.isNullOrBlank()) {
+            workflowViewModel.showTransientMessage("QR scanning cancelled")
+        } else {
+            p2ViewModel.validateScannedQr(payload)
+        }
+    }
+
+    fun launchQrScanner() {
+        qrScannerLauncher.launch(
+            ScanOptions().apply {
+                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                setPrompt("Scan a signed Silent Disco invitation")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            },
+        )
+    }
+
     fun requestPermissionThen(
         requestContext: PermissionRequestContext,
         continuation: () -> Unit,
@@ -140,8 +170,22 @@ fun SilentDiscoApp(
         }
     }
 
+    fun startVerifiedQrJoin() {
+        val invitation = p2UiState.validatedInvitation ?: return
+        showVerifiedQrDialog = false
+        pendingQrJoin = true
+        qrJoinScanObserved = false
+        viewModel.selectRole(AppRole.LISTENER)
+        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
+            navController.navigateSingleTop(AppRoutes.NearbySessions)
+            viewModel.scanForSessions()
+        }
+        workflowViewModel.showTransientMessage("Looking for ${invitation.sessionName} nearby…")
+    }
+
     LaunchedEffect(uiState) {
         workflowViewModel.onUiStateChanged(uiState)
+        p2ViewModel.observeAppState(uiState)
     }
 
     LaunchedEffect(workflowViewModel, navController) {
@@ -154,9 +198,7 @@ fun SilentDiscoApp(
                         launchSingleTop = true
                     }
                 }
-                AppUiEffect.NavigateListenerPlayback -> {
-                    navController.navigateSingleTop(AppRoutes.ListenerPlayback)
-                }
+                AppUiEffect.NavigateListenerPlayback -> navController.navigateSingleTop(AppRoutes.ListenerPlayback)
                 AppUiEffect.ShowEndSessionConfirmation -> showEndSessionConfirmation = true
                 AppUiEffect.ShowLeaveSessionConfirmation -> showLeaveSessionConfirmation = true
                 is AppUiEffect.ShowTransientMessage -> snackbarHostState.showSnackbar(effect.message)
@@ -165,8 +207,62 @@ fun SilentDiscoApp(
     }
 
     LaunchedEffect(uiState.lastMessage) {
-        uiState.lastMessage?.takeIf(String::isNotBlank)?.let {
+        uiState.lastMessage?.takeIf(String::isNotBlank)?.let { snackbarHostState.showSnackbar(it) }
+    }
+
+    LaunchedEffect(p2UiState.lastMessage) {
+        p2UiState.lastMessage?.takeIf(String::isNotBlank)?.let {
             snackbarHostState.showSnackbar(it)
+            p2ViewModel.consumeMessage()
+        }
+    }
+
+    LaunchedEffect(p2UiState.lastError) {
+        p2UiState.lastError?.takeIf(String::isNotBlank)?.let {
+            snackbarHostState.showSnackbar(it)
+            p2ViewModel.consumeError()
+        }
+    }
+
+    LaunchedEffect(p2UiState.validatedInvitation?.sessionId) {
+        showVerifiedQrDialog = p2UiState.validatedInvitation != null
+    }
+
+    LaunchedEffect(
+        p2UiState.rejoinTarget?.sessionId,
+        p2UiState.recentAvailability,
+        uiState.discoveredSessions,
+    ) {
+        val target = p2UiState.rejoinTarget
+        if (target != null && p2UiState.recentAvailability == RecentAvailability.AVAILABLE) {
+            val live = uiState.discoveredSessions.firstOrNull { it.id == target.sessionId }
+            if (live != null) {
+                p2ViewModel.cancelRecentSessionCheck()
+                viewModel.selectDiscoveredSession(live)
+                navController.navigateSingleTop(AppRoutes.SessionJoin)
+            }
+        }
+    }
+
+    LaunchedEffect(pendingQrJoin, uiState.isScanning, uiState.discoveredSessions) {
+        if (!pendingQrJoin) return@LaunchedEffect
+        if (uiState.isScanning) qrJoinScanObserved = true
+        val invitation = p2UiState.validatedInvitation ?: return@LaunchedEffect
+        val live = uiState.discoveredSessions.firstOrNull { it.id == invitation.sessionId }
+        if (live != null) {
+            pendingQrJoin = false
+            qrJoinScanObserved = false
+            viewModel.selectDiscoveredSession(live)
+            viewModel.updateInviteCode(invitation.inviteCode.orEmpty())
+            p2ViewModel.dismissValidatedInvitation()
+            navController.navigateSingleTop(AppRoutes.SessionJoin)
+        } else if (qrJoinScanObserved && !uiState.isScanning) {
+            pendingQrJoin = false
+            qrJoinScanObserved = false
+            p2ViewModel.dismissValidatedInvitation()
+            snackbarHostState.showSnackbar(
+                "The signed invitation is valid, but that exact session is not currently nearby.",
+            )
         }
     }
 
@@ -201,10 +297,19 @@ fun SilentDiscoApp(
                             navController.navigateSingleTop(AppRoutes.NearbySessions)
                         }
                     },
-                    onSettingsClick = {
-                        navController.navigateSingleTop(AppRoutes.Settings)
-                    },
+                    onSettingsClick = { navController.navigateSingleTop(AppRoutes.Settings) },
                     onRetryStorage = viewModel::retryDomainPersistence,
+                    recentSession = p2UiState.mostRecentSession,
+                    recentAvailability = p2UiState.recentAvailability,
+                    onCheckRecentSession = p2UiState.mostRecentSession?.let { recent ->
+                        {
+                            p2ViewModel.requestRecentSessionCheck(recent)
+                            viewModel.selectRole(AppRole.LISTENER)
+                            requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
+                                navController.navigateSingleTop(AppRoutes.NearbySessions)
+                            }
+                        }
+                    },
                 )
             }
 
@@ -218,9 +323,7 @@ fun SilentDiscoApp(
                             audioPickerLauncher.launch(arrayOf("audio/*"))
                         }
                     },
-                    onNext = {
-                        navController.navigateSingleTop(AppRoutes.HostAccessSetup)
-                    },
+                    onNext = { navController.navigateSingleTop(AppRoutes.HostAccessSetup) },
                 )
             }
 
@@ -228,15 +331,11 @@ fun SilentDiscoApp(
                 HostAccessSetupScreen(
                     uiState = uiState,
                     onBack = { navController.popBackStack() },
-                    onApprovalModeChanged = { mode ->
-                        viewModel.updateHostForm(approvalMode = mode)
-                    },
+                    onApprovalModeChanged = { mode -> viewModel.updateHostForm(approvalMode = mode) },
                     onInviteCodeChanged = { code ->
                         viewModel.updateHostForm(inviteCode = normalizeInviteCode(code))
                     },
-                    onGenerateCode = {
-                        viewModel.updateHostForm(inviteCode = generateInviteCode())
-                    },
+                    onGenerateCode = { viewModel.updateHostForm(inviteCode = generateInviteCode()) },
                     onStartSession = {
                         workflowViewModel.onHostSessionCreationResult(viewModel.createHostSession())
                     },
@@ -284,15 +383,20 @@ fun SilentDiscoApp(
                 NearbySessionsScreen(
                     uiState = uiState,
                     permissionRequired = permissionRequired,
-                    onBack = { navController.popBackStack() },
+                    onBack = {
+                        p2ViewModel.cancelRecentSessionCheck()
+                        navController.popBackStack()
+                    },
                     onRequestPermission = {
                         requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {}
                     },
                     onRefresh = viewModel::scanForSessions,
                     onSelectSession = { session ->
+                        p2ViewModel.cancelRecentSessionCheck()
                         viewModel.selectDiscoveredSession(session)
                         navController.navigateSingleTop(AppRoutes.SessionJoin)
                     },
+                    onScanQr = ::launchQrScanner,
                 )
             }
 
@@ -363,18 +467,27 @@ fun SilentDiscoApp(
                     onOpenAdvancedDiagnostics = {
                         navController.navigateSingleTop(AppRoutes.AdvancedDiagnostics)
                     },
+                    onOpenTrustedHosts = {
+                        navController.navigateSingleTop(AppRoutes.TrustedHosts)
+                    },
                 )
             }
 
             composable(AppRoutes.TrustedDevices) {
-                LaunchedEffect(Unit) {
-                    trustedDevicesViewModel.refresh()
-                }
+                LaunchedEffect(Unit) { trustedDevicesViewModel.refresh() }
                 TrustedDevicesScreen(
                     uiState = trustedDevicesUiState,
                     onBack = { navController.popBackStack() },
                     onRefresh = trustedDevicesViewModel::refresh,
                     onDelete = trustedDevicesViewModel::deleteDevice,
+                )
+            }
+
+            composable(AppRoutes.TrustedHosts) {
+                TrustedHostsScreen(
+                    uiState = p2UiState,
+                    onBack = { navController.popBackStack() },
+                    onDelete = p2ViewModel::deleteTrustedHost,
                 )
             }
         }
@@ -453,6 +566,38 @@ fun SilentDiscoApp(
             onShareInstructions = { instructions ->
                 sharePlainText("Share Silent Disco invitation", instructions)
             },
+            onShowSignedQr = {
+                showInviteDialog = false
+                p2ViewModel.prepareHostQr(uiState)
+            },
         )
+    }
+
+    p2UiState.hostQrPayload?.let { payload ->
+        QrHostInvitationDialog(
+            payload = payload,
+            onDismiss = p2ViewModel::clearHostQr,
+        )
+    }
+
+    if (showVerifiedQrDialog) {
+        p2UiState.validatedInvitation?.let { invitation ->
+            VerifiedQrInvitationDialog(
+                invitation = invitation,
+                alreadyTrusted = p2UiState.validatedHostIsTrusted(),
+                onDismiss = {
+                    showVerifiedQrDialog = false
+                    p2ViewModel.dismissValidatedInvitation()
+                },
+                onJoinOnce = ::startVerifiedQrJoin,
+                onTrustAndJoin = {
+                    if (p2UiState.validatedHostIsTrusted()) {
+                        startVerifiedQrJoin()
+                    } else {
+                        p2ViewModel.trustValidatedHost()
+                    }
+                },
+            )
+        }
     }
 }
