@@ -87,7 +87,7 @@ class WorkflowEffectIntegrationTest {
         workflow.emit(AppUiEffect.NavigateHome)
 
         assertCurrentRoute(AppRoutes.Home)
-        assertNoPreviousDestination()
+        assertOnlyDestination(AppRoutes.Home)
     }
 
     @Test
@@ -101,7 +101,7 @@ class WorkflowEffectIntegrationTest {
 
         workflow.emit(AppUiEffect.NavigateHome)
         assertCurrentRoute(AppRoutes.Home)
-        assertNoPreviousDestination()
+        assertOnlyDestination(AppRoutes.Home)
     }
 
     @Test
@@ -124,14 +124,15 @@ class WorkflowEffectIntegrationTest {
         assertCurrentRoute(route)
     }
 
-    private fun assertNoPreviousDestination() {
+    private fun assertOnlyDestination(route: String) {
         composeRule.waitUntil(timeoutMillis = 5_000L) {
-            navController.previousBackStackEntry == null
+            navController.currentBackStack.value
+                .mapNotNull { it.destination.route } == listOf(route)
         }
-        val previousRoute = composeRule.runOnIdle {
-            navController.previousBackStackEntry?.destination?.route
+        val destinationRoutes = composeRule.runOnIdle {
+            navController.currentBackStack.value.mapNotNull { it.destination.route }
         }
-        assertThat(previousRoute).isNull()
+        assertThat(destinationRoutes).containsExactly(route)
     }
 
     private fun assertCurrentRoute(route: String) {
