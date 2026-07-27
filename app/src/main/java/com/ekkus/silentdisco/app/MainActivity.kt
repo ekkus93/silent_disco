@@ -12,6 +12,7 @@ class MainActivity : ComponentActivity() {
     private val mainViewModel by viewModels<MainViewModel>()
     private val workflowViewModel by viewModels<WorkflowViewModel>()
     private val trustedDevicesViewModel by viewModels<TrustedDevicesViewModel>()
+    private val p2ViewModel by viewModels<P2ViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,6 +23,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = mainViewModel,
                     workflowViewModel = workflowViewModel,
                     trustedDevicesViewModel = trustedDevicesViewModel,
+                    p2ViewModel = p2ViewModel,
                 )
             }
         }
