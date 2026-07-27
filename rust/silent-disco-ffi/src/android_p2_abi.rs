@@ -148,7 +148,8 @@ fn optional_java_string(
 }
 
 fn java_bytes(env: &mut JNIEnv<'_>, value: &JByteArray<'_>) -> Result<Vec<u8>, Status> {
-    env.convert_byte_array(value).map_err(|_| Status::Conversion)
+    env.convert_byte_array(value)
+        .map_err(|_| Status::Conversion)
 }
 
 fn new_string(env: &mut JNIEnv<'_>, value: &str) -> jstring {
