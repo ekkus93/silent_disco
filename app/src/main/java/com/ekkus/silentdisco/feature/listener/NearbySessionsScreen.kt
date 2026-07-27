@@ -50,6 +50,7 @@ fun NearbySessionsScreen(
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
     onSelectSession: (SessionInfo) -> Unit,
+    onScanQr: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -64,6 +65,14 @@ fun NearbySessionsScreen(
                 }
             },
             actions = {
+                if (onScanQr != null) {
+                    TextButton(
+                        onClick = onScanQr,
+                        modifier = Modifier.testTag("nearby-scan-qr"),
+                    ) {
+                        Text("Scan QR")
+                    }
+                }
                 IconButton(
                     onClick = onRefresh,
                     enabled = !uiState.isScanning && !permissionRequired,
@@ -76,7 +85,7 @@ fun NearbySessionsScreen(
         when {
             permissionRequired -> EmptyState(
                 title = "Allow nearby device access",
-                detail = "This lets your phone find Silent Disco sessions near you.",
+                detail = "This lets your phone find Silent Disco sessions near you. You may still scan a signed QR invitation from the top bar.",
                 actionLabel = "Continue",
                 onAction = onRequestPermission,
                 modifier = Modifier.testTag("nearby-permission-required"),
@@ -101,7 +110,7 @@ fun NearbySessionsScreen(
 
             uiState.discoveredSessions.isEmpty() -> EmptyState(
                 title = "No nearby sessions found",
-                detail = "Ask the host to start their session, then try again.",
+                detail = "Ask the host to start their session, then try again or scan the host's signed QR invitation.",
                 actionLabel = "Look again",
                 onAction = onRefresh,
                 modifier = Modifier.testTag("nearby-empty"),
