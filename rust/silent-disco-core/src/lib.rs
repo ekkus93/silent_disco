@@ -2,6 +2,7 @@
 
 pub mod domain;
 pub mod error;
+pub mod p2;
 pub mod protocol;
 pub mod storage;
 pub mod sync;
