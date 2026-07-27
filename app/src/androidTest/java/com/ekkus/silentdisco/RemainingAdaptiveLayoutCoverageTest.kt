@@ -7,12 +7,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNode
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -77,8 +80,9 @@ class RemainingAdaptiveLayoutCoverageTest {
             }
         }
 
-        composeRule.onNodeWithText("Approve once").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Reject").performScrollTo().assertIsDisplayed()
+        composeRule.onNode(hasScrollAction()).performScrollToIndex(4)
+        composeRule.onNodeWithText("Approve once").assertIsDisplayed()
+        composeRule.onNodeWithText("Reject").assertIsDisplayed()
     }
 
     @Test
