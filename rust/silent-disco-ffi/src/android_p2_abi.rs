@@ -151,7 +151,7 @@ fn java_bytes(env: &mut JNIEnv<'_>, value: &JByteArray<'_>) -> Result<Vec<u8>, S
     env.convert_byte_array(value).map_err(|_| Status::Conversion)
 }
 
-fn new_string(env: &JNIEnv<'_>, value: &str) -> jstring {
+fn new_string(env: &mut JNIEnv<'_>, value: &str) -> jstring {
     env.new_string(value).map_or(null_mut(), JString::into_raw)
 }
 
@@ -162,7 +162,7 @@ fn envelope(result: Result<Value, Status>) -> String {
     }
 }
 
-fn envelope_string(env: &JNIEnv<'_>, result: Result<Value, Status>) -> jstring {
+fn envelope_string(env: &mut JNIEnv<'_>, result: Result<Value, Status>) -> jstring {
     new_string(env, &envelope(result))
 }
 
@@ -282,7 +282,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP2ListRecentJson(
-    env: JNIEnv<'_>,
+    mut env: JNIEnv<'_>,
     _receiver: JObject<'_>,
     handle: jlong,
     now_ms: jlong,
@@ -305,7 +305,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
                 .map_err(|error| map_error(&error))
         })
     })();
-    envelope_string(&env, result)
+    envelope_string(&mut env, result)
 }
 
 #[must_use]
@@ -340,7 +340,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
             .map(Value::String)
             .map_err(|error| map_error(&error))
     })();
-    envelope_string(&env, result)
+    envelope_string(&mut env, result)
 }
 
 #[must_use]
@@ -359,7 +359,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
                 .map_err(|error| map_error(&error))
         })
     });
-    envelope_string(&env, result)
+    envelope_string(&mut env, result)
 }
 
 #[must_use]
@@ -372,7 +372,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
 ) -> jstring {
     let result = java_bytes(&mut env, &public_key_der)
         .map(|bytes| Value::String(public_key_fingerprint(&bytes)));
-    envelope_string(&env, result)
+    envelope_string(&mut env, result)
 }
 
 #[must_use]
@@ -397,7 +397,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
             Ok(result)
         })
     });
-    envelope_string(&env, result)
+    envelope_string(&mut env, result)
 }
 
 #[must_use]
@@ -432,7 +432,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP2ListTrustedJson(
-    env: JNIEnv<'_>,
+    mut env: JNIEnv<'_>,
     _receiver: JObject<'_>,
     handle: jlong,
 ) -> jstring {
@@ -443,7 +443,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
             .map(|values| Value::Array(values.iter().map(trusted_json).collect()))
             .map_err(|error| map_error(&error))
     });
-    envelope_string(&env, result)
+    envelope_string(&mut env, result)
 }
 
 #[must_use]
