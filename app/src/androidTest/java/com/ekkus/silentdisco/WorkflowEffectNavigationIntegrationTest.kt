@@ -22,8 +22,10 @@ import com.ekkus.silentdisco.app.AppUiEffect
 import com.ekkus.silentdisco.app.navigateHomeAndClearWorkflow
 import com.ekkus.silentdisco.app.navigateSingleTop
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.withContext
 import org.junit.Rule
 import org.junit.Test
 
@@ -43,6 +45,7 @@ class WorkflowEffectNavigationIntegrationTest {
 
         holder.emit(AppUiEffect.NavigateHostDashboard)
         composeRule.onNodeWithTag("effect-route-host-dashboard").assertIsDisplayed()
+        composeRule.waitForIdle()
 
         holder.emit(AppUiEffect.NavigateHome)
         composeRule.onNodeWithTag("effect-route-home").assertIsDisplayed()
@@ -145,9 +148,15 @@ private fun WorkflowEffectHarness(
     LaunchedEffect(holder, navController) {
         holder.effects.collect { effect ->
             when (effect) {
-                AppUiEffect.NavigateHome -> navController.navigateHomeAndClearWorkflow()
-                AppUiEffect.NavigateHostDashboard -> navController.navigateSingleTop(AppRoutes.HostDashboard)
-                AppUiEffect.NavigateListenerPlayback -> navController.navigateSingleTop(AppRoutes.ListenerPlayback)
+                AppUiEffect.NavigateHome -> withContext(Dispatchers.Main.immediate) {
+                    navController.navigateHomeAndClearWorkflow()
+                }
+                AppUiEffect.NavigateHostDashboard -> withContext(Dispatchers.Main.immediate) {
+                    navController.navigateSingleTop(AppRoutes.HostDashboard)
+                }
+                AppUiEffect.NavigateListenerPlayback -> withContext(Dispatchers.Main.immediate) {
+                    navController.navigateSingleTop(AppRoutes.ListenerPlayback)
+                }
                 AppUiEffect.ShowEndSessionConfirmation -> showEndConfirmation = true
                 AppUiEffect.ShowLeaveSessionConfirmation -> showLeaveConfirmation = true
                 is AppUiEffect.ShowTransientMessage -> transientMessage = effect.message
