@@ -60,6 +60,30 @@ class P2PresentationTest {
         ).isTrue()
     }
 
+    @Test
+    fun trustedGroupingRequiresLastVerifiedSessionAndStillTrustedKey() {
+        val key = byteArrayOf(1, 2, 3)
+        val verified = invitation(publicKey = key)
+        val trusted = P2TrustedHost(
+            fingerprint = verified.hostFingerprint,
+            displayName = "Renamed host",
+            publicKeyDer = key,
+            lastVerifiedMs = 1L,
+        )
+        val state = P2UiState(
+            lastVerifiedInvitation = verified,
+            trustedHosts = listOf(trusted),
+        )
+
+        assertThat(state.trustedVerifiedSessionIds()).containsExactly(verified.sessionId)
+        assertThat(state.copy(trustedHosts = emptyList()).trustedVerifiedSessionIds()).isEmpty()
+        assertThat(
+            state.copy(
+                trustedHosts = listOf(trusted.copy(publicKeyDer = byteArrayOf(9, 9, 9))),
+            ).trustedVerifiedSessionIds(),
+        ).isEmpty()
+    }
+
     private fun invitation(
         approvalMode: String = "manual",
         inviteCode: String? = null,
