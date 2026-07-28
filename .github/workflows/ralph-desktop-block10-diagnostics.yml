@@ -46,167 +46,132 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
-          def replace_exact(path: str, old: str, new: str) -> None:
+          def replace_pattern(path: str, pattern: str, replacement: str, marker: str) -> None:
               target = Path(path)
               source = target.read_text()
-              if old not in source:
-                  raise SystemExit(f"expected source was not found in {path}")
-              target.write_text(source.replace(old, new, 1))
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE | re.DOTALL)
+              if count == 1:
+                  target.write_text(updated)
+                  return
+              if marker in source:
+                  return
+              raise SystemExit(f"expected source was not found in {path}: {marker}")
 
           notification = "desktop/src-tauri/src/notification_buffer.rs"
-          replace_exact(
+          replace_pattern(
               notification,
-              '''                    return Err(CoreError {
-                          code: CoreErrorCode::QueueOverflow,
-                          message: "desktop pending notification queue is full".to_owned(),
-                          subsystem: CoreErrorCode::QueueOverflow.subsystem(),
-                          severity: ErrorSeverity::Fatal,
-                          retryable: false,
-                          operation_id: None,
-                          context: Vec::new(),
-                      });''',
+              r'''                    return Err\(CoreError \{\n                        code: CoreErrorCode::QueueOverflow,\n                        message: "desktop pending notification queue is full"\.to_owned\(\),\n                        subsystem: CoreErrorCode::QueueOverflow\.subsystem\(\),\n                        severity: ErrorSeverity::Fatal,\n                        retryable: false,\n                        operation_id: None,\n                        context: Vec::new\(\),\n                    \}\);''',
               '''                    return Err(core_error(
-                          CoreErrorCode::QueueOverflow,
-                          "desktop pending notification queue is full",
-                      ));''',
+                        CoreErrorCode::QueueOverflow,
+                        "desktop pending notification queue is full",
+                    ));''',
+              "return Err(core_error(",
           )
-          replace_exact(
+          replace_pattern(
               notification,
-              '''fn bridge_error(message: &str) -> CoreError {
-              CoreError {
-                  code: CoreErrorCode::FfiCallbackFailed,
-                  message: message.to_owned(),
-                  subsystem: CoreErrorCode::FfiCallbackFailed.subsystem(),
-                  severity: ErrorSeverity::Fatal,
-                  retryable: false,
-                  operation_id: None,
-                  context: Vec::new(),
-              }
-          }''',
+              r'''fn bridge_error\(message: &str\) -> CoreError \{\n    CoreError \{\n        code: CoreErrorCode::FfiCallbackFailed,\n        message: message\.to_owned\(\),\n        subsystem: CoreErrorCode::FfiCallbackFailed\.subsystem\(\),\n        severity: ErrorSeverity::Fatal,\n        retryable: false,\n        operation_id: None,\n        context: Vec::new\(\),\n    \}\n\}''',
               '''fn bridge_error(message: &'static str) -> CoreError {
-              core_error(CoreErrorCode::FfiCallbackFailed, message)
-          }
+    core_error(CoreErrorCode::FfiCallbackFailed, message)
+}
 
-          fn core_error(code: CoreErrorCode, message: &'static str) -> CoreError {
-              match CoreError::new(code, message, ErrorSeverity::Fatal, false, None) {
-                  Ok(error) => error,
-                  Err(error) => panic!("invalid static desktop notification error: {error}"),
-              }
-          }''',
+fn core_error(code: CoreErrorCode, message: &'static str) -> CoreError {
+    match CoreError::new(code, message, ErrorSeverity::Fatal, false, None) {
+        Ok(error) => error,
+        Err(error) => panic!("invalid static desktop notification error: {error}"),
+    }
+}''',
+              "fn core_error(code: CoreErrorCode",
           )
-          replace_exact(
+          replace_pattern(
               notification,
-              '''CoreNotification::Error(CoreError {
-                          code: CoreErrorCode::PlatformOperationFailed,
-                          message: format!("failure {index}"),
-                          subsystem: CoreErrorCode::PlatformOperationFailed.subsystem(),
-                          severity: ErrorSeverity::Error,
-                          retryable: false,
-                          operation_id: None,
-                          context: Vec::new(),
-                      })''',
+              r'''CoreNotification::Error\(CoreError \{\n                    code: CoreErrorCode::PlatformOperationFailed,\n                    message: format!\("failure \{index\}"\),\n                    subsystem: CoreErrorCode::PlatformOperationFailed\.subsystem\(\),\n                    severity: ErrorSeverity::Error,\n                    retryable: false,\n                    operation_id: None,\n                    context: Vec::new\(\),\n                \}\)''',
               '''CoreNotification::Error(
-                          CoreError::new(
-                              CoreErrorCode::PlatformOperationFailed,
-                              format!("failure {index}"),
-                              ErrorSeverity::Error,
-                              false,
-                              None,
-                          )
-                          .expect("valid test error"),
-                      )''',
+                    CoreError::new(
+                        CoreErrorCode::PlatformOperationFailed,
+                        format!("failure {index}"),
+                        ErrorSeverity::Error,
+                        false,
+                        None,
+                    )
+                    .expect("valid test error"),
+                )''',
+              ".expect(\"valid test error\")",
           )
-          replace_exact(
+          replace_pattern(
               notification,
-              '''CoreNotification::Error(CoreError {
-                      code: CoreErrorCode::PlatformOperationFailed,
-                      message: "overflow".to_owned(),
-                      subsystem: CoreErrorCode::PlatformOperationFailed.subsystem(),
-                      severity: ErrorSeverity::Error,
-                      retryable: false,
-                      operation_id: None,
-                      context: Vec::new(),
-                  })''',
+              r'''CoreNotification::Error\(CoreError \{\n                code: CoreErrorCode::PlatformOperationFailed,\n                message: "overflow"\.to_owned\(\),\n                subsystem: CoreErrorCode::PlatformOperationFailed\.subsystem\(\),\n                severity: ErrorSeverity::Error,\n                retryable: false,\n                operation_id: None,\n                context: Vec::new\(\),\n            \}\)''',
               '''CoreNotification::Error(
-                      CoreError::new(
-                          CoreErrorCode::PlatformOperationFailed,
-                          "overflow",
-                          ErrorSeverity::Error,
-                          false,
-                          None,
-                      )
-                      .expect("valid test error"),
-                  )''',
+                CoreError::new(
+                    CoreErrorCode::PlatformOperationFailed,
+                    "overflow",
+                    ErrorSeverity::Error,
+                    false,
+                    None,
+                )
+                .expect("valid test error"),
+            )''',
+              '"overflow",\n                    ErrorSeverity::Error',
           )
 
-          replace_exact(
+          replace_pattern(
               "desktop/src-tauri/src/platform/identity.rs",
-              '''            Self::GenerateSecret(source) => Some(source),
-                      Self::InvalidStoredSecretLength { .. }
-                      | Self::IdentifierEncodingFailed
-                      | Self::DerivedIdentifierInvalid => None,''',
+              r'''            Self::GenerateSecret\(source\) => Some\(source\),\n            Self::InvalidStoredSecretLength \{ \.\. \}\n            \| Self::IdentifierEncodingFailed\n            \| Self::DerivedIdentifierInvalid => None,''',
               '''            Self::GenerateSecret(_)
-                      | Self::InvalidStoredSecretLength { .. }
-                      | Self::IdentifierEncodingFailed
-                      | Self::DerivedIdentifierInvalid => None,''',
+            | Self::InvalidStoredSecretLength { .. }
+            | Self::IdentifierEncodingFailed
+            | Self::DerivedIdentifierInvalid => None,''',
+              "Self::GenerateSecret(_)",
           )
 
           app_state = "desktop/src-tauri/src/app_state.rs"
-          replace_exact(
+          replace_pattern(
               app_state,
-              '''    identity: DesktopIdentity,
-              handle: CoreActorHandle,
-              notifications: Arc<DesktopNotificationBuffer>,''',
+              r'''    identity: DesktopIdentity,\n    handle: CoreActorHandle,\n    notifications: Arc<DesktopNotificationBuffer>,''',
               '''    _identity: DesktopIdentity,
-              handle: CoreActorHandle,
-              _notifications: Arc<DesktopNotificationBuffer>,''',
+    handle: CoreActorHandle,
+    _notifications: Arc<DesktopNotificationBuffer>,''',
+              "_identity: DesktopIdentity",
           )
-          replace_exact(
+          replace_pattern(
               app_state,
+              r'''                    let cleanup = shutdown_owned_resources\(ready\.owned\);\n                    let error = append_cleanup\(primary, cleanup\.err\(\)\);\n                    let _ = self\.fail_open\(error\.clone\(\)\);\n                    Err\(error\)''',
               '''                    let cleanup = shutdown_owned_resources(ready.owned);
-                      let error = append_cleanup(primary, cleanup.err());
-                      let _ = self.fail_open(error.clone());
-                      Err(error)''',
-              '''                    let cleanup = shutdown_owned_resources(ready.owned);
-                      let error = append_cleanup(primary, cleanup.err());
-                      if let Err(state_error) = self.fail_open(error.clone()) {
-                          return Err(append_cleanup(error, Some(state_error)));
-                      }
-                      Err(error)''',
+                    let error = append_cleanup(primary, cleanup.err());
+                    if let Err(state_error) = self.fail_open(error.clone()) {
+                        return Err(append_cleanup(error, Some(state_error)));
+                    }
+                    Err(error)''',
+              "if let Err(state_error) = self.fail_open",
           )
-          replace_exact(
+          replace_pattern(
               app_state,
+              r'''            CloseAction::Shutdown\(ready\) => \{\n                let _public_identity = ready\.identity\.device_id\(\);\n                let _pending_bridge = Arc::strong_count\(&ready\.notifications\);\n                self\.finish_close\(shutdown_owned_resources\(ready\.owned\)\)\n            \}''',
               '''            CloseAction::Shutdown(ready) => {
-                      let _public_identity = ready.identity.device_id();
-                      let _pending_bridge = Arc::strong_count(&ready.notifications);
-                      self.finish_close(shutdown_owned_resources(ready.owned))
-                  }''',
-              '''            CloseAction::Shutdown(ready) => {
-                      self.finish_close(shutdown_owned_resources(ready.owned))
-                  }''',
+                self.finish_close(shutdown_owned_resources(ready.owned))
+            }''',
+              "self.finish_close(shutdown_owned_resources(ready.owned))",
           )
-          replace_exact(
+          replace_pattern(
               app_state,
-              '''            identity,
-                      handle,
-                      notifications,''',
+              r'''            identity,\n            handle,\n            notifications,''',
               '''            _identity: identity,
-                      handle,
-                      _notifications: notifications,''',
+            handle,
+            _notifications: notifications,''',
+              "_notifications: notifications",
           )
 
-          replace_exact(
+          replace_pattern(
               "desktop/src-tauri/src/runtime_dto.rs",
+              r'''fn saturating_u32\(value: usize\) -> u32 \{\n    u32::try_from\(value\)\.unwrap_or\(u32::MAX\)\n\}''',
               '''fn saturating_u32(value: usize) -> u32 {
-              u32::try_from(value).unwrap_or(u32::MAX)
-          }''',
-              '''fn saturating_u32(value: usize) -> u32 {
-              match u32::try_from(value) {
-                  Ok(value) => value,
-                  Err(error) => panic!("validated core collection count exceeded u32: {error}"),
-              }
-          }''',
+    match u32::try_from(value) {
+        Ok(value) => value,
+        Err(error) => panic!("validated core collection count exceeded u32: {error}"),
+    }
+}''',
+              "validated core collection count exceeded u32",
           )
           PY
 
