@@ -67,6 +67,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Create Rust binding frontend placeholder
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco binding CI placeholder</title>\n' > desktop/dist/index.html
+
       - name: Verify Rust-derived TypeScript bindings
         run: npm run bindings:check
 
