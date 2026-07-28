@@ -3,14 +3,15 @@ use silent_disco_core::domain::{
     RequestId, SessionId, TransportState, TrustState,
 };
 use silent_disco_core::runtime::{
-    AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorRuntime, CoreCommand,
-    CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch, JoinRequestSummary,
-    NetworkEndpoint, PlatformEffect, PlatformEffectRequest, PlatformEvent,
+    AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime,
+    CoreCommand, CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch,
+    JoinRequestSummary, NetworkEndpoint, PlatformEffect, PlatformEffectRequest, PlatformEvent,
     PlatformOperationCompletion, SessionAdvertisement, SnapshotRevision, TransportEvent,
     current_protocol_version,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(3);
@@ -21,15 +22,66 @@ fn public_actor_api_drives_simulated_host_and_listener_flows() {
     run_listener_flow();
 }
 
+#[test]
+fn observer_can_read_current_snapshot_without_actor_lock_deadlock() {
+    let handle_slot = Arc::new(Mutex::new(None::<CoreActorHandle>));
+    let observer_handle_slot = Arc::clone(&handle_slot);
+    let (observed_sender, observed_receiver) = channel();
+
+    let runtime = CoreActorRuntime::start(
+        CoreActorConfig::new(DeviceId::new("observer-core").expect("valid device ID")),
+        move |notification| {
+            if let CoreNotification::Snapshot(delivered) = notification
+                && delivered.revision.get() > 0
+            {
+                let handle = observer_handle_slot
+                    .lock()
+                    .expect("observer handle slot lock")
+                    .clone()
+                    .expect("actor handle installed before post-start notification");
+                let current = handle.current_snapshot()?;
+                observed_sender
+                    .send((delivered.revision.get(), current.revision.get()))
+                    .expect("observer result receiver remains connected");
+            }
+            Ok(())
+        },
+    )
+    .expect("start actor runtime");
+    let handle = runtime.handle();
+    *handle_slot.lock().expect("install actor handle") = Some(handle.clone());
+
+    handle
+        .submit_command(command(
+            0,
+            CoreCommand::SelectRole { role: AppRole::Host },
+        ))
+        .expect("queue role selection");
+
+    assert_eq!(
+        observed_receiver
+            .recv_timeout(NOTIFICATION_TIMEOUT)
+            .expect("observer reads current snapshot"),
+        (1, 1)
+    );
+    runtime.shutdown().expect("shutdown actor runtime");
+}
+
 fn run_host_flow() {
     let (runtime, receiver) = start_runtime("host-core");
     let handle = runtime.handle();
     assert_eq!(next_snapshot(&receiver, 0).revision.get(), 0);
 
     handle
-        .submit_command(command(0, CoreCommand::SelectRole { role: AppRole::Host }))
+        .submit_command(command(
+            0,
+            CoreCommand::SelectRole { role: AppRole::Host },
+        ))
         .expect("queue host role selection");
-    assert_eq!(next_snapshot(&receiver, 1).selected_role, Some(AppRole::Host));
+    assert_eq!(
+        next_snapshot(&receiver, 1).selected_role,
+        Some(AppRole::Host)
+    );
 
     let source = AudioSourceDescriptor::new("source-1", "fixture.wav", Some(4_096), Some(2_000))
         .expect("valid staged source descriptor");
@@ -51,22 +103,46 @@ fn run_host_flow() {
         .submit_command(command(2, CoreCommand::CreateHostSession))
         .expect("queue host creation");
     let creating = next_snapshot(&receiver, 3);
-    assert_eq!(creating.host_lifecycle, HostLifecycle::CreatingSession);
+    assert_eq!(
+        creating.host_lifecycle,
+        HostLifecycle::CreatingSession
+    );
     let advertising_effect = next_effect(&receiver);
     assert!(matches!(
         advertising_effect.request,
         PlatformEffectRequest::StartAdvertising(_)
     ));
+    let advertising_operation_id = advertising_effect.operation_id.clone();
 
     handle
         .submit_platform_event(PlatformEvent::OperationSucceeded {
-            operation_id: advertising_effect.operation_id,
+            operation_id: advertising_operation_id.clone(),
             completion: PlatformOperationCompletion::AdvertisingStarted,
         })
         .expect("submit advertising completion");
     let waiting = next_snapshot(&receiver, 4);
-    assert_eq!(waiting.host_lifecycle, HostLifecycle::WaitingForListeners);
+    assert_eq!(
+        waiting.host_lifecycle,
+        HostLifecycle::WaitingForListeners
+    );
     assert_eq!(waiting.transport_state, TransportState::Advertising);
+
+    handle
+        .submit_platform_event(PlatformEvent::OperationSucceeded {
+            operation_id: advertising_operation_id,
+            completion: PlatformOperationCompletion::AdvertisingStarted,
+        })
+        .expect("queue duplicate completion for reducer rejection");
+    let duplicate_error = next_error(&receiver);
+    assert!(duplicate_error.message.contains("stale or duplicate"));
+    assert_eq!(
+        handle
+            .current_snapshot()
+            .expect("current snapshot after duplicate completion")
+            .revision
+            .get(),
+        4
+    );
 
     let join_request = JoinRequestSummary::new(
         RequestId::new("request-1").expect("valid request ID"),
@@ -99,7 +175,10 @@ fn run_listener_flow() {
             },
         ))
         .expect("queue listener role selection");
-    assert_eq!(next_snapshot(&receiver, 1).selected_role, Some(AppRole::Listener));
+    assert_eq!(
+        next_snapshot(&receiver, 1).selected_role,
+        Some(AppRole::Listener)
+    );
 
     handle
         .submit_command(command(1, CoreCommand::StartDiscovery))
@@ -120,7 +199,10 @@ fn run_listener_flow() {
         .expect("submit discovery completion");
     let scanning = next_snapshot(&receiver, 3);
     assert!(scanning.discovery_active);
-    assert_eq!(scanning.listener_lifecycle, ListenerLifecycle::Scanning);
+    assert_eq!(
+        scanning.listener_lifecycle,
+        ListenerLifecycle::Scanning
+    );
 
     let endpoint = NetworkEndpoint::new(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -164,7 +246,10 @@ fn run_listener_flow() {
         ))
         .expect("queue listener join");
     let joining = next_snapshot(&receiver, 6);
-    assert_eq!(joining.listener_lifecycle, ListenerLifecycle::JoinRequested);
+    assert_eq!(
+        joining.listener_lifecycle,
+        ListenerLifecycle::JoinRequested
+    );
     assert_eq!(joining.transport_state, TransportState::Connecting);
     let network_effect = next_effect(&receiver);
     assert!(matches!(
@@ -179,7 +264,10 @@ fn run_listener_flow() {
         })
         .expect("submit network completion");
     let connected = next_snapshot(&receiver, 7);
-    assert_eq!(connected.listener_lifecycle, ListenerLifecycle::Connecting);
+    assert_eq!(
+        connected.listener_lifecycle,
+        ListenerLifecycle::Connecting
+    );
     assert_eq!(connected.transport_state, TransportState::Connected);
 
     runtime.shutdown().expect("shutdown listener actor");
@@ -211,7 +299,9 @@ fn next_snapshot(
 ) -> silent_disco_core::runtime::CoreSnapshot {
     loop {
         match receiver.recv_timeout(NOTIFICATION_TIMEOUT) {
-            Ok(CoreNotification::Snapshot(snapshot)) if snapshot.revision.get() >= minimum_revision => {
+            Ok(CoreNotification::Snapshot(snapshot))
+                if snapshot.revision.get() >= minimum_revision =>
+            {
                 return snapshot;
             }
             Ok(_) => {}
@@ -233,6 +323,19 @@ fn next_effect(receiver: &Receiver<CoreNotification>) -> PlatformEffect {
             Err(RecvTimeoutError::Timeout) => panic!("timed out waiting for platform effect"),
             Err(RecvTimeoutError::Disconnected) => {
                 panic!("notification observer disconnected while waiting for effect")
+            }
+        }
+    }
+}
+
+fn next_error(receiver: &Receiver<CoreNotification>) -> silent_disco_core::error::CoreError {
+    loop {
+        match receiver.recv_timeout(NOTIFICATION_TIMEOUT) {
+            Ok(CoreNotification::Error(error)) => return error,
+            Ok(_) => {}
+            Err(RecvTimeoutError::Timeout) => panic!("timed out waiting for core error"),
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("notification observer disconnected while waiting for error")
             }
         }
     }
