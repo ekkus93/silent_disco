@@ -1,0 +1,251 @@
+name: Temporary PR38 Desktop Clippy Repair
+
+on:
+  push:
+    branches:
+      - chatgpt/fix-rust-ci-30332312110
+
+permissions:
+  contents: write
+
+env:
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  repair-desktop-rust:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: chatgpt/fix-rust-ci-30332312110
+          fetch-depth: 0
+
+      - name: Install Linux Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Apply guarded desktop Clippy fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match in {path}, found {count}')
+              target.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'desktop/src-tauri/src/platform/paths.rs',
+          '''    if let Some(parent) = canonical_parent {
+              if !canonical.starts_with(parent) {
+                  return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
+              }
+          }
+          ''',
+          '''    if let Some(parent) = canonical_parent
+              && !canonical.starts_with(parent)
+          {
+              return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
+          }
+          ''',
+              'trusted-root containment',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/paths.rs',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  if error.kind() != std::io::ErrorKind::NotFound {
+                      panic!("failed to remove test directory: {error}");
+                  }
+              }
+          }
+          ''',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  assert_eq!(
+                      error.kind(),
+                      std::io::ErrorKind::NotFound,
+                      "failed to remove test directory: {error}"
+                  );
+              }
+          }
+          ''',
+              'paths test cleanup',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/profile_lock.rs',
+          '''            .field("lock_path", &self.lock_path)
+              .field("held", &self.file.is_some())
+              .finish()
+          ''',
+          '''            .field("lock_path", &self.lock_path)
+              .field("held", &self.file.is_some())
+              .field("release_attempted", &self.release_attempted)
+              .finish()
+          ''',
+              'profile lease debug fields',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/profile_lock.rs',
+          '''        if !self.release_attempted && !std::thread::panicking() {
+              panic!(
+                  "ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}",
+                  self.profile_id
+              );
+          }
+          ''',
+          '''        assert!(
+              self.release_attempted || std::thread::panicking(),
+              "ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}",
+              self.profile_id
+          );
+          ''',
+              'explicit profile release assertion',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/profile_lock.rs',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  if error.kind() != std::io::ErrorKind::NotFound {
+                      panic!("failed to remove test directory: {error}");
+                  }
+              }
+          }
+          ''',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  assert_eq!(
+                      error.kind(),
+                      std::io::ErrorKind::NotFound,
+                      "failed to remove test directory: {error}"
+                  );
+              }
+          }
+          ''',
+              'profile lock test cleanup',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/profile_metadata.rs',
+          '''impl fmt::Display for ProfileMetadataError {
+              fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+          ''',
+          '''impl fmt::Display for ProfileMetadataError {
+              #[allow(
+                  clippy::too_many_lines,
+                  reason = "the exhaustive formatter keeps every metadata failure variant explicit"
+              )]
+              fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+          ''',
+              'metadata formatter lint rationale',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/profile_metadata.rs',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  if error.kind() != std::io::ErrorKind::NotFound {
+                      panic!("failed to remove test directory: {error}");
+                  }
+              }
+          }
+          ''',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  assert_eq!(
+                      error.kind(),
+                      std::io::ErrorKind::NotFound,
+                      "failed to remove test directory: {error}"
+                  );
+              }
+          }
+          ''',
+              'metadata test cleanup',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/storage_inspection.rs',
+              '/// last. It never opens SQLite directly and never falls back to an in-memory or\n',
+              '/// last. It never opens `SQLite` directly and never falls back to an in-memory or\n',
+              'SQLite documentation markup',
+          )
+          replace_once(
+              'desktop/src-tauri/src/platform/storage_inspection.rs',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  if error.kind() != std::io::ErrorKind::NotFound && !std::thread::panicking() {
+                      panic!("failed to remove storage-inspection test directory: {error}");
+                  }
+              }
+          }
+          ''',
+          '''        fn drop(&mut self) {
+              if let Err(error) = fs::remove_dir_all(&self.0) {
+                  assert!(
+                      error.kind() == std::io::ErrorKind::NotFound || std::thread::panicking(),
+                      "failed to remove storage-inspection test directory: {error}"
+                  );
+              }
+          }
+          ''',
+              'storage inspection test cleanup',
+          )
+          PY
+
+      - name: Format and validate desktop Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco Rust CI placeholder</title>\n' > desktop/dist/index.html
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all -- --check
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml --all-features
+          cargo check --manifest-path desktop/src-tauri/Cargo.toml --all-features
+
+      - name: Verify repair scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          unexpected="$(git diff --name-only | grep -v -E '^(desktop/src-tauri/src/platform/(paths|profile_lock|profile_metadata|storage_inspection)\.rs|\.github/workflows/temp-pr38-desktop-clippy-repair\.yml)$' || true)"
+          if [ -n "$unexpected" ]; then
+            printf 'Unexpected files changed:\n%s\n' "$unexpected" >&2
+            exit 1
+          fi
+
+      - name: Commit validated repair and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/temp-pr38-desktop-clippy-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            desktop/src-tauri/src/platform/paths.rs \
+            desktop/src-tauri/src/platform/profile_lock.rs \
+            desktop/src-tauri/src/platform/profile_metadata.rs \
+            desktop/src-tauri/src/platform/storage_inspection.rs
+          git commit -m "Fix desktop Rust Clippy findings"
+          git push origin HEAD:chatgpt/fix-rust-ci-30332312110
