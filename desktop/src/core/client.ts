@@ -85,27 +85,28 @@ export async function connectProfileWithNotifications(
   profileId: string,
   onNotification: (notification: CoreNotificationDto) => void,
 ): Promise<DesktopProfileConnection> {
+  let existingNotifications: DesktopNotificationSubscription;
   try {
-    const notifications = await attachNotifications(onNotification);
-    const snapshot = await getCurrentSnapshot();
-    return {
-      connectionKind: "reattached",
-      profile: null,
-      snapshot,
-      notifications,
-    };
+    existingNotifications = await attachNotifications(onNotification);
   } catch (error: unknown) {
     if (!hasDesktopErrorCode(error, "desktop.profile.not_ready")) {
       throw error;
     }
+    const session = await openProfileWithNotifications(profileId, onNotification);
+    return {
+      connectionKind: "opened",
+      profile: session.profile,
+      snapshot: session.profile.snapshot,
+      notifications: session.notifications,
+    };
   }
 
-  const session = await openProfileWithNotifications(profileId, onNotification);
+  const snapshot = await getCurrentSnapshot();
   return {
-    connectionKind: "opened",
-    profile: session.profile,
-    snapshot: session.profile.snapshot,
-    notifications: session.notifications,
+    connectionKind: "reattached",
+    profile: null,
+    snapshot,
+    notifications: existingNotifications,
   };
 }
 
