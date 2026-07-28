@@ -537,9 +537,17 @@ fn send_notification(
     sender: &SyncSender<NotificationMessage>,
     notification: CoreNotification,
 ) -> Result<(), CoreError> {
-    sender
-        .send(NotificationMessage::Notify(Box::new(notification)))
-        .map_err(|_| worker_stopped(None))
+    match sender.try_send(NotificationMessage::Notify(Box::new(notification))) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err(core_error(
+            CoreErrorCode::QueueOverflow,
+            "notification queue is full",
+            ErrorSeverity::Fatal,
+            false,
+            None,
+        )),
+        Err(TrySendError::Disconnected(_)) => Err(worker_stopped(None)),
+    }
 }
 
 fn write_snapshot(shared: &ActorShared, snapshot: &CoreSnapshot) -> Result<(), CoreError> {
@@ -601,8 +609,12 @@ const fn status_name(failed: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{CoreActorConfig, CoreActorRuntime};
-    use crate::domain::DeviceId;
+    use crate::domain::{AppRole, DeviceId};
     use crate::error::CoreErrorCode;
+    use crate::runtime::{CoreCommand, CoreCommandRequest, SnapshotRevision};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::time::Duration;
 
     #[test]
     fn rejects_zero_queue_capacity() {
@@ -636,5 +648,100 @@ mod tests {
         }
         assert!(handle.current_snapshot().is_err());
         assert!(runtime.shutdown().is_err());
+    }
+
+    #[test]
+    fn notification_queue_overflow_fails_actor_without_blocking() {
+        let release_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let observer_gate = Arc::clone(&release_gate);
+        let observer_calls = Arc::new(AtomicUsize::new(0));
+        let observer_call_count = Arc::clone(&observer_calls);
+        let (entered_sender, entered_receiver) = mpsc::channel();
+
+        let mut config = CoreActorConfig::new(DeviceId::new("core-3").expect("valid device ID"));
+        config.actor_queue_capacity = 8;
+        config.notification_queue_capacity = 1;
+
+        let runtime = CoreActorRuntime::start(config, move |_| {
+            if observer_call_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                entered_sender
+                    .send(())
+                    .map_err(|_| super::worker_stopped(None))?;
+                let (released, wake) = &*observer_gate;
+                let mut released = released
+                    .lock()
+                    .map_err(|_| super::shared_state_error("test gate was poisoned"))?;
+                while !*released {
+                    released = wake
+                        .wait(released)
+                        .map_err(|_| super::shared_state_error("test gate was poisoned"))?;
+                }
+            }
+            Ok(())
+        })
+        .expect("runtime starts");
+        entered_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("initial notification entered observer");
+
+        let handle = runtime.handle();
+        handle
+            .submit_command(
+                CoreCommandRequest::new(
+                    SnapshotRevision::new(0),
+                    CoreCommand::SelectRole {
+                        role: AppRole::Host,
+                    },
+                )
+                .expect("valid first command"),
+            )
+            .expect("first command admitted");
+
+        for _ in 0..1_000 {
+            if handle
+                .current_snapshot()
+                .is_ok_and(|snapshot| snapshot.revision == SnapshotRevision::new(1))
+            {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            handle
+                .current_snapshot()
+                .expect("first command snapshot is available")
+                .revision,
+            SnapshotRevision::new(1)
+        );
+
+        handle
+            .submit_command(
+                CoreCommandRequest::new(
+                    SnapshotRevision::new(1),
+                    CoreCommand::SelectRole {
+                        role: AppRole::Listener,
+                    },
+                )
+                .expect("valid second command"),
+            )
+            .expect("second command admitted");
+
+        let overflow = (0..1_000).find_map(|_| match handle.current_snapshot() {
+            Ok(_) => {
+                std::thread::yield_now();
+                None
+            }
+            Err(error) => Some(error),
+        });
+        let overflow = overflow.expect("notification overflow becomes visible");
+        assert_eq!(overflow.code, CoreErrorCode::QueueOverflow);
+        assert_eq!(overflow.message, "notification queue is full");
+
+        let (released, wake) = &*release_gate;
+        *released.lock().expect("release gate lock") = true;
+        wake.notify_all();
+
+        assert!(runtime.shutdown().is_err());
+        assert!(observer_calls.load(Ordering::SeqCst) >= 1);
     }
 }
