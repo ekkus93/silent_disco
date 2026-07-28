@@ -51,6 +51,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Generate Rust-derived TypeScript bindings
+        run: npm run bindings:generate
+
+      - name: Require committed generated bindings
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- desktop/src/core/generated/desktop-bindings.ts)"
+          if [[ -n "${status}" ]]; then
+            printf '%s\n' "${status}"
+            echo "desktop bindings must be committed exactly as generated." >&2
+            exit 1
+          fi
+
       - name: Check formatting
         run: npm run format:check
 
@@ -85,6 +100,7 @@ jobs:
           name: desktop-frontend-diagnostics
           path: |
             desktop/package-lock.json
+            desktop/src/core/generated/desktop-bindings.ts
             desktop/dist/
           if-no-files-found: warn
           retention-days: 3
