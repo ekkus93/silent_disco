@@ -1,9 +1,13 @@
 use serde::Serialize;
 
+pub mod app_state;
 pub mod bindings;
 pub mod dto;
+pub mod notification_buffer;
 pub mod platform;
 pub mod profile;
+pub mod runtime_dto;
+pub mod shutdown;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,7 +41,13 @@ fn get_core_smoke(input: u64) -> CoreSmokeDto {
 /// successful process exit.
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_core_smoke])
+        .manage(app_state::DesktopAppState::new())
+        .invoke_handler(tauri::generate_handler![
+            get_core_smoke,
+            app_state::open_profile,
+            app_state::get_current_snapshot,
+            app_state::close_profile
+        ])
         .run(tauri::generate_context!())
 }
 
