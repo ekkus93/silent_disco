@@ -1,0 +1,91 @@
+name: Ralph oversized refactor task 1
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/ralph-oversized-refactor.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ralph-oversized-refactor-master
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  task-1-main-view-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Transform and validate Task 1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exec > >(tee /tmp/task1.log) 2>&1
+          trap 'status=$?; echo "FAILED_COMMAND=${BASH_COMMAND}"; echo "EXIT_STATUS=${status}"; exit ${status}' ERR
+
+          python3 scripts/task1_main_view_model_refactor.py
+
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+          cd rust
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          cd ..
+
+          ./gradlew assembleDebug test lintDebug --stacktrace --console=plain
+
+          # The refactor changes no dependencies. Do not include a resolver-generated lockfile diff.
+          git checkout -- rust/Cargo.lock
+
+      - name: Commit Task 1
+        run: |
+          set -euo pipefail
+          rm .github/workflows/ralph-oversized-refactor.yml
+          rm scripts/task1_main_view_model_refactor.py
+          rm -f docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TASK1_FAILURE.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          test -n "$(git status --porcelain)"
+          git commit -m "Refactor MainViewModel into focused action modules"
+          git push origin HEAD:master
+
+      - name: Record Task 1 failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          cp /tmp/task1.log /tmp/task1.saved 2>/dev/null || true
+          git reset --hard "${GITHUB_SHA}"
+          rm -f .github/workflows/ralph-oversized-refactor.yml
+          rm -f scripts/task1_main_view_model_refactor.py
+          if test -s /tmp/task1.saved; then
+            {
+              printf '# Task 1 MainViewModel refactor failure\n\n```text\n'
+              tail -n 500 /tmp/task1.saved
+              printf '\n```\n'
+            } > docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TASK1_FAILURE.md
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Record Task 1 refactor failure [skip ci]"
+          git push origin HEAD:master
