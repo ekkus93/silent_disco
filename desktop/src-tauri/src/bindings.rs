@@ -2,7 +2,10 @@ use crate::dto::{
     BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto, MigrationSummaryDto, ProfileSummaryDto,
     StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
 };
-use crate::runtime_dto::{CoreSnapshotDto, OpenProfileRequest, OpenProfileResponse};
+use crate::runtime_dto::{
+    AttachNotificationResponse, CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto,
+    DiagnosticFieldDto, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
+};
 use std::fmt;
 use ts_rs::{Config, TS};
 
@@ -33,6 +36,11 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<OpenProfileRequest>(&config),
         declaration::<CoreSnapshotDto>(&config),
         declaration::<OpenProfileResponse>(&config),
+        declaration::<AttachNotificationResponse>(&config),
+        declaration::<PlatformEffectDto>(&config),
+        declaration::<DiagnosticFieldDto>(&config),
+        declaration::<CoreDiagnosticDto>(&config),
+        declaration::<CoreNotificationDto>(&config),
     ];
 
     let mut output = String::from(GENERATED_HEADER);
@@ -79,6 +87,8 @@ mod tests {
         assert!(first.contains("export type StorageInspectionDto"));
         assert!(first.contains("export type CoreSnapshotDto"));
         assert!(first.contains("export type OpenProfileResponse"));
+        assert!(first.contains("export type AttachNotificationResponse"));
+        assert!(first.contains("export type CoreNotificationDto"));
     }
 
     #[test]
@@ -91,5 +101,14 @@ mod tests {
         assert!(!output.contains("identitySecret"));
         assert!(output.contains("hasPublicKey"));
         assert!(output.contains("hasPrivateKeyReference"));
+    }
+
+    #[test]
+    fn notification_contract_is_redacted() {
+        let output = render_typescript_bindings().expect("render bindings");
+        assert!(output.contains("effectKind"));
+        assert!(output.contains("operationId"));
+        assert!(!output.contains("privateKey"));
+        assert!(!output.contains("nativeHandle"));
     }
 }
