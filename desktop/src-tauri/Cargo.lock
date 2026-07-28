@@ -2995,6 +2995,7 @@ name = "silent-disco-desktop"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "silent-disco-core",
  "tauri",
  "tauri-build",
