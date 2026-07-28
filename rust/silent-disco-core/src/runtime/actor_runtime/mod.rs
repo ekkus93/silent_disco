@@ -69,9 +69,7 @@ impl CoreActorConfig {
         if !(1..=MAX_ACTOR_QUEUE_CAPACITY).contains(&self.actor_queue_capacity) {
             return Err(core_error(
                 CoreErrorCode::InvalidArgument,
-                format!(
-                    "actor queue capacity must be between 1 and {MAX_ACTOR_QUEUE_CAPACITY}"
-                ),
+                format!("actor queue capacity must be between 1 and {MAX_ACTOR_QUEUE_CAPACITY}"),
                 ErrorSeverity::Error,
                 false,
                 None,
@@ -130,10 +128,7 @@ impl CoreActorRuntime {
     ///
     /// Returns configuration or thread-start failure. A partially started
     /// notification worker is shut down and joined before returning.
-    pub fn start<O: CoreObserver>(
-        config: CoreActorConfig,
-        observer: O,
-    ) -> Result<Self, CoreError> {
+    pub fn start<O: CoreObserver>(config: CoreActorConfig, observer: O) -> Result<Self, CoreError> {
         config.validate()?;
         let (notification_sender, notification_receiver) =
             sync_channel(config.notification_queue_capacity);
@@ -195,9 +190,7 @@ impl CoreActorRuntime {
                 if send_failed || join_failed {
                     return Err(core_error(
                         CoreErrorCode::ShutdownFailed,
-                        format!(
-                            "{primary}; notification-worker startup cleanup also failed"
-                        ),
+                        format!("{primary}; notification-worker startup cleanup also failed"),
                         ErrorSeverity::Fatal,
                         false,
                         None,
@@ -315,10 +308,7 @@ impl CoreActorHandle {
     ///
     /// Returns observer/actor failure, shutdown, operation-ID exhaustion, or
     /// visible queue overflow without blocking.
-    pub fn submit_command(
-        &self,
-        request: CoreCommandRequest,
-    ) -> Result<CommandReceipt, CoreError> {
+    pub fn submit_command(&self, request: CoreCommandRequest) -> Result<CommandReceipt, CoreError> {
         self.ensure_accepting()?;
         request
             .command
@@ -444,9 +434,10 @@ impl CoreActorHandle {
         )? {
             return Err(error);
         }
-        if let Some(error) =
-            read_failure(&self.shared.actor_failure, "actor failure mutex was poisoned")?
-        {
+        if let Some(error) = read_failure(
+            &self.shared.actor_failure,
+            "actor failure mutex was poisoned",
+        )? {
             return Err(error);
         }
         Ok(())
@@ -513,9 +504,8 @@ fn run_notification_worker<O: CoreObserver>(
     while let Ok(message) = receiver.recv() {
         match message {
             NotificationMessage::Notify(notification) => {
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    observer.on_notification(*notification)
-                }));
+                let result =
+                    catch_unwind(AssertUnwindSafe(|| observer.on_notification(*notification)));
                 match result {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {

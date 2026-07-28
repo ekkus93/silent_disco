@@ -11,11 +11,10 @@ use crate::domain::{
 use crate::error::CoreError;
 use crate::runtime::records::{
     AudioEvent, CoreActorInput, CoreCommand, CoreDiagnostic, CoreNotification, CoreSnapshot,
-    DiagnosticField, DiscoveryRequest, NetworkEstablishmentRequest, PlatformEffect,
-    PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion, RecoverableAction,
-    SessionAdvertisement, StorageCompletion, StorageEvent, TransportEvent,
-    current_protocol_version, MAX_CONNECTED_LISTENERS, MAX_DISCOVERED_SESSIONS,
-    MAX_PENDING_JOIN_REQUESTS,
+    DiagnosticField, DiscoveryRequest, MAX_CONNECTED_LISTENERS, MAX_DISCOVERED_SESSIONS,
+    MAX_PENDING_JOIN_REQUESTS, NetworkEstablishmentRequest, PlatformEffect, PlatformEffectRequest,
+    PlatformEvent, PlatformOperationCompletion, RecoverableAction, SessionAdvertisement,
+    StorageCompletion, StorageEvent, TransportEvent, current_protocol_version,
 };
 
 const MAX_PENDING_PLATFORM_OPERATIONS: usize = 128;
@@ -109,10 +108,9 @@ impl ActorState {
                             stop_requested: false,
                         };
                     }
-                    outcome.notifications.insert(
-                        0,
-                        CoreNotification::Snapshot(candidate.snapshot.clone()),
-                    );
+                    outcome
+                        .notifications
+                        .insert(0, CoreNotification::Snapshot(candidate.snapshot.clone()));
                 }
                 *self = candidate;
                 ProcessResult {
@@ -158,9 +156,7 @@ impl ActorState {
     ) -> Result<ApplyOutcome, CoreError> {
         match command {
             CoreCommand::SelectRole { role } => self.select_role(operation_id, role),
-            CoreCommand::UpdateHostDraft(patch) => {
-                self.update_host_draft(operation_id, &patch)
-            }
+            CoreCommand::UpdateHostDraft(patch) => self.update_host_draft(operation_id, &patch),
             CoreCommand::CreateHostSession => self.create_host_session(operation_id),
             CoreCommand::EndHostSession => self.end_host_session(operation_id),
             CoreCommand::StartDiscovery => self.start_discovery(operation_id),
@@ -265,9 +261,7 @@ impl ActorState {
         self.snapshot
             .host_draft
             .validate_for_creation()
-            .map_err(|error| {
-                invalid_argument(error.to_string(), Some(operation_id.clone()))
-            })?;
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
         let session_id = self.next_session_id()?;
         let advertisement = SessionAdvertisement::new(
             session_id.clone(),
@@ -290,10 +284,7 @@ impl ActorState {
         Ok(ApplyOutcome::effect(effect))
     }
 
-    fn end_host_session(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn end_host_session(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Host, &operation_id)?;
         if self.host_session_id.is_none()
             || matches!(
@@ -314,10 +305,7 @@ impl ActorState {
         Ok(ApplyOutcome::effect(effect))
     }
 
-    fn start_discovery(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn start_discovery(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Listener, &operation_id)?;
         if self.snapshot.discovery_active
             || self
@@ -332,9 +320,7 @@ impl ActorState {
         }
         if !matches!(
             self.snapshot.listener_lifecycle,
-            ListenerLifecycle::Idle
-                | ListenerLifecycle::Disconnected
-                | ListenerLifecycle::Error
+            ListenerLifecycle::Idle | ListenerLifecycle::Disconnected | ListenerLifecycle::Error
         ) {
             return Err(invalid_state(
                 "discovery cannot start in the current lifecycle",
@@ -351,10 +337,7 @@ impl ActorState {
         Ok(ApplyOutcome::effect(effect))
     }
 
-    fn stop_discovery(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn stop_discovery(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Listener, &operation_id)?;
         if !self.snapshot.discovery_active {
             return Err(invalid_state("discovery is not active", Some(operation_id)));
@@ -398,10 +381,7 @@ impl ActorState {
         Ok(ApplyOutcome::changed())
     }
 
-    fn submit_join(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn submit_join(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Listener, &operation_id)?;
         if self.snapshot.listener_lifecycle != ListenerLifecycle::SessionSelected {
             return Err(invalid_state(
@@ -443,10 +423,7 @@ impl ActorState {
         Ok(ApplyOutcome::effect(effect))
     }
 
-    fn cancel_join(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn cancel_join(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Listener, &operation_id)?;
         if matches!(
             self.snapshot.transport_state,
@@ -475,10 +452,7 @@ impl ActorState {
         Ok(ApplyOutcome::effect(effect))
     }
 
-    fn retry_recoverable(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn retry_recoverable(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         let error = self.snapshot.last_error.as_ref().ok_or_else(|| {
             invalid_state(
                 "there is no recoverable failure to retry",
@@ -516,12 +490,8 @@ impl ActorState {
                 self.snapshot.capabilities = capabilities;
                 Ok(ApplyOutcome::changed())
             }
-            PlatformEvent::AppEnteredForeground => {
-                self.diagnostic("app_foreground", Vec::new())
-            }
-            PlatformEvent::AppEnteredBackground => {
-                self.diagnostic("app_background", Vec::new())
-            }
+            PlatformEvent::AppEnteredForeground => self.diagnostic("app_foreground", Vec::new()),
+            PlatformEvent::AppEnteredBackground => self.diagnostic("app_background", Vec::new()),
         }
     }
 
@@ -709,9 +679,7 @@ impl ActorState {
         self.require_role_event(AppRole::Host)?;
         if !matches!(
             self.snapshot.host_lifecycle,
-            HostLifecycle::WaitingForListeners
-                | HostLifecycle::Ready
-                | HostLifecycle::Streaming
+            HostLifecycle::WaitingForListeners | HostLifecycle::Ready | HostLifecycle::Streaming
         ) {
             return Err(invalid_state(
                 "join request arrived while host admission was unavailable",
@@ -786,10 +754,7 @@ impl ActorState {
         Ok(ApplyOutcome::changed())
     }
 
-    fn record_transport_failure(
-        &mut self,
-        error: CoreError,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn record_transport_failure(&mut self, error: CoreError) -> Result<ApplyOutcome, CoreError> {
         self.snapshot.last_error = Some(error.clone());
         self.snapshot.transport_state = TransportState::Failed;
         match self.snapshot.selected_role {
@@ -849,10 +814,7 @@ impl ActorState {
                 self.snapshot.playback_state = PlaybackState::Underrun;
                 let mut outcome = self.diagnostic(
                     "audio_underrun",
-                    vec![Self::field(
-                        "missing_frames",
-                        &missing_frames.to_string(),
-                    )?],
+                    vec![Self::field("missing_frames", &missing_frames.to_string())?],
                 )?;
                 outcome.changed = true;
                 Ok(outcome)
@@ -880,9 +842,7 @@ impl ActorState {
                     Ok(ApplyOutcome::changed())
                 }
                 StorageCompletion::SettingsLoaded(None) => Ok(ApplyOutcome::default()),
-                StorageCompletion::SettingsSaved => {
-                    self.diagnostic("settings_saved", Vec::new())
-                }
+                StorageCompletion::SettingsSaved => self.diagnostic("settings_saved", Vec::new()),
                 StorageCompletion::TrustedDevicesLoaded(devices) => self.diagnostic(
                     "trusted_devices_loaded",
                     vec![Self::field("count", &devices.len().to_string())?],
@@ -944,10 +904,7 @@ impl ActorState {
             .map(|(_, pending)| pending)
     }
 
-    fn remove_pending(
-        &mut self,
-        operation_id: &OperationId,
-    ) -> Option<PendingPlatformOperation> {
+    fn remove_pending(&mut self, operation_id: &OperationId) -> Option<PendingPlatformOperation> {
         let index = self
             .pending_platform
             .iter()
@@ -955,11 +912,7 @@ impl ActorState {
         Some(self.pending_platform.remove(index).1)
     }
 
-    fn apply_pending_failure(
-        &mut self,
-        pending: &PendingPlatformOperation,
-        error: &CoreError,
-    ) {
+    fn apply_pending_failure(&mut self, pending: &PendingPlatformOperation, error: &CoreError) {
         match pending {
             PendingPlatformOperation::StartAdvertising { .. }
             | PendingPlatformOperation::StopAdvertising => {
@@ -1013,11 +966,7 @@ impl ActorState {
         Ok(format!("diagnostics-{sequence}"))
     }
 
-    fn require_role(
-        &self,
-        role: AppRole,
-        operation_id: &OperationId,
-    ) -> Result<(), CoreError> {
+    fn require_role(&self, role: AppRole, operation_id: &OperationId) -> Result<(), CoreError> {
         if self.snapshot.selected_role == Some(role) {
             Ok(())
         } else {
@@ -1075,8 +1024,7 @@ impl ActorState {
     }
 
     fn field(key: &str, value: &str) -> Result<DiagnosticField, CoreError> {
-        DiagnosticField::new(key, value)
-            .map_err(|error| invalid_argument(error.to_string(), None))
+        DiagnosticField::new(key, value).map_err(|error| invalid_argument(error.to_string(), None))
     }
 
     fn diagnostic(

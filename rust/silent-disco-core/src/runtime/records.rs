@@ -59,7 +59,11 @@ impl CoreCommand {
         match self {
             Self::SubmitJoin {
                 invite_code: Some(code),
-            } => validate_token(code, MAX_INVITE_CODE_BYTES, RuntimeContractError::InviteCode),
+            } => validate_token(
+                code,
+                MAX_INVITE_CODE_BYTES,
+                RuntimeContractError::InviteCode,
+            ),
             Self::SetLocalVolume { linear_gain }
                 if !linear_gain.is_finite() || !(0.0..=1.0).contains(linear_gain) =>
             {
@@ -149,10 +153,7 @@ impl AudioOutputRequest {
     /// # Errors
     ///
     /// Rejects zero sample rate or channel count.
-    pub const fn new(
-        sample_rate_hz: u32,
-        channels: u16,
-    ) -> Result<Self, RuntimeContractError> {
+    pub const fn new(sample_rate_hz: u32, channels: u16) -> Result<Self, RuntimeContractError> {
         if sample_rate_hz == 0 || channels == 0 {
             return Err(RuntimeContractError::AudioOutputFormat);
         }
@@ -184,11 +185,7 @@ impl AudioOutputInfo {
     ) -> Result<Self, RuntimeContractError> {
         AudioOutputRequest::new(sample_rate_hz, channels)?;
         let backend_name = backend_name.into();
-        validate_token(
-            &backend_name,
-            64,
-            RuntimeContractError::AudioBackendName,
-        )?;
+        validate_token(&backend_name, 64, RuntimeContractError::AudioBackendName)?;
         Ok(Self {
             sample_rate_hz,
             channels,
@@ -295,7 +292,9 @@ pub enum PlatformEvent {
         error: CoreError,
     },
     SessionDiscovered(SessionAdvertisement),
-    SessionExpired { session_id: SessionId },
+    SessionExpired {
+        session_id: SessionId,
+    },
     CapabilityStateChanged(CapabilitySnapshot),
     AppEnteredForeground,
     AppEnteredBackground,
@@ -331,7 +330,9 @@ pub enum TransportEvent {
         operation_id: OperationId,
         report: DeliveryReport,
     },
-    SessionEnded { session_id: SessionId },
+    SessionEnded {
+        session_id: SessionId,
+    },
     Failed(CoreError),
 }
 
@@ -347,8 +348,12 @@ pub enum AudioEvent {
         device_id: DeviceId,
         summary: SynchronizationSummary,
     },
-    EndOfStream { stream_id: StreamId },
-    Underrun { missing_frames: u32 },
+    EndOfStream {
+        stream_id: StreamId,
+    },
+    Underrun {
+        missing_frames: u32,
+    },
     Failed(CoreError),
 }
 
@@ -606,9 +611,7 @@ impl fmt::Display for RuntimeContractError {
 
 impl Error for RuntimeContractError {}
 
-fn validate_unique_sessions(
-    sessions: &[SessionAdvertisement],
-) -> Result<(), RuntimeContractError> {
+fn validate_unique_sessions(sessions: &[SessionAdvertisement]) -> Result<(), RuntimeContractError> {
     for (index, session) in sessions.iter().enumerate() {
         if sessions[..index]
             .iter()
@@ -671,8 +674,8 @@ pub const fn current_protocol_version() -> u16 {
 mod tests {
     use super::{
         AudioOutputRequest, CommandReceipt, CoreActorInput, CoreCommand, CoreCommandRequest,
-        CoreSnapshot, PermissionCapability, PlatformEffect, PlatformEffectRequest,
-        PlatformEvent, PlatformOperationCompletion, RuntimeContractError,
+        CoreSnapshot, PermissionCapability, PlatformEffect, PlatformEffectRequest, PlatformEvent,
+        PlatformOperationCompletion, RuntimeContractError,
     };
     use crate::domain::{OperationId, TransportState};
     use crate::runtime::SnapshotRevision;

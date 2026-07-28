@@ -1,6 +1,6 @@
 use silent_disco_core::domain::{
-    AppRole, ApprovalMode, DeviceId, HostLifecycle, ListenerLifecycle, MonotonicMillis,
-    RequestId, SessionId, TransportState, TrustState,
+    AppRole, ApprovalMode, DeviceId, HostLifecycle, ListenerLifecycle, MonotonicMillis, RequestId,
+    SessionId, TransportState, TrustState,
 };
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime,
@@ -53,7 +53,9 @@ fn observer_can_read_current_snapshot_without_actor_lock_deadlock() {
     handle
         .submit_command(command(
             0,
-            CoreCommand::SelectRole { role: AppRole::Host },
+            CoreCommand::SelectRole {
+                role: AppRole::Host,
+            },
         ))
         .expect("queue role selection");
     assert_eq!(
@@ -73,7 +75,9 @@ fn run_host_flow() {
     handle
         .submit_command(command(
             0,
-            CoreCommand::SelectRole { role: AppRole::Host },
+            CoreCommand::SelectRole {
+                role: AppRole::Host,
+            },
         ))
         .expect("queue host role selection");
     assert_eq!(
@@ -118,10 +122,7 @@ fn run_host_flow() {
         })
         .expect("submit advertising completion");
     let waiting = next_snapshot(&receiver, 4);
-    assert_eq!(
-        waiting.host_lifecycle,
-        HostLifecycle::WaitingForListeners
-    );
+    assert_eq!(waiting.host_lifecycle, HostLifecycle::WaitingForListeners);
     assert_eq!(waiting.transport_state, TransportState::Advertising);
 
     handle
@@ -193,13 +194,8 @@ fn run_listener_flow() {
     assert!(scanning.discovery_active);
     assert_eq!(scanning.listener_lifecycle, ListenerLifecycle::Scanning);
 
-    let endpoint = NetworkEndpoint::new(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        41_001,
-        41_002,
-        41_003,
-    )
-    .expect("valid endpoint");
+    let endpoint = NetworkEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41_001, 41_002, 41_003)
+        .expect("valid endpoint");
     let session_id = SessionId::new("remote-session").expect("valid session ID");
     let advertisement = SessionAdvertisement::new(
         session_id.clone(),
@@ -228,10 +224,7 @@ fn run_listener_flow() {
         ListenerLifecycle::SessionSelected
     );
     handle
-        .submit_command(command(
-            5,
-            CoreCommand::SubmitJoin { invite_code: None },
-        ))
+        .submit_command(command(5, CoreCommand::SubmitJoin { invite_code: None }))
         .expect("queue listener join");
     let joining = next_snapshot(&receiver, 6);
     assert_eq!(joining.listener_lifecycle, ListenerLifecycle::JoinRequested);
