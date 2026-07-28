@@ -1,0 +1,235 @@
+name: Desktop CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "desktop/**"
+      - "rust/**"
+      - ".github/workflows/desktop-ci.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "desktop/**"
+      - "rust/**"
+      - ".github/workflows/desktop-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22.16.0"
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  frontend:
+    name: Desktop frontend quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Generate exact npm lockfile when missing
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run TypeScript checks
+        run: npm run typecheck
+
+      - name: Run frontend tests
+        run: npm test -- --run
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Require committed npm lockfile
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- desktop/package-lock.json)"
+          if [[ -n "${status}" ]]; then
+            printf '%s\n' "${status}"
+            echo "desktop/package-lock.json must be committed exactly as generated." >&2
+            exit 1
+          fi
+
+      - name: Upload generated npm lockfile and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-frontend-diagnostics
+          path: |
+            desktop/package-lock.json
+            desktop/dist/
+          if-no-files-found: warn
+          retention-days: 3
+
+  rust:
+    name: Desktop Rust quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Generate exact Cargo lockfile when missing
+        working-directory: desktop/src-tauri
+        run: cargo generate-lockfile
+
+      - name: Check Rust formatting
+        working-directory: desktop/src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Run strict Clippy
+        working-directory: desktop/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run desktop backend tests
+        working-directory: desktop/src-tauri
+        run: cargo test --all-features
+
+      - name: Check desktop backend
+        working-directory: desktop/src-tauri
+        run: cargo check --all-features
+
+      - name: Require committed Cargo lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- desktop/src-tauri/Cargo.lock)"
+          if [[ -n "${status}" ]]; then
+            printf '%s\n' "${status}"
+            echo "desktop/src-tauri/Cargo.lock must be committed exactly as generated." >&2
+            exit 1
+          fi
+
+      - name: Upload generated Cargo lockfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-rust-diagnostics
+          path: desktop/src-tauri/Cargo.lock
+          if-no-files-found: warn
+          retention-days: 3
+
+  linux-bundle:
+    name: Linux desktop bundle smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+
+      - name: Install Linux Tauri bundle dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Generate exact lockfiles when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd desktop
+          npm install --package-lock-only --ignore-scripts
+          cd src-tauri
+          cargo generate-lockfile
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build Linux bundles
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri build 2>&1 | tee ../desktop-tauri-build.log
+
+      - name: Require committed lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- desktop/package-lock.json desktop/src-tauri/Cargo.lock)"
+          if [[ -n "${status}" ]]; then
+            printf '%s\n' "${status}"
+            echo "Desktop lockfiles must be committed exactly as generated." >&2
+            exit 1
+          fi
+
+      - name: Upload Linux bundles and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-bundle
+          path: |
+            desktop-tauri-build.log
+            desktop/package-lock.json
+            desktop/src-tauri/Cargo.lock
+            desktop/src-tauri/target/release/bundle/
+          if-no-files-found: warn
+          retention-days: 3
