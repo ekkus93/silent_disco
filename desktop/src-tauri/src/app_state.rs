@@ -1,12 +1,16 @@
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
 use crate::notification_buffer::DesktopNotificationBuffer;
+use crate::notification_channel::TauriNotificationSink;
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
 };
 use crate::platform::paths::{DesktopProfilePaths, resolve_profile_paths};
 use crate::platform::profile_lock::ProfileLease;
 use crate::profile::ProfileId;
-use crate::runtime_dto::{CoreSnapshotDto, OpenProfileRequest, OpenProfileResponse};
+use crate::runtime_dto::{
+    AttachNotificationResponse, CoreNotificationDto, CoreSnapshotDto, OpenProfileRequest,
+    OpenProfileResponse,
+};
 use crate::shutdown::{
     DesktopOwnedResources, cleanup_lease, cleanup_with_actor, cleanup_without_actor,
     shutdown_owned_resources,
@@ -17,6 +21,7 @@ use silent_disco_core::runtime::{
 use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
 const INITIAL_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -37,7 +42,7 @@ struct ReadyRuntime {
     profile_id: ProfileId,
     _identity: DesktopIdentity,
     handle: CoreActorHandle,
-    _notifications: Arc<DesktopNotificationBuffer>,
+    notifications: Arc<DesktopNotificationBuffer>,
     owned: DesktopOwnedResources,
 }
 
@@ -125,11 +130,37 @@ impl DesktopAppState {
     fn current_snapshot(&self) -> Result<CoreSnapshotDto, DesktopErrorDto> {
         let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         match &*state {
-            DesktopRuntimeState::Ready(ready) => ready
-                .handle
-                .current_snapshot()
-                .map(CoreSnapshotDto::from)
-                .map_err(DesktopErrorDto::from),
+            DesktopRuntimeState::Ready(ready) => {
+                if let Some(error) = ready
+                    .notifications
+                    .delivery_failure()
+                    .map_err(DesktopErrorDto::from)?
+                {
+                    return Err(DesktopErrorDto::from(error));
+                }
+                ready
+                    .handle
+                    .current_snapshot()
+                    .map(CoreSnapshotDto::from)
+                    .map_err(DesktopErrorDto::from)
+            }
+            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Closed
+            | DesktopRuntimeState::Opening { .. }
+            | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
+                "desktop.profile.not_ready",
+                "runtime",
+                "error",
+                true,
+                "no desktop profile is ready",
+            )),
+        }
+    }
+
+    fn notification_buffer(&self) -> Result<Arc<DesktopNotificationBuffer>, DesktopErrorDto> {
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        match &*state {
+            DesktopRuntimeState::Ready(ready) => Ok(Arc::clone(&ready.notifications)),
             DesktopRuntimeState::Failed(error) => Err(error.clone()),
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
@@ -322,6 +353,40 @@ pub fn get_current_snapshot(app: AppHandle) -> Result<CoreSnapshotDto, DesktopEr
     app.state::<DesktopAppState>().current_snapshot()
 }
 
+/// Attaches or replaces the frontend notification channel for the ready profile.
+///
+/// The current authoritative snapshot is dispatched first. Replacing a subscription stops
+/// and joins the old worker before the new subscription becomes active.
+///
+/// # Errors
+///
+/// Returns a structured error when no profile is ready, the bridge has failed, the worker
+/// cannot start, or the blocking attachment task fails.
+#[tauri::command]
+pub async fn attach_notifications(
+    app: AppHandle,
+    channel: Channel<CoreNotificationDto>,
+) -> Result<AttachNotificationResponse, DesktopErrorDto> {
+    let notifications = app
+        .state::<DesktopAppState>()
+        .notification_buffer()?;
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        notifications.attach_sink(Arc::new(TauriNotificationSink::new(channel)))
+    });
+    let subscription = task.await.map_err(|error| {
+        DesktopErrorDto::new(
+            "desktop.bridge.attach_worker_failed",
+            "runtime",
+            "fatal",
+            false,
+            &format!("desktop notification attachment worker failed: {error}"),
+        )
+    })??;
+    Ok(AttachNotificationResponse {
+        subscription_id: subscription.get().to_string(),
+    })
+}
+
 /// Closes the active profile in reverse startup order.
 ///
 /// # Errors
@@ -453,8 +518,9 @@ fn open_runtime(
             profile_id,
             _identity: identity,
             handle,
-            _notifications: notifications,
+            notifications: Arc::clone(&notifications),
             owned: DesktopOwnedResources {
+                notifications,
                 actor,
                 database,
                 lease,
