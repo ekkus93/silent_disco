@@ -1,6 +1,6 @@
 use super::{
-    DESKTOP_PENDING_NOTIFICATION_CAPACITY, DesktopNotificationBuffer,
-    DesktopNotificationSendError, DesktopNotificationSink,
+    DESKTOP_PENDING_NOTIFICATION_CAPACITY, DesktopNotificationBuffer, DesktopNotificationSendError,
+    DesktopNotificationSink,
 };
 use silent_disco_core::domain::OperationId;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
