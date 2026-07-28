@@ -1,0 +1,363 @@
+name: Run full validation once
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/run-full-validation-once.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: full-validation-once-master
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.16.0"
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  rust:
+    name: Full validation - Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+      - name: Check Rust formatting
+        id: rust-format
+        continue-on-error: true
+        working-directory: rust
+        run: cargo fmt --all -- --check
+      - name: Run strict Rust Clippy
+        id: rust-clippy
+        continue-on-error: true
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run all Rust tests
+        id: rust-tests
+        continue-on-error: true
+        working-directory: rust
+        run: cargo test --workspace --all-features
+      - name: Enforce Rust results
+        if: always()
+        env:
+          FORMAT_RESULT: ${{ steps.rust-format.outcome }}
+          CLIPPY_RESULT: ${{ steps.rust-clippy.outcome }}
+          TEST_RESULT: ${{ steps.rust-tests.outcome }}
+        run: |
+          printf 'format=%s\nclippy=%s\ntests=%s\n' "${FORMAT_RESULT}" "${CLIPPY_RESULT}" "${TEST_RESULT}"
+          test "${FORMAT_RESULT}" = success
+          test "${CLIPPY_RESULT}" = success
+          test "${TEST_RESULT}" = success
+
+  android:
+    name: Full validation - Android build, unit tests, lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK and NDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+      - name: Install pinned Rust toolchain for Android
+        run: rustup toolchain install "${RUST_VERSION}" --profile minimal
+      - name: Build Android APKs and instrumentation APK
+        id: android-build
+        continue-on-error: true
+        run: |
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain
+      - name: Verify native Rust library packaging
+        id: android-packaging
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "${apk}"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "${apk}" "lib/${abi}/libsilent_disco_ffi.so" | grep -Fx "lib/${abi}/libsilent_disco_ffi.so"
+            done
+          done
+      - name: Run all Android unit tests
+        id: android-tests
+        continue-on-error: true
+        run: ./gradlew test --stacktrace --console=plain
+      - name: Run Android lint
+        id: android-lint
+        continue-on-error: true
+        run: ./gradlew lintDebug --stacktrace --console=plain
+      - name: Enforce Android results
+        if: always()
+        env:
+          BUILD_RESULT: ${{ steps.android-build.outcome }}
+          PACKAGING_RESULT: ${{ steps.android-packaging.outcome }}
+          TEST_RESULT: ${{ steps.android-tests.outcome }}
+          LINT_RESULT: ${{ steps.android-lint.outcome }}
+        run: |
+          printf 'build=%s\npackaging=%s\ntests=%s\nlint=%s\n' "${BUILD_RESULT}" "${PACKAGING_RESULT}" "${TEST_RESULT}" "${LINT_RESULT}"
+          test "${BUILD_RESULT}" = success
+          test "${PACKAGING_RESULT}" = success
+          test "${TEST_RESULT}" = success
+          test "${LINT_RESULT}" = success
+
+  android-instrumentation:
+    name: Full validation - Android instrumentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK and NDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+      - name: Install pinned Rust toolchain for Android
+        run: rustup toolchain install "${RUST_VERSION}" --profile minimal
+      - name: Run Gradle-managed instrumentation suite
+        run: |
+          ./gradlew pixel2api29DebugAndroidTest \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=software \
+            --stacktrace \
+            --console=plain
+
+  desktop-frontend:
+    name: Full validation - Desktop frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify exact frontend lockfile
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Check frontend formatting
+        id: frontend-format
+        continue-on-error: true
+        run: npm run format:check
+      - name: Run frontend lint
+        id: frontend-lint
+        continue-on-error: true
+        run: npm run lint
+      - name: Run TypeScript checks
+        id: frontend-types
+        continue-on-error: true
+        run: npm run typecheck
+      - name: Run all frontend tests
+        id: frontend-tests
+        continue-on-error: true
+        run: npm test -- --run
+      - name: Build frontend
+        id: frontend-build
+        continue-on-error: true
+        run: npm run build
+      - name: Require committed frontend lockfile
+        id: frontend-lock
+        continue-on-error: true
+        working-directory: .
+        run: test -z "$(git status --porcelain -- desktop/package-lock.json)"
+      - name: Enforce frontend results
+        if: always()
+        working-directory: .
+        env:
+          FORMAT_RESULT: ${{ steps.frontend-format.outcome }}
+          LINT_RESULT: ${{ steps.frontend-lint.outcome }}
+          TYPES_RESULT: ${{ steps.frontend-types.outcome }}
+          TEST_RESULT: ${{ steps.frontend-tests.outcome }}
+          BUILD_RESULT: ${{ steps.frontend-build.outcome }}
+          LOCK_RESULT: ${{ steps.frontend-lock.outcome }}
+        run: |
+          printf 'format=%s\nlint=%s\ntypes=%s\ntests=%s\nbuild=%s\nlock=%s\n' "${FORMAT_RESULT}" "${LINT_RESULT}" "${TYPES_RESULT}" "${TEST_RESULT}" "${BUILD_RESULT}" "${LOCK_RESULT}"
+          test "${FORMAT_RESULT}" = success
+          test "${LINT_RESULT}" = success
+          test "${TYPES_RESULT}" = success
+          test "${TEST_RESULT}" = success
+          test "${BUILD_RESULT}" = success
+          test "${LOCK_RESULT}" = success
+
+  desktop-rust:
+    name: Full validation - Desktop Rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux Tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+      - name: Verify exact Cargo lockfile
+        working-directory: desktop/src-tauri
+        run: cargo generate-lockfile
+      - name: Create frontend placeholder
+        run: |
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco validation placeholder</title>\n' > desktop/dist/index.html
+      - name: Check desktop Rust formatting
+        id: desktop-rust-format
+        continue-on-error: true
+        working-directory: desktop/src-tauri
+        run: cargo fmt --all -- --check
+      - name: Run strict desktop Rust Clippy
+        id: desktop-rust-clippy
+        continue-on-error: true
+        working-directory: desktop/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run all desktop backend tests
+        id: desktop-rust-tests
+        continue-on-error: true
+        working-directory: desktop/src-tauri
+        run: cargo test --all-features
+      - name: Check desktop backend
+        id: desktop-rust-check
+        continue-on-error: true
+        working-directory: desktop/src-tauri
+        run: cargo check --all-features
+      - name: Require committed Cargo lockfile
+        id: desktop-rust-lock
+        continue-on-error: true
+        run: test -z "$(git status --porcelain -- desktop/src-tauri/Cargo.lock)"
+      - name: Enforce desktop Rust results
+        if: always()
+        env:
+          FORMAT_RESULT: ${{ steps.desktop-rust-format.outcome }}
+          CLIPPY_RESULT: ${{ steps.desktop-rust-clippy.outcome }}
+          TEST_RESULT: ${{ steps.desktop-rust-tests.outcome }}
+          CHECK_RESULT: ${{ steps.desktop-rust-check.outcome }}
+          LOCK_RESULT: ${{ steps.desktop-rust-lock.outcome }}
+        run: |
+          printf 'format=%s\nclippy=%s\ntests=%s\ncheck=%s\nlock=%s\n' "${FORMAT_RESULT}" "${CLIPPY_RESULT}" "${TEST_RESULT}" "${CHECK_RESULT}" "${LOCK_RESULT}"
+          test "${FORMAT_RESULT}" = success
+          test "${CLIPPY_RESULT}" = success
+          test "${TEST_RESULT}" = success
+          test "${CHECK_RESULT}" = success
+          test "${LOCK_RESULT}" = success
+
+  desktop-bundle:
+    name: Full validation - Linux bundles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+      - name: Install Linux Tauri bundle dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+      - name: Verify exact lockfiles
+        run: |
+          cd desktop
+          npm install --package-lock-only --ignore-scripts
+          cd src-tauri
+          cargo generate-lockfile
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Build Linux AppImage and DEB bundles
+        working-directory: desktop
+        run: npm run tauri build
+      - name: Require committed lockfiles
+        run: test -z "$(git status --porcelain -- desktop/package-lock.json desktop/src-tauri/Cargo.lock)"
+
+  record:
+    name: Record full validation result
+    if: always()
+    needs:
+      - rust
+      - android
+      - android-instrumentation
+      - desktop-frontend
+      - desktop-rust
+      - desktop-bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Record results and remove runner
+        env:
+          RUN_ID: ${{ github.run_id }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+          INSTRUMENTATION_RESULT: ${{ needs.android-instrumentation.result }}
+          FRONTEND_RESULT: ${{ needs.desktop-frontend.result }}
+          DESKTOP_RUST_RESULT: ${{ needs.desktop-rust.result }}
+          BUNDLE_RESULT: ${{ needs.desktop-bundle.result }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin master
+          {
+            printf '\n## Full validation run %s\n\n' "${RUN_ID}"
+            printf -- '- Source commit: `%s`\n' "${SOURCE_SHA}"
+            printf -- '- Rust format/Clippy/tests lane: **%s**\n' "${RUST_RESULT}"
+            printf -- '- Android build/packaging/unit/lint lane: **%s**\n' "${ANDROID_RESULT}"
+            printf -- '- Android instrumentation lane: **%s**\n' "${INSTRUMENTATION_RESULT}"
+            printf -- '- Desktop frontend format/lint/typecheck/tests/build lane: **%s**\n' "${FRONTEND_RESULT}"
+            printf -- '- Desktop Rust format/Clippy/tests/check lane: **%s**\n' "${DESKTOP_RUST_RESULT}"
+            printf -- '- Linux AppImage/DEB bundle lane: **%s**\n' "${BUNDLE_RESULT}"
+          } >> memory.md
+          rm .github/workflows/run-full-validation-once.yml
+          git add memory.md .github/workflows/run-full-validation-once.yml
+          git commit -m "Record full validation run ${RUN_ID} [skip ci]"
+          git push origin HEAD:master
