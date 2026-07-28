@@ -110,10 +110,9 @@ impl DesktopNotificationBuffer {
     #[cfg(test)]
     #[must_use]
     pub fn failing_initial_notification() -> Self {
-        Self {
-            fail_initial_notification: true,
-            ..Self::default()
-        }
+        let mut buffer = Self::default();
+        buffer.fail_initial_notification = true;
+        buffer
     }
 
     /// Waits for the actor's first delivered snapshot.
@@ -205,7 +204,7 @@ impl DesktopNotificationBuffer {
         let shared = Arc::clone(&self.shared);
         let join = thread::Builder::new()
             .name(format!("silent-disco-desktop-notifications-{}", id.get()))
-            .spawn(move || run_subscription_worker(&shared, id, &worker_stop, sink))
+            .spawn(move || run_subscription_worker(&shared, id, &worker_stop, sink.as_ref()))
             .map_err(|_| {
                 clear_active_subscription(&self.shared, id);
                 bridge_error(
@@ -321,13 +320,16 @@ fn run_subscription_worker(
     shared: &NotificationShared,
     id: DesktopNotificationSubscriptionId,
     stop: &AtomicBool,
-    sink: Arc<dyn DesktopNotificationSink>,
+    sink: &dyn DesktopNotificationSink,
 ) {
     let mut delivered_snapshot = None;
     loop {
-        let next = match wait_for_next(shared, id, stop, delivered_snapshot) {
-            Ok(Some(notification)) => notification,
-            Ok(None) | Err(_) => return,
+        let next = wait_for_next(shared, id, stop, delivered_snapshot).unwrap_or_else(|error| {
+            record_worker_failure(shared, id, error);
+            None
+        });
+        let Some(next) = next else {
+            return;
         };
         let snapshot_revision = notification_snapshot_revision(&next);
         if sink.send(next).is_err() {
@@ -396,14 +398,27 @@ fn notification_snapshot_revision(notification: &CoreNotification) -> Option<Sna
 }
 
 fn record_delivery_failure(shared: &NotificationShared, id: DesktopNotificationSubscriptionId) {
-    let Ok(mut state) = shared.state.lock() else {
-        return;
-    };
-    if state.active_subscription == Some(id) {
-        state.delivery_failure = Some(bridge_error(
+    record_worker_failure(
+        shared,
+        id,
+        bridge_error(
             CoreErrorCode::FfiCallbackFailed,
             "desktop notification channel send failed",
-        ));
+        ),
+    );
+}
+
+fn record_worker_failure(
+    shared: &NotificationShared,
+    id: DesktopNotificationSubscriptionId,
+    error: CoreError,
+) {
+    let mut state = shared
+        .state
+        .lock()
+        .expect("desktop notification worker failure state was poisoned");
+    if state.active_subscription == Some(id) {
+        state.delivery_failure = Some(error);
         state.active_subscription = None;
         shared.available.notify_all();
     }
