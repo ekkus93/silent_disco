@@ -572,48 +572,50 @@ Current tuning/trust data in `SharedPreferences` must be handled explicitly.
 
 Implement:
 
-- [ ] `CoreCommand`;
-- [ ] `PlatformEvent`;
-- [ ] `TransportEvent`;
-- [ ] `AudioEvent`;
-- [ ] `StorageEvent`;
-- [ ] `PlatformEffect`;
-- [ ] `CoreNotification`;
-- [ ] `CoreSnapshot`;
-- [ ] `CommandReceipt`;
-- [ ] operation IDs and snapshot revisions.
+- [x] `CoreCommand`;
+- [x] `PlatformEvent`;
+- [x] `TransportEvent`;
+- [x] `AudioEvent`;
+- [x] `StorageEvent`;
+- [x] `PlatformEffect`;
+- [x] `CoreNotification`;
+- [x] `CoreSnapshot`;
+- [x] `CommandReceipt`;
+- [x] operation IDs and snapshot revisions.
 
 ### 10.2 Implement serialized actor
 
-- [ ] One actor owns mutable domain state.
-- [ ] Commands/events are processed in FIFO order within a documented source-order policy.
-- [ ] Queue is bounded.
-- [ ] Queue overflow is visible and does not drop silently.
-- [ ] Long work is delegated to workers/effects.
-- [ ] Results return as events with operation IDs.
-- [ ] Stale or duplicate completions are rejected.
+- [x] One actor owns mutable domain state.
+- [x] Commands/events are processed in FIFO order within a documented source-order policy.
+- [x] Queue is bounded.
+- [x] Queue overflow is visible and does not drop silently.
+- [x] Long work is delegated to workers/effects.
+- [x] Results return as events with operation IDs.
+- [x] Stale or duplicate completions are rejected.
 
 ### 10.3 Implement notification dispatcher
 
-- [ ] Notifications are emitted off the actor lock.
-- [ ] Effects and errors cannot be silently dropped.
-- [ ] Snapshot coalescing, if implemented, guarantees latest revision delivery.
-- [ ] Observer failure becomes a bridge error.
-- [ ] Notification worker has explicit shutdown/join.
+- [x] Notifications are emitted off the actor lock.
+- [x] Effects and errors cannot be silently dropped.
+- [x] Snapshot coalescing, if implemented, guarantees latest revision delivery.
+- [x] Observer failure becomes a bridge error.
+- [x] Notification worker has explicit shutdown/join.
 
 ### 10.4 Add actor tests
 
-- [ ] deterministic command sequence;
-- [ ] invalid command rejection without mutation;
-- [ ] effect and completion correlation;
-- [ ] stale completion rejection;
-- [ ] queue overflow;
-- [ ] observer failure;
-- [ ] monotonic snapshot revisions;
-- [ ] shutdown while operations pending;
-- [ ] no notification under state lock.
+- [x] deterministic command sequence;
+- [x] invalid command rejection without mutation;
+- [x] effect and completion correlation;
+- [x] stale completion rejection;
+- [x] queue overflow;
+- [x] observer failure;
+- [x] monotonic snapshot revisions;
+- [x] shutdown while operations pending;
+- [x] no notification under state lock.
 
 **Acceptance:** A host-independent Rust test can drive a complete simulated host/listener state flow through commands/events and snapshots.
+
+**Implementation status:** Complete. PR #38 merged the authoritative actor runtime and its strict repair pass. Permanent Desktop CI run `30339287568` and repository CI run `30339287556` passed Rust formatting, Clippy with warnings denied, Rust tests, Android builds/tests/lint, generated-artifact checks, and Linux desktop bundle smoke validation. The actor remains platform-independent; UniFFI and Android `CoreFacade` work remain Block 11.
 
 ---
 
