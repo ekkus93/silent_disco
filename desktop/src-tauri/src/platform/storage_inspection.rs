@@ -21,7 +21,7 @@ pub struct ProfileStorageInspection {
 ///
 /// The operation acquires the profile lease before opening mutable storage, reads
 /// only typed APIs, explicitly stops and joins the worker, and releases the lease
-/// last. It never opens SQLite directly and never falls back to an in-memory or
+/// last. It never opens `SQLite` directly and never falls back to an in-memory or
 /// alternate database.
 ///
 /// # Errors
@@ -213,9 +213,10 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound && !std::thread::panicking() {
-                    panic!("failed to remove storage-inspection test directory: {error}");
-                }
+                assert!(
+                    error.kind() == std::io::ErrorKind::NotFound || std::thread::panicking(),
+                    "failed to remove storage-inspection test directory: {error}"
+                );
             }
         }
     }

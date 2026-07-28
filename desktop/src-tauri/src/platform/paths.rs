@@ -182,10 +182,10 @@ fn ensure_owned_directory(
     }
 
     let canonical = canonicalize(label, path)?;
-    if let Some(parent) = canonical_parent {
-        if !canonical.starts_with(parent) {
-            return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
-        }
+    if let Some(parent) = canonical_parent
+        && !canonical.starts_with(parent)
+    {
+        return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
     }
     Ok(())
 }
@@ -337,9 +337,11 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    panic!("failed to remove test directory: {error}");
-                }
+                assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "failed to remove test directory: {error}"
+                );
             }
         }
     }

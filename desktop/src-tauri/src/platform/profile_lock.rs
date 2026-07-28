@@ -110,6 +110,7 @@ impl fmt::Debug for ProfileLease {
             .field("profile_id", &self.profile_id)
             .field("lock_path", &self.lock_path)
             .field("held", &self.file.is_some())
+            .field("release_attempted", &self.release_attempted)
             .finish()
     }
 }
@@ -123,12 +124,11 @@ impl Drop for ProfileLease {
         let unlock_result = file.unlock();
         drop(file);
 
-        if !self.release_attempted && !std::thread::panicking() {
-            panic!(
-                "ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}",
-                self.profile_id
-            );
-        }
+        assert!(
+            self.release_attempted || std::thread::panicking(),
+            "ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}",
+            self.profile_id
+        );
     }
 }
 
@@ -301,9 +301,11 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    panic!("failed to remove test directory: {error}");
-                }
+                assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "failed to remove test directory: {error}"
+                );
             }
         }
     }

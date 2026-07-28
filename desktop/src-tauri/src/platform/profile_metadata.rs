@@ -333,6 +333,10 @@ pub enum ProfileMetadataError {
 }
 
 impl fmt::Display for ProfileMetadataError {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the exhaustive formatter keeps every metadata failure variant explicit"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PreparePaths(error) => {
@@ -508,9 +512,11 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    panic!("failed to remove test directory: {error}");
-                }
+                assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "failed to remove test directory: {error}"
+                );
             }
         }
     }
