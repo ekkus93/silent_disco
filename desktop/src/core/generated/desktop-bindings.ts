@@ -12,7 +12,13 @@ export type StoredSettingsSummaryDto = { syncSampleWindow: number, syncCadenceMs
 
 export type TrustedDeviceSummaryDto = { deviceId: string, displayName: string, trustState: string, firstSeenMs: string, lastSeenMs: string, updatedAtMs: string, hasPublicKey: boolean, hasPrivateKeyReference: boolean, };
 
-export type BridgeLifecycleDto = { "kind": "closed" } | { "kind": "opening", "details": { profileId: string, } } | { "kind": "ready", "details": { profileId: string, } } | { "kind": "failed", "details": { error: DesktopErrorDto, } };
+export type BridgeLifecycleDto = { "kind": "closed" } | { "kind": "opening", "details": { profile_id: string, } } | { "kind": "ready", "details": { profile_id: string, } } | { "kind": "failed", "details": { error: DesktopErrorDto, } };
 
 export type StorageInspectionDto = { sqliteVersion: string, foreignKeysEnabled: boolean, journalMode: string, busyTimeoutMs: number, synchronousPolicy: string, schemaVersion: number, appliedMigrations: Array<MigrationSummaryDto>, integrityCheck: string, settings: StoredSettingsSummaryDto | null, trustedDevices: Array<TrustedDeviceSummaryDto>, };
+
+export type OpenProfileRequest = { profileId: string, };
+
+export type CoreSnapshotDto = { revision: string, selectedRole: string | null, hostLifecycle: string, listenerLifecycle: string, transportState: string, discoveryActive: boolean, discoveredSessionCount: number, pendingJoinRequestCount: number, listenerCount: number, playbackState: string, playbackPositionMs: string, recoverableAction: string | null, lastError: DesktopErrorDto | null, shuttingDown: boolean, };
+
+export type OpenProfileResponse = { lifecycle: BridgeLifecycleDto, coreVersion: CoreVersionDto, snapshot: CoreSnapshotDto, };
 

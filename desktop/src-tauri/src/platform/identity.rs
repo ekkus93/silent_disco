@@ -39,8 +39,8 @@ impl DesktopIdentity {
             write!(&mut encoded, "{byte:02x}")
                 .map_err(|_| DesktopIdentityError::IdentifierEncodingFailed)?;
         }
-        let device_id = DeviceId::new(encoded)
-            .map_err(|_| DesktopIdentityError::DerivedIdentifierInvalid)?;
+        let device_id =
+            DeviceId::new(encoded).map_err(|_| DesktopIdentityError::DerivedIdentifierInvalid)?;
         Ok(Self { device_id })
     }
 }
@@ -76,8 +76,7 @@ impl DesktopIdentityProvider for SystemDesktopIdentityProvider {
             Ok(secret) => secret,
             Err(KeyringError::NoEntry) => {
                 let mut generated = vec![0_u8; IDENTITY_SECRET_BYTES];
-                getrandom::fill(&mut generated)
-                    .map_err(DesktopIdentityError::GenerateSecret)?;
+                getrandom::fill(&mut generated).map_err(DesktopIdentityError::GenerateSecret)?;
                 if let Err(error) = entry.set_secret(&generated) {
                     generated.fill(0);
                     return Err(DesktopIdentityError::PersistSecret(error));
@@ -119,16 +118,28 @@ impl fmt::Display for DesktopIdentityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::OpenCredentialStore(error) => {
-                write!(formatter, "could not open the operating-system credential store: {error}")
+                write!(
+                    formatter,
+                    "could not open the operating-system credential store: {error}"
+                )
             }
             Self::ReadSecret(error) => {
-                write!(formatter, "could not read desktop identity from secure storage: {error}")
+                write!(
+                    formatter,
+                    "could not read desktop identity from secure storage: {error}"
+                )
             }
             Self::GenerateSecret(error) => {
-                write!(formatter, "could not generate desktop identity secret: {error}")
+                write!(
+                    formatter,
+                    "could not generate desktop identity secret: {error}"
+                )
             }
             Self::PersistSecret(error) => {
-                write!(formatter, "could not persist desktop identity in secure storage: {error}")
+                write!(
+                    formatter,
+                    "could not persist desktop identity in secure storage: {error}"
+                )
             }
             Self::VerifyPersistedSecret(error) => write!(
                 formatter,
@@ -155,8 +166,8 @@ impl std::error::Error for DesktopIdentityError {
             | Self::ReadSecret(source)
             | Self::PersistSecret(source)
             | Self::VerifyPersistedSecret(source) => Some(source),
-            Self::GenerateSecret(source) => Some(source),
-            Self::InvalidStoredSecretLength { .. }
+            Self::GenerateSecret(_)
+            | Self::InvalidStoredSecretLength { .. }
             | Self::IdentifierEncodingFailed
             | Self::DerivedIdentifierInvalid => None,
         }

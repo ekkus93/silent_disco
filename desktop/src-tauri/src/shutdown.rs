@@ -13,6 +13,11 @@ pub struct DesktopOwnedResources {
 ///
 /// Every cleanup phase is attempted. A later cleanup failure never overwrites
 /// an earlier failure; the returned bounded error describes every failed phase.
+///
+/// # Errors
+///
+/// Returns one bounded structured error when actor shutdown, database shutdown, or
+/// explicit profile-lock release fails. All later cleanup phases are still attempted.
 pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), DesktopErrorDto> {
     let actor_error = resources.actor.shutdown().err();
     let database_error = resources.database.stop_and_join().err();
@@ -29,6 +34,8 @@ pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), 
     ))
 }
 
+/// Cleans up database and profile-lock ownership after actor startup failed.
+#[must_use]
 pub fn cleanup_without_actor(
     database: DatabaseWorker,
     lease: ProfileLease,
@@ -39,11 +46,15 @@ pub fn cleanup_without_actor(
     combine_primary(primary, None, database_error.as_ref(), lease_error.as_ref())
 }
 
+/// Releases a profile lease after an earlier startup stage failed.
+#[must_use]
 pub fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {
     let lease_error = lease.release().err();
     combine_primary(primary, None, None, lease_error.as_ref())
 }
 
+/// Cleans up actor, database, and profile-lock ownership after startup failed.
+#[must_use]
 pub fn cleanup_with_actor(
     actor: CoreActorRuntime,
     database: DatabaseWorker,

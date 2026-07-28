@@ -1,5 +1,4 @@
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
-use crate::runtime_dto::{CoreSnapshotDto, OpenProfileRequest, OpenProfileResponse};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
@@ -7,11 +6,14 @@ use crate::platform::identity::{
 use crate::platform::paths::{DesktopProfilePaths, resolve_profile_paths};
 use crate::platform::profile_lock::ProfileLease;
 use crate::profile::ProfileId;
+use crate::runtime_dto::{CoreSnapshotDto, OpenProfileRequest, OpenProfileResponse};
 use crate::shutdown::{
     DesktopOwnedResources, cleanup_lease, cleanup_with_actor, cleanup_without_actor,
     shutdown_owned_resources,
 };
-use silent_disco_core::runtime::{CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver};
+use silent_disco_core::runtime::{
+    CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver,
+};
 use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,9 +35,9 @@ enum DesktopRuntimeState {
 
 struct ReadyRuntime {
     profile_id: ProfileId,
-    identity: DesktopIdentity,
+    _identity: DesktopIdentity,
     handle: CoreActorHandle,
-    notifications: Arc<DesktopNotificationBuffer>,
+    _notifications: Arc<DesktopNotificationBuffer>,
     owned: DesktopOwnedResources,
 }
 
@@ -91,10 +93,9 @@ impl DesktopAppState {
         &self,
         ready: ReadyRuntime,
         snapshot: CoreSnapshotDto,
-    ) -> Result<OpenProfileResponse, (DesktopErrorDto, ReadyRuntime)> {
-        let mut state = match self.runtime.lock() {
-            Ok(state) => state,
-            Err(_) => return Err((poisoned_state_error(), ready)),
+    ) -> Result<OpenProfileResponse, Box<(DesktopErrorDto, ReadyRuntime)>> {
+        let Ok(mut state) = self.runtime.lock() else {
+            return Err(Box::new((poisoned_state_error(), ready)));
         };
         match &*state {
             DesktopRuntimeState::Opening { profile_id } if profile_id == &ready.profile_id => {
@@ -108,7 +109,7 @@ impl DesktopAppState {
                 *state = DesktopRuntimeState::Ready(Box::new(ready));
                 Ok(response)
             }
-            _ => Err((
+            _ => Err(Box::new((
                 DesktopErrorDto::new(
                     "desktop.profile.state_changed",
                     "runtime",
@@ -117,7 +118,7 @@ impl DesktopAppState {
                     "desktop profile lifecycle changed during startup",
                 ),
                 ready,
-            )),
+            ))),
         }
     }
 
@@ -145,11 +146,7 @@ impl DesktopAppState {
     fn take_for_close(&self) -> Result<CloseAction, DesktopErrorDto> {
         let mut state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         match std::mem::replace(&mut *state, DesktopRuntimeState::Closing) {
-            DesktopRuntimeState::Closed => {
-                *state = DesktopRuntimeState::Closed;
-                Ok(CloseAction::AlreadyClosed)
-            }
-            DesktopRuntimeState::Failed(_) => {
+            DesktopRuntimeState::Closed | DesktopRuntimeState::Failed(_) => {
                 *state = DesktopRuntimeState::Closed;
                 Ok(CloseAction::AlreadyClosed)
             }
@@ -194,7 +191,7 @@ impl DesktopAppState {
     #[cfg(test)]
     fn open_profile_sync(
         &self,
-        paths: DesktopProfilePaths,
+        paths: &DesktopProfilePaths,
         profile_id: ProfileId,
         provider: &dyn DesktopIdentityProvider,
         notifications: Arc<DesktopNotificationBuffer>,
@@ -203,10 +200,13 @@ impl DesktopAppState {
         match open_runtime(paths, profile_id, provider, notifications) {
             Ok((ready, snapshot)) => match self.install_ready(ready, snapshot) {
                 Ok(response) => Ok(response),
-                Err((primary, ready)) => {
+                Err(boxed) => {
+                    let (primary, ready) = *boxed;
                     let cleanup = shutdown_owned_resources(ready.owned);
                     let error = append_cleanup(primary, cleanup.err());
-                    let _ = self.fail_open(error.clone());
+                    if let Err(state_error) = self.fail_open(error.clone()) {
+                        return Err(append_cleanup(error, Some(state_error)));
+                    }
                     Err(error)
                 }
             },
@@ -222,8 +222,6 @@ impl DesktopAppState {
         match self.take_for_close()? {
             CloseAction::AlreadyClosed => Ok(()),
             CloseAction::Shutdown(ready) => {
-                let _public_identity = ready.identity.device_id();
-                let _pending_bridge = Arc::strong_count(&ready.notifications);
                 self.finish_close(shutdown_owned_resources(ready.owned))
             }
         }
@@ -235,6 +233,13 @@ enum CloseAction {
     Shutdown(Box<ReadyRuntime>),
 }
 
+/// Opens one production profile after lock, identity, storage, actor, and bridge startup.
+///
+/// # Errors
+///
+/// Returns a structured desktop error for invalid profile IDs, path or lock failures,
+/// unavailable secure identity, storage or actor startup failure, bridge failure, or
+/// lifecycle races. Partial startup is cleaned up before the error is returned.
 #[tauri::command]
 pub async fn open_profile(
     app: AppHandle,
@@ -270,7 +275,7 @@ pub async fn open_profile(
     let notifications = Arc::new(DesktopNotificationBuffer::new());
     let provider = SystemDesktopIdentityProvider;
     let task = tauri::async_runtime::spawn_blocking(move || {
-        open_runtime(paths, profile_id, &provider, notifications)
+        open_runtime(&paths, profile_id, &provider, notifications)
     });
     let result = task.await.map_err(|error| {
         DesktopErrorDto::new(
@@ -286,10 +291,13 @@ pub async fn open_profile(
     match result {
         Ok(Ok((ready, snapshot))) => match state.install_ready(ready, snapshot) {
             Ok(response) => Ok(response),
-            Err((primary, ready)) => {
+            Err(boxed) => {
+                let (primary, ready) = *boxed;
                 let cleanup = shutdown_owned_resources(ready.owned);
                 let error = append_cleanup(primary, cleanup.err());
-                state.fail_open(error.clone())?;
+                if let Err(state_error) = state.fail_open(error.clone()) {
+                    return Err(append_cleanup(error, Some(state_error)));
+                }
                 Err(error)
             }
         },
@@ -300,11 +308,26 @@ pub async fn open_profile(
     }
 }
 
+/// Returns the latest authoritative Rust snapshot for the open profile.
+///
+/// # Errors
+///
+/// Returns a structured error when no profile is ready or when the actor/bridge failed.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Tauri command injection supplies AppHandle by value"
+)]
 #[tauri::command]
 pub fn get_current_snapshot(app: AppHandle) -> Result<CoreSnapshotDto, DesktopErrorDto> {
     app.state::<DesktopAppState>().current_snapshot()
 }
 
+/// Closes the active profile in reverse startup order.
+///
+/// # Errors
+///
+/// Returns a structured error when lifecycle state is unavailable, another open/close
+/// is in progress, the close worker fails, or actor/database/profile-lock cleanup fails.
 #[tauri::command]
 pub async fn close_profile(app: AppHandle) -> Result<BridgeLifecycleDto, DesktopErrorDto> {
     let action = app.state::<DesktopAppState>().take_for_close()?;
@@ -329,12 +352,12 @@ pub async fn close_profile(app: AppHandle) -> Result<BridgeLifecycleDto, Desktop
 }
 
 fn open_runtime(
-    paths: DesktopProfilePaths,
+    paths: &DesktopProfilePaths,
     profile_id: ProfileId,
     provider: &dyn DesktopIdentityProvider,
     notifications: Arc<DesktopNotificationBuffer>,
 ) -> Result<(ReadyRuntime, CoreSnapshotDto), DesktopErrorDto> {
-    let lease = ProfileLease::acquire(&paths, &profile_id).map_err(|error| {
+    let lease = ProfileLease::acquire(paths, &profile_id).map_err(|error| {
         DesktopErrorDto::new(
             "desktop.profile.lock_failed",
             "storage",
@@ -387,16 +410,15 @@ fn open_runtime(
 
     let observer_buffer = Arc::clone(&notifications);
     let observer = move |notification| observer_buffer.on_notification(notification);
-    let actor = match CoreActorRuntime::start(
-        CoreActorConfig::new(identity.device_id().clone()),
-        observer,
-    ) {
-        Ok(actor) => actor,
-        Err(error) => {
-            let primary = DesktopErrorDto::from(error);
-            return Err(cleanup_without_actor(database, lease, primary));
-        }
-    };
+    let actor =
+        match CoreActorRuntime::start(CoreActorConfig::new(identity.device_id().clone()), observer)
+        {
+            Ok(actor) => actor,
+            Err(error) => {
+                let primary = DesktopErrorDto::from(error);
+                return Err(cleanup_without_actor(database, lease, primary));
+            }
+        };
     let handle = actor.handle();
 
     let delivered_snapshot = match notifications.wait_for_initial_snapshot(INITIAL_SNAPSHOT_TIMEOUT)
@@ -429,9 +451,9 @@ fn open_runtime(
     Ok((
         ReadyRuntime {
             profile_id,
-            identity,
+            _identity: identity,
             handle,
-            notifications,
+            _notifications: notifications,
             owned: DesktopOwnedResources {
                 actor,
                 database,
@@ -443,15 +465,17 @@ fn open_runtime(
 }
 
 fn append_cleanup(primary: DesktopErrorDto, cleanup: Option<DesktopErrorDto>) -> DesktopErrorDto {
-    cleanup.map_or(primary.clone(), |cleanup| {
-        DesktopErrorDto::new(
-            &primary.code,
-            &primary.subsystem,
-            &primary.severity,
-            primary.retryable,
-            &format!("{}; {}", primary.message, cleanup.message),
-        )
-    })
+    let Some(cleanup) = cleanup else {
+        return primary;
+    };
+    let cleanup_message = cleanup.message;
+    DesktopErrorDto::new(
+        &primary.code,
+        &primary.subsystem,
+        &primary.severity,
+        primary.retryable,
+        &format!("{}; {cleanup_message}", primary.message),
+    )
 }
 
 fn poisoned_state_error() -> DesktopErrorDto {
@@ -534,7 +558,7 @@ mod tests {
         let state = DesktopAppState::new();
         let response = state
             .open_profile_sync(
-                paths,
+                &paths,
                 id,
                 &FixedIdentityProvider([9; 32]),
                 Arc::new(DesktopNotificationBuffer::new()),
@@ -554,7 +578,7 @@ mod tests {
         let state = DesktopAppState::new();
         state
             .open_profile_sync(
-                paths.clone(),
+                &paths,
                 id.clone(),
                 &FixedIdentityProvider([4; 32]),
                 Arc::new(DesktopNotificationBuffer::new()),
@@ -568,7 +592,7 @@ mod tests {
         assert!(
             state
                 .open_profile_sync(
-                    paths.clone(),
+                    &paths,
                     id.clone(),
                     &FixedIdentityProvider([4; 32]),
                     Arc::new(DesktopNotificationBuffer::new()),
@@ -594,7 +618,7 @@ mod tests {
         assert!(
             state
                 .open_profile_sync(
-                    paths.clone(),
+                    &paths,
                     id.clone(),
                     &FixedIdentityProvider([5; 32]),
                     Arc::new(DesktopNotificationBuffer::new()),
@@ -618,7 +642,7 @@ mod tests {
         assert!(
             state
                 .open_profile_sync(
-                    paths.clone(),
+                    &paths,
                     id.clone(),
                     &FixedIdentityProvider([6; 32]),
                     Arc::new(DesktopNotificationBuffer::failing_initial_notification()),

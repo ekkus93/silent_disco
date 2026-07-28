@@ -42,9 +42,7 @@ impl From<CoreSnapshot> for CoreSnapshotDto {
     fn from(value: CoreSnapshot) -> Self {
         Self {
             revision: value.revision.get().to_string(),
-            selected_role: value
-                .selected_role
-                .map(|role| role.wire_name().to_owned()),
+            selected_role: value.selected_role.map(|role| role.wire_name().to_owned()),
             host_lifecycle: value.host_lifecycle.wire_name().to_owned(),
             listener_lifecycle: value.listener_lifecycle.wire_name().to_owned(),
             transport_state: value.transport_state.wire_name().to_owned(),
@@ -85,12 +83,13 @@ impl From<CoreError> for DesktopErrorDto {
 }
 
 fn saturating_u32(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
+    match u32::try_from(value) {
+        Ok(value) => value,
+        Err(error) => panic!("validated core collection count exceeded u32: {error}"),
+    }
 }
 
-fn recoverable_action_name(
-    action: silent_disco_core::runtime::RecoverableAction,
-) -> String {
+fn recoverable_action_name(action: silent_disco_core::runtime::RecoverableAction) -> String {
     match action {
         silent_disco_core::runtime::RecoverableAction::Retry => "retry",
         silent_disco_core::runtime::RecoverableAction::Rescan => "rescan",

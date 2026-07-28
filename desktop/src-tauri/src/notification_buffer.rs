@@ -44,10 +44,7 @@ impl DesktopNotificationBuffer {
     /// # Errors
     ///
     /// Returns a fatal bridge error on poisoned synchronization or timeout.
-    pub fn wait_for_initial_snapshot(
-        &self,
-        timeout: Duration,
-    ) -> Result<CoreSnapshot, CoreError> {
+    pub fn wait_for_initial_snapshot(&self, timeout: Duration) -> Result<CoreSnapshot, CoreError> {
         let deadline = Instant::now() + timeout;
         let mut state = self
             .state
@@ -114,15 +111,10 @@ impl CoreObserver for DesktopNotificationBuffer {
             }
             other => {
                 if state.pending.len() >= DESKTOP_PENDING_NOTIFICATION_CAPACITY {
-                    return Err(CoreError {
-                        code: CoreErrorCode::QueueOverflow,
-                        message: "desktop pending notification queue is full".to_owned(),
-                        subsystem: CoreErrorCode::QueueOverflow.subsystem(),
-                        severity: ErrorSeverity::Fatal,
-                        retryable: false,
-                        operation_id: None,
-                        context: Vec::new(),
-                    });
+                    return Err(core_error(
+                        CoreErrorCode::QueueOverflow,
+                        "desktop pending notification queue is full",
+                    ));
                 }
                 state.pending.push_back(other);
                 Ok(())
@@ -131,15 +123,14 @@ impl CoreObserver for DesktopNotificationBuffer {
     }
 }
 
-fn bridge_error(message: &str) -> CoreError {
-    CoreError {
-        code: CoreErrorCode::FfiCallbackFailed,
-        message: message.to_owned(),
-        subsystem: CoreErrorCode::FfiCallbackFailed.subsystem(),
-        severity: ErrorSeverity::Fatal,
-        retryable: false,
-        operation_id: None,
-        context: Vec::new(),
+fn bridge_error(message: &'static str) -> CoreError {
+    core_error(CoreErrorCode::FfiCallbackFailed, message)
+}
+
+fn core_error(code: CoreErrorCode, message: &'static str) -> CoreError {
+    match CoreError::new(code, message, ErrorSeverity::Fatal, false, None) {
+        Ok(error) => error,
+        Err(error) => panic!("invalid static desktop notification error: {error}"),
     }
 }
 
@@ -168,28 +159,30 @@ mod tests {
         let observer = DesktopNotificationBuffer::new();
         for index in 0..DESKTOP_PENDING_NOTIFICATION_CAPACITY {
             observer
-                .on_notification(CoreNotification::Error(CoreError {
-                    code: CoreErrorCode::PlatformOperationFailed,
-                    message: format!("failure {index}"),
-                    subsystem: CoreErrorCode::PlatformOperationFailed.subsystem(),
-                    severity: ErrorSeverity::Error,
-                    retryable: false,
-                    operation_id: None,
-                    context: Vec::new(),
-                }))
+                .on_notification(CoreNotification::Error(
+                    CoreError::new(
+                        CoreErrorCode::PlatformOperationFailed,
+                        format!("failure {index}"),
+                        ErrorSeverity::Error,
+                        false,
+                        None,
+                    )
+                    .expect("valid test error"),
+                ))
                 .expect("bounded notification accepted");
         }
 
         let error = observer
-            .on_notification(CoreNotification::Error(CoreError {
-                code: CoreErrorCode::PlatformOperationFailed,
-                message: "overflow".to_owned(),
-                subsystem: CoreErrorCode::PlatformOperationFailed.subsystem(),
-                severity: ErrorSeverity::Error,
-                retryable: false,
-                operation_id: None,
-                context: Vec::new(),
-            }))
+            .on_notification(CoreNotification::Error(
+                CoreError::new(
+                    CoreErrorCode::PlatformOperationFailed,
+                    "overflow",
+                    ErrorSeverity::Error,
+                    false,
+                    None,
+                )
+                .expect("valid test error"),
+            ))
             .expect_err("overflow must fail");
         assert_eq!(error.code, CoreErrorCode::QueueOverflow);
     }
