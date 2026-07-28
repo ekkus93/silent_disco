@@ -367,9 +367,7 @@ pub async fn attach_notifications(
     app: AppHandle,
     channel: Channel<CoreNotificationDto>,
 ) -> Result<AttachNotificationResponse, DesktopErrorDto> {
-    let notifications = app
-        .state::<DesktopAppState>()
-        .notification_buffer()?;
+    let notifications = app.state::<DesktopAppState>().notification_buffer()?;
     let task = tauri::async_runtime::spawn_blocking(move || {
         notifications.attach_sink(Arc::new(TauriNotificationSink::new(channel)))
     });
