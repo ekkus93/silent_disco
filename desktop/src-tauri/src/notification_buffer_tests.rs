@@ -2,12 +2,15 @@ use super::{
     DESKTOP_PENDING_NOTIFICATION_CAPACITY, DesktopNotificationBuffer,
     DesktopNotificationSendError, DesktopNotificationSink,
 };
+use silent_disco_core::domain::OperationId;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
-    CoreDiagnostic, CoreNotification, CoreObserver, CoreSnapshot, SnapshotRevision,
+    CoreDiagnostic, CoreNotification, CoreObserver, CoreSnapshot, PlatformEffect,
+    PlatformEffectRequest, SnapshotRevision,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -88,6 +91,57 @@ impl DesktopNotificationSink for FailAfterInitialSink {
     }
 }
 
+#[derive(Default)]
+struct BlockingState {
+    sends: usize,
+    blocked: bool,
+    released: bool,
+}
+
+#[derive(Default)]
+struct BlockingSink {
+    state: Mutex<BlockingState>,
+    available: Condvar,
+}
+
+impl BlockingSink {
+    fn wait_until_blocked(&self) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut state = self.state.lock().expect("blocking lock");
+        while !state.blocked {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "notification send did not block");
+            let (next, wait) = self
+                .available
+                .wait_timeout(state, remaining)
+                .expect("blocking wait");
+            state = next;
+            assert!(!wait.timed_out(), "notification send did not block");
+        }
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().expect("blocking lock");
+        state.released = true;
+        self.available.notify_all();
+    }
+}
+
+impl DesktopNotificationSink for BlockingSink {
+    fn send(&self, _notification: CoreNotification) -> Result<(), DesktopNotificationSendError> {
+        let mut state = self.state.lock().expect("blocking lock");
+        state.sends += 1;
+        if state.sends == 2 {
+            state.blocked = true;
+            self.available.notify_all();
+            while !state.released {
+                state = self.available.wait(state).expect("blocking wait");
+            }
+        }
+        Ok(())
+    }
+}
+
 fn snapshot(revision: u64) -> CoreNotification {
     CoreNotification::Snapshot(CoreSnapshot {
         revision: SnapshotRevision::new(revision),
@@ -112,6 +166,16 @@ fn platform_error(message: &str) -> CoreNotification {
     )
 }
 
+fn platform_effect(operation_id: &str) -> CoreNotification {
+    CoreNotification::Effect(
+        PlatformEffect::new(
+            OperationId::new(operation_id).expect("operation ID"),
+            PlatformEffectRequest::StopAdvertising,
+        )
+        .expect("platform effect"),
+    )
+}
+
 fn wait_for_delivery_failure(observer: &DesktopNotificationBuffer) -> CoreError {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
@@ -122,7 +186,7 @@ fn wait_for_delivery_failure(observer: &DesktopNotificationBuffer) -> CoreError 
             Instant::now() < deadline,
             "delivery failure was not recorded"
         );
-        std::thread::yield_now();
+        thread::yield_now();
     }
 }
 
@@ -149,6 +213,30 @@ fn coalesces_snapshots_and_delivers_initial_snapshot() {
     let delivered = sink.wait_for_len(1);
     assert_snapshot_revision(&delivered[0], 3);
     assert_eq!(observer.pending_len().expect("pending length"), 0);
+    observer.shutdown().expect("shutdown");
+}
+
+#[test]
+fn live_snapshots_are_delivered_in_monotonic_revision_order() {
+    let observer = DesktopNotificationBuffer::new();
+    observer.on_notification(snapshot(1)).expect("snapshot 1");
+    let sink = RecordingSink::default();
+    observer
+        .attach_sink(Arc::new(sink.clone()))
+        .expect("attach subscriber");
+    sink.wait_for_len(1);
+
+    observer.on_notification(snapshot(2)).expect("snapshot 2");
+    sink.wait_for_len(2);
+    observer
+        .on_notification(snapshot(1))
+        .expect("stale live snapshot");
+    observer.on_notification(snapshot(3)).expect("snapshot 3");
+    let delivered = sink.wait_for_len(3);
+
+    assert_snapshot_revision(&delivered[0], 1);
+    assert_snapshot_revision(&delivered[1], 2);
+    assert_snapshot_revision(&delivered[2], 3);
     observer.shutdown().expect("shutdown");
 }
 
@@ -207,9 +295,12 @@ fn pending_events_are_not_starved_by_snapshot_coalescing() {
 }
 
 #[test]
-fn errors_survive_snapshot_pressure() {
+fn effects_and_errors_survive_snapshot_pressure() {
     let observer = DesktopNotificationBuffer::new();
     observer.on_notification(snapshot(1)).expect("snapshot 1");
+    observer
+        .on_notification(platform_effect("operation-1"))
+        .expect("platform effect");
     observer
         .on_notification(platform_error("must-deliver-error"))
         .expect("platform error");
@@ -223,10 +314,11 @@ fn errors_survive_snapshot_pressure() {
     observer
         .attach_sink(Arc::new(sink.clone()))
         .expect("attach subscriber");
-    let delivered = sink.wait_for_len(2);
+    let delivered = sink.wait_for_len(3);
     assert_snapshot_revision(&delivered[0], 100);
+    assert!(matches!(&delivered[1], CoreNotification::Effect(_)));
     assert!(matches!(
-        &delivered[1],
+        &delivered[2],
         CoreNotification::Error(error) if error.message == "must-deliver-error"
     ));
     observer.shutdown().expect("shutdown");
@@ -327,6 +419,29 @@ fn frontend_reload_reattaches_and_redelivers_failed_notification() {
             .is_none()
     );
     observer.shutdown().expect("shutdown");
+}
+
+#[test]
+fn shutdown_joins_worker_while_notification_send_is_pending() {
+    let observer = Arc::new(DesktopNotificationBuffer::new());
+    observer.on_notification(snapshot(9)).expect("snapshot");
+    observer
+        .on_notification(diagnostic("pending-at-shutdown"))
+        .expect("pending diagnostic");
+    let sink = Arc::new(BlockingSink::default());
+    observer
+        .attach_sink(sink.clone())
+        .expect("attach blocking sink");
+    sink.wait_until_blocked();
+
+    let shutdown_observer = Arc::clone(&observer);
+    let shutdown = thread::spawn(move || shutdown_observer.shutdown());
+    sink.release();
+
+    shutdown
+        .join()
+        .expect("shutdown thread")
+        .expect("shutdown result");
 }
 
 #[test]
