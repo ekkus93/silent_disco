@@ -68,6 +68,7 @@ jobs:
             cd ..
             npm ci
             npm run bindings:generate
+            npm run format
           } 2>&1 | tee block10-generate.log
 
       - name: Validate desktop Rust
