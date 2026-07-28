@@ -205,9 +205,7 @@ impl DesktopNotificationBuffer {
         let join = thread::Builder::new()
             .name(format!("silent-disco-desktop-notifications-{}", id.get()))
             .spawn(move || run_subscription_worker(&shared, id, &worker_stop, sink.as_ref()))
-            .map_err(|_| {
-                clear_active_subscription(&self.shared, id).unwrap_or_else(|error| error)
-            })?;
+            .map_err(|_| worker_start_error_after_cleanup(&self.shared, id))?;
 
         *worker_slot = Some(SubscriptionWorker { id, stop, join });
         self.shared.available.notify_all();
@@ -456,18 +454,28 @@ fn stop_and_join(
     })
 }
 
+fn worker_start_error_after_cleanup(
+    shared: &NotificationShared,
+    id: DesktopNotificationSubscriptionId,
+) -> CoreError {
+    match clear_active_subscription(shared, id) {
+        Ok(()) => bridge_error(
+            CoreErrorCode::WorkerStopped,
+            "could not start desktop notification subscription worker",
+        ),
+        Err(error) => error,
+    }
+}
+
 fn clear_active_subscription(
     shared: &NotificationShared,
     id: DesktopNotificationSubscriptionId,
-) -> Result<CoreError, CoreError> {
+) -> Result<(), CoreError> {
     let mut state = shared.state.lock().map_err(|_| state_poisoned_error())?;
     if state.active_subscription == Some(id) {
         state.active_subscription = None;
     }
-    Ok(bridge_error(
-        CoreErrorCode::WorkerStopped,
-        "could not start desktop notification subscription worker",
-    ))
+    Ok(())
 }
 
 fn ensure_bridge_open(state: &NotificationState) -> Result<(), CoreError> {
