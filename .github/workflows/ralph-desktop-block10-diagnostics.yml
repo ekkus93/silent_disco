@@ -37,63 +37,40 @@ jobs:
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
 
       - name: Format and generate exact artifacts
-        id: generate
-        continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
-          {
-            set -euo pipefail
-            cd desktop/src-tauri
-            cargo fmt --all
-            cargo generate-lockfile
-            cd ..
-            npm ci
-            npm run bindings:generate
-          } 2>&1 | tee block10-generate.log
+          set -euo pipefail
+          cd desktop/src-tauri
+          cargo fmt --all
+          cargo generate-lockfile
+          cd ..
+          npm ci
+          npm run bindings:generate
 
       - name: Validate desktop Rust
-        id: rust
-        if: ${{ steps.generate.outcome == 'success' }}
-        continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
-          {
-            set -euo pipefail
-            mkdir -p desktop/dist
-            printf '<!doctype html><title>Silent Disco Rust validation</title>\n' > desktop/dist/index.html
-            cd desktop/src-tauri
-            cargo fmt --all -- --check
-            cargo clippy --all-targets --all-features -- -D warnings
-            cargo test --all-features
-            cargo check --all-features
-          } 2>&1 | tee block10-rust.log
+          set -euo pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco Rust validation</title>\n' > desktop/dist/index.html
+          cd desktop/src-tauri
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+          cargo check --all-features
 
       - name: Validate desktop frontend
-        id: frontend
-        if: ${{ steps.generate.outcome == 'success' && steps.rust.outcome == 'success' }}
-        continue-on-error: true
         working-directory: desktop
-        shell: bash
         run: |
-          set -o pipefail
-          {
-            set -euo pipefail
-            npm run bindings:check
-            npm run format:check
-            npm run lint
-            npm run typecheck
-            npm test -- --run
-            npm run build
-          } 2>&1 | tee ../block10-frontend.log
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
 
       - name: Validate source-size invariant
-        id: source
-        if: ${{ steps.generate.outcome == 'success' && steps.rust.outcome == 'success' && steps.frontend.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        run: bash scripts/check-source-file-line-counts.sh 2>&1 | tee block10-source.log
+        run: bash scripts/check-source-file-line-counts.sh
 
       - name: Upload finalization diagnostics
         if: always()
@@ -101,7 +78,6 @@ jobs:
         with:
           name: ralph-desktop-block10-finalize
           path: |
-            block10-*.log
             desktop/src-tauri/src/
             desktop/src-tauri/Cargo.lock
             desktop/src/core/generated/desktop-bindings.ts
@@ -109,7 +85,6 @@ jobs:
           retention-days: 3
 
       - name: Commit validated generated and formatted files
-        if: ${{ steps.generate.outcome == 'success' && steps.rust.outcome == 'success' && steps.frontend.outcome == 'success' && steps.source.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -120,7 +95,3 @@ jobs:
           git add desktop/src-tauri desktop/src/core/generated/desktop-bindings.ts
           git commit -m "Validate desktop core runtime ownership"
           git push origin HEAD:ralph/desktop-block10
-
-      - name: Fail visibly when any validation stage failed
-        if: ${{ steps.generate.outcome != 'success' || steps.rust.outcome != 'success' || steps.frontend.outcome != 'success' || steps.source.outcome != 'success' }}
-        run: exit 1
