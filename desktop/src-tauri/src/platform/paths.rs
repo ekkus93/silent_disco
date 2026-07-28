@@ -1,4 +1,4 @@
-use crate::profile::{ProfileId, ProfileValidationError};
+use crate::profile::ProfileId;
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, Runtime};
 /// Deterministic application-owned paths for one desktop profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopProfilePaths {
+    profiles_root: PathBuf,
     root: PathBuf,
     domain_database: PathBuf,
     p2_database: Option<PathBuf>,
@@ -40,6 +41,7 @@ impl DesktopProfilePaths {
         }
 
         Ok(Self {
+            profiles_root,
             domain_database: root.join("silent-disco.sqlite3"),
             p2_database: None,
             metadata: root.join("profile.json"),
@@ -50,26 +52,40 @@ impl DesktopProfilePaths {
         })
     }
 
-    /// Creates only the directories owned by this profile.
+    /// Creates and validates only the directories owned by this profile.
     ///
-    /// This method does not create or open either database file.
+    /// This method rejects pre-existing symlinks for the profile root and each
+    /// writable child directory. It does not create or open either database file.
     ///
     /// # Errors
     ///
-    /// Returns [`ProfilePathError::CreateDirectory`] with the failed operation when
-    /// any required directory cannot be created.
+    /// Returns [`ProfilePathError`] when a directory cannot be created, is not a
+    /// directory, is a symlink, cannot be canonicalized, or escapes its trusted root.
     pub fn prepare_directories(&self) -> Result<(), ProfilePathError> {
-        for (operation, path) in [
-            ("create profile root", self.root.as_path()),
-            ("create source directory", self.sources.as_path()),
-            ("create diagnostics directory", self.diagnostics.as_path()),
-            ("create cache directory", self.cache.as_path()),
-        ] {
-            fs::create_dir_all(path).map_err(|source| ProfilePathError::CreateDirectory {
-                operation,
+        fs::create_dir_all(&self.profiles_root).map_err(|source| {
+            ProfilePathError::CreateDirectory {
+                operation: "create profiles root",
                 source,
-            })?;
+            }
+        })?;
+        reject_symlink_or_non_directory("profiles root", &self.profiles_root)?;
+        let canonical_profiles_root = canonicalize("profiles root", &self.profiles_root)?;
+
+        ensure_owned_directory(
+            "profile root",
+            &self.root,
+            Some(&canonical_profiles_root),
+        )?;
+        let canonical_profile_root = canonicalize("profile root", &self.root)?;
+
+        for (label, path) in [
+            ("source directory", self.sources.as_path()),
+            ("diagnostics directory", self.diagnostics.as_path()),
+            ("cache directory", self.cache.as_path()),
+        ] {
+            ensure_owned_directory(label, path, Some(&canonical_profile_root))?;
         }
+
         Ok(())
     }
 
@@ -147,6 +163,61 @@ fn validate_trusted_root(root: &Path) -> Result<(), ProfilePathError> {
     Ok(())
 }
 
+fn ensure_owned_directory(
+    label: &'static str,
+    path: &Path,
+    canonical_parent: Option<&Path>,
+) -> Result<(), ProfilePathError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => reject_symlink_or_non_directory(label, path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(path).map_err(|source| ProfilePathError::CreateDirectory {
+                operation: label,
+                source,
+            })?;
+            reject_symlink_or_non_directory(label, path)?;
+        }
+        Err(source) => {
+            return Err(ProfilePathError::InspectPath {
+                operation: label,
+                source,
+            });
+        }
+    }
+
+    let canonical = canonicalize(label, path)?;
+    if let Some(parent) = canonical_parent {
+        if !canonical.starts_with(parent) {
+            return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
+        }
+    }
+    Ok(())
+}
+
+fn reject_symlink_or_non_directory(
+    label: &'static str,
+    path: &Path,
+) -> Result<(), ProfilePathError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| ProfilePathError::InspectPath {
+        operation: label,
+        source,
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(ProfilePathError::SymlinkNotAllowed(label));
+    }
+    if !metadata.is_dir() {
+        return Err(ProfilePathError::NotDirectory(label));
+    }
+    Ok(())
+}
+
+fn canonicalize(label: &'static str, path: &Path) -> Result<PathBuf, ProfilePathError> {
+    fs::canonicalize(path).map_err(|source| ProfilePathError::CanonicalizePath {
+        operation: label,
+        source,
+    })
+}
+
 /// Failure while resolving or preparing desktop profile paths.
 #[derive(Debug)]
 pub enum ProfilePathError {
@@ -163,8 +234,22 @@ pub enum ProfilePathError {
         operation: &'static str,
         source: std::io::Error,
     },
-    /// A profile identifier failed validation before path construction.
-    InvalidProfile(ProfileValidationError),
+    /// An existing path could not be inspected safely.
+    InspectPath {
+        operation: &'static str,
+        source: std::io::Error,
+    },
+    /// A required directory path was a symbolic link.
+    SymlinkNotAllowed(&'static str),
+    /// A required directory path existed but was not a directory.
+    NotDirectory(&'static str),
+    /// An owned directory could not be canonicalized.
+    CanonicalizePath {
+        operation: &'static str,
+        source: std::io::Error,
+    },
+    /// A canonical owned directory escaped the expected parent.
+    DirectoryEscapedTrustedRoot(&'static str),
 }
 
 impl fmt::Display for ProfilePathError {
@@ -184,7 +269,21 @@ impl fmt::Display for ProfilePathError {
             Self::CreateDirectory { operation, source } => {
                 write!(formatter, "{operation} failed: {source}")
             }
-            Self::InvalidProfile(error) => write!(formatter, "invalid profile: {error}"),
+            Self::InspectPath { operation, source } => {
+                write!(formatter, "could not inspect {operation}: {source}")
+            }
+            Self::SymlinkNotAllowed(operation) => {
+                write!(formatter, "{operation} must not be a symbolic link")
+            }
+            Self::NotDirectory(operation) => {
+                write!(formatter, "{operation} exists but is not a directory")
+            }
+            Self::CanonicalizePath { operation, source } => {
+                write!(formatter, "could not canonicalize {operation}: {source}")
+            }
+            Self::DirectoryEscapedTrustedRoot(operation) => {
+                write!(formatter, "{operation} escaped its trusted parent directory")
+            }
         }
     }
 }
@@ -192,19 +291,17 @@ impl fmt::Display for ProfilePathError {
 impl std::error::Error for ProfilePathError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::CreateDirectory { source, .. } => Some(source),
-            Self::InvalidProfile(source) => Some(source),
+            Self::CreateDirectory { source, .. }
+            | Self::InspectPath { source, .. }
+            | Self::CanonicalizePath { source, .. } => Some(source),
             Self::TrustedRootNotAbsolute
             | Self::TrustedRootContainsTraversal
             | Self::ProfileEscapedTrustedRoot
-            | Self::TauriPathResolution(_) => None,
+            | Self::TauriPathResolution(_)
+            | Self::SymlinkNotAllowed(_)
+            | Self::NotDirectory(_)
+            | Self::DirectoryEscapedTrustedRoot(_) => None,
         }
-    }
-}
-
-impl From<ProfileValidationError> for ProfilePathError {
-    fn from(value: ProfileValidationError) -> Self {
-        Self::InvalidProfile(value)
     }
 }
 
@@ -251,23 +348,22 @@ mod tests {
         let first_id = ProfileId::parse("main").expect("valid ID");
         let second_id = ProfileId::parse("lab_2").expect("valid ID");
 
-        let first = DesktopProfilePaths::from_trusted_app_local_data_root(
-            &test_root.0,
-            &first_id,
-        )
-        .expect("valid paths");
-        let second = DesktopProfilePaths::from_trusted_app_local_data_root(
-            &test_root.0,
-            &second_id,
-        )
-        .expect("valid paths");
+        let first =
+            DesktopProfilePaths::from_trusted_app_local_data_root(&test_root.0, &first_id)
+                .expect("valid paths");
+        let second =
+            DesktopProfilePaths::from_trusted_app_local_data_root(&test_root.0, &second_id)
+                .expect("valid paths");
 
         assert_eq!(first.root(), test_root.0.join("profiles/main"));
         assert_eq!(
             first.domain_database(),
             test_root.0.join("profiles/main/silent-disco.sqlite3")
         );
-        assert_eq!(first.metadata(), test_root.0.join("profiles/main/profile.json"));
+        assert_eq!(
+            first.metadata(),
+            test_root.0.join("profiles/main/profile.json")
+        );
         assert_ne!(first.root(), second.root());
         assert!(first.p2_database().is_none());
     }
@@ -305,5 +401,27 @@ mod tests {
         assert!(paths.cache().is_dir());
         assert!(!paths.domain_database().exists());
         assert!(!paths.metadata().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_profile_root_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let test_root = TestDirectory::new();
+        let outside = TestDirectory::new();
+        let profiles = test_root.0.join("profiles");
+        fs::create_dir_all(&profiles).expect("create profiles directory");
+        symlink(&outside.0, profiles.join("main")).expect("create profile symlink");
+
+        let id = ProfileId::parse("main").expect("valid ID");
+        let paths = DesktopProfilePaths::from_trusted_app_local_data_root(&test_root.0, &id)
+            .expect("valid paths");
+
+        assert!(matches!(
+            paths.prepare_directories(),
+            Err(ProfilePathError::SymlinkNotAllowed("profile root"))
+        ));
+        assert!(!outside.0.join("sources").exists());
     }
 }
