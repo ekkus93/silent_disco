@@ -148,7 +148,7 @@ fn run_host_flow() {
         RequestId::new("request-1").expect("valid request ID"),
         DeviceId::new("listener-1").expect("valid listener ID"),
         "Listener one",
-        TrustState::Unknown,
+        TrustState::SessionOnly,
         true,
         MonotonicMillis::new(100),
     )
