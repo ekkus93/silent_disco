@@ -1,0 +1,103 @@
+name: Ralph oversized refactor task 2
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/ralph-oversized-refactor.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ralph-oversized-refactor-master
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "1.97.1"
+  SOURCE_SHA: "486f2df79ed407620771c08033c6e2002b557548"
+
+jobs:
+  task-2-storage-worker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Transform and validate Task 2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exec > >(tee /tmp/task2.log) 2>&1
+          trap 'status=$?; echo "FAILED_COMMAND=${BASH_COMMAND}"; echo "EXIT_STATUS=${status}"; exit ${status}' ERR
+
+          rm rust/silent-disco-core/src/storage/worker.rs
+          base="https://raw.githubusercontent.com/ekkus93/silent_disco/${SOURCE_SHA}"
+          files=(
+            rust/silent-disco-core/src/storage/worker/mod.rs
+            rust/silent-disco-core/src/storage/worker/client.rs
+            rust/silent-disco-core/src/storage/worker/lifecycle.rs
+            rust/silent-disco-core/src/storage/worker/tests.rs
+          )
+          for file in "${files[@]}"; do
+            mkdir -p "$(dirname "${file}")"
+            curl --fail --location --silent --show-error "${base}/${file}" --output "${file}"
+          done
+
+          while IFS= read -r file; do
+            lines=$(wc -l < "${file}")
+            printf '%4d %s\n' "${lines}" "${file}"
+            test "${lines}" -lt 800
+          done < <(find rust/silent-disco-core/src/storage/worker -maxdepth 1 -type f -name '*.rs' | sort)
+
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+          cd rust
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          cd ..
+          ./gradlew assembleDebug test lintDebug --stacktrace --console=plain
+          git checkout -- rust/Cargo.lock
+
+      - name: Commit Task 2
+        run: |
+          set -euo pipefail
+          rm .github/workflows/ralph-oversized-refactor.yml
+          rm -f docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TASK2_FAILURE.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          test -n "$(git status --porcelain)"
+          git commit -m "Split database worker by client and lifecycle responsibilities"
+          git push origin HEAD:master
+
+      - name: Record Task 2 failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          cp /tmp/task2.log /tmp/task2.saved 2>/dev/null || true
+          git reset --hard "${GITHUB_SHA}"
+          rm -f .github/workflows/ralph-oversized-refactor.yml
+          if test -s /tmp/task2.saved; then
+            {
+              printf '# Task 2 storage worker refactor failure\n\n```text\n'
+              tail -n 500 /tmp/task2.saved
+              printf '\n```\n'
+            } > docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TASK2_FAILURE.md
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Record Task 2 refactor failure [skip ci]"
+          git push origin HEAD:master
