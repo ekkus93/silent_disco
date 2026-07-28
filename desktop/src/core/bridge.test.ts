@@ -34,7 +34,7 @@ const connection = {
     subscriptionId: "11",
     channel: {},
   },
-} as DesktopProfileConnection;
+} as unknown as DesktopProfileConnection;
 
 const diagnostic: CoreNotificationDto = {
   kind: "diagnostic",
