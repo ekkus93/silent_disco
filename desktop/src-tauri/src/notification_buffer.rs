@@ -409,7 +409,7 @@ fn record_delivery_failure(
     if state.active_subscription != Some(id) {
         return;
     }
-    if !matches!(notification, CoreNotification::Snapshot(_)) {
+    if !matches!(&notification, CoreNotification::Snapshot(_)) {
         assert!(
             state.failed_delivery.replace(notification).is_none(),
             "desktop notification dispatcher retained more than one failed delivery"
