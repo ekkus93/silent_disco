@@ -330,7 +330,7 @@ fn run_subscription_worker(
         };
         let snapshot_revision = notification_snapshot_revision(&next);
         if let Err(error) = sink.send(next.clone()) {
-            record_delivery_failure(shared, id, next, error);
+            record_delivery_failure(shared, id, next, &error);
             return;
         }
         if let Some(revision) = snapshot_revision {
@@ -397,7 +397,7 @@ fn record_delivery_failure(
     shared: &NotificationShared,
     id: DesktopNotificationSubscriptionId,
     notification: CoreNotification,
-    error: DesktopNotificationSendError,
+    error: &DesktopNotificationSendError,
 ) {
     let mut state = shared
         .state
@@ -412,7 +412,7 @@ fn record_delivery_failure(
             "desktop notification dispatcher retained more than one failed delivery"
         );
     }
-    state.delivery_failure = Some(channel_send_error(&error));
+    state.delivery_failure = Some(channel_send_error(error));
     state.active_subscription = None;
     shared.available.notify_all();
 }
