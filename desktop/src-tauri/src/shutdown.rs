@@ -1,9 +1,12 @@
 use crate::dto::DesktopErrorDto;
+use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
 use silent_disco_core::runtime::CoreActorRuntime;
 use silent_disco_core::storage::{DatabaseWorker, StorageError};
+use std::sync::Arc;
 
 pub struct DesktopOwnedResources {
+    pub notifications: Arc<DesktopNotificationBuffer>,
     pub actor: CoreActorRuntime,
     pub database: DatabaseWorker,
     pub lease: ProfileLease,
@@ -16,18 +19,25 @@ pub struct DesktopOwnedResources {
 ///
 /// # Errors
 ///
-/// Returns one bounded structured error when actor shutdown, database shutdown, or
-/// explicit profile-lock release fails. All later cleanup phases are still attempted.
+/// Returns one bounded structured error when notification-worker shutdown, actor shutdown,
+/// database shutdown, or explicit profile-lock release fails. All later cleanup phases are
+/// still attempted.
 pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), DesktopErrorDto> {
+    let notification_error = resources.notifications.shutdown().err();
     let actor_error = resources.actor.shutdown().err();
     let database_error = resources.database.stop_and_join().err();
     let lease_error = resources.lease.release().err();
 
-    if actor_error.is_none() && database_error.is_none() && lease_error.is_none() {
+    if notification_error.is_none()
+        && actor_error.is_none()
+        && database_error.is_none()
+        && lease_error.is_none()
+    {
         return Ok(());
     }
 
     Err(cleanup_error(
+        notification_error.as_ref(),
         actor_error.as_ref(),
         database_error.as_ref(),
         lease_error.as_ref(),
@@ -73,6 +83,7 @@ pub fn cleanup_with_actor(
 }
 
 fn cleanup_error(
+    notifications: Option<&silent_disco_core::error::CoreError>,
     actor: Option<&silent_disco_core::error::CoreError>,
     database: Option<&StorageError>,
     lease: Option<&ProfileLockError>,
@@ -83,7 +94,8 @@ fn cleanup_error(
         "fatal",
         false,
         &format!(
-            "desktop shutdown failed (actor={}, database={}, profile_lock={})",
+            "desktop shutdown failed (notifications={}, actor={}, database={}, profile_lock={})",
+            status(notifications),
             status(actor),
             status(database),
             status(lease)
