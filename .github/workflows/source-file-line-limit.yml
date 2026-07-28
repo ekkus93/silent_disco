@@ -1,0 +1,29 @@
+name: Source file line limit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-file-line-limit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-file-line-limit:
+    name: Tracked source files stay below 800 lines
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enforce source file line limit
+        run: bash scripts/check-source-file-line-counts.sh
