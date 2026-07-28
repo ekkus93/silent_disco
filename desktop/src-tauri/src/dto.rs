@@ -270,7 +270,10 @@ mod tests {
         };
         let json = serde_json::to_value(&value).expect("serialize lifecycle");
         assert_eq!(json["kind"], "failed");
-        assert_eq!(json["details"]["error"]["code"], "desktop.storage.open_failed");
+        assert_eq!(
+            json["details"]["error"]["code"],
+            "desktop.storage.open_failed"
+        );
         assert_eq!(
             serde_json::from_value::<BridgeLifecycleDto>(json).expect("deserialize lifecycle"),
             value
@@ -313,7 +316,10 @@ mod tests {
         };
 
         let dto = StorageInspectionDto::try_from(inspection).expect("convert inspection");
-        assert_eq!(dto.applied_migrations[0].applied_at_ms, u64::MAX.to_string());
+        assert_eq!(
+            dto.applied_migrations[0].applied_at_ms,
+            u64::MAX.to_string()
+        );
         assert_eq!(
             dto.settings.as_ref().expect("settings").updated_at_ms,
             u64::MAX.to_string()

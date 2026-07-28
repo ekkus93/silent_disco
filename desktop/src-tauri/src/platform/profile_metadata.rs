@@ -32,11 +32,8 @@ pub fn load_profile_metadata(
     expected_profile_id: &ProfileId,
 ) -> Result<ProfileMetadata, ProfileMetadataError> {
     let path = paths.metadata();
-    let file_metadata = fs::symlink_metadata(path).map_err(|source| {
-        ProfileMetadataError::InspectMetadata {
-            source,
-        }
-    })?;
+    let file_metadata = fs::symlink_metadata(path)
+        .map_err(|source| ProfileMetadataError::InspectMetadata { source })?;
     if file_metadata.file_type().is_symlink() {
         return Err(ProfileMetadataError::MetadataSymlinkNotAllowed);
     }
@@ -166,8 +163,8 @@ pub fn cleanup_incomplete_profile_metadata_files(
             });
         }
 
-        let entry = entry_result
-            .map_err(|source| ProfileMetadataError::ReadProfileDirectory { source })?;
+        let entry =
+            entry_result.map_err(|source| ProfileMetadataError::ReadProfileDirectory { source })?;
         if !entry
             .file_name()
             .as_encoded_bytes()
@@ -338,7 +335,9 @@ pub enum ProfileMetadataError {
 impl fmt::Display for ProfileMetadataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PreparePaths(error) => write!(formatter, "profile path preparation failed: {error}"),
+            Self::PreparePaths(error) => {
+                write!(formatter, "profile path preparation failed: {error}")
+            }
             Self::InspectMetadata { source } => {
                 write!(formatter, "could not inspect profile metadata: {source}")
             }
@@ -355,7 +354,10 @@ impl fmt::Display for ProfileMetadataError {
                 write!(formatter, "could not read profile metadata: {source}")
             }
             Self::MetadataTooLarge { maximum } => {
-                write!(formatter, "profile metadata exceeds the {maximum}-byte limit")
+                write!(
+                    formatter,
+                    "profile metadata exceeds the {maximum}-byte limit"
+                )
             }
             Self::DeserializeMetadata { source } => {
                 write!(formatter, "profile metadata is malformed: {source}")
@@ -368,25 +370,40 @@ impl fmt::Display for ProfileMetadataError {
                 formatter.write_str("profile metadata path has no parent directory")
             }
             Self::ReserveTemporary { source } => {
-                write!(formatter, "could not reserve metadata temporary file: {source}")
+                write!(
+                    formatter,
+                    "could not reserve metadata temporary file: {source}"
+                )
             }
             Self::TemporaryNameExhausted { attempts } => write!(
                 formatter,
                 "could not reserve metadata temporary file after {attempts} attempts"
             ),
             Self::WriteTemporary { source } => {
-                write!(formatter, "could not write metadata temporary file: {source}")
+                write!(
+                    formatter,
+                    "could not write metadata temporary file: {source}"
+                )
             }
             Self::SyncTemporary { source } => {
-                write!(formatter, "could not synchronize metadata temporary file: {source}")
+                write!(
+                    formatter,
+                    "could not synchronize metadata temporary file: {source}"
+                )
             }
             Self::PublishMetadata { source } => {
-                write!(formatter, "could not publish profile metadata atomically: {source}")
+                write!(
+                    formatter,
+                    "could not publish profile metadata atomically: {source}"
+                )
             }
             Self::ExistingMetadataConflict => formatter
                 .write_str("existing profile metadata conflicts with the requested metadata"),
             Self::RemoveTemporary { source } => {
-                write!(formatter, "could not remove metadata temporary file: {source}")
+                write!(
+                    formatter,
+                    "could not remove metadata temporary file: {source}"
+                )
             }
             Self::CommittedFinalizationFailed {
                 cleanup_error,
@@ -409,11 +426,13 @@ impl fmt::Display for ProfileMetadataError {
                 write!(formatter, "could not read profile directory: {source}")
             }
             Self::InspectTemporary { source } => {
-                write!(formatter, "could not inspect metadata temporary entry: {source}")
+                write!(
+                    formatter,
+                    "could not inspect metadata temporary entry: {source}"
+                )
             }
-            Self::UnsafeTemporaryEntry => formatter.write_str(
-                "metadata temporary cleanup refused a symlink or non-regular entry",
-            ),
+            Self::UnsafeTemporaryEntry => formatter
+                .write_str("metadata temporary cleanup refused a symlink or non-regular entry"),
             Self::CleanupEntryLimitExceeded { maximum } => write!(
                 formatter,
                 "metadata temporary cleanup exceeded its {maximum}-entry scan limit"
@@ -534,7 +553,10 @@ mod tests {
             initialize_profile_metadata(&paths, &metadata),
             Err(ProfileMetadataError::DeserializeMetadata { .. })
         ));
-        assert_eq!(fs::read(paths.metadata()).expect("read preserved file"), b"{broken");
+        assert_eq!(
+            fs::read(paths.metadata()).expect("read preserved file"),
+            b"{broken"
+        );
     }
 
     #[test]

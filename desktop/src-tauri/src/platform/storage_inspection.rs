@@ -67,12 +67,10 @@ pub fn inspect_profile_storage(
                 release_error: release.err(),
             })
         }
-        (Ok(_), Err(primary), release) => {
-            Err(ProfileStorageInspectionError::ShutdownAndRelease {
-                primary,
-                release_error: release.err(),
-            })
-        }
+        (Ok(_), Err(primary), release) => Err(ProfileStorageInspectionError::ShutdownAndRelease {
+            primary,
+            release_error: release.err(),
+        }),
         (Ok(_), Ok(()), Err(primary)) => {
             Err(ProfileStorageInspectionError::ReleaseProfileLease(primary))
         }
@@ -125,7 +123,9 @@ impl fmt::Display for ProfileStorageInspectionError {
             Self::AcquireProfileLease(error) => {
                 write!(formatter, "could not acquire profile lease: {error}")
             }
-            Self::OpenDatabase(error) => write!(formatter, "could not open profile database: {error}"),
+            Self::OpenDatabase(error) => {
+                write!(formatter, "could not open profile database: {error}")
+            }
             Self::OpenAndRelease {
                 primary,
                 release_error,
@@ -213,9 +213,7 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound
-                    && !std::thread::panicking()
-                {
+                if error.kind() != std::io::ErrorKind::NotFound && !std::thread::panicking() {
                     panic!("failed to remove storage-inspection test directory: {error}");
                 }
             }
@@ -245,7 +243,10 @@ mod tests {
 
         let second = inspect_profile_storage(&paths, &profile_id).expect("reopen inspection");
         assert_eq!(second.metadata.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(second.metadata.applied_migrations, first.metadata.applied_migrations);
+        assert_eq!(
+            second.metadata.applied_migrations,
+            first.metadata.applied_migrations
+        );
     }
 
     #[test]

@@ -76,7 +76,10 @@ export function App() {
           ) : null}
 
           {state.kind === "failed" ? (
-            <div className="mt-4 rounded-xl border border-red-300/30 bg-red-950/40 p-4" role="alert">
+            <div
+              className="mt-4 rounded-xl border border-red-300/30 bg-red-950/40 p-4"
+              role="alert"
+            >
               <p className="font-semibold text-red-100">Shared core verification failed</p>
               <p className="mt-2 text-sm leading-6 text-red-100/80">{state.message}</p>
             </div>

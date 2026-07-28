@@ -53,7 +53,9 @@ fn check_existing(path: &Path, expected: &[u8]) -> Result<(), Box<dyn Error>> {
     }
 
     let mut actual = Vec::new();
-    File::open(path)?.take(MAX_BINDING_BYTES + 1).read_to_end(&mut actual)?;
+    File::open(path)?
+        .take(MAX_BINDING_BYTES + 1)
+        .read_to_end(&mut actual)?;
     if actual != expected {
         return Err(format!(
             "generated TypeScript bindings are stale; run `npm run bindings:generate` and commit {}",

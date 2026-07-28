@@ -37,9 +37,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Shared core verification failed",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Shared core verification failed");
     expect(screen.getByRole("alert")).toHaveTextContent("native bridge unavailable");
   });
 });
