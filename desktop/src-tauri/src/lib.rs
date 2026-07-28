@@ -1,5 +1,8 @@
 use serde::Serialize;
 
+pub mod platform;
+pub mod profile;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CoreSmokeDto {
@@ -24,6 +27,12 @@ fn get_core_smoke(input: u64) -> CoreSmokeDto {
     core_smoke(input)
 }
 
+/// Runs the Silent Disco desktop shell.
+///
+/// # Errors
+///
+/// Returns a Tauri startup or event-loop error instead of converting it into a
+/// successful process exit.
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![get_core_smoke])
