@@ -1,6 +1,4 @@
-use crate::notification_buffer::{
-    DesktopNotificationSendError, DesktopNotificationSink,
-};
+use crate::notification_buffer::{DesktopNotificationSendError, DesktopNotificationSink};
 use crate::runtime_dto::CoreNotificationDto;
 use silent_disco_core::runtime::CoreNotification;
 use tauri::ipc::Channel;
