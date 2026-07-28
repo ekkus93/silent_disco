@@ -1,0 +1,8 @@
+repair_status=1
+source_commit=e0904dffae565d7bdd66164646baa5a583be9d51
+---
+trusted-root containment: literal matches=0
+Traceback (most recent call last):
+  File "<stdin>", line 26, in <module>
+  File "<stdin>", line 12, in replace_text
+RuntimeError: trusted-root containment: expected exactly one literal match in desktop/src-tauri/src/platform/paths.rs, found 0
