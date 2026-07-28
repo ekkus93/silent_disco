@@ -474,3 +474,83 @@ Complete this section only after Tasks 1 through 5 have each been implemented an
 - [ ] Run any repository-wide CI or instrumentation validation required by the current project baseline.
 - [ ] Record the five implementation commit SHAs and final validation evidence in `memory.md`.
 - [ ] Mark this TODO complete only after the final validation evidence is available.
+
+---
+
+# Ralph Loop completion record
+
+Status: **Implementation complete and fully validated.**
+
+The five oversized source-file refactors were implemented as five separate commits on `master`.
+Before each implementation commit, Rust formatting, strict Clippy with warnings denied, all Rust tests, Android debug assembly, Android unit tests, and Android lint passed.
+The same complete validation matrix passed once more after all five commits were combined.
+
+## Final line counts
+
+### Task 1 — MainViewModel
+
+Implementation commit: `5bac13879e223841d8625c713b56af574667e0de`
+
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt` — **481 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelAudioPipeline.kt` — **92 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelDemo.kt` — **121 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelDiagnostics.kt` — **110 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelHostActions.kt` — **533 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelHostPlayback.kt` — **224 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelListenerActions.kt` — **277 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelListenerPlayback.kt` — **269 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelPersistence.kt` — **105 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelSupport.kt` — **101 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelSynchronization.kt` — **233 lines**
+- `app/src/main/java/com/ekkus/silentdisco/app/MainViewModelTransport.kt` — **478 lines**
+
+### Task 2 — Storage worker
+
+Implementation commit: `7dd779d23a4c411462a796c63693d21913c4e0c0`
+
+- `rust/silent-disco-core/src/storage/worker/client.rs` — **269 lines**
+- `rust/silent-disco-core/src/storage/worker/lifecycle.rs` — **149 lines**
+- `rust/silent-disco-core/src/storage/worker/mod.rs` — **623 lines**
+- `rust/silent-disco-core/src/storage/worker/tests.rs` — **351 lines**
+
+### Task 3 — Protocol codec
+
+Implementation commit: `7be020c4e4e9fd2103698b0d84aee6511098bda8`
+
+- `rust/silent-disco-core/src/protocol/codec/decoding.rs` — **367 lines**
+- `rust/silent-disco-core/src/protocol/codec/encoding.rs` — **278 lines**
+- `rust/silent-disco-core/src/protocol/codec/mod.rs` — **310 lines**
+- `rust/silent-disco-core/src/protocol/codec/tests.rs` — **248 lines**
+
+### Task 4 — Actor state reducer
+
+Implementation commit: `edf5db368af48c42581611a2f684357e4d966308`
+
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/audio.rs` — **64 lines**
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/commands.rs` — **346 lines**
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/mod.rs` — **158 lines**
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/platform.rs` — **187 lines**
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/storage.rs` — **54 lines**
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/support.rs` — **181 lines**
+- `rust/silent-disco-core/src/runtime/actor_runtime/state/transport.rs` — **143 lines**
+
+### Task 5 — Android database ABI
+
+Implementation commit: `e43f750e402b707c8029bbdd96654e8174240242`
+
+- `rust/silent-disco-ffi/src/android_database_abi/exports.rs` — **378 lines**
+- `rust/silent-disco-ffi/src/android_database_abi/mod.rs` — **352 lines**
+- `rust/silent-disco-ffi/src/android_database_abi/tests.rs` — **112 lines**
+
+## Verified acceptance summary
+
+- [x] All 30 resulting source files are below 800 physical lines.
+- [x] Each original oversized file was handled as its own independently validated task and implementation commit.
+- [x] Public `MainViewModel` UI actions remain member methods; large implementations were moved into focused action modules.
+- [x] Storage worker queueing, shutdown, serialization, and explicit error behavior remain covered by the Rust test suite.
+- [x] Protocol canonical vectors, malformed-input rejection, CRC handling, and decoder diagnostics remain covered by the Rust test suite.
+- [x] Actor transactional reducer behavior and public actor integration flows remain covered by the Rust test suite.
+- [x] Android database registry, cache, import, and JNI-facing behavior remain covered by Rust and Android validation.
+- [x] No wildcard-import lint suppression was added; strict Clippy passed with warnings denied.
+- [x] No dependency change or generated `Cargo.lock` change was included in the refactor commits.
+- [x] Temporary workflows, transformers, and failure reports were removed after use.
