@@ -1,5 +1,9 @@
 use serde::Serialize;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "desktop startup keeps rollback ownership in one linear transaction"
+)]
 pub mod app_state;
 pub mod bindings;
 pub mod dto;
