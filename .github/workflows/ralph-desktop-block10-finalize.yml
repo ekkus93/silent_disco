@@ -53,6 +53,8 @@ jobs:
           set -o pipefail
           {
             set -euo pipefail
+            mkdir -p desktop/dist
+            printf '<!doctype html><title>Silent Disco binding generation</title>\n' > desktop/dist/index.html
             cd desktop/src-tauri
             cargo fmt --all
             cargo generate-lockfile
@@ -67,8 +69,6 @@ jobs:
           set -o pipefail
           {
             set -euo pipefail
-            mkdir -p desktop/dist
-            printf '<!doctype html><title>Silent Disco Rust validation</title>\n' > desktop/dist/index.html
             cd desktop/src-tauri
             cargo fmt --all -- --check
             cargo clippy --all-targets --all-features -- -D warnings
