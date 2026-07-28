@@ -1,5 +1,28 @@
 # memory.md — `silent_disco`
 
+## 2026-07-27T20:00:00Z - GPT-5.6 Thinking - Tauri desktop host Block 1 baseline recorded
+
+- Started the Ralph Loop for `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` from `master` at commit `e9ed31aca529f1811f9db4cc7121f8b2e3df31c4`.
+- Confirmed the required desktop documents exist at `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md` and `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`.
+- Compared implementation commit `294fd72ad703cf9bbf2b5ffc25599985f72dfbee` with the desktop-plan head. The five intervening commits change documentation only; no Rust, Kotlin, C++, Gradle, or workflow production source changed.
+- Used permanent GitHub Actions run `30304221562` as the latest source-equivalent automated baseline. Its Rust quality, Android build/unit/lint, ABI packaging, and API 29 managed instrumentation jobs all completed successfully. This is recorded evidence, not a claim that the current execution container reran those commands.
+- Physical Android acceptance remains open. The current handoff requires at least two physical Android devices; the native-load, Rust synchronization, Rust database, host/listener, resilience, P2, and release/device scenarios must not be inferred from CI or emulator results.
+- Inspected the shared migration TODO and production search results. Shared Blocks 10, 12, 14, 16, 19, 23, and 26 remain incomplete:
+  - Block 10: no production `CoreCommand`, `PlatformEvent`, `CoreSnapshot`, `CoreHandle`, or authoritative actor implementation; this blocks desktop actor integration, host UI state, Lab Mode, and most production desktop phases.
+  - Block 12: host lifecycle and approval policy remain Kotlin/Android-owned; this blocks a production desktop host.
+  - Block 14: no Rust bounded decoded-PCM ingestion or streaming host packetizer; this blocks production desktop audio transmission.
+  - Block 16: no Rust SPSC render ring; this blocks the shared real-time output architecture and optional desktop monitor output.
+  - Block 19: no Rust TCP/UDP transport runtime; this blocks real desktop-to-Android LAN sessions.
+  - Block 23: decoder ownership remains undecided and unimplemented; this blocks the final production desktop decoder path.
+  - Block 26: unified Rust diagnostics/export remains incomplete; this blocks the final desktop diagnostics and Lab Mode observability surface.
+- Current Kotlin ownership remains visible in `MainViewModel`, `PcmPacketizer`, `ListenerPlaybackScheduler`, `AudioTrackPlaybackEngine`, BLE/Wi-Fi Direct services, and Kotlin TCP transport. The desktop implementation must not copy these responsibilities into Tauri-specific Rust or TypeScript.
+- Execution environment inventory for this session:
+  - Debian GNU/Linux 13 (`trixie`), x86_64 container; this is not the intended Ubuntu 24.04 developer baseline.
+  - Node `v22.16.0`; npm `10.9.2`.
+  - No installed Rust toolchain, `gh`, Android SDK/`adb`, PipeWire/PulseAudio/ALSA tools, WebKitGTK development packages, Secret Service development package, Avahi daemon/client development package, or physical Android device.
+  - The container has no direct GitHub network access and no systemd user/system service environment. It cannot validate multicast/mDNS, real audio, Tauri Linux bundling, Android interoperability, or the user's actual LAN topology.
+- Fresh local `./gradlew`, Cargo, and Android instrumentation commands were not run and must not be marked complete. Block 1 is a recorded partial baseline, not accepted complete; continue with the missing reproducible developer-machine inventory and fresh gates before adding desktop files.
+
 ## 2026-07-26T04:17:33Z - GPT-5.6 Thinking - Rust-owned Android persistence Block 9 complete
 
 - Added `AndroidDatabasePathProvider`, which uses `noBackupFilesDir/domain/silent-disco.sqlite3`, creates only the parent directory, returns the complete path to Rust, never opens SQLite, and intentionally excludes the domain database from Android backup.
