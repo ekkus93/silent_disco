@@ -19,7 +19,7 @@ serde_json = "=1.0.145"
 silent-disco-core = { path = "../../rust/silent-disco-core" }
 tauri = "=2.11.2"
 tauri-plugin-dialog = "=2.7.2"
-ts-rs = { version = "=12.0.1", features = ["serde-compat"] }
+ts-rs = { version = "=12.0.1", features = ["serde-compat", "no-serde-warnings"] }
 
 [features]
 default = ["custom-protocol"]
