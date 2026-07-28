@@ -4,6 +4,7 @@ pub mod app_state;
 pub mod bindings;
 pub mod dto;
 pub mod notification_buffer;
+pub mod notification_channel;
 pub mod platform;
 pub mod profile;
 pub mod runtime_dto;
