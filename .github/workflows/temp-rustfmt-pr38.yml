@@ -1,0 +1,41 @@
+name: Temporary Rustfmt PR38
+
+on:
+  push:
+    branches:
+      - chatgpt/fix-rust-ci-30332312110
+
+permissions:
+  contents: write
+
+jobs:
+  format-rust:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: chatgpt/fix-rust-ci-30332312110
+          fetch-depth: 0
+
+      - name: Install pinned Rust formatter
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+
+      - name: Format Rust workspace
+        working-directory: rust
+        run: cargo fmt --all
+
+      - name: Commit exact formatter output
+        run: |
+          if git diff --quiet -- rust; then
+            echo "Rust files are already formatted."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust
+          git commit -m "Apply pinned Rust formatting"
+          git push origin HEAD:chatgpt/fix-rust-ci-30332312110
