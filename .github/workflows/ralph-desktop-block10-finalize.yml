@@ -8,6 +8,7 @@ on:
       - "desktop/**"
       - "scripts/repair-desktop-block10.py"
       - "scripts/repair-desktop-block10-clippy.py"
+      - "scripts/repair-desktop-block10-clippy-bootstrap.py"
       - ".github/workflows/ralph-desktop-block10-finalize.yml"
 
 permissions:
@@ -49,6 +50,7 @@ jobs:
           {
             set -euo pipefail
             python3 scripts/repair-desktop-block10.py
+            python3 scripts/repair-desktop-block10-clippy-bootstrap.py
             python3 scripts/repair-desktop-block10-clippy.py
           } 2>&1 | tee block10-patch.log
 
@@ -125,6 +127,7 @@ jobs:
           git rm .github/workflows/ralph-desktop-block10-validate.yml
           git rm scripts/repair-desktop-block10.py
           git rm scripts/repair-desktop-block10-clippy.py
+          git rm scripts/repair-desktop-block10-clippy-bootstrap.py
           git add desktop/src-tauri desktop/src/core/generated/desktop-bindings.ts
           git commit -m "Validate desktop core runtime ownership"
           git push origin HEAD:ralph/desktop-block10
