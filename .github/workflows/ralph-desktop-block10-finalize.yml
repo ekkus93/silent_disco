@@ -126,9 +126,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/ralph-desktop-block10-finalize.yml
           git rm .github/workflows/ralph-desktop-block10-validate.yml
-          git rm scripts/repair-desktop-block10.py
-          git rm scripts/repair-desktop-block10-clippy.py
-          git rm scripts/repair-desktop-block10-clippy-bootstrap.py
+          git rm -f scripts/repair-desktop-block10.py
+          git rm -f scripts/repair-desktop-block10-clippy.py
+          git rm -f scripts/repair-desktop-block10-clippy-bootstrap.py
           git add desktop/src-tauri desktop/src/core/generated/desktop-bindings.ts
           git commit -m "Validate desktop core runtime ownership"
           git push origin HEAD:ralph/desktop-block10
