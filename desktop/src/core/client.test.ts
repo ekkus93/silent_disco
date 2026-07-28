@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CoreNotificationDto, OpenProfileResponse } from "./generated/desktop-bindings";
-import { attachNotifications, openProfileWithNotifications } from "./client";
+import {
+  attachNotifications,
+  connectProfileWithNotifications,
+  openProfileWithNotifications,
+} from "./client";
 
 const { channelInstances, invokeMock } = vi.hoisted(() => ({
   channelInstances: [] as Array<{ onmessage: (message: unknown) => void }>,
@@ -85,6 +89,68 @@ describe("desktop core client", () => {
       "open_profile",
       "attach_notifications",
     ]);
+  });
+
+  it("attaches to an existing profile before requesting its current snapshot", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "attach_notifications") {
+        return Promise.resolve({ subscriptionId: "9" });
+      }
+      if (command === "get_current_snapshot") {
+        return Promise.resolve({ ...openResponse.snapshot, revision: "12" });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    const connection = await connectProfileWithNotifications("main", vi.fn());
+
+    expect(connection.connectionKind).toBe("reattached");
+    expect(connection.profile).toBeNull();
+    expect(connection.snapshot.revision).toBe("12");
+    expect(connection.notifications.subscriptionId).toBe("9");
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      "attach_notifications",
+      "get_current_snapshot",
+    ]);
+  });
+
+  it("opens and attaches when no profile is ready", async () => {
+    let attachmentCount = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "attach_notifications") {
+        attachmentCount += 1;
+        if (attachmentCount === 1) {
+          return Promise.reject({ code: "desktop.profile.not_ready" });
+        }
+        return Promise.resolve({ subscriptionId: "10" });
+      }
+      if (command === "open_profile") {
+        return Promise.resolve(openResponse);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    const connection = await connectProfileWithNotifications("main", vi.fn());
+
+    expect(connection.connectionKind).toBe("opened");
+    expect(connection.profile).toEqual(openResponse);
+    expect(connection.snapshot).toEqual(openResponse.snapshot);
+    expect(connection.notifications.subscriptionId).toBe("10");
+    expect(channelInstances).toHaveLength(2);
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      "attach_notifications",
+      "open_profile",
+      "attach_notifications",
+    ]);
+  });
+
+  it("does not open a profile after an unexpected attachment failure", async () => {
+    const attachmentError = new Error("channel permission denied");
+    invokeMock.mockRejectedValue(attachmentError);
+
+    await expect(connectProfileWithNotifications("main", vi.fn())).rejects.toBe(attachmentError);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0]?.[0]).toBe("attach_notifications");
   });
 
   it("closes an opened profile when notification attachment fails", async () => {
