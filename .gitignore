@@ -30,7 +30,8 @@ desktop/src-tauri/target/
 # Desktop frontend output
 desktop/node_modules/
 desktop/dist/
-desktop/src/core/generated/
+desktop/src/core/generated/*
+!desktop/src/core/generated/desktop-bindings.ts
 
 # Keystore files
 *.jks
