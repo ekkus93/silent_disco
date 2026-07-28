@@ -347,10 +347,7 @@ fn wait_for_next(
 ) -> Result<Option<CoreNotification>, CoreError> {
     let mut state = shared.state.lock().map_err(|_| state_poisoned_error())?;
     loop {
-        if stop.load(Ordering::Acquire)
-            || state.closed
-            || state.active_subscription != Some(id)
-        {
+        if stop.load(Ordering::Acquire) || state.closed || state.active_subscription != Some(id) {
             return Ok(None);
         }
 
