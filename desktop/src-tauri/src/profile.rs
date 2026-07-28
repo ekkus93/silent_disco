@@ -56,10 +56,7 @@ impl ProfileId {
             ));
         }
         if !value.bytes().all(|byte| {
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || byte == b'-'
-                || byte == b'_'
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
         }) {
             return Err(ProfileValidationError::InvalidId(
                 "profile ID may contain only lowercase ASCII letters, digits, '-' and '_'",

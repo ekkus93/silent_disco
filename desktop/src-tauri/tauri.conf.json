@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["appimage", "deb"],
-    "category": "Music"
+    "category": "Music",
+    "icon": ["icons/icon.png"]
   }
 }

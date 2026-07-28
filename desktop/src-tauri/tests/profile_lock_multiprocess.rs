@@ -36,9 +36,10 @@ impl TestDirectory {
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.0) {
-            if error.kind() != std::io::ErrorKind::NotFound && !thread::panicking() {
-                panic!("failed to remove profile-lock test directory: {error}");
-            }
+            assert!(
+                error.kind() == std::io::ErrorKind::NotFound || thread::panicking(),
+                "failed to remove profile-lock test directory: {error}"
+            );
         }
     }
 }
@@ -51,9 +52,8 @@ fn child_lock_holder() {
     let root = PathBuf::from(
         std::env::var_os(CHILD_ROOT_ENV).expect("child profile root environment variable"),
     );
-    let ready = PathBuf::from(
-        std::env::var_os(CHILD_READY_ENV).expect("child ready environment variable"),
-    );
+    let ready =
+        PathBuf::from(std::env::var_os(CHILD_READY_ENV).expect("child ready environment variable"));
     let release = PathBuf::from(
         std::env::var_os(CHILD_RELEASE_ENV).expect("child release environment variable"),
     );
@@ -191,7 +191,10 @@ fn wait_for_path(path: &Path, timeout: Duration) -> Result<(), String> {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("path did not appear before timeout: {}", path.display()));
+            return Err(format!(
+                "path did not appear before timeout: {}",
+                path.display()
+            ));
         }
         thread::sleep(POLL_INTERVAL);
     }

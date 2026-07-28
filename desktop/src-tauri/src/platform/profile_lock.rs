@@ -110,6 +110,7 @@ impl fmt::Debug for ProfileLease {
             .field("profile_id", &self.profile_id)
             .field("lock_path", &self.lock_path)
             .field("held", &self.file.is_some())
+            .field("release_attempted", &self.release_attempted)
             .finish()
     }
 }
@@ -123,12 +124,11 @@ impl Drop for ProfileLease {
         let unlock_result = file.unlock();
         drop(file);
 
-        if !self.release_attempted && !std::thread::panicking() {
-            panic!(
-                "ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}",
-                self.profile_id
-            );
-        }
+        assert!(
+            self.release_attempted || std::thread::panicking(),
+            "ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}",
+            self.profile_id
+        );
     }
 }
 
@@ -160,10 +160,7 @@ fn validate_locked_path(profile_root: &Path, lock_path: &Path) -> Result<(), Pro
     Ok(())
 }
 
-fn unlock_after_acquisition_failure(
-    file: &File,
-    primary: ProfileLockError,
-) -> ProfileLockError {
+fn unlock_after_acquisition_failure(file: &File, primary: ProfileLockError) -> ProfileLockError {
     match file.unlock() {
         Ok(()) => primary,
         Err(cleanup) => ProfileLockError::AcquisitionAndUnlockFailed {
@@ -233,7 +230,10 @@ impl fmt::Display for ProfileLockError {
                 write!(formatter, "could not canonicalize profile root: {source}")
             }
             Self::CanonicalizeLockFile { source } => {
-                write!(formatter, "could not canonicalize profile lock file: {source}")
+                write!(
+                    formatter,
+                    "could not canonicalize profile lock file: {source}"
+                )
             }
             Self::LockFileEscapedProfileRoot => {
                 formatter.write_str("profile lock file escaped the profile root")
@@ -241,9 +241,7 @@ impl fmt::Display for ProfileLockError {
             Self::ReleaseLock { source } => {
                 write!(formatter, "could not release profile lock: {source}")
             }
-            Self::LeaseAlreadyReleased => {
-                formatter.write_str("profile lease was already released")
-            }
+            Self::LeaseAlreadyReleased => formatter.write_str("profile lease was already released"),
             Self::AcquisitionAndUnlockFailed { primary, cleanup } => write!(
                 formatter,
                 "{primary}; cleanup unlock after acquisition also failed: {cleanup}"
@@ -303,9 +301,11 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    panic!("failed to remove test directory: {error}");
-                }
+                assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "failed to remove test directory: {error}"
+                );
             }
         }
     }
@@ -361,13 +361,15 @@ mod tests {
         paths.prepare_directories().expect("prepare profile");
         let outside_file = outside.0.join("outside.lock");
         fs::write(&outside_file, b"outside").expect("write outside file");
-        symlink(&outside_file, paths.root().join(".profile.lock"))
-            .expect("create lock symlink");
+        symlink(&outside_file, paths.root().join(".profile.lock")).expect("create lock symlink");
 
         assert!(matches!(
             ProfileLease::acquire(&paths, &id),
             Err(ProfileLockError::LockFileSymlinkNotAllowed)
         ));
-        assert_eq!(fs::read(outside_file).expect("read outside file"), b"outside");
+        assert_eq!(
+            fs::read(outside_file).expect("read outside file"),
+            b"outside"
+        );
     }
 }

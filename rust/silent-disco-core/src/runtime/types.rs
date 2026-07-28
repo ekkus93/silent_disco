@@ -1,6 +1,6 @@
 use crate::domain::{
-    ApprovalMode, DeliverySeverity, DeviceId, MonotonicMillis, RequestId, SessionId, SyncConfidence,
-    TransportState, TrustState, TuningSettings,
+    ApprovalMode, DeliverySeverity, DeviceId, MonotonicMillis, RequestId, SessionId,
+    SyncConfidence, TransportState, TrustState, TuningSettings,
 };
 use crate::error::CoreError;
 use crate::protocol::{MAX_DISPLAY_NAME_BYTES, MAX_INVITE_CODE_BYTES, MAX_SESSION_NAME_BYTES};
@@ -213,7 +213,9 @@ impl HostDraft {
                 MAX_INVITE_CODE_BYTES,
                 RuntimeRecordValidationError::InviteCode,
             ),
-            (ApprovalMode::InviteCode, None) => Err(RuntimeRecordValidationError::InviteCodeRequired),
+            (ApprovalMode::InviteCode, None) => {
+                Err(RuntimeRecordValidationError::InviteCodeRequired)
+            }
             (ApprovalMode::Manual | ApprovalMode::TrustedDevices, Some(_)) => {
                 Err(RuntimeRecordValidationError::UnexpectedInviteCode)
             }
@@ -245,7 +247,9 @@ impl TuningPatch {
         current: &TuningSettings,
     ) -> Result<TuningSettings, RuntimeRecordValidationError> {
         let next = TuningSettings {
-            sync_sample_window: self.sync_sample_window.unwrap_or(current.sync_sample_window),
+            sync_sample_window: self
+                .sync_sample_window
+                .unwrap_or(current.sync_sample_window),
             sync_cadence_ms: self.sync_cadence_ms.unwrap_or(current.sync_cadence_ms),
             startup_buffer_ms: self.startup_buffer_ms.unwrap_or(current.startup_buffer_ms),
             late_packet_threshold_ms: self
@@ -692,7 +696,10 @@ mod tests {
 
     #[test]
     fn revisions_advance_without_wrapping() {
-        assert_eq!(SnapshotRevision::new(7).checked_next().expect("next").get(), 8);
+        assert_eq!(
+            SnapshotRevision::new(7).checked_next().expect("next").get(),
+            8
+        );
         assert_eq!(
             SnapshotRevision::new(u64::MAX).checked_next(),
             Err(RuntimeRecordValidationError::RevisionOverflow)
@@ -763,11 +770,7 @@ mod tests {
         let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
         assert!(NetworkEndpoint::new(address, 0, 2, 3).is_err());
         assert!(NetworkEndpoint::new(address, 1, 2, 3).is_ok());
-        assert!(
-            SynchronizationSummary::new(SyncConfidence::Good, 1.0, -1.0, 0.0).is_err()
-        );
-        assert!(
-            SynchronizationSummary::new(SyncConfidence::Good, f64::NAN, 1.0, 0.0).is_err()
-        );
+        assert!(SynchronizationSummary::new(SyncConfidence::Good, 1.0, -1.0, 0.0).is_err());
+        assert!(SynchronizationSummary::new(SyncConfidence::Good, f64::NAN, 1.0, 0.0).is_err());
     }
 }

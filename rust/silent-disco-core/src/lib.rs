@@ -4,6 +4,12 @@ pub mod domain;
 pub mod error;
 pub mod p2;
 pub mod protocol;
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::unnecessary_wraps,
+    clippy::unused_self,
+    reason = "the private serialized reducer preserves uniform fallible handler signatures and owned correlation records"
+)]
 pub mod runtime;
 pub mod storage;
 pub mod sync;

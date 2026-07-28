@@ -71,11 +71,7 @@ impl DesktopProfilePaths {
         reject_symlink_or_non_directory("profiles root", &self.profiles_root)?;
         let canonical_profiles_root = canonicalize("profiles root", &self.profiles_root)?;
 
-        ensure_owned_directory(
-            "profile root",
-            &self.root,
-            Some(&canonical_profiles_root),
-        )?;
+        ensure_owned_directory("profile root", &self.root, Some(&canonical_profiles_root))?;
         let canonical_profile_root = canonicalize("profile root", &self.root)?;
 
         for (label, path) in [
@@ -186,10 +182,10 @@ fn ensure_owned_directory(
     }
 
     let canonical = canonicalize(label, path)?;
-    if let Some(parent) = canonical_parent {
-        if !canonical.starts_with(parent) {
-            return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
-        }
+    if let Some(parent) = canonical_parent
+        && !canonical.starts_with(parent)
+    {
+        return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));
     }
     Ok(())
 }
@@ -264,7 +260,10 @@ impl fmt::Display for ProfilePathError {
                 formatter.write_str("profile path escaped the trusted application data root")
             }
             Self::TauriPathResolution(message) => {
-                write!(formatter, "could not resolve application-local-data path: {message}")
+                write!(
+                    formatter,
+                    "could not resolve application-local-data path: {message}"
+                )
             }
             Self::CreateDirectory { operation, source } => {
                 write!(formatter, "{operation} failed: {source}")
@@ -282,7 +281,10 @@ impl fmt::Display for ProfilePathError {
                 write!(formatter, "could not canonicalize {operation}: {source}")
             }
             Self::DirectoryEscapedTrustedRoot(operation) => {
-                write!(formatter, "{operation} escaped its trusted parent directory")
+                write!(
+                    formatter,
+                    "{operation} escaped its trusted parent directory"
+                )
             }
         }
     }
@@ -335,9 +337,11 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             if let Err(error) = fs::remove_dir_all(&self.0) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    panic!("failed to remove test directory: {error}");
-                }
+                assert_eq!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "failed to remove test directory: {error}"
+                );
             }
         }
     }
@@ -348,9 +352,8 @@ mod tests {
         let first_id = ProfileId::parse("main").expect("valid ID");
         let second_id = ProfileId::parse("lab_2").expect("valid ID");
 
-        let first =
-            DesktopProfilePaths::from_trusted_app_local_data_root(&test_root.0, &first_id)
-                .expect("valid paths");
+        let first = DesktopProfilePaths::from_trusted_app_local_data_root(&test_root.0, &first_id)
+            .expect("valid paths");
         let second =
             DesktopProfilePaths::from_trusted_app_local_data_root(&test_root.0, &second_id)
                 .expect("valid paths");
