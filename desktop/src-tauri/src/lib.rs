@@ -47,6 +47,7 @@ pub fn run() -> tauri::Result<()> {
             get_core_smoke,
             app_state::open_profile,
             app_state::get_current_snapshot,
+            app_state::attach_notifications,
             app_state::close_profile
         ])
         .run(tauri::generate_context!())
