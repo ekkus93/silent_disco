@@ -15,6 +15,7 @@ tauri-build = "=2.6.2"
 
 [dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
 silent-disco-core = { path = "../../rust/silent-disco-core" }
 tauri = "=2.11.2"
 tauri-plugin-dialog = "=2.7.2"
