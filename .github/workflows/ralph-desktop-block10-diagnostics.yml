@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ralph-desktop-block10-finalize
+  cancel-in-progress: true
+
 jobs:
   validate-and-commit:
     runs-on: ubuntu-24.04
@@ -36,41 +40,225 @@ jobs:
             build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
 
-      - name: Format and generate exact artifacts
+      - name: Repair compiler and fail-visibility defects
         shell: bash
         run: |
           set -euo pipefail
-          cd desktop/src-tauri
-          cargo fmt --all
-          cargo generate-lockfile
-          cd ..
-          npm ci
-          npm run bindings:generate
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text()
+              if old not in source:
+                  raise SystemExit(f"expected source was not found in {path}")
+              target.write_text(source.replace(old, new, 1))
+
+          notification = "desktop/src-tauri/src/notification_buffer.rs"
+          replace_exact(
+              notification,
+              '''                    return Err(CoreError {
+                          code: CoreErrorCode::QueueOverflow,
+                          message: "desktop pending notification queue is full".to_owned(),
+                          subsystem: CoreErrorCode::QueueOverflow.subsystem(),
+                          severity: ErrorSeverity::Fatal,
+                          retryable: false,
+                          operation_id: None,
+                          context: Vec::new(),
+                      });''',
+              '''                    return Err(core_error(
+                          CoreErrorCode::QueueOverflow,
+                          "desktop pending notification queue is full",
+                      ));''',
+          )
+          replace_exact(
+              notification,
+              '''fn bridge_error(message: &str) -> CoreError {
+              CoreError {
+                  code: CoreErrorCode::FfiCallbackFailed,
+                  message: message.to_owned(),
+                  subsystem: CoreErrorCode::FfiCallbackFailed.subsystem(),
+                  severity: ErrorSeverity::Fatal,
+                  retryable: false,
+                  operation_id: None,
+                  context: Vec::new(),
+              }
+          }''',
+              '''fn bridge_error(message: &'static str) -> CoreError {
+              core_error(CoreErrorCode::FfiCallbackFailed, message)
+          }
+
+          fn core_error(code: CoreErrorCode, message: &'static str) -> CoreError {
+              match CoreError::new(code, message, ErrorSeverity::Fatal, false, None) {
+                  Ok(error) => error,
+                  Err(error) => panic!("invalid static desktop notification error: {error}"),
+              }
+          }''',
+          )
+          replace_exact(
+              notification,
+              '''CoreNotification::Error(CoreError {
+                          code: CoreErrorCode::PlatformOperationFailed,
+                          message: format!("failure {index}"),
+                          subsystem: CoreErrorCode::PlatformOperationFailed.subsystem(),
+                          severity: ErrorSeverity::Error,
+                          retryable: false,
+                          operation_id: None,
+                          context: Vec::new(),
+                      })''',
+              '''CoreNotification::Error(
+                          CoreError::new(
+                              CoreErrorCode::PlatformOperationFailed,
+                              format!("failure {index}"),
+                              ErrorSeverity::Error,
+                              false,
+                              None,
+                          )
+                          .expect("valid test error"),
+                      )''',
+          )
+          replace_exact(
+              notification,
+              '''CoreNotification::Error(CoreError {
+                      code: CoreErrorCode::PlatformOperationFailed,
+                      message: "overflow".to_owned(),
+                      subsystem: CoreErrorCode::PlatformOperationFailed.subsystem(),
+                      severity: ErrorSeverity::Error,
+                      retryable: false,
+                      operation_id: None,
+                      context: Vec::new(),
+                  })''',
+              '''CoreNotification::Error(
+                      CoreError::new(
+                          CoreErrorCode::PlatformOperationFailed,
+                          "overflow",
+                          ErrorSeverity::Error,
+                          false,
+                          None,
+                      )
+                      .expect("valid test error"),
+                  )''',
+          )
+
+          replace_exact(
+              "desktop/src-tauri/src/platform/identity.rs",
+              '''            Self::GenerateSecret(source) => Some(source),
+                      Self::InvalidStoredSecretLength { .. }
+                      | Self::IdentifierEncodingFailed
+                      | Self::DerivedIdentifierInvalid => None,''',
+              '''            Self::GenerateSecret(_)
+                      | Self::InvalidStoredSecretLength { .. }
+                      | Self::IdentifierEncodingFailed
+                      | Self::DerivedIdentifierInvalid => None,''',
+          )
+
+          app_state = "desktop/src-tauri/src/app_state.rs"
+          replace_exact(
+              app_state,
+              '''    identity: DesktopIdentity,
+              handle: CoreActorHandle,
+              notifications: Arc<DesktopNotificationBuffer>,''',
+              '''    _identity: DesktopIdentity,
+              handle: CoreActorHandle,
+              _notifications: Arc<DesktopNotificationBuffer>,''',
+          )
+          replace_exact(
+              app_state,
+              '''                    let cleanup = shutdown_owned_resources(ready.owned);
+                      let error = append_cleanup(primary, cleanup.err());
+                      let _ = self.fail_open(error.clone());
+                      Err(error)''',
+              '''                    let cleanup = shutdown_owned_resources(ready.owned);
+                      let error = append_cleanup(primary, cleanup.err());
+                      if let Err(state_error) = self.fail_open(error.clone()) {
+                          return Err(append_cleanup(error, Some(state_error)));
+                      }
+                      Err(error)''',
+          )
+          replace_exact(
+              app_state,
+              '''            CloseAction::Shutdown(ready) => {
+                      let _public_identity = ready.identity.device_id();
+                      let _pending_bridge = Arc::strong_count(&ready.notifications);
+                      self.finish_close(shutdown_owned_resources(ready.owned))
+                  }''',
+              '''            CloseAction::Shutdown(ready) => {
+                      self.finish_close(shutdown_owned_resources(ready.owned))
+                  }''',
+          )
+          replace_exact(
+              app_state,
+              '''            identity,
+                      handle,
+                      notifications,''',
+              '''            _identity: identity,
+                      handle,
+                      _notifications: notifications,''',
+          )
+
+          replace_exact(
+              "desktop/src-tauri/src/runtime_dto.rs",
+              '''fn saturating_u32(value: usize) -> u32 {
+              u32::try_from(value).unwrap_or(u32::MAX)
+          }''',
+              '''fn saturating_u32(value: usize) -> u32 {
+              match u32::try_from(value) {
+                  Ok(value) => value,
+                  Err(error) => panic!("validated core collection count exceeded u32: {error}"),
+              }
+          }''',
+          )
+          PY
+
+      - name: Format and generate exact artifacts
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            set -euo pipefail
+            cd desktop/src-tauri
+            cargo fmt --all
+            cargo generate-lockfile
+            cd ..
+            npm ci
+            npm run bindings:generate
+          } 2>&1 | tee block10-generate.log
 
       - name: Validate desktop Rust
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p desktop/dist
-          printf '<!doctype html><title>Silent Disco Rust validation</title>\n' > desktop/dist/index.html
-          cd desktop/src-tauri
-          cargo fmt --all -- --check
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all-features
-          cargo check --all-features
+          set -o pipefail
+          {
+            set -euo pipefail
+            mkdir -p desktop/dist
+            printf '<!doctype html><title>Silent Disco Rust validation</title>\n' > desktop/dist/index.html
+            cd desktop/src-tauri
+            cargo fmt --all -- --check
+            cargo clippy --all-targets --all-features -- -D warnings
+            cargo test --all-features
+            cargo check --all-features
+          } 2>&1 | tee block10-rust.log
 
       - name: Validate desktop frontend
         working-directory: desktop
+        shell: bash
         run: |
-          npm run bindings:check
-          npm run format:check
-          npm run lint
-          npm run typecheck
-          npm test -- --run
-          npm run build
+          set -o pipefail
+          {
+            set -euo pipefail
+            npm run bindings:check
+            npm run format:check
+            npm run lint
+            npm run typecheck
+            npm test -- --run
+            npm run build
+          } 2>&1 | tee ../block10-frontend.log
 
       - name: Validate source-size invariant
-        run: bash scripts/check-source-file-line-counts.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/check-source-file-line-counts.sh 2>&1 | tee block10-source.log
 
       - name: Upload finalization diagnostics
         if: always()
@@ -78,6 +266,7 @@ jobs:
         with:
           name: ralph-desktop-block10-finalize
           path: |
+            block10-*.log
             desktop/src-tauri/src/
             desktop/src-tauri/Cargo.lock
             desktop/src/core/generated/desktop-bindings.ts
