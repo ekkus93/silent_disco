@@ -45,11 +45,35 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Install Linux dependencies for Rust binding generator
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
       - name: Generate exact npm lockfile when missing
         run: npm install --package-lock-only --ignore-scripts
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Create Rust binding frontend placeholder
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco binding CI placeholder</title>\n' > desktop/dist/index.html
 
       - name: Verify Rust-derived TypeScript bindings
         run: npm run bindings:check

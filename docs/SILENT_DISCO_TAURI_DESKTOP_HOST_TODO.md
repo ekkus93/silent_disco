@@ -551,35 +551,37 @@ This block is complete only when Block 10 of `docs/SILENT_DISCO_RUST_CORE_MIGRAT
 
 ### 9.1 Verify shared actor records
 
-- [ ] `CoreCommand` exists;
-- [ ] `PlatformEvent` exists;
-- [ ] `TransportEvent` exists;
-- [ ] `AudioEvent` exists;
-- [ ] `StorageEvent` exists;
-- [ ] `PlatformEffect` exists;
-- [ ] `CoreNotification` exists;
-- [ ] `CoreSnapshot` exists;
-- [ ] `CommandReceipt` exists;
-- [ ] operation IDs and snapshot revisions are tested.
+- [x] `CoreCommand` exists;
+- [x] `PlatformEvent` exists;
+- [x] `TransportEvent` exists;
+- [x] `AudioEvent` exists;
+- [x] `StorageEvent` exists;
+- [x] `PlatformEffect` exists;
+- [x] `CoreNotification` exists;
+- [x] `CoreSnapshot` exists;
+- [x] `CommandReceipt` exists;
+- [x] operation IDs and snapshot revisions are tested.
 
 ### 9.2 Verify actor behavior
 
-- [ ] one serialized owner;
-- [ ] bounded queue;
-- [ ] visible queue-full result;
-- [ ] no blocking database/network work under actor state ownership;
-- [ ] stale completion rejection;
-- [ ] notification outside state lock;
-- [ ] deterministic shutdown and join.
+- [x] one serialized owner;
+- [x] bounded queue;
+- [x] visible queue-full result;
+- [x] no blocking database/network work under actor state ownership;
+- [x] stale completion rejection;
+- [x] notification outside state lock;
+- [x] deterministic shutdown and join.
 
 ### 9.3 Run shared acceptance
 
-- [ ] host-independent simulated state flow passes;
-- [ ] shared Rust gates pass;
-- [ ] Android build/tests/lint pass;
-- [ ] no desktop-specific type appears in the core actor.
+- [x] host-independent simulated state flow passes;
+- [x] shared Rust gates pass;
+- [x] Android build/tests/lint pass;
+- [x] no desktop-specific type appears in the core actor.
 
 **Acceptance:** The desktop can consume a real authoritative core instead of inventing one.
+
+**Implementation status:** Complete. The shared actor records/runtime are production code, remain free of desktop-specific types, and passed the host-independent actor tests plus the repository Rust/Android and desktop gates recorded for PR #38.
 
 ---
 
@@ -609,12 +611,12 @@ struct DesktopRuntimeState {
 }
 ```
 
-- [ ] mutex poisoning is mapped to a fatal bridge error;
-- [ ] no audio callback accesses this mutex;
-- [ ] one production core per process;
-- [ ] opening twice fails explicitly;
-- [ ] partially opened resources are cleaned in reverse order;
-- [ ] cleanup failures are preserved.
+- [x] mutex poisoning is mapped to a fatal bridge error;
+- [x] no audio callback accesses this mutex;
+- [x] one production core per process;
+- [x] opening twice fails explicitly;
+- [x] partially opened resources are cleaned in reverse order;
+- [x] cleanup failures are preserved.
 
 ### 10.2 Implement open command
 
@@ -631,29 +633,31 @@ pub async fn open_profile(
 }
 ```
 
-- [ ] do blocking open work off the Tauri/UI thread;
-- [ ] return actual startup stage and failure;
-- [ ] do not report ready until identity, storage, actor, and required bridge components are ready;
-- [ ] return current snapshot revision.
+- [x] do blocking open work off the Tauri/UI thread;
+- [x] return actual startup stage and failure;
+- [x] do not report ready until identity, storage, actor, and required bridge components are ready;
+- [x] return current snapshot revision.
 
 ### 10.3 Add current snapshot command
 
-- [ ] fetch actual `CoreSnapshot`;
-- [ ] map through one tested DTO conversion;
-- [ ] do not derive legal actions in Tauri;
-- [ ] preserve revision.
+- [x] fetch actual `CoreSnapshot`;
+- [x] map through one tested DTO conversion;
+- [x] do not derive legal actions in Tauri;
+- [x] preserve revision.
 
 ### 10.4 Add tests
 
-- [ ] successful open;
-- [ ] second open rejection;
-- [ ] storage failure cleanup;
-- [ ] observer setup failure cleanup;
-- [ ] profile lock retained for core lifetime;
-- [ ] current snapshot after open;
-- [ ] idempotent shutdown after partial failure.
+- [x] successful open;
+- [x] second open rejection;
+- [x] storage failure cleanup;
+- [x] observer setup failure cleanup;
+- [x] profile lock retained for core lifetime;
+- [x] current snapshot after open;
+- [x] idempotent shutdown after partial failure.
 
 **Acceptance:** Tauri owns a direct real `CoreHandle` with deterministic resource ownership.
+
+**Implementation status:** Complete in PR #40. Tauri owns one real shared-core actor and one Rust database worker for the open profile; secure identity, storage, actor, and initial notification delivery must all succeed before `Ready`. Open/close work runs off the UI thread, duplicate opens fail, startup and shutdown cleanup is reverse-ordered and fail-visible, and the current snapshot preserves the authoritative revision. Guarded finalizer run `30393427074` passed desktop Rust formatting, strict Clippy, backend tests/check, generated bindings, Biome formatting/lint, TypeScript, frontend tests/build, and the repository source-size invariant.
 
 ---
 
