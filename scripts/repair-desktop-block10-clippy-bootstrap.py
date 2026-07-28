@@ -36,8 +36,8 @@ if source.count(old_first_call) != 1:
     raise SystemExit("first test profile-path call precondition changed")
 source = source.replace(old_first_call, new_first_call)
 
-old_cloned_call = '''                    paths.clone(),'''
-new_borrowed_call = '''                    &paths,'''
+old_cloned_call = "paths.clone(),"
+new_borrowed_call = "&paths,"
 if source.count(old_cloned_call) != 4:
     raise SystemExit("cloned test profile-path call precondition changed")
 source = source.replace(old_cloned_call, new_borrowed_call)
