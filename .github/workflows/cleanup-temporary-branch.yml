@@ -1,0 +1,32 @@
+name: Clean temporary branch
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/cleanup-temporary-branch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Delete temporary branch and this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin --delete agent/tauri-block8-bindings || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/cleanup-temporary-branch.yml
+          git commit -m "Remove temporary branch cleanup"
+          git push origin HEAD:master
