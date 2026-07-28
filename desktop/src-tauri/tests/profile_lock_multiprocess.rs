@@ -36,9 +36,10 @@ impl TestDirectory {
 impl Drop for TestDirectory {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.0) {
-            if error.kind() != std::io::ErrorKind::NotFound && !thread::panicking() {
-                panic!("failed to remove profile-lock test directory: {error}");
-            }
+            assert!(
+                error.kind() == std::io::ErrorKind::NotFound || thread::panicking(),
+                "failed to remove profile-lock test directory: {error}"
+            );
         }
     }
 }
