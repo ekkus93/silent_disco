@@ -18,8 +18,28 @@ second_pass.write_text(source.replace(old_count, new_count))
 
 app_state = Path("desktop/src-tauri/src/app_state.rs")
 source = app_state.read_text()
-old_call = "match open_runtime(paths, profile_id, provider, notifications) {"
-new_call = "match open_runtime(&paths, profile_id, provider, notifications) {"
-if source.count(old_call) != 1:
-    raise SystemExit("test open_runtime call precondition changed")
-app_state.write_text(source.replace(old_call, new_call))
+old_parameter = '''    fn open_profile_sync(
+        &self,
+        paths: DesktopProfilePaths,'''
+new_parameter = '''    fn open_profile_sync(
+        &self,
+        paths: &DesktopProfilePaths,'''
+if source.count(old_parameter) != 1:
+    raise SystemExit("test open_profile_sync parameter precondition changed")
+source = source.replace(old_parameter, new_parameter)
+
+old_first_call = '''                paths,
+                id,'''
+new_first_call = '''                &paths,
+                id,'''
+if source.count(old_first_call) != 1:
+    raise SystemExit("first test profile-path call precondition changed")
+source = source.replace(old_first_call, new_first_call)
+
+old_cloned_call = '''                    paths.clone(),'''
+new_borrowed_call = '''                    &paths,'''
+if source.count(old_cloned_call) != 4:
+    raise SystemExit("cloned test profile-path call precondition changed")
+source = source.replace(old_cloned_call, new_borrowed_call)
+
+app_state.write_text(source)
