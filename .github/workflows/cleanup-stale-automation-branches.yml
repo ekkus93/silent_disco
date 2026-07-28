@@ -1,0 +1,63 @@
+name: Cleanup stale automation branches
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/cleanup-stale-automation-branches.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Delete stale automation branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+
+          deleted=0
+          while IFS= read -r branch; do
+            case "${branch}" in
+              master|HEAD|"")
+                continue
+                ;;
+              agent/*|feature/*|docs/*|chatgpt/*|THIS_SHOULD_NOT_BE_CREATED)
+                echo "Deleting stale automation branch: ${branch}"
+                git push origin --delete "${branch}"
+                deleted=$((deleted + 1))
+                ;;
+              *)
+                echo "Preserving unrelated branch: ${branch}"
+                ;;
+            esac
+          done < <(
+            git for-each-ref \
+              --format='%(refname:strip=3)' \
+              refs/remotes/origin \
+              | sort -u
+          )
+
+          echo "Deleted ${deleted} stale automation branch(es)."
+
+      - name: Remove this one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/cleanup-stale-automation-branches.yml
+          git add .github/workflows/cleanup-stale-automation-branches.yml
+          git commit -m "Remove one-shot branch cleanup workflow"
+          git push origin HEAD:master
