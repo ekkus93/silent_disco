@@ -21,14 +21,14 @@ describe("App", () => {
       major: 0,
       minor: 1,
       patch: 0,
-      smoke: "6000285865745416193",
+      smoke: "6000001225524396033",
     });
 
     render(<App />);
 
     expect(screen.getByRole("status")).toHaveTextContent("Verifying the shared core");
     expect(await screen.findByText("0.1.0")).toBeVisible();
-    expect(screen.getByText("6000285865745416193")).toBeVisible();
+    expect(screen.getByText("6000001225524396033")).toBeVisible();
     expect(invokeMock).toHaveBeenCalledWith("get_core_smoke", { input: 42 });
   });
 
