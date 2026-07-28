@@ -412,7 +412,7 @@ fn record_delivery_failure(
             "desktop notification dispatcher retained more than one failed delivery"
         );
     }
-    state.delivery_failure = Some(channel_send_error(error));
+    state.delivery_failure = Some(channel_send_error(&error));
     state.active_subscription = None;
     shared.available.notify_all();
 }
@@ -485,7 +485,7 @@ fn ensure_bridge_open(state: &NotificationState) -> Result<(), CoreError> {
     Ok(())
 }
 
-fn channel_send_error(error: DesktopNotificationSendError) -> CoreError {
+fn channel_send_error(error: &DesktopNotificationSendError) -> CoreError {
     match CoreError::new(
         CoreErrorCode::FfiCallbackFailed,
         format!("desktop notification channel send failed: {error}"),
