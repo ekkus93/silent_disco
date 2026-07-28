@@ -5,6 +5,7 @@ import type {
   BridgeLifecycleDto,
   CoreNotificationDto,
   CoreSnapshotDto,
+  DesktopErrorDto,
   OpenProfileRequest,
   OpenProfileResponse,
 } from "./generated/desktop-bindings";
@@ -23,6 +24,13 @@ export interface DesktopNotificationSubscription {
 
 export interface OpenProfileSession {
   profile: OpenProfileResponse;
+  notifications: DesktopNotificationSubscription;
+}
+
+export interface DesktopProfileConnection {
+  connectionKind: "opened" | "reattached";
+  profile: OpenProfileResponse | null;
+  snapshot: CoreSnapshotDto;
   notifications: DesktopNotificationSubscription;
 }
 
@@ -73,6 +81,41 @@ export async function openProfileWithNotifications(
   }
 }
 
+export async function connectProfileWithNotifications(
+  profileId: string,
+  onNotification: (notification: CoreNotificationDto) => void,
+): Promise<DesktopProfileConnection> {
+  try {
+    const notifications = await attachNotifications(onNotification);
+    const snapshot = await getCurrentSnapshot();
+    return {
+      connectionKind: "reattached",
+      profile: null,
+      snapshot,
+      notifications,
+    };
+  } catch (error: unknown) {
+    if (!hasDesktopErrorCode(error, "desktop.profile.not_ready")) {
+      throw error;
+    }
+  }
+
+  const session = await openProfileWithNotifications(profileId, onNotification);
+  return {
+    connectionKind: "opened",
+    profile: session.profile,
+    snapshot: session.profile.snapshot,
+    notifications: session.notifications,
+  };
+}
+
 export async function closeProfile(): Promise<BridgeLifecycleDto> {
   return invoke<BridgeLifecycleDto>("close_profile");
+}
+
+function hasDesktopErrorCode(error: unknown, expectedCode: string): error is DesktopErrorDto {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+  return (error as { code: unknown }).code === expectedCode;
 }
