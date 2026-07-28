@@ -1,0 +1,166 @@
+name: Temporary PR38 Desktop Repair Diagnostic
+
+on:
+  push:
+    branches:
+      - chatgpt/fix-rust-ci-30332312110
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-report:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: chatgpt/fix-rust-ci-30332312110
+          fetch-depth: 0
+
+      - name: Install pinned formatter
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup default 1.97.1
+
+      - name: Apply repair and capture result
+        id: repair
+        shell: bash
+        run: |
+          set +e
+          python - <<'PY' > /tmp/pr38-repair.log 2>&1
+          from pathlib import Path
+          import re
+
+          edits = []
+
+          def replace_text(path: str, old: str, new: str, label: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              print(f"{label}: literal matches={count}")
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one literal match in {path}, found {count}")
+              target.write_text(text.replace(old, new, 1))
+              edits.append(label)
+
+          def replace_regex(path: str, pattern: str, replacement: str, label: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+              print(f"{label}: regex matches={count}")
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one regex match in {path}, found {count}")
+              target.write_text(updated)
+              edits.append(label)
+
+          replace_text(
+              "desktop/src-tauri/src/platform/paths.rs",
+              "    if let Some(parent) = canonical_parent {\n        if !canonical.starts_with(parent) {\n            return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));\n        }\n    }\n",
+              "    if let Some(parent) = canonical_parent\n        && !canonical.starts_with(parent)\n    {\n        return Err(ProfilePathError::DirectoryEscapedTrustedRoot(label));\n    }\n",
+              "trusted-root containment",
+          )
+
+          generic_drop_pattern = (
+              r"        fn drop\(&mut self\) \{\n"
+              r"            if let Err\(error\) = fs::remove_dir_all\(&self\.0\) \{\n"
+              r"                if error\.kind\(\) != std::io::ErrorKind::NotFound \{\n"
+              r"                    panic!\(\"failed to remove test directory: \{error\}\"\);\n"
+              r"                \}\n"
+              r"            \}\n"
+              r"        \}"
+          )
+          generic_drop_replacement = (
+              "        fn drop(&mut self) {\n"
+              "            if let Err(error) = fs::remove_dir_all(&self.0) {\n"
+              "                assert_eq!(\n"
+              "                    error.kind(),\n"
+              "                    std::io::ErrorKind::NotFound,\n"
+              "                    \"failed to remove test directory: {error}\"\n"
+              "                );\n"
+              "            }\n"
+              "        }"
+          )
+          replace_regex(
+              "desktop/src-tauri/src/platform/paths.rs",
+              generic_drop_pattern,
+              generic_drop_replacement,
+              "paths test cleanup",
+          )
+
+          replace_text(
+              "desktop/src-tauri/src/platform/profile_lock.rs",
+              "            .field(\"lock_path\", &self.lock_path)\n            .field(\"held\", &self.file.is_some())\n            .finish()\n",
+              "            .field(\"lock_path\", &self.lock_path)\n            .field(\"held\", &self.file.is_some())\n            .field(\"release_attempted\", &self.release_attempted)\n            .finish()\n",
+              "profile lease debug fields",
+          )
+          replace_text(
+              "desktop/src-tauri/src/platform/profile_lock.rs",
+              "        if !self.release_attempted && !std::thread::panicking() {\n            panic!(\n                \"ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}\",\n                self.profile_id\n            );\n        }\n",
+              "        assert!(\n            self.release_attempted || std::thread::panicking(),\n            \"ProfileLease for '{}' was dropped without explicit release; fallback unlock result: {unlock_result:?}\",\n            self.profile_id\n        );\n",
+              "explicit profile release assertion",
+          )
+          replace_regex(
+              "desktop/src-tauri/src/platform/profile_lock.rs",
+              generic_drop_pattern,
+              generic_drop_replacement,
+              "profile lock test cleanup",
+          )
+
+          replace_text(
+              "desktop/src-tauri/src/platform/profile_metadata.rs",
+              "impl fmt::Display for ProfileMetadataError {\n    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {\n",
+              "impl fmt::Display for ProfileMetadataError {\n    #[allow(\n        clippy::too_many_lines,\n        reason = \"the exhaustive formatter keeps every metadata failure variant explicit\"\n    )]\n    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {\n",
+              "metadata formatter rationale",
+          )
+          replace_regex(
+              "desktop/src-tauri/src/platform/profile_metadata.rs",
+              generic_drop_pattern,
+              generic_drop_replacement,
+              "metadata test cleanup",
+          )
+
+          replace_text(
+              "desktop/src-tauri/src/platform/storage_inspection.rs",
+              "/// last. It never opens SQLite directly and never falls back to an in-memory or\n",
+              "/// last. It never opens `SQLite` directly and never falls back to an in-memory or\n",
+              "SQLite documentation markup",
+          )
+          replace_text(
+              "desktop/src-tauri/src/platform/storage_inspection.rs",
+              "        fn drop(&mut self) {\n            if let Err(error) = fs::remove_dir_all(&self.0) {\n                if error.kind() != std::io::ErrorKind::NotFound && !std::thread::panicking() {\n                    panic!(\"failed to remove storage-inspection test directory: {error}\");\n                }\n            }\n        }\n",
+              "        fn drop(&mut self) {\n            if let Err(error) = fs::remove_dir_all(&self.0) {\n                assert!(\n                    error.kind() == std::io::ErrorKind::NotFound || std::thread::panicking(),\n                    \"failed to remove storage-inspection test directory: {error}\"\n                );\n            }\n        }\n",
+              "storage inspection test cleanup",
+          )
+          print(f"applied {len(edits)} edits: {', '.join(edits)}")
+          PY
+          repair_status=$?
+
+          if [ "$repair_status" -eq 0 ]; then
+            cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all >> /tmp/pr38-repair.log 2>&1
+            repair_status=$?
+          fi
+
+          {
+            echo "repair_status=${repair_status}"
+            echo "source_commit=${GITHUB_SHA}"
+            echo "---"
+            cat /tmp/pr38-repair.log
+          } > .github/pr38-desktop-repair-result.txt
+          exit 0
+
+      - name: Commit result and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/temp-pr38-desktop-clippy-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/pr38-desktop-repair-result.txt
+          git add desktop/src-tauri/src/platform/paths.rs || true
+          git add desktop/src-tauri/src/platform/profile_lock.rs || true
+          git add desktop/src-tauri/src/platform/profile_metadata.rs || true
+          git add desktop/src-tauri/src/platform/storage_inspection.rs || true
+          git commit -m "Report desktop Rust repair result"
+          git push origin HEAD:chatgpt/fix-rust-ci-30332312110
