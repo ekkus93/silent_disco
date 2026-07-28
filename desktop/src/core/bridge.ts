@@ -1,8 +1,5 @@
 import type { CoreNotificationDto } from "./generated/desktop-bindings";
-import {
-  connectProfileWithNotifications,
-  type DesktopProfileConnection,
-} from "./client";
+import { connectProfileWithNotifications, type DesktopProfileConnection } from "./client";
 
 type DesktopNotificationListener = (notification: CoreNotificationDto) => void;
 
@@ -15,18 +12,14 @@ function dispatchNotification(notification: CoreNotificationDto): void {
   }
 }
 
-export function subscribeDesktopNotifications(
-  listener: DesktopNotificationListener,
-): () => void {
+export function subscribeDesktopNotifications(listener: DesktopNotificationListener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 }
 
-export function ensureDesktopBridge(
-  profileId = "main",
-): Promise<DesktopProfileConnection> {
+export function ensureDesktopBridge(profileId = "main"): Promise<DesktopProfileConnection> {
   if (connectionPromise === null) {
     connectionPromise = connectProfileWithNotifications(profileId, dispatchNotification).catch(
       (error: unknown) => {
