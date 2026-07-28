@@ -3,6 +3,7 @@
     reason = "the restored actor keeps two contract imports adjacent to their upcoming Block 12 handlers"
 )]
 mod actor;
+mod host_admission;
 mod records;
 mod types;
 
@@ -10,6 +11,11 @@ pub use actor::{
     CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver,
     DEFAULT_ACTOR_QUEUE_CAPACITY, DEFAULT_NOTIFICATION_QUEUE_CAPACITY,
     MAX_ACTOR_QUEUE_CAPACITY, MAX_NOTIFICATION_QUEUE_CAPACITY,
+};
+pub use host_admission::{
+    ApprovalDelivery, ApprovalPreparation, DeliveryCommitDisposition, JoinRejectionReason,
+    JoinRequestDisposition, TrustPersistenceOutcome, TrustPersistenceRequest,
+    approval_after_persistence, classify_delivery, classify_join_request, prepare_approval,
 };
 pub use records::{
     AudioEvent, AudioOutputInfo, AudioOutputRequest, CommandReceipt, CoreActorInput, CoreCommand,
