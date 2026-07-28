@@ -72,6 +72,17 @@ pub struct OpenProfileResponse {
     pub snapshot: CoreSnapshotDto,
 }
 
+/// Identifies the one active desktop notification subscription.
+///
+/// The identifier is encoded as a decimal string because JavaScript numbers cannot
+/// represent every `u64` value exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct AttachNotificationResponse {
+    pub subscription_id: String,
+}
+
 /// Redacted frontend-visible platform effect. Native handles and payload details stay in Rust.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -203,7 +214,7 @@ fn recoverable_action_name(action: silent_disco_core::runtime::RecoverableAction
 
 #[cfg(test)]
 mod tests {
-    use super::{CoreNotificationDto, CoreSnapshotDto};
+    use super::{AttachNotificationResponse, CoreNotificationDto, CoreSnapshotDto};
     use silent_disco_core::domain::{AppRole, HostLifecycle, OperationId, TransportState};
     use silent_disco_core::runtime::{
         CoreNotification, CoreSnapshot, PlatformEffect, PlatformEffectRequest, SnapshotRevision,
@@ -241,5 +252,13 @@ mod tests {
         };
         assert_eq!(dto.operation_id, "operation-1");
         assert_eq!(dto.effect_kind, "stop_advertising");
+    }
+
+    #[test]
+    fn subscription_identifier_is_transport_safe() {
+        let response = AttachNotificationResponse {
+            subscription_id: u64::MAX.to_string(),
+        };
+        assert_eq!(response.subscription_id, "18446744073709551615");
     }
 }
