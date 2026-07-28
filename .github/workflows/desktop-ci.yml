@@ -127,7 +127,10 @@ jobs:
 
       - name: Run strict Clippy
         working-directory: desktop/src-tauri
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee ../../../desktop-rust-clippy.log
 
       - name: Run desktop backend tests
         working-directory: desktop/src-tauri
@@ -148,12 +151,14 @@ jobs:
             exit 1
           fi
 
-      - name: Upload generated Cargo lockfile
+      - name: Upload generated Cargo lockfile and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: desktop-rust-diagnostics
-          path: desktop/src-tauri/Cargo.lock
+          path: |
+            desktop/src-tauri/Cargo.lock
+            desktop-rust-clippy.log
           if-no-files-found: warn
           retention-days: 3
 
