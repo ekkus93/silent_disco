@@ -145,7 +145,7 @@ impl From<CoreDiagnostic> for CoreDiagnosticDto {
 )]
 #[ts(tag = "kind", content = "details", rename_all = "camelCase")]
 pub enum CoreNotificationDto {
-    Snapshot(CoreSnapshotDto),
+    Snapshot(Box<CoreSnapshotDto>),
     Effect(PlatformEffectDto),
     Error(DesktopErrorDto),
     Diagnostic(CoreDiagnosticDto),
@@ -154,7 +154,9 @@ pub enum CoreNotificationDto {
 impl From<CoreNotification> for CoreNotificationDto {
     fn from(value: CoreNotification) -> Self {
         match value {
-            CoreNotification::Snapshot(snapshot) => Self::Snapshot(CoreSnapshotDto::from(snapshot)),
+            CoreNotification::Snapshot(snapshot) => {
+                Self::Snapshot(Box::new(CoreSnapshotDto::from(snapshot)))
+            }
             CoreNotification::Effect(effect) => Self::Effect(PlatformEffectDto::from(effect)),
             CoreNotification::Error(error) => Self::Error(DesktopErrorDto::from(error)),
             CoreNotification::Diagnostic(diagnostic) => {
