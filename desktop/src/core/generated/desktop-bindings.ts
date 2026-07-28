@@ -22,3 +22,13 @@ export type CoreSnapshotDto = { revision: string, selectedRole: string | null, h
 
 export type OpenProfileResponse = { lifecycle: BridgeLifecycleDto, coreVersion: CoreVersionDto, snapshot: CoreSnapshotDto, };
 
+export type AttachNotificationResponse = { subscriptionId: string, };
+
+export type PlatformEffectDto = { operationId: string, effectKind: string, };
+
+export type DiagnosticFieldDto = { key: string, value: string, };
+
+export type CoreDiagnosticDto = { name: string, fields: Array<DiagnosticFieldDto>, };
+
+export type CoreNotificationDto = { "kind": "snapshot", "details": CoreSnapshotDto } | { "kind": "effect", "details": PlatformEffectDto } | { "kind": "error", "details": DesktopErrorDto } | { "kind": "diagnostic", "details": CoreDiagnosticDto };
+
