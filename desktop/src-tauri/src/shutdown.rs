@@ -12,19 +12,22 @@ pub struct DesktopOwnedResources {
     pub lease: ProfileLease,
 }
 
-/// Shuts down owned resources in strict reverse startup order.
+/// Shuts down owned resources in dependency-safe order.
 ///
-/// Every cleanup phase is attempted. A later cleanup failure never overwrites
-/// an earlier failure; the returned bounded error describes every failed phase.
+/// The core observer remains available while the actor performs controlled shutdown because
+/// the actor emits its final authoritative notification during that phase. The notification
+/// dispatcher is closed immediately afterward, before storage and profile-lock release.
+/// Every cleanup phase is attempted. A later cleanup failure never overwrites an earlier
+/// failure; the returned bounded error describes every failed phase.
 ///
 /// # Errors
 ///
-/// Returns one bounded structured error when notification-worker shutdown, actor shutdown,
+/// Returns one bounded structured error when actor shutdown, notification-worker shutdown,
 /// database shutdown, or explicit profile-lock release fails. All later cleanup phases are
 /// still attempted.
 pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), DesktopErrorDto> {
-    let notification_error = resources.notifications.shutdown().err();
     let actor_error = resources.actor.shutdown().err();
+    let notification_error = resources.notifications.shutdown().err();
     let database_error = resources.database.stop_and_join().err();
     let lease_error = resources.lease.release().err();
 
