@@ -1,4 +1,4 @@
-name: Ralph desktop Block 10 diagnostics
+name: Ralph desktop Block 10 finalize
 
 on:
   pull_request:
@@ -9,20 +9,25 @@ on:
       - ".github/workflows/ralph-desktop-block10-diagnostics.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  validate-and-commit:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out implementation branch
+        uses: actions/checkout@v4
         with:
           ref: ralph/desktop-block10
-      - uses: actions/setup-node@v4
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
           node-version: "22.16.0"
-      - name: Install Rust and Tauri dependencies
+
+      - name: Install pinned Rust and Tauri dependencies
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.97.1
@@ -30,37 +35,51 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
-      - name: Format and generate
-        id: generate
-        continue-on-error: true
+
+      - name: Format and generate exact artifacts
+        shell: bash
         run: |
+          set -euo pipefail
           cd desktop/src-tauri
           cargo fmt --all
           cargo generate-lockfile
           cd ..
           npm ci
           npm run bindings:generate
-      - name: Compile and test
-        id: validate
-        continue-on-error: true
+
+      - name: Validate desktop Rust
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p desktop/dist
-          printf '<!doctype html><title>diagnostic</title>\n' > desktop/dist/index.html
+          printf '<!doctype html><title>Silent Disco Rust validation</title>\n' > desktop/dist/index.html
           cd desktop/src-tauri
+          cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-features
           cargo check --all-features
-      - name: Upload formatted and generated outputs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ralph-desktop-block10-diagnostics
-          path: |
-            desktop/src-tauri/src/
-            desktop/src-tauri/Cargo.lock
-            desktop/src/core/generated/desktop-bindings.ts
-          if-no-files-found: warn
-          retention-days: 3
-      - name: Fail when generation or validation failed
-        if: steps.generate.outcome != 'success' || steps.validate.outcome != 'success'
-        run: exit 1
+
+      - name: Validate desktop frontend
+        working-directory: desktop
+        run: |
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
+
+      - name: Validate source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Commit validated generated and formatted files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/ralph-desktop-block10-diagnostics.yml
+          git rm .github/workflows/ralph-desktop-block10-validate.yml
+          git add desktop/src-tauri desktop/src/core/generated/desktop-bindings.ts
+          git commit -m "Validate desktop core runtime ownership"
+          git push origin HEAD:ralph/desktop-block10
