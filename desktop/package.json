@@ -11,6 +11,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "bindings:generate": "cargo run --manifest-path src-tauri/Cargo.toml --bin generate_bindings --",
+    "bindings:check": "cargo run --manifest-path src-tauri/Cargo.toml --bin generate_bindings -- --check",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
