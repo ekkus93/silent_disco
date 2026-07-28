@@ -7,6 +7,7 @@ on:
     paths:
       - "desktop/**"
       - "scripts/repair-desktop-block10.py"
+      - "scripts/repair-desktop-block10-clippy.py"
       - ".github/workflows/ralph-desktop-block10-finalize.yml"
 
 permissions:
@@ -45,7 +46,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 scripts/repair-desktop-block10.py 2>&1 | tee block10-patch.log
+          {
+            set -euo pipefail
+            python3 scripts/repair-desktop-block10.py
+            python3 scripts/repair-desktop-block10-clippy.py
+          } 2>&1 | tee block10-patch.log
 
       - name: Format and regenerate exact artifacts
         shell: bash
@@ -119,6 +124,7 @@ jobs:
           git rm .github/workflows/ralph-desktop-block10-finalize.yml
           git rm .github/workflows/ralph-desktop-block10-validate.yml
           git rm scripts/repair-desktop-block10.py
+          git rm scripts/repair-desktop-block10-clippy.py
           git add desktop/src-tauri desktop/src/core/generated/desktop-bindings.ts
           git commit -m "Validate desktop core runtime ownership"
           git push origin HEAD:ralph/desktop-block10
