@@ -1,4 +1,4 @@
-name: Temporary PR38 Actor Clippy Repair
+name: Temporary PR38 Tauri Icon Generator
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  repair-actor-state:
+  generate-icon:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -19,255 +19,65 @@ jobs:
           ref: chatgpt/fix-rust-ci-30332312110
           fetch-depth: 0
 
-      - name: Install pinned Rust toolchain
-        run: |
-          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
-          rustup default 1.97.1
-
-      - name: Apply guarded actor reducer fixes
+      - name: Generate deterministic RGBA PNG
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import struct
+          import zlib
 
-          path = Path('rust/silent-disco-core/src/runtime/actor_runtime/state.rs')
-          text = path.read_text()
+          width = 512
+          height = 512
+          center = width // 2
+          rows = bytearray()
 
-          def replace_once(old: str, new: str, label: str) -> None:
-              global text
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected 1 match, found {count}')
-              text = text.replace(old, new, 1)
+          for y in range(height):
+              rows.append(0)
+              dy = y - center
+              for x in range(width):
+                  dx = x - center
+                  radius2 = dx * dx + dy * dy
+                  if radius2 < 76 * 76:
+                      rgba = (245, 158, 11, 255)
+                  elif radius2 < 132 * 132:
+                      rgba = (34, 211, 238, 255)
+                  elif radius2 < 190 * 190 and ((x + y) // 18) % 2 == 0:
+                      rgba = (168, 85, 247, 255)
+                  else:
+                      rgba = (17, 24, 39, 255)
+                  rows.extend(rgba)
 
-          replace_once(
-          '''use crate::runtime::records::{
-              AudioEvent, CoreActorInput, CoreCommand, CoreDiagnostic, CoreNotification, CoreSnapshot,
-              DiagnosticField, DiscoveryRequest, MAX_CONNECTED_LISTENERS, MAX_DISCOVERED_SESSIONS,
-              MAX_PENDING_JOIN_REQUESTS, NetworkEstablishmentRequest, PlatformEffect, PlatformEffectRequest,
-              PlatformEvent, PlatformOperationCompletion, RecoverableAction, SessionAdvertisement,
-              StorageCompletion, StorageEvent, TransportEvent, current_protocol_version,
-          };
-          ''',
-          '''use crate::runtime::records::{
-              AudioEvent, CoreActorInput, CoreCommand, CoreNotification, CoreSnapshot, DiscoveryRequest,
-              MAX_CONNECTED_LISTENERS, MAX_DISCOVERED_SESSIONS, MAX_PENDING_JOIN_REQUESTS,
-              NetworkEstablishmentRequest, PlatformEffect, PlatformEffectRequest, PlatformEvent,
-              PlatformOperationCompletion, RecoverableAction, StorageCompletion, StorageEvent, TransportEvent,
-              current_protocol_version,
-          };
-          use crate::runtime::types::{CoreDiagnostic, DiagnosticField, SessionAdvertisement};
-          ''',
-          'import layout',
+          def chunk(kind: bytes, payload: bytes) -> bytes:
+              return (
+                  struct.pack('>I', len(payload))
+                  + kind
+                  + payload
+                  + struct.pack('>I', zlib.crc32(kind + payload) & 0xFFFFFFFF)
+              )
+
+          png = (
+              b'\x89PNG\r\n\x1a\n'
+              + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0))
+              + chunk(b'IDAT', zlib.compress(bytes(rows), level=9))
+              + chunk(b'IEND', b'')
           )
-          replace_once(
-              'CoreCommand::CancelJoin => self.cancel_join(operation_id),',
-              'CoreCommand::CancelJoin => self.cancel_join(&operation_id),',
-              'cancel command borrow',
-          )
-          replace_once(
-          '''    fn cancel_join(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
-              self.require_role(AppRole::Listener, &operation_id)?;
-          ''',
-          '''    fn cancel_join(&mut self, operation_id: &OperationId) -> Result<ApplyOutcome, CoreError> {
-              self.require_role(AppRole::Listener, operation_id)?;
-          ''',
-          'cancel signature',
-          )
-          replace_once(
-              'PlatformEvent::SessionExpired { session_id } => self.expire_session(&session_id),',
-              'PlatformEvent::SessionExpired { session_id } => Ok(self.expire_session(&session_id)),',
-              'expire call',
-          )
-          replace_once(
-          '''    fn expire_session(&mut self, session_id: &SessionId) -> Result<ApplyOutcome, CoreError> {
-              let previous = self.snapshot.discovered_sessions.len();
-              self.snapshot
-                  .discovered_sessions
-                  .retain(|session| &session.session_id != session_id);
-              if previous == self.snapshot.discovered_sessions.len() {
-                  return Ok(ApplyOutcome::default());
-              }
-              if self.snapshot.selected_session.as_ref() == Some(session_id) {
-                  self.snapshot.selected_session = None;
-                  self.snapshot.listener_lifecycle = if self.snapshot.discovery_active {
-                      ListenerLifecycle::Scanning
-                  } else {
-                      ListenerLifecycle::Idle
-                  };
-              }
-              Ok(ApplyOutcome::changed())
-          }
-          ''',
-          '''    fn expire_session(&mut self, session_id: &SessionId) -> ApplyOutcome {
-              let previous = self.snapshot.discovered_sessions.len();
-              self.snapshot
-                  .discovered_sessions
-                  .retain(|session| &session.session_id != session_id);
-              if previous == self.snapshot.discovered_sessions.len() {
-                  return ApplyOutcome::default();
-              }
-              if self.snapshot.selected_session.as_ref() == Some(session_id) {
-                  self.snapshot.selected_session = None;
-                  self.snapshot.listener_lifecycle = if self.snapshot.discovery_active {
-                      ListenerLifecycle::Scanning
-                  } else {
-                      ListenerLifecycle::Idle
-                  };
-              }
-              ApplyOutcome::changed()
-          }
-          ''',
-          'expire return type',
-          )
-          replace_once(
-          '''            TransportEvent::ListenerDisconnected { device_id, error } => {
-                  self.record_listener_disconnect(&device_id, error)
-              }
-          ''',
-          '''            TransportEvent::ListenerDisconnected { device_id, error } => {
-                  Ok(self.record_listener_disconnect(&device_id, error))
-              }
-          ''',
-          'listener disconnect call',
-          )
-          replace_once(
-              'TransportEvent::Failed(error) => self.record_transport_failure(error),',
-              'TransportEvent::Failed(error) => Ok(self.record_transport_failure(error)),',
-              'transport failure call',
-          )
-          replace_once(
-          '''    fn record_listener_disconnect(
-              &mut self,
-              device_id: &DeviceId,
-              error: Option<CoreError>,
-          ) -> Result<ApplyOutcome, CoreError> {
-              let previous = self.snapshot.listeners.len();
-              self.snapshot
-                  .listeners
-                  .retain(|listener| &listener.device_id != device_id);
-              if let Some(error) = error {
-                  self.snapshot.last_error = Some(error.clone());
-                  return Ok(ApplyOutcome {
-                      notifications: vec![CoreNotification::Error(error)],
-                      changed: true,
-                      stop_requested: false,
-                  });
-              }
-              if previous == self.snapshot.listeners.len() {
-                  return Ok(ApplyOutcome::default());
-              }
-              Ok(ApplyOutcome::changed())
-          }
-          ''',
-          '''    fn record_listener_disconnect(
-              &mut self,
-              device_id: &DeviceId,
-              error: Option<CoreError>,
-          ) -> ApplyOutcome {
-              let previous = self.snapshot.listeners.len();
-              self.snapshot
-                  .listeners
-                  .retain(|listener| &listener.device_id != device_id);
-              if let Some(error) = error {
-                  self.snapshot.last_error = Some(error.clone());
-                  return ApplyOutcome {
-                      notifications: vec![CoreNotification::Error(error)],
-                      changed: true,
-                      stop_requested: false,
-                  };
-              }
-              if previous == self.snapshot.listeners.len() {
-                  return ApplyOutcome::default();
-              }
-              ApplyOutcome::changed()
-          }
-          ''',
-          'listener disconnect return type',
-          )
-          replace_once(
-          '''    fn record_transport_failure(&mut self, error: CoreError) -> Result<ApplyOutcome, CoreError> {
-              self.snapshot.last_error = Some(error.clone());
-              self.snapshot.transport_state = TransportState::Failed;
-              match self.snapshot.selected_role {
-                  Some(AppRole::Host) => self.snapshot.host_lifecycle = HostLifecycle::Error,
-                  Some(AppRole::Listener) => {
-                      self.snapshot.listener_lifecycle = ListenerLifecycle::Error;
-                      self.snapshot.recoverable_action = Some(RecoverableAction::Reconnect);
-                  }
-                  None => {}
-              }
-              Ok(ApplyOutcome {
-                  notifications: vec![CoreNotification::Error(error)],
-                  changed: true,
-                  stop_requested: false,
-              })
-          }
-          ''',
-          '''    fn record_transport_failure(&mut self, error: CoreError) -> ApplyOutcome {
-              self.snapshot.last_error = Some(error.clone());
-              self.snapshot.transport_state = TransportState::Failed;
-              match self.snapshot.selected_role {
-                  Some(AppRole::Host) => self.snapshot.host_lifecycle = HostLifecycle::Error,
-                  Some(AppRole::Listener) => {
-                      self.snapshot.listener_lifecycle = ListenerLifecycle::Error;
-                      self.snapshot.recoverable_action = Some(RecoverableAction::Reconnect);
-                  }
-                  None => {}
-              }
-              ApplyOutcome {
-                  notifications: vec![CoreNotification::Error(error)],
-                  changed: true,
-                  stop_requested: false,
-              }
-          }
-          ''',
-          'transport failure return type',
-          )
-          count = text.count('self.diagnostic(')
-          if count != 8:
-              raise SystemExit(f'diagnostic calls: expected 8 matches, found {count}')
-          text = text.replace('self.diagnostic(', 'Self::diagnostic(')
-          replace_once(
-          '''    fn diagnostic(
-              &self,
-              name: &str,
-          ''',
-          '''    fn diagnostic(
-              name: &str,
-          ''',
-          'diagnostic associated function',
-          )
-          path.write_text(text)
+          output = Path('desktop/src-tauri/icons/icon.png')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_bytes(png)
+          if output.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
+              raise SystemExit('generated icon is not a PNG')
           PY
+          file desktop/src-tauri/icons/icon.png
 
-      - name: Format and validate Rust workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path rust/Cargo.toml --all
-          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
-          cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
-          cargo test --manifest-path rust/Cargo.toml --workspace --all-features
-
-      - name: Verify repair scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          unexpected="$(git diff --name-only | grep -v -E '^(rust/silent-disco-core/src/runtime/actor_runtime/state.rs|\.github/workflows/temp-pr38-actor-clippy-repair.yml)$' || true)"
-          if [ -n "$unexpected" ]; then
-            printf 'Unexpected files changed:\n%s\n' "$unexpected" >&2
-            exit 1
-          fi
-
-      - name: Commit validated repair and remove workflow
+      - name: Commit icon and remove temporary workflow
         shell: bash
         run: |
           set -euo pipefail
           git rm .github/workflows/temp-pr38-actor-clippy-repair.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rust/silent-disco-core/src/runtime/actor_runtime/state.rs
-          git commit -m "Fix actor reducer Clippy findings"
+          git add desktop/src-tauri/icons/icon.png
+          git commit -m "Add Tauri application icon"
           git push origin HEAD:chatgpt/fix-rust-ci-30332312110
