@@ -4,7 +4,7 @@
 )]
 mod actor;
 mod host_admission;
-mod records;
+mod records_v2;
 mod types;
 
 pub use actor::{
@@ -17,14 +17,15 @@ pub use host_admission::{
     JoinRequestDisposition, TrustPersistenceOutcome, TrustPersistenceRequest,
     approval_after_persistence, classify_delivery, classify_join_request, prepare_approval,
 };
-pub use records::{
+pub use records_v2::{
     AudioEvent, AudioOutputInfo, AudioOutputRequest, CommandReceipt, CoreActorInput, CoreCommand,
     CoreCommandRequest, CoreNotification, CoreSnapshot, DiscoveryRequest, NetworkEstablishmentRequest,
     PermissionCapability, PlatformEffect, PlatformEffectRequest, PlatformEvent,
     PlatformOperationCompletion, RecoverableAction, RuntimeContractError, StorageCompletion,
-    StorageEvent, TransportEvent, current_protocol_version, MAX_CAPABILITY_REQUESTS,
-    MAX_CONNECTED_LISTENERS, MAX_DISCOVERED_SESSIONS, MAX_EXPORT_ID_BYTES,
-    MAX_PENDING_JOIN_REQUESTS, MAX_STORAGE_TRUSTED_DEVICES,
+    StorageEffect, StorageEffectRequest, StorageEvent, TransportEffect, TransportEffectRequest,
+    TransportEvent, current_protocol_version, MAX_CAPABILITY_REQUESTS, MAX_CONNECTED_LISTENERS,
+    MAX_DISCOVERED_SESSIONS, MAX_EXPORT_ID_BYTES, MAX_PENDING_JOIN_REQUESTS,
+    MAX_STORAGE_TRUSTED_DEVICES,
 };
 pub use types::{
     AudioSourceDescriptor, AudioSourcePatch, CapabilitySnapshot, CoreDiagnostic, DeliveryReport,
