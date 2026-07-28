@@ -130,7 +130,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee ../../../desktop-rust-clippy.log
+          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee ../../desktop-rust-clippy.log
 
       - name: Run desktop backend tests
         working-directory: desktop/src-tauri
