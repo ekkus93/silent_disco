@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+pub mod dto;
 pub mod platform;
 pub mod profile;
 
