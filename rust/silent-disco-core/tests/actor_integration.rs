@@ -4,10 +4,10 @@ use silent_disco_core::domain::{
 };
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime,
-    CoreCommand, CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch,
-    JoinRequestSummary, NetworkEndpoint, PlatformEffect, PlatformEffectRequest, PlatformEvent,
-    PlatformOperationCompletion, SessionAdvertisement, SnapshotRevision, TransportEvent,
-    current_protocol_version,
+    CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot, HostDraftPatch,
+    InviteCodePatch, JoinRequestSummary, NetworkEndpoint, PlatformEffect, PlatformEffectRequest,
+    PlatformEvent, PlatformOperationCompletion, SessionAdvertisement, SnapshotRevision,
+    TransportEvent, current_protocol_version,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
@@ -27,7 +27,6 @@ fn observer_can_read_current_snapshot_without_actor_lock_deadlock() {
     let handle_slot = Arc::new(Mutex::new(None::<CoreActorHandle>));
     let observer_handle_slot = Arc::clone(&handle_slot);
     let (observed_sender, observed_receiver) = channel();
-
     let runtime = CoreActorRuntime::start(
         CoreActorConfig::new(DeviceId::new("observer-core").expect("valid device ID")),
         move |notification| {
@@ -38,7 +37,7 @@ fn observer_can_read_current_snapshot_without_actor_lock_deadlock() {
                     .lock()
                     .expect("observer handle slot lock")
                     .clone()
-                    .expect("actor handle installed before post-start notification");
+                    .expect("actor handle installed before changed snapshot");
                 let current = handle.current_snapshot()?;
                 observed_sender
                     .send((delivered.revision.get(), current.revision.get()))
@@ -57,7 +56,6 @@ fn observer_can_read_current_snapshot_without_actor_lock_deadlock() {
             CoreCommand::SelectRole { role: AppRole::Host },
         ))
         .expect("queue role selection");
-
     assert_eq!(
         observed_receiver
             .recv_timeout(NOTIFICATION_TIMEOUT)
@@ -102,9 +100,8 @@ fn run_host_flow() {
     handle
         .submit_command(command(2, CoreCommand::CreateHostSession))
         .expect("queue host creation");
-    let creating = next_snapshot(&receiver, 3);
     assert_eq!(
-        creating.host_lifecycle,
+        next_snapshot(&receiver, 3).host_lifecycle,
         HostLifecycle::CreatingSession
     );
     let advertising_effect = next_effect(&receiver);
@@ -133,8 +130,7 @@ fn run_host_flow() {
             completion: PlatformOperationCompletion::AdvertisingStarted,
         })
         .expect("queue duplicate completion for reducer rejection");
-    let duplicate_error = next_error(&receiver);
-    assert!(duplicate_error.message.contains("stale or duplicate"));
+    assert!(next_error(&receiver).message.contains("stale or duplicate"));
     assert_eq!(
         handle
             .current_snapshot()
@@ -156,9 +152,7 @@ fn run_host_flow() {
     handle
         .submit_transport_event(TransportEvent::JoinRequested(join_request))
         .expect("submit join request fact");
-    let pending = next_snapshot(&receiver, 5);
-    assert_eq!(pending.pending_join_requests.len(), 1);
-
+    assert_eq!(next_snapshot(&receiver, 5).pending_join_requests.len(), 1);
     runtime.shutdown().expect("shutdown host actor");
 }
 
@@ -183,14 +177,12 @@ fn run_listener_flow() {
     handle
         .submit_command(command(1, CoreCommand::StartDiscovery))
         .expect("queue discovery start");
-    let pending_discovery = next_snapshot(&receiver, 2);
-    assert!(!pending_discovery.discovery_active);
+    assert!(!next_snapshot(&receiver, 2).discovery_active);
     let discovery_effect = next_effect(&receiver);
     assert!(matches!(
         discovery_effect.request,
         PlatformEffectRequest::StartDiscovery(_)
     ));
-
     handle
         .submit_platform_event(PlatformEvent::OperationSucceeded {
             operation_id: discovery_effect.operation_id,
@@ -199,10 +191,7 @@ fn run_listener_flow() {
         .expect("submit discovery completion");
     let scanning = next_snapshot(&receiver, 3);
     assert!(scanning.discovery_active);
-    assert_eq!(
-        scanning.listener_lifecycle,
-        ListenerLifecycle::Scanning
-    );
+    assert_eq!(scanning.listener_lifecycle, ListenerLifecycle::Scanning);
 
     let endpoint = NetworkEndpoint::new(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -238,7 +227,6 @@ fn run_listener_flow() {
         next_snapshot(&receiver, 5).listener_lifecycle,
         ListenerLifecycle::SessionSelected
     );
-
     handle
         .submit_command(command(
             5,
@@ -246,10 +234,7 @@ fn run_listener_flow() {
         ))
         .expect("queue listener join");
     let joining = next_snapshot(&receiver, 6);
-    assert_eq!(
-        joining.listener_lifecycle,
-        ListenerLifecycle::JoinRequested
-    );
+    assert_eq!(joining.listener_lifecycle, ListenerLifecycle::JoinRequested);
     assert_eq!(joining.transport_state, TransportState::Connecting);
     let network_effect = next_effect(&receiver);
     assert!(matches!(
@@ -264,12 +249,8 @@ fn run_listener_flow() {
         })
         .expect("submit network completion");
     let connected = next_snapshot(&receiver, 7);
-    assert_eq!(
-        connected.listener_lifecycle,
-        ListenerLifecycle::Connecting
-    );
+    assert_eq!(connected.listener_lifecycle, ListenerLifecycle::Connecting);
     assert_eq!(connected.transport_state, TransportState::Connected);
-
     runtime.shutdown().expect("shutdown listener actor");
 }
 
@@ -293,10 +274,7 @@ fn command(revision: u64, command: CoreCommand) -> CoreCommandRequest {
         .expect("valid command request")
 }
 
-fn next_snapshot(
-    receiver: &Receiver<CoreNotification>,
-    minimum_revision: u64,
-) -> silent_disco_core::runtime::CoreSnapshot {
+fn next_snapshot(receiver: &Receiver<CoreNotification>, minimum_revision: u64) -> CoreSnapshot {
     loop {
         match receiver.recv_timeout(NOTIFICATION_TIMEOUT) {
             Ok(CoreNotification::Snapshot(snapshot))
