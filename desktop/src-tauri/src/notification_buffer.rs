@@ -309,10 +309,7 @@ impl CoreObserver for DesktopNotificationBuffer {
 
 impl Drop for DesktopNotificationBuffer {
     fn drop(&mut self) {
-        let clean = self
-            .worker
-            .get_mut()
-            .is_ok_and(|worker| worker.is_none());
+        let clean = self.worker.get_mut().is_ok_and(|worker| worker.is_none());
         assert!(
             clean || thread::panicking(),
             "DesktopNotificationBuffer dropped with an active subscription worker"
@@ -430,10 +427,7 @@ fn stop_and_join(
     })
 }
 
-fn clear_active_subscription(
-    shared: &NotificationShared,
-    id: DesktopNotificationSubscriptionId,
-) {
+fn clear_active_subscription(shared: &NotificationShared, id: DesktopNotificationSubscriptionId) {
     if let Ok(mut state) = shared.state.lock()
         && state.active_subscription == Some(id)
     {
@@ -544,8 +538,10 @@ mod tests {
     impl DesktopNotificationSink for RecordingSink {
         fn send(&self, notification: CoreNotification) -> Result<(), DesktopNotificationSendError> {
             if self.fail {
-                return Err(DesktopNotificationSendError::new("injected channel failure")
-                    .expect("valid test failure"));
+                return Err(
+                    DesktopNotificationSendError::new("injected channel failure")
+                        .expect("valid test failure"),
+                );
             }
             let mut notifications = self.state.notifications.lock().expect("recording lock");
             notifications.push(notification);
@@ -570,7 +566,9 @@ mod tests {
         let observer = DesktopNotificationBuffer::new();
         observer.on_notification(snapshot(1)).expect("snapshot 1");
         observer.on_notification(snapshot(3)).expect("snapshot 3");
-        observer.on_notification(snapshot(2)).expect("stale snapshot");
+        observer
+            .on_notification(snapshot(2))
+            .expect("stale snapshot");
 
         let sink = RecordingSink::default();
         observer
@@ -712,10 +710,17 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
-            if observer.delivery_failure().expect("failure state").is_some() {
+            if observer
+                .delivery_failure()
+                .expect("failure state")
+                .is_some()
+            {
                 break;
             }
-            assert!(Instant::now() < deadline, "delivery failure was not recorded");
+            assert!(
+                Instant::now() < deadline,
+                "delivery failure was not recorded"
+            );
             std::thread::yield_now();
         }
         let error = observer
@@ -737,6 +742,10 @@ mod tests {
         observer.shutdown().expect("shutdown");
 
         assert!(observer.on_notification(snapshot(10)).is_err());
-        assert!(observer.attach_sink(Arc::new(RecordingSink::default())).is_err());
+        assert!(
+            observer
+                .attach_sink(Arc::new(RecordingSink::default()))
+                .is_err()
+        );
     }
 }
