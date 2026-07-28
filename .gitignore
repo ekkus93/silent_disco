@@ -25,6 +25,12 @@ render.experimental.xml
 
 # Rust build output
 rust/target/
+desktop/src-tauri/target/
+
+# Desktop frontend output
+desktop/node_modules/
+desktop/dist/
+desktop/src/core/generated/
 
 # Keystore files
 *.jks
