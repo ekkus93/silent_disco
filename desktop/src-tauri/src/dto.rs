@@ -301,7 +301,7 @@ mod tests {
                 updated_at_ms: u64::MAX,
             }),
             trusted_devices: vec![TrustedDevice {
-                device_id: DeviceId::parse("phone-1").expect("valid device ID"),
+                device_id: DeviceId::new("phone-1").expect("valid device ID"),
                 display_name: "Listener phone".to_owned(),
                 public_key: Some(vec![1, 2, 3]),
                 private_key_ref: Some("secret-service:item-1".to_owned()),
