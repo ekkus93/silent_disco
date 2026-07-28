@@ -1,3 +1,4 @@
+pub mod identity;
 #[allow(
     clippy::similar_names,
     reason = "canonical profile and profiles roots are distinct security boundaries"
