@@ -1,7 +1,9 @@
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
 use serde::{Deserialize, Serialize};
 use silent_disco_core::error::CoreError;
-use silent_disco_core::runtime::CoreSnapshot;
+use silent_disco_core::runtime::{
+    CoreDiagnostic, CoreNotification, CoreSnapshot, PlatformEffect, PlatformEffectRequest,
+};
 use ts_rs::TS;
 
 /// Validated transport shape for opening a profile.
@@ -70,6 +72,103 @@ pub struct OpenProfileResponse {
     pub snapshot: CoreSnapshotDto,
 }
 
+/// Redacted frontend-visible platform effect. Native handles and payload details stay in Rust.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct PlatformEffectDto {
+    pub operation_id: String,
+    pub effect_kind: String,
+}
+
+impl From<PlatformEffect> for PlatformEffectDto {
+    fn from(value: PlatformEffect) -> Self {
+        Self {
+            operation_id: value.operation_id.into_string(),
+            effect_kind: platform_effect_name(&value.request).to_owned(),
+        }
+    }
+}
+
+/// One bounded non-secret diagnostic field emitted to the desktop frontend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct DiagnosticFieldDto {
+    pub key: String,
+    pub value: String,
+}
+
+/// One bounded non-secret diagnostic event emitted to the desktop frontend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct CoreDiagnosticDto {
+    pub name: String,
+    pub fields: Vec<DiagnosticFieldDto>,
+}
+
+impl From<CoreDiagnostic> for CoreDiagnosticDto {
+    fn from(value: CoreDiagnostic) -> Self {
+        Self {
+            name: value.name,
+            fields: value
+                .fields
+                .into_iter()
+                .map(|field| DiagnosticFieldDto {
+                    key: field.key,
+                    value: field.value,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Authoritative, revisioned notification sent over the Tauri channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    deny_unknown_fields,
+    tag = "kind",
+    content = "details",
+    rename_all = "camelCase"
+)]
+#[ts(tag = "kind", content = "details", rename_all = "camelCase")]
+pub enum CoreNotificationDto {
+    Snapshot(CoreSnapshotDto),
+    Effect(PlatformEffectDto),
+    Error(DesktopErrorDto),
+    Diagnostic(CoreDiagnosticDto),
+}
+
+impl From<CoreNotification> for CoreNotificationDto {
+    fn from(value: CoreNotification) -> Self {
+        match value {
+            CoreNotification::Snapshot(snapshot) => Self::Snapshot(CoreSnapshotDto::from(snapshot)),
+            CoreNotification::Effect(effect) => Self::Effect(PlatformEffectDto::from(effect)),
+            CoreNotification::Error(error) => Self::Error(DesktopErrorDto::from(error)),
+            CoreNotification::Diagnostic(diagnostic) => {
+                Self::Diagnostic(CoreDiagnosticDto::from(diagnostic))
+            }
+        }
+    }
+}
+
+fn platform_effect_name(request: &PlatformEffectRequest) -> &'static str {
+    match request {
+        PlatformEffectRequest::RequestCapabilities(_) => "request_capabilities",
+        PlatformEffectRequest::StartAdvertising(_) => "start_advertising",
+        PlatformEffectRequest::StopAdvertising => "stop_advertising",
+        PlatformEffectRequest::StartDiscovery(_) => "start_discovery",
+        PlatformEffectRequest::StopDiscovery => "stop_discovery",
+        PlatformEffectRequest::EstablishNetwork(_) => "establish_network",
+        PlatformEffectRequest::ReleaseNetwork => "release_network",
+        PlatformEffectRequest::PrepareAudioSource(_) => "prepare_audio_source",
+        PlatformEffectRequest::StartAudioOutput(_) => "start_audio_output",
+        PlatformEffectRequest::StopAudioOutput => "stop_audio_output",
+        PlatformEffectRequest::ShareDiagnostics { .. } => "share_diagnostics",
+    }
+}
+
 impl From<CoreError> for DesktopErrorDto {
     fn from(value: CoreError) -> Self {
         Self::new(
@@ -104,9 +203,11 @@ fn recoverable_action_name(action: silent_disco_core::runtime::RecoverableAction
 
 #[cfg(test)]
 mod tests {
-    use super::CoreSnapshotDto;
-    use silent_disco_core::domain::{AppRole, HostLifecycle, TransportState};
-    use silent_disco_core::runtime::{CoreSnapshot, SnapshotRevision};
+    use super::{CoreNotificationDto, CoreSnapshotDto};
+    use silent_disco_core::domain::{AppRole, HostLifecycle, OperationId, TransportState};
+    use silent_disco_core::runtime::{
+        CoreNotification, CoreSnapshot, PlatformEffect, PlatformEffectRequest, SnapshotRevision,
+    };
 
     #[test]
     fn snapshot_conversion_preserves_authoritative_revision_and_lifecycle() {
@@ -123,5 +224,22 @@ mod tests {
         assert_eq!(dto.selected_role.as_deref(), Some("host"));
         assert_eq!(dto.host_lifecycle, "waiting_for_listeners");
         assert_eq!(dto.transport_state, "advertising");
+    }
+
+    #[test]
+    fn effect_conversion_redacts_native_payload_details() {
+        let effect = PlatformEffect::new(
+            OperationId::new("operation-1").expect("operation ID"),
+            PlatformEffectRequest::StopAdvertising,
+        )
+        .expect("platform effect");
+
+        let CoreNotificationDto::Effect(dto) =
+            CoreNotificationDto::from(CoreNotification::Effect(effect))
+        else {
+            panic!("effect notification must remain an effect");
+        };
+        assert_eq!(dto.operation_id, "operation-1");
+        assert_eq!(dto.effect_kind, "stop_advertising");
     }
 }
