@@ -6,8 +6,7 @@ export const selectPendingCommandReceipts = (state: RootState) =>
   Object.values(state.core.pendingCommandReceipts);
 export const selectCoreErrors = (state: RootState) => state.core.errors;
 export const selectCoreDiagnostics = (state: RootState) => state.core.diagnostics;
-export const selectStaleNotificationCounters = (state: RootState) =>
-  state.core.staleNotifications;
+export const selectStaleNotificationCounters = (state: RootState) => state.core.staleNotifications;
 export const selectLatestCoreError = (state: RootState) => state.core.errors.at(-1) ?? null;
 export const selectAuthoritativeRevision = (state: RootState) =>
   state.core.snapshot?.revision ?? null;
