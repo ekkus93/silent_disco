@@ -187,10 +187,7 @@ function throwDesktopBridgeError(error: DesktopErrorDto): never {
   throw new DesktopBridgeInvocationError(error);
 }
 
-async function invokeDesktop<T>(
-  command: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
+async function invokeDesktop<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(command, args);
   } catch (error: unknown) {
