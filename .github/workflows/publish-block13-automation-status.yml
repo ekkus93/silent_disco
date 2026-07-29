@@ -7,6 +7,8 @@ on:
       - Enable Block 13 Targeted Transport
       - Apply Block 13 Targeted Transport
       - Run Block 13 Targeted Transport
+      - Run Block 13 Rust Admission Routing
+      - Inspect Block 13 UniFFI API
     types:
       - requested
       - in_progress
