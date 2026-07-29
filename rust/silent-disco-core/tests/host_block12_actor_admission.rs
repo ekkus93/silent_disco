@@ -1,5 +1,5 @@
 use silent_disco_core::domain::{
-    AppRole, ApprovalMode, DeviceId, MonotonicMillis, RequestId, TrustState,
+    AppRole, ApprovalMode, DeviceId, MonotonicMillis, RequestId, TransportState, TrustState,
 };
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
@@ -36,6 +36,7 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
     );
     let awaiting_delivery = next_snapshot(&receiver, pending.revision.get() + 1);
     assert_eq!(awaiting_delivery.pending_join_requests.len(), 1);
+    assert!(awaiting_delivery.listeners.is_empty());
     let first_effect = next_transport_effect(&receiver);
     assert!(matches!(
         first_effect.request,
@@ -53,6 +54,7 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
         .expect("submit zero-recipient completion");
     let failed_delivery = next_snapshot(&receiver, awaiting_delivery.revision.get() + 1);
     assert_eq!(failed_delivery.pending_join_requests.len(), 1);
+    assert!(failed_delivery.listeners.is_empty());
     assert_eq!(
         failed_delivery
             .last_error
@@ -79,6 +81,10 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
         .expect("submit partial completion");
     let committed = next_snapshot(&receiver, retrying.revision.get() + 1);
     assert!(committed.pending_join_requests.is_empty());
+    assert_eq!(committed.listeners.len(), 1);
+    assert_eq!(committed.listeners[0].device_id, request.device_id);
+    assert_eq!(committed.listeners[0].trust_state, TrustState::SessionOnly);
+    assert_eq!(committed.listeners[0].transport_state, TransportState::Connecting);
     assert_eq!(
         committed
             .last_delivery
@@ -161,6 +167,9 @@ fn trust_write_failure_is_visible_and_approval_becomes_session_only() {
         .expect("submit approval delivery");
     let approved = next_snapshot(&receiver, downgraded.revision.get() + 1);
     assert!(approved.pending_join_requests.is_empty());
+    assert_eq!(approved.listeners.len(), 1);
+    assert_eq!(approved.listeners[0].trust_state, TrustState::SessionOnly);
+    assert_eq!(approved.listeners[0].transport_state, TransportState::Connecting);
     assert_eq!(
         approved
             .last_error
@@ -181,6 +190,7 @@ fn trusted_policy_auto_approves_but_waits_for_delivery() {
         .expect("submit trusted join request");
     let awaiting_delivery = next_snapshot(&receiver, 5);
     assert_eq!(awaiting_delivery.pending_join_requests.len(), 1);
+    assert!(awaiting_delivery.listeners.is_empty());
     let approval = next_transport_effect(&receiver);
     assert!(matches!(
         approval.request,
@@ -197,6 +207,9 @@ fn trusted_policy_auto_approves_but_waits_for_delivery() {
         .expect("submit auto-approval delivery");
     let approved = next_snapshot(&receiver, awaiting_delivery.revision.get() + 1);
     assert!(approved.pending_join_requests.is_empty());
+    assert_eq!(approved.listeners.len(), 1);
+    assert_eq!(approved.listeners[0].trust_state, TrustState::Trusted);
+    assert_eq!(approved.listeners[0].transport_state, TransportState::Connecting);
     runtime.shutdown().expect("shutdown host actor");
 }
 
@@ -225,7 +238,7 @@ fn start_host(
             role: AppRole::Host,
         },
     );
-    let source = AudioSourceDescriptor::new("source-1", "fixture.wav", Some(4096), Some(2000))
+    let source = AudioSourceDescriptor::new("source-1", "fixture.wav", Some(4_096), Some(2_000))
         .expect("valid audio source");
     let drafted = submit_and_snapshot(
         &handle,
