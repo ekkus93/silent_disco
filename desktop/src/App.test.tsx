@@ -6,13 +6,15 @@ import { App } from "./App";
 import { createAppStore } from "./app/store";
 import type { CoreNotificationDto } from "./core/generated/desktop-bindings";
 
-const { ensureDesktopBridgeMock, subscribeDesktopNotificationsMock, unsubscribeMock } = vi.hoisted(
-  () => ({
-    ensureDesktopBridgeMock: vi.fn(),
-    subscribeDesktopNotificationsMock: vi.fn(),
-    unsubscribeMock: vi.fn(),
-  }),
-);
+const {
+  ensureDesktopBridgeMock,
+  subscribeDesktopNotificationsMock,
+  unsubscribeMock,
+} = vi.hoisted(() => ({
+  ensureDesktopBridgeMock: vi.fn(),
+  subscribeDesktopNotificationsMock: vi.fn(),
+  unsubscribeMock: vi.fn(),
+}));
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
 
