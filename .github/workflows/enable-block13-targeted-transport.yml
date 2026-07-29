@@ -9,7 +9,12 @@ on:
       - ".github/workflows/enable-block13-targeted-transport.yml"
 
 permissions:
+  actions: write
   contents: write
+
+concurrency:
+  group: enable-block13-targeted-transport
+  cancel-in-progress: true
 
 jobs:
   enable:
@@ -20,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Enable and trigger targeted transport workflow
+      - name: Enable targeted transport workflow
         shell: bash
         run: |
           set -euo pipefail
@@ -47,3 +52,9 @@ jobs:
           git add .github/workflows/apply-block13-targeted-transport.yml
           git commit -m "Enable Block 13 targeted transport workflow"
           git push origin HEAD:master
+
+      - name: Dispatch targeted transport implementation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run apply-block13-targeted-transport.yml --ref master
