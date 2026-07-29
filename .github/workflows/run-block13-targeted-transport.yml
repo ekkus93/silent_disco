@@ -51,4 +51,14 @@ jobs:
             exit 1
           }
           git commit -m "Add exact-listener control delivery"
-          git push origin HEAD:master
+
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git rebase origin/master
+            if git push origin HEAD:master; then
+              exit 0
+            fi
+            printf 'Push attempt %s raced another master update; retrying.\n' "${attempt}" >&2
+          done
+          echo "Could not publish targeted transport after bounded retries." >&2
+          exit 1
