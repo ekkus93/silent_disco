@@ -25,10 +25,7 @@ function snapshot(revision: string, hostLifecycle = "idle"): CoreSnapshotDto {
 }
 
 function readyState(initialSnapshot: CoreSnapshotDto) {
-  const opening = coreReducer(
-    undefined,
-    coreActions.bridgeOpening({ profileId: "main" }),
-  );
+  const opening = coreReducer(undefined, coreActions.bridgeOpening({ profileId: "main" }));
   return coreReducer(
     opening,
     coreActions.bridgeReady({ profileId: "main", snapshot: initialSnapshot }),
@@ -98,10 +95,7 @@ describe("authoritative core slice", () => {
   });
 
   it("does not count the duplicate bootstrap snapshot as a stale notification", () => {
-    let state = coreReducer(
-      undefined,
-      coreActions.bridgeOpening({ profileId: "main" }),
-    );
+    let state = coreReducer(undefined, coreActions.bridgeOpening({ profileId: "main" }));
     state = coreReducer(
       state,
       coreActions.notificationReceived({ kind: "snapshot", details: snapshot("12") }),
@@ -114,6 +108,28 @@ describe("authoritative core slice", () => {
     expect(state.bridgeLifecycle.kind).toBe("ready");
     expect(state.snapshot?.revision).toBe("12");
     expect(state.staleNotifications.snapshots).toBe(0);
+  });
+
+  it("accepts revision zero after a fresh bridge open resets the prior session", () => {
+    let state = readyState(snapshot("31", "streaming"));
+    state = coreReducer(
+      state,
+      coreActions.commandPending({
+        operationId: "old-operation",
+        commandKind: "end_host",
+      }),
+    );
+
+    state = coreReducer(state, coreActions.bridgeOpening({ profileId: "main" }));
+    expect(state.snapshot).toBeNull();
+    expect(state.pendingCommandReceipts).toEqual({});
+
+    state = coreReducer(
+      state,
+      coreActions.bridgeReady({ profileId: "main", snapshot: snapshot("0") }),
+    );
+    expect(state.snapshot?.revision).toBe("0");
+    expect(state.bridgeLifecycle.kind).toBe("ready");
   });
 
   it("fails visibly when a notification has an invalid revision", () => {
