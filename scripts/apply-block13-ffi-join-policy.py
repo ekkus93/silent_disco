@@ -67,8 +67,8 @@ def update_test() -> None:
     replace_once(
         TEST,
         "raw-invite-test-field",
-        "                        invite_code_valid: true,",
-        "                        invite_code: None,",
+        "invite_code_valid: true,",
+        "invite_code: None,",
     )
 
 
