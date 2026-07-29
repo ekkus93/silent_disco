@@ -6,6 +6,7 @@ on:
       - Fix Block 13 Rust and Rerun Transport
       - Enable Block 13 Targeted Transport
       - Apply Block 13 Targeted Transport
+      - Run Block 13 Targeted Transport
     types:
       - requested
       - in_progress
