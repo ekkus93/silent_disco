@@ -60,11 +60,11 @@ jobs:
               ;;
           esac
 
-          latest_run_id="$([
-            -n "${EVENT_WORKFLOW_ID}"
-          ] && gh api \
-            "repos/${REPOSITORY}/actions/workflows/${EVENT_WORKFLOW_ID}/runs?per_page=1" \
-            --jq '.workflow_runs[0].id')"
+          latest_run_id="$(
+            gh api \
+              "repos/${REPOSITORY}/actions/workflows/${EVENT_WORKFLOW_ID}/runs?per_page=1" \
+              --jq '.workflow_runs[0].id'
+          )"
           if [[ "${latest_run_id}" != "${EVENT_RUN_ID}" ]]; then
             printf 'Skipping stale state for run %s; latest run is %s.\n' \
               "${EVENT_RUN_ID}" "${latest_run_id}"
@@ -226,11 +226,11 @@ jobs:
           patch_path.write_text(json.dumps(patch), encoding="utf-8")
           PY
 
-          latest_run_id="$([
-            -n "${EVENT_WORKFLOW_ID}"
-          ] && gh api \
-            "repos/${REPOSITORY}/actions/workflows/${EVENT_WORKFLOW_ID}/runs?per_page=1" \
-            --jq '.workflow_runs[0].id')"
+          latest_run_id="$(
+            gh api \
+              "repos/${REPOSITORY}/actions/workflows/${EVENT_WORKFLOW_ID}/runs?per_page=1" \
+              --jq '.workflow_runs[0].id'
+          )"
           if [[ "${latest_run_id}" != "${EVENT_RUN_ID}" ]]; then
             printf 'Skipping superseded state for run %s; latest run is now %s.\n' \
               "${EVENT_RUN_ID}" "${latest_run_id}"
