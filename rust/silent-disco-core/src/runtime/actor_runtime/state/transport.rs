@@ -106,6 +106,12 @@ impl ActorState {
         self.snapshot
             .listeners
             .retain(|listener| &listener.device_id != device_id);
+        if previous != self.snapshot.listeners.len()
+            && self.snapshot.listeners.is_empty()
+            && self.snapshot.host_lifecycle == HostLifecycle::Ready
+        {
+            self.snapshot.host_lifecycle = HostLifecycle::WaitingForListeners;
+        }
         if let Some(error) = error {
             self.snapshot.last_error = Some(error.clone());
             return Ok(ApplyOutcome {
@@ -127,10 +133,15 @@ impl ActorState {
         self.snapshot.last_error = Some(error.clone());
         self.snapshot.transport_state = TransportState::Failed;
         match self.snapshot.selected_role {
-            Some(AppRole::Host) => self.snapshot.host_lifecycle = HostLifecycle::Error,
+            Some(AppRole::Host) => {
+                self.snapshot.host_lifecycle = HostLifecycle::Error;
+                self.snapshot.recoverable_action =
+                    error.retryable.then_some(RecoverableAction::Retry);
+            }
             Some(AppRole::Listener) => {
                 self.snapshot.listener_lifecycle = ListenerLifecycle::Error;
-                self.snapshot.recoverable_action = Some(RecoverableAction::Reconnect);
+                self.snapshot.recoverable_action =
+                    error.retryable.then_some(RecoverableAction::Reconnect);
             }
             None => {}
         }

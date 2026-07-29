@@ -6,7 +6,7 @@ use silent_disco_core::runtime::{
     AudioEvent, AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle,
     CoreActorRuntime, CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot,
     HostDraftPatch, InviteCodePatch, ListenerSummary, PlatformEffect, PlatformEffectRequest,
-    PlatformEvent, PlatformOperationCompletion, SnapshotRevision, TransportEvent,
+    PlatformEvent, PlatformOperationCompletion, RecoverableAction, SnapshotRevision, TransportEvent,
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
@@ -16,40 +16,8 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 #[test]
 fn host_lifecycle_transitions_are_rust_authoritative() {
     let (runtime, handle, receiver) = start_actor();
-    let selected = command_snapshot(
-        &handle,
-        &receiver,
-        SnapshotRevision::new(0),
-        CoreCommand::SelectRole {
-            role: AppRole::Host,
-        },
-    );
-    let source = AudioSourceDescriptor::new("source-1", "fixture.wav", Some(4096), Some(2000))
-        .expect("valid audio source");
-    let drafted = command_snapshot(
-        &handle,
-        &receiver,
-        selected.revision,
-        CoreCommand::UpdateHostDraft(HostDraftPatch {
-            session_name: Some("Lifecycle host".to_owned()),
-            approval_mode: Some(ApprovalMode::Manual),
-            invite_code: InviteCodePatch::Unchanged,
-            audio_source: AudioSourcePatch::Set(source),
-            remember_approved_devices: Some(false),
-        }),
-    );
-    let creating = command_snapshot(
-        &handle,
-        &receiver,
-        drafted.revision,
-        CoreCommand::CreateHostSession,
-    );
+    let (creating, start_advertising) = create_host(&handle, &receiver, "Lifecycle host");
     assert_eq!(creating.host_lifecycle, HostLifecycle::CreatingSession);
-    let start_advertising = next_platform_effect(&receiver);
-    assert!(matches!(
-        start_advertising.request,
-        PlatformEffectRequest::StartAdvertising(_)
-    ));
 
     handle
         .submit_transport_event(TransportEvent::StateChanged(TransportState::Advertising))
@@ -65,18 +33,29 @@ fn host_lifecycle_transitions_are_rust_authoritative() {
     let waiting = next_snapshot(&receiver, advertising.revision.get() + 1);
     assert_eq!(waiting.host_lifecycle, HostLifecycle::WaitingForListeners);
 
-    let listener = ListenerSummary::new(
-        DeviceId::new("listener-1").expect("valid listener ID"),
-        "Listener One",
-        TrustState::SessionOnly,
-        TransportState::Connected,
-    )
-    .expect("valid listener summary");
+    let listener = listener_summary();
     handle
-        .submit_transport_event(TransportEvent::ListenerConnected(listener))
+        .submit_transport_event(TransportEvent::ListenerConnected(listener.clone()))
         .expect("submit listener connection");
     let ready = next_snapshot(&receiver, waiting.revision.get() + 1);
     assert_eq!(ready.host_lifecycle, HostLifecycle::Ready);
+
+    handle
+        .submit_transport_event(TransportEvent::ListenerDisconnected {
+            device_id: listener.device_id.clone(),
+            error: None,
+        })
+        .expect("submit listener disconnect");
+    let waiting_again = next_snapshot(&receiver, ready.revision.get() + 1);
+    assert_eq!(
+        waiting_again.host_lifecycle,
+        HostLifecycle::WaitingForListeners
+    );
+    handle
+        .submit_transport_event(TransportEvent::ListenerConnected(listener))
+        .expect("submit listener reconnect");
+    let ready_again = next_snapshot(&receiver, waiting_again.revision.get() + 1);
+    assert_eq!(ready_again.host_lifecycle, HostLifecycle::Ready);
 
     handle
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
@@ -88,13 +67,13 @@ fn host_lifecycle_transitions_are_rust_authoritative() {
             .current_snapshot()
             .expect("snapshot after rejected pause")
             .revision,
-        ready.revision
+        ready_again.revision
     );
 
     handle
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
         .expect("submit playing state");
-    let streaming = next_snapshot(&receiver, ready.revision.get() + 1);
+    let streaming = next_snapshot(&receiver, ready_again.revision.get() + 1);
     assert_eq!(streaming.host_lifecycle, HostLifecycle::Streaming);
     handle
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
@@ -131,53 +110,72 @@ fn host_lifecycle_transitions_are_rust_authoritative() {
 }
 
 #[test]
-fn host_failure_and_retry_are_visible() {
-    let (runtime, handle, receiver) = start_waiting_host();
-    let waiting = handle.current_snapshot().expect("waiting snapshot");
-    let transport_error = CoreError::new(
-        CoreErrorCode::TransportConnectionLost,
-        "injected host transport failure",
+fn retryable_host_start_failure_reissues_the_real_effect() {
+    let (runtime, handle, receiver) = start_actor();
+    let (creating, first_effect) = create_host(&handle, &receiver, "Retry host");
+    let first_session_id = match &first_effect.request {
+        PlatformEffectRequest::StartAdvertising(advertisement) => advertisement.session_id.clone(),
+        request => panic!("unexpected host start effect: {request:?}"),
+    };
+    let failure = CoreError::new(
+        CoreErrorCode::PlatformOperationFailed,
+        "injected advertising failure",
         ErrorSeverity::Error,
         true,
-        None,
+        Some(first_effect.operation_id.clone()),
     )
-    .expect("valid transport error");
+    .expect("valid platform error");
     handle
-        .submit_transport_event(TransportEvent::Failed(transport_error))
-        .expect("submit transport failure");
-    let failed = next_snapshot(&receiver, waiting.revision.get() + 1);
+        .submit_platform_event(PlatformEvent::OperationFailed {
+            operation_id: first_effect.operation_id,
+            error: failure,
+        })
+        .expect("submit advertising failure");
+    let failed = next_snapshot(&receiver, creating.revision.get() + 1);
     assert_eq!(failed.host_lifecycle, HostLifecycle::Error);
+    assert_eq!(failed.transport_state, TransportState::Failed);
+    assert_eq!(failed.recoverable_action, Some(RecoverableAction::Retry));
     assert!(failed.last_error.is_some());
 
-    let retried = command_snapshot(
+    let retrying = command_snapshot(
         &handle,
         &receiver,
         failed.revision,
         CoreCommand::RetryRecoverableFailure,
     );
-    assert_eq!(retried.host_lifecycle, HostLifecycle::Error);
-    assert!(retried.last_error.is_none());
+    assert_eq!(retrying.host_lifecycle, HostLifecycle::CreatingSession);
+    assert_eq!(retrying.transport_state, TransportState::Idle);
+    assert!(retrying.last_error.is_none());
+    let retry_effect = next_platform_effect(&receiver);
+    let retry_session_id = match retry_effect.request {
+        PlatformEffectRequest::StartAdvertising(advertisement) => advertisement.session_id,
+        request => panic!("unexpected retry effect: {request:?}"),
+    };
+    assert_eq!(retry_session_id, first_session_id);
     runtime.shutdown().expect("shutdown actor");
 }
 
-fn start_waiting_host() -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNotification>) {
-    let (runtime, handle, receiver) = start_actor();
+fn create_host(
+    handle: &CoreActorHandle,
+    receiver: &Receiver<CoreNotification>,
+    session_name: &str,
+) -> (CoreSnapshot, PlatformEffect) {
     let selected = command_snapshot(
-        &handle,
-        &receiver,
+        handle,
+        receiver,
         SnapshotRevision::new(0),
         CoreCommand::SelectRole {
             role: AppRole::Host,
         },
     );
-    let source = AudioSourceDescriptor::new("source-2", "fixture.wav", Some(4096), Some(2000))
+    let source = AudioSourceDescriptor::new("source-1", "fixture.wav", Some(4096), Some(2000))
         .expect("valid audio source");
     let drafted = command_snapshot(
-        &handle,
-        &receiver,
+        handle,
+        receiver,
         selected.revision,
         CoreCommand::UpdateHostDraft(HostDraftPatch {
-            session_name: Some("Failure host".to_owned()),
+            session_name: Some(session_name.to_owned()),
             approval_mode: Some(ApprovalMode::Manual),
             invite_code: InviteCodePatch::Unchanged,
             audio_source: AudioSourcePatch::Set(source),
@@ -185,21 +183,27 @@ fn start_waiting_host() -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNoti
         }),
     );
     let creating = command_snapshot(
-        &handle,
-        &receiver,
+        handle,
+        receiver,
         drafted.revision,
         CoreCommand::CreateHostSession,
     );
-    let effect = next_platform_effect(&receiver);
-    handle
-        .submit_platform_event(PlatformEvent::OperationSucceeded {
-            operation_id: effect.operation_id,
-            completion: PlatformOperationCompletion::AdvertisingStarted,
-        })
-        .expect("submit advertising success");
-    let waiting = next_snapshot(&receiver, creating.revision.get() + 1);
-    assert_eq!(waiting.host_lifecycle, HostLifecycle::WaitingForListeners);
-    (runtime, handle, receiver)
+    let effect = next_platform_effect(receiver);
+    assert!(matches!(
+        effect.request,
+        PlatformEffectRequest::StartAdvertising(_)
+    ));
+    (creating, effect)
+}
+
+fn listener_summary() -> ListenerSummary {
+    ListenerSummary::new(
+        DeviceId::new("listener-1").expect("valid listener ID"),
+        "Listener One",
+        TrustState::SessionOnly,
+        TransportState::Connected,
+    )
+    .expect("valid listener summary")
 }
 
 fn start_actor() -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNotification>) {

@@ -1,7 +1,7 @@
 use super::{
     ActorState, AppRole, ApplyOutcome, CoreCommand, CoreError, DiscoveryRequest, HostLifecycle,
     ListenerLifecycle, NetworkEstablishmentRequest, OperationId, PendingPlatformOperation,
-    PlatformEffectRequest, SessionAdvertisement, SessionId, TransportState,
+    PlatformEffectRequest, RecoverableAction, SessionAdvertisement, SessionId, TransportState,
     current_protocol_version, invalid_argument, invalid_state,
 };
 
@@ -63,6 +63,8 @@ impl ActorState {
         if self.snapshot.host_lifecycle != HostLifecycle::Idle
             || self.snapshot.listener_lifecycle != ListenerLifecycle::Idle
             || !self.pending_platform.is_empty()
+            || !self.pending_transport.is_empty()
+            || !self.pending_storage.is_empty()
         {
             return Err(invalid_state(
                 "role cannot change while a session or operation is active",
@@ -120,23 +122,10 @@ impl ActorState {
             .validate_for_creation()
             .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
         let session_id = self.next_session_id()?;
-        let advertisement = SessionAdvertisement::new(
-            session_id.clone(),
-            self.local_device_id.clone(),
-            self.snapshot.host_draft.session_name.clone(),
-            self.snapshot.host_draft.approval_mode,
-            current_protocol_version(),
-            None,
-        )
-        .map_err(|error| invalid_argument(error.to_string(), Some(operation_id)))?;
-        let effect = self.start_platform_operation(
-            PlatformEffectRequest::StartAdvertising(advertisement),
-            PendingPlatformOperation::StartAdvertising {
-                session_id: session_id.clone(),
-            },
-        )?;
+        let effect = self.start_host_advertising(operation_id, session_id.clone())?;
         self.host_session_id = Some(session_id);
         self.snapshot.host_lifecycle = HostLifecycle::CreatingSession;
+        self.snapshot.transport_state = TransportState::Idle;
         self.clear_failure();
         Ok(ApplyOutcome::effect(effect))
     }
@@ -334,13 +323,77 @@ impl ActorState {
                 Some(operation_id.clone()),
             )
         })?;
-        if !error.retryable || self.snapshot.recoverable_action.is_none() {
+        let action = self.snapshot.recoverable_action.ok_or_else(|| {
+            invalid_state(
+                "the current failure has no recoverable action",
+                Some(operation_id.clone()),
+            )
+        })?;
+        if !error.retryable {
             return Err(invalid_state(
                 "the current failure is not retryable",
                 Some(operation_id),
             ));
         }
+
+        if self.snapshot.selected_role == Some(AppRole::Host)
+            && action == RecoverableAction::Retry
+        {
+            return self.retry_host_session(operation_id);
+        }
+
         self.clear_failure();
         Ok(ApplyOutcome::changed())
+    }
+
+    fn retry_host_session(
+        &mut self,
+        operation_id: OperationId,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_role(AppRole::Host, &operation_id)?;
+        if !self.pending_platform.is_empty()
+            || !self.pending_transport.is_empty()
+            || !self.pending_storage.is_empty()
+        {
+            return Err(invalid_state(
+                "host retry cannot start while another operation is pending",
+                Some(operation_id),
+            ));
+        }
+        self.snapshot
+            .host_draft
+            .validate_for_creation()
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        let session_id = self.host_session_id.clone().ok_or_else(|| {
+            invalid_state(
+                "host retry has no active session identity",
+                Some(operation_id.clone()),
+            )
+        })?;
+        let effect = self.start_host_advertising(operation_id, session_id)?;
+        self.snapshot.host_lifecycle = HostLifecycle::CreatingSession;
+        self.snapshot.transport_state = TransportState::Idle;
+        self.clear_failure();
+        Ok(ApplyOutcome::effect(effect))
+    }
+
+    fn start_host_advertising(
+        &mut self,
+        operation_id: OperationId,
+        session_id: SessionId,
+    ) -> Result<super::PlatformEffect, CoreError> {
+        let advertisement = SessionAdvertisement::new(
+            session_id.clone(),
+            self.local_device_id.clone(),
+            self.snapshot.host_draft.session_name.clone(),
+            self.snapshot.host_draft.approval_mode,
+            current_protocol_version(),
+            None,
+        )
+        .map_err(|error| invalid_argument(error.to_string(), Some(operation_id)))?;
+        self.start_platform_operation(
+            PlatformEffectRequest::StartAdvertising(advertisement),
+            PendingPlatformOperation::StartAdvertising { session_id },
+        )
     }
 }
