@@ -24,7 +24,12 @@ For shared-core work, read and follow:
 - `docs/SILENT_DISCO_RUST_CORE_ARCHITECTURE_SPEC.md`
 - `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`
 
-Do not create additional assistant-generated design documents unless they are committed at the exact path referenced by the spec or TODO.
+For desktop companion work, read and follow:
+
+- `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md`
+- `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`
+
+Do not create additional assistant-generated design documents unless they are committed at the exact path referenced by one of these specs or TODOs.
 
 ## Confirmed project decisions
 
@@ -60,7 +65,22 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
+`app/build.gradle.kts` also wires custom Gradle `Exec` tasks (`buildRustAndroidDebug`, `buildRustAndroidRelease`, via `cargo-ndk` for 4 ABIs) into `mergeXJniLibFolders`/`clean` — Android builds invoke the Rust build automatically.
+
 Do not claim these commands passed unless they were actually executed with the pinned toolchain.
+
+## Desktop companion (Tauri)
+
+`desktop/` is a Tauri 2 desktop companion app: Rust backend in `desktop/src-tauri`, React 19 + Redux Toolkit + Tailwind frontend in `desktop/src`. It is governed by the same architectural boundaries (presentation / platform adapters / authoritative Rust domain state / etc.) as the Android app.
+
+Run the full desktop quality gate with:
+
+```bash
+cd desktop
+npm run check
+```
+
+This runs UniFFI bindings-check, Biome format/lint, `tsc`, Vitest, and a production build in sequence. Do not claim it passed unless it was actually executed.
 
 ## Core implementation priorities
 
