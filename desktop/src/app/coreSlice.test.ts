@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -207,7 +209,10 @@ describe("authoritative core slice", () => {
 
   it("keeps host lifecycle mutation out of frontend actions and transition helpers", () => {
     expect(Object.keys(coreActions)).not.toContain("setHostLifecycle");
-    const source = readFileSync(new URL("./coreSlice.ts", import.meta.url), "utf8");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "coreSlice.ts"),
+      "utf8",
+    );
     expect(source).not.toMatch(/\b(?:advance|set|transition)HostLifecycle\b/);
   });
 });

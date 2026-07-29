@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; case \"$f\" in */desktop/src/*) (cd desktop && npx --yes @biomejs/biome@2.5.5 format --write \"$f\") 2>/dev/null;; esac; } || true",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash scripts/check-source-file-line-counts.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
