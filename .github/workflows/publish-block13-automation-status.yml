@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - Fix Block 13 Rust and Rerun Transport
+      - Enable Block 13 Targeted Transport
       - Apply Block 13 Targeted Transport
     types:
       - requested
