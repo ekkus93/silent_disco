@@ -58,6 +58,19 @@ pub(super) fn resource_limit(
     )
 }
 
+pub(super) fn transport_delivery_failed(
+    message: impl Into<String>,
+    operation_id: OperationId,
+) -> CoreError {
+    core_error(
+        CoreErrorCode::TransportDeliveryFailed,
+        message,
+        ErrorSeverity::Error,
+        true,
+        Some(operation_id),
+    )
+}
+
 pub(super) fn worker_stopped(operation_id: Option<OperationId>) -> CoreError {
     core_error(
         CoreErrorCode::WorkerStopped,

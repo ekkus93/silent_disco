@@ -388,6 +388,8 @@ fn notification_snapshot_revision(notification: &CoreNotification) -> Option<Sna
     match notification {
         CoreNotification::Snapshot(snapshot) => Some(snapshot.revision),
         CoreNotification::Effect(_)
+        | CoreNotification::TransportEffect(_)
+        | CoreNotification::StorageEffect(_)
         | CoreNotification::Error(_)
         | CoreNotification::Diagnostic(_) => None,
     }

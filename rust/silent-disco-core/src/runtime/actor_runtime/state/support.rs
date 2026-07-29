@@ -1,8 +1,10 @@
 use super::{
     ActorState, AppRole, ApplyOutcome, CoreDiagnostic, CoreError, CoreNotification,
-    DiagnosticField, HostLifecycle, ListenerLifecycle, MAX_PENDING_PLATFORM_OPERATIONS,
-    OperationId, PendingPlatformOperation, PlatformEffect, PlatformEffectRequest, PlaybackState,
-    RecoverableAction, SessionId, TransportState, invalid_argument, invalid_state, resource_limit,
+    DiagnosticField, HostLifecycle, ListenerLifecycle, MAX_PENDING_EFFECT_OPERATIONS, OperationId,
+    PendingPlatformOperation, PendingStorageOperation, PendingTransportOperation, PlatformEffect,
+    PlatformEffectRequest, PlaybackState, RecoverableAction, SessionId, StorageEffect,
+    StorageEffectRequest, TransportEffect, TransportEffectRequest, TransportState, invalid_argument,
+    invalid_state, resource_limit,
 };
 
 impl ActorState {
@@ -11,17 +13,54 @@ impl ActorState {
         request: PlatformEffectRequest,
         pending: PendingPlatformOperation,
     ) -> Result<PlatformEffect, CoreError> {
-        if self.pending_platform.len() >= MAX_PENDING_PLATFORM_OPERATIONS {
-            return Err(resource_limit(
-                "pending platform-operation capacity reached",
-                None,
-            ));
-        }
+        self.ensure_effect_capacity()?;
         let operation_id = self.next_effect_id()?;
         let effect = PlatformEffect::new(operation_id.clone(), request)
             .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
         self.pending_platform.push((operation_id, pending));
         Ok(effect)
+    }
+
+    pub(super) fn start_transport_operation(
+        &mut self,
+        request: TransportEffectRequest,
+        pending: PendingTransportOperation,
+    ) -> Result<TransportEffect, CoreError> {
+        self.ensure_effect_capacity()?;
+        let operation_id = self.next_effect_id()?;
+        let effect = TransportEffect::new(operation_id.clone(), request)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        self.pending_transport.push((operation_id, pending));
+        Ok(effect)
+    }
+
+    pub(super) fn start_storage_operation(
+        &mut self,
+        request: StorageEffectRequest,
+        pending: PendingStorageOperation,
+    ) -> Result<StorageEffect, CoreError> {
+        self.ensure_effect_capacity()?;
+        let operation_id = self.next_effect_id()?;
+        let effect = StorageEffect::new(operation_id.clone(), request)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        self.pending_storage.push((operation_id, pending));
+        Ok(effect)
+    }
+
+    fn ensure_effect_capacity(&self) -> Result<(), CoreError> {
+        let pending = self
+            .pending_platform
+            .len()
+            .checked_add(self.pending_transport.len())
+            .and_then(|count| count.checked_add(self.pending_storage.len()))
+            .ok_or_else(|| resource_limit("pending effect-operation count overflow", None))?;
+        if pending >= MAX_PENDING_EFFECT_OPERATIONS {
+            return Err(resource_limit(
+                "pending effect-operation capacity reached",
+                None,
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn pending(&self, operation_id: &OperationId) -> Option<&PendingPlatformOperation> {
@@ -40,6 +79,48 @@ impl ActorState {
             .iter()
             .position(|(candidate, _)| candidate == operation_id)?;
         Some(self.pending_platform.remove(index).1)
+    }
+
+    pub(super) fn pending_transport(
+        &self,
+        operation_id: &OperationId,
+    ) -> Option<&PendingTransportOperation> {
+        self.pending_transport
+            .iter()
+            .find(|(candidate, _)| candidate == operation_id)
+            .map(|(_, pending)| pending)
+    }
+
+    pub(super) fn remove_pending_transport(
+        &mut self,
+        operation_id: &OperationId,
+    ) -> Option<PendingTransportOperation> {
+        let index = self
+            .pending_transport
+            .iter()
+            .position(|(candidate, _)| candidate == operation_id)?;
+        Some(self.pending_transport.remove(index).1)
+    }
+
+    pub(super) fn pending_storage(
+        &self,
+        operation_id: &OperationId,
+    ) -> Option<&PendingStorageOperation> {
+        self.pending_storage
+            .iter()
+            .find(|(candidate, _)| candidate == operation_id)
+            .map(|(_, pending)| pending)
+    }
+
+    pub(super) fn remove_pending_storage(
+        &mut self,
+        operation_id: &OperationId,
+    ) -> Option<PendingStorageOperation> {
+        let index = self
+            .pending_storage
+            .iter()
+            .position(|(candidate, _)| candidate == operation_id)?;
+        Some(self.pending_storage.remove(index).1)
     }
 
     pub(super) fn apply_pending_failure(
@@ -139,6 +220,8 @@ impl ActorState {
 
     pub(super) fn reset_host_session(&mut self) {
         self.host_session_id = None;
+        self.pending_transport.clear();
+        self.pending_storage.clear();
         self.snapshot.host_lifecycle = HostLifecycle::Idle;
         self.snapshot.transport_state = TransportState::Idle;
         self.snapshot.pending_join_requests.clear();

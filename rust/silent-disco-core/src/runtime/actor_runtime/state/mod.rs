@@ -3,6 +3,7 @@
     reason = "the serialized reducer keeps each source-ordered event family auditable in one place"
 )]
 
+mod admission;
 mod audio;
 mod commands;
 mod platform;
@@ -10,10 +11,12 @@ mod storage;
 mod support;
 mod transport;
 
-use super::errors::{invalid_argument, invalid_state, resource_limit};
+use super::errors::{
+    invalid_argument, invalid_state, resource_limit, transport_delivery_failed,
+};
 use crate::domain::{
-    AppRole, DeviceId, HostLifecycle, ListenerLifecycle, OperationId, PlaybackState, SessionId,
-    TransportState,
+    AppRole, DeviceId, HostLifecycle, ListenerLifecycle, OperationId, PlaybackState, RequestId,
+    SessionId, TransportState,
 };
 use crate::error::CoreError;
 use crate::runtime::records::{
@@ -23,8 +26,12 @@ use crate::runtime::records::{
     PlatformEvent, PlatformOperationCompletion, RecoverableAction, SessionAdvertisement,
     StorageCompletion, StorageEvent, TransportEvent, current_protocol_version,
 };
+use crate::runtime::{
+    ApprovalDelivery, StorageEffect, StorageEffectRequest, TransportEffect, TransportEffectRequest,
+    TrustPersistenceRequest,
+};
 
-const MAX_PENDING_PLATFORM_OPERATIONS: usize = 128;
+const MAX_PENDING_EFFECT_OPERATIONS: usize = 128;
 
 #[derive(Debug, Clone)]
 pub(super) struct ActorState {
@@ -32,6 +39,8 @@ pub(super) struct ActorState {
     local_device_id: DeviceId,
     host_session_id: Option<SessionId>,
     pending_platform: Vec<(OperationId, PendingPlatformOperation)>,
+    pending_transport: Vec<(OperationId, PendingTransportOperation)>,
+    pending_storage: Vec<(OperationId, PendingStorageOperation)>,
     next_effect_sequence: u64,
     next_session_sequence: u64,
     next_export_sequence: u64,
@@ -46,6 +55,23 @@ enum PendingPlatformOperation {
     EstablishNetwork { session_id: SessionId },
     ReleaseNetwork,
     ShareDiagnostics { export_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingTransportOperation {
+    ApproveJoin(ApprovalDelivery),
+    RejectJoin {
+        request_id: RequestId,
+        listener_id: DeviceId,
+    },
+    DisconnectListener {
+        listener_id: DeviceId,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingStorageOperation {
+    PersistApprovalTrust(TrustPersistenceRequest),
 }
 
 #[derive(Debug, Default)]
@@ -70,6 +96,22 @@ impl ApplyOutcome {
             stop_requested: false,
         }
     }
+
+    fn transport_effect(effect: TransportEffect) -> Self {
+        Self {
+            notifications: vec![CoreNotification::TransportEffect(effect)],
+            changed: true,
+            stop_requested: false,
+        }
+    }
+
+    fn storage_effect(effect: StorageEffect) -> Self {
+        Self {
+            notifications: vec![CoreNotification::StorageEffect(effect)],
+            changed: true,
+            stop_requested: false,
+        }
+    }
 }
 
 pub(super) struct ProcessResult {
@@ -84,6 +126,8 @@ impl ActorState {
             local_device_id,
             host_session_id: None,
             pending_platform: Vec::new(),
+            pending_transport: Vec::new(),
+            pending_storage: Vec::new(),
             next_effect_sequence: 1,
             next_session_sequence: 1,
             next_export_sequence: 1,
@@ -147,12 +191,45 @@ impl ActorState {
                         Some(operation_id),
                     ));
                 }
-                self.apply_command(operation_id, request.command)
+                match request.command {
+                    CoreCommand::ApproveJoin { request_id } => {
+                        self.approve_join(operation_id, request_id)
+                    }
+                    CoreCommand::RejectJoin { request_id } => {
+                        self.reject_join(operation_id, request_id)
+                    }
+                    CoreCommand::RemoveListener { listener_id } => {
+                        self.remove_listener(operation_id, listener_id)
+                    }
+                    command => self.apply_command(operation_id, command),
+                }
             }
             CoreActorInput::Platform(event) => self.apply_platform(event),
-            CoreActorInput::Transport(event) => self.apply_transport(event),
-            CoreActorInput::Audio(event) => self.apply_audio(event),
-            CoreActorInput::Storage(event) => self.apply_storage(event),
+            CoreActorInput::Transport(event) => match event {
+                TransportEvent::JoinRequested(request) => self.handle_join_request(request),
+                TransportEvent::DeliveryCompleted {
+                    operation_id,
+                    report,
+                } => self.complete_transport_delivery(operation_id, report),
+                TransportEvent::StateChanged(state) => self.apply_transport_state(state),
+                event => self.apply_transport(event),
+            },
+            CoreActorInput::Audio(event) => self.apply_audio_with_host_lifecycle(event),
+            CoreActorInput::Storage(event) => {
+                let admission_event = self.pending_storage(event.operation_id()).is_some()
+                    || matches!(
+                        &event,
+                        StorageEvent::OperationSucceeded {
+                            completion: StorageCompletion::TrustedDeviceUpdated { .. },
+                            ..
+                        }
+                    );
+                if admission_event {
+                    self.apply_admission_storage(event)
+                } else {
+                    self.apply_storage(event)
+                }
+            }
         }
     }
 }

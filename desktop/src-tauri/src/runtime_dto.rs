@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
     CoreDiagnostic, CoreNotification, CoreSnapshot, PlatformEffect, PlatformEffectRequest,
+    StorageEffect, StorageEffectRequest, TransportEffect, TransportEffectRequest,
 };
 use ts_rs::TS;
 
@@ -83,7 +84,7 @@ pub struct AttachNotificationResponse {
     pub subscription_id: String,
 }
 
-/// Redacted frontend-visible platform effect. Native handles and payload details stay in Rust.
+/// Redacted frontend-visible core effect. Native handles and payload details stay in Rust.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
@@ -97,6 +98,24 @@ impl From<PlatformEffect> for PlatformEffectDto {
         Self {
             operation_id: value.operation_id.into_string(),
             effect_kind: platform_effect_name(&value.request).to_owned(),
+        }
+    }
+}
+
+impl From<TransportEffect> for PlatformEffectDto {
+    fn from(value: TransportEffect) -> Self {
+        Self {
+            operation_id: value.operation_id.into_string(),
+            effect_kind: transport_effect_name(&value.request).to_owned(),
+        }
+    }
+}
+
+impl From<StorageEffect> for PlatformEffectDto {
+    fn from(value: StorageEffect) -> Self {
+        Self {
+            operation_id: value.operation_id.into_string(),
+            effect_kind: storage_effect_name(&value.request).to_owned(),
         }
     }
 }
@@ -158,6 +177,12 @@ impl From<CoreNotification> for CoreNotificationDto {
                 Self::Snapshot(Box::new(CoreSnapshotDto::from(snapshot)))
             }
             CoreNotification::Effect(effect) => Self::Effect(PlatformEffectDto::from(effect)),
+            CoreNotification::TransportEffect(effect) => {
+                Self::Effect(PlatformEffectDto::from(effect))
+            }
+            CoreNotification::StorageEffect(effect) => {
+                Self::Effect(PlatformEffectDto::from(effect))
+            }
             CoreNotification::Error(error) => Self::Error(DesktopErrorDto::from(error)),
             CoreNotification::Diagnostic(diagnostic) => {
                 Self::Diagnostic(CoreDiagnosticDto::from(diagnostic))
@@ -179,6 +204,20 @@ fn platform_effect_name(request: &PlatformEffectRequest) -> &'static str {
         PlatformEffectRequest::StartAudioOutput(_) => "start_audio_output",
         PlatformEffectRequest::StopAudioOutput => "stop_audio_output",
         PlatformEffectRequest::ShareDiagnostics { .. } => "share_diagnostics",
+    }
+}
+
+fn transport_effect_name(request: &TransportEffectRequest) -> &'static str {
+    match request {
+        TransportEffectRequest::DeliverJoinApproval { .. } => "deliver_join_approval",
+        TransportEffectRequest::DeliverJoinRejection { .. } => "deliver_join_rejection",
+        TransportEffectRequest::DisconnectListener { .. } => "disconnect_listener",
+    }
+}
+
+fn storage_effect_name(request: &StorageEffectRequest) -> &'static str {
+    match request {
+        StorageEffectRequest::PersistTrustedDevice { .. } => "persist_trusted_device",
     }
 }
 

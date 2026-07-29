@@ -1,4 +1,5 @@
 mod actor_runtime;
+mod effects;
 mod host_admission;
 #[path = "records_runtime.rs"]
 mod records;
@@ -11,6 +12,10 @@ mod types;
 pub use actor_runtime::{
     CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver, DEFAULT_ACTOR_QUEUE_CAPACITY,
     DEFAULT_NOTIFICATION_QUEUE_CAPACITY, MAX_ACTOR_QUEUE_CAPACITY, MAX_NOTIFICATION_QUEUE_CAPACITY,
+};
+pub use effects::{
+    EffectContractError, StorageEffect, StorageEffectRequest, TransportEffect,
+    TransportEffectRequest,
 };
 pub use host_admission::{
     ApprovalDelivery, ApprovalPreparation, DeliveryCommitDisposition, JoinRejectionReason,
