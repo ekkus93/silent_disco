@@ -79,7 +79,13 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
         .expect("submit partial completion");
     let committed = next_snapshot(&receiver, retrying.revision.get() + 1);
     assert!(committed.pending_join_requests.is_empty());
-    assert_eq!(committed.last_delivery.expect("delivery report").successful_peers, 1);
+    assert_eq!(
+        committed
+            .last_delivery
+            .expect("delivery report")
+            .successful_peers,
+        1
+    );
     assert_eq!(next_diagnostic(&receiver).name, "transport_delivery_partial");
 
     submit_command(
@@ -250,7 +256,7 @@ fn start_host(
             completion: PlatformOperationCompletion::AdvertisingStarted,
         })
         .expect("submit advertising success");
-    let waiting = next_snapshot(&receiver, creating.revision.get() + 1);
+    next_snapshot(&receiver, creating.revision.get() + 1);
     (runtime, handle, receiver)
 }
 
@@ -346,7 +352,9 @@ fn next_error(receiver: &Receiver<CoreNotification>) -> CoreError {
     }
 }
 
-fn next_diagnostic(receiver: &Receiver<CoreNotification>) -> silent_disco_core::runtime::CoreDiagnostic {
+fn next_diagnostic(
+    receiver: &Receiver<CoreNotification>,
+) -> silent_disco_core::runtime::CoreDiagnostic {
     loop {
         match receiver.recv_timeout(TIMEOUT) {
             Ok(CoreNotification::Diagnostic(diagnostic)) => return diagnostic,
