@@ -17,21 +17,42 @@ def replace_once(path: Path, label: str, old: str, new: str) -> None:
     path.write_text(content.replace(old, new), encoding="utf-8")
 
 
-def update_record() -> None:
-    replace_once(
-        TYPES,
-        "raw-invite-field",
-        "    pub invite_code_valid: bool,",
-        "    pub invite_code: Option<String>,",
-    )
+def add_input_record() -> None:
+    marker = """#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiSynchronizationSummary {
+"""
+    input_record = """#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiJoinRequestInput {
+    pub request_id: String,
+    pub device_id: String,
+    pub display_name: String,
+    pub trust_state: FfiTrustState,
+    pub invite_code: Option<String>,
+    pub received_at_ms: u64,
+}
+
+"""
+    replace_once(TYPES, "join-input-record", marker, input_record + marker)
 
 
 def update_submission_policy() -> None:
     replace_once(
         HANDLE,
+        "join-input-import",
+        "    FfiDeliveryReport, FfiHostDraft, FfiJoinRequest, FfiListenerSummary, FfiPlatformCompletion,",
+        "    FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,\n    FfiPlatformCompletion,",
+    )
+    replace_once(
+        HANDLE,
         "approval-mode-import",
         "    DeviceId, MonotonicMillis, OperationId, RequestId, SyncConfidence, TransportState, TrustState,",
         "    ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SyncConfidence,\n    TransportState, TrustState,",
+    )
+    replace_once(
+        HANDLE,
+        "join-input-argument",
+        "pub fn submit_join_request(&self, request: FfiJoinRequest)",
+        "pub fn submit_join_request(&self, request: FfiJoinRequestInput)",
     )
     old = """        self.ensure_open()?;
         let request = JoinRequestSummary::new(
@@ -66,6 +87,18 @@ def update_submission_policy() -> None:
 def update_test() -> None:
     replace_once(
         TEST,
+        "join-input-test-import",
+        "FfiCoreNotification, FfiCoreObserver, FfiDeliveryReport, FfiHostDraft, FfiJoinRequest,",
+        "FfiCoreNotification, FfiCoreObserver, FfiDeliveryReport, FfiHostDraft,\n    FfiJoinRequestInput,",
+    )
+    replace_once(
+        TEST,
+        "join-input-test-constructor",
+        ".submit_join_request(FfiJoinRequest {",
+        ".submit_join_request(FfiJoinRequestInput {",
+    )
+    replace_once(
+        TEST,
         "raw-invite-test-field",
         "invite_code_valid: true,",
         "invite_code: None,",
@@ -73,7 +106,7 @@ def update_test() -> None:
 
 
 def main() -> None:
-    update_record()
+    add_input_record()
     update_submission_policy()
     update_test()
 
