@@ -28,7 +28,7 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
 
       - name: Generate Kotlin bindings
-        run: scripts/generate-uniffi-kotlin.sh "${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
+        run: bash scripts/generate-uniffi-kotlin.sh "${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
 
       - name: Extract public API declaration report
         shell: bash
