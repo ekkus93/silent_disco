@@ -691,34 +691,36 @@ Adapt to the actual actor API. Do not block the core notification thread on the 
 
 ### 11.2 Add bounded dispatcher
 
-- [ ] bounded bridge queue;
-- [ ] snapshot coalescing only if latest revision is guaranteed;
-- [ ] effects and errors never silently dropped;
-- [ ] channel send failure becomes visible bridge state;
-- [ ] explicit subscription ID;
-- [ ] replace or reject duplicate subscriptions intentionally;
-- [ ] worker stop and join.
+- [x] bounded bridge queue;
+- [x] snapshot coalescing only if latest revision is guaranteed;
+- [x] effects and errors never silently dropped;
+- [x] channel send failure becomes visible bridge state;
+- [x] explicit subscription ID;
+- [x] replace or reject duplicate subscriptions intentionally;
+- [x] worker stop and join.
 
 ### 11.3 Attach Tauri channel
 
-- [ ] frontend attaches after open;
-- [ ] backend sends current snapshot immediately after attachment;
-- [ ] frontend reload can reattach;
-- [ ] stale old subscription cannot continue consuming;
-- [ ] private data is filtered before send.
+- [x] frontend attaches after open;
+- [x] backend sends current snapshot immediately after attachment;
+- [x] frontend reload can reattach;
+- [x] stale old subscription cannot continue consuming;
+- [x] private data is filtered before send.
 
 ### 11.4 Add tests
 
-- [ ] monotonically increasing snapshots;
-- [ ] stale snapshot handling;
-- [ ] closed channel;
-- [ ] duplicate attach;
-- [ ] frontend reload;
-- [ ] bounded queue pressure;
-- [ ] effect/error delivery under snapshot load;
-- [ ] shutdown while notification pending.
+- [x] monotonically increasing snapshots;
+- [x] stale snapshot handling;
+- [x] closed channel;
+- [x] duplicate attach;
+- [x] frontend reload;
+- [x] bounded queue pressure;
+- [x] effect/error delivery under snapshot load;
+- [x] shutdown while notification pending.
 
 **Acceptance:** The frontend receives revisioned authoritative notifications without blocking or silent loss.
+
+**Implementation status:** Complete on `master` at commit `3ce9aa8143bf943864d2d30a0db38c6f043bcae8`. The production bridge uses `notification_buffer.rs` for the bounded revision-aware dispatcher and `notification_channel.rs` for the redacted Tauri channel adapter. It replaces and joins stale subscriptions, retains failed non-snapshot notifications for reload delivery, exposes channel and worker failures, and keeps the frontend single-flight and reload-aware. CI #728, Source file line limit #76, and Desktop CI #133 passed for the final implementation commit.
 
 ---
 
