@@ -1,0 +1,91 @@
+name: Run Block 13 Targeted Transport
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/run-block13-targeted-transport.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run-block13-targeted-transport
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Apply reviewed targeted transport transformation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path(".github/workflows/apply-block13-targeted-transport.yml")
+          lines = source.read_text(encoding="utf-8").splitlines()
+          step_anchor = "      - name: Implement targeted control delivery"
+          try:
+              step_index = lines.index(step_anchor)
+          except ValueError as error:
+              raise SystemExit("targeted transport implementation step is missing") from error
+
+          run_index = None
+          for index in range(step_index + 1, len(lines)):
+              if lines[index] == "        run: |":
+                  run_index = index + 1
+                  break
+              if lines[index].startswith("      - name:"):
+                  break
+          if run_index is None:
+              raise SystemExit("targeted transport implementation script is missing")
+
+          script_lines = []
+          for line in lines[run_index:]:
+              if line.startswith("      - name:"):
+                  break
+              if line and not line.startswith("          "):
+                  raise SystemExit(f"unexpected implementation indentation: {line!r}")
+              script_lines.append(line[10:] if line else "")
+
+          filtered = [
+              line for line in script_lines
+              if line.strip() != "git rm .github/workflows/apply-block13-targeted-transport.yml"
+          ]
+          output = Path("/tmp/apply-block13-targeted-transport.sh")
+          output.write_text("\n".join(filtered) + "\n", encoding="utf-8")
+          PY
+          bash /tmp/apply-block13-targeted-transport.sh
+          git diff --check
+
+      - name: Run targeted transport tests
+        run: ./gradlew testDebugUnitTest --tests com.ekkus.silentdisco.core.transport.TargetedTcpTransportTest --stacktrace --console=plain
+
+      - name: Commit targeted transport source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main app/src/test
+          git diff --cached --quiet && {
+            echo "Targeted transport transformation produced no source changes." >&2
+            exit 1
+          }
+          git commit -m "Add exact-listener control delivery"
+          git push origin HEAD:master
