@@ -77,6 +77,11 @@ jobs:
           }
           """,
           )
+          replace_once(
+              "rust/silent-disco-core/tests/host_block12_actor_tuning.rs",
+              "request => panic!(\"unexpected storage effect: {request:?}\"),",
+              "request @ StorageEffectRequest::PersistTrustedDevice { .. } => {\n            panic!(\"unexpected storage effect: {request:?}\")\n        }",
+          )
           PY
           git rm .github/workflows/fix-block13-rust-and-rerun-transport.yml
           cd rust
