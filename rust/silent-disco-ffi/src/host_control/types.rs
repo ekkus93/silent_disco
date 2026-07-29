@@ -344,7 +344,7 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for FfiBridgeError {
     }
 }
 
-#[uniffi::export(foreign)]
+#[uniffi::export(callback_interface)]
 pub trait FfiCoreObserver: Send + Sync {
     fn on_notification(
         &self,
