@@ -1,0 +1,650 @@
+Generated from: silent_disco_ffi.kt
+Purpose: exact temporary UniFFI Kotlin API inspection for Desktop Block 13
+
+    fun asByteBuffer() =
+
+    fun lift(value: FfiType): KotlinType
+
+    fun lower(value: KotlinType): FfiType
+
+    fun read(buf: ByteBuffer): KotlinType
+
+    fun allocationSize(value: KotlinType): ULong
+
+    fun write(value: KotlinType, buf: ByteBuffer)
+
+    fun lowerIntoRustBuffer(value: KotlinType): RustBuffer.ByValue {
+
+    fun liftFromRustBuffer(rbuf: RustBuffer.ByValue): KotlinType {
+
+    override fun lift(value: RustBuffer.ByValue) = liftFromRustBuffer(value)
+
+    override fun lower(value: KotlinType) = lowerIntoRustBuffer(value)
+
+    fun isSuccess(): Boolean {
+
+    fun isError(): Boolean {
+
+    fun isPanic(): Boolean {
+
+    fun lift(error_buf: RustBuffer.ByValue): E;
+
+    override fun lift(error_buf: RustBuffer.ByValue): InternalException {
+
+    fun insert(obj: T): Long {
+
+    fun clone(handle: Long): Long {
+
+    fun get(handle: Long): T {
+
+    fun remove(handle: Long): T {
+
+    fun callback(`data`: Long,`pollResult`: Byte,)
+
+    fun callback(`handle`: Long,)
+
+    fun callback(`handle`: Long,)
+
+    fun callback(`handle`: Long,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultU8.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultI8.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultU16.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultI16.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultU32.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultI32.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultU64.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultI64.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultF32.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultF64.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultRustBuffer.UniffiByValue,)
+
+    fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultVoid.UniffiByValue,)
+
+    fun callback(`uniffiHandle`: Long,`notification`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+
+    fun destroy()
+
+    override fun lift(value: Long): CallbackInterface {
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+
+    fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable
+
+    override fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable =
+
+    override fun clean() = cleanable.clean()
+
+    override fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable =
+
+    override fun clean() = cleanable.clean()
+
+    override fun lift(value: Short): UShort {
+
+    override fun read(buf: ByteBuffer): UShort {
+
+    override fun lower(value: UShort): Short {
+
+    override fun allocationSize(value: UShort) = 2UL
+
+    override fun write(value: UShort, buf: ByteBuffer) {
+
+    override fun lift(value: Int): UInt {
+
+    override fun read(buf: ByteBuffer): UInt {
+
+    override fun lower(value: UInt): Int {
+
+    override fun allocationSize(value: UInt) = 4UL
+
+    override fun write(value: UInt, buf: ByteBuffer) {
+
+    override fun lift(value: Long): ULong {
+
+    override fun read(buf: ByteBuffer): ULong {
+
+    override fun lower(value: ULong): Long {
+
+    override fun allocationSize(value: ULong) = 8UL
+
+    override fun write(value: ULong, buf: ByteBuffer) {
+
+    override fun lift(value: Double): Double {
+
+    override fun read(buf: ByteBuffer): Double {
+
+    override fun lower(value: Double): Double {
+
+    override fun allocationSize(value: Double) = 8UL
+
+    override fun write(value: Double, buf: ByteBuffer) {
+
+    override fun lift(value: Byte): Boolean {
+
+    override fun read(buf: ByteBuffer): Boolean {
+
+    override fun lower(value: Boolean): Byte {
+
+    override fun allocationSize(value: Boolean) = 1UL
+
+    override fun write(value: Boolean, buf: ByteBuffer) {
+
+    override fun lift(value: RustBuffer.ByValue): String {
+
+    override fun read(buf: ByteBuffer): String {
+
+    fun toUtf8(value: String): ByteBuffer {
+
+    override fun lower(value: String): RustBuffer.ByValue {
+
+    override fun allocationSize(value: String): ULong {
+
+    override fun write(value: String, buf: ByteBuffer) {
+
+    override fun destroy() {
+
+    override fun close() {
+
+    fun uniffiCloneHandle(): Long {
+
+    override fun lower(value: FfiCoreHandle): Long {
+
+    override fun lift(value: Long): FfiCoreHandle {
+
+    override fun read(buf: ByteBuffer): FfiCoreHandle {
+
+    override fun allocationSize(value: FfiCoreHandle) = 8UL
+
+    override fun write(value: FfiCoreHandle, buf: ByteBuffer) {
+
+    override fun destroy() {
+
+    override fun close() {
+
+    fun uniffiCloneHandle(): Long {
+
+    override fun lower(value: FfiCoreObserver): Long {
+
+    override fun lift(value: Long): FfiCoreObserver {
+
+    override fun read(buf: ByteBuffer): FfiCoreObserver {
+
+    override fun allocationSize(value: FfiCoreObserver) = 8UL
+
+    override fun write(value: FfiCoreObserver, buf: ByteBuffer) {
+
+data class FfiAudioSource (
+    val `sourceId`: kotlin.String
+    , 
+    val `displayName`: kotlin.String
+    , 
+    val `sizeBytes`: kotlin.ULong?
+    , 
+    val `durationMs`: kotlin.ULong?
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiAudioSource {
+
+    override fun allocationSize(value: FfiAudioSource) = (
+            FfiConverterString.allocationSize(value.`sourceId`) +
+            FfiConverterString.allocationSize(value.`displayName`) +
+            FfiConverterOptionalULong.allocationSize(value.`sizeBytes`) +
+            FfiConverterOptionalULong.allocationSize(value.`durationMs`)
+    )
+
+    override fun write(value: FfiAudioSource, buf: ByteBuffer) {
+
+data class FfiCommandReceipt (
+    val `operationId`: kotlin.String
+    , 
+    val `acceptedAtRevision`: kotlin.ULong
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiCommandReceipt {
+
+    override fun allocationSize(value: FfiCommandReceipt) = (
+            FfiConverterString.allocationSize(value.`operationId`) +
+            FfiConverterULong.allocationSize(value.`acceptedAtRevision`)
+    )
+
+    override fun write(value: FfiCommandReceipt, buf: ByteBuffer) {
+
+data class FfiCoreDiagnostic (
+    val `name`: kotlin.String
+    , 
+    val `fields`: List<FfiDiagnosticField>
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiCoreDiagnostic {
+
+    override fun allocationSize(value: FfiCoreDiagnostic) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterSequenceTypeFfiDiagnosticField.allocationSize(value.`fields`)
+    )
+
+    override fun write(value: FfiCoreDiagnostic, buf: ByteBuffer) {
+
+data class FfiCoreError (
+    val `code`: kotlin.String
+    , 
+    val `subsystem`: kotlin.String
+    , 
+    val `severity`: kotlin.String
+    , 
+    val `retryable`: kotlin.Boolean
+    , 
+    val `operationId`: kotlin.String?
+    , 
+    val `message`: kotlin.String
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiCoreError {
+
+    override fun allocationSize(value: FfiCoreError) = (
+            FfiConverterString.allocationSize(value.`code`) +
+            FfiConverterString.allocationSize(value.`subsystem`) +
+            FfiConverterString.allocationSize(value.`severity`) +
+            FfiConverterBoolean.allocationSize(value.`retryable`) +
+            FfiConverterOptionalString.allocationSize(value.`operationId`) +
+            FfiConverterString.allocationSize(value.`message`)
+    )
+
+    override fun write(value: FfiCoreError, buf: ByteBuffer) {
+
+data class FfiCoreSnapshot (
+    val `revision`: kotlin.ULong
+    , 
+    val `selectedRole`: FfiAppRole?
+    , 
+    val `hostDraft`: FfiHostDraft
+    , 
+    val `hostLifecycle`: FfiHostLifecycle
+    , 
+    val `listenerLifecycle`: kotlin.String
+    , 
+    val `transportState`: FfiTransportState
+    , 
+    val `discoveryActive`: kotlin.Boolean
+    , 
+    val `pendingJoinRequests`: List<FfiJoinRequest>
+    , 
+    val `listeners`: List<FfiListenerSummary>
+    , 
+    val `playbackState`: FfiPlaybackState
+    , 
+    val `playbackPositionMs`: kotlin.ULong
+    , 
+    val `lastDelivery`: FfiDeliveryReport?
+    , 
+    val `recoverableAction`: kotlin.String?
+    , 
+    val `lastError`: FfiCoreError?
+    , 
+    val `shuttingDown`: kotlin.Boolean
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiCoreSnapshot {
+
+    override fun allocationSize(value: FfiCoreSnapshot) = (
+            FfiConverterULong.allocationSize(value.`revision`) +
+            FfiConverterOptionalTypeFfiAppRole.allocationSize(value.`selectedRole`) +
+            FfiConverterTypeFfiHostDraft.allocationSize(value.`hostDraft`) +
+            FfiConverterTypeFfiHostLifecycle.allocationSize(value.`hostLifecycle`) +
+            FfiConverterString.allocationSize(value.`listenerLifecycle`) +
+            FfiConverterTypeFfiTransportState.allocationSize(value.`transportState`) +
+            FfiConverterBoolean.allocationSize(value.`discoveryActive`) +
+            FfiConverterSequenceTypeFfiJoinRequest.allocationSize(value.`pendingJoinRequests`) +
+            FfiConverterSequenceTypeFfiListenerSummary.allocationSize(value.`listeners`) +
+            FfiConverterTypeFfiPlaybackState.allocationSize(value.`playbackState`) +
+            FfiConverterULong.allocationSize(value.`playbackPositionMs`) +
+            FfiConverterOptionalTypeFfiDeliveryReport.allocationSize(value.`lastDelivery`) +
+            FfiConverterOptionalString.allocationSize(value.`recoverableAction`) +
+            FfiConverterOptionalTypeFfiCoreError.allocationSize(value.`lastError`) +
+            FfiConverterBoolean.allocationSize(value.`shuttingDown`)
+    )
+
+    override fun write(value: FfiCoreSnapshot, buf: ByteBuffer) {
+
+data class FfiCoreVersion (
+    val `major`: kotlin.UShort
+    , 
+    val `minor`: kotlin.UShort
+    , 
+    val `patch`: kotlin.UShort
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiCoreVersion {
+
+    override fun allocationSize(value: FfiCoreVersion) = (
+            FfiConverterUShort.allocationSize(value.`major`) +
+            FfiConverterUShort.allocationSize(value.`minor`) +
+            FfiConverterUShort.allocationSize(value.`patch`)
+    )
+
+    override fun write(value: FfiCoreVersion, buf: ByteBuffer) {
+
+data class FfiDeliveryReport (
+    val `intendedPeers`: kotlin.UInt
+    , 
+    val `successfulPeers`: kotlin.UInt
+    , 
+    val `failedPeers`: kotlin.UInt
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiDeliveryReport {
+
+    override fun allocationSize(value: FfiDeliveryReport) = (
+            FfiConverterUInt.allocationSize(value.`intendedPeers`) +
+            FfiConverterUInt.allocationSize(value.`successfulPeers`) +
+            FfiConverterUInt.allocationSize(value.`failedPeers`)
+    )
+
+    override fun write(value: FfiDeliveryReport, buf: ByteBuffer) {
+
+data class FfiDiagnosticField (
+    val `key`: kotlin.String
+    , 
+    val `value`: kotlin.String
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiDiagnosticField {
+
+    override fun allocationSize(value: FfiDiagnosticField) = (
+            FfiConverterString.allocationSize(value.`key`) +
+            FfiConverterString.allocationSize(value.`value`)
+    )
+
+    override fun write(value: FfiDiagnosticField, buf: ByteBuffer) {
+
+data class FfiHostDraft (
+    val `sessionName`: kotlin.String
+    , 
+    val `approvalMode`: FfiApprovalMode
+    , 
+    val `inviteCode`: kotlin.String?
+    , 
+    val `audioSource`: FfiAudioSource?
+    , 
+    val `rememberApprovedDevices`: kotlin.Boolean
+    , 
+    val `tuning`: FfiTuningSettings
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiHostDraft {
+
+    override fun allocationSize(value: FfiHostDraft) = (
+            FfiConverterString.allocationSize(value.`sessionName`) +
+            FfiConverterTypeFfiApprovalMode.allocationSize(value.`approvalMode`) +
+            FfiConverterOptionalString.allocationSize(value.`inviteCode`) +
+            FfiConverterOptionalTypeFfiAudioSource.allocationSize(value.`audioSource`) +
+            FfiConverterBoolean.allocationSize(value.`rememberApprovedDevices`) +
+            FfiConverterTypeFfiTuningSettings.allocationSize(value.`tuning`)
+    )
+
+    override fun write(value: FfiHostDraft, buf: ByteBuffer) {
+
+data class FfiJoinRequest (
+    val `requestId`: kotlin.String
+    , 
+    val `deviceId`: kotlin.String
+    , 
+    val `displayName`: kotlin.String
+    , 
+    val `trustState`: FfiTrustState
+    , 
+    val `inviteCodeValid`: kotlin.Boolean
+    , 
+    val `receivedAtMs`: kotlin.ULong
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiJoinRequest {
+
+    override fun allocationSize(value: FfiJoinRequest) = (
+            FfiConverterString.allocationSize(value.`requestId`) +
+            FfiConverterString.allocationSize(value.`deviceId`) +
+            FfiConverterString.allocationSize(value.`displayName`) +
+            FfiConverterTypeFfiTrustState.allocationSize(value.`trustState`) +
+            FfiConverterBoolean.allocationSize(value.`inviteCodeValid`) +
+            FfiConverterULong.allocationSize(value.`receivedAtMs`)
+    )
+
+    override fun write(value: FfiJoinRequest, buf: ByteBuffer) {
+
+data class FfiListenerSummary (
+    val `deviceId`: kotlin.String
+    , 
+    val `displayName`: kotlin.String
+    , 
+    val `trustState`: FfiTrustState
+    , 
+    val `transportState`: FfiTransportState
+    , 
+    val `synchronization`: FfiSynchronizationSummary?
+    , 
+    val `lastContactMs`: kotlin.ULong?
+    , 
+    val `lastError`: FfiCoreError?
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiListenerSummary {
+
+    override fun allocationSize(value: FfiListenerSummary) = (
+            FfiConverterString.allocationSize(value.`deviceId`) +
+            FfiConverterString.allocationSize(value.`displayName`) +
+            FfiConverterTypeFfiTrustState.allocationSize(value.`trustState`) +
+            FfiConverterTypeFfiTransportState.allocationSize(value.`transportState`) +
+            FfiConverterOptionalTypeFfiSynchronizationSummary.allocationSize(value.`synchronization`) +
+            FfiConverterOptionalULong.allocationSize(value.`lastContactMs`) +
+            FfiConverterOptionalTypeFfiCoreError.allocationSize(value.`lastError`)
+    )
+
+    override fun write(value: FfiListenerSummary, buf: ByteBuffer) {
+
+data class FfiSynchronizationSummary (
+    val `confidence`: kotlin.String
+    , 
+    val `offsetMs`: kotlin.Double
+    , 
+    val `roundTripMs`: kotlin.Double
+    , 
+    val `driftPpm`: kotlin.Double
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiSynchronizationSummary {
+
+    override fun allocationSize(value: FfiSynchronizationSummary) = (
+            FfiConverterString.allocationSize(value.`confidence`) +
+            FfiConverterDouble.allocationSize(value.`offsetMs`) +
+            FfiConverterDouble.allocationSize(value.`roundTripMs`) +
+            FfiConverterDouble.allocationSize(value.`driftPpm`)
+    )
+
+    override fun write(value: FfiSynchronizationSummary, buf: ByteBuffer) {
+
+data class FfiTuningPatch (
+    val `syncSampleWindow`: kotlin.UInt?
+    , 
+    val `syncCadenceMs`: kotlin.ULong?
+    , 
+    val `startupBufferMs`: kotlin.ULong?
+    , 
+    val `latePacketThresholdMs`: kotlin.ULong?
+    , 
+    val `hardResyncThresholdMs`: kotlin.ULong?
+    , 
+    val `syncDriftThresholdMs`: kotlin.Double?
+    , 
+    val `scanWindowMs`: kotlin.ULong?
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiTuningPatch {
+
+    override fun allocationSize(value: FfiTuningPatch) = (
+            FfiConverterOptionalUInt.allocationSize(value.`syncSampleWindow`) +
+            FfiConverterOptionalULong.allocationSize(value.`syncCadenceMs`) +
+            FfiConverterOptionalULong.allocationSize(value.`startupBufferMs`) +
+            FfiConverterOptionalULong.allocationSize(value.`latePacketThresholdMs`) +
+            FfiConverterOptionalULong.allocationSize(value.`hardResyncThresholdMs`) +
+            FfiConverterOptionalDouble.allocationSize(value.`syncDriftThresholdMs`) +
+            FfiConverterOptionalULong.allocationSize(value.`scanWindowMs`)
+    )
+
+    override fun write(value: FfiTuningPatch, buf: ByteBuffer) {
+
+data class FfiTuningSettings (
+    val `syncSampleWindow`: kotlin.UInt
+    , 
+    val `syncCadenceMs`: kotlin.ULong
+    , 
+    val `startupBufferMs`: kotlin.ULong
+    , 
+    val `latePacketThresholdMs`: kotlin.ULong
+    , 
+    val `hardResyncThresholdMs`: kotlin.ULong
+    , 
+    val `syncDriftThresholdMs`: kotlin.Double
+    , 
+    val `scanWindowMs`: kotlin.ULong
+    
+){
+
+    override fun read(buf: ByteBuffer): FfiTuningSettings {
+
+    override fun allocationSize(value: FfiTuningSettings) = (
+            FfiConverterUInt.allocationSize(value.`syncSampleWindow`) +
+            FfiConverterULong.allocationSize(value.`syncCadenceMs`) +
+            FfiConverterULong.allocationSize(value.`startupBufferMs`) +
+            FfiConverterULong.allocationSize(value.`latePacketThresholdMs`) +
+            FfiConverterULong.allocationSize(value.`hardResyncThresholdMs`) +
+            FfiConverterDouble.allocationSize(value.`syncDriftThresholdMs`) +
+            FfiConverterULong.allocationSize(value.`scanWindowMs`)
+    )
+
+    override fun write(value: FfiTuningSettings, buf: ByteBuffer) {
+
+enum class FfiAppRole {
+
+    override fun read(buf: ByteBuffer) = try {
+
+    override fun allocationSize(value: FfiAppRole) = 4UL
+
+    override fun write(value: FfiAppRole, buf: ByteBuffer) {
+
+enum class FfiApprovalMode {
+
+    override fun read(buf: ByteBuffer) = try {
+
+    override fun allocationSize(value: FfiApprovalMode) = 4UL
+
+    override fun write(value: FfiApprovalMode, buf: ByteBuffer) {
+
+sealed class FfiBridgeException(message: String): kotlin.Exception(message) {
+
+    override fun read(buf: ByteBuffer): FfiBridgeException {
+
+    override fun allocationSize(value: FfiBridgeException): ULong {
+
+    override fun write(value: FfiBridgeException, buf: ByteBuffer) {
+
+sealed class FfiCoreNotification {
+
+    data class Snapshot(
+        val `snapshot`: com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot) : FfiCoreNotification()
+
+    data class PlatformEffect(
+        val `effect`: com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect) : FfiCoreNotification()
+
+    data class TransportEffect(
+        val `effect`: com.ekkus.silentdisco.core.uniffi.FfiTransportEffect) : FfiCoreNotification()
+
+    data class StorageEffect(
+        val `effect`: com.ekkus.silentdisco.core.uniffi.FfiStorageEffect) : FfiCoreNotification()
+
+    data class Error(
+        val `error`: com.ekkus.silentdisco.core.uniffi.FfiCoreError) : FfiCoreNotification()
+
+    data class Diagnostic(
+        val `diagnostic`: com.ekkus.silentdisco.core.uniffi.FfiCoreDiagnostic) : FfiCoreNotification()
+
+    override fun read(buf: ByteBuffer): FfiCoreNotification {
+
+    override fun allocationSize(value: FfiCoreNotification) = when(value) {
+
+    override fun write(value: FfiCoreNotification, buf: ByteBuffer) {
+
+enum class FfiHostLifecycle {
+
+    override fun read(buf: ByteBuffer) = try {
+
+    override fun allocationSize(value: FfiHostLifecycle) = 4UL
+
+    override fun write(value: FfiHostLifecycle, buf: ByteBuffer) {
+
+sealed class FfiPlatformCompletion {
+
+    object AdvertisingStarted : FfiPlatformCompletion()
+
+    object AdvertisingStopped : FfiPlatformCompletion()
+
+    object DiscoveryStarted : FfiPlatformCompletion()
+
+    object DiscoveryStopped : FfiPlatformCompletion()
+
+    data class NetworkEndpointReady(
+        val `address`: kotlin.String, 
+        val `controlPort`: kotlin.UShort, 
+        val `syncPort`: kotlin.UShort, 
+        val `audioPort`: kotlin.UShort) : FfiPlatformCompletion()
+
+    object NetworkReleased : FfiPlatformCompletion()
+
+    data class AudioSourcePrepared(
+        val `source`: com.ekkus.silentdisco.core.uniffi.FfiAudioSource) : FfiPlatformCompletion()
+
+    data class AudioOutputStarted(
+        val `sampleRateHz`: kotlin.UInt, 
+        val `channels`: kotlin.UShort, 
+        val `backendName`: kotlin.String) : FfiPlatformCompletion()
+
+    object AudioOutputStopped : FfiPlatformCompletion()
+
+    data class DiagnosticsShared(
+        val `exportId`: kotlin.String) : FfiPlatformCompletion()
+
+    override fun read(buf: ByteBuffer): FfiPlatformCompletion {
+
+    override fun allocationSize(value: FfiPlatformCompletion) = when(value) {
+
+    override fun write(value: FfiPlatformCompletion, buf: ByteBuffer) {
+
+sealed class FfiPlatformEffect {
+
