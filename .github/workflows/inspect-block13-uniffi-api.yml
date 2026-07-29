@@ -27,13 +27,14 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
 
       - name: Generate Kotlin bindings
-        run: scripts/generate-uniffi-kotlin.sh "${RUNNER_TEMP}/uniffi-kotlin"
+        run: scripts/generate-uniffi-kotlin.sh "${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
 
       - name: Extract public API declaration report
         shell: bash
         run: |
           set -euo pipefail
-          generated_file="$(find "${RUNNER_TEMP}/uniffi-kotlin" -type f -name '*.kt' -print -quit)"
+          generated_root="${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
+          generated_file="$(find "${generated_root}" -type f -name '*.kt' -print -quit)"
           test -n "${generated_file}"
           mkdir -p docs/review-source
           python3 - "${generated_file}" docs/review-source/BLOCK13_GENERATED_UNIFFI_API.txt <<'PY'
@@ -55,7 +56,7 @@ jobs:
           for index, line in enumerate(lines):
               stripped = line.strip()
               if declaration.match(stripped):
-                  selected.extend(lines[max(0, index - 2): min(len(lines), index + 12)])
+                  selected.extend(lines[max(0, index - 2): min(len(lines), index + 14)])
                   selected.append("")
               if re.search(r"class FfiCoreHandle\b", line):
                   in_handle = True
@@ -64,12 +65,11 @@ jobs:
               if in_handle:
                   brace_depth += line.count("{") - line.count("}")
                   if method.match(line):
-                      selected.extend(lines[index: min(len(lines), index + 8)])
+                      selected.extend(lines[index: min(len(lines), index + 10)])
                       selected.append("")
                   if brace_depth <= 0:
                       in_handle = False
 
-          # Preserve order while removing repeated overlapping lines.
           compact = []
           previous = None
           for line in selected:
@@ -84,9 +84,10 @@ jobs:
               "Purpose: exact temporary UniFFI Kotlin API inspection for Desktop Block 13",
               "",
           ]
-          output_path.write_text("\n".join(header + compact) + "\n", encoding="utf-8")
-          if len((header + compact)) > 750:
+          report = header + compact
+          if len(report) > 750:
               raise SystemExit("generated API report exceeds the repository line budget")
+          output_path.write_text("\n".join(report) + "\n", encoding="utf-8")
           PY
           git diff --check
 
@@ -98,4 +99,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/review-source/BLOCK13_GENERATED_UNIFFI_API.txt
           git commit -m "Record generated Block 13 UniFFI API"
-          git push origin HEAD:master
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git rebase origin/master
+            if git push origin HEAD:master; then
+              exit 0
+            fi
+            printf 'Push attempt %s raced another master update; retrying.\n' "${attempt}" >&2
+          done
+          exit 1
