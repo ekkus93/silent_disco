@@ -46,48 +46,42 @@ jobs:
           source_path = Path(sys.argv[1])
           output_path = Path(sys.argv[2])
           lines = source_path.read_text(encoding="utf-8").splitlines()
-          declaration = re.compile(
-              r"^(public )?(data class|class|interface|sealed class|enum class|object|fun) "
-              r"(Ffi|ffiCore|FfiCoreHandle|FfiCoreObserver)"
+          top_level = re.compile(
+              r"^(data class|enum class|sealed class|interface|class) "
+              r"(Ffi[A-Za-z0-9_]+)"
           )
-          method = re.compile(r"^\s{4}(public )?fun [A-Za-z].*")
-          selected = []
-          in_handle = False
-          brace_depth = 0
-          for index, line in enumerate(lines):
-              stripped = line.strip()
-              if declaration.match(stripped):
-                  selected.extend(lines[max(0, index - 2): min(len(lines), index + 14)])
-                  selected.append("")
-              if re.search(r"class FfiCoreHandle\b", line):
-                  in_handle = True
-                  brace_depth = line.count("{") - line.count("}")
-                  continue
-              if in_handle:
-                  brace_depth += line.count("{") - line.count("}")
-                  if method.match(line):
-                      selected.extend(lines[index: min(len(lines), index + 10)])
-                      selected.append("")
-                  if brace_depth <= 0:
-                      in_handle = False
+          method_start = re.compile(r"^\s{4}(override )?fun [A-Za-z][A-Za-z0-9_]*\(")
+          variant_start = re.compile(r"^\s{4}(data class|data object|object) [A-Z][A-Za-z0-9_]*")
 
-          compact = []
-          previous = None
-          for line in selected:
-              if line == previous == "":
-                  continue
-              compact.append(line)
-              previous = line
-          if not any("FfiCoreHandle" in line for line in compact):
-              raise SystemExit("generated FfiCoreHandle declaration was not found")
-          header = [
+          report = [
               f"Generated from: {source_path.name}",
               "Purpose: exact temporary UniFFI Kotlin API inspection for Desktop Block 13",
               "",
           ]
-          report = header + compact
-          if len(report) > 750:
-              raise SystemExit("generated API report exceeds the repository line budget")
+          index = 0
+          while index < len(lines):
+              line = lines[index]
+              stripped = line.strip()
+              if top_level.match(stripped) or method_start.match(line) or variant_start.match(line):
+                  block = [line]
+                  depth = line.count("(") - line.count(")")
+                  continuation = line.rstrip().endswith(("(", ",")) or depth > 0
+                  index += 1
+                  while index < len(lines) and continuation:
+                      next_line = lines[index]
+                      block.append(next_line)
+                      depth += next_line.count("(") - next_line.count(")")
+                      continuation = depth > 0 or next_line.rstrip().endswith(",")
+                      index += 1
+                  report.extend(block)
+                  report.append("")
+                  continue
+              index += 1
+
+          if not any("FfiCoreHandle" in line for line in report):
+              raise SystemExit("generated FfiCoreHandle declaration was not found")
+          if len(report) > 700:
+              raise SystemExit(f"generated API report has {len(report)} lines")
           output_path.write_text("\n".join(report) + "\n", encoding="utf-8")
           PY
           git diff --check
