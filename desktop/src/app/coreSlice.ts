@@ -162,6 +162,8 @@ export const coreSlice = createSlice({
   initialState,
   reducers: {
     bridgeOpening(state, action: PayloadAction<{ profileId: string }>) {
+      state.snapshot = null;
+      state.pendingCommandReceipts = {};
       state.bridgeLifecycle = {
         kind: "opening",
         details: { profile_id: action.payload.profileId },
@@ -198,6 +200,8 @@ export const coreSlice = createSlice({
       };
     },
     bridgeFailed(state, action: PayloadAction<DesktopErrorDto>) {
+      state.snapshot = null;
+      state.pendingCommandReceipts = {};
       state.bridgeLifecycle = { kind: "failed", details: { error: action.payload } };
       recordError(state, action.payload);
     },
