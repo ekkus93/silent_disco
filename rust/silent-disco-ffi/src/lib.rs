@@ -8,6 +8,12 @@
 //! smallest scope, while unsafe blocks and foreign-pointer dereferences remain
 //! prohibited unless their invariants are documented explicitly.
 
+#[allow(
+    unsafe_code,
+    reason = "UniFFI generates the reviewed FFI scaffolding; handwritten unsafe code remains denied"
+)]
+uniffi::setup_scaffolding!();
+
 mod android_abi;
 mod android_database_abi;
 mod android_p2_abi;
@@ -22,7 +28,7 @@ pub use sync::{
 };
 
 /// Binding-facing version record. Domain version ownership remains in the core.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct FfiCoreVersion {
     pub major: u16,
     pub minor: u16,
@@ -40,12 +46,14 @@ impl From<CoreVersion> for FfiCoreVersion {
 }
 
 #[must_use]
+#[uniffi::export]
 pub fn ffi_core_version() -> FfiCoreVersion {
     core_version().into()
 }
 
 #[must_use]
-pub const fn ffi_deterministic_smoke(input: u64) -> u64 {
+#[uniffi::export]
+pub fn ffi_deterministic_smoke(input: u64) -> u64 {
     deterministic_smoke(input)
 }
 
