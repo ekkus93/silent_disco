@@ -10,6 +10,8 @@ import type {
   OpenProfileResponse,
 } from "./generated/desktop-bindings";
 
+const MAX_ERROR_DETAIL_LENGTH = 320;
+
 export interface CoreSmokeDto {
   major: number;
   minor: number;
@@ -34,24 +36,86 @@ export interface DesktopProfileConnection {
   notifications: DesktopNotificationSubscription;
 }
 
+function isDesktopErrorDto(error: unknown): error is DesktopErrorDto {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const candidate = error as Record<string, unknown>;
+  return (
+    typeof candidate.code === "string" &&
+    typeof candidate.subsystem === "string" &&
+    typeof candidate.severity === "string" &&
+    typeof candidate.retryable === "boolean" &&
+    typeof candidate.message === "string"
+  );
+}
+
+function boundedErrorDetail(error: unknown): string {
+  let detail: string;
+  if (error instanceof Error) {
+    detail = error.message;
+  } else if (typeof error === "string") {
+    detail = error;
+  } else {
+    detail = "The native invocation transport failed without a structured error.";
+  }
+  const singleLine = detail.replaceAll(/\s+/g, " ").trim();
+  if (singleLine.length === 0) {
+    return "The native invocation transport failed without a message.";
+  }
+  return singleLine.slice(0, MAX_ERROR_DETAIL_LENGTH);
+}
+
+export function toDesktopBridgeError(error: unknown, operation: string): DesktopErrorDto {
+  if (isDesktopErrorDto(error)) {
+    return error;
+  }
+  return {
+    code: "desktop.bridge.invoke_transport_failed",
+    subsystem: "bridge",
+    severity: "error",
+    retryable: true,
+    message: `${operation} failed before returning a structured desktop error: ${boundedErrorDetail(error)}`,
+  };
+}
+
+async function invokeDesktop<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error: unknown) {
+    throw toDesktopBridgeError(error, command);
+  }
+}
+
 export async function getCoreSmoke(input: number): Promise<CoreSmokeDto> {
   if (!Number.isSafeInteger(input) || input < 0) {
     throw new Error("Core smoke input must be a non-negative safe integer.");
   }
 
-  return invoke<CoreSmokeDto>("get_core_smoke", { input });
+  return invokeDesktop<CoreSmokeDto>("get_core_smoke", { input });
 }
 
 export async function getCurrentSnapshot(): Promise<CoreSnapshotDto> {
-  return invoke<CoreSnapshotDto>("get_current_snapshot");
+  return invokeDesktop<CoreSnapshotDto>("get_current_snapshot");
 }
 
 export async function attachNotifications(
   onNotification: (notification: CoreNotificationDto) => void,
 ): Promise<DesktopNotificationSubscription> {
-  const channel = new Channel<CoreNotificationDto>();
-  channel.onmessage = onNotification;
-  const response = await invoke<AttachNotificationResponse>("attach_notifications", { channel });
+  let channel: Channel<CoreNotificationDto>;
+  try {
+    channel = new Channel<CoreNotificationDto>();
+    channel.onmessage = onNotification;
+  } catch (error: unknown) {
+    throw toDesktopBridgeError(error, "create notification channel");
+  }
+
+  const response = await invokeDesktop<AttachNotificationResponse>("attach_notifications", {
+    channel,
+  });
   return {
     subscriptionId: response.subscriptionId,
     channel,
@@ -63,21 +127,29 @@ export async function openProfileWithNotifications(
   onNotification: (notification: CoreNotificationDto) => void,
 ): Promise<OpenProfileSession> {
   const request: OpenProfileRequest = { profileId };
-  const profile = await invoke<OpenProfileResponse>("open_profile", { request });
+  const profile = await invokeDesktop<OpenProfileResponse>("open_profile", { request });
 
   try {
     const notifications = await attachNotifications(onNotification);
     return { profile, notifications };
   } catch (attachmentError: unknown) {
+    const attachmentFailure = toDesktopBridgeError(
+      attachmentError,
+      "attach notifications after profile open",
+    );
     try {
       await closeProfile();
     } catch (closeError: unknown) {
-      throw new AggregateError(
-        [attachmentError, closeError],
-        "Notification attachment failed and the opened profile could not be closed cleanly.",
-      );
+      const closeFailure = toDesktopBridgeError(closeError, "close profile after attachment failure");
+      throw {
+        code: "desktop.bridge.attach_cleanup_failed",
+        subsystem: "bridge",
+        severity: "fatal",
+        retryable: false,
+        message: `Notification attachment failed (${attachmentFailure.code}: ${attachmentFailure.message}); profile cleanup also failed (${closeFailure.code}: ${closeFailure.message}).`,
+      } satisfies DesktopErrorDto;
     }
-    throw attachmentError;
+    throw attachmentFailure;
   }
 }
 
@@ -89,8 +161,9 @@ export async function connectProfileWithNotifications(
   try {
     existingNotifications = await attachNotifications(onNotification);
   } catch (error: unknown) {
-    if (!hasDesktopErrorCode(error, "desktop.profile.not_ready")) {
-      throw error;
+    const failure = toDesktopBridgeError(error, "attach to existing profile");
+    if (failure.code !== "desktop.profile.not_ready") {
+      throw failure;
     }
     const session = await openProfileWithNotifications(profileId, onNotification);
     return {
@@ -111,12 +184,5 @@ export async function connectProfileWithNotifications(
 }
 
 export async function closeProfile(): Promise<BridgeLifecycleDto> {
-  return invoke<BridgeLifecycleDto>("close_profile");
-}
-
-function hasDesktopErrorCode(error: unknown, expectedCode: string): error is DesktopErrorDto {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return false;
-  }
-  return (error as { code: unknown }).code === expectedCode;
+  return invokeDesktop<BridgeLifecycleDto>("close_profile");
 }

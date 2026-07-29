@@ -91,7 +91,7 @@ describe("desktop core client", () => {
     ]);
   });
 
-  it("attaches to an existing profile before requesting its current snapshot", async () => {
+  it("reattaches before obtaining the authoritative current snapshot", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "attach_notifications") {
         return Promise.resolve({ subscriptionId: "9" });
@@ -120,7 +120,13 @@ describe("desktop core client", () => {
       if (command === "attach_notifications") {
         attachmentCount += 1;
         if (attachmentCount === 1) {
-          return Promise.reject({ code: "desktop.profile.not_ready" });
+          return Promise.reject({
+            code: "desktop.profile.not_ready",
+            subsystem: "runtime",
+            severity: "error",
+            retryable: true,
+            message: "No desktop profile is ready.",
+          });
         }
         return Promise.resolve({ subscriptionId: "10" });
       }
@@ -144,23 +150,52 @@ describe("desktop core client", () => {
     ]);
   });
 
-  it("does not open a profile after an unexpected attachment failure", async () => {
-    const attachmentError = new Error("channel permission denied");
-    invokeMock.mockRejectedValue(attachmentError);
+  it("converts unexpected invocation transport failure into a structured bridge error", async () => {
+    invokeMock.mockRejectedValue(new Error("channel permission denied"));
 
-    await expect(connectProfileWithNotifications("main", vi.fn())).rejects.toBe(attachmentError);
+    await expect(connectProfileWithNotifications("main", vi.fn())).rejects.toMatchObject({
+      code: "desktop.bridge.invoke_transport_failed",
+      subsystem: "bridge",
+      retryable: true,
+      message: expect.stringContaining("channel permission denied"),
+    });
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock.mock.calls[0]?.[0]).toBe("attach_notifications");
   });
 
+  it("does not retry a failed non-idempotent profile open", async () => {
+    let attachmentCount = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "attach_notifications") {
+        attachmentCount += 1;
+        return Promise.reject({
+          code: "desktop.profile.not_ready",
+          subsystem: "runtime",
+          severity: "error",
+          retryable: true,
+          message: "No desktop profile is ready.",
+        });
+      }
+      if (command === "open_profile") {
+        return Promise.reject(new Error("credential store unavailable"));
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    await expect(connectProfileWithNotifications("main", vi.fn())).rejects.toMatchObject({
+      code: "desktop.bridge.invoke_transport_failed",
+    });
+    expect(attachmentCount).toBe(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "open_profile")).toHaveLength(1);
+  });
+
   it("closes an opened profile when notification attachment fails", async () => {
-    const attachmentError = new Error("channel unavailable");
     invokeMock.mockImplementation((command: string) => {
       if (command === "open_profile") {
         return Promise.resolve(openResponse);
       }
       if (command === "attach_notifications") {
-        return Promise.reject(attachmentError);
+        return Promise.reject(new Error("channel unavailable"));
       }
       if (command === "close_profile") {
         return Promise.resolve({ kind: "closed" });
@@ -168,7 +203,10 @@ describe("desktop core client", () => {
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
 
-    await expect(openProfileWithNotifications("main", vi.fn())).rejects.toBe(attachmentError);
+    await expect(openProfileWithNotifications("main", vi.fn())).rejects.toMatchObject({
+      code: "desktop.bridge.invoke_transport_failed",
+      message: expect.stringContaining("channel unavailable"),
+    });
     expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
       "open_profile",
       "attach_notifications",
@@ -176,26 +214,25 @@ describe("desktop core client", () => {
     ]);
   });
 
-  it("preserves attachment and cleanup failures together", async () => {
-    const attachmentError = new Error("channel unavailable");
-    const closeError = new Error("profile close failed");
+  it("preserves attachment and cleanup failures in one bounded bridge error", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "open_profile") {
         return Promise.resolve(openResponse);
       }
       if (command === "attach_notifications") {
-        return Promise.reject(attachmentError);
+        return Promise.reject(new Error("channel unavailable"));
       }
       if (command === "close_profile") {
-        return Promise.reject(closeError);
+        return Promise.reject(new Error("profile close failed"));
       }
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
 
-    const failure = await openProfileWithNotifications("main", vi.fn()).catch(
-      (error: unknown) => error,
-    );
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).errors).toEqual([attachmentError, closeError]);
+    await expect(openProfileWithNotifications("main", vi.fn())).rejects.toMatchObject({
+      code: "desktop.bridge.attach_cleanup_failed",
+      severity: "fatal",
+      retryable: false,
+      message: expect.stringContaining("profile close failed"),
+    });
   });
 });
