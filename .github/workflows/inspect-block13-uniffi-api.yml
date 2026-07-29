@@ -1,6 +1,7 @@
 name: Inspect Block 13 UniFFI API
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
