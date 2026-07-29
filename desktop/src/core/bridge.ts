@@ -47,9 +47,7 @@ export function subscribeDesktopNotifications(listener: DesktopNotificationListe
   };
 }
 
-export async function ensureDesktopBridge(
-  profileId = "main",
-): Promise<DesktopProfileConnection> {
+export async function ensureDesktopBridge(profileId = "main"): Promise<DesktopProfileConnection> {
   const connection = await establishDesktopBridge(profileId);
   if (snapshotRefreshPromise === null) {
     snapshotRefreshPromise = getCurrentSnapshot()
