@@ -15,6 +15,7 @@ val rustAndroidAbis = setOf(
     "x86_64",
 )
 val rustGeneratedJniRoot = layout.buildDirectory.dir("generated/rustJniLibs")
+val uniffiGeneratedKotlinRoot = layout.buildDirectory.dir("generated/uniffiKotlin")
 
 android {
     namespace = "com.ekkus.silentdisco"
@@ -60,6 +61,7 @@ android {
     }
 
     sourceSets {
+        getByName("main").java.srcDir(uniffiGeneratedKotlinRoot)
         getByName("debug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
         getByName("pocDebug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
         getByName("release").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("release") })
@@ -141,6 +143,22 @@ val buildRustAndroidRelease = registerRustAndroidBuildTask(
     profile = "release",
 )
 
+val generateRustKotlinBindings = tasks.register<Exec>("generateRustKotlinBindings") {
+    group = "rust"
+    description = "Generates pinned UniFFI Kotlin bindings from the Rust cdylib metadata."
+
+    inputs.file(rootProject.file("scripts/generate-uniffi-kotlin.sh"))
+    inputs.files(rootProject.fileTree("rust") { exclude("target/**") })
+    outputs.dir(uniffiGeneratedKotlinRoot)
+
+    workingDir(rootProject.projectDir)
+    commandLine(
+        "bash",
+        rootProject.file("scripts/generate-uniffi-kotlin.sh").absolutePath,
+        uniffiGeneratedKotlinRoot.get().asFile.absolutePath,
+    )
+}
+
 // Rust must be built before Android packages generated JNI libraries.
 tasks.matching { it.name == "mergeDebugJniLibFolders" }.configureEach {
     dependsOn(buildRustAndroidDebug)
@@ -152,14 +170,20 @@ tasks.matching { it.name == "mergeReleaseJniLibFolders" }.configureEach {
     dependsOn(buildRustAndroidRelease)
 }
 
+// Generated bindings are part of every Kotlin compilation, including tests.
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach {
+    dependsOn(generateRustKotlinBindings)
+}
+
 val cleanRustAndroid = tasks.register<Delete>("cleanRustAndroid") {
     group = "rust"
-    description = "Deletes only generated Rust Android JNI libraries."
-    delete(rustGeneratedJniRoot)
+    description = "Deletes generated Rust Android JNI libraries and UniFFI Kotlin sources."
+    delete(rustGeneratedJniRoot, uniffiGeneratedKotlinRoot)
 }
 tasks.matching { it.name == "clean" }.configureEach {
     dependsOn(cleanRustAndroid)
 }
+
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
@@ -174,6 +198,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
     implementation("com.google.oboe:oboe:1.10.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
