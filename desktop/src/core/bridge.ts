@@ -1,10 +1,15 @@
+import {
+  connectProfileWithNotifications,
+  getCurrentSnapshot,
+  type DesktopProfileConnection,
+} from "./client";
 import type { CoreNotificationDto } from "./generated/desktop-bindings";
-import { connectProfileWithNotifications, type DesktopProfileConnection } from "./client";
 
 type DesktopNotificationListener = (notification: CoreNotificationDto) => void;
 
 const listeners = new Set<DesktopNotificationListener>();
 let connectionPromise: Promise<DesktopProfileConnection> | null = null;
+let snapshotRefreshPromise: Promise<DesktopProfileConnection> | null = null;
 
 function dispatchNotification(notification: CoreNotificationDto): void {
   for (const listener of listeners) {
@@ -12,14 +17,7 @@ function dispatchNotification(notification: CoreNotificationDto): void {
   }
 }
 
-export function subscribeDesktopNotifications(listener: DesktopNotificationListener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function ensureDesktopBridge(profileId = "main"): Promise<DesktopProfileConnection> {
+function establishDesktopBridge(profileId: string): Promise<DesktopProfileConnection> {
   if (connectionPromise === null) {
     connectionPromise = connectProfileWithNotifications(profileId, dispatchNotification).catch(
       (error: unknown) => {
@@ -29,4 +27,25 @@ export function ensureDesktopBridge(profileId = "main"): Promise<DesktopProfileC
     );
   }
   return connectionPromise;
+}
+
+export function subscribeDesktopNotifications(listener: DesktopNotificationListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export async function ensureDesktopBridge(
+  profileId = "main",
+): Promise<DesktopProfileConnection> {
+  const connection = await establishDesktopBridge(profileId);
+  if (snapshotRefreshPromise === null) {
+    snapshotRefreshPromise = getCurrentSnapshot()
+      .then((snapshot) => ({ ...connection, snapshot }))
+      .finally(() => {
+        snapshotRefreshPromise = null;
+      });
+  }
+  return snapshotRefreshPromise;
 }
