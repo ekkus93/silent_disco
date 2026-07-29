@@ -521,15 +521,6 @@ impl CoreSnapshot {
     }
 }
 
-/// Output delivered by the notification dispatcher.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CoreNotification {
-    Snapshot(CoreSnapshot),
-    Effect(PlatformEffect),
-    Error(CoreError),
-    Diagnostic(CoreDiagnostic),
-}
-
 /// Source-ordered input accepted by the serialized actor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoreActorInput {

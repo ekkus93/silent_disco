@@ -1,7 +1,7 @@
 use super::{
     ActorState, ApplyOutcome, CoreError, CoreNotification, MAX_CONNECTED_LISTENERS,
-    MAX_PENDING_JOIN_REQUESTS, PendingStorageOperation, PendingTransportOperation,
-    invalid_state, transport_delivery_failed,
+    MAX_PENDING_JOIN_REQUESTS, PendingStorageOperation, PendingTransportOperation, invalid_state,
+    transport_delivery_failed,
 };
 use crate::domain::{
     AppRole, DeviceId, HostLifecycle, OperationId, PlaybackState, RequestId, TransportState,
@@ -58,14 +58,13 @@ impl ActorState {
         self.snapshot.pending_join_requests.push(request.clone());
         match disposition {
             JoinRequestDisposition::PendingManualDecision => Ok(ApplyOutcome::changed()),
-            JoinRequestDisposition::AutoApprove { trusted_for_future } => {
-                self.start_approval_delivery(ApprovalDelivery {
+            JoinRequestDisposition::AutoApprove { trusted_for_future } => self
+                .start_approval_delivery(ApprovalDelivery {
                     request_id: request.request_id,
                     device_id: request.device_id,
                     trusted_for_future,
                     persistence_failed: false,
-                })
-            }
+                }),
             JoinRequestDisposition::AutoReject { reason } => {
                 self.start_rejection_delivery(&request, reason)
             }
@@ -78,7 +77,9 @@ impl ActorState {
         request_id: RequestId,
     ) -> Result<ApplyOutcome, CoreError> {
         self.require_host_admission_command(&operation_id)?;
-        let request = self.pending_join_request(&request_id, &operation_id)?.clone();
+        let request = self
+            .pending_join_request(&request_id, &operation_id)?
+            .clone();
         self.ensure_request_operation_idle(&request_id, &operation_id)?;
         match prepare_approval(&self.snapshot.host_draft, &request) {
             ApprovalPreparation::PersistTrustFirst(persistence) => {
@@ -101,7 +102,9 @@ impl ActorState {
         request_id: RequestId,
     ) -> Result<ApplyOutcome, CoreError> {
         self.require_host_admission_command(&operation_id)?;
-        let request = self.pending_join_request(&request_id, &operation_id)?.clone();
+        let request = self
+            .pending_join_request(&request_id, &operation_id)?
+            .clone();
         self.ensure_request_operation_idle(&request_id, &operation_id)?;
         self.start_rejection_delivery(&request, JoinRejectionReason::HostRejected)
     }
@@ -158,14 +161,12 @@ impl ActorState {
             super::invalid_argument(error.to_string(), Some(event.operation_id().clone()))
         })?;
         let wrapper_id = event.operation_id().clone();
-        let pending = self
-            .remove_pending_storage(&wrapper_id)
-            .ok_or_else(|| {
-                invalid_state(
-                    "stale or duplicate admission storage completion",
-                    Some(wrapper_id.clone()),
-                )
-            })?;
+        let pending = self.remove_pending_storage(&wrapper_id).ok_or_else(|| {
+            invalid_state(
+                "stale or duplicate admission storage completion",
+                Some(wrapper_id.clone()),
+            )
+        })?;
         match (pending, event) {
             (
                 PendingStorageOperation::PersistApprovalTrust(persistence),
@@ -192,10 +193,8 @@ impl ActorState {
                     ));
                 }
                 error.operation_id = Some(operation_id);
-                let delivery = approval_after_persistence(
-                    &persistence,
-                    TrustPersistenceOutcome::Failed,
-                );
+                let delivery =
+                    approval_after_persistence(&persistence, TrustPersistenceOutcome::Failed);
                 let effect = self.create_approval_transport_effect(delivery)?;
                 self.snapshot.last_error = Some(error.clone());
                 Ok(ApplyOutcome {
@@ -375,11 +374,7 @@ impl ActorState {
                 self.snapshot.host_lifecycle = HostLifecycle::Error;
                 self.snapshot.recoverable_action = Some(RecoverableAction::ReselectAudioSource);
             }
-            Some(
-                PlaybackState::Buffering
-                | PlaybackState::Ready
-                | PlaybackState::Underrun,
-            )
+            Some(PlaybackState::Buffering | PlaybackState::Ready | PlaybackState::Underrun)
             | None => {}
         }
         Ok(outcome)
@@ -402,10 +397,7 @@ impl ActorState {
         Ok(())
     }
 
-    fn require_host_admission_command(
-        &self,
-        operation_id: &OperationId,
-    ) -> Result<(), CoreError> {
+    fn require_host_admission_command(&self, operation_id: &OperationId) -> Result<(), CoreError> {
         self.require_role(AppRole::Host, operation_id)?;
         if self.host_session_id.is_none()
             || !matches!(
@@ -446,22 +438,28 @@ impl ActorState {
         request_id: &RequestId,
         operation_id: &OperationId,
     ) -> Result<(), CoreError> {
-        let transport_pending = self.pending_transport.iter().any(|(_, pending)| match pending {
-            PendingTransportOperation::ApproveJoin(delivery) => {
-                &delivery.request_id == request_id
-            }
-            PendingTransportOperation::RejectJoin {
-                request_id: pending_id,
-                ..
-            } => pending_id == request_id,
-            PendingTransportOperation::DisconnectListener { .. } => false,
-        });
-        let storage_pending = self.pending_storage.iter().any(|(_, pending)| match pending {
-            PendingStorageOperation::PersistApprovalTrust(persistence) => {
-                &persistence.request_id == request_id
-            }
-            PendingStorageOperation::PersistTuning(_) => false,
-        });
+        let transport_pending = self
+            .pending_transport
+            .iter()
+            .any(|(_, pending)| match pending {
+                PendingTransportOperation::ApproveJoin(delivery) => {
+                    &delivery.request_id == request_id
+                }
+                PendingTransportOperation::RejectJoin {
+                    request_id: pending_id,
+                    ..
+                } => pending_id == request_id,
+                PendingTransportOperation::DisconnectListener { .. } => false,
+            });
+        let storage_pending = self
+            .pending_storage
+            .iter()
+            .any(|(_, pending)| match pending {
+                PendingStorageOperation::PersistApprovalTrust(persistence) => {
+                    &persistence.request_id == request_id
+                }
+                PendingStorageOperation::PersistTuning(_) => false,
+            });
         if transport_pending || storage_pending {
             return Err(invalid_state(
                 "join request already has an admission operation in progress",
@@ -571,10 +569,7 @@ impl ActorState {
                 &request.request_id == request_id && &request.device_id == listener_id
             })
             .ok_or_else(|| {
-                invalid_state(
-                    "join request disappeared before delivery completed",
-                    None,
-                )
+                invalid_state("join request disappeared before delivery completed", None)
             })?;
         Ok(self.snapshot.pending_join_requests.remove(index))
     }

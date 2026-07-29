@@ -12,14 +12,12 @@ impl ActorState {
             invalid_argument(error.to_string(), Some(event.operation_id().clone()))
         })?;
         let wrapper_id = event.operation_id().clone();
-        let pending = self
-            .remove_pending_storage(&wrapper_id)
-            .ok_or_else(|| {
-                invalid_state(
-                    "stale or duplicate tuning storage completion",
-                    Some(wrapper_id.clone()),
-                )
-            })?;
+        let pending = self.remove_pending_storage(&wrapper_id).ok_or_else(|| {
+            invalid_state(
+                "stale or duplicate tuning storage completion",
+                Some(wrapper_id.clone()),
+            )
+        })?;
         match (pending, event) {
             (
                 PendingStorageOperation::PersistTuning(settings),

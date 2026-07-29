@@ -30,11 +30,12 @@ impl FfiCoreHandle {
     ) -> Result<Arc<Self>, FfiBridgeError> {
         let device_id = DeviceId::new(local_device_id)
             .map_err(|error| FfiBridgeError::Core(error.to_string()))?;
-        let runtime = CoreActorRuntime::start(CoreActorConfig::new(device_id), move |notification| {
-            observer
-                .on_notification(notification.into())
-                .map_err(|_| observer_callback_error())
-        })?;
+        let runtime =
+            CoreActorRuntime::start(CoreActorConfig::new(device_id), move |notification| {
+                observer
+                    .on_notification(notification.into())
+                    .map_err(|_| observer_callback_error())
+            })?;
         let handle = runtime.handle();
         Ok(Arc::new(Self {
             runtime: Mutex::new(Some(runtime)),
@@ -199,10 +200,7 @@ impl FfiCoreHandle {
         Ok(())
     }
 
-    pub fn transport_state_changed(
-        &self,
-        state: FfiTransportState,
-    ) -> Result<(), FfiBridgeError> {
+    pub fn transport_state_changed(&self, state: FfiTransportState) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
         self.handle
             .submit_transport_event(TransportEvent::StateChanged(state.into()))?;
@@ -291,11 +289,7 @@ impl FfiCoreHandle {
         Ok(())
     }
 
-    pub fn transport_failed(
-        &self,
-        message: String,
-        retryable: bool,
-    ) -> Result<(), FfiBridgeError> {
+    pub fn transport_failed(&self, message: String, retryable: bool) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
         self.handle
             .submit_transport_event(TransportEvent::Failed(input_transport_error(
@@ -342,10 +336,7 @@ impl FfiCoreHandle {
         Ok(())
     }
 
-    pub fn playback_state_changed(
-        &self,
-        state: FfiPlaybackState,
-    ) -> Result<(), FfiBridgeError> {
+    pub fn playback_state_changed(&self, state: FfiPlaybackState) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
         self.handle
             .submit_audio_event(AudioEvent::PlaybackStateChanged(state.into()))?;

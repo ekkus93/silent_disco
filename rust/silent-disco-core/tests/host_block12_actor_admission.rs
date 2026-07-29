@@ -4,10 +4,10 @@ use silent_disco_core::domain::{
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime,
-    CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot, DeliveryReport, HostDraftPatch,
-    InviteCodePatch, JoinRequestSummary, PlatformEffect, PlatformEffectRequest, PlatformEvent,
-    PlatformOperationCompletion, SnapshotRevision, StorageEffect, StorageEvent, TransportEffect,
-    TransportEffectRequest, TransportEvent,
+    CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot, DeliveryReport,
+    HostDraftPatch, InviteCodePatch, JoinRequestSummary, PlatformEffect, PlatformEffectRequest,
+    PlatformEvent, PlatformOperationCompletion, SnapshotRevision, StorageEffect, StorageEvent,
+    TransportEffect, TransportEffectRequest, TransportEvent,
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
@@ -84,7 +84,10 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
     assert_eq!(committed.listeners.len(), 1);
     assert_eq!(committed.listeners[0].device_id, request.device_id);
     assert_eq!(committed.listeners[0].trust_state, TrustState::SessionOnly);
-    assert_eq!(committed.listeners[0].transport_state, TransportState::Connecting);
+    assert_eq!(
+        committed.listeners[0].transport_state,
+        TransportState::Connecting
+    );
     assert_eq!(
         committed
             .last_delivery
@@ -92,7 +95,10 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
             .successful_peers,
         1
     );
-    assert_eq!(next_diagnostic(&receiver).name, "transport_delivery_partial");
+    assert_eq!(
+        next_diagnostic(&receiver).name,
+        "transport_delivery_partial"
+    );
 
     submit_command(
         &handle,
@@ -169,7 +175,10 @@ fn trust_write_failure_is_visible_and_approval_becomes_session_only() {
     assert!(approved.pending_join_requests.is_empty());
     assert_eq!(approved.listeners.len(), 1);
     assert_eq!(approved.listeners[0].trust_state, TrustState::SessionOnly);
-    assert_eq!(approved.listeners[0].transport_state, TransportState::Connecting);
+    assert_eq!(
+        approved.listeners[0].transport_state,
+        TransportState::Connecting
+    );
     assert_eq!(
         approved
             .last_error
@@ -209,14 +218,21 @@ fn trusted_policy_auto_approves_but_waits_for_delivery() {
     assert!(approved.pending_join_requests.is_empty());
     assert_eq!(approved.listeners.len(), 1);
     assert_eq!(approved.listeners[0].trust_state, TrustState::Trusted);
-    assert_eq!(approved.listeners[0].transport_state, TransportState::Connecting);
+    assert_eq!(
+        approved.listeners[0].transport_state,
+        TransportState::Connecting
+    );
     runtime.shutdown().expect("shutdown host actor");
 }
 
 fn start_host(
     approval_mode: ApprovalMode,
     remember_approved_devices: bool,
-) -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNotification>) {
+) -> (
+    CoreActorRuntime,
+    CoreActorHandle,
+    Receiver<CoreNotification>,
+) {
     let (sender, receiver) = channel();
     let runtime = CoreActorRuntime::start(
         CoreActorConfig::new(DeviceId::new("host-core").expect("valid host ID")),
@@ -302,9 +318,7 @@ fn submit_and_snapshot(
 
 fn submit_command(handle: &CoreActorHandle, revision: SnapshotRevision, command: CoreCommand) {
     handle
-        .submit_command(
-            CoreCommandRequest::new(revision, command).expect("valid command request"),
-        )
+        .submit_command(CoreCommandRequest::new(revision, command).expect("valid command request"))
         .expect("queue command");
 }
 

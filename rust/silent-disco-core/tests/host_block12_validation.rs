@@ -142,10 +142,7 @@ fn admission_policy_rejects_bad_invites_and_auto_approves_only_trusted_devices()
         ..HostDraft::default()
     };
     assert_eq!(
-        classify_join_request(
-            &invite_draft,
-            &join_request(TrustState::SessionOnly, false)
-        ),
+        classify_join_request(&invite_draft, &join_request(TrustState::SessionOnly, false)),
         JoinRequestDisposition::AutoReject {
             reason: JoinRejectionReason::IncorrectInviteCode,
         }
@@ -162,10 +159,7 @@ fn admission_policy_rejects_bad_invites_and_auto_approves_only_trusted_devices()
         }
     );
     assert_eq!(
-        classify_join_request(
-            &trusted_draft,
-            &join_request(TrustState::SessionOnly, true)
-        ),
+        classify_join_request(&trusted_draft, &join_request(TrustState::SessionOnly, true)),
         JoinRequestDisposition::PendingManualDecision
     );
 }

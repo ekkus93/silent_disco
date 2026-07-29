@@ -106,9 +106,11 @@ impl ActorState {
         operation_id: OperationId,
         patch: &crate::runtime::TuningPatch,
     ) -> Result<ApplyOutcome, CoreError> {
-        if self.pending_storage.iter().any(|(_, pending)| {
-            matches!(pending, PendingStorageOperation::PersistTuning(_))
-        }) {
+        if self
+            .pending_storage
+            .iter()
+            .any(|(_, pending)| matches!(pending, PendingStorageOperation::PersistTuning(_)))
+        {
             return Err(invalid_state(
                 "a tuning update is already pending durable storage",
                 Some(operation_id),
@@ -362,8 +364,7 @@ impl ActorState {
             ));
         }
 
-        if self.snapshot.selected_role == Some(AppRole::Host)
-            && action == RecoverableAction::Retry
+        if self.snapshot.selected_role == Some(AppRole::Host) && action == RecoverableAction::Retry
         {
             return self.retry_host_session(operation_id);
         }
@@ -372,10 +373,7 @@ impl ActorState {
         Ok(ApplyOutcome::changed())
     }
 
-    fn retry_host_session(
-        &mut self,
-        operation_id: OperationId,
-    ) -> Result<ApplyOutcome, CoreError> {
+    fn retry_host_session(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Host, &operation_id)?;
         if !self.pending_platform.is_empty()
             || !self.pending_transport.is_empty()

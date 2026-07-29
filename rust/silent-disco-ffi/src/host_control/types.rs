@@ -298,24 +298,12 @@ pub enum FfiPlatformCompletion {
 
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum FfiCoreNotification {
-    Snapshot {
-        snapshot: FfiCoreSnapshot,
-    },
-    PlatformEffect {
-        effect: FfiPlatformEffect,
-    },
-    TransportEffect {
-        effect: FfiTransportEffect,
-    },
-    StorageEffect {
-        effect: FfiStorageEffect,
-    },
-    Error {
-        error: FfiCoreError,
-    },
-    Diagnostic {
-        diagnostic: FfiCoreDiagnostic,
-    },
+    Snapshot { snapshot: FfiCoreSnapshot },
+    PlatformEffect { effect: FfiPlatformEffect },
+    TransportEffect { effect: FfiTransportEffect },
+    StorageEffect { effect: FfiStorageEffect },
+    Error { error: FfiCoreError },
+    Diagnostic { diagnostic: FfiCoreDiagnostic },
 }
 
 #[derive(Debug, uniffi::Error)]
@@ -344,10 +332,7 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for FfiBridgeError {
     }
 }
 
-#[uniffi::export(foreign)]
+#[uniffi::export(with_foreign)]
 pub trait FfiCoreObserver: Send + Sync {
-    fn on_notification(
-        &self,
-        notification: FfiCoreNotification,
-    ) -> Result<(), FfiBridgeError>;
+    fn on_notification(&self, notification: FfiCoreNotification) -> Result<(), FfiBridgeError>;
 }

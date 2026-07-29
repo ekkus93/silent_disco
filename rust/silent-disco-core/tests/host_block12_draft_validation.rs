@@ -34,13 +34,8 @@ fn host_draft_validation_covers_required_fields_and_cross_field_rules() {
         Err(RuntimeRecordValidationError::InviteCodeRequired)
     );
 
-    let source = AudioSourceDescriptor::new(
-        "source-1",
-        "fixture.wav",
-        Some(4_096),
-        Some(2_000),
-    )
-    .expect("valid staged source");
+    let source = AudioSourceDescriptor::new("source-1", "fixture.wav", Some(4_096), Some(2_000))
+        .expect("valid staged source");
     let invite_draft = named
         .patched(&HostDraftPatch {
             approval_mode: Some(ApprovalMode::InviteCode),
@@ -93,18 +88,13 @@ fn tuning_patch_validates_exact_values_instead_of_silently_clamping() {
     let defaults = TuningSettings::default();
     let valid = TuningPatch {
         late_packet_threshold_ms: Some(MIN_LATE_PACKET_THRESHOLD_MS),
-        hard_resync_threshold_ms: Some(
-            MIN_LATE_PACKET_THRESHOLD_MS + MIN_RESYNC_THRESHOLD_GAP_MS,
-        ),
+        hard_resync_threshold_ms: Some(MIN_LATE_PACKET_THRESHOLD_MS + MIN_RESYNC_THRESHOLD_GAP_MS),
         scan_window_ms: Some(MAX_SCAN_WINDOW_MS),
         ..TuningPatch::default()
     }
     .apply_to(&defaults)
     .expect("valid boundary tuning");
-    assert_eq!(
-        valid.late_packet_threshold_ms,
-        MIN_LATE_PACKET_THRESHOLD_MS
-    );
+    assert_eq!(valid.late_packet_threshold_ms, MIN_LATE_PACKET_THRESHOLD_MS);
     assert_eq!(valid.scan_window_ms, MAX_SCAN_WINDOW_MS);
 
     let out_of_range = TuningPatch {

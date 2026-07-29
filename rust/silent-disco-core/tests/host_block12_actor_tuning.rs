@@ -106,7 +106,11 @@ fn tuning_failure_preserves_previous_settings_and_is_visible() {
     runtime.shutdown().expect("shutdown actor");
 }
 
-fn start_actor() -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNotification>) {
+fn start_actor() -> (
+    CoreActorRuntime,
+    CoreActorHandle,
+    Receiver<CoreNotification>,
+) {
     let (sender, receiver) = channel();
     let runtime = CoreActorRuntime::start(
         CoreActorConfig::new(DeviceId::new("tuning-core").expect("valid device ID")),
@@ -125,9 +129,7 @@ fn start_actor() -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNotificatio
 
 fn submit_command(handle: &CoreActorHandle, revision: SnapshotRevision, command: CoreCommand) {
     handle
-        .submit_command(
-            CoreCommandRequest::new(revision, command).expect("valid command request"),
-        )
+        .submit_command(CoreCommandRequest::new(revision, command).expect("valid command request"))
         .expect("queue command");
 }
 

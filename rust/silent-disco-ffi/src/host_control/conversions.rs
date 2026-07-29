@@ -209,9 +209,7 @@ impl TryFrom<FfiTuningPatch> for TuningPatch {
                 .sync_sample_window
                 .map(u16::try_from)
                 .transpose()
-                .map_err(|_| {
-                    FfiBridgeError::Core("sync sample window exceeds u16".to_owned())
-                })?,
+                .map_err(|_| FfiBridgeError::Core("sync sample window exceeds u16".to_owned()))?,
             sync_cadence_ms: value.sync_cadence_ms,
             startup_buffer_ms: value.startup_buffer_ms,
             late_packet_threshold_ms: value.late_packet_threshold_ms,

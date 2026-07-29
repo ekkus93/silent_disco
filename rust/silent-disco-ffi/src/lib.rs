@@ -8,10 +8,6 @@
 //! smallest scope, while unsafe blocks and foreign-pointer dereferences remain
 //! prohibited unless their invariants are documented explicitly.
 
-#[allow(
-    unsafe_code,
-    reason = "UniFFI generates the reviewed FFI scaffolding; handwritten unsafe code remains denied"
-)]
 uniffi::setup_scaffolding!();
 
 mod android_abi;

@@ -1,5 +1,5 @@
-use crate::domain::{ApprovalMode, DeviceId, RequestId, TrustState};
 use super::{DeliveryReport, HostDraft, JoinRequestSummary};
+use crate::domain::{ApprovalMode, DeviceId, RequestId, TrustState};
 
 /// Stable machine-readable rejection reasons emitted by host admission policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,10 +103,7 @@ pub const fn classify_join_request(
 /// Durable trust is written before approval delivery whenever the host requested
 /// "remember approved devices" and the listener is not already trusted.
 #[must_use]
-pub fn prepare_approval(
-    draft: &HostDraft,
-    request: &JoinRequestSummary,
-) -> ApprovalPreparation {
+pub fn prepare_approval(draft: &HostDraft, request: &JoinRequestSummary) -> ApprovalPreparation {
     if draft.remember_approved_devices && request.trust_state != TrustState::Trusted {
         ApprovalPreparation::PersistTrustFirst(TrustPersistenceRequest {
             request_id: request.request_id.clone(),
@@ -221,15 +218,15 @@ mod tests {
         };
         let request = request(TrustState::SessionOnly, true);
 
-        let ApprovalPreparation::PersistTrustFirst(persistence) = prepare_approval(&draft, &request)
+        let ApprovalPreparation::PersistTrustFirst(persistence) =
+            prepare_approval(&draft, &request)
         else {
             panic!("approval must persist trust before delivery");
         };
         assert_eq!(persistence.request_id, request.request_id);
         assert_eq!(persistence.device_id, request.device_id);
 
-        let delivery =
-            approval_after_persistence(&persistence, TrustPersistenceOutcome::Committed);
+        let delivery = approval_after_persistence(&persistence, TrustPersistenceOutcome::Committed);
         assert!(delivery.trusted_for_future);
         assert!(!delivery.persistence_failed);
     }
@@ -241,7 +238,8 @@ mod tests {
             ..HostDraft::default()
         };
         let request = request(TrustState::SessionOnly, true);
-        let ApprovalPreparation::PersistTrustFirst(persistence) = prepare_approval(&draft, &request)
+        let ApprovalPreparation::PersistTrustFirst(persistence) =
+            prepare_approval(&draft, &request)
         else {
             panic!("approval must persist trust before delivery");
         };

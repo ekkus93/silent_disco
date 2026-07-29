@@ -12,9 +12,7 @@ mod support;
 mod transport;
 mod tuning;
 
-use super::errors::{
-    invalid_argument, invalid_state, resource_limit, transport_delivery_failed,
-};
+use super::errors::{invalid_argument, invalid_state, resource_limit, transport_delivery_failed};
 use crate::domain::{
     AppRole, DeviceId, HostLifecycle, ListenerLifecycle, OperationId, PlaybackState, RequestId,
     SessionId, TransportState, TuningSettings,

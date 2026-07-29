@@ -3,8 +3,8 @@ use super::{
     DiagnosticField, HostLifecycle, ListenerLifecycle, MAX_PENDING_EFFECT_OPERATIONS, OperationId,
     PendingPlatformOperation, PendingStorageOperation, PendingTransportOperation, PlatformEffect,
     PlatformEffectRequest, PlaybackState, RecoverableAction, SessionId, StorageEffect,
-    StorageEffectRequest, TransportEffect, TransportEffectRequest, TransportState, invalid_argument,
-    invalid_state, resource_limit,
+    StorageEffectRequest, TransportEffect, TransportEffectRequest, TransportState,
+    invalid_argument, invalid_state, resource_limit,
 };
 
 impl ActorState {
@@ -79,16 +79,6 @@ impl ActorState {
             .iter()
             .position(|(candidate, _)| candidate == operation_id)?;
         Some(self.pending_platform.remove(index).1)
-    }
-
-    pub(super) fn pending_transport(
-        &self,
-        operation_id: &OperationId,
-    ) -> Option<&PendingTransportOperation> {
-        self.pending_transport
-            .iter()
-            .find(|(candidate, _)| candidate == operation_id)
-            .map(|(_, pending)| pending)
     }
 
     pub(super) fn remove_pending_transport(
@@ -221,9 +211,8 @@ impl ActorState {
     pub(super) fn reset_host_session(&mut self) {
         self.host_session_id = None;
         self.pending_transport.clear();
-        self.pending_storage.retain(|(_, pending)| {
-            matches!(pending, PendingStorageOperation::PersistTuning(_))
-        });
+        self.pending_storage
+            .retain(|(_, pending)| matches!(pending, PendingStorageOperation::PersistTuning(_)));
         self.snapshot.host_lifecycle = HostLifecycle::Idle;
         self.snapshot.transport_state = TransportState::Idle;
         self.snapshot.pending_join_requests.clear();

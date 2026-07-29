@@ -6,7 +6,8 @@ use silent_disco_core::runtime::{
     AudioEvent, AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle,
     CoreActorRuntime, CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot,
     HostDraftPatch, InviteCodePatch, ListenerSummary, PlatformEffect, PlatformEffectRequest,
-    PlatformEvent, PlatformOperationCompletion, RecoverableAction, SnapshotRevision, TransportEvent,
+    PlatformEvent, PlatformOperationCompletion, RecoverableAction, SnapshotRevision,
+    TransportEvent,
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
@@ -206,7 +207,11 @@ fn listener_summary() -> ListenerSummary {
     .expect("valid listener summary")
 }
 
-fn start_actor() -> (CoreActorRuntime, CoreActorHandle, Receiver<CoreNotification>) {
+fn start_actor() -> (
+    CoreActorRuntime,
+    CoreActorHandle,
+    Receiver<CoreNotification>,
+) {
     let (sender, receiver) = channel();
     let runtime = CoreActorRuntime::start(
         CoreActorConfig::new(DeviceId::new("host-core").expect("valid host ID")),
@@ -230,9 +235,7 @@ fn command_snapshot(
     command: CoreCommand,
 ) -> CoreSnapshot {
     handle
-        .submit_command(
-            CoreCommandRequest::new(revision, command).expect("valid command request"),
-        )
+        .submit_command(CoreCommandRequest::new(revision, command).expect("valid command request"))
         .expect("queue command");
     next_snapshot(receiver, revision.get() + 1)
 }

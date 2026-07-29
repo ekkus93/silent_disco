@@ -53,10 +53,7 @@ impl RecordingObserver {
 }
 
 impl FfiCoreObserver for RecordingObserver {
-    fn on_notification(
-        &self,
-        notification: FfiCoreNotification,
-    ) -> Result<(), FfiBridgeError> {
+    fn on_notification(&self, notification: FfiCoreNotification) -> Result<(), FfiBridgeError> {
         self.notifications
             .lock()
             .expect("recording lock")
