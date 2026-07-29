@@ -1,0 +1,483 @@
+name: Apply Block 13 Targeted Transport
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/apply-block13-targeted-transport.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-block13-targeted-transport
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Implement targeted control delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          models = "app/src/main/java/com/ekkus/silentdisco/core/transport/TransportModels.kt"
+          replace_once(
+              models,
+              """data class SendAllResult(
+              val peerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+          ) {
+              val deliveredToAnyPeer: Boolean get() = successCount > 0
+              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+          }
+
+          """,
+              """data class SendAllResult(
+              val peerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+          ) {
+              val deliveredToAnyPeer: Boolean get() = successCount > 0
+              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+          }
+
+          data class TargetedDeliveryResult(
+              val listenerId: String,
+              val intendedPeerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+              val message: String? = null,
+          ) {
+              val deliveredToTarget: Boolean
+                  get() = intendedPeerCount == 1 && successCount == 1 && failureCount == 0
+
+              companion object {
+                  fun delivered(listenerId: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 1,
+                      successCount = 1,
+                      failureCount = 0,
+                  )
+
+                  fun notFound(listenerId: String, message: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 0,
+                      successCount = 0,
+                      failureCount = 0,
+                      message = message,
+                  )
+
+                  fun failed(listenerId: String, message: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 1,
+                      successCount = 0,
+                      failureCount = 1,
+                      message = message,
+                  )
+              }
+          }
+
+          """,
+          )
+          replace_once(
+              models,
+              """    suspend fun sendControlToHost(message: ControlMessage)
+              suspend fun broadcastControl(message: ControlMessage): SendAllResult
+          """,
+              """    suspend fun sendControlToHost(message: ControlMessage)
+              suspend fun sendControlToListener(
+                  listenerId: String,
+                  message: ControlMessage,
+              ): TargetedDeliveryResult
+              suspend fun broadcastControl(message: ControlMessage): SendAllResult
+          """,
+          )
+
+          tcp = "app/src/main/java/com/ekkus/silentdisco/core/transport/TcpTransport.kt"
+          replace_once(
+              tcp,
+              """internal data class TcpChannelStats(
+              val connectionCount: Int = 0,
+              val bytesSent: Long = 0,
+              val bytesReceived: Long = 0,
+          )
+
+          """,
+              """internal data class TcpChannelStats(
+              val connectionCount: Int = 0,
+              val bytesSent: Long = 0,
+              val bytesReceived: Long = 0,
+          )
+
+          internal data class PeerDeliveryResult(
+              val peerFound: Boolean,
+              val delivered: Boolean,
+              val errorMessage: String? = null,
+          )
+
+          """,
+          )
+          replace_once(
+              tcp,
+              """    suspend fun sendAll(message: T): SendAllResult {
+              val snapshot = peers.values.toList()
+              var success = 0
+              var failure = 0
+              snapshot.forEach { peer ->
+                  runCatching { peer.send(message) }
+                      .onSuccess { success += 1 }
+                      .onFailure { error ->
+                          failure += 1
+                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                      }
+              }
+              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
+          }
+
+          """,
+              """    suspend fun sendAll(message: T): SendAllResult {
+              val snapshot = peers.values.toList()
+              var success = 0
+              var failure = 0
+              snapshot.forEach { peer ->
+                  runCatching { peer.send(message) }
+                      .onSuccess { success += 1 }
+                      .onFailure { error ->
+                          failure += 1
+                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                      }
+              }
+              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
+          }
+
+              suspend fun sendTo(remoteAddress: String, message: T): PeerDeliveryResult {
+                  val peer = peers[remoteAddress]
+                      ?: return PeerDeliveryResult(
+                          peerFound = false,
+                          delivered = false,
+                          errorMessage = "No active $channelName connection for $remoteAddress",
+                      )
+                  return runCatching {
+                      peer.send(message)
+                      PeerDeliveryResult(peerFound = true, delivered = true)
+                  }.getOrElse { error ->
+                      val messageText = error.message ?: "Unknown $channelName send failure"
+                      logger.w(
+                          "transport.$channelName.send-target",
+                          "Failed to send to $remoteAddress: $messageText",
+                      )
+                      peer.close()
+                      PeerDeliveryResult(
+                          peerFound = true,
+                          delivered = false,
+                          errorMessage = messageText,
+                      )
+                  }
+              }
+
+          """,
+          )
+
+          service = "app/src/main/java/com/ekkus/silentdisco/core/transport/WifiDirectTransportService.kt"
+          replace_once(
+              service,
+              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+          import kotlinx.coroutines.CoroutineScope
+          """,
+              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+          import java.util.concurrent.ConcurrentHashMap
+          import kotlinx.coroutines.CoroutineScope
+          """,
+          )
+          replace_once(
+              service,
+              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+              private var activeSession: SessionInfo? = null
+          """,
+              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+              private val listenerControlRoutes = ConcurrentHashMap<String, String>()
+              private var activeSession: SessionInfo? = null
+          """,
+          )
+          replace_once(
+              service,
+              """        hosting = true
+              stopClientChannels()
+          """,
+              """        hosting = true
+              listenerControlRoutes.clear()
+              stopClientChannels()
+          """,
+          )
+          replace_once(
+              service,
+              """    override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+          """,
+              """    override suspend fun sendControlToListener(
+              listenerId: String,
+              message: ControlMessage,
+          ): TargetedDeliveryResult {
+              val embeddedListenerId = message.targetListenerId()
+              if (embeddedListenerId != listenerId) {
+                  return TargetedDeliveryResult.failed(
+                      listenerId,
+                      "Control message target does not match requested listener",
+                  )
+              }
+              val remoteAddress = listenerControlRoutes[listenerId]
+                  ?: return TargetedDeliveryResult.notFound(
+                      listenerId,
+                      "No control connection is associated with listener $listenerId",
+                  )
+              val server = controlServer
+                  ?: return TargetedDeliveryResult.failed(listenerId, "Control server is not active")
+              val delivery = server.sendTo(remoteAddress, message)
+              if (!delivery.peerFound || !delivery.delivered) {
+                  listenerControlRoutes.remove(listenerId, remoteAddress)
+              }
+              recordHeartbeat()
+              updateByteCounts()
+              return when {
+                  delivery.delivered -> TargetedDeliveryResult.delivered(listenerId)
+                  delivery.peerFound -> TargetedDeliveryResult.failed(
+                      listenerId,
+                      delivery.errorMessage ?: "Targeted control delivery failed",
+                  )
+                  else -> TargetedDeliveryResult.notFound(
+                      listenerId,
+                      delivery.errorMessage ?: "Targeted listener connection is no longer active",
+                  )
+              }
+          }
+
+              override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+          """,
+          )
+          replace_once(
+              service,
+              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+              server.incoming.collectInto(_controlMessages::tryEmit)
+          }
+
+          """,
+              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+              scope.launch {
+                  server.incoming.collect { event ->
+                      val message = event.message
+                      if (message is ControlMessage.JoinRequest) {
+                          listenerControlRoutes[message.device.deviceId] = event.remoteAddress
+                      }
+                      _controlMessages.emit(message)
+                      recordHeartbeat()
+                      updateByteCounts()
+                      logger.d("transport.message", "Received message from ${event.remoteAddress}")
+                  }
+              }
+          }
+
+          """,
+          )
+          for flow_name in ("_syncRequests", "_syncResponses", "_audioPackets", "_controlMessages"):
+              old = f"collectInto({flow_name}::tryEmit)"
+              new = f"collectInto({flow_name}::emit)"
+              target = Path(service)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"{service}: missing {old}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+          replace_once(
+              service,
+              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: (T) -> Boolean) {
+              scope.launch {
+                  collect { event ->
+                      emit(event.message)
+          """,
+              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: suspend (T) -> Unit) {
+              scope.launch {
+                  collect { event ->
+                      emit(event.message)
+          """,
+          )
+          replace_once(
+              service,
+              """    private fun stopServerChannels() {
+              controlServer?.close()
+          """,
+              """    private fun stopServerChannels() {
+              listenerControlRoutes.clear()
+              controlServer?.close()
+          """,
+          )
+          replace_once(
+              service,
+              """    private companion object {
+          """,
+              """    private fun ControlMessage.targetListenerId(): String? = when (this) {
+              is ControlMessage.JoinApproval -> listenerId
+              is ControlMessage.JoinRejection -> listenerId
+              is ControlMessage.Heartbeat -> listenerId
+              is ControlMessage.Disconnect -> listenerId
+              is ControlMessage.ResyncNotice -> listenerId
+              is ControlMessage.Hello,
+              is ControlMessage.JoinRequest,
+              is ControlMessage.StreamStart,
+              is ControlMessage.Pause,
+              is ControlMessage.Stop,
+              -> null
+          }
+
+              private companion object {
+          """,
+          )
+          PY
+
+          cat > app/src/test/java/com/ekkus/silentdisco/core/transport/TargetedTcpTransportTest.kt <<'KOTLIN'
+          package com.ekkus.silentdisco.core.transport
+
+          import com.ekkus.silentdisco.core.logging.AppLogger
+          import com.ekkus.silentdisco.core.protocol.ControlMessage
+          import com.ekkus.silentdisco.core.protocol.DeviceIdentity
+          import com.ekkus.silentdisco.core.protocol.SessionId
+          import com.google.common.truth.Truth.assertThat
+          import java.net.ServerSocket
+          import kotlinx.coroutines.async
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.runBlocking
+          import kotlinx.coroutines.withTimeout
+          import org.junit.Test
+
+          class TargetedTcpTransportTest {
+              @Test
+              fun `server sends approval only to source connection`() = runBlocking {
+                  val port = ServerSocket(0).use { it.localPort }
+                  val logger = AppLogger()
+                  val server = TcpServerChannel(
+                      port = port,
+                      channelName = "control-test",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+                  val intendedClient = TcpClientChannel(
+                      host = "127.0.0.1",
+                      port = port,
+                      channelName = "intended-client",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+                  val unrelatedClient = TcpClientChannel(
+                      host = "127.0.0.1",
+                      port = port,
+                      channelName = "unrelated-client",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+
+                  try {
+                      server.start()
+                      intendedClient.connect()
+                      unrelatedClient.connect()
+
+                      val inbound = async {
+                          withTimeout(5_000) { server.incoming.first() }
+                      }
+                      intendedClient.send(
+                          ControlMessage.JoinRequest(
+                              version = 1,
+                              sessionId = SessionId("session-1"),
+                              device = DeviceIdentity("listener-1", "Pixel"),
+                          ),
+                      )
+                      val sourceEvent = inbound.await()
+
+                      val intendedReply = async {
+                          withTimeout(5_000) { intendedClient.incoming.first() }
+                      }
+                      val approval = ControlMessage.JoinApproval(
+                          version = 1,
+                          sessionId = SessionId("session-1"),
+                          listenerId = "listener-1",
+                          trustedForFuture = false,
+                      )
+                      val result = server.sendTo(sourceEvent.remoteAddress, approval)
+
+                      assertThat(result.peerFound).isTrue()
+                      assertThat(result.delivered).isTrue()
+                      assertThat(intendedReply.await().message).isEqualTo(approval)
+                      assertThat(unrelatedClient.bytesReceived()).isEqualTo(0L)
+                  } finally {
+                      unrelatedClient.close()
+                      intendedClient.close()
+                      server.close()
+                  }
+              }
+
+              @Test
+              fun `server reports missing targeted connection`() = runBlocking {
+                  val port = ServerSocket(0).use { it.localPort }
+                  val server = TcpServerChannel(
+                      port = port,
+                      channelName = "control-test",
+                      codec = ControlMessageCodec,
+                      logger = AppLogger(),
+                  )
+                  try {
+                      server.start()
+                      val result = server.sendTo(
+                          "/127.0.0.1:1",
+                          ControlMessage.JoinRejection(
+                              version = 1,
+                              sessionId = SessionId("session-1"),
+                              listenerId = "listener-1",
+                              reason = "rejected",
+                          ),
+                      )
+                      assertThat(result.peerFound).isFalse()
+                      assertThat(result.delivered).isFalse()
+                  } finally {
+                      server.close()
+                  }
+              }
+          }
+          KOTLIN
+
+          git rm .github/workflows/apply-block13-targeted-transport.yml
+          git diff --check
+
+      - name: Run targeted transport tests
+        run: ./gradlew testDebugUnitTest --tests com.ekkus.silentdisco.core.transport.TargetedTcpTransportTest --stacktrace --console=plain
+
+      - name: Commit targeted transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main app/src/test
+          git commit -m "Add exact-listener control delivery"
+          git push origin HEAD:master
