@@ -6,15 +6,13 @@ import { App } from "./App";
 import { createAppStore } from "./app/store";
 import type { CoreNotificationDto } from "./core/generated/desktop-bindings";
 
-const {
-  ensureDesktopBridgeMock,
-  subscribeDesktopNotificationsMock,
-  unsubscribeMock,
-} = vi.hoisted(() => ({
-  ensureDesktopBridgeMock: vi.fn(),
-  subscribeDesktopNotificationsMock: vi.fn(),
-  unsubscribeMock: vi.fn(),
-}));
+const { ensureDesktopBridgeMock, subscribeDesktopNotificationsMock, unsubscribeMock } = vi.hoisted(
+  () => ({
+    ensureDesktopBridgeMock: vi.fn(),
+    subscribeDesktopNotificationsMock: vi.fn(),
+    unsubscribeMock: vi.fn(),
+  }),
+);
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
 
@@ -79,9 +77,7 @@ describe("App", () => {
 
     const { store } = renderApp();
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Opening or reattaching the main profile",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Opening or reattaching the main profile");
     expect(await screen.findByText("Opened the main profile")).toBeVisible();
     expect(screen.getByText("17")).toBeVisible();
     expect(screen.getByText("4")).toBeVisible();
@@ -110,30 +106,27 @@ describe("App", () => {
     expect(store.getState().core.snapshot?.revision).toBe("5");
   });
 
-  it(
-    "displays a command failure delivered by the authoritative notification channel",
-    async () => {
-      ensureDesktopBridgeMock.mockResolvedValue(connection);
-      renderApp();
-      await screen.findByText("Opened the main profile");
+  it("displays a command failure delivered by the authoritative notification channel", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+    await screen.findByText("Opened the main profile");
 
-      act(() => {
-        notificationListener?.({
-          kind: "error",
-          details: {
-            code: "core.command.rejected",
-            subsystem: "runtime",
-            severity: "error",
-            retryable: false,
-            message: "The command was rejected.",
-          },
-        });
+    act(() => {
+      notificationListener?.({
+        kind: "error",
+        details: {
+          code: "core.command.rejected",
+          subsystem: "runtime",
+          severity: "error",
+          retryable: false,
+          message: "The command was rejected.",
+        },
       });
+    });
 
-      expect(screen.getByRole("alert")).toHaveTextContent("Core command or bridge error");
-      expect(screen.getByRole("alert")).toHaveTextContent("The command was rejected.");
-    },
-  );
+    expect(screen.getByRole("alert")).toHaveTextContent("Core command or bridge error");
+    expect(screen.getByRole("alert")).toHaveTextContent("The command was rejected.");
+  });
 
   it("keeps bridge startup failure visible as a structured Redux error", async () => {
     ensureDesktopBridgeMock.mockRejectedValue(new Error("native bridge unavailable"));
