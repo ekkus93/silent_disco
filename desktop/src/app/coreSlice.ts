@@ -169,10 +169,7 @@ export const coreSlice = createSlice({
         details: { profile_id: action.payload.profileId },
       };
     },
-    bridgeReady(
-      state,
-      action: PayloadAction<{ profileId: string; snapshot: CoreSnapshotDto }>,
-    ) {
+    bridgeReady(state, action: PayloadAction<{ profileId: string; snapshot: CoreSnapshotDto }>) {
       const lifecycle = state.bridgeLifecycle;
       if (
         lifecycle.kind !== "opening" ||
@@ -231,10 +228,7 @@ export const coreSlice = createSlice({
           break;
       }
     },
-    commandPending(
-      state,
-      action: PayloadAction<{ operationId: string; commandKind: string }>,
-    ) {
+    commandPending(state, action: PayloadAction<{ operationId: string; commandKind: string }>) {
       const { operationId, commandKind } = action.payload;
       if (state.pendingCommandReceipts[operationId] !== undefined) {
         state.staleNotifications.commandReceipts += 1;
