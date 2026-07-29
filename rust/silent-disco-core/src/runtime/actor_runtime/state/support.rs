@@ -221,7 +221,9 @@ impl ActorState {
     pub(super) fn reset_host_session(&mut self) {
         self.host_session_id = None;
         self.pending_transport.clear();
-        self.pending_storage.clear();
+        self.pending_storage.retain(|(_, pending)| {
+            matches!(pending, PendingStorageOperation::PersistTuning(_))
+        });
         self.snapshot.host_lifecycle = HostLifecycle::Idle;
         self.snapshot.transport_state = TransportState::Idle;
         self.snapshot.pending_join_requests.clear();

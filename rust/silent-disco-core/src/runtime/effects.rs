@@ -1,4 +1,4 @@
-use crate::domain::{DeviceId, OperationId, RequestId, SessionId};
+use crate::domain::{DeviceId, OperationId, RequestId, SessionId, TuningSettings};
 use crate::protocol::{MAX_DISPLAY_NAME_BYTES, MAX_REASON_BYTES};
 use core::fmt;
 use std::error::Error;
@@ -75,8 +75,11 @@ impl TransportEffect {
 }
 
 /// One durable-storage operation requested by the authoritative actor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StorageEffectRequest {
+    PersistSettings {
+        settings: TuningSettings,
+    },
     PersistTrustedDevice {
         device_id: DeviceId,
         display_name: String,
@@ -88,9 +91,12 @@ impl StorageEffectRequest {
     ///
     /// # Errors
     ///
-    /// Rejects an invalid listener display name.
+    /// Rejects invalid tuning settings or an invalid listener display name.
     pub fn validate(&self) -> Result<(), EffectContractError> {
         match self {
+            Self::PersistSettings { settings } => settings
+                .validate()
+                .map_err(|_| EffectContractError::TuningSettings),
             Self::PersistTrustedDevice { display_name, .. } => validate_human_text(
                 display_name,
                 MAX_DISPLAY_NAME_BYTES,
@@ -101,7 +107,7 @@ impl StorageEffectRequest {
 }
 
 /// Correlated storage work emitted by the authoritative actor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StorageEffect {
     pub operation_id: OperationId,
     pub request: StorageEffectRequest,
@@ -130,6 +136,7 @@ impl StorageEffect {
 pub enum EffectContractError {
     ControlReason,
     DeviceDisplayName,
+    TuningSettings,
 }
 
 impl fmt::Display for EffectContractError {
@@ -137,6 +144,7 @@ impl fmt::Display for EffectContractError {
         formatter.write_str(match self {
             Self::ControlReason => "transport control reason is invalid",
             Self::DeviceDisplayName => "device display name is invalid",
+            Self::TuningSettings => "tuning settings are invalid",
         })
     }
 }
@@ -181,7 +189,7 @@ mod tests {
         EffectContractError, StorageEffect, StorageEffectRequest, TransportEffect,
         TransportEffectRequest,
     };
-    use crate::domain::{DeviceId, OperationId, RequestId, SessionId};
+    use crate::domain::{DeviceId, OperationId, RequestId, SessionId, TuningSettings};
 
     #[test]
     fn effects_validate_at_construction() {
@@ -198,13 +206,20 @@ mod tests {
         )
         .expect("valid transport effect");
         StorageEffect::new(
+            operation_id.clone(),
+            StorageEffectRequest::PersistSettings {
+                settings: TuningSettings::default(),
+            },
+        )
+        .expect("valid settings effect");
+        StorageEffect::new(
             operation_id,
             StorageEffectRequest::PersistTrustedDevice {
                 device_id,
                 display_name: "Listener One".to_owned(),
             },
         )
-        .expect("valid storage effect");
+        .expect("valid trusted-device effect");
     }
 
     #[test]

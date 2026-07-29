@@ -217,6 +217,7 @@ fn transport_effect_name(request: &TransportEffectRequest) -> &'static str {
 
 fn storage_effect_name(request: &StorageEffectRequest) -> &'static str {
     match request {
+        StorageEffectRequest::PersistSettings { .. } => "persist_settings",
         StorageEffectRequest::PersistTrustedDevice { .. } => "persist_trusted_device",
     }
 }

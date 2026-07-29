@@ -1,8 +1,9 @@
 use super::{
     ActorState, AppRole, ApplyOutcome, CoreCommand, CoreError, DiscoveryRequest, HostLifecycle,
     ListenerLifecycle, NetworkEstablishmentRequest, OperationId, PendingPlatformOperation,
-    PlatformEffectRequest, RecoverableAction, SessionAdvertisement, SessionId, TransportState,
-    current_protocol_version, invalid_argument, invalid_state,
+    PendingStorageOperation, PlatformEffectRequest, RecoverableAction, SessionAdvertisement,
+    SessionId, StorageEffectRequest, TransportState, current_protocol_version, invalid_argument,
+    invalid_state,
 };
 
 impl ActorState {
@@ -25,6 +26,7 @@ impl ActorState {
             CoreCommand::CancelJoin => self.cancel_join(operation_id),
             CoreCommand::ExportDiagnostics => self.export_diagnostics(),
             CoreCommand::RetryRecoverableFailure => self.retry_recoverable(operation_id),
+            CoreCommand::UpdateTuning(patch) => self.update_tuning(operation_id, &patch),
             CoreCommand::Shutdown => {
                 self.snapshot.shutting_down = true;
                 Ok(ApplyOutcome {
@@ -46,10 +48,6 @@ impl ActorState {
             | CoreCommand::SetLocalVolume { .. }
             | CoreCommand::RequestResync => Err(invalid_state(
                 "playback requires the shared packetizer and scheduler blocks",
-                Some(operation_id),
-            )),
-            CoreCommand::UpdateTuning(_) => Err(invalid_state(
-                "tuning updates require correlated durable storage integration",
                 Some(operation_id),
             )),
         }
@@ -101,6 +99,34 @@ impl ActorState {
             .map_err(|error| invalid_argument(error.to_string(), Some(operation_id)))?;
         self.clear_failure();
         Ok(ApplyOutcome::changed())
+    }
+
+    pub(super) fn update_tuning(
+        &mut self,
+        operation_id: OperationId,
+        patch: &crate::runtime::TuningPatch,
+    ) -> Result<ApplyOutcome, CoreError> {
+        if self.pending_storage.iter().any(|(_, pending)| {
+            matches!(pending, PendingStorageOperation::PersistTuning(_))
+        }) {
+            return Err(invalid_state(
+                "a tuning update is already pending durable storage",
+                Some(operation_id),
+            ));
+        }
+        let settings = patch
+            .apply_to(&self.snapshot.tuning)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        if settings == self.snapshot.tuning {
+            return Ok(ApplyOutcome::default());
+        }
+        let effect = self.start_storage_operation(
+            StorageEffectRequest::PersistSettings {
+                settings: settings.clone(),
+            },
+            PendingStorageOperation::PersistTuning(settings),
+        )?;
+        Ok(ApplyOutcome::storage_effect(effect))
     }
 
     pub(super) fn create_host_session(

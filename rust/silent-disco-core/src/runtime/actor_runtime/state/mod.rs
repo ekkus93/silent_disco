@@ -10,13 +10,14 @@ mod platform;
 mod storage;
 mod support;
 mod transport;
+mod tuning;
 
 use super::errors::{
     invalid_argument, invalid_state, resource_limit, transport_delivery_failed,
 };
 use crate::domain::{
     AppRole, DeviceId, HostLifecycle, ListenerLifecycle, OperationId, PlaybackState, RequestId,
-    SessionId, TransportState,
+    SessionId, TransportState, TuningSettings,
 };
 use crate::error::CoreError;
 use crate::runtime::records::{
@@ -69,9 +70,10 @@ enum PendingTransportOperation {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum PendingStorageOperation {
     PersistApprovalTrust(TrustPersistenceRequest),
+    PersistTuning(TuningSettings),
 }
 
 #[derive(Debug, Default)]
@@ -216,15 +218,23 @@ impl ActorState {
             },
             CoreActorInput::Audio(event) => self.apply_audio_with_host_lifecycle(event),
             CoreActorInput::Storage(event) => {
-                let admission_event = self.pending_storage(event.operation_id()).is_some()
-                    || matches!(
-                        &event,
-                        StorageEvent::OperationSucceeded {
-                            completion: StorageCompletion::TrustedDeviceUpdated { .. },
-                            ..
-                        }
-                    );
-                if admission_event {
+                let tuning_completion = matches!(
+                    self.pending_storage(event.operation_id()),
+                    Some(PendingStorageOperation::PersistTuning(_))
+                );
+                let admission_completion = matches!(
+                    self.pending_storage(event.operation_id()),
+                    Some(PendingStorageOperation::PersistApprovalTrust(_))
+                ) || matches!(
+                    &event,
+                    StorageEvent::OperationSucceeded {
+                        completion: StorageCompletion::TrustedDeviceUpdated { .. },
+                        ..
+                    }
+                );
+                if tuning_completion {
+                    self.apply_tuning_storage(event)
+                } else if admission_completion {
                     self.apply_admission_storage(event)
                 } else {
                     self.apply_storage(event)
