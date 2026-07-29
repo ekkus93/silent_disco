@@ -245,7 +245,16 @@ describe("desktop core client", () => {
     });
     const message = (failure as { message: string }).message;
     expect(message.length).toBeLessThanOrEqual(512);
-    expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    expect(
+      Array.from(message).every((character) => {
+        const codePoint = character.codePointAt(0);
+        return (
+          codePoint === undefined ||
+          (codePoint > 31 && codePoint < 127) ||
+          codePoint > 159
+        );
+      }),
+    ).toBe(true);
     expect(message).toContain("channel unavailable");
     expect(message).toContain("profile close failed");
   });
