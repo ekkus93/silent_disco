@@ -9,9 +9,9 @@ use silent_disco_core::domain::{
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreCommand,
-    CoreCommandRequest, HostDraftPatch, InviteCodePatch, JoinRequestSummary, ListenerSummary,
-    PlatformEvent, SnapshotRevision, StorageCompletion, StorageEvent, SynchronizationSummary,
-    TransportEvent,
+    CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch, JoinRequestSummary,
+    ListenerSummary, PlatformEvent, SnapshotRevision, StorageCompletion, StorageEvent,
+    SynchronizationSummary, TransportEvent,
 };
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +21,10 @@ pub struct FfiCoreHandle {
     handle: CoreActorHandle,
 }
 
+#[allow(
+    clippy::missing_errors_doc,
+    reason = "all exported methods use the uniform validated FfiBridgeError contract"
+)]
 #[uniffi::export]
 impl FfiCoreHandle {
     #[uniffi::constructor]
@@ -30,12 +34,14 @@ impl FfiCoreHandle {
     ) -> Result<Arc<Self>, FfiBridgeError> {
         let device_id = DeviceId::new(local_device_id)
             .map_err(|error| FfiBridgeError::Core(error.to_string()))?;
-        let runtime =
-            CoreActorRuntime::start(CoreActorConfig::new(device_id), move |notification| {
+        let runtime = CoreActorRuntime::start(
+            CoreActorConfig::new(device_id),
+            move |notification: CoreNotification| {
                 observer
                     .on_notification(notification.into())
                     .map_err(|_| observer_callback_error())
-            })?;
+            },
+        )?;
         let handle = runtime.handle();
         Ok(Arc::new(Self {
             runtime: Mutex::new(Some(runtime)),
@@ -440,13 +446,12 @@ fn input_error(
 }
 
 fn observer_callback_error() -> CoreError {
-    CoreError {
-        code: CoreErrorCode::FfiCallbackFailed,
-        message: "foreign core observer rejected a notification".to_owned(),
-        subsystem: CoreErrorCode::FfiCallbackFailed.subsystem(),
-        severity: ErrorSeverity::Fatal,
-        retryable: true,
-        operation_id: None,
-        context: Vec::new(),
-    }
+    CoreError::new(
+        CoreErrorCode::FfiCallbackFailed,
+        "foreign core observer rejected a notification",
+        ErrorSeverity::Fatal,
+        true,
+        None,
+    )
+    .expect("static observer callback error must satisfy the bounded error contract")
 }

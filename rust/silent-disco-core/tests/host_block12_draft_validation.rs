@@ -1,5 +1,5 @@
 use silent_disco_core::domain::{
-    ApprovalMode, MAX_SCAN_WINDOW_MS, MIN_LATE_PACKET_THRESHOLD_MS, MIN_RESYNC_THRESHOLD_GAP_MS,
+    ApprovalMode, MAX_SCAN_WINDOW_MS, MIN_HARD_RESYNC_THRESHOLD_MS, MIN_LATE_PACKET_THRESHOLD_MS,
     TuningSettings,
 };
 use silent_disco_core::runtime::{
@@ -88,7 +88,7 @@ fn tuning_patch_validates_exact_values_instead_of_silently_clamping() {
     let defaults = TuningSettings::default();
     let valid = TuningPatch {
         late_packet_threshold_ms: Some(MIN_LATE_PACKET_THRESHOLD_MS),
-        hard_resync_threshold_ms: Some(MIN_LATE_PACKET_THRESHOLD_MS + MIN_RESYNC_THRESHOLD_GAP_MS),
+        hard_resync_threshold_ms: Some(MIN_HARD_RESYNC_THRESHOLD_MS),
         scan_window_ms: Some(MAX_SCAN_WINDOW_MS),
         ..TuningPatch::default()
     }

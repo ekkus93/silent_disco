@@ -296,6 +296,10 @@ pub enum FfiPlatformCompletion {
     },
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "UniFFI rich enums require owned record payloads at the foreign boundary"
+)]
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum FfiCoreNotification {
     Snapshot { snapshot: FfiCoreSnapshot },
@@ -334,5 +338,10 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for FfiBridgeError {
 
 #[uniffi::export(with_foreign)]
 pub trait FfiCoreObserver: Send + Sync {
+    /// Accepts one serialized notification from the authoritative Rust actor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiBridgeError`] when the foreign observer cannot accept the notification.
     fn on_notification(&self, notification: FfiCoreNotification) -> Result<(), FfiBridgeError>;
 }

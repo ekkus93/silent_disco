@@ -7,7 +7,8 @@ use super::types::{
     FfiTuningPatch, FfiTuningSettings,
 };
 use silent_disco_core::domain::{
-    AppRole, ApprovalMode, HostLifecycle, PlaybackState, TransportState, TrustState, TuningSettings,
+    AppRole, ApprovalMode, HostLifecycle, MonotonicMillis, OperationId, PlaybackState,
+    TransportState, TrustState, TuningSettings,
 };
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
@@ -250,7 +251,7 @@ impl From<CoreError> for FfiCoreError {
             subsystem: value.subsystem.stable_name().to_owned(),
             severity: value.severity.stable_name().to_owned(),
             retryable: value.retryable,
-            operation_id: value.operation_id.map(|value| value.into_string()),
+            operation_id: value.operation_id.map(OperationId::into_string),
             message: value.message,
         }
     }
@@ -313,7 +314,7 @@ impl From<silent_disco_core::runtime::ListenerSummary> for FfiListenerSummary {
             trust_state: value.trust_state.into(),
             transport_state: value.transport_state.into(),
             synchronization: value.synchronization.map(Into::into),
-            last_contact_ms: value.last_contact.map(|value| value.get()),
+            last_contact_ms: value.last_contact.map(MonotonicMillis::get),
             last_error: value.last_error.map(Into::into),
         }
     }

@@ -1,7 +1,7 @@
 use super::{
-    AudioSourceDescriptor, CapabilitySnapshot, CoreDiagnostic, DeliveryReport, HostDraft,
-    HostDraftPatch, JoinRequestSummary, ListenerSummary, NetworkEndpoint, SessionAdvertisement,
-    SnapshotRevision, SynchronizationSummary, TuningPatch,
+    AudioSourceDescriptor, CapabilitySnapshot, DeliveryReport, HostDraft, HostDraftPatch,
+    JoinRequestSummary, ListenerSummary, NetworkEndpoint, SessionAdvertisement, SnapshotRevision,
+    SynchronizationSummary, TuningPatch,
 };
 use crate::domain::{
     AppRole, DeviceId, HostLifecycle, ListenerLifecycle, OperationId, PlaybackState, RequestId,

@@ -29,7 +29,9 @@ fn tuning_snapshot_changes_only_after_correlated_storage_success() {
     let effect = next_storage_effect(&receiver);
     let expected = match &effect.request {
         StorageEffectRequest::PersistSettings { settings } => settings.clone(),
-        request => panic!("unexpected storage effect: {request:?}"),
+        request @ StorageEffectRequest::PersistTrustedDevice { .. } => {
+            panic!("unexpected storage effect: {request:?}")
+        }
     };
     assert_eq!(expected.sync_cadence_ms, 1_500);
     assert_eq!(expected.startup_buffer_ms, 500);
