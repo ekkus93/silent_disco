@@ -96,7 +96,9 @@ describe("App", () => {
 
     const { store } = renderApp();
 
-    expect(screen.getByRole("status")).toHaveTextContent("Opening or reattaching the main profile");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Opening or reattaching the main profile",
+    );
     expect(await screen.findByText("0.1.0")).toBeVisible();
     expect(screen.getByText("Opened the main profile")).toBeVisible();
     expect(screen.getByText("17")).toBeVisible();
@@ -128,28 +130,31 @@ describe("App", () => {
     expect(store.getState().core.snapshot?.revision).toBe("5");
   });
 
-  it("displays a command failure delivered by the authoritative notification channel", async () => {
-    getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });
-    ensureDesktopBridgeMock.mockResolvedValue(connection);
-    renderApp();
-    await screen.findByText("Opened the main profile");
+  it(
+    "displays a command failure delivered by the authoritative notification channel",
+    async () => {
+      getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });
+      ensureDesktopBridgeMock.mockResolvedValue(connection);
+      renderApp();
+      await screen.findByText("Opened the main profile");
 
-    act(() => {
-      notificationListener?.({
-        kind: "error",
-        details: {
-          code: "core.command.rejected",
-          subsystem: "runtime",
-          severity: "error",
-          retryable: false,
-          message: "The command was rejected.",
-        },
+      act(() => {
+        notificationListener?.({
+          kind: "error",
+          details: {
+            code: "core.command.rejected",
+            subsystem: "runtime",
+            severity: "error",
+            retryable: false,
+            message: "The command was rejected.",
+          },
+        });
       });
-    });
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Core command or bridge error");
-    expect(screen.getByRole("alert")).toHaveTextContent("The command was rejected.");
-  });
+      expect(screen.getByRole("alert")).toHaveTextContent("Core command or bridge error");
+      expect(screen.getByRole("alert")).toHaveTextContent("The command was rejected.");
+    },
+  );
 
   it("keeps bridge startup failure visible as a structured Redux error", async () => {
     getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });

@@ -12,6 +12,7 @@ import type {
 const MAX_PENDING_COMMANDS = 128;
 const MAX_ERRORS = 32;
 const MAX_DIAGNOSTICS = 64;
+const MAX_SNAPSHOT_REVISION = 18_446_744_073_709_551_615n;
 const DECIMAL_REVISION = /^(0|[1-9]\d*)$/;
 
 export interface PendingCommandReceipt {
@@ -54,14 +55,11 @@ const initialState: CoreState = {
 };
 
 export function parseSnapshotRevision(value: string): bigint | null {
-  if (!DECIMAL_REVISION.test(value)) {
+  if (!DECIMAL_REVISION.test(value) || value.length > 20) {
     return null;
   }
-  try {
-    return BigInt(value);
-  } catch {
-    return null;
-  }
+  const revision = BigInt(value);
+  return revision <= MAX_SNAPSHOT_REVISION ? revision : null;
 }
 
 export function shouldAcceptSnapshot(current: string | null, incoming: string): boolean {
@@ -108,9 +106,12 @@ function recordError(state: CoreState, error: DesktopErrorDto): void {
 
 type SnapshotAcceptance = "accepted" | "stale" | "invalid";
 
-function acceptSnapshot(state: CoreState, snapshot: CoreSnapshotDto): SnapshotAcceptance {
-  const incomingRevision = parseSnapshotRevision(snapshot.revision);
-  if (incomingRevision === null) {
+function acceptSnapshot(
+  state: CoreState,
+  snapshot: CoreSnapshotDto,
+  countStaleNotification: boolean,
+): SnapshotAcceptance {
+  if (parseSnapshotRevision(snapshot.revision) === null) {
     recordError(
       state,
       frontendError(
@@ -125,12 +126,26 @@ function acceptSnapshot(state: CoreState, snapshot: CoreSnapshotDto): SnapshotAc
 
   const currentRevision = state.snapshot?.revision ?? null;
   if (!shouldAcceptSnapshot(currentRevision, snapshot.revision)) {
-    state.staleNotifications.snapshots += 1;
+    if (countStaleNotification) {
+      state.staleNotifications.snapshots += 1;
+    }
     return "stale";
   }
 
   state.snapshot = snapshot;
   return "accepted";
+}
+
+function failFromLatestError(state: CoreState): void {
+  const error =
+    state.errors.at(-1) ??
+    frontendError(
+      "desktop.frontend.missing_failure_detail",
+      "fatal",
+      false,
+      "The frontend entered a failed bridge state without an error detail.",
+    );
+  state.bridgeLifecycle = { kind: "failed", details: { error } };
 }
 
 function observeEffect(state: CoreState, effect: PlatformEffectDto): void {
@@ -156,12 +171,25 @@ export const coreSlice = createSlice({
       state,
       action: PayloadAction<{ profileId: string; snapshot: CoreSnapshotDto }>,
     ) {
-      const acceptance = acceptSnapshot(state, action.payload.snapshot);
+      const lifecycle = state.bridgeLifecycle;
+      if (
+        lifecycle.kind !== "opening" ||
+        lifecycle.details.profile_id !== action.payload.profileId
+      ) {
+        recordError(
+          state,
+          frontendError(
+            "desktop.frontend.unexpected_bridge_ready",
+            "error",
+            false,
+            "An out-of-sequence bridge-ready result was rejected.",
+          ),
+        );
+        return;
+      }
+      const acceptance = acceptSnapshot(state, action.payload.snapshot, false);
       if (acceptance === "invalid") {
-        const error = state.errors.at(-1);
-        if (error !== undefined) {
-          state.bridgeLifecycle = { kind: "failed", details: { error } };
-        }
+        failFromLatestError(state);
         return;
       }
       state.bridgeLifecycle = {
@@ -182,7 +210,9 @@ export const coreSlice = createSlice({
       const notification = action.payload;
       switch (notification.kind) {
         case "snapshot":
-          acceptSnapshot(state, notification.details);
+          if (acceptSnapshot(state, notification.details, true) === "invalid") {
+            failFromLatestError(state);
+          }
           break;
         case "effect":
           observeEffect(state, notification.details);

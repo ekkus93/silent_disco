@@ -11,6 +11,33 @@ import type {
 } from "./generated/desktop-bindings";
 
 const MAX_ERROR_DETAIL_LENGTH = 320;
+const MAX_BRIDGE_ERROR_MESSAGE_LENGTH = 768;
+
+class DesktopBridgeInvocationError extends Error implements DesktopErrorDto {
+  readonly code: string;
+  readonly subsystem: string;
+  readonly severity: string;
+  readonly retryable: boolean;
+
+  constructor(error: DesktopErrorDto) {
+    super(error.message);
+    this.name = "DesktopBridgeInvocationError";
+    this.code = error.code;
+    this.subsystem = error.subsystem;
+    this.severity = error.severity;
+    this.retryable = error.retryable;
+  }
+
+  toDto(): DesktopErrorDto {
+    return {
+      code: this.code,
+      subsystem: this.subsystem,
+      severity: this.severity,
+      retryable: this.retryable,
+      message: this.message,
+    };
+  }
+}
 
 export interface CoreSmokeDto {
   major: number;
@@ -40,7 +67,7 @@ function isDesktopErrorDto(error: unknown): error is DesktopErrorDto {
   if (typeof error !== "object" || error === null) {
     return false;
   }
-  const candidate = error as Record<string, unknown>;
+  const candidate = error as Partial<DesktopErrorDto>;
   return (
     typeof candidate.code === "string" &&
     typeof candidate.subsystem === "string" &&
@@ -66,17 +93,36 @@ function boundedErrorDetail(error: unknown): string {
   return singleLine.slice(0, MAX_ERROR_DETAIL_LENGTH);
 }
 
+function boundedBridgeMessage(message: string): string {
+  return message.slice(0, MAX_BRIDGE_ERROR_MESSAGE_LENGTH);
+}
+
 export function toDesktopBridgeError(error: unknown, operation: string): DesktopErrorDto {
+  if (error instanceof DesktopBridgeInvocationError) {
+    return error.toDto();
+  }
   if (isDesktopErrorDto(error)) {
-    return error;
+    return {
+      code: error.code,
+      subsystem: error.subsystem,
+      severity: error.severity,
+      retryable: error.retryable,
+      message: error.message,
+    };
   }
   return {
     code: "desktop.bridge.invoke_transport_failed",
     subsystem: "bridge",
     severity: "error",
     retryable: true,
-    message: `${operation} failed before returning a structured desktop error: ${boundedErrorDetail(error)}`,
+    message: boundedBridgeMessage(
+      `${operation} failed before returning a structured desktop error: ${boundedErrorDetail(error)}`,
+    ),
   };
+}
+
+function throwDesktopBridgeError(error: DesktopErrorDto): never {
+  throw new DesktopBridgeInvocationError(error);
 }
 
 async function invokeDesktop<T>(
@@ -86,7 +132,7 @@ async function invokeDesktop<T>(
   try {
     return await invoke<T>(command, args);
   } catch (error: unknown) {
-    throw toDesktopBridgeError(error, command);
+    throwDesktopBridgeError(toDesktopBridgeError(error, command));
   }
 }
 
@@ -110,7 +156,7 @@ export async function attachNotifications(
     channel = new Channel<CoreNotificationDto>();
     channel.onmessage = onNotification;
   } catch (error: unknown) {
-    throw toDesktopBridgeError(error, "create notification channel");
+    throwDesktopBridgeError(toDesktopBridgeError(error, "create notification channel"));
   }
 
   const response = await invokeDesktop<AttachNotificationResponse>("attach_notifications", {
@@ -140,16 +186,21 @@ export async function openProfileWithNotifications(
     try {
       await closeProfile();
     } catch (closeError: unknown) {
-      const closeFailure = toDesktopBridgeError(closeError, "close profile after attachment failure");
-      throw {
+      const closeFailure = toDesktopBridgeError(
+        closeError,
+        "close profile after attachment failure",
+      );
+      throwDesktopBridgeError({
         code: "desktop.bridge.attach_cleanup_failed",
         subsystem: "bridge",
         severity: "fatal",
         retryable: false,
-        message: `Notification attachment failed (${attachmentFailure.code}: ${attachmentFailure.message}); profile cleanup also failed (${closeFailure.code}: ${closeFailure.message}).`,
-      } satisfies DesktopErrorDto;
+        message: boundedBridgeMessage(
+          `Notification attachment failed (${attachmentFailure.code}: ${attachmentFailure.message}); profile cleanup also failed (${closeFailure.code}: ${closeFailure.message}).`,
+        ),
+      });
     }
-    throw attachmentFailure;
+    throwDesktopBridgeError(attachmentFailure);
   }
 }
 
@@ -163,7 +214,7 @@ export async function connectProfileWithNotifications(
   } catch (error: unknown) {
     const failure = toDesktopBridgeError(error, "attach to existing profile");
     if (failure.code !== "desktop.profile.not_ready") {
-      throw failure;
+      throwDesktopBridgeError(failure);
     }
     const session = await openProfileWithNotifications(profileId, onNotification);
     return {
