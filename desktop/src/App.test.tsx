@@ -6,27 +6,15 @@ import { App } from "./App";
 import { createAppStore } from "./app/store";
 import type { CoreNotificationDto } from "./core/generated/desktop-bindings";
 
-const {
-  ensureDesktopBridgeMock,
-  getCoreSmokeMock,
-  subscribeDesktopNotificationsMock,
-  unsubscribeMock,
-} = vi.hoisted(() => ({
-  ensureDesktopBridgeMock: vi.fn(),
-  getCoreSmokeMock: vi.fn(),
-  subscribeDesktopNotificationsMock: vi.fn(),
-  unsubscribeMock: vi.fn(),
-}));
+const { ensureDesktopBridgeMock, subscribeDesktopNotificationsMock, unsubscribeMock } = vi.hoisted(
+  () => ({
+    ensureDesktopBridgeMock: vi.fn(),
+    subscribeDesktopNotificationsMock: vi.fn(),
+    unsubscribeMock: vi.fn(),
+  }),
+);
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
-
-vi.mock("./core/client", async () => {
-  const actual = await vi.importActual<typeof import("./core/client")>("./core/client");
-  return {
-    ...actual,
-    getCoreSmoke: getCoreSmokeMock,
-  };
-});
 
 vi.mock("./core/bridge", () => ({
   ensureDesktopBridge: ensureDesktopBridgeMock,
@@ -74,7 +62,6 @@ describe("App", () => {
   beforeEach(() => {
     notificationListener = undefined;
     ensureDesktopBridgeMock.mockReset();
-    getCoreSmokeMock.mockReset();
     subscribeDesktopNotificationsMock.mockReset();
     unsubscribeMock.mockReset();
     subscribeDesktopNotificationsMock.mockImplementation(
@@ -86,12 +73,6 @@ describe("App", () => {
   });
 
   it("opens the authoritative profile bridge and renders the Redux snapshot", async () => {
-    getCoreSmokeMock.mockResolvedValue({
-      major: 0,
-      minor: 1,
-      patch: 0,
-      smoke: "6000001225524396033",
-    });
     ensureDesktopBridgeMock.mockResolvedValue(connection);
 
     const { store } = renderApp();
@@ -99,17 +80,14 @@ describe("App", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Opening or reattaching the main profile",
     );
-    expect(await screen.findByText("0.1.0")).toBeVisible();
-    expect(screen.getByText("Opened the main profile")).toBeVisible();
+    expect(await screen.findByText("Opened the main profile")).toBeVisible();
     expect(screen.getByText("17")).toBeVisible();
     expect(screen.getByText("4")).toBeVisible();
-    expect(screen.getByText("6000001225524396033")).toBeVisible();
     expect(store.getState().core.snapshot).toEqual(connection.snapshot);
     expect(ensureDesktopBridgeMock).toHaveBeenCalledWith("main");
   });
 
   it("replaces the displayed complete snapshot only for a newer revision", async () => {
-    getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });
     ensureDesktopBridgeMock.mockResolvedValue(connection);
     const { store } = renderApp();
     await screen.findByText("Opened the main profile");
@@ -133,7 +111,6 @@ describe("App", () => {
   it(
     "displays a command failure delivered by the authoritative notification channel",
     async () => {
-      getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });
       ensureDesktopBridgeMock.mockResolvedValue(connection);
       renderApp();
       await screen.findByText("Opened the main profile");
@@ -157,7 +134,6 @@ describe("App", () => {
   );
 
   it("keeps bridge startup failure visible as a structured Redux error", async () => {
-    getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });
     ensureDesktopBridgeMock.mockRejectedValue(new Error("native bridge unavailable"));
 
     const { store } = renderApp();
@@ -171,7 +147,6 @@ describe("App", () => {
   });
 
   it("unsubscribes the React listener without closing the native channel", () => {
-    getCoreSmokeMock.mockResolvedValue({ major: 0, minor: 1, patch: 0, smoke: "42" });
     ensureDesktopBridgeMock.mockResolvedValue(connection);
 
     const { view } = renderApp();

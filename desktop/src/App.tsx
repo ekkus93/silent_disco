@@ -9,10 +9,9 @@ import {
 } from "./app/selectors";
 import { useAppDispatch, useAppSelector } from "./app/store";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
-import { getCoreSmoke, toDesktopBridgeError, type CoreSmokeDto } from "./core/client";
+import { toDesktopBridgeError } from "./core/client";
 
 interface ShellConnectionState {
-  core: CoreSmokeDto;
   connectionKind: "opened" | "reattached";
   subscriptionId: string;
 }
@@ -34,8 +33,8 @@ export function App() {
       dispatch(coreActions.notificationReceived(notification));
     });
 
-    Promise.all([getCoreSmoke(42), ensureDesktopBridge(profileId)])
-      .then(([core, bridgeConnection]) => {
+    ensureDesktopBridge(profileId)
+      .then((bridgeConnection) => {
         if (!active) {
           return;
         }
@@ -46,7 +45,6 @@ export function App() {
           }),
         );
         setConnection({
-          core,
           connectionKind: bridgeConnection.connectionKind,
           subscriptionId: bridgeConnection.notifications.subscriptionId,
         });
@@ -92,12 +90,6 @@ export function App() {
           {ready ? (
             <dl className="mt-4 grid gap-4 sm:grid-cols-2" aria-label="Desktop bridge status">
               <div>
-                <dt className="text-sm text-violet-100/60">Core version</dt>
-                <dd className="mt-1 font-mono text-lg">
-                  {connection.core.major}.{connection.core.minor}.{connection.core.patch}
-                </dd>
-              </div>
-              <div>
                 <dt className="text-sm text-violet-100/60">Profile connection</dt>
                 <dd className="mt-1 text-sm text-cyan-200">
                   {connection.connectionKind === "opened"
@@ -127,12 +119,6 @@ export function App() {
                 <dt className="text-sm text-violet-100/60">Stale snapshots rejected</dt>
                 <dd className="mt-1 font-mono text-sm text-violet-100/80">
                   {staleNotifications.snapshots}
-                </dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-sm text-violet-100/60">Deterministic smoke value</dt>
-                <dd className="mt-1 break-all font-mono text-sm text-violet-100/80">
-                  {connection.core.smoke}
                 </dd>
               </div>
             </dl>
