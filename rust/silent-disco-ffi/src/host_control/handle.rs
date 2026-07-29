@@ -1,8 +1,7 @@
-use super::conversions::network_endpoint;
 use super::types::{
     FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
     FfiDeliveryReport, FfiHostDraft, FfiJoinRequest, FfiListenerSummary, FfiPlatformCompletion,
-    FfiPlaybackState, FfiTransportState, FfiTuningPatch,
+    FfiPlaybackState, FfiTransportState, FfiTuningPatch, FfiTuningSettings,
 };
 use silent_disco_core::domain::{
     DeviceId, MonotonicMillis, OperationId, RequestId, SyncConfidence, TransportState, TrustState,
@@ -11,8 +10,8 @@ use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreCommand,
     CoreCommandRequest, HostDraftPatch, InviteCodePatch, JoinRequestSummary, ListenerSummary,
-    PlatformEvent, PlatformOperationCompletion, SnapshotRevision, StorageCompletion, StorageEvent,
-    SynchronizationSummary, TransportEvent,
+    PlatformEvent, SnapshotRevision, StorageCompletion, StorageEvent, SynchronizationSummary,
+    TransportEvent,
 };
 use std::sync::{Arc, Mutex};
 
@@ -45,7 +44,10 @@ impl FfiCoreHandle {
 
     pub fn current_snapshot(&self) -> Result<FfiCoreSnapshot, FfiBridgeError> {
         self.ensure_open()?;
-        self.handle.current_snapshot().map(Into::into).map_err(Into::into)
+        self.handle
+            .current_snapshot()
+            .map(Into::into)
+            .map_err(Into::into)
     }
 
     pub fn select_role(
@@ -66,7 +68,7 @@ impl FfiCoreHandle {
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
         self.ensure_open()?;
         let current = self.handle.current_snapshot()?;
-        if FfiCoreSnapshot::from(current.clone()).host_draft.tuning != draft.tuning {
+        if FfiTuningSettings::from(current.tuning) != draft.tuning {
             return Err(FfiBridgeError::Core(
                 "host draft tuning must be changed with update_tuning".to_owned(),
             ));
@@ -168,10 +170,11 @@ impl FfiCoreHandle {
         completion: FfiPlatformCompletion,
     ) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
-        self.handle.submit_platform_event(PlatformEvent::OperationSucceeded {
-            operation_id: operation_id_from_string(operation_id)?,
-            completion: completion.try_into()?,
-        })?;
+        self.handle
+            .submit_platform_event(PlatformEvent::OperationSucceeded {
+                operation_id: operation_id_from_string(operation_id)?,
+                completion: completion.try_into()?,
+            })?;
         Ok(())
     }
 
@@ -183,15 +186,16 @@ impl FfiCoreHandle {
     ) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
         let operation_id = operation_id_from_string(operation_id)?;
-        self.handle.submit_platform_event(PlatformEvent::OperationFailed {
-            operation_id: operation_id.clone(),
-            error: input_error(
-                CoreErrorCode::PlatformOperationFailed,
-                message,
-                retryable,
-                Some(operation_id),
-            )?,
-        })?;
+        self.handle
+            .submit_platform_event(PlatformEvent::OperationFailed {
+                operation_id: operation_id.clone(),
+                error: input_error(
+                    CoreErrorCode::PlatformOperationFailed,
+                    message,
+                    retryable,
+                    Some(operation_id),
+                )?,
+            })?;
         Ok(())
     }
 
@@ -325,15 +329,16 @@ impl FfiCoreHandle {
     ) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
         let operation_id = operation_id_from_string(operation_id)?;
-        self.handle.submit_storage_event(StorageEvent::OperationFailed {
-            operation_id: operation_id.clone(),
-            error: input_error(
-                CoreErrorCode::StorageWriteFailed,
-                message,
-                retryable,
-                Some(operation_id),
-            )?,
-        })?;
+        self.handle
+            .submit_storage_event(StorageEvent::OperationFailed {
+                operation_id: operation_id.clone(),
+                error: input_error(
+                    CoreErrorCode::StorageWriteFailed,
+                    message,
+                    retryable,
+                    Some(operation_id),
+                )?,
+            })?;
         Ok(())
     }
 
@@ -453,14 +458,4 @@ fn observer_callback_error() -> CoreError {
         operation_id: None,
         context: Vec::new(),
     }
-}
-
-#[allow(dead_code, reason = "kept for the listener bridge expansion in the same UniFFI API")]
-fn validated_endpoint(
-    address: &str,
-    control_port: u16,
-    sync_port: u16,
-    audio_port: u16,
-) -> Result<silent_disco_core::runtime::NetworkEndpoint, FfiBridgeError> {
-    network_endpoint(address, control_port, sync_port, audio_port)
 }
