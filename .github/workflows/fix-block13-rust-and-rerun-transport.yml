@@ -53,6 +53,16 @@ jobs:
           )
           replace_once(
               "rust/silent-disco-ffi/src/host_control/handle.rs",
+              "#[uniffi::export]\nimpl FfiCoreHandle {",
+              """#[allow(
+              clippy::missing_errors_doc,
+              reason = "all exported methods use the uniform validated FfiBridgeError contract"
+          )]
+          #[uniffi::export]
+          impl FfiCoreHandle {""",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/handle.rs",
               """fn observer_callback_error() -> CoreError {
               CoreError {
                   code: CoreErrorCode::FfiCallbackFailed,
@@ -81,6 +91,52 @@ jobs:
               "rust/silent-disco-core/tests/host_block12_actor_tuning.rs",
               "request => panic!(\"unexpected storage effect: {request:?}\"),",
               "request @ StorageEffectRequest::PersistTrustedDevice { .. } => {\n            panic!(\"unexpected storage effect: {request:?}\")\n        }",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/conversions.rs",
+              """    AppRole, ApprovalMode, HostLifecycle, PlaybackState, TransportState, TrustState, TuningSettings,
+          """,
+              """    AppRole, ApprovalMode, HostLifecycle, MonotonicMillis, OperationId, PlaybackState,
+              TransportState, TrustState, TuningSettings,
+          """,
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/conversions.rs",
+              "value.operation_id.map(|value| value.into_string())",
+              "value.operation_id.map(OperationId::into_string)",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/conversions.rs",
+              "value.last_contact.map(|value| value.get())",
+              "value.last_contact.map(MonotonicMillis::get)",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/types.rs",
+              "#[derive(Debug, Clone, PartialEq, uniffi::Enum)]\npub enum FfiCoreNotification {",
+              """#[allow(
+              clippy::large_enum_variant,
+              reason = "UniFFI rich enums require owned record payloads at the foreign boundary"
+          )]
+          #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+          pub enum FfiCoreNotification {""",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/types.rs",
+              """#[uniffi::export(with_foreign)]
+          pub trait FfiCoreObserver: Send + Sync {
+              fn on_notification(&self, notification: FfiCoreNotification) -> Result<(), FfiBridgeError>;
+          }
+          """,
+              """#[uniffi::export(with_foreign)]
+          pub trait FfiCoreObserver: Send + Sync {
+              /// Accepts one serialized notification from the authoritative Rust actor.
+              ///
+              /// # Errors
+              ///
+              /// Returns [`FfiBridgeError`] when the foreign observer cannot accept the notification.
+              fn on_notification(&self, notification: FfiCoreNotification) -> Result<(), FfiBridgeError>;
+          }
+          """,
           )
           PY
           git rm .github/workflows/fix-block13-rust-and-rerun-transport.yml
