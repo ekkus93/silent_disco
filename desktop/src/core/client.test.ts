@@ -219,28 +219,34 @@ describe("desktop core client", () => {
     ]);
   });
 
-  it(
-    "preserves attachment and cleanup failures in one bounded bridge error",
-    async () => {
-      invokeMock.mockImplementation((command: string) => {
-        if (command === "open_profile") {
-          return Promise.resolve(openResponse);
-        }
-        if (command === "attach_notifications") {
-          return Promise.reject(new Error("channel unavailable"));
-        }
-        if (command === "close_profile") {
-          return Promise.reject(new Error("profile close failed"));
-        }
-        return Promise.reject(new Error(`unexpected command: ${command}`));
-      });
+  it("preserves both failures in a bounded, single-line cleanup error", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "open_profile") {
+        return Promise.resolve(openResponse);
+      }
+      if (command === "attach_notifications") {
+        return Promise.reject(new Error(`channel unavailable\n${"a".repeat(900)}`));
+      }
+      if (command === "close_profile") {
+        return Promise.reject(new Error(`profile close failed\u0000${"b".repeat(900)}`));
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
 
-      await expect(openProfileWithNotifications("main", vi.fn())).rejects.toMatchObject({
-        code: "desktop.bridge.attach_cleanup_failed",
-        severity: "fatal",
-        retryable: false,
-        message: expect.stringContaining("profile close failed"),
-      });
-    },
-  );
+    const failure = await openProfileWithNotifications("main", vi.fn()).catch(
+      (error: unknown) => error,
+    );
+
+    expect(failure).toMatchObject({
+      code: "desktop.bridge.attach_cleanup_failed",
+      severity: "fatal",
+      retryable: false,
+      message: expect.stringContaining("profile cleanup also failed"),
+    });
+    const message = (failure as { message: string }).message;
+    expect(message.length).toBeLessThanOrEqual(512);
+    expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    expect(message).toContain("channel unavailable");
+    expect(message).toContain("profile close failed");
+  });
 });
