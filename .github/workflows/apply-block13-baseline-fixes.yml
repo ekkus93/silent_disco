@@ -1,0 +1,137 @@
+name: Apply Desktop Block 13 Baseline Fixes
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/apply-block13-baseline-fixes.yml"
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: apply-block13-baseline-fixes
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply exact formatter and binding fixes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download authoritative Rust formatter patch
+        uses: actions/download-artifact@v4
+        with:
+          name: rustfmt-patch
+          path: ${{ runner.temp }}/rustfmt-patch
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 30495791933
+
+      - name: Apply formatter output and compile fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch_path="${RUNNER_TEMP}/rustfmt-patch/rustfmt.patch"
+          test -s "${patch_path}"
+          git apply --check "${patch_path}"
+          git apply "${patch_path}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              content = target.read_text(encoding="utf-8")
+              if content.count(old) != 1:
+                  raise SystemExit(
+                      f"expected exactly one match in {path}, found {content.count(old)}"
+                  )
+              target.write_text(content.replace(old, new), encoding="utf-8")
+
+          replace_exact(
+              "rust/silent-disco-ffi/src/host_control/types.rs",
+              "#[uniffi::export(foreign)]",
+              "#[uniffi::export(with_foreign)]",
+          )
+
+          support_path = Path(
+              "rust/silent-disco-core/src/runtime/actor_runtime/state/support.rs"
+          )
+          support = support_path.read_text(encoding="utf-8")
+          start_marker = "    pub(super) fn pending_transport("
+          end_marker = "    pub(super) fn remove_pending_transport("
+          if support.count(start_marker) != 1 or support.count(end_marker) != 1:
+              raise SystemExit("unexpected pending transport helper layout")
+          start = support.index(start_marker)
+          end = support.index(end_marker, start)
+          support_path.write_text(support[:start] + support[end:], encoding="utf-8")
+
+          replace_exact(
+              "rust/silent-disco-core/src/runtime/records.rs",
+              """/// Output delivered by the notification dispatcher.
+          #[derive(Debug, Clone, PartialEq)]
+          pub enum CoreNotification {
+              Snapshot(CoreSnapshot),
+              Effect(PlatformEffect),
+              Error(CoreError),
+              Diagnostic(CoreDiagnostic),
+          }
+
+          """,
+              "",
+          )
+
+          replace_exact(
+              "rust/silent-disco-ffi/src/lib.rs",
+              """#[allow(
+              unsafe_code,
+              reason = \"UniFFI generates the reviewed FFI scaffolding; handwritten unsafe code remains denied\"
+          )]
+          """,
+              "",
+          )
+          PY
+
+          git rm .github/workflows/apply-block13-baseline-fixes.yml
+          git diff --check
+
+      - name: Verify Rust formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          cd rust
+          cargo +1.97.1 fmt --all -- --check
+
+      - name: Commit and push repaired baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust
+          git diff --cached --quiet && {
+            echo "No baseline changes were produced." >&2
+            exit 1
+          }
+          git commit -m "Fix Desktop Block 13 Rust CI baseline"
+          git push origin HEAD:master
+
+      - name: Dispatch authoritative validation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref master
+          gh workflow run desktop-ci.yml --ref master
+          gh workflow run source-file-line-limit.yml --ref master
