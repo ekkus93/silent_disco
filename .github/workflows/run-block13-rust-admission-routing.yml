@@ -1,6 +1,7 @@
 name: Run Block 13 Rust Admission Routing
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
