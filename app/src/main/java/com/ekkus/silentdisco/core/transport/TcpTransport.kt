@@ -131,6 +131,13 @@ internal data class TcpChannelStats(
     val bytesReceived: Long = 0,
 )
 
+
+internal data class PeerDeliveryResult(
+    val peerFound: Boolean,
+    val delivered: Boolean,
+    val errorMessage: String? = null,
+)
+
 internal class TcpServerChannel<T>(
     private val port: Int,
     private val channelName: String,
@@ -200,6 +207,32 @@ internal class TcpServerChannel<T>(
         }
         return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
     }
+
+
+suspend fun sendTo(remoteAddress: String, message: T): PeerDeliveryResult {
+    val peer = peers[remoteAddress]
+        ?: return PeerDeliveryResult(
+            peerFound = false,
+            delivered = false,
+            errorMessage = "No active $channelName connection for $remoteAddress",
+        )
+    return runCatching {
+        peer.send(message)
+        PeerDeliveryResult(peerFound = true, delivered = true)
+    }.getOrElse { error ->
+        val messageText = error.message ?: "Unknown $channelName send failure"
+        logger.w(
+            "transport.$channelName.send-target",
+            "Failed to send to $remoteAddress: $messageText",
+        )
+        peer.close()
+        PeerDeliveryResult(
+            peerFound = true,
+            delivered = false,
+            errorMessage = messageText,
+        )
+    }
+}
 
     fun connectionCount(): Int = peers.size
 

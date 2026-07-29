@@ -21,6 +21,7 @@ import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,6 +56,7 @@ class WifiDirectTransportService(
     override val audioPackets: SharedFlow<AudioPacket> = _audioPackets.asSharedFlow()
 
     private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+    private val listenerControlRoutes = ConcurrentHashMap<String, String>()
     private var activeSession: SessionInfo? = null
     private var pendingConnectSession: SessionInfo? = null
     private var hosting = false
@@ -93,6 +95,7 @@ class WifiDirectTransportService(
         activeSession = session
         pendingConnectSession = null
         hosting = true
+        listenerControlRoutes.clear()
         stopClientChannels()
         ensureReceiver()
         if (manager == null || channel == null) {
@@ -198,6 +201,44 @@ class WifiDirectTransportService(
         recordHeartbeat()
         updateByteCounts()
     }
+
+
+override suspend fun sendControlToListener(
+    listenerId: String,
+    message: ControlMessage,
+): TargetedDeliveryResult {
+    val embeddedListenerId = message.targetListenerId()
+    if (embeddedListenerId != listenerId) {
+        return TargetedDeliveryResult.failed(
+            listenerId,
+            "Control message target does not match requested listener",
+        )
+    }
+    val remoteAddress = listenerControlRoutes[listenerId]
+        ?: return TargetedDeliveryResult.notFound(
+            listenerId,
+            "No control connection is associated with listener $listenerId",
+        )
+    val server = controlServer
+        ?: return TargetedDeliveryResult.failed(listenerId, "Control server is not active")
+    val delivery = server.sendTo(remoteAddress, message)
+    if (!delivery.peerFound || !delivery.delivered) {
+        listenerControlRoutes.remove(listenerId, remoteAddress)
+    }
+    recordHeartbeat()
+    updateByteCounts()
+    return when {
+        delivery.delivered -> TargetedDeliveryResult.delivered(listenerId)
+        delivery.peerFound -> TargetedDeliveryResult.failed(
+            listenerId,
+            delivery.errorMessage ?: "Targeted control delivery failed",
+        )
+        else -> TargetedDeliveryResult.notFound(
+            listenerId,
+            delivery.errorMessage ?: "Targeted listener connection is no longer active",
+        )
+    }
+}
 
     override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
         val result = controlServer?.sendAll(message) ?: error("Control server is not active")
@@ -465,35 +506,47 @@ class WifiDirectTransportService(
         }
     }
 
-    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
-        server.incoming.collectInto(_controlMessages::tryEmit)
+
+private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+    scope.launch {
+        server.incoming.collect { event ->
+            val message = event.message
+            if (message is ControlMessage.JoinRequest) {
+                listenerControlRoutes[message.device.deviceId] = event.remoteAddress
+            }
+            _controlMessages.emit(message)
+            recordHeartbeat()
+            updateByteCounts()
+            logger.d("transport.message", "Received message from ${event.remoteAddress}")
+        }
     }
+}
 
     private fun observeSyncServer(server: TcpServerChannel<SyncRequestPacket>) {
-        server.incoming.collectInto(_syncRequests::tryEmit)
+        server.incoming.collectInto(_syncRequests::emit)
     }
 
     private fun observeSyncResponseServer(server: TcpServerChannel<SyncResponsePacket>) {
-        server.incoming.collectInto(_syncResponses::tryEmit)
+        server.incoming.collectInto(_syncResponses::emit)
     }
 
     private fun observeAudioServer(server: TcpServerChannel<AudioPacket>) {
-        server.incoming.collectInto(_audioPackets::tryEmit)
+        server.incoming.collectInto(_audioPackets::emit)
     }
 
     private fun observeControlClient(client: TcpClientChannel<ControlMessage>) {
-        client.incoming.collectInto(_controlMessages::tryEmit)
+        client.incoming.collectInto(_controlMessages::emit)
     }
 
     private fun observeSyncResponseClient(client: TcpClientChannel<SyncResponsePacket>) {
-        client.incoming.collectInto(_syncResponses::tryEmit)
+        client.incoming.collectInto(_syncResponses::emit)
     }
 
     private fun observeAudioClient(client: TcpClientChannel<AudioPacket>) {
-        client.incoming.collectInto(_audioPackets::tryEmit)
+        client.incoming.collectInto(_audioPackets::emit)
     }
 
-    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: (T) -> Boolean) {
+    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: suspend (T) -> Unit) {
         scope.launch {
             collect { event ->
                 emit(event.message)
@@ -574,6 +627,7 @@ class WifiDirectTransportService(
     }
 
     private fun stopServerChannels() {
+        listenerControlRoutes.clear()
         controlServer?.close()
         controlServer = null
         syncServer?.close()
@@ -624,6 +678,21 @@ class WifiDirectTransportService(
         }
         return ContextCompat.checkSelfPermission(appContext, permission) == PackageManager.PERMISSION_GRANTED
     }
+
+
+private fun ControlMessage.targetListenerId(): String? = when (this) {
+    is ControlMessage.JoinApproval -> listenerId
+    is ControlMessage.JoinRejection -> listenerId
+    is ControlMessage.Heartbeat -> listenerId
+    is ControlMessage.Disconnect -> listenerId
+    is ControlMessage.ResyncNotice -> listenerId
+    is ControlMessage.Hello,
+    is ControlMessage.JoinRequest,
+    is ControlMessage.StreamStart,
+    is ControlMessage.Pause,
+    is ControlMessage.Stop,
+    -> null
+}
 
     private companion object {
         const val WIFI_DIRECT_GROUP_OWNER = "192.168.49.1"

@@ -60,6 +60,43 @@ data class SendAllResult(
     val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
 }
 
+
+data class TargetedDeliveryResult(
+    val listenerId: String,
+    val intendedPeerCount: Int,
+    val successCount: Int,
+    val failureCount: Int,
+    val message: String? = null,
+) {
+    val deliveredToTarget: Boolean
+        get() = intendedPeerCount == 1 && successCount == 1 && failureCount == 0
+
+    companion object {
+        fun delivered(listenerId: String) = TargetedDeliveryResult(
+            listenerId = listenerId,
+            intendedPeerCount = 1,
+            successCount = 1,
+            failureCount = 0,
+        )
+
+        fun notFound(listenerId: String, message: String) = TargetedDeliveryResult(
+            listenerId = listenerId,
+            intendedPeerCount = 0,
+            successCount = 0,
+            failureCount = 0,
+            message = message,
+        )
+
+        fun failed(listenerId: String, message: String) = TargetedDeliveryResult(
+            listenerId = listenerId,
+            intendedPeerCount = 1,
+            successCount = 0,
+            failureCount = 1,
+            message = message,
+        )
+    }
+}
+
 enum class BroadcastDeliverySeverity {
     OK,
     ZERO_PEERS,
@@ -95,6 +132,10 @@ interface SessionTransport {
     fun cancelDiscovery() = stop()
     fun connectToSession(session: SessionInfo)
     suspend fun sendControlToHost(message: ControlMessage)
+    suspend fun sendControlToListener(
+        listenerId: String,
+        message: ControlMessage,
+    ): TargetedDeliveryResult
     suspend fun broadcastControl(message: ControlMessage): SendAllResult
     suspend fun sendSyncRequestToHost(packet: SyncRequestPacket)
     suspend fun broadcastSyncResponse(packet: SyncResponsePacket): SendAllResult
