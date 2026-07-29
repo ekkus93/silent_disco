@@ -190,7 +190,7 @@ fn create_host(
     );
     let effect = next_platform_effect(receiver);
     assert!(matches!(
-        effect.request,
+        &effect.request,
         PlatformEffectRequest::StartAdvertising(_)
     ));
     (creating, effect)
