@@ -1,0 +1,101 @@
+name: Inspect Block 13 UniFFI API
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/inspect-block13-uniffi-api.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: inspect-block13-uniffi-api
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Generate Kotlin bindings
+        run: scripts/generate-uniffi-kotlin.sh "${RUNNER_TEMP}/uniffi-kotlin"
+
+      - name: Extract public API declaration report
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated_file="$(find "${RUNNER_TEMP}/uniffi-kotlin" -type f -name '*.kt' -print -quit)"
+          test -n "${generated_file}"
+          mkdir -p docs/review-source
+          python3 - "${generated_file}" docs/review-source/BLOCK13_GENERATED_UNIFFI_API.txt <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          source_path = Path(sys.argv[1])
+          output_path = Path(sys.argv[2])
+          lines = source_path.read_text(encoding="utf-8").splitlines()
+          declaration = re.compile(
+              r"^(public )?(data class|class|interface|sealed class|enum class|object|fun) "
+              r"(Ffi|ffiCore|FfiCoreHandle|FfiCoreObserver)"
+          )
+          method = re.compile(r"^\s{4}(public )?fun [A-Za-z].*")
+          selected = []
+          in_handle = False
+          brace_depth = 0
+          for index, line in enumerate(lines):
+              stripped = line.strip()
+              if declaration.match(stripped):
+                  selected.extend(lines[max(0, index - 2): min(len(lines), index + 12)])
+                  selected.append("")
+              if re.search(r"class FfiCoreHandle\b", line):
+                  in_handle = True
+                  brace_depth = line.count("{") - line.count("}")
+                  continue
+              if in_handle:
+                  brace_depth += line.count("{") - line.count("}")
+                  if method.match(line):
+                      selected.extend(lines[index: min(len(lines), index + 8)])
+                      selected.append("")
+                  if brace_depth <= 0:
+                      in_handle = False
+
+          # Preserve order while removing repeated overlapping lines.
+          compact = []
+          previous = None
+          for line in selected:
+              if line == previous == "":
+                  continue
+              compact.append(line)
+              previous = line
+          if not any("FfiCoreHandle" in line for line in compact):
+              raise SystemExit("generated FfiCoreHandle declaration was not found")
+          header = [
+              f"Generated from: {source_path.name}",
+              "Purpose: exact temporary UniFFI Kotlin API inspection for Desktop Block 13",
+              "",
+          ]
+          output_path.write_text("\n".join(header + compact) + "\n", encoding="utf-8")
+          if len((header + compact)) > 750:
+              raise SystemExit("generated API report exceeds the repository line budget")
+          PY
+          git diff --check
+
+      - name: Commit declaration report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/review-source/BLOCK13_GENERATED_UNIFFI_API.txt
+          git commit -m "Record generated Block 13 UniFFI API"
+          git push origin HEAD:master
