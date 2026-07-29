@@ -4,6 +4,7 @@ members = [
     "silent-disco-core",
     "silent-disco-ffi",
     "silent-disco-test-support",
+    "uniffi-bindgen",
 ]
 
 [workspace.package]
