@@ -1,6 +1,7 @@
 name: Fix Block 13 Rust and Rerun Transport
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
