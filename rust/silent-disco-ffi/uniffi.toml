@@ -1,0 +1,6 @@
+[bindings.kotlin]
+package_name = "com.ekkus.silentdisco.core.uniffi"
+cdylib_name = "silent_disco_ffi"
+generate_immutable_records = true
+android = true
+kotlin_target_version = "2.0.21"
