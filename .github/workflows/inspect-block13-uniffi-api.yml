@@ -38,13 +38,13 @@ jobs:
           generated_file="$(find "${generated_root}" -type f -name '*.kt' -print -quit)"
           test -n "${generated_file}"
           mkdir -p docs/review-source
-          python3 - "${generated_file}" docs/review-source/BLOCK13_GENERATED_UNIFFI_API.txt <<'PY'
+          python3 - "${generated_file}" docs/review-source/BLOCK13_GENERATED_UNIFFI_API <<'PY'
           import re
           import sys
           from pathlib import Path
 
           source_path = Path(sys.argv[1])
-          output_path = Path(sys.argv[2])
+          output_base = Path(sys.argv[2])
           lines = source_path.read_text(encoding="utf-8").splitlines()
           top_level = re.compile(
               r"^(data class|enum class|sealed class|interface|class) "
@@ -80,9 +80,12 @@ jobs:
 
           if not any("FfiCoreHandle" in line for line in report):
               raise SystemExit("generated FfiCoreHandle declaration was not found")
-          if len(report) > 700:
-              raise SystemExit(f"generated API report has {len(report)} lines")
-          output_path.write_text("\n".join(report) + "\n", encoding="utf-8")
+          chunks = [report[index:index + 650] for index in range(0, len(report), 650)]
+          if len(chunks) > 2:
+              raise SystemExit(f"generated API report requires {len(chunks)} parts")
+          for part_number, chunk in enumerate(chunks, start=1):
+              output = output_base.with_name(f"{output_base.name}_PART{part_number}.txt")
+              output.write_text("\n".join(chunk) + "\n", encoding="utf-8")
           PY
           git diff --check
 
@@ -92,7 +95,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/review-source/BLOCK13_GENERATED_UNIFFI_API.txt
+          git add docs/review-source/BLOCK13_GENERATED_UNIFFI_API_PART*.txt
           git commit -m "Record generated Block 13 UniFFI API"
           for attempt in 1 2 3; do
             git fetch origin master
