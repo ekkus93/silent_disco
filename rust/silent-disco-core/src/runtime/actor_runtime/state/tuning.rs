@@ -29,14 +29,6 @@ impl ActorState {
                 },
             ) => {
                 self.snapshot.tuning = settings;
-                if self
-                    .snapshot
-                    .last_error
-                    .as_ref()
-                    .is_some_and(|error| error.subsystem == crate::error::CoreSubsystem::Storage)
-                {
-                    self.snapshot.last_error = None;
-                }
                 let mut outcome = self.diagnostic("settings_saved", Vec::new())?;
                 outcome.changed = true;
                 Ok(outcome)
