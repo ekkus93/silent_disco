@@ -1,17 +1,19 @@
 use super::{
-    ActorState, ApplyOutcome, CoreError, CoreNotification, MAX_PENDING_JOIN_REQUESTS,
-    PendingStorageOperation, PendingTransportOperation, invalid_state, transport_delivery_failed,
+    ActorState, ApplyOutcome, CoreError, CoreNotification, MAX_CONNECTED_LISTENERS,
+    MAX_PENDING_JOIN_REQUESTS, PendingStorageOperation, PendingTransportOperation,
+    invalid_state, transport_delivery_failed,
 };
 use crate::domain::{
     AppRole, DeviceId, HostLifecycle, OperationId, PlaybackState, RequestId, TransportState,
+    TrustState,
 };
 use crate::error::CoreErrorCode;
 use crate::runtime::{
     ApprovalDelivery, ApprovalPreparation, AudioEvent, DeliveryCommitDisposition, DeliveryReport,
-    JoinRejectionReason, JoinRequestDisposition, JoinRequestSummary, RecoverableAction,
-    StorageCompletion, StorageEffectRequest, StorageEvent, TransportEffectRequest, TransportEvent,
-    TrustPersistenceOutcome, approval_after_persistence, classify_delivery, classify_join_request,
-    prepare_approval,
+    JoinRejectionReason, JoinRequestDisposition, JoinRequestSummary, ListenerSummary,
+    RecoverableAction, StorageCompletion, StorageEffectRequest, StorageEvent,
+    TransportEffectRequest, TransportEvent, TrustPersistenceOutcome, approval_after_persistence,
+    classify_delivery, classify_join_request, prepare_approval,
 };
 
 impl ActorState {
@@ -251,13 +253,15 @@ impl ActorState {
 
         match pending {
             PendingTransportOperation::ApproveJoin(delivery) => {
-                self.remove_pending_request(&delivery.request_id, &delivery.device_id)?;
+                let request =
+                    self.remove_pending_request(&delivery.request_id, &delivery.device_id)?;
+                self.record_approved_listener(request, &delivery)?;
             }
             PendingTransportOperation::RejectJoin {
                 request_id,
                 listener_id,
             } => {
-                self.remove_pending_request(&request_id, &listener_id)?;
+                let _ = self.remove_pending_request(&request_id, &listener_id)?;
             }
             PendingTransportOperation::DisconnectListener { listener_id } => {
                 let previous = self.snapshot.listeners.len();
@@ -456,6 +460,7 @@ impl ActorState {
             PendingStorageOperation::PersistApprovalTrust(persistence) => {
                 &persistence.request_id == request_id
             }
+            PendingStorageOperation::PersistTuning(_) => false,
         });
         if transport_pending || storage_pending {
             return Err(invalid_state(
@@ -517,11 +522,47 @@ impl ActorState {
         Ok(ApplyOutcome::transport_effect(effect))
     }
 
+    fn record_approved_listener(
+        &mut self,
+        request: JoinRequestSummary,
+        delivery: &ApprovalDelivery,
+    ) -> Result<(), CoreError> {
+        let trust_state = if delivery.trusted_for_future {
+            TrustState::Trusted
+        } else {
+            TrustState::SessionOnly
+        };
+        let listener = ListenerSummary::new(
+            request.device_id,
+            request.display_name,
+            trust_state,
+            TransportState::Connecting,
+        )
+        .map_err(|error| super::invalid_argument(error.to_string(), None))?;
+        if let Some(existing) = self
+            .snapshot
+            .listeners
+            .iter_mut()
+            .find(|existing| existing.device_id == listener.device_id)
+        {
+            *existing = listener;
+            return Ok(());
+        }
+        if self.snapshot.listeners.len() >= MAX_CONNECTED_LISTENERS {
+            return Err(super::resource_limit(
+                "connected-listener capacity reached",
+                None,
+            ));
+        }
+        self.snapshot.listeners.push(listener);
+        Ok(())
+    }
+
     fn remove_pending_request(
         &mut self,
         request_id: &RequestId,
         listener_id: &DeviceId,
-    ) -> Result<(), CoreError> {
+    ) -> Result<JoinRequestSummary, CoreError> {
         let index = self
             .snapshot
             .pending_join_requests
@@ -535,7 +576,6 @@ impl ActorState {
                     None,
                 )
             })?;
-        self.snapshot.pending_join_requests.remove(index);
-        Ok(())
+        Ok(self.snapshot.pending_join_requests.remove(index))
     }
 }
