@@ -1,0 +1,48 @@
+name: Enable Block 13 Targeted Transport
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/enable-block13-targeted-transport.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable and trigger targeted transport workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/apply-block13-targeted-transport.yml")
+          text = path.read_text(encoding="utf-8")
+          old = "on:\n  push:\n"
+          new = "on:\n  workflow_dispatch:\n  push:\n"
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one workflow trigger block, found {text.count(old)}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+          git rm .github/workflows/enable-block13-targeted-transport.yml
+          git diff --check
+
+      - name: Commit trigger update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/apply-block13-targeted-transport.yml
+          git commit -m "Enable Block 13 targeted transport workflow"
+          git push origin HEAD:master
