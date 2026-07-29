@@ -1,0 +1,110 @@
+name: Fix Block 13 Rust and Rerun Transport
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/fix-block13-rust-and-rerun-transport.yml"
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fix remaining Rust compile errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace_once(
+              "rust/silent-disco-core/src/runtime/records.rs",
+              "AudioSourceDescriptor, CapabilitySnapshot, CoreDiagnostic, DeliveryReport, HostDraft,",
+              "AudioSourceDescriptor, CapabilitySnapshot, DeliveryReport, HostDraft,",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/handle.rs",
+              "CoreCommandRequest, HostDraftPatch, InviteCodePatch, JoinRequestSummary, ListenerSummary,",
+              "CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch, JoinRequestSummary, ListenerSummary,",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/handle.rs",
+              "move |notification| {",
+              "move |notification: CoreNotification| {",
+          )
+          replace_once(
+              "rust/silent-disco-ffi/src/host_control/handle.rs",
+              """fn observer_callback_error() -> CoreError {
+              CoreError {
+                  code: CoreErrorCode::FfiCallbackFailed,
+                  message: "foreign core observer rejected a notification".to_owned(),
+                  subsystem: CoreErrorCode::FfiCallbackFailed.subsystem(),
+                  severity: ErrorSeverity::Fatal,
+                  retryable: true,
+                  operation_id: None,
+                  context: Vec::new(),
+              }
+          }
+          """,
+              """fn observer_callback_error() -> CoreError {
+              CoreError::new(
+                  CoreErrorCode::FfiCallbackFailed,
+                  "foreign core observer rejected a notification",
+                  ErrorSeverity::Fatal,
+                  true,
+                  None,
+              )
+              .expect("static observer callback error must satisfy the bounded error contract")
+          }
+          """,
+          )
+          PY
+          git rm .github/workflows/fix-block13-rust-and-rerun-transport.yml
+          cd rust
+          cargo fmt --all
+          cd ..
+          git diff --check
+
+      - name: Verify Rust workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          cd rust
+          cargo +1.97.1 fmt --all -- --check
+          cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings
+          cargo +1.97.1 test --workspace --all-features
+
+      - name: Commit Rust repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust
+          git commit -m "Fix remaining UniFFI compile errors"
+          git push origin HEAD:master
+
+      - name: Rerun targeted transport implementation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run apply-block13-targeted-transport.yml --ref master
