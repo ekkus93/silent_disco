@@ -138,6 +138,16 @@ jobs:
           }
           """,
           )
+          replace_once(
+              "rust/silent-disco-core/tests/host_block12_draft_validation.rs",
+              "ApprovalMode, MAX_SCAN_WINDOW_MS, MIN_LATE_PACKET_THRESHOLD_MS, MIN_RESYNC_THRESHOLD_GAP_MS,\n    TuningSettings,",
+              "ApprovalMode, MAX_SCAN_WINDOW_MS, MIN_HARD_RESYNC_THRESHOLD_MS,\n    MIN_LATE_PACKET_THRESHOLD_MS, TuningSettings,",
+          )
+          replace_once(
+              "rust/silent-disco-core/tests/host_block12_draft_validation.rs",
+              "Some(MIN_LATE_PACKET_THRESHOLD_MS + MIN_RESYNC_THRESHOLD_GAP_MS)",
+              "Some(MIN_HARD_RESYNC_THRESHOLD_MS)",
+          )
           PY
           git rm .github/workflows/fix-block13-rust-and-rerun-transport.yml
           cd rust
