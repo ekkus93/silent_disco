@@ -51,9 +51,7 @@ export function App() {
       })
       .catch((error: unknown) => {
         if (active) {
-          dispatch(
-            coreActions.bridgeFailed(toDesktopBridgeError(error, "desktop bridge startup")),
-          );
+          dispatch(coreActions.bridgeFailed(toDesktopBridgeError(error, "desktop bridge startup")));
         }
       });
 
