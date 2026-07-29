@@ -1,6 +1,7 @@
 name: Enable Block 13 Targeted Transport
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
