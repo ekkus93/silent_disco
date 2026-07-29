@@ -11,7 +11,10 @@ import type {
 } from "./generated/desktop-bindings";
 
 const MAX_ERROR_DETAIL_LENGTH = 320;
-const MAX_BRIDGE_ERROR_MESSAGE_LENGTH = 768;
+const MAX_BRIDGE_ERROR_MESSAGE_LENGTH = 512;
+const MAX_COMBINED_ERROR_CODE_LENGTH = 64;
+const MAX_COMBINED_ERROR_DETAIL_LENGTH = 128;
+const ERROR_WHITESPACE = /\s+/g;
 
 class DesktopBridgeInvocationError extends Error implements DesktopErrorDto {
   readonly code: string;
@@ -77,24 +80,80 @@ function isDesktopErrorDto(error: unknown): error is DesktopErrorDto {
   );
 }
 
-function boundedErrorDetail(error: unknown): string {
-  let detail: string;
-  if (error instanceof Error) {
-    detail = error.message;
-  } else if (typeof error === "string") {
-    detail = error;
-  } else {
-    detail = "The native invocation transport failed without a structured error.";
-  }
-  const singleLine = detail.replaceAll(/\s+/g, " ").trim();
+function singleLineText(value: string): string {
+  return Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined &&
+      ((codePoint >= 0 && codePoint <= 31) || (codePoint >= 127 && codePoint <= 159))
+      ? " "
+      : character;
+  })
+    .join("")
+    .replaceAll(ERROR_WHITESPACE, " ")
+    .trim();
+}
+
+function boundedText(value: string, fallback: string, maximumLength: number): string {
+  const singleLine = singleLineText(value);
   if (singleLine.length === 0) {
-    return "The native invocation transport failed without a message.";
+    return fallback;
   }
-  return singleLine.slice(0, MAX_ERROR_DETAIL_LENGTH);
+  return Array.from(singleLine).slice(0, maximumLength).join("");
+}
+
+function boundedErrorDetail(error: unknown): string {
+  if (error instanceof Error) {
+    return boundedText(
+      error.message,
+      "The native invocation transport failed without a message.",
+      MAX_ERROR_DETAIL_LENGTH,
+    );
+  }
+  if (typeof error === "string") {
+    return boundedText(
+      error,
+      "The native invocation transport failed without a message.",
+      MAX_ERROR_DETAIL_LENGTH,
+    );
+  }
+  return "The native invocation transport failed without a structured error.";
 }
 
 function boundedBridgeMessage(message: string): string {
-  return message.slice(0, MAX_BRIDGE_ERROR_MESSAGE_LENGTH);
+  return boundedText(
+    message,
+    "The desktop bridge failed without a usable error message.",
+    MAX_BRIDGE_ERROR_MESSAGE_LENGTH,
+  );
+}
+
+function attachmentCleanupMessage(
+  attachmentFailure: DesktopErrorDto,
+  closeFailure: DesktopErrorDto,
+): string {
+  const attachmentCode = boundedText(
+    attachmentFailure.code,
+    "unknown_attachment_failure",
+    MAX_COMBINED_ERROR_CODE_LENGTH,
+  );
+  const closeCode = boundedText(
+    closeFailure.code,
+    "unknown_cleanup_failure",
+    MAX_COMBINED_ERROR_CODE_LENGTH,
+  );
+  const attachmentDetail = boundedText(
+    attachmentFailure.message,
+    "notification attachment failed",
+    MAX_COMBINED_ERROR_DETAIL_LENGTH,
+  );
+  const closeDetail = boundedText(
+    closeFailure.message,
+    "profile cleanup failed",
+    MAX_COMBINED_ERROR_DETAIL_LENGTH,
+  );
+  return boundedBridgeMessage(
+    `Notification attachment failed (${attachmentCode}: ${attachmentDetail}); profile cleanup also failed (${closeCode}: ${closeDetail}).`,
+  );
 }
 
 export function toDesktopBridgeError(error: unknown, operation: string): DesktopErrorDto {
@@ -107,7 +166,7 @@ export function toDesktopBridgeError(error: unknown, operation: string): Desktop
       subsystem: error.subsystem,
       severity: error.severity,
       retryable: error.retryable,
-      message: error.message,
+      message: boundedBridgeMessage(error.message),
     };
   }
   return {
@@ -195,9 +254,7 @@ export async function openProfileWithNotifications(
         subsystem: "bridge",
         severity: "fatal",
         retryable: false,
-        message: boundedBridgeMessage(
-          `Notification attachment failed (${attachmentFailure.code}: ${attachmentFailure.message}); profile cleanup also failed (${closeFailure.code}: ${closeFailure.message}).`,
-        ),
+        message: attachmentCleanupMessage(attachmentFailure, closeFailure),
       });
     }
     throwDesktopBridgeError(attachmentFailure);
