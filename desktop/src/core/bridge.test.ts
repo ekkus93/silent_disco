@@ -108,6 +108,19 @@ describe("desktop bridge connection", () => {
     expect(getCurrentSnapshotMock).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects a different profile instead of silently reusing the cached connection", async () => {
+    connectMock.mockResolvedValue(connection);
+    getCurrentSnapshotMock.mockResolvedValue(snapshot);
+    const { ensureDesktopBridge } = await import("./bridge");
+
+    await ensureDesktopBridge("main");
+    await expect(ensureDesktopBridge("secondary")).rejects.toThrow(
+      "cannot silently reuse that connection",
+    );
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(getCurrentSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+
   it("allows an explicit retry after connection failure", async () => {
     const failure = new Error("bridge unavailable");
     connectMock.mockRejectedValueOnce(failure).mockResolvedValueOnce(connection);
