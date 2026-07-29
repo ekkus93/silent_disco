@@ -83,10 +83,13 @@ function isDesktopErrorDto(error: unknown): error is DesktopErrorDto {
 function singleLineText(value: string): string {
   return Array.from(value, (character) => {
     const codePoint = character.codePointAt(0);
-    return codePoint !== undefined &&
+    if (
+      codePoint !== undefined &&
       ((codePoint >= 0 && codePoint <= 31) || (codePoint >= 127 && codePoint <= 159))
-      ? " "
-      : character;
+    ) {
+      return " ";
+    }
+    return character;
   })
     .join("")
     .replaceAll(ERROR_WHITESPACE, " ")
