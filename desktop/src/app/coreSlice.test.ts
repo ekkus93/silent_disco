@@ -171,10 +171,7 @@ describe("authoritative core slice", () => {
       "start_advertising",
     );
 
-    state = coreReducer(
-      state,
-      coreActions.commandReceiptObserved({ operationId: "operation-1" }),
-    );
+    state = coreReducer(state, coreActions.commandReceiptObserved({ operationId: "operation-1" }));
     expect(state.pendingCommandReceipts["operation-1"]).toBeUndefined();
   });
 
