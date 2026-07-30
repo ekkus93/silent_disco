@@ -1,4 +1,5 @@
 use super::audio_device;
+use super::capabilities::desktop_capabilities;
 use super::diagnostics_export;
 use super::discovery;
 use super::failure::{DesktopPlatformFailure, core_error};
@@ -316,14 +317,7 @@ impl DesktopPlatformAdapters {
     pub(super) fn new(paths: DesktopProfilePaths) -> Self {
         Self {
             paths,
-            capabilities: CapabilitySnapshot {
-                nearby_discovery_available: false,
-                nearby_advertising_available: false,
-                local_network_available: false,
-                audio_source_selection_available: true,
-                audio_output_available: false,
-                secure_store_available: true,
-            },
+            capabilities: desktop_capabilities(),
         }
     }
 }
