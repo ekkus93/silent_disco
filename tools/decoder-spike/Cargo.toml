@@ -1,0 +1,16 @@
+[package]
+name = "silent-disco-decoder-spike"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+[dependencies]
+symphonia = { version = "=0.6.0", default-features = false, features = ["wav", "pcm", "flac", "mp3", "id3v1", "id3v2"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
