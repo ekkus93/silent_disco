@@ -42,7 +42,10 @@ jobs:
             git mv scripts/apply-block13-playback-authority.py \
               scripts/fixtures/apply-block13-playback-authority.py.txt
           fi
-          python3 scripts/fixtures/apply-block13-playback-authority.py.txt
+          cp scripts/fixtures/apply-block13-playback-authority.py.txt \
+            scripts/.apply-block13-playback-authority.py
+          python3 scripts/.apply-block13-playback-authority.py
+          rm scripts/.apply-block13-playback-authority.py
           python3 - <<'PY'
           from pathlib import Path
 
