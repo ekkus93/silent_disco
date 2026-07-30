@@ -1,0 +1,86 @@
+name: Desktop Block 17 lockfile sync
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/sync-desktop-block17-lockfile'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact default-branch input
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Publish sync run URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
+            -f body="Desktop Block 17 lockfile sync started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at input $(git rev-parse HEAD)."
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Regenerate only the transformed desktop lockfile
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          input_sha="$(git rev-parse HEAD)"
+          echo "input_sha=${input_sha}" >> "${GITHUB_OUTPUT}"
+
+          python3 scripts/apply-desktop-block17.py
+          cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
+          cp desktop/src-tauri/Cargo.lock /tmp/desktop-block17-Cargo.lock
+
+          git reset --hard "${input_sha}"
+          git clean -fd
+          cp /tmp/desktop-block17-Cargo.lock desktop/src-tauri/Cargo.lock
+          rm .github/workflows/desktop-block17-lockfile-sync.yml
+
+          mapfile -t changed < <(git status --porcelain | sed 's/^...//')
+          if [[ "${#changed[@]}" -ne 2 ]]; then
+            printf 'Unexpected lockfile sync paths:\n'
+            printf '%s\n' "${changed[@]}"
+            exit 1
+          fi
+          printf '%s\n' "${changed[@]}" | sort > /tmp/actual-paths
+          printf '%s\n' \
+            '.github/workflows/desktop-block17-lockfile-sync.yml' \
+            'desktop/src-tauri/Cargo.lock' | sort > /tmp/expected-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+          git diff --check
+
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          if [[ "${remote_sha}" != "${input_sha}" ]]; then
+            echo "master moved from ${input_sha} to ${remote_sha}; refusing lockfile sync" >&2
+            exit 1
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add desktop/src-tauri/Cargo.lock .github/workflows/desktop-block17-lockfile-sync.yml
+          git commit -m "Synchronize Desktop Block 17 lockfile"
+          commit_sha="$(git rev-parse HEAD)"
+          echo "commit_sha=${commit_sha}" >> "${GITHUB_OUTPUT}"
+          git push origin HEAD:master
+
+      - name: Publish sync success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMIT_SHA: ${{ steps.sync.outputs.commit_sha }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
+            -f body="Desktop Block 17 lockfile synchronized at ${COMMIT_SHA}: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
