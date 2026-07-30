@@ -1,0 +1,63 @@
+name: Desktop Block 19 source snapshot
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/desktop-block19-source-snapshot.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-block19-source-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out current master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Record exact input
+        run: git rev-parse HEAD > BLOCK19_SNAPSHOT_INPUT.txt
+
+      - name: Create bounded source archive
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude='**/target' \
+            --exclude='**/node_modules' \
+            --exclude='**/build' \
+            --exclude='desktop/dist' \
+            --exclude='app/.cxx' \
+            -czf silent-disco-block19-source.tgz \
+            BLOCK19_SNAPSHOT_INPUT.txt \
+            Cargo.toml \
+            Cargo.lock \
+            rust \
+            desktop \
+            app \
+            build.gradle.kts \
+            settings.gradle.kts \
+            gradle.properties \
+            gradle \
+            gradlew \
+            gradlew.bat \
+            scripts \
+            tools \
+            docs \
+            memory.md
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-block19-source
+          path: silent-disco-block19-source.tgz
+          if-no-files-found: error
+          retention-days: 1
