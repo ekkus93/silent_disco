@@ -320,7 +320,7 @@ impl DesktopPlatformAdapters {
                 nearby_discovery_available: false,
                 nearby_advertising_available: false,
                 local_network_available: false,
-                audio_source_selection_available: false,
+                audio_source_selection_available: true,
                 audio_output_available: false,
                 secure_store_available: true,
             },
