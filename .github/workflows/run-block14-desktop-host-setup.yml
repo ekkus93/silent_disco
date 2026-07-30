@@ -97,6 +97,8 @@ jobs:
           cargo fmt --all
           cd ../desktop/src-tauri
           cargo fmt --all
+          cd ../..
+          git add -A
 
       - name: Enforce tracked source line limit
         run: bash scripts/check-source-file-line-counts.sh
@@ -144,7 +146,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
+          git diff --check --cached
           test ! -e scripts/apply-block14-desktop-host-setup.py
           test ! -e .github/workflows/run-block14-desktop-host-setup.yml
           test -f desktop/src/screens/HostSetupScreen.tsx
@@ -158,7 +160,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
           git commit -m "Implement desktop Block 14 host setup"
           git push origin HEAD:master
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
