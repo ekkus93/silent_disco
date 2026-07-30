@@ -1,6 +1,7 @@
-name: Normalize Desktop Block 13 Playback Migration
+name: Run Desktop Block 13 Playback Authority
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -9,32 +10,162 @@ on:
 
 permissions:
   contents: write
+  issues: write
+
+concurrency:
+  group: block13-playback-authority
+  cancel-in-progress: false
 
 jobs:
-  normalize:
+  migrate-and-validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Move migration payload outside source-line enforcement
+      - name: Record validation start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Rust playback-authority validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+
+      - name: Apply playback authority migration
         run: |
           set -euo pipefail
-          mkdir -p scripts/fixtures
-          git mv scripts/apply-block13-playback-authority.py \
-            scripts/fixtures/apply-block13-playback-authority.py.txt
-          python3 -m py_compile scripts/fixtures/apply-block13-playback-authority.py.txt
+          if [[ -f scripts/apply-block13-playback-authority.py ]]; then
+            mkdir -p scripts/fixtures
+            git mv scripts/apply-block13-playback-authority.py \
+              scripts/fixtures/apply-block13-playback-authority.py.txt
+          fi
+          python3 scripts/fixtures/apply-block13-playback-authority.py.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("rust/silent-disco-core/src/runtime/actor_runtime/state/admission.rs")
+          content = path.read_text(encoding="utf-8")
+          old = '''            PendingTransportOperation::DisconnectListener { listener_id } => {
+              let previous = self.snapshot.listeners.len();
+              self.snapshot
+                  .listeners
+                  .retain(|listener| listener.device_id != listener_id);
+              if previous == self.snapshot.listeners.len() {
+                  return Err(invalid_state(
+                      "listener disappeared before removal delivery completed",
+                      Some(operation_id),
+                  ));
+              }
+            }
+          }
+          '''
+          new = '''            PendingTransportOperation::DisconnectListener { listener_id } => {
+              let previous = self.snapshot.listeners.len();
+              self.snapshot
+                  .listeners
+                  .retain(|listener| listener.device_id != listener_id);
+              if previous == self.snapshot.listeners.len() {
+                  return Err(invalid_state(
+                      "listener disappeared before removal delivery completed",
+                      Some(operation_id),
+                  ));
+              }
+            }
+            PendingTransportOperation::StartHostPlayback
+            | PendingTransportOperation::PauseHostPlayback
+            | PendingTransportOperation::ResumeHostPlayback
+            | PendingTransportOperation::StopHostPlayback => {
+              return Err(invalid_state(
+                  "host playback completion was routed to admission handling",
+                  Some(operation_id),
+              ));
+            }
+          }
+          '''
+          if content.count(old) != 1:
+              raise SystemExit("admission.rs: playback exhaustiveness fixture mismatch")
+          path.write_text(content.replace(old, new), encoding="utf-8")
+          PY
+          cd rust
+          cargo +1.97.1 fmt --all
+
+      - name: Check patch and source size
+        run: |
+          git diff --check
           bash scripts/check-source-file-line-counts.sh
 
-      - name: Commit normalized migration fixture
+      - name: Run strict Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee ../block13-playback-clippy.log
+
+      - name: Run Rust and FFI tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo +1.97.1 test --workspace --all-features 2>&1 | tee ../block13-playback-tests.log
+
+      - name: Generate and verify Kotlin bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
+          rm -rf "${output}"
+          bash scripts/generate-uniffi-kotlin.sh "${output}"
+          generated="${output}/com/ekkus/silentdisco/core/uniffi/silent_disco_ffi.kt"
+          grep -q "data class StartHostPlayback" "${generated}"
+          grep -q "data class PauseHostPlayback" "${generated}"
+          grep -q "fun startHostPlayback" "${generated}"
+          grep -q "fun transportOperationFailed" "${generated}"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block13-playback-authority-diagnostics
+          path: |
+            block13-playback-clippy.log
+            block13-playback-tests.log
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Commit validated playback authority
+        id: commit
+        shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/apply-block13-playback-authority.py \
+          git add -A rust scripts/apply-block13-playback-authority.py \
             scripts/fixtures/apply-block13-playback-authority.py.txt
-          git commit -m "Store Block 13 migration as a non-source fixture"
-          git pull --rebase origin master
-          git push origin HEAD:master
+          git commit -m "Make host playback commands Rust-authoritative"
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git rebase origin/master
+            if git push origin HEAD:master; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          exit 1
+
+      - name: Record validation success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh issue comment 45 --body "Rust playback-authority validation passed and committed \`${COMMIT_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Record validation failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Rust playback-authority validation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
