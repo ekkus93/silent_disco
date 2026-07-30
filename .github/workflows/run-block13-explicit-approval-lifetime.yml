@@ -1,0 +1,108 @@
+name: Run Block 13 Explicit Approval Lifetime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/run-block13-explicit-approval-lifetime.yml"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: block13-explicit-approval-lifetime
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record validation start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Approval-lifetime validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+
+      - name: Apply explicit approval lifetime migration
+        run: python3 scripts/apply-block13-explicit-approval-lifetime.py
+
+      - name: Format Rust
+        run: |
+          cd rust
+          cargo fmt --all
+
+      - name: Check Rust formatting
+        run: |
+          cd rust
+          cargo fmt --all -- --check
+
+      - name: Run Rust clippy
+        run: |
+          cd rust
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        run: |
+          cd rust
+          cargo test --workspace --all-features
+
+      - name: Generate Kotlin bindings
+        run: bash scripts/generate-uniffi-kotlin.sh "${RUNNER_TEMP}/block13-kotlin"
+
+      - name: Validate patch
+        run: git diff --check
+
+      - name: Commit validated migration
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            rust/silent-disco-core/src/runtime/records.rs \
+            rust/silent-disco-core/src/runtime/records_v2.rs \
+            rust/silent-disco-core/src/runtime/actor_runtime/state/commands.rs \
+            rust/silent-disco-core/src/runtime/actor_runtime/state/admission.rs \
+            rust/silent-disco-core/src/runtime/host_admission.rs \
+            rust/silent-disco-core/tests/host_block12_actor_admission.rs \
+            rust/silent-disco-ffi/src/host_control/handle.rs \
+            rust/silent-disco-ffi/tests/host_admission.rs \
+            scripts/apply-block13-rust-admission.py
+          git commit -m "Make approval lifetime explicit in Rust"
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git rebase origin/master
+            if git push origin HEAD:master; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            printf 'Push attempt %s raced another master update; retrying.\n' "${attempt}" >&2
+          done
+          exit 1
+
+      - name: Record validation success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh issue comment 45 --body "Approval-lifetime validation passed and committed \`${COMMIT_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Record validation failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Approval-lifetime validation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
