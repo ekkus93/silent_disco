@@ -84,9 +84,8 @@ impl ActorState {
                     ));
                 }
             }
-            AudioEvent::PlaybackStateChanged(PlaybackState::Error)
+            AudioEvent::PlaybackStateChanged(PlaybackState::Error | PlaybackState::Underrun)
             | AudioEvent::Failed(_)
-            | AudioEvent::PlaybackStateChanged(PlaybackState::Underrun)
             | AudioEvent::PositionAdvanced { .. }
             | AudioEvent::SynchronizationUpdated { .. }
             | AudioEvent::Underrun { .. } => {}
@@ -141,7 +140,10 @@ mod tests {
             .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
             .expect("stop is legal while streaming");
         assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
-        assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::WaitingForListeners);
+        assert_eq!(
+            state.snapshot.host_lifecycle,
+            HostLifecycle::WaitingForListeners
+        );
     }
 
     #[test]
