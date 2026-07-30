@@ -682,8 +682,11 @@ mod tests {
             )
             .expect("open profile");
 
-        assert_eq!(response.snapshot.revision, "0");
-        assert_eq!(state.current_snapshot().expect("snapshot").revision, "0");
+        assert_eq!(response.snapshot.revision, "1");
+        assert!(response.snapshot.capabilities.audio_source_selection_available);
+        assert!(response.snapshot.capabilities.secure_store_available);
+        assert!(!response.snapshot.capabilities.audio_output_available);
+        assert_eq!(state.current_snapshot().expect("snapshot").revision, "1");
         state.close_sync().expect("first close");
         state.close_sync().expect("idempotent second close");
     }
