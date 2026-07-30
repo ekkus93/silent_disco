@@ -6,6 +6,7 @@ on:
       - master
     paths:
       - ".github/workflows/finalize-desktop-block16-once.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
