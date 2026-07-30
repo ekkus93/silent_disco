@@ -99,7 +99,7 @@ jobs:
               "    pub actor: CoreActorRuntime,\n": "    pub(crate) actor: CoreActorRuntime,\n",
               "    pub database: DatabaseWorker,\n": "    pub(crate) database: DatabaseWorker,\n",
               "    pub lease: ProfileLease,\n": "    pub(crate) lease: ProfileLease,\n",
-              "pub fn shutdown_owned_resources(\n": "pub(crate) fn shutdown_owned_resources(\n",
+              "pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), DesktopErrorDto> {\n": "pub(crate) fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), DesktopErrorDto> {\n",
               "pub fn cleanup_without_actor(\n": "pub(crate) fn cleanup_without_actor(\n",
               "pub fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {\n": "pub(crate) fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {\n",
               "pub fn cleanup_with_actor(\n": "pub(crate) fn cleanup_with_actor(\n",
