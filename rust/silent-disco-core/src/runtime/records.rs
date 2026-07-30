@@ -23,23 +23,40 @@ pub const MAX_STORAGE_TRUSTED_DEVICES: usize = 1_024;
 /// Presentation intent submitted to the authoritative actor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoreCommand {
-    SelectRole { role: AppRole },
+    SelectRole {
+        role: AppRole,
+    },
     UpdateHostDraft(HostDraftPatch),
     CreateHostSession,
     EndHostSession,
     StartDiscovery,
     StopDiscovery,
-    SelectSession { session_id: SessionId },
-    SubmitJoin { invite_code: Option<String> },
+    SelectSession {
+        session_id: SessionId,
+    },
+    SubmitJoin {
+        invite_code: Option<String>,
+    },
     CancelJoin,
-    ApproveJoin { request_id: RequestId },
-    RejectJoin { request_id: RequestId },
-    RemoveListener { listener_id: DeviceId },
-    StartPlayback { source: AudioSourceDescriptor },
+    ApproveJoin {
+        request_id: RequestId,
+        remember_for_future: bool,
+    },
+    RejectJoin {
+        request_id: RequestId,
+    },
+    RemoveListener {
+        listener_id: DeviceId,
+    },
+    StartPlayback {
+        source: AudioSourceDescriptor,
+    },
     PausePlayback,
     ResumePlayback,
     StopPlayback,
-    SetLocalVolume { linear_gain: f32 },
+    SetLocalVolume {
+        linear_gain: f32,
+    },
     RequestResync,
     RetryRecoverableFailure,
     UpdateTuning(TuningPatch),

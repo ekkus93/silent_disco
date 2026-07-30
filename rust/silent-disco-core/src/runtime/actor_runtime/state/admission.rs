@@ -13,7 +13,7 @@ use crate::runtime::{
     JoinRejectionReason, JoinRequestDisposition, JoinRequestSummary, ListenerSummary,
     RecoverableAction, StorageCompletion, StorageEffectRequest, StorageEvent,
     TransportEffectRequest, TransportEvent, TrustPersistenceOutcome, approval_after_persistence,
-    classify_delivery, classify_join_request, prepare_approval,
+    classify_delivery, classify_join_request, prepare_explicit_approval,
 };
 
 impl ActorState {
@@ -75,13 +75,14 @@ impl ActorState {
         &mut self,
         operation_id: OperationId,
         request_id: RequestId,
+        remember_for_future: bool,
     ) -> Result<ApplyOutcome, CoreError> {
         self.require_host_admission_command(&operation_id)?;
         let request = self
             .pending_join_request(&request_id, &operation_id)?
             .clone();
         self.ensure_request_operation_idle(&request_id, &operation_id)?;
-        match prepare_approval(&self.snapshot.host_draft, &request) {
+        match prepare_explicit_approval(&request, remember_for_future) {
             ApprovalPreparation::PersistTrustFirst(persistence) => {
                 let effect = self.start_storage_operation(
                     StorageEffectRequest::PersistTrustedDevice {

@@ -31,7 +31,10 @@ pub enum CoreCommand {
     SelectSession { session_id: SessionId },
     SubmitJoin { invite_code: Option<String> },
     CancelJoin,
-    ApproveJoin { request_id: RequestId },
+    ApproveJoin {
+        request_id: RequestId,
+        remember_for_future: bool,
+    },
     RejectJoin { request_id: RequestId },
     RemoveListener { listener_id: DeviceId },
     StartPlayback { source: AudioSourceDescriptor },

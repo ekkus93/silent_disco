@@ -32,6 +32,7 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
         pending.revision,
         CoreCommand::ApproveJoin {
             request_id: request.request_id.clone(),
+            remember_for_future: false,
         },
     );
     let awaiting_delivery = next_snapshot(&receiver, pending.revision.get() + 1);
@@ -69,6 +70,7 @@ fn manual_admission_is_deduplicated_and_delivery_first() {
         failed_delivery.revision,
         CoreCommand::ApproveJoin {
             request_id: request.request_id.clone(),
+            remember_for_future: false,
         },
     );
     let retrying = next_snapshot(&receiver, failed_delivery.revision.get() + 1);
@@ -126,6 +128,7 @@ fn trust_write_failure_is_visible_and_approval_becomes_session_only() {
         pending.revision,
         CoreCommand::ApproveJoin {
             request_id: request.request_id,
+            remember_for_future: true,
         },
     );
     let persisting = next_snapshot(&receiver, pending.revision.get() + 1);

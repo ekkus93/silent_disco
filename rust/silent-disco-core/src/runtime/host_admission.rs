@@ -98,13 +98,22 @@ pub const fn classify_join_request(
     JoinRequestDisposition::PendingManualDecision
 }
 
-/// Plans an explicit approval without mutating the pending request.
-///
-/// Durable trust is written before approval delivery whenever the host requested
-/// "remember approved devices" and the listener is not already trusted.
+/// Plans an approval using the host draft's default lifetime policy.
 #[must_use]
 pub fn prepare_approval(draft: &HostDraft, request: &JoinRequestSummary) -> ApprovalPreparation {
-    if draft.remember_approved_devices && request.trust_state != TrustState::Trusted {
+    prepare_explicit_approval(request, draft.remember_approved_devices)
+}
+
+/// Plans one explicit approval without mutating the pending request.
+///
+/// Durable trust is written before approval delivery only when this specific command
+/// requests future trust and the listener is not already trusted.
+#[must_use]
+pub fn prepare_explicit_approval(
+    request: &JoinRequestSummary,
+    remember_for_future: bool,
+) -> ApprovalPreparation {
+    if remember_for_future && request.trust_state != TrustState::Trusted {
         ApprovalPreparation::PersistTrustFirst(TrustPersistenceRequest {
             request_id: request.request_id.clone(),
             device_id: request.device_id.clone(),

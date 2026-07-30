@@ -123,11 +123,13 @@ impl FfiCoreHandle {
         &self,
         expected_revision: u64,
         request_id: String,
+        remember_for_future: bool,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
         self.submit_command(
             expected_revision,
             CoreCommand::ApproveJoin {
                 request_id: request_id_from_string(request_id)?,
+                remember_for_future,
             },
         )
     }

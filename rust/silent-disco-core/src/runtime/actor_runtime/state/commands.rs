@@ -35,7 +35,10 @@ impl ActorState {
                     stop_requested: true,
                 })
             }
-            CoreCommand::ApproveJoin { request_id } => self.approve_join(operation_id, request_id),
+            CoreCommand::ApproveJoin {
+                request_id,
+                remember_for_future,
+            } => self.approve_join(operation_id, request_id, remember_for_future),
             CoreCommand::RejectJoin { request_id } => self.reject_join(operation_id, request_id),
             CoreCommand::RemoveListener { listener_id } => {
                 self.remove_listener(operation_id, listener_id)

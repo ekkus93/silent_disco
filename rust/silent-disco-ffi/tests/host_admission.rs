@@ -126,7 +126,7 @@ fn uniffi_admission_reaches_delivery_first_actor_handlers() {
     assert_eq!(pending.pending_join_requests.len(), 1);
 
     handle
-        .approve_join(pending.revision, "request-ffi-1".to_owned())
+        .approve_join(pending.revision, "request-ffi-1".to_owned(), false)
         .expect("approve join request");
     let delivering = observer.wait_for_snapshot(pending.revision + 1);
     assert_eq!(delivering.pending_join_requests.len(), 1);
