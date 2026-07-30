@@ -16,6 +16,7 @@ import java.io.EOFException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
@@ -163,7 +164,12 @@ internal class TcpServerChannel<T>(
         emitStats()
         acceptJob = scope.launch {
             while (true) {
-                val socket = serverSocket?.accept() ?: break
+                val socket = try {
+                    serverSocket?.accept() ?: break
+                } catch (error: SocketException) {
+                    if (serverSocket?.isClosed == true) break
+                    throw error
+                }
                 val remoteAddress = socket.remoteSocketAddress.toString()
                 val peer = PeerConnection(
                     socket = socket,

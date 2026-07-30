@@ -365,7 +365,7 @@ fun SilentDiscoApp(
                     },
                     onGenerateCode = { viewModel.updateHostForm(inviteCode = generateInviteCode()) },
                     onStartSession = {
-                        workflowViewModel.onHostSessionCreationResult(viewModel.createHostSession())
+                        viewModel.createHostSession()
                     },
                     onOpenSettings = ::openSystemSettings,
                     onShareSupportReport = ::shareSupportReport,

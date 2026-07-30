@@ -40,7 +40,9 @@ import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
+import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
+import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.DeviceIdentity
@@ -75,6 +77,9 @@ class MainViewModel @JvmOverloads constructor(
     application: Application,
     internal val playbackEngine: PlaybackEngine = AudioTrackPlaybackEngine(),
     internal val domainStore: AndroidRustDomainStore = AndroidRustDomainStore(application),
+    internal val hostCoreFactory: (String) -> HostCoreController = {
+        UniFfiHostCoreController(it)
+    },
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
     internal val diagnosticsStore = DiagnosticsStore()
@@ -108,6 +113,7 @@ class MainViewModel @JvmOverloads constructor(
     internal var scanJob: Job? = null
     internal var pendingSyncCorrelationId: Long? = null
     internal var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
+    internal var hostCoreController: HostCoreController? = null
     internal val localListenerDeviceId = "listener-device"
 
     init {
@@ -160,68 +166,24 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
-    internal fun validateHostForm(state: AppUiState): String? = HostSessionValidator.validate(state.hostForm)
+    fun createHostSession() = createRustHostSession()
 
-    fun createHostSession(): Boolean = createHostSessionImpl()
+    fun addDemoJoinRequest() = submitDemoRustJoinRequest()
 
-    fun addDemoJoinRequest() {
-        val sessionId = _uiState.value.hostDiagnostics.sessionId.ifBlank { currentSessionId?.value ?: "demo-session" }
-        val request = JoinRequest(
-            requestId = UUID.randomUUID().toString(),
-            sessionId = sessionId,
-            listenerId = UUID.randomUUID().toString(),
-            listenerName = "Listener ${_uiState.value.pendingJoinRequests.size + 1}",
-            inviteCode = null,
-            requestedAtMs = SystemClock.elapsedRealtime(),
-        )
-        _uiState.value = _uiState.value.copy(
-            pendingJoinRequests = _uiState.value.pendingJoinRequests + request,
-            hostState = HostLifecycleState.READY,
-        )
-        refreshHostDiagnostics()
-    }
+    fun approveJoinRequest(
+        request: JoinRequest,
+        rememberForFuture: Boolean = _uiState.value.hostForm.rememberApprovedDevices,
+    ) = approveRustJoinRequest(request, rememberForFuture)
 
-    fun approveJoinRequest(request: JoinRequest) = approveJoinRequestImpl(request)
+    fun rejectJoinRequest(request: JoinRequest) = rejectRustJoinRequest(request)
 
-    fun rejectJoinRequest(request: JoinRequest) = rejectJoinRequestImpl(request)
-
-    fun trustListener(listenerId: String) {
-        val displayName = _uiState.value.approvedListeners
-            .firstOrNull { it.deviceId == listenerId }
-            ?.displayName
-            ?: listenerId
-        viewModelScope.launch {
-            persistTrustedListenerRecord(listenerId, displayName).fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(
-                        approvedListeners = _uiState.value.approvedListeners.map {
-                            if (it.deviceId == listenerId) {
-                                it.copy(trustState = TrustState.TRUSTED_PLACEHOLDER)
-                            } else {
-                                it
-                            }
-                        },
-                        lastMessage = "Trusted listener ${listenerId.take(6)}",
-                        lastError = null,
-                    )
-                    refreshHostDiagnostics()
-                },
-                onFailure = ::reportTrustedListenerPersistenceFailure,
-            )
-        }
-    }
+    fun trustListener(listenerId: String) = trustRustListener(listenerId)
 
     internal fun trustedListenerPersistenceMessage(error: Throwable): String =
         "Could not remember listener; approval remains session-only: " +
             (error.message ?: "trusted-device persistence failed")
 
-    fun removeListener(listenerId: String) {
-        _uiState.value = _uiState.value.copy(
-            approvedListeners = _uiState.value.approvedListeners.filterNot { it.deviceId == listenerId },
-            lastMessage = "Removed listener ${listenerId.take(6)}",
-        )
-        refreshHostDiagnostics()
-    }
+    fun removeListener(listenerId: String) = removeRustListener(listenerId)
 
     fun startHostPlayback() = startHostPlaybackImpl()
 
@@ -229,7 +191,7 @@ class MainViewModel @JvmOverloads constructor(
 
     fun stopHostPlayback() = stopHostPlaybackImpl()
 
-    fun endSession() = endSessionImpl()
+    fun endSession() = endRustHostSession()
 
     fun scanForSessions() = scanForSessionsImpl()
 
@@ -408,6 +370,7 @@ class MainViewModel @JvmOverloads constructor(
     override fun onCleared() {
         bleService.stop()
         wifiDirectService.stop()
+        hostCoreController?.close()
         runBlocking(Dispatchers.IO) { domainStore.close() }
         super.onCleared()
     }

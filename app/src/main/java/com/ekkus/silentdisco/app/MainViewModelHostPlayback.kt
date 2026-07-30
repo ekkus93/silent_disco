@@ -151,11 +151,8 @@ import kotlinx.coroutines.runBlocking
                 if (consecutiveAudioSendFailures >= 10) {
                     val message = "Audio transport failed repeatedly; stream stopped"
                     hostStreamJob?.cancel()
-                    _uiState.value = _uiState.value.copy(
-                        hostState = HostLifecycleState.ERROR,
-                        hostPlaybackState = PlaybackState.ERROR,
-                        lastError = message,
-                    )
+                    _uiState.value = _uiState.value.copy(lastError = message)
+                    reportRustHostPlaybackState(PlaybackState.ERROR, message)
                     diagnosticsStore.updateHost {
                         it.copy(
                             streamState = PlaybackState.ERROR,
@@ -172,11 +169,8 @@ import kotlinx.coroutines.runBlocking
             }
             logger.i("stream.stop", "Reached end of file for host stream")
             metrics.increment("stream_eof")
-            _uiState.value = _uiState.value.copy(
-                hostState = HostLifecycleState.READY,
-                hostPlaybackState = PlaybackState.STOPPED,
-                lastMessage = "Reached end of file",
-            )
+            _uiState.value = _uiState.value.copy(lastMessage = "Reached end of file")
+            reportRustHostPlaybackState(PlaybackState.STOPPED)
             propagateListenerPlaybackState(
                 playbackState = PlaybackState.STOPPED,
                 listenerState = _uiState.value.listenerState,
@@ -208,11 +202,8 @@ import kotlinx.coroutines.runBlocking
         val message = error.message ?: "Host playback engine failed"
         logger.e("playback.host", message, error)
         hostStreamJob?.cancel()
-        _uiState.value = _uiState.value.copy(
-            hostState = HostLifecycleState.ERROR,
-            hostPlaybackState = PlaybackState.ERROR,
-            lastError = message,
-        )
+        _uiState.value = _uiState.value.copy(lastError = message)
+        reportRustHostPlaybackState(PlaybackState.ERROR, message)
         diagnosticsStore.updateHost {
             it.copy(
                 streamState = PlaybackState.ERROR,

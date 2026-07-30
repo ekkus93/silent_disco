@@ -2,6 +2,7 @@ package com.ekkus.silentdisco.app
 
 import androidx.annotation.MainThread
 import androidx.lifecycle.ViewModel
+import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import kotlinx.coroutines.channels.Channel
@@ -14,6 +15,7 @@ class WorkflowViewModel : ViewModel() {
 
     private var startupNavigationConsumed = false
     private var playbackNavigationConsumed = false
+    private var hostNavigationConsumed = false
     private var cleared = false
 
     fun onUiStateChanged(state: AppUiState) {
@@ -28,6 +30,14 @@ class WorkflowViewModel : ViewModel() {
         if (shouldNavigateToListenerPlayback(state, playbackNavigationConsumed)) {
             playbackNavigationConsumed = true
             emit(AppUiEffect.NavigateListenerPlayback)
+        }
+
+        if (state.hostState in hostNavigationResetStates) {
+            hostNavigationConsumed = false
+        }
+        if (!hostNavigationConsumed && state.hostState in hostDashboardStates) {
+            hostNavigationConsumed = true
+            emit(AppUiEffect.NavigateHostDashboard)
         }
     }
 
@@ -83,6 +93,17 @@ class WorkflowViewModel : ViewModel() {
     }
 
     private companion object {
+        val hostDashboardStates = setOf(
+            HostLifecycleState.ADVERTISING,
+            HostLifecycleState.WAITING_FOR_LISTENERS,
+            HostLifecycleState.READY,
+            HostLifecycleState.STREAMING,
+            HostLifecycleState.PAUSED,
+        )
+        val hostNavigationResetStates = setOf(
+            HostLifecycleState.IDLE,
+            HostLifecycleState.ERROR,
+        )
         val playbackResetStates = setOf(
             ListenerLifecycleState.IDLE,
             ListenerLifecycleState.SCANNING,

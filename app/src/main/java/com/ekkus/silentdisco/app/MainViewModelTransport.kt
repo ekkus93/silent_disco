@@ -106,6 +106,7 @@ import kotlinx.coroutines.runBlocking
         viewModelScope.launch {
             wifiDirectService.snapshot.collect { snapshot ->
                 refreshDiscoveredSessions()
+                reportRustHostTransportState(snapshot.state)
                 handleTransportSnapshot(snapshot)
                 if (pendingJoinRequestMessage != null && snapshot.state == TransportConnectionState.CONNECTED) {
                     sendPendingJoinRequest()
@@ -133,19 +134,7 @@ import kotlinx.coroutines.runBlocking
         val role = classifyTransportSnapshotRole(_uiState.value.hostState, _uiState.value.listenerState)
         when (role) {
             TransportSnapshotRole.HOST_FAILURE -> {
-                _uiState.value = _uiState.value.copy(
-                    hostState = HostLifecycleState.ERROR,
-                    hostPlaybackState = if (_uiState.value.hostPlaybackState == PlaybackState.PLAYING) {
-                        PlaybackState.ERROR
-                    } else {
-                        _uiState.value.hostPlaybackState
-                    },
-                    lastError = errorMessage,
-                )
-                diagnosticsStore.updateHost {
-                    it.copy(lastError = errorMessage, metricsSummary = summarizeMetrics())
-                }
-                refreshHostDiagnostics()
+                reportRustHostTransportFailure(errorMessage, snapshot.lastError.retryable)
             }
             TransportSnapshotRole.LISTENER_FAILURE -> {
                 pendingJoinRequestMessage = null
@@ -186,19 +175,7 @@ import kotlinx.coroutines.runBlocking
         )
         if (!hosting) return
         wifiDirectService.stop()
-        _uiState.value = _uiState.value.copy(
-            hostState = HostLifecycleState.ERROR,
-            hostPlaybackState = if (_uiState.value.hostPlaybackState == PlaybackState.PLAYING) {
-                PlaybackState.ERROR
-            } else {
-                _uiState.value.hostPlaybackState
-            },
-            lastError = message,
-        )
-        diagnosticsStore.updateHost {
-            it.copy(lastError = message, metricsSummary = summarizeMetrics())
-        }
-        refreshHostDiagnostics()
+        reportRustHostTransportFailure(message, retryable = true)
     }
 
     internal fun MainViewModel.handleControlMessage(message: ControlMessage) {
@@ -220,69 +197,8 @@ import kotlinx.coroutines.runBlocking
         }
     }
 
-    internal fun MainViewModel.joinRejectionReason(message: ControlMessage.JoinRequest): String? {
-        if (message.sessionId != currentSessionId) return "Session mismatch"
-        val form = _uiState.value.hostForm
-        if (form.approvalMode == ApprovalMode.INVITE_CODE) {
-            val expected = form.inviteCode.trim()
-            val actual = message.inviteCode?.trim().orEmpty()
-            if (expected.isBlank()) return "Host invite code is not configured"
-            if (actual != expected) return "Incorrect invite code"
-        }
-        return null
-    }
-
     internal fun MainViewModel.handleJoinRequestMessage(message: ControlMessage.JoinRequest) {
-        if (message.sessionId != currentSessionId) return
-
-        val rejectionReason = joinRejectionReason(message)
-        if (rejectionReason != null) {
-            logger.w("listener.join.reject", rejectionReason)
-            viewModelScope.launch {
-                val delivered = runCatching {
-                    wifiDirectService.broadcastControl(
-                        ControlMessage.JoinRejection(
-                            version = 1,
-                            sessionId = message.sessionId,
-                            listenerId = message.device.deviceId,
-                            reason = rejectionReason,
-                        ),
-                    )
-                }.map { result ->
-                    reportHostBroadcastDelivery("send join rejection", result, requireAnyPeer = true)
-                }.getOrElse { error ->
-                    handleHostControlFailure("send join rejection", error)
-                    false
-                }
-
-                if (delivered) {
-                    val hostMessage = "Rejected ${message.device.displayName}: $rejectionReason"
-                    diagnosticsStore.updateHost {
-                        it.copy(lastError = hostMessage, metricsSummary = summarizeMetrics())
-                    }
-                    _uiState.value = _uiState.value.copy(lastError = hostMessage)
-                    refreshHostDiagnostics()
-                }
-            }
-            return
-        }
-
-        val request = JoinRequest(
-            requestId = "${message.device.deviceId}-${message.sessionId.value}",
-            sessionId = message.sessionId.value,
-            listenerId = message.device.deviceId,
-            listenerName = message.device.displayName,
-            inviteCode = message.inviteCode,
-            requestedAtMs = SystemClock.elapsedRealtime(),
-        )
-        if (_uiState.value.pendingJoinRequests.any { it.listenerId == request.listenerId }) return
-        _uiState.value = _uiState.value.copy(
-            pendingJoinRequests = _uiState.value.pendingJoinRequests + request,
-            hostState = HostLifecycleState.READY,
-            lastMessage = "${request.listenerName} requested to join",
-            lastError = null,
-        )
-        refreshHostDiagnostics()
+        submitRustJoinRequest(message)
     }
 
     internal fun MainViewModel.handleJoinApprovalMessage(message: ControlMessage.JoinApproval) {
