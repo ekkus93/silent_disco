@@ -37,4 +37,7 @@ staging.write_text(text.replace(old, new, 1))
 
 tests = Path("desktop/src-tauri/src/app_state_tests.rs")
 text = tests.read_text()
-tests.write_text(text.lstrip("\n"))
+normalized = text.lstrip("\ufeff\r\n\t ")
+if not normalized.startswith("use super::DesktopAppState;"):
+    raise SystemExit("app_state_tests.rs: unexpected first statement after split")
+tests.write_text(normalized)
