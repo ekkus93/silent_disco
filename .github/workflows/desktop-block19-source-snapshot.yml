@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: desktop-block19-source-snapshot
@@ -23,6 +24,13 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+
+      - name: Publish run link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 19 source snapshot: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at $(git rev-parse HEAD)."
 
       - name: Record exact input
         run: git rev-parse HEAD > BLOCK19_SNAPSHOT_INPUT.txt
