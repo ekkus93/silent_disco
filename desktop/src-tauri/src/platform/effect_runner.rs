@@ -204,16 +204,17 @@ impl DesktopPlatformEffectRunner {
         handle: CoreActorHandle,
         paths: DesktopProfilePaths,
     ) -> Result<Self, CoreError> {
+        let capability_handle = handle.clone();
         let runner = Self::start_with_components(
             inbox,
             dispatcher,
-            Arc::new(handle.clone()),
+            Arc::new(handle),
             Arc::new(DesktopPlatformAdapters::new(paths)),
         )?;
-        if let Err(primary) = publish_desktop_capabilities(&handle) {
+        if let Err(primary) = publish_desktop_capabilities(&capability_handle) {
             return match runner.shutdown() {
                 Ok(()) => Err(primary),
-                Err(cleanup) => Err(append_startup_cleanup(primary, cleanup)),
+                Err(cleanup) => Err(append_startup_cleanup(primary, &cleanup)),
             };
         }
         Ok(runner)
@@ -507,7 +508,7 @@ fn cancelled_event(operation_id: OperationId) -> PlatformEvent {
     }
 }
 
-fn append_startup_cleanup(primary: CoreError, cleanup: CoreError) -> CoreError {
+fn append_startup_cleanup(primary: CoreError, cleanup: &CoreError) -> CoreError {
     let primary_detail = bounded_error_detail(&primary.message, 300);
     let cleanup_detail = bounded_error_detail(&cleanup.message, 120);
     let message = format!(
