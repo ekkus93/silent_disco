@@ -157,8 +157,8 @@ jobs:
           end = text.index("## Block 17 — Implement atomic source staging", start)
           block = text[start:end]
           unchecked = block.count("- [ ]")
-          if unchecked != 16:
-              raise SystemExit(f"expected 16 unchecked Block 16 tasks, found {unchecked}")
+          if unchecked != 19:
+              raise SystemExit(f"expected 19 unchecked Block 16 tasks, found {unchecked}")
           block = block.replace("- [ ]", "- [x]")
           evidence = (
               "**Completion evidence:** Secure single-file selection, bounded signature inspection, "
