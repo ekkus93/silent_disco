@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use symphonia::core::audio::Audio;
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
@@ -139,8 +138,8 @@ fn decode_file(arguments: &Arguments) -> DecodeReport {
                     Ok(decoded) => {
                         let decoded_frames = u64::try_from(decoded.frames()).unwrap_or(u64::MAX);
                         frames = frames.saturating_add(decoded_frames);
-                        sample_rate_hz.get_or_insert(decoded.spec().rate);
-                        channels.get_or_insert(decoded.spec().channels.count());
+                        sample_rate_hz.get_or_insert(decoded.spec().rate());
+                        channels.get_or_insert(decoded.spec().channels().count());
                     }
                     Err(error) => {
                         return failure_report(
@@ -219,13 +218,12 @@ fn open_decoder(path: &Path) -> Result<OpenedDecoder, Error> {
         hint.with_extension(extension);
     }
 
-    let probe = symphonia::default::get_probe().probe(
+    let format = symphonia::default::get_probe().probe(
         &hint,
         stream,
         FormatOptions::default(),
         MetadataOptions::default(),
     )?;
-    let format = probe.format;
     let track = format
         .default_track(TrackType::Audio)
         .cloned()
@@ -237,7 +235,7 @@ fn open_decoder(path: &Path) -> Result<OpenedDecoder, Error> {
     let source_sample_format = format!("{:?}", audio_parameters.sample_format);
     let codec = format!("{:?}", audio_parameters.codec);
     let decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(audio_parameters, &AudioDecoderOptions::default())?;
+        .make_audio_decoder(&audio_parameters, &AudioDecoderOptions::default())?;
 
     Ok(OpenedDecoder {
         format,
