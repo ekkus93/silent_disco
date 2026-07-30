@@ -1,3 +1,4 @@
+# Installed before this trigger commit so the push event can start the workflow.
 name: Guard Desktop Block 14
 
 on:
