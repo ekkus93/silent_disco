@@ -941,33 +941,35 @@ Create:
 desktop/src-tauri/src/platform/file_picker.rs
 ```
 
-- [ ] invoke the pinned Tauri dialog plugin from Rust or a narrowly typed frontend command;
-- [ ] allow only intentional file selection, not directory-wide access;
-- [ ] treat cancellation separately from failure;
-- [ ] do not expose unrestricted filesystem capability;
-- [ ] do not trust extension or MIME alone.
+- [x] invoke the pinned Tauri dialog plugin from Rust or a narrowly typed frontend command;
+- [x] allow only intentional file selection, not directory-wide access;
+- [x] treat cancellation separately from failure;
+- [x] do not expose unrestricted filesystem capability;
+- [x] do not trust extension or MIME alone.
 
 ### 16.2 Inspect source metadata safely
 
-- [ ] regular file check;
-- [ ] maximum size check;
-- [ ] bounded display name;
-- [ ] canonical source identity where safe;
-- [ ] no unbounded cover-art/metadata load;
-- [ ] explicit unsupported source result.
+- [x] regular file check;
+- [x] maximum size check;
+- [x] bounded display name;
+- [x] canonical source identity where safe;
+- [x] no unbounded cover-art/metadata load;
+- [x] explicit unsupported source result.
 
 ### 16.3 Tests
 
 Use an injectable dialog/file boundary.
 
-- [ ] cancellation;
-- [ ] nonexistent file;
-- [ ] directory selected;
-- [ ] oversized file;
-- [ ] Unicode filename;
-- [ ] deceptive extension;
-- [ ] permission denied;
-- [ ] no success on dialog failure.
+- [x] cancellation;
+- [x] nonexistent file;
+- [x] directory selected;
+- [x] oversized file;
+- [x] Unicode filename;
+- [x] deceptive extension;
+- [x] permission denied;
+- [x] no success on dialog failure.
+
+**Completion evidence:** Secure single-file selection, bounded signature inspection, opaque backend registration, authoritative capability publication, profile-lifecycle cleanup, frontend integration, and all automated gates passed in GitHub Actions run `30539622045` from source commit `bf9664058c9ca239e6d1995d512782aed81c5921`. Physical interaction with a native desktop file dialog was not performed by this CI run.
 
 **Acceptance:** File selection grants only the access needed to stage one explicit source.
 
