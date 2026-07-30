@@ -1,6 +1,8 @@
 use super::failure::core_error;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
-use silent_disco_core::runtime::{CapabilitySnapshot, CoreActorHandle, PlatformEvent};
+use silent_disco_core::runtime::{
+    CapabilitySnapshot, CoreActorHandle, CoreSnapshot, PlatformEvent,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,14 +22,17 @@ pub(crate) const fn desktop_capabilities() -> CapabilitySnapshot {
     }
 }
 
-/// Publishes capabilities through the actor and waits for authoritative snapshot evidence.
-pub(crate) fn publish_desktop_capabilities(handle: &CoreActorHandle) -> Result<(), CoreError> {
+/// Publishes capabilities through the actor and returns the authoritative acknowledged snapshot.
+pub(crate) fn publish_desktop_capabilities(
+    handle: &CoreActorHandle,
+) -> Result<CoreSnapshot, CoreError> {
     let expected = desktop_capabilities();
     handle.submit_platform_event(PlatformEvent::CapabilityStateChanged(expected))?;
     let deadline = Instant::now() + CAPABILITY_STARTUP_TIMEOUT;
     loop {
-        if handle.current_snapshot()?.capabilities == expected {
-            return Ok(());
+        let snapshot = handle.current_snapshot()?;
+        if snapshot.capabilities == expected {
+            return Ok(snapshot);
         }
         if Instant::now() >= deadline {
             return Err(core_error(

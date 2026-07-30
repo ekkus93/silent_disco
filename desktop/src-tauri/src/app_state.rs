@@ -4,6 +4,7 @@ use crate::notification_channel::TauriNotificationSink;
 use crate::platform::effect_runner::{
     DesktopCoreObserver, DesktopPlatformEffectDispatcher, DesktopPlatformEffectRunner,
 };
+use crate::platform::file_picker::SelectedSourceRegistry;
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
 };
@@ -448,8 +449,22 @@ pub async fn close_profile(app: AppHandle) -> Result<BridgeLifecycleDto, Desktop
                 })?
         }
     };
-    app.state::<DesktopAppState>().finish_close(result)?;
+    let registry_cleanup = app.state::<SelectedSourceRegistry>().clear().map(|_| ());
+    app.state::<DesktopAppState>()
+        .finish_close(merge_close_results(result, registry_cleanup))?;
     Ok(BridgeLifecycleDto::Closed)
+}
+
+fn merge_close_results(
+    primary: Result<(), DesktopErrorDto>,
+    registry_cleanup: Result<(), DesktopErrorDto>,
+) -> Result<(), DesktopErrorDto> {
+    match (primary, registry_cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(primary), Ok(())) => Err(primary),
+        (Ok(()), Err(cleanup)) => Err(cleanup),
+        (Err(primary), Err(cleanup)) => Err(append_cleanup(primary, Some(cleanup))),
+    }
 }
 
 fn open_runtime(
@@ -549,13 +564,13 @@ fn open_runtime(
         return Err(cleanup_with_actor(actor, database, lease, primary));
     }
 
-    let platform_runner = match DesktopPlatformEffectRunner::start(
+    let (platform_runner, current_snapshot) = match DesktopPlatformEffectRunner::start(
         platform_inbox,
         platform_dispatcher,
         handle.clone(),
         paths.clone(),
     ) {
-        Ok(runner) => runner,
+        Ok(started) => started,
         Err(error) => {
             let primary = DesktopErrorDto::from(error);
             return Err(cleanup_with_actor(actor, database, lease, primary));
@@ -686,7 +701,10 @@ mod tests {
         assert!(response.snapshot.capabilities.audio_source_selection_available);
         assert!(response.snapshot.capabilities.secure_store_available);
         assert!(!response.snapshot.capabilities.audio_output_available);
-        assert_eq!(state.current_snapshot().expect("snapshot").revision, "1");
+        assert!(!response.snapshot.capabilities.local_network_available);
+        let current = state.current_snapshot().expect("snapshot");
+        assert_eq!(current.revision, response.snapshot.revision);
+        assert_eq!(current.capabilities, response.snapshot.capabilities);
         state.close_sync().expect("first close");
         state.close_sync().expect("idempotent second close");
     }

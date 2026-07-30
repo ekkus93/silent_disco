@@ -78,6 +78,11 @@ impl SelectedSourceRegistry {
         Ok(selected.replace(source))
     }
 
+    pub(crate) fn clear(&self) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
+        let mut selected = self.selected.lock().map_err(|_| registry_error())?;
+        Ok(selected.take())
+    }
+
     pub(crate) fn restore_if_current(
         &self,
         current_source_id: &str,
@@ -126,6 +131,8 @@ impl<R: Runtime> TauriAudioFileDialog<R> {
 
 impl<R: Runtime> AudioFileDialog for TauriAudioFileDialog<R> {
     fn pick_file(&self) -> Result<Option<PathBuf>, DesktopErrorDto> {
+        // The pinned plugin reports native close/cancel as `None` and exposes no separate picker
+        // backend-error channel. Path conversion and every post-selection failure remain explicit.
         let selected = self
             .app
             .dialog()

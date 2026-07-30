@@ -83,14 +83,12 @@ fn startup_publication_updates_the_authoritative_actor_snapshot() {
     .expect("start actor");
     let handle = actor.handle();
 
-    publish_desktop_capabilities(&handle).expect("publish desktop capabilities");
+    let published = publish_desktop_capabilities(&handle).expect("publish desktop capabilities");
 
+    assert_eq!(published.capabilities, desktop_capabilities());
     assert_eq!(
-        handle
-            .current_snapshot()
-            .expect("authoritative snapshot")
-            .capabilities,
-        desktop_capabilities()
+        handle.current_snapshot().expect("authoritative snapshot"),
+        published
     );
     actor.shutdown().expect("shutdown actor");
 }

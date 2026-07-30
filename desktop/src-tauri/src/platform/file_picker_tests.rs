@@ -3,6 +3,7 @@ use super::file_picker::{
     SelectedSourceRegistry, select_and_inspect,
 };
 use crate::dto::DesktopErrorDto;
+use silent_disco_core::runtime::MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES;
 use std::fs::{self, File};
 use std::io::{self, Cursor, Write};
 use std::path::{Path, PathBuf};
@@ -54,12 +55,20 @@ struct SystemBoundary;
 
 impl AudioFileBoundary for SystemBoundary {
     fn open(&self, path: &Path) -> io::Result<OpenedAudioFile> {
+        let metadata = fs::metadata(path)?;
+        if !metadata.file_type().is_file() {
+            return Ok(OpenedAudioFile::new(
+                Box::new(io::empty()),
+                false,
+                metadata.len(),
+            ));
+        }
         let file = File::open(path)?;
-        let metadata = file.metadata()?;
+        let opened_metadata = file.metadata()?;
         Ok(OpenedAudioFile::new(
             Box::new(file),
-            metadata.file_type().is_file(),
-            metadata.len(),
+            opened_metadata.file_type().is_file(),
+            opened_metadata.len(),
         ))
     }
 
@@ -77,6 +86,18 @@ impl AudioFileBoundary for FailingBoundary {
 
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         Ok(path.to_path_buf())
+    }
+}
+
+struct CanonicalizeFailingBoundary(io::ErrorKind);
+
+impl AudioFileBoundary for CanonicalizeFailingBoundary {
+    fn open(&self, _path: &Path) -> io::Result<OpenedAudioFile> {
+        panic!("open must not run after canonicalization failure");
+    }
+
+    fn canonicalize(&self, _path: &Path) -> io::Result<PathBuf> {
+        Err(io::Error::from(self.0))
     }
 }
 
@@ -144,16 +165,33 @@ fn nonexistent_file_is_rejected() {
 #[test]
 fn directory_selection_is_rejected() {
     let root = TestDirectory::new();
+    let error = select_and_inspect(&FixedDialog(Ok(Some(root.0.clone()))), &SystemBoundary)
+        .expect_err("directory must fail");
+    assert_eq!(error.code, "desktop.audio_source.not_regular_file");
+}
+
+#[test]
+fn empty_file_is_rejected() {
     let error = select_and_inspect(
-        &FixedDialog(Ok(Some(root.0.clone()))),
+        &FixedDialog(Ok(Some(PathBuf::from("empty.wav")))),
         &SyntheticBoundary {
-            regular: false,
-            byte_length: 4096,
+            regular: true,
+            byte_length: 0,
             bytes: Vec::new(),
         },
     )
-    .expect_err("directory must fail");
-    assert_eq!(error.code, "desktop.audio_source.not_regular_file");
+    .expect_err("empty source must fail");
+    assert_eq!(error.code, "desktop.audio_source.empty");
+}
+
+#[test]
+fn canonicalization_failure_is_explicit() {
+    let error = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from("unavailable.wav")))),
+        &CanonicalizeFailingBoundary(io::ErrorKind::PermissionDenied),
+    )
+    .expect_err("canonicalization failure must remain visible");
+    assert_eq!(error.code, "desktop.audio_source.permission_denied");
 }
 
 #[test]
@@ -181,6 +219,77 @@ fn unicode_filename_is_preserved_in_bounded_descriptor() {
     assert_eq!(source.descriptor().display_name, "東京の夜.flac");
     assert_eq!(source.descriptor().byte_length, Some(11));
     assert!(source.descriptor().source_id.starts_with("desktop-source-"));
+}
+
+#[test]
+fn long_unicode_name_is_truncated_on_a_character_boundary() {
+    let name = format!("{}.flac", "界".repeat(100));
+    let source = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from(name)))),
+        &SyntheticBoundary {
+            regular: true,
+            byte_length: 8,
+            bytes: b"fLaCdata".to_vec(),
+        },
+    )
+    .expect("inspect bounded Unicode source")
+    .expect("source selected");
+    assert!(source.descriptor().display_name.len() <= MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES);
+    assert!(source.descriptor().display_name.ends_with('界'));
+}
+
+#[test]
+fn control_characters_are_sanitized_from_display_name() {
+    let source = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from("bad\u{0007}name.flac")))),
+        &SyntheticBoundary {
+            regular: true,
+            byte_length: 8,
+            bytes: b"fLaCdata".to_vec(),
+        },
+    )
+    .expect("inspect sanitized source")
+    .expect("source selected");
+    assert_eq!(source.descriptor().display_name, "bad name.flac");
+}
+
+#[test]
+fn canonical_source_identity_is_deterministic_and_input_sensitive() {
+    let first = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from("same.wav")))),
+        &SyntheticBoundary {
+            regular: true,
+            byte_length: 16,
+            bytes: b"RIFF\0\0\0\0WAVEdata".to_vec(),
+        },
+    )
+    .expect("inspect first")
+    .expect("first selected");
+    let same = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from("same.wav")))),
+        &SyntheticBoundary {
+            regular: true,
+            byte_length: 16,
+            bytes: b"RIFF\0\0\0\0WAVEdata".to_vec(),
+        },
+    )
+    .expect("inspect same")
+    .expect("same selected");
+    let different = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from("same.wav")))),
+        &SyntheticBoundary {
+            regular: true,
+            byte_length: 17,
+            bytes: b"RIFF\0\0\0\0WAVEdata".to_vec(),
+        },
+    )
+    .expect("inspect different")
+    .expect("different selected");
+    assert_eq!(first.descriptor().source_id, same.descriptor().source_id);
+    assert_ne!(
+        first.descriptor().source_id,
+        different.descriptor().source_id
+    );
 }
 
 #[test]
@@ -254,6 +363,17 @@ fn registry_is_single_slot_and_rolls_back_only_current_selection() {
         registry
             .resolve(&second_id)
             .expect("resolve second")
+            .is_none()
+    );
+    let cleared = registry
+        .clear()
+        .expect("clear registry")
+        .expect("first source retained before clear");
+    assert_eq!(cleared.descriptor().source_id, first_id);
+    assert!(
+        registry
+            .resolve(&first_id)
+            .expect("resolve after clear")
             .is_none()
     );
 }

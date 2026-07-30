@@ -203,7 +203,7 @@ impl DesktopPlatformEffectRunner {
         dispatcher: DesktopPlatformEffectDispatcher,
         handle: CoreActorHandle,
         paths: DesktopProfilePaths,
-    ) -> Result<Self, CoreError> {
+    ) -> Result<(Self, CoreSnapshot), CoreError> {
         let capability_handle = handle.clone();
         let runner = Self::start_with_components(
             inbox,
@@ -211,13 +211,16 @@ impl DesktopPlatformEffectRunner {
             Arc::new(handle),
             Arc::new(DesktopPlatformAdapters::new(paths)),
         )?;
-        if let Err(primary) = publish_desktop_capabilities(&capability_handle) {
-            return match runner.shutdown() {
-                Ok(()) => Err(primary),
-                Err(cleanup) => Err(append_startup_cleanup(primary, &cleanup)),
-            };
-        }
-        Ok(runner)
+        let snapshot = match publish_desktop_capabilities(&capability_handle) {
+            Ok(snapshot) => snapshot,
+            Err(primary) => {
+                return match runner.shutdown() {
+                    Ok(()) => Err(primary),
+                    Err(cleanup) => Err(append_startup_cleanup(primary, &cleanup)),
+                };
+            }
+        };
+        Ok((runner, snapshot))
     }
 
     pub(super) fn start_with_components(
