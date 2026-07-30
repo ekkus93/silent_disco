@@ -8,6 +8,7 @@ on:
       - master
     paths:
       - "scripts/apply-block14-desktop-host-setup.py"
+      - "scripts/fix-block14-app-state-split.py"
       - ".github/workflows/run-block14-desktop-host-setup.yml"
 
 permissions:
@@ -80,7 +81,9 @@ jobs:
             "ndk;28.2.13676358"
 
       - name: Apply Block 14 production slice
-        run: python scripts/apply-block14-desktop-host-setup.py
+        run: |
+          python scripts/apply-block14-desktop-host-setup.py
+          python scripts/fix-block14-app-state-split.py
 
       - name: Install frontend dependencies
         working-directory: desktop
@@ -148,9 +151,11 @@ jobs:
           set -euo pipefail
           git diff --check --cached
           test ! -e scripts/apply-block14-desktop-host-setup.py
+          test ! -e scripts/fix-block14-app-state-split.py
           test ! -e .github/workflows/run-block14-desktop-host-setup.yml
           test -f desktop/src/screens/HostSetupScreen.tsx
           test -f desktop/src/screens/HostSetupScreen.test.tsx
+          test -f desktop/src-tauri/src/host_commands.rs
           git status --short
 
       - name: Commit validated Block 14
