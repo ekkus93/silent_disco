@@ -74,46 +74,31 @@ jobs:
 
           path = Path("rust/silent-disco-core/src/runtime/actor_runtime/state/admission.rs")
           content = path.read_text(encoding="utf-8")
-          old = '''            PendingTransportOperation::DisconnectListener { listener_id } => {
-              let previous = self.snapshot.listeners.len();
-              self.snapshot
-                  .listeners
-                  .retain(|listener| listener.device_id != listener_id);
-              if previous == self.snapshot.listeners.len() {
+          disconnect = "            PendingTransportOperation::DisconnectListener { listener_id } => {"
+          if content.count(disconnect) != 1:
+              raise SystemExit("admission.rs: disconnect arm fixture mismatch")
+          if "PendingTransportOperation::StartHostPlayback" in content:
+              raise SystemExit("admission.rs: playback arm already present")
+          start = content.index(disconnect)
+          boundary = "\n        }\n\n        if self\n            .snapshot\n            .last_error"
+          end = content.find(boundary, start)
+          if end < 0:
+              raise SystemExit("admission.rs: post-match boundary not found")
+          playback_arms = '''
+              PendingTransportOperation::StartHostPlayback
+              | PendingTransportOperation::PauseHostPlayback
+              | PendingTransportOperation::ResumeHostPlayback
+              | PendingTransportOperation::StopHostPlayback => {
                   return Err(invalid_state(
-                      "listener disappeared before removal delivery completed",
+                      "host playback completion was routed to admission handling",
                       Some(operation_id),
                   ));
               }
-            }
-          }
           '''
-          new = '''            PendingTransportOperation::DisconnectListener { listener_id } => {
-              let previous = self.snapshot.listeners.len();
-              self.snapshot
-                  .listeners
-                  .retain(|listener| listener.device_id != listener_id);
-              if previous == self.snapshot.listeners.len() {
-                  return Err(invalid_state(
-                      "listener disappeared before removal delivery completed",
-                      Some(operation_id),
-                  ));
-              }
-            }
-            PendingTransportOperation::StartHostPlayback
-            | PendingTransportOperation::PauseHostPlayback
-            | PendingTransportOperation::ResumeHostPlayback
-            | PendingTransportOperation::StopHostPlayback => {
-              return Err(invalid_state(
-                  "host playback completion was routed to admission handling",
-                  Some(operation_id),
-              ));
-            }
-          }
-          '''
-          if content.count(old) != 1:
-              raise SystemExit("admission.rs: playback exhaustiveness fixture mismatch")
-          path.write_text(content.replace(old, new), encoding="utf-8")
+          path.write_text(
+              content[:end] + playback_arms + content[end:],
+              encoding="utf-8",
+          )
           PY
           cd rust
           cargo +1.97.1 fmt --all
