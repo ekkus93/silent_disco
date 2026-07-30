@@ -6,6 +6,7 @@
 mod admission;
 mod audio;
 mod commands;
+mod host_audio_control;
 mod platform;
 mod storage;
 mod support;
@@ -215,7 +216,7 @@ impl ActorState {
                 TransportEvent::StateChanged(state) => self.apply_transport_state(state),
                 event => self.apply_transport(event),
             },
-            CoreActorInput::Audio(event) => self.apply_audio_with_host_lifecycle(event),
+            CoreActorInput::Audio(event) => self.apply_audio_control(event),
             CoreActorInput::Storage(event) => {
                 let tuning_completion = matches!(
                     self.pending_storage(event.operation_id()),
