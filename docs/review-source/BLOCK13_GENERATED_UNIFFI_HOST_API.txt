@@ -1,0 +1,972 @@
+Generated from: silent_disco_ffi.kt
+Purpose: exact generated host-controller API for Desktop Block 13
+
+open class FfiCoreHandle: Disposable, AutoCloseable, FfiCoreHandleInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_silent_disco_ffi_fn_free_fficorehandle(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_silent_disco_ffi_fn_clone_fficorehandle(handle, status)
+        }
+    }
+
+    
+    @Throws(FfiBridgeException::class)override fun `approveJoin`(`expectedRevision`: kotlin.ULong, `requestId`: kotlin.String): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_approve_join(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),FfiConverterString.lower(`requestId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `createHostSession`(`expectedRevision`: kotlin.ULong): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_create_host_session(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `currentSnapshot`(): FfiCoreSnapshot {
+            return FfiConverterTypeFfiCoreSnapshot.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_current_snapshot(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `endHostSession`(`expectedRevision`: kotlin.ULong): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_end_host_session(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `platformOperationFailed`(`operationId`: kotlin.String, `message`: kotlin.String, `retryable`: kotlin.Boolean)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_platform_operation_failed(
+        it,
+        FfiConverterString.lower(`operationId`),FfiConverterString.lower(`message`),FfiConverterBoolean.lower(`retryable`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `platformOperationSucceeded`(`operationId`: kotlin.String, `completion`: FfiPlatformCompletion)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_platform_operation_succeeded(
+        it,
+        FfiConverterString.lower(`operationId`),FfiConverterTypeFfiPlatformCompletion.lower(`completion`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `playbackStateChanged`(`state`: FfiPlaybackState)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_playback_state_changed(
+        it,
+        FfiConverterTypeFfiPlaybackState.lower(`state`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `rejectJoin`(`expectedRevision`: kotlin.ULong, `requestId`: kotlin.String): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_reject_join(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),FfiConverterString.lower(`requestId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `removeListener`(`expectedRevision`: kotlin.ULong, `listenerId`: kotlin.String): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_remove_listener(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),FfiConverterString.lower(`listenerId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `retryRecoverableFailure`(`expectedRevision`: kotlin.ULong): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_retry_recoverable_failure(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `selectRole`(`expectedRevision`: kotlin.ULong, `role`: FfiAppRole): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_select_role(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),FfiConverterTypeFfiAppRole.lower(`role`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `settingsSaved`(`operationId`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_settings_saved(
+        it,
+        FfiConverterString.lower(`operationId`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `shutdown`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_shutdown(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `storageOperationFailed`(`operationId`: kotlin.String, `message`: kotlin.String, `retryable`: kotlin.Boolean)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_storage_operation_failed(
+        it,
+        FfiConverterString.lower(`operationId`),FfiConverterString.lower(`message`),FfiConverterBoolean.lower(`retryable`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `submitJoinRequest`(`request`: FfiJoinRequestInput)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_submit_join_request(
+        it,
+        FfiConverterTypeFfiJoinRequestInput.lower(`request`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `submitListenerConnected`(`listener`: FfiListenerSummary)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_submit_listener_connected(
+        it,
+        FfiConverterTypeFfiListenerSummary.lower(`listener`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `submitListenerDisconnected`(`deviceId`: kotlin.String, `error`: FfiCoreError?)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_submit_listener_disconnected(
+        it,
+        FfiConverterString.lower(`deviceId`),FfiConverterOptionalTypeFfiCoreError.lower(`error`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `transportDeliveryCompleted`(`operationId`: kotlin.String, `report`: FfiDeliveryReport)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_transport_delivery_completed(
+        it,
+        FfiConverterString.lower(`operationId`),FfiConverterTypeFfiDeliveryReport.lower(`report`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `transportFailed`(`message`: kotlin.String, `retryable`: kotlin.Boolean)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_transport_failed(
+        it,
+        FfiConverterString.lower(`message`),FfiConverterBoolean.lower(`retryable`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `transportStateChanged`(`state`: FfiTransportState)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_transport_state_changed(
+        it,
+        FfiConverterTypeFfiTransportState.lower(`state`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `trustedDeviceUpdated`(`operationId`: kotlin.String, `deviceId`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_trusted_device_updated(
+        it,
+        FfiConverterString.lower(`operationId`),FfiConverterString.lower(`deviceId`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `updateHostDraft`(`expectedRevision`: kotlin.ULong, `draft`: FfiHostDraft): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_update_host_draft(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),FfiConverterTypeFfiHostDraft.lower(`draft`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBridgeException::class)override fun `updateTuning`(`expectedRevision`: kotlin.ULong, `patch`: FfiTuningPatch): FfiCommandReceipt {
+            return FfiConverterTypeFfiCommandReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_method_fficorehandle_update_tuning(
+        it,
+        FfiConverterULong.lower(`expectedRevision`),FfiConverterTypeFfiTuningPatch.lower(`patch`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    companion object {
+        
+    @Throws(FfiBridgeException::class) fun `open`(`localDeviceId`: kotlin.String, `observer`: FfiCoreObserver): FfiCoreHandle {
+            return FfiConverterTypeFfiCoreHandle.lift(
+    uniffiRustCallWithError(FfiBridgeException) { _status ->
+    UniffiLib.uniffi_silent_disco_ffi_fn_constructor_fficorehandle_open(
+    
+        FfiConverterString.lower(`localDeviceId`),FfiConverterTypeFfiCoreObserver.lower(`observer`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+public interface FfiCoreObserver {
+    
+    /**
+     * Accepts one serialized notification from the authoritative Rust actor.
+     *
+     * # Errors
+     *
+     * Returns [`FfiBridgeError`] when the foreign observer cannot accept the notification.
+     */
+    fun `onNotification`(`notification`: FfiCoreNotification)
+    
+    companion object
+}
+
+data class FfiAudioSource (
+    val `sourceId`: kotlin.String
+    , 
+    val `displayName`: kotlin.String
+    , 
+    val `sizeBytes`: kotlin.ULong?
+    , 
+    val `durationMs`: kotlin.ULong?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+data class FfiCoreSnapshot (
+    val `revision`: kotlin.ULong
+    , 
+    val `selectedRole`: FfiAppRole?
+    , 
+    val `hostDraft`: FfiHostDraft
+    , 
+    val `hostLifecycle`: FfiHostLifecycle
+    , 
+    val `listenerLifecycle`: kotlin.String
+    , 
+    val `transportState`: FfiTransportState
+    , 
+    val `discoveryActive`: kotlin.Boolean
+    , 
+    val `pendingJoinRequests`: List<FfiJoinRequest>
+    , 
+    val `listeners`: List<FfiListenerSummary>
+    , 
+    val `playbackState`: FfiPlaybackState
+    , 
+    val `playbackPositionMs`: kotlin.ULong
+    , 
+    val `lastDelivery`: FfiDeliveryReport?
+    , 
+    val `recoverableAction`: kotlin.String?
+    , 
+    val `lastError`: FfiCoreError?
+    , 
+    val `shuttingDown`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+data class FfiDeliveryReport (
+    val `intendedPeers`: kotlin.UInt
+    , 
+    val `successfulPeers`: kotlin.UInt
+    , 
+    val `failedPeers`: kotlin.UInt
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+data class FfiHostDraft (
+    val `sessionName`: kotlin.String
+    , 
+    val `approvalMode`: FfiApprovalMode
+    , 
+    val `inviteCode`: kotlin.String?
+    , 
+    val `audioSource`: FfiAudioSource?
+    , 
+    val `rememberApprovedDevices`: kotlin.Boolean
+    , 
+    val `tuning`: FfiTuningSettings
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+data class FfiJoinRequestInput (
+    val `requestId`: kotlin.String
+    , 
+    val `deviceId`: kotlin.String
+    , 
+    val `displayName`: kotlin.String
+    , 
+    val `trustState`: FfiTrustState
+    , 
+    val `inviteCode`: kotlin.String?
+    , 
+    val `receivedAtMs`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+data class FfiJoinRequest (
+    val `requestId`: kotlin.String
+    , 
+    val `deviceId`: kotlin.String
+    , 
+    val `displayName`: kotlin.String
+    , 
+    val `trustState`: FfiTrustState
+    , 
+    val `inviteCodeValid`: kotlin.Boolean
+    , 
+    val `receivedAtMs`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+data class FfiTuningSettings (
+    val `syncSampleWindow`: kotlin.UInt
+    , 
+    val `syncCadenceMs`: kotlin.ULong
+    , 
+    val `startupBufferMs`: kotlin.ULong
+    , 
+    val `latePacketThresholdMs`: kotlin.ULong
+    , 
+    val `hardResyncThresholdMs`: kotlin.ULong
+    , 
+    val `syncDriftThresholdMs`: kotlin.Double
+    , 
+    val `scanWindowMs`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+enum class FfiAppRole {
+    
+    HOST,
+    LISTENER;
+
+    
+
+
+    companion object
+}
+
+enum class FfiApprovalMode {
+    
+    MANUAL,
+    TRUSTED_DEVICES,
+    INVITE_CODE;
+
+    
+
+
+    companion object
+}
+
+enum class FfiHostLifecycle {
+    
+    IDLE,
+    CREATING_SESSION,
+    ADVERTISING,
+    WAITING_FOR_LISTENERS,
+    READY,
+    STREAMING,
+    PAUSED,
+    ENDING_SESSION,
+    ERROR;
+
+    
+
+
+    companion object
+}
+
+enum class FfiPlaybackState {
+    
+    STOPPED,
+    BUFFERING,
+    READY,
+    PLAYING,
+    PAUSED,
+    UNDERRUN,
+    ERROR;
+
+    
+
+
+    companion object
+}
+
+enum class FfiTransportState {
+    
+    IDLE,
+    DISCOVERING,
+    ADVERTISING,
+    CONNECTING,
+    CONNECTED,
+    RETRYING,
+    DISCONNECTED,
+    FAILED;
+
+    
+
+
+    companion object
+}
+
+enum class FfiTrustState {
+    
+    UNKNOWN,
+    SESSION_ONLY,
+    TRUSTED,
+    REVOKED;
+
+    
+
+
+    companion object
+}
+
+sealed class FfiCoreNotification {
+    
+    data class Snapshot(
+        val `snapshot`: com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot) : FfiCoreNotification()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class PlatformEffect(
+        val `effect`: com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect) : FfiCoreNotification()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class TransportEffect(
+        val `effect`: com.ekkus.silentdisco.core.uniffi.FfiTransportEffect) : FfiCoreNotification()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StorageEffect(
+        val `effect`: com.ekkus.silentdisco.core.uniffi.FfiStorageEffect) : FfiCoreNotification()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class Error(
+        val `error`: com.ekkus.silentdisco.core.uniffi.FfiCoreError) : FfiCoreNotification()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class Diagnostic(
+        val `diagnostic`: com.ekkus.silentdisco.core.uniffi.FfiCoreDiagnostic) : FfiCoreNotification()
+        
+    {
+        
+
+        companion object
+    }
+    
+
+    
+
+    
+    
+
+
+    companion object
+}
+
+sealed class FfiPlatformEffect {
+    
+    data class RequestCapabilities(
+        val `operationId`: kotlin.String, 
+        val `capabilities`: List<kotlin.String>) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StartAdvertising(
+        val `operationId`: kotlin.String, 
+        val `sessionId`: kotlin.String, 
+        val `hostDeviceId`: kotlin.String, 
+        val `sessionName`: kotlin.String, 
+        val `approvalMode`: com.ekkus.silentdisco.core.uniffi.FfiApprovalMode) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StopAdvertising(
+        val `operationId`: kotlin.String) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StartDiscovery(
+        val `operationId`: kotlin.String, 
+        val `scanWindowMs`: kotlin.ULong) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StopDiscovery(
+        val `operationId`: kotlin.String) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class EstablishNetwork(
+        val `operationId`: kotlin.String, 
+        val `sessionId`: kotlin.String, 
+        val `address`: kotlin.String, 
+        val `controlPort`: kotlin.UShort, 
+        val `syncPort`: kotlin.UShort, 
+        val `audioPort`: kotlin.UShort) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class ReleaseNetwork(
+        val `operationId`: kotlin.String) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class PrepareAudioSource(
+        val `operationId`: kotlin.String, 
+        val `source`: com.ekkus.silentdisco.core.uniffi.FfiAudioSource) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StartAudioOutput(
+        val `operationId`: kotlin.String, 
+        val `sampleRateHz`: kotlin.UInt, 
+        val `channels`: kotlin.UShort) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class StopAudioOutput(
+        val `operationId`: kotlin.String) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class ShareDiagnostics(
+        val `operationId`: kotlin.String, 
+        val `exportId`: kotlin.String) : FfiPlatformEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+
+    
+
+    
+    
+
+
+    companion object
+}
+
+sealed class FfiStorageEffect {
+    
+    data class PersistSettings(
+        val `operationId`: kotlin.String, 
+        val `settings`: com.ekkus.silentdisco.core.uniffi.FfiTuningSettings) : FfiStorageEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class PersistTrustedDevice(
+        val `operationId`: kotlin.String, 
+        val `deviceId`: kotlin.String, 
+        val `displayName`: kotlin.String) : FfiStorageEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+
+    
+
+    
+    
+
+
+    companion object
+}
+
+sealed class FfiTransportEffect {
+    
+    data class DeliverJoinApproval(
+        val `operationId`: kotlin.String, 
+        val `requestId`: kotlin.String, 
+        val `sessionId`: kotlin.String, 
+        val `listenerId`: kotlin.String, 
+        val `trustedForFuture`: kotlin.Boolean) : FfiTransportEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class DeliverJoinRejection(
+        val `operationId`: kotlin.String, 
+        val `requestId`: kotlin.String, 
+        val `sessionId`: kotlin.String, 
+        val `listenerId`: kotlin.String, 
+        val `reasonCode`: kotlin.String) : FfiTransportEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class DisconnectListener(
+        val `operationId`: kotlin.String, 
+        val `sessionId`: kotlin.String, 
+        val `listenerId`: kotlin.String, 
+        val `reasonCode`: kotlin.String) : FfiTransportEffect()
+        
+    {
+        
+
+        companion object
+    }
+    
+
+    
+
+    
+    
+
+
+    companion object
+}
+
