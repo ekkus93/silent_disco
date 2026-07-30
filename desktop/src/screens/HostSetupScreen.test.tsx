@@ -9,12 +9,14 @@ import { createAppStore } from "../app/store";
 import type { CoreSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostSetupScreen } from "./HostSetupScreen";
 
-const { selectAudioSource, selectHostRole, updateHostDraft, createHostSession } = vi.hoisted(() => ({
-  selectAudioSource: vi.fn(),
-  selectHostRole: vi.fn(),
-  updateHostDraft: vi.fn(),
-  createHostSession: vi.fn(),
-}));
+const { selectAudioSource, selectHostRole, updateHostDraft, createHostSession } = vi.hoisted(
+  () => ({
+    selectAudioSource: vi.fn(),
+    selectHostRole: vi.fn(),
+    updateHostDraft: vi.fn(),
+    createHostSession: vi.fn(),
+  }),
+);
 
 vi.mock("../core/audioSourceClient", () => ({ selectAudioSource }));
 
@@ -135,7 +137,11 @@ describe("HostSetupScreen", () => {
       canCreateHostSession: false,
       hostDraft: { ...snapshot().hostDraft, audioSource: null },
       hostDraftValidation: [
-        { field: "audioSource", code: "audio_source_required", message: "audio source is required" },
+        {
+          field: "audioSource",
+          code: "audio_source_required",
+          message: "audio source is required",
+        },
       ],
     });
     const store = renderScreen(initial);
