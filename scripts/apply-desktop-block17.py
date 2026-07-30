@@ -328,6 +328,11 @@ control.write_text(text.replace(old, new, 1))
 
 tests = Path("desktop/src-tauri/src/platform/source_staging_tests.rs")
 text = tests.read_text()
+old = "        inspected_source(&source_path, &bytes),"
+new = "        &inspected_source(&source_path, &bytes),"
+if text.count(old) != 4:
+    raise SystemExit("source_staging_tests.rs: staging borrow anchors mismatch")
+text = text.replace(old, new)
 old = "            self.control.cancel();"
 new = "            let _ = self.control.cancel();"
 if text.count(old) != 1:
