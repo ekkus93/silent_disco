@@ -23,6 +23,7 @@ pub(crate) const fn desktop_capabilities() -> CapabilitySnapshot {
 }
 
 /// Publishes capabilities through the actor and returns the authoritative acknowledged snapshot.
+/// Profile readiness is withheld until this post-publication snapshot is available.
 pub(crate) fn publish_desktop_capabilities(
     handle: &CoreActorHandle,
 ) -> Result<CoreSnapshot, CoreError> {
