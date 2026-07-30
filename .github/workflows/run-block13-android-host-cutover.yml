@@ -1,0 +1,131 @@
+name: Run Desktop Block 13 Android Host Cutover
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/run-block13-android-host-cutover.yml"
+      - "scripts/apply-block13-android-host-cutover.py"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: block13-android-host-cutover
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record validation start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Android host cutover validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install required Android SDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Install pinned Rust toolchain for Android
+        run: rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Apply Android host cutover
+        run: python3 scripts/apply-block13-android-host-cutover.py
+
+      - name: Check patch
+        run: git diff --check
+
+      - name: Build debug app with generated Rust bindings
+        id: android-build
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --console=plain 2>&1 | tee block13-android-build.log
+
+      - name: Run Android unit tests
+        id: android-tests
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace --console=plain 2>&1 | tee block13-android-tests.log
+
+      - name: Run Android lint
+        id: android-lint
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace --console=plain 2>&1 | tee block13-android-lint.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block13-android-host-cutover-diagnostics
+          path: |
+            block13-android-build.log
+            block13-android-tests.log
+            block13-android-lint.log
+            app/build/test-results/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Commit validated Android cutover
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A app/src/main/java app/src/test/java
+          git commit -m "Route Android host authority through Rust"
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git rebase origin/master
+            if git push origin HEAD:master; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            printf 'Push attempt %s raced another master update; retrying.\n' "${attempt}" >&2
+          done
+          exit 1
+
+      - name: Record validation success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh issue comment 45 --body "Android host cutover validation passed and committed \`${COMMIT_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Record validation failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Android host cutover validation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
