@@ -30,7 +30,7 @@ jobs:
       - name: Generate Kotlin bindings
         run: bash scripts/generate-uniffi-kotlin.sh "${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
 
-      - name: Extract public API declaration report
+      - name: Extract focused host API report
         shell: bash
         run: |
           set -euo pipefail
@@ -38,65 +38,58 @@ jobs:
           generated_file="$(find "${generated_root}" -type f -name '*.kt' -print -quit)"
           test -n "${generated_file}"
           mkdir -p docs/review-source
-          python3 - "${generated_file}" docs/review-source/BLOCK13_GENERATED_UNIFFI_API <<'PY'
-          import re
+          python3 - "${generated_file}" docs/review-source/BLOCK13_GENERATED_UNIFFI_HOST_API.txt <<'PY'
           import sys
           from pathlib import Path
 
           source_path = Path(sys.argv[1])
-          output_base = Path(sys.argv[2])
+          output_path = Path(sys.argv[2])
           lines = source_path.read_text(encoding="utf-8").splitlines()
-          top_level = re.compile(
-              r"^(data class|enum class|sealed class|interface|class) "
-              r"(Ffi[A-Za-z0-9_]+)"
-          )
-          method_start = re.compile(r"^\s{4}(override )?fun [A-Za-z][A-Za-z0-9_]*\(")
-          variant_start = re.compile(r"^\s{4}(data class|data object|object) [A-Z][A-Za-z0-9_]*")
-
+          targets = [
+              "class FfiCoreHandle",
+              "interface FfiCoreObserver",
+              "data class FfiJoinRequestInput",
+              "data class FfiJoinRequest ",
+          ]
           report = [
               f"Generated from: {source_path.name}",
-              "Purpose: exact temporary UniFFI Kotlin API inspection for Desktop Block 13",
+              "Purpose: exact generated host-controller API for Desktop Block 13",
               "",
           ]
-          index = 0
-          while index < len(lines):
-              line = lines[index]
-              stripped = line.strip()
-              if top_level.match(stripped) or method_start.match(line) or variant_start.match(line):
-                  block = [line]
-                  depth = line.count("(") - line.count(")")
-                  continuation = line.rstrip().endswith(("(", ",")) or depth > 0
-                  index += 1
-                  while index < len(lines) and continuation:
-                      next_line = lines[index]
-                      block.append(next_line)
-                      depth += next_line.count("(") - next_line.count(")")
-                      continuation = depth > 0 or next_line.rstrip().endswith(",")
-                      index += 1
-                  report.extend(block)
-                  report.append("")
-                  continue
-              index += 1
 
-          if not any("FfiCoreHandle" in line for line in report):
-              raise SystemExit("generated FfiCoreHandle declaration was not found")
-          chunks = [report[index:index + 650] for index in range(0, len(report), 650)]
-          if len(chunks) > 2:
-              raise SystemExit(f"generated API report requires {len(chunks)} parts")
-          for part_number, chunk in enumerate(chunks, start=1):
-              output = output_base.with_name(f"{output_base.name}_PART{part_number}.txt")
-              output.write_text("\n".join(chunk) + "\n", encoding="utf-8")
+          for target in targets:
+              matches = [index for index, line in enumerate(lines) if target in line]
+              if len(matches) != 1:
+                  raise SystemExit(f"target {target!r} matched {len(matches)} lines")
+              start = matches[0]
+              while start > 0 and lines[start - 1].lstrip().startswith(("@", "//")):
+                  start -= 1
+              depth = 0
+              opened = False
+              block = []
+              for line in lines[start:]:
+                  block.append(line)
+                  depth += line.count("{") - line.count("}")
+                  opened = opened or "{" in line
+                  if opened and depth == 0:
+                      break
+              report.extend(block)
+              report.append("")
+
+          if len(report) > 700:
+              raise SystemExit(f"focused generated API report has {len(report)} lines")
+          output_path.write_text("\n".join(report) + "\n", encoding="utf-8")
           PY
           git diff --check
 
-      - name: Commit declaration report
+      - name: Commit focused declaration report
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/review-source/BLOCK13_GENERATED_UNIFFI_API_PART*.txt
-          git commit -m "Record generated Block 13 UniFFI API"
+          git add docs/review-source/BLOCK13_GENERATED_UNIFFI_HOST_API.txt
+          git commit -m "Record generated Block 13 host API"
           for attempt in 1 2 3; do
             git fetch origin master
             git rebase origin/master
