@@ -37,5 +37,13 @@ staging.write_text(text.replace(old, new, 1))
 
 tests = Path("desktop/src-tauri/src/app_state_tests.rs")
 text = tests.read_text()
-if text.startswith("\n"):
-    tests.write_text(text[1:])
+marker = "use super::DesktopAppState;"
+start = text.find(marker)
+if start < 0:
+    raise SystemExit("app_state_tests.rs: expected first use statement was not generated")
+if text[:start].strip("\ufeff\r\n\t "):
+    raise SystemExit("app_state_tests.rs: unexpected non-whitespace prefix")
+normalized = text[start:]
+if not normalized.startswith(marker):
+    raise SystemExit("app_state_tests.rs: unexpected first statement after split")
+tests.write_text(normalized)
