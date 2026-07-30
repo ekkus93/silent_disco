@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/run-block13-android-host-cutover.yml"
       - "scripts/apply-block13-android-host-cutover.py"
+      - "scripts/fix-block13-android-host-cutover.py"
 
 permissions:
   contents: write
@@ -52,7 +53,9 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
 
       - name: Apply Android host cutover
-        run: python3 scripts/apply-block13-android-host-cutover.py
+        run: |
+          python3 scripts/apply-block13-android-host-cutover.py
+          python3 scripts/fix-block13-android-host-cutover.py
 
       - name: Check patch
         run: git diff --check
