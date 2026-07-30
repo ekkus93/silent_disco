@@ -48,8 +48,23 @@ jobs:
           targets = [
               "class FfiCoreHandle",
               "interface FfiCoreObserver",
+              "data class FfiAudioSource ",
+              "data class FfiCoreSnapshot ",
+              "data class FfiDeliveryReport ",
+              "data class FfiHostDraft ",
               "data class FfiJoinRequestInput",
               "data class FfiJoinRequest ",
+              "data class FfiTuningSettings ",
+              "enum class FfiAppRole",
+              "enum class FfiApprovalMode",
+              "enum class FfiHostLifecycle",
+              "enum class FfiPlaybackState",
+              "enum class FfiTransportState",
+              "enum class FfiTrustState",
+              "sealed class FfiCoreNotification",
+              "sealed class FfiPlatformEffect",
+              "sealed class FfiStorageEffect",
+              "sealed class FfiTransportEffect",
           ]
           report = [
               f"Generated from: {source_path.name}",
@@ -76,7 +91,7 @@ jobs:
               report.extend(block)
               report.append("")
 
-          if len(report) > 700:
+          if len(report) > 2_500:
               raise SystemExit(f"focused generated API report has {len(report)} lines")
           output_path.write_text("\n".join(report) + "\n", encoding="utf-8")
           PY
