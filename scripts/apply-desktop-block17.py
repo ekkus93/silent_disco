@@ -37,6 +37,5 @@ staging.write_text(text.replace(old, new, 1))
 
 tests = Path("desktop/src-tauri/src/app_state_tests.rs")
 text = tests.read_text()
-if not text.startswith("\n"):
-    raise SystemExit("app_state_tests.rs: expected one leading split newline")
-tests.write_text(text[1:])
+if text.startswith("\n"):
+    tests.write_text(text[1:])
