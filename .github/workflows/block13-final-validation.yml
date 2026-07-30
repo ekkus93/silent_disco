@@ -1,0 +1,121 @@
+name: Validate Desktop Block 13 Final State
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    if: >-
+      github.event.issue.number == 45 &&
+      contains(github.event.comment.body, '/run-block13-final')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Record validation start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Desktop Block 13 final validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+
+      - name: Check source size and whitespace
+        run: |
+          git diff --check
+          bash scripts/check-source-file-line-counts.sh
+
+      - name: Check Rust formatting
+        run: |
+          cd rust
+          cargo +1.97.1 fmt --all -- --check
+
+      - name: Run strict Rust Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee ../block13-final-clippy.log
+
+      - name: Run Rust and FFI tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo +1.97.1 test --workspace --all-features 2>&1 | tee ../block13-final-rust-tests.log
+
+      - name: Assemble Android debug app
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --console=plain 2>&1 | tee block13-final-android-build.log
+
+      - name: Run Android unit tests
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace --console=plain 2>&1 | tee block13-final-android-tests.log
+
+      - name: Run Android lint
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace --console=plain 2>&1 | tee block13-final-android-lint.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block13-final-validation-diagnostics
+          path: |
+            block13-final-clippy.log
+            block13-final-rust-tests.log
+            block13-final-android-build.log
+            block13-final-android-tests.log
+            block13-final-android-lint.log
+            app/build/test-results/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Record validation success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Desktop Block 13 final validation passed at \`${GITHUB_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Record validation failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Desktop Block 13 final validation failed at \`${GITHUB_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
