@@ -61,8 +61,14 @@ class UniFfiHostCoreController(localDeviceId: String) : HostCoreController {
         override fun onNotification(notification: FfiCoreNotification) {
             when (notification) {
                 is FfiCoreNotification.Snapshot -> _snapshots.value = notification.snapshot
-                else -> check(notificationChannel.trySend(notification).isSuccess) {
-                    "Rust host notification channel is closed"
+                else -> {
+                    val delivered = notificationChannel.trySend(notification).isSuccess
+                    if (!delivered && !closed.get()) {
+                        System.err.println(
+                            "SilentDisco: Rust host notification could not be queued: " +
+                                notification::class.java.simpleName,
+                        )
+                    }
                 }
             }
         }
