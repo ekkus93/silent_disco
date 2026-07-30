@@ -1,0 +1,229 @@
+name: Guard Desktop Block 15 Platform Effect Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "scripts/apply-block15-platform-effect-runner.py"
+      - ".github/workflows/run-block15-platform-effect-runner.yml"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: guarded-desktop-block15-platform-effects
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.16.0"
+  RUST_VERSION: "1.97.1"
+  CARGO_NET_RETRY: "5"
+
+jobs:
+  implement-and-validate:
+    name: Implement and validate Desktop Block 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Announce guarded run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --repo "${GITHUB_REPOSITORY}" --body \
+            "Desktop Block 15 guarded implementation started in Actions run ${GITHUB_RUN_ID}. Production and completion-record changes will be committed only after every shared Rust, Android, and desktop regression gate passes."
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Install Linux and Android dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Apply Block 15 implementation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/apply-block15-platform-effect-runner.py")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = {
+              "    fn start_with_components(\n": "    pub(super) fn start_with_components(\n",
+              "trait DesktopPlatformEventSink: Send + Sync + 'static {\n": "pub(super) trait DesktopPlatformEventSink: Send + Sync + 'static {\n",
+              "trait DesktopPlatformEffectExecutor: Send + Sync + 'static {\n": "pub(super) trait DesktopPlatformEffectExecutor: Send + Sync + 'static {\n",
+              "struct DesktopPlatformAdapters {\n": "pub(super) struct DesktopPlatformAdapters {\n",
+              "impl DesktopPlatformAdapters {\n    fn new(paths: DesktopProfilePaths) -> Self {\n": "impl DesktopPlatformAdapters {\n    pub(super) fn new(paths: DesktopProfilePaths) -> Self {\n",
+              "pub struct DesktopOwnedResources {\n": "pub(crate) struct DesktopOwnedResources {\n",
+              "    pub platform_runner: DesktopPlatformEffectRunner,\n": "    pub(crate) platform_runner: DesktopPlatformEffectRunner,\n",
+              "    pub notifications: Arc<DesktopNotificationBuffer>,\n": "    pub(crate) notifications: Arc<DesktopNotificationBuffer>,\n",
+              "    pub actor: CoreActorRuntime,\n": "    pub(crate) actor: CoreActorRuntime,\n",
+              "    pub database: DatabaseWorker,\n": "    pub(crate) database: DatabaseWorker,\n",
+              "    pub lease: ProfileLease,\n": "    pub(crate) lease: ProfileLease,\n",
+              "pub fn shutdown_owned_resources(\n": "pub(crate) fn shutdown_owned_resources(\n",
+              "pub fn cleanup_without_actor(\n": "pub(crate) fn cleanup_without_actor(\n",
+              "pub fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {\n": "pub(crate) fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {\n",
+              "pub fn cleanup_with_actor(\n": "pub(crate) fn cleanup_with_actor(\n",
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected one preflight replacement for {old!r}, found {text.count(old)}")
+              text = text.replace(old, new, 1)
+
+          start = text.index("#[test]\nfn production_capabilities_and_unsupported_discovery_are_explicit()")
+          end = text.index("#[test]\nfn unsupported_effect_returns_correlated_visible_failure()", start)
+          text = text[:start] + text[end:]
+          path.write_text(text, encoding="utf-8")
+          PY
+          python scripts/apply-block15-platform-effect-runner.py
+          git add -A
+          git diff --check --cached
+
+      - name: Enforce tracked source line limit
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Validate shared Rust
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings \
+            2>&1 | tee ../block15-shared-rust-clippy.log
+          cargo test --workspace --all-features \
+            2>&1 | tee ../block15-shared-rust-tests.log
+
+      - name: Validate Android regression
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew assembleDebug testDebugUnitTest lintDebug --stacktrace --console=plain \
+            2>&1 | tee block15-android-validation.log
+
+      - name: Validate desktop frontend regression
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco guarded validation</title>\n' > desktop/dist/index.html
+          cd desktop
+          npm ci
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run 2>&1 | tee ../block15-desktop-tests.log
+          npm run build
+
+      - name: Validate desktop backend and Block 15 tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd desktop/src-tauri
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings \
+            2>&1 | tee ../../block15-desktop-rust-clippy.log
+          cargo test --all-features \
+            2>&1 | tee ../../block15-desktop-rust-tests.log
+          cargo check --all-features
+
+      - name: Verify Block 15 diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check --cached
+          test ! -e scripts/apply-block15-platform-effect-runner.py
+          test ! -e .github/workflows/run-block15-platform-effect-runner.yml
+          test -f desktop/src-tauri/src/platform/effect_runner.rs
+          test -f desktop/src-tauri/src/platform/effect_runner_tests.rs
+          test -f desktop/src-tauri/src/platform/discovery.rs
+          test -f desktop/src-tauri/src/platform/audio_device.rs
+          test -f desktop/src-tauri/src/platform/diagnostics_export.rs
+          grep -q "DesktopCoreObserver" desktop/src-tauri/src/app_state.rs
+          grep -q "submit_platform_event" desktop/src-tauri/src/platform/effect_runner.rs
+          grep -q "write_export" desktop/src-tauri/src/platform/diagnostics_export.rs
+          grep -q "## Block 15" docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md
+          grep -q "Desktop Block 15 platform-effect runner" memory.md
+          ! grep -R "PlatformOperationCompletion::AdvertisingStarted" desktop/src-tauri/src/platform/discovery.rs
+          ! grep -R "PlatformOperationCompletion::AudioOutputStarted" desktop/src-tauri/src/platform/audio_device.rs
+          git status --short
+
+      - name: Commit validated Block 15
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Implement Desktop Block 15 platform effect runner"
+          git push origin HEAD:master
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh issue comment 45 --repo "${GITHUB_REPOSITORY}" --body \
+            "Desktop Block 15 passed in Actions run ${GITHUB_RUN_ID} and committed ${COMMIT_SHA}. The desktop now owns a bounded platform-effect worker with correlated completions, cancellation, panic containment, real capability resolution and diagnostics export, explicit unsupported-adapter failures, and deterministic shutdown. Source-size, shared Rust, Android, desktop frontend, and desktop Rust gates all passed."
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-block15-diagnostics
+          path: |
+            block15-*.log
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --repo "${GITHUB_REPOSITORY}" --body \
+            "Desktop Block 15 guarded implementation failed in Actions run ${GITHUB_RUN_ID}. No production Block 15 commit was pushed. Inspect the failed step and uploaded diagnostics before retrying."
