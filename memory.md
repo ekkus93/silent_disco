@@ -339,3 +339,15 @@ Execution constraints for this session:
 - Startup removes only strict, provably owned incomplete regular temporary files. Unrelated files, symbolic links, and non-file entries are never silently deleted.
 - Tests cover success, cancellation, source failure during copy, destination write failure, hash mismatch, collision, verified reuse, incomplete-temp cleanup, cleanup refusal, original preservation, progress throttling, and cancellation control.
 - Validation passed source-size enforcement; shared Rust format/strict Clippy/tests; Android builds, ABI packaging, unit tests, lint, and instrumentation; generated desktop bindings, format/lint/typecheck/tests/build; desktop Rust strict gates; exact lockfiles; and Linux Tauri bundle creation. Native file-dialog interaction on a physical desktop session remains unclaimed.
+
+## 2026-07-30 — Desktop Block 18 decoder decision complete
+
+- Evidence commit: `0cecbc38cfca68620131ed4c072968896fac2e65`.
+- Guarded validation run: `30576293784`.
+- Selected decoder: `symphonia = 0.6.0`, default features disabled, features `wav`, `pcm`, `flac`, `mp3`, `id3v1`, `id3v2`; license `MPL-2.0`.
+- Selected ownership: shared Rust streaming decoder (shared Block 23 Path B), with no automatic platform, HTML, Web Audio, TypeScript, or FFmpeg fallback.
+- Initial formats: WAV/PCM, native FLAC, and MP3. Desktop Block 19 will convert source-native planar buffers incrementally into bounded 48 kHz stereo PCM16 little-endian chunks.
+- Valid-fixture realtime factors on this CI host: WAV `5934.7x`, FLAC `2832.2x`, MP3 `963.9x`.
+- Peak RSS on this CI host: WAV `3.0` MiB, FLAC `3.1` MiB, MP3 `3.6` MiB, and the 2 MiB metadata MP3 `6.9` MiB.
+- Corrupt and truncated fixtures failed visibly; cooperative cancellation stopped at a decoder packet boundary. These measurements are environment-specific evidence, not product-wide performance limits.
+- Shared Block 23 remains open for Android bridge overhead, physical mobile evidence, iOS file-access constraints, and removal of the temporary platform decoder path.

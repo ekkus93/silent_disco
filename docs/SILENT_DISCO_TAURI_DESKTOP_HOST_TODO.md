@@ -1044,43 +1044,45 @@ Evaluate the current compatible Symphonia release or approved alternatives using
 
 Measure:
 
-- [ ] WAV/PCM support;
-- [ ] FLAC support;
-- [ ] MP3 support;
-- [ ] corrupt-file behavior;
-- [ ] metadata bounds;
-- [ ] cancellation behavior;
-- [ ] decode throughput;
-- [ ] peak memory;
-- [ ] startup latency;
-- [ ] output format conversion needs;
-- [ ] license and feature set;
-- [ ] Rust toolchain compatibility.
+- [x] WAV/PCM support;
+- [x] FLAC support;
+- [x] MP3 support;
+- [x] corrupt-file behavior;
+- [x] metadata bounds;
+- [x] cancellation behavior;
+- [x] decode throughput;
+- [x] peak memory;
+- [x] startup latency;
+- [x] output format conversion needs;
+- [x] license and feature set;
+- [x] Rust toolchain compatibility.
 
 ### 18.2 Choose ownership
 
 Preferred:
 
-- [ ] shared Rust streaming decoder module/crate usable by desktop and eligible for mobile.
+- [x] shared Rust streaming decoder module/crate usable by desktop and eligible for mobile.
 
 Temporary allowed alternative:
 
-- [ ] desktop Rust decoder adapter feeding the exact shared bounded PCM-ingestion API from Block 14.
+- [x] desktop Rust decoder adapter feeding the exact shared bounded PCM-ingestion API from Block 14.
 
 Prohibited:
 
-- [ ] TypeScript decoder;
-- [ ] HTML audio decoding;
-- [ ] full-track decode into one vector;
-- [ ] hidden fallback between two decoders.
+- [x] TypeScript decoder;
+- [x] HTML audio decoding;
+- [x] full-track decode into one vector;
+- [x] hidden fallback between two decoders.
 
 ### 18.3 Record decision
 
-- [ ] exact crate/version/features;
-- [ ] supported initial formats;
-- [ ] measured results;
-- [ ] rejected alternatives;
-- [ ] removal plan for any temporary adapter.
+- [x] exact crate/version/features;
+- [x] supported initial formats;
+- [x] measured results;
+- [x] rejected alternatives;
+- [x] removal plan for any temporary adapter.
+
+**Completion evidence:** Symphonia `0.6.0` with minimal WAV/PCM, FLAC, MP3, and ID3 features was compiled and measured against deterministic valid, corrupt, truncated, oversized-metadata, and cancellation fixtures. Shared Rust streaming decode was selected after the complete regression matrix passed in GitHub Actions run `30576293784` from evidence commit `0cecbc38cfca68620131ed4c072968896fac2e65`. Results are recorded in `docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.md`; measurements are specific to the CI host and are not universal product limits.
 
 **Acceptance:** One explicit decoder path is selected with executable evidence.
 

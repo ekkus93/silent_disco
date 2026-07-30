@@ -1310,6 +1310,8 @@ Do not start this block until Rust packetization, scheduler, and Android Oboe ou
 - [ ] Do not maintain two silent decoder paths.
 - [ ] A debug comparison path must be explicit and visibly selected.
 
+**Desktop Block 18 coordination:** Path B (shared Rust decoding) is selected. The desktop Symphonia spike and decision record are complete, but shared Block 23 remains open until Android bridge overhead, mobile physical-device format parity, iOS file-access constraints, and removal of the temporary platform decoder path are recorded. No hidden fallback is introduced during that migration.
+
 **Acceptance:** One documented production decoder ownership model exists with performance/device evidence.
 
 ---
