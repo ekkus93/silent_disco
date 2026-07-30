@@ -1,11 +1,8 @@
 name: Desktop Block 19 source snapshot
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - .github/workflows/desktop-block19-source-snapshot.yml
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -17,6 +14,7 @@ concurrency:
 
 jobs:
   snapshot:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/snapshot-desktop-block19'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out current master
