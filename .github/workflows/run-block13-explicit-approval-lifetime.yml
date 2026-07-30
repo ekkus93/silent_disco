@@ -41,10 +41,11 @@ jobs:
           path = Path("rust/silent-disco-core/src/runtime/actor_runtime/state/commands.rs")
           content = path.read_text(encoding="utf-8")
           old = "            CoreCommand::ApproveJoin { request_id } => self.approve_join(operation_id, request_id),\n"
-          new = """            CoreCommand::ApproveJoin { request_id } => {
-              self.approve_join(operation_id, request_id)
-          }
-          """
+          new = (
+              "            CoreCommand::ApproveJoin { request_id } => {\n"
+              "                self.approve_join(operation_id, request_id)\n"
+              "            }\n"
+          )
           if content.count(old) != 1:
               raise SystemExit(f"dispatcher fixture matched {content.count(old)} times")
           path.write_text(content.replace(old, new), encoding="utf-8")
