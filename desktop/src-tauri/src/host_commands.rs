@@ -1,11 +1,12 @@
 use crate::app_state::DesktopAppState;
 use crate::dto::DesktopErrorDto;
+use crate::platform::file_picker::{SelectedSourceRegistry, pick_and_inspect};
 use crate::runtime_dto::{CommandReceiptDto, RevisionCommandRequest, UpdateHostDraftRequest};
 use silent_disco_core::domain::{AppRole, ApprovalMode};
 use silent_disco_core::runtime::{
     AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch, SnapshotRevision,
 };
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 /// Selects the host role through the revision-aware authoritative actor.
 #[allow(clippy::needless_pass_by_value)] // Tauri command extraction requires State by value.
@@ -21,6 +22,62 @@ pub fn select_host_role(
             role: AppRole::Host,
         },
     )
+}
+
+/// Opens one backend-owned file dialog, inspects one source, and registers its opaque descriptor.
+///
+/// Cancellation returns `Ok(None)` and is never reported as success or failure. Queue admission of
+/// the resulting draft patch returns `Some(receipt)`; the frontend still waits for a newer snapshot.
+///
+/// # Errors
+///
+/// Returns a structured validation, dialog, filesystem, source-inspection, registry, actor, or
+/// blocking-worker failure. Native paths never enter the command response or core command.
+#[tauri::command]
+pub async fn select_audio_source(
+    app: AppHandle,
+    request: RevisionCommandRequest,
+) -> Result<Option<CommandReceiptDto>, DesktopErrorDto> {
+    let revision = parse_snapshot_revision(&request.expected_revision)?;
+    let picker_app = app.clone();
+    let inspected = tauri::async_runtime::spawn_blocking(move || pick_and_inspect(picker_app))
+        .await
+        .map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.audio_source.worker_failed",
+                "audio_source",
+                "error",
+                true,
+                &format!("audio source selection worker failed: {error}"),
+            )
+        })??;
+    let Some(source) = inspected else {
+        return Ok(None);
+    };
+
+    let descriptor = source.descriptor().clone();
+    let source_id = descriptor.source_id.clone();
+    let registry = app.state::<SelectedSourceRegistry>();
+    let previous = registry.replace(source)?;
+    let result = app.state::<DesktopAppState>().submit_core_command(
+        revision,
+        CoreCommand::UpdateHostDraft(HostDraftPatch {
+            session_name: None,
+            approval_mode: None,
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(descriptor),
+            remember_approved_devices: None,
+        }),
+    );
+    match result {
+        Ok(receipt) => Ok(Some(receipt)),
+        Err(primary) => {
+            if let Err(rollback) = registry.restore_if_current(&source_id, previous) {
+                return Err(append_registration_rollback(primary, rollback));
+            }
+            Err(primary)
+        }
+    }
 }
 
 /// Applies one typed host-draft patch without allowing native paths through IPC.
@@ -101,6 +158,22 @@ fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopError
                 &format!("expected revision is outside the supported range: {error}"),
             )
         })
+}
+
+fn append_registration_rollback(
+    primary: DesktopErrorDto,
+    rollback: DesktopErrorDto,
+) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        &primary.code,
+        &primary.subsystem,
+        &primary.severity,
+        primary.retryable,
+        &format!(
+            "{}; selected-source registration rollback also failed: {}",
+            primary.message, rollback.message
+        ),
+    )
 }
 
 #[cfg(test)]
