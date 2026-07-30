@@ -9,11 +9,14 @@ import { createAppStore } from "../app/store";
 import type { CoreSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostSetupScreen } from "./HostSetupScreen";
 
-const { selectHostRole, updateHostDraft, createHostSession } = vi.hoisted(() => ({
+const { selectAudioSource, selectHostRole, updateHostDraft, createHostSession } = vi.hoisted(() => ({
+  selectAudioSource: vi.fn(),
   selectHostRole: vi.fn(),
   updateHostDraft: vi.fn(),
   createHostSession: vi.fn(),
 }));
+
+vi.mock("../core/audioSourceClient", () => ({ selectAudioSource }));
 
 vi.mock("../core/client", async () => {
   const actual = await vi.importActual<typeof import("../core/client")>("../core/client");
@@ -74,6 +77,7 @@ function renderScreen(initial = snapshot()) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  selectAudioSource.mockResolvedValue({ operationId: "source-2", acceptedAtRevision: "4" });
   selectHostRole.mockResolvedValue({ operationId: "role-1", acceptedAtRevision: "4" });
   updateHostDraft.mockResolvedValue({ operationId: "draft-1", acceptedAtRevision: "4" });
   createHostSession.mockResolvedValue({ operationId: "create-1", acceptedAtRevision: "4" });
@@ -85,6 +89,7 @@ describe("HostSetupScreen", () => {
     const session = screen.getByLabelText("Session name");
     const approval = screen.getByLabelText("Listener approval");
     const remember = screen.getByLabelText("Remember approved devices");
+    const select = screen.getByRole("button", { name: "Select audio file" });
     const validate = screen.getByRole("button", { name: "Validate settings" });
     expect(
       session.compareDocumentPosition(approval) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -93,7 +98,10 @@ describe("HostSetupScreen", () => {
       approval.compareDocumentPosition(remember) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      remember.compareDocumentPosition(validate) & Node.DOCUMENT_POSITION_FOLLOWING,
+      remember.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      select.compareDocumentPosition(validate) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -120,6 +128,52 @@ describe("HostSetupScreen", () => {
       "aria-describedby",
       "session-name-error",
     );
+  });
+
+  it("registers an inspected source without displaying it optimistically", async () => {
+    const initial = snapshot({
+      canCreateHostSession: false,
+      hostDraft: { ...snapshot().hostDraft, audioSource: null },
+      hostDraftValidation: [
+        { field: "audioSource", code: "audio_source_required", message: "audio source is required" },
+      ],
+    });
+    const store = renderScreen(initial);
+    fireEvent.click(screen.getByRole("button", { name: "Select audio file" }));
+    await waitFor(() => expect(selectAudioSource).toHaveBeenCalledWith("4"));
+    expect(screen.getByText("No inspected source selected.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Waiting for a newer Rust snapshot"),
+    );
+
+    store.dispatch(
+      coreActions.notificationReceived({
+        kind: "snapshot",
+        details: snapshot({ revision: "5" }),
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("set.wav")).toBeInTheDocument());
+    expect(store.getState().core.pendingCommandReceipts).toEqual({});
+  });
+
+  it("treats native dialog cancellation as no command and no error", async () => {
+    selectAudioSource.mockResolvedValue(null);
+    const store = renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Select audio file" }));
+    await waitFor(() => expect(selectAudioSource).toHaveBeenCalledWith("4"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Select audio file" })).toBeEnabled(),
+    );
+    expect(store.getState().core.pendingCommandReceipts).toEqual({});
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows source-selection failure without changing the authoritative source", async () => {
+    selectAudioSource.mockRejectedValue(new Error("permission denied"));
+    const store = renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Select audio file" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("permission denied"));
+    expect(store.getState().core.snapshot?.hostDraft.audioSource?.sourceId).toBe("source-1");
   });
 
   it("keeps create pending until a newer Rust snapshot is observed", async () => {
