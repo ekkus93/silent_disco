@@ -1,0 +1,61 @@
+name: Repair Desktop Block 18 revalidation harness
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/patch-desktop-block18-revalidation.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-desktop-block18-revalidation
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out current master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Add deterministic frontend placeholder before binding generation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/desktop-block18-revalidate.yml")
+          text = path.read_text()
+          old = """        run: |
+          npm ci
+          npm run bindings:check
+"""
+          new = """        run: |
+          mkdir -p dist
+          printf '<!doctype html><title>Silent Disco Block 18 validation</title>\\n' > dist/index.html
+          npm ci
+          npm run bindings:check
+"""
+          if text.count(old) != 1:
+              raise SystemExit("frontend validation block changed unexpectedly")
+          path.write_text(text.replace(old, new))
+          PY
+
+      - name: Commit harness repair and remove patch workflow
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/patch-desktop-block18-revalidation.yml
+          git add .github/workflows/desktop-block18-revalidate.yml
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Repair Desktop Block 18 revalidation harness"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
