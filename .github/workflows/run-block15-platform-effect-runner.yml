@@ -103,6 +103,19 @@ jobs:
               "pub fn cleanup_without_actor(\n": "pub(crate) fn cleanup_without_actor(\n",
               "pub fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {\n": "pub(crate) fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {\n",
               "pub fn cleanup_with_actor(\n": "pub(crate) fn cleanup_with_actor(\n",
+              "            Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => Ok(()),\n": "            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => Ok(()),\n",
+              ".spawn(move || run_worker(inbox, sink.as_ref(), executor.as_ref()))\n": ".spawn(move || run_worker(&inbox, sink.as_ref(), executor.as_ref()))\n",
+              "fn run_worker(\n    inbox: DesktopPlatformEffectInbox,\n": "fn run_worker(\n    inbox: &DesktopPlatformEffectInbox,\n",
+              "            return drain_cancelled(&inbox, sink);\n": "            return drain_cancelled(inbox, sink);\n",
+              "            Ok(RunnerMessage::Effect(effect)) => process_effect(&inbox, sink, executor, effect)?,\n": "            Ok(RunnerMessage::Effect(effect)) => process_effect(inbox, sink, executor, &effect)?,\n",
+              "            Ok(RunnerMessage::Shutdown) => return drain_cancelled(&inbox, sink),\n": "            Ok(RunnerMessage::Shutdown) => return drain_cancelled(inbox, sink),\n",
+              "    effect: PlatformEffect,\n": "    effect: &PlatformEffect,\n",
+              "        effect.request,\n        PlatformEffectRequest::ShareDiagnostics { .. }\n": "        &effect.request,\n        PlatformEffectRequest::ShareDiagnostics { .. }\n",
+              "        executor.execute(&effect, snapshot.as_ref())\n": "        executor.execute(effect, snapshot.as_ref())\n",
+              "#[derive(Serialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct CapabilityExport {\n": "#[derive(Serialize)]\n#[serde(rename_all = \"camelCase\")]\n#[allow(\n    clippy::struct_excessive_bools,\n    reason = \"the stable diagnostics wire record mirrors the core capability snapshot\"\n)]\nstruct CapabilityExport {\n",
+              "#[cfg(test)]\npub(super) mod test_support {\n    pub(super) use super::{\n        DesktopPlatformEffectDispatcher, DesktopPlatformEffectExecutor,\n        DesktopPlatformEffectInbox, DesktopPlatformEffectRunner, DesktopPlatformEventSink,\n    };\n}\n": "",
+              "'''use super::effect_runner::test_support::{\n    DesktopPlatformEffectDispatcher, DesktopPlatformEffectExecutor, DesktopPlatformEffectInbox,\n    DesktopPlatformEffectRunner, DesktopPlatformEventSink,\n};\n": "'''use super::effect_runner::{\n    DesktopPlatformEffectDispatcher, DesktopPlatformEffectExecutor, DesktopPlatformEffectInbox,\n    DesktopPlatformEffectRunner, DesktopPlatformEventSink,\n};\n",
+              "use std::sync::{Arc, Mutex};\n": "use std::sync::Arc;\n",
           }
           for old, new in replacements.items():
               if text.count(old) != 1:
