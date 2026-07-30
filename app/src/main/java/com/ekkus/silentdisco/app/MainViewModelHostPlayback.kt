@@ -71,145 +71,154 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-    internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
-        hostStreamJob?.cancel()
-        hostStreamJob = viewModelScope.launch {
-            var previousSendElapsedMs: Long? = null
-            var consecutiveAudioSendFailures = 0
-            val packetDurationMs = latestPackets.firstOrNull()?.let { it.samplesPerPacket * 1_000L / it.sampleRate } ?: 20L
-            latestPackets.forEachIndexed { index, packet ->
-                val now = SystemClock.elapsedRealtime()
-                previousSendElapsedMs?.let { previous ->
-                    val sendGap = now - previous
-                    metrics.recordTiming("packet_gap_ms", sendGap.toDouble())
-                    if (kotlin.math.abs(sendGap - packetDurationMs) > 8) {
-                        metrics.increment("packet_send_anomaly")
-                        logger.w("packet.send.anomaly", "seq=${packet.sequenceNumber} gap=${sendGap}ms")
+internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
+    hostStreamJob?.cancel()
+    hostStreamJob = viewModelScope.launch {
+        var previousSendElapsedMs: Long? = null
+        var consecutiveAudioSendFailures = 0
+        val packetDurationMs = latestPackets.firstOrNull()?.let { it.samplesPerPacket * 1_000L / it.sampleRate } ?: 20L
+        latestPackets.forEachIndexed { index, packet ->
+            while (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
+                delay(PAUSE_POLL_INTERVAL_MS)
+            }
+            if (_uiState.value.hostPlaybackState in setOf(PlaybackState.STOPPED, PlaybackState.ERROR)) {
+                return@launch
+            }
+
+            val now = SystemClock.elapsedRealtime()
+            previousSendElapsedMs?.let { previous ->
+                val sendGap = now - previous
+                metrics.recordTiming("packet_gap_ms", sendGap.toDouble())
+                if (kotlin.math.abs(sendGap - packetDurationMs) > 8) {
+                    metrics.increment("packet_send_anomaly")
+                    logger.w("packet.send.anomaly", "seq=${packet.sequenceNumber} gap=${sendGap}ms")
+                }
+            }
+            if (index % 25 == 0 || index == latestPackets.lastIndex) {
+                logger.i("stream.packet", "stream=${streamId.value} sent=${index + 1}/${latestPackets.size}")
+            }
+            metrics.increment("packet_send_total")
+            diagnosticsStore.updateHost {
+                it.copy(
+                    packetSendCount = (index + 1).toLong(),
+                    packetSendRatePerSecond = 1_000.0 / packetDurationMs,
+                    lastContactElapsedMs = now,
+                    metricsSummary = summarizeMetrics(),
+                )
+            }
+            runCatching {
+                playbackEngine.write(
+                    PlaybackFrame(
+                        packet = packet,
+                        localDeadlineMs = packet.hostPresentationTimeMs,
+                    ),
+                )
+            }.onFailure { error ->
+                handleHostPlaybackEngineFailure(error)
+                return@launch
+            }
+            runCatching {
+                wifiDirectService.broadcastAudio(packet)
+            }.onSuccess { result ->
+                when {
+                    result.peerCount == 0 -> {
+                        consecutiveAudioSendFailures = 0
+                        val message = "No connected listeners for audio broadcast"
+                        _uiState.value = _uiState.value.copy(lastError = message)
+                        diagnosticsStore.updateHost {
+                            it.copy(lastError = message, metricsSummary = summarizeMetrics())
+                        }
+                        refreshHostDiagnostics()
+                    }
+                    result.failureCount > 0 -> {
+                        consecutiveAudioSendFailures += 1
+                        val message = "Audio packet delivered to ${result.successCount}/${result.peerCount} listeners; ${result.failureCount} failed"
+                        logger.w("transport.audio", message)
+                        _uiState.value = _uiState.value.copy(lastError = message)
+                        diagnosticsStore.updateHost {
+                            it.copy(lastError = message, metricsSummary = summarizeMetrics())
+                        }
+                        refreshHostDiagnostics()
+                    }
+                    else -> {
+                        consecutiveAudioSendFailures = 0
+                        diagnosticsStore.updateHost { it.copy(lastError = null) }
                     }
                 }
-                if (index % 25 == 0 || index == latestPackets.lastIndex) {
-                    logger.i("stream.packet", "stream=${streamId.value} sent=${index + 1}/${latestPackets.size}")
+            }.onFailure { error ->
+                consecutiveAudioSendFailures += 1
+                val message = error.message ?: "Failed to send audio packet"
+                logger.w("transport.audio", "Failed to send packet ${packet.sequenceNumber}: $message")
+                _uiState.value = _uiState.value.copy(lastError = message)
+                diagnosticsStore.updateHost {
+                    it.copy(lastError = message, metricsSummary = summarizeMetrics())
                 }
-                metrics.increment("packet_send_total")
+                refreshHostDiagnostics()
+            }
+            if (consecutiveAudioSendFailures >= 10) {
+                val message = "Audio transport failed repeatedly; stream stopped"
+                hostStreamJob?.cancel()
+                _uiState.value = _uiState.value.copy(lastError = message)
+                reportRustHostPlaybackState(PlaybackState.ERROR, message)
                 diagnosticsStore.updateHost {
                     it.copy(
-                        packetSendCount = (index + 1).toLong(),
-                        packetSendRatePerSecond = 1_000.0 / packetDurationMs,
-                        lastContactElapsedMs = now,
+                        streamState = PlaybackState.ERROR,
+                        lastError = message,
                         metricsSummary = summarizeMetrics(),
                     )
                 }
+                refreshHostDiagnostics(streamState = PlaybackState.ERROR)
+                return@launch
+            }
+            refreshHostDiagnostics()
+            previousSendElapsedMs = now
+            delay(packetDurationMs)
+        }
+        logger.i("stream.stop", "Reached end of file for host stream")
+        metrics.increment("stream_eof")
+        _uiState.value = _uiState.value.copy(lastMessage = "Reached end of file")
+        reportRustHostPlaybackState(PlaybackState.STOPPED)
+        propagateListenerPlaybackState(
+            playbackState = PlaybackState.STOPPED,
+            listenerState = _uiState.value.listenerState,
+            message = "Host stream reached end of file",
+        )
+        currentSessionId?.let { sessionId ->
+            viewModelScope.launch {
                 runCatching {
-                    playbackEngine.write(
-                        PlaybackFrame(
-                            packet = packet,
-                            localDeadlineMs = packet.hostPresentationTimeMs,
+                    wifiDirectService.broadcastControl(
+                        ControlMessage.Stop(
+                            version = 1,
+                            sessionId = sessionId,
+                            streamId = streamId,
+                            hostStopTimeMs = SystemClock.elapsedRealtime(),
                         ),
                     )
-                }.onFailure { error ->
-                    handleHostPlaybackEngineFailure(error)
-                    return@launch
-                }
-                runCatching {
-                    wifiDirectService.broadcastAudio(packet)
                 }.onSuccess { result ->
-                    when {
-                        result.peerCount == 0 -> {
-                            consecutiveAudioSendFailures = 0
-                            val message = "No connected listeners for audio broadcast"
-                            _uiState.value = _uiState.value.copy(lastError = message)
-                            diagnosticsStore.updateHost {
-                                it.copy(lastError = message, metricsSummary = summarizeMetrics())
-                            }
-                            refreshHostDiagnostics()
-                        }
-                        result.failureCount > 0 -> {
-                            consecutiveAudioSendFailures += 1
-                            val message = "Audio packet delivered to ${result.successCount}/${result.peerCount} listeners; ${result.failureCount} failed"
-                            logger.w("transport.audio", message)
-                            _uiState.value = _uiState.value.copy(lastError = message)
-                            diagnosticsStore.updateHost {
-                                it.copy(lastError = message, metricsSummary = summarizeMetrics())
-                            }
-                            refreshHostDiagnostics()
-                        }
-                        else -> {
-                            consecutiveAudioSendFailures = 0
-                            diagnosticsStore.updateHost { it.copy(lastError = null) }
-                        }
-                    }
+                    reportHostBroadcastDelivery("broadcast stream stop", result, requireAnyPeer = false)
                 }.onFailure { error ->
-                    consecutiveAudioSendFailures += 1
-                    val message = error.message ?: "Failed to send audio packet"
-                    logger.w("transport.audio", "Failed to send packet ${packet.sequenceNumber}: $message")
-                    _uiState.value = _uiState.value.copy(lastError = message)
-                    diagnosticsStore.updateHost {
-                        it.copy(lastError = message, metricsSummary = summarizeMetrics())
-                    }
-                    refreshHostDiagnostics()
-                }
-                if (consecutiveAudioSendFailures >= 10) {
-                    val message = "Audio transport failed repeatedly; stream stopped"
-                    hostStreamJob?.cancel()
-                    _uiState.value = _uiState.value.copy(lastError = message)
-                    reportRustHostPlaybackState(PlaybackState.ERROR, message)
-                    diagnosticsStore.updateHost {
-                        it.copy(
-                            streamState = PlaybackState.ERROR,
-                            lastError = message,
-                            metricsSummary = summarizeMetrics(),
-                        )
-                    }
-                    refreshHostDiagnostics(streamState = PlaybackState.ERROR)
-                    return@launch
-                }
-                refreshHostDiagnostics()
-                previousSendElapsedMs = now
-                delay(packetDurationMs)
-            }
-            logger.i("stream.stop", "Reached end of file for host stream")
-            metrics.increment("stream_eof")
-            _uiState.value = _uiState.value.copy(lastMessage = "Reached end of file")
-            reportRustHostPlaybackState(PlaybackState.STOPPED)
-            propagateListenerPlaybackState(
-                playbackState = PlaybackState.STOPPED,
-                listenerState = _uiState.value.listenerState,
-                message = "Host stream reached end of file",
-            )
-            currentSessionId?.let { sessionId ->
-                viewModelScope.launch {
-                    runCatching {
-                        wifiDirectService.broadcastControl(
-                            ControlMessage.Stop(
-                                version = 1,
-                                sessionId = sessionId,
-                                streamId = streamId,
-                                hostStopTimeMs = SystemClock.elapsedRealtime(),
-                            ),
-                        )
-                    }.onSuccess { result ->
-                        reportHostBroadcastDelivery("broadcast stream stop", result, requireAnyPeer = false)
-                    }.onFailure { error ->
-                        handleHostControlFailure("broadcast stream stop", error)
-                    }
+                    handleHostControlFailure("broadcast stream stop", error)
                 }
             }
-            refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
         }
+        refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
     }
+}
 
-    internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
-        val message = error.message ?: "Host playback engine failed"
-        logger.e("playback.host", message, error)
-        hostStreamJob?.cancel()
-        _uiState.value = _uiState.value.copy(lastError = message)
-        reportRustHostPlaybackState(PlaybackState.ERROR, message)
-        diagnosticsStore.updateHost {
-            it.copy(
-                streamState = PlaybackState.ERROR,
-                lastError = message,
-                metricsSummary = summarizeMetrics(),
-            )
-        }
-        refreshHostDiagnostics(streamState = PlaybackState.ERROR)
+internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
+    val message = error.message ?: "Host playback engine failed"
+    logger.e("playback.host", message, error)
+    hostStreamJob?.cancel()
+    _uiState.value = _uiState.value.copy(lastError = message)
+    reportRustHostPlaybackState(PlaybackState.ERROR, message)
+    diagnosticsStore.updateHost {
+        it.copy(
+            streamState = PlaybackState.ERROR,
+            lastError = message,
+            metricsSummary = summarizeMetrics(),
+        )
     }
+    refreshHostDiagnostics(streamState = PlaybackState.ERROR)
+}
+
+private const val PAUSE_POLL_INTERVAL_MS = 20L
