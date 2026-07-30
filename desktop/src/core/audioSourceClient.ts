@@ -10,6 +10,9 @@ export async function selectAudioSource(
   try {
     return await invoke<CommandReceiptDto | null>("select_audio_source", { request });
   } catch (error: unknown) {
-    throw toDesktopBridgeError(error, "select_audio_source");
+    const failure = toDesktopBridgeError(error, "select_audio_source");
+    const invocationError = Object.assign(new Error(failure.message), failure);
+    invocationError.name = "DesktopBridgeInvocationError";
+    throw invocationError;
   }
 }
