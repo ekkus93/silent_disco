@@ -62,7 +62,7 @@ jobs:
           cargo test --workspace --all-features
 
       - name: Generate Kotlin bindings
-        run: bash scripts/generate-uniffi-kotlin.sh "${RUNNER_TEMP}/block13-kotlin"
+        run: bash scripts/generate-uniffi-kotlin.sh "${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
 
       - name: Validate patch
         run: git diff --check
