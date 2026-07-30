@@ -1,12 +1,14 @@
 use super::audio_device;
-use super::capabilities::desktop_capabilities;
+use super::capabilities::{desktop_capabilities, publish_desktop_capabilities};
 use super::diagnostics_export;
 use super::discovery;
 use super::failure::{DesktopPlatformFailure, core_error};
 use super::paths::DesktopProfilePaths;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use silent_disco_core::domain::OperationId;
-use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
+use silent_disco_core::error::{
+    CoreError, CoreErrorCode, ErrorSeverity, MAX_ERROR_MESSAGE_BYTES,
+};
 use silent_disco_core::runtime::{
     CapabilitySnapshot, CoreActorHandle, CoreNotification, CoreObserver, CoreSnapshot,
     PlatformEffect, PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion,
@@ -196,19 +198,27 @@ impl DesktopPlatformEffectRunner {
     ///
     /// # Errors
     ///
-    /// Returns a visible worker-start failure. A failed start leaves no detached task.
+    /// Returns a visible worker-start or capability-publication failure. A failed start joins any
+    /// worker that was created before returning.
     pub(crate) fn start(
         inbox: DesktopPlatformEffectInbox,
         dispatcher: DesktopPlatformEffectDispatcher,
         handle: CoreActorHandle,
         paths: DesktopProfilePaths,
     ) -> Result<Self, CoreError> {
-        Self::start_with_components(
+        let runner = Self::start_with_components(
             inbox,
             dispatcher,
-            Arc::new(handle),
+            Arc::new(handle.clone()),
             Arc::new(DesktopPlatformAdapters::new(paths)),
-        )
+        )?;
+        if let Err(primary) = publish_desktop_capabilities(&handle) {
+            return match runner.shutdown() {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(append_startup_cleanup(primary, cleanup)),
+            };
+        }
+        Ok(runner)
     }
 
     pub(super) fn start_with_components(
@@ -497,6 +507,35 @@ fn cancelled_event(operation_id: OperationId) -> PlatformEvent {
         )
         .into_core_error(operation_id),
     }
+}
+
+fn append_startup_cleanup(primary: CoreError, cleanup: CoreError) -> CoreError {
+    let primary_detail = bounded_error_detail(&primary.message, 300);
+    let cleanup_detail = bounded_error_detail(&cleanup.message, 120);
+    let message = format!(
+        "{primary_detail}; platform runner cleanup also failed ({}): {cleanup_detail}",
+        cleanup.code
+    );
+    CoreError::new(
+        primary.code,
+        message,
+        primary.severity,
+        primary.retryable,
+        primary.operation_id.clone(),
+    )
+    .unwrap_or(primary)
+}
+
+fn bounded_error_detail(value: &str, maximum_bytes: usize) -> String {
+    let limit = maximum_bytes.min(MAX_ERROR_MESSAGE_BYTES);
+    if value.len() <= limit {
+        return value.to_owned();
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 fn runner_error(
