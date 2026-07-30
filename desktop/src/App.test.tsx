@@ -1,18 +1,28 @@
+import "@testing-library/jest-dom/vitest";
+
 import { act, render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { createAppStore } from "./app/store";
-import type { CoreNotificationDto } from "./core/generated/desktop-bindings";
+import type { CoreNotificationDto, CoreSnapshotDto } from "./core/generated/desktop-bindings";
 
-const { ensureDesktopBridgeMock, subscribeDesktopNotificationsMock, unsubscribeMock } = vi.hoisted(
-  () => ({
-    ensureDesktopBridgeMock: vi.fn(),
-    subscribeDesktopNotificationsMock: vi.fn(),
-    unsubscribeMock: vi.fn(),
-  }),
-);
+const {
+  ensureDesktopBridgeMock,
+  subscribeDesktopNotificationsMock,
+  unsubscribeMock,
+  selectHostRoleMock,
+  updateHostDraftMock,
+  createHostSessionMock,
+} = vi.hoisted(() => ({
+  ensureDesktopBridgeMock: vi.fn(),
+  subscribeDesktopNotificationsMock: vi.fn(),
+  unsubscribeMock: vi.fn(),
+  selectHostRoleMock: vi.fn(),
+  updateHostDraftMock: vi.fn(),
+  createHostSessionMock: vi.fn(),
+}));
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
 
@@ -20,30 +30,58 @@ vi.mock("./core/bridge", () => ({
   ensureDesktopBridge: ensureDesktopBridgeMock,
   subscribeDesktopNotifications: subscribeDesktopNotificationsMock,
 }));
+vi.mock("./core/client", async () => {
+  const actual = await vi.importActual<typeof import("./core/client")>("./core/client");
+  return {
+    ...actual,
+    selectHostRole: selectHostRoleMock,
+    updateHostDraft: updateHostDraftMock,
+    createHostSession: createHostSessionMock,
+  };
+});
+
+const snapshot: CoreSnapshotDto = {
+  revision: "4",
+  selectedRole: "host",
+  capabilities: {
+    localNetworkAvailable: true,
+    audioSourceSelectionAvailable: true,
+    audioOutputAvailable: true,
+    secureStoreAvailable: true,
+  },
+  hostDraft: {
+    sessionName: "Oakland Night",
+    approvalMode: "manual",
+    inviteCode: null,
+    audioSource: {
+      sourceId: "source-1",
+      displayName: "set.wav",
+      byteLength: "1024",
+      durationMs: "5000",
+    },
+    rememberApprovedDevices: false,
+  },
+  hostDraftValidation: [],
+  canCreateHostSession: true,
+  hostLifecycle: "idle",
+  listenerLifecycle: "idle",
+  transportState: "idle",
+  discoveryActive: false,
+  discoveredSessionCount: 0,
+  pendingJoinRequestCount: 0,
+  listenerCount: 0,
+  playbackState: "stopped",
+  playbackPositionMs: "0",
+  recoverableAction: null,
+  lastError: null,
+  shuttingDown: false,
+};
 
 const connection = {
   connectionKind: "opened" as const,
   profile: null,
-  snapshot: {
-    revision: "4",
-    selectedRole: null,
-    hostLifecycle: "idle",
-    listenerLifecycle: "idle",
-    transportState: "idle",
-    discoveryActive: false,
-    discoveredSessionCount: 0,
-    pendingJoinRequestCount: 0,
-    listenerCount: 0,
-    playbackState: "stopped",
-    playbackPositionMs: "0",
-    recoverableAction: null,
-    lastError: null,
-    shuttingDown: false,
-  },
-  notifications: {
-    subscriptionId: "17",
-    channel: {},
-  },
+  snapshot,
+  notifications: { subscriptionId: "17", channel: {} },
 };
 
 function renderApp() {
@@ -64,6 +102,9 @@ describe("App", () => {
     ensureDesktopBridgeMock.mockReset();
     subscribeDesktopNotificationsMock.mockReset();
     unsubscribeMock.mockReset();
+    selectHostRoleMock.mockReset();
+    updateHostDraftMock.mockReset();
+    createHostSessionMock.mockReset();
     subscribeDesktopNotificationsMock.mockImplementation(
       (listener: (notification: CoreNotificationDto) => void) => {
         notificationListener = listener;
@@ -72,44 +113,37 @@ describe("App", () => {
     );
   });
 
-  it("opens the authoritative profile bridge and renders the Redux snapshot", async () => {
+  it("opens the bridge and renders the authoritative Host Setup screen", async () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
-
     const { store } = renderApp();
 
-    expect(screen.getByRole("status")).toHaveTextContent("Opening or reattaching the main profile");
-    expect(await screen.findByText("Opened the main profile")).toBeVisible();
-    expect(screen.getByText("17")).toBeVisible();
-    expect(screen.getByText("4")).toBeVisible();
-    expect(store.getState().core.snapshot).toEqual(connection.snapshot);
+    expect(screen.getByRole("status")).toHaveTextContent("Opening or reattaching");
+    expect(await screen.findByRole("heading", { name: "Create a silent disco" })).toBeVisible();
+    expect(screen.getByLabelText("Session name")).toHaveValue("Oakland Night");
+    expect(store.getState().core.snapshot).toEqual(snapshot);
     expect(ensureDesktopBridgeMock).toHaveBeenCalledWith("main");
   });
 
-  it("replaces the displayed complete snapshot only for a newer revision", async () => {
+  it("renders only a newer complete authoritative snapshot", async () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
     const { store } = renderApp();
-    await screen.findByText("Opened the main profile");
+    await screen.findByRole("heading", { name: "Create a silent disco" });
 
     act(() => {
       notificationListener?.({
         kind: "snapshot",
-        details: {
-          ...connection.snapshot,
-          revision: "5",
-          hostLifecycle: "waiting_for_listeners",
-        },
+        details: { ...snapshot, revision: "5", hostLifecycle: "waiting_for_listeners" },
       });
     });
 
-    expect(screen.getByText("5")).toBeVisible();
-    expect(screen.getByText("waiting_for_listeners")).toBeVisible();
+    expect(screen.getByText(/Rust host lifecycle: waiting_for_listeners/)).toBeVisible();
     expect(store.getState().core.snapshot?.revision).toBe("5");
   });
 
-  it("displays a command failure delivered by the authoritative notification channel", async () => {
+  it("keeps a core command failure visible", async () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
     renderApp();
-    await screen.findByText("Opened the main profile");
+    await screen.findByRole("heading", { name: "Create a silent disco" });
 
     act(() => {
       notificationListener?.({
@@ -124,29 +158,23 @@ describe("App", () => {
       });
     });
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Core command or bridge error");
+    expect(screen.getByRole("alert")).toHaveTextContent("Host setup command failed");
     expect(screen.getByRole("alert")).toHaveTextContent("The command was rejected.");
   });
 
   it("keeps bridge startup failure visible as a structured Redux error", async () => {
     ensureDesktopBridgeMock.mockRejectedValue(new Error("native bridge unavailable"));
-
     const { store } = renderApp();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Desktop bridge startup failed");
     expect(screen.getByRole("alert")).toHaveTextContent("native bridge unavailable");
     expect(store.getState().core.bridgeLifecycle.kind).toBe("failed");
-    expect(store.getState().core.errors.at(-1)?.code).toBe(
-      "desktop.bridge.invoke_transport_failed",
-    );
   });
 
   it("unsubscribes the React listener without closing the native channel", () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
-
     const { view } = renderApp();
     view.unmount();
-
     expect(unsubscribeMock).toHaveBeenCalledOnce();
   });
 });

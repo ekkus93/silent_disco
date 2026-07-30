@@ -3,8 +3,10 @@ use crate::dto::{
     StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
 };
 use crate::runtime_dto::{
-    AttachNotificationResponse, CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto,
-    DiagnosticFieldDto, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
+    AttachNotificationResponse, AudioSourceSummaryDto, CapabilitySnapshotDto, CommandReceiptDto,
+    CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto, DiagnosticFieldDto, HostDraftDto,
+    HostDraftValidationDto, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
+    RevisionCommandRequest, UpdateHostDraftRequest,
 };
 use std::fmt;
 use ts_rs::{Config, TS};
@@ -34,6 +36,13 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<BridgeLifecycleDto>(&config),
         declaration::<StorageInspectionDto>(&config),
         declaration::<OpenProfileRequest>(&config),
+        declaration::<RevisionCommandRequest>(&config),
+        declaration::<UpdateHostDraftRequest>(&config),
+        declaration::<CommandReceiptDto>(&config),
+        declaration::<AudioSourceSummaryDto>(&config),
+        declaration::<HostDraftDto>(&config),
+        declaration::<CapabilitySnapshotDto>(&config),
+        declaration::<HostDraftValidationDto>(&config),
         declaration::<CoreSnapshotDto>(&config),
         declaration::<OpenProfileResponse>(&config),
         declaration::<AttachNotificationResponse>(&config),
@@ -85,6 +94,9 @@ mod tests {
         assert!(first.starts_with("// @generated"));
         assert!(first.contains("export type BridgeLifecycleDto"));
         assert!(first.contains("export type StorageInspectionDto"));
+        assert!(first.contains("export type HostDraftDto"));
+        assert!(first.contains("export type UpdateHostDraftRequest"));
+        assert!(first.contains("export type CommandReceiptDto"));
         assert!(first.contains("export type CoreSnapshotDto"));
         assert!(first.contains("export type OpenProfileResponse"));
         assert!(first.contains("export type AttachNotificationResponse"));

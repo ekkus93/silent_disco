@@ -11,6 +11,23 @@ function snapshot(revision: string, hostLifecycle = "idle"): CoreSnapshotDto {
   return {
     revision,
     selectedRole: null,
+    capabilities: {
+      localNetworkAvailable: false,
+      audioSourceSelectionAvailable: false,
+      audioOutputAvailable: false,
+      secureStoreAvailable: false,
+    },
+    hostDraft: {
+      sessionName: "",
+      approvalMode: "manual",
+      inviteCode: null,
+      audioSource: null,
+      rememberApprovedDevices: false,
+    },
+    hostDraftValidation: [
+      { field: "sessionName", code: "session_name", message: "session name is invalid" },
+    ],
+    canCreateHostSession: false,
     hostLifecycle,
     listenerLifecycle: "idle",
     transportState: "idle",
@@ -149,31 +166,21 @@ describe("authoritative core slice", () => {
     expect(state.snapshot?.revision).toBe("1");
   });
 
-  it("keeps a command pending until explicit core receipt evidence arrives", () => {
+  it("keeps a command pending until a newer authoritative snapshot arrives", () => {
     let state = coreReducer(
       undefined,
       coreActions.commandPending({
         operationId: "operation-1",
         commandKind: "start_host",
+        submittedAtRevision: "0",
       }),
     );
+    expect(state.pendingCommandReceipts["operation-1"]).toBeDefined();
+
     state = coreReducer(
       state,
       coreActions.notificationReceived({ kind: "snapshot", details: snapshot("1") }),
     );
-    state = coreReducer(
-      state,
-      coreActions.notificationReceived({
-        kind: "effect",
-        details: { operationId: "operation-1", effectKind: "start_advertising" },
-      }),
-    );
-
-    expect(state.pendingCommandReceipts["operation-1"]?.observedEffectKind).toBe(
-      "start_advertising",
-    );
-
-    state = coreReducer(state, coreActions.commandReceiptObserved({ operationId: "operation-1" }));
     expect(state.pendingCommandReceipts["operation-1"]).toBeUndefined();
   });
 

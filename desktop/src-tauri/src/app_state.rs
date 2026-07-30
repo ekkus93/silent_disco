@@ -8,15 +8,16 @@ use crate::platform::paths::{DesktopProfilePaths, resolve_profile_paths};
 use crate::platform::profile_lock::ProfileLease;
 use crate::profile::ProfileId;
 use crate::runtime_dto::{
-    AttachNotificationResponse, CoreNotificationDto, CoreSnapshotDto, OpenProfileRequest,
-    OpenProfileResponse,
+    AttachNotificationResponse, CommandReceiptDto, CoreNotificationDto, CoreSnapshotDto,
+    OpenProfileRequest, OpenProfileResponse,
 };
 use crate::shutdown::{
     DesktopOwnedResources, cleanup_lease, cleanup_with_actor, cleanup_without_actor,
     shutdown_owned_resources,
 };
 use silent_disco_core::runtime::{
-    CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver,
+    CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreCommand, CoreCommandRequest,
+    CoreObserver, SnapshotRevision,
 };
 use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
 use std::sync::{Arc, Mutex};
@@ -144,6 +145,40 @@ impl DesktopAppState {
                     .map(CoreSnapshotDto::from)
                     .map_err(DesktopErrorDto::from)
             }
+            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Closed
+            | DesktopRuntimeState::Opening { .. }
+            | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
+                "desktop.profile.not_ready",
+                "runtime",
+                "error",
+                true,
+                "no desktop profile is ready",
+            )),
+        }
+    }
+
+    pub(crate) fn submit_core_command(
+        &self,
+        expected_revision: SnapshotRevision,
+        command: CoreCommand,
+    ) -> Result<CommandReceiptDto, DesktopErrorDto> {
+        let request = CoreCommandRequest::new(expected_revision, command).map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.command.invalid_payload",
+                "validation",
+                "error",
+                false,
+                &error.to_string(),
+            )
+        })?;
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        match &*state {
+            DesktopRuntimeState::Ready(ready) => ready
+                .handle
+                .submit_command(request)
+                .map(CommandReceiptDto::from)
+                .map_err(DesktopErrorDto::from),
             DesktopRuntimeState::Failed(error) => Err(error.clone()),
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }

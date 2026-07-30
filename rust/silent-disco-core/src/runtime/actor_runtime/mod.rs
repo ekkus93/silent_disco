@@ -640,14 +640,14 @@ mod tests {
         )
         .expect("runtime starts before observer failure is reported");
         let handle = runtime.handle();
-        for _ in 0..100 {
-            if handle.current_snapshot().is_err() {
-                break;
-            }
-            std::thread::yield_now();
-        }
-        assert!(handle.current_snapshot().is_err());
-        assert!(runtime.shutdown().is_err());
+        let shutdown_error = runtime
+            .shutdown()
+            .expect_err("observer failure must make controlled shutdown fail visibly");
+        assert_eq!(shutdown_error.code, CoreErrorCode::ShutdownFailed);
+        let observer_error = handle
+            .current_snapshot()
+            .expect_err("joined observer failure must remain visible through the handle");
+        assert_eq!(observer_error.code, CoreErrorCode::FfiCallbackFailed);
     }
 
     #[test]

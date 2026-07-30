@@ -18,7 +18,21 @@ export type StorageInspectionDto = { sqliteVersion: string, foreignKeysEnabled: 
 
 export type OpenProfileRequest = { profileId: string, };
 
-export type CoreSnapshotDto = { revision: string, selectedRole: string | null, hostLifecycle: string, listenerLifecycle: string, transportState: string, discoveryActive: boolean, discoveredSessionCount: number, pendingJoinRequestCount: number, listenerCount: number, playbackState: string, playbackPositionMs: string, recoverableAction: string | null, lastError: DesktopErrorDto | null, shuttingDown: boolean, };
+export type RevisionCommandRequest = { expectedRevision: string, };
+
+export type UpdateHostDraftRequest = { expectedRevision: string, sessionName: string, approvalMode: string, inviteCode: string | null, rememberApprovedDevices: boolean, };
+
+export type CommandReceiptDto = { operationId: string, acceptedAtRevision: string, };
+
+export type AudioSourceSummaryDto = { sourceId: string, displayName: string, byteLength: string | null, durationMs: string | null, };
+
+export type HostDraftDto = { sessionName: string, approvalMode: string, inviteCode: string | null, audioSource: AudioSourceSummaryDto | null, rememberApprovedDevices: boolean, };
+
+export type CapabilitySnapshotDto = { localNetworkAvailable: boolean, audioSourceSelectionAvailable: boolean, audioOutputAvailable: boolean, secureStoreAvailable: boolean, };
+
+export type HostDraftValidationDto = { field: string, code: string, message: string, };
+
+export type CoreSnapshotDto = { revision: string, selectedRole: string | null, capabilities: CapabilitySnapshotDto, hostDraft: HostDraftDto, hostDraftValidation: Array<HostDraftValidationDto>, canCreateHostSession: boolean, hostLifecycle: string, listenerLifecycle: string, transportState: string, discoveryActive: boolean, discoveredSessionCount: number, pendingJoinRequestCount: number, listenerCount: number, playbackState: string, playbackPositionMs: string, recoverableAction: string | null, lastError: DesktopErrorDto | null, shuttingDown: boolean, };
 
 export type OpenProfileResponse = { lifecycle: BridgeLifecycleDto, coreVersion: CoreVersionDto, snapshot: CoreSnapshotDto, };
 

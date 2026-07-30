@@ -7,6 +7,7 @@ use serde::Serialize;
 pub mod app_state;
 pub mod bindings;
 pub mod dto;
+mod host_commands;
 pub mod notification_buffer;
 pub mod notification_channel;
 pub mod platform;
@@ -51,6 +52,9 @@ pub fn run() -> tauri::Result<()> {
             get_core_smoke,
             app_state::open_profile,
             app_state::get_current_snapshot,
+            host_commands::select_host_role,
+            host_commands::update_host_draft,
+            host_commands::create_host_session,
             app_state::attach_notifications,
             app_state::close_profile
         ])

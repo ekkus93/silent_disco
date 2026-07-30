@@ -28,7 +28,27 @@ const openResponse: OpenProfileResponse = {
   coreVersion: { major: 0, minor: 1, patch: 0 },
   snapshot: {
     revision: "0",
-    selectedRole: null,
+    selectedRole: "host",
+    capabilities: {
+      localNetworkAvailable: true,
+      audioSourceSelectionAvailable: true,
+      audioOutputAvailable: true,
+      secureStoreAvailable: true,
+    },
+    hostDraft: {
+      sessionName: "Oakland Night",
+      approvalMode: "manual",
+      inviteCode: null,
+      audioSource: {
+        sourceId: "source-1",
+        displayName: "set.wav",
+        byteLength: "1024",
+        durationMs: "5000",
+      },
+      rememberApprovedDevices: false,
+    },
+    hostDraftValidation: [],
+    canCreateHostSession: true,
     hostLifecycle: "idle",
     listenerLifecycle: "idle",
     transportState: "idle",

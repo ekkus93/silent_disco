@@ -3,11 +3,14 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AttachNotificationResponse,
   BridgeLifecycleDto,
+  CommandReceiptDto,
   CoreNotificationDto,
   CoreSnapshotDto,
   DesktopErrorDto,
   OpenProfileRequest,
   OpenProfileResponse,
+  RevisionCommandRequest,
+  UpdateHostDraftRequest,
 } from "./generated/desktop-bindings";
 
 const MAX_ERROR_DETAIL_LENGTH = 320;
@@ -289,6 +292,20 @@ export async function connectProfileWithNotifications(
     snapshot,
     notifications: existingNotifications,
   };
+}
+
+export async function selectHostRole(expectedRevision: string): Promise<CommandReceiptDto> {
+  const request: RevisionCommandRequest = { expectedRevision };
+  return invokeDesktop<CommandReceiptDto>("select_host_role", { request });
+}
+
+export async function updateHostDraft(request: UpdateHostDraftRequest): Promise<CommandReceiptDto> {
+  return invokeDesktop<CommandReceiptDto>("update_host_draft", { request });
+}
+
+export async function createHostSession(expectedRevision: string): Promise<CommandReceiptDto> {
+  const request: RevisionCommandRequest = { expectedRevision };
+  return invokeDesktop<CommandReceiptDto>("create_host_session", { request });
 }
 
 export async function closeProfile(): Promise<BridgeLifecycleDto> {

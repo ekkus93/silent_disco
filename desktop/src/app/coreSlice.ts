@@ -106,6 +106,22 @@ function recordError(state: CoreState, error: DesktopErrorDto): void {
 
 type SnapshotAcceptance = "accepted" | "stale" | "invalid";
 
+function settleCommandsFromSnapshot(state: CoreState, revision: string): void {
+  const incomingRevision = parseSnapshotRevision(revision);
+  if (incomingRevision === null) {
+    return;
+  }
+  for (const [operationId, pending] of Object.entries(state.pendingCommandReceipts)) {
+    const submittedRevision =
+      pending.submittedAtRevision === null
+        ? null
+        : parseSnapshotRevision(pending.submittedAtRevision);
+    if (submittedRevision !== null && incomingRevision > submittedRevision) {
+      delete state.pendingCommandReceipts[operationId];
+    }
+  }
+}
+
 function acceptSnapshot(
   state: CoreState,
   snapshot: CoreSnapshotDto,
@@ -133,6 +149,7 @@ function acceptSnapshot(
   }
 
   state.snapshot = snapshot;
+  settleCommandsFromSnapshot(state, snapshot.revision);
   return "accepted";
 }
 
@@ -219,6 +236,7 @@ export const coreSlice = createSlice({
           observeEffect(state, notification.details);
           break;
         case "error":
+          state.pendingCommandReceipts = {};
           recordError(state, notification.details);
           break;
         case "diagnostic":
@@ -228,8 +246,25 @@ export const coreSlice = createSlice({
           break;
       }
     },
-    commandPending(state, action: PayloadAction<{ operationId: string; commandKind: string }>) {
+    commandPending(
+      state,
+      action: PayloadAction<{
+        operationId: string;
+        commandKind: string;
+        submittedAtRevision?: string;
+      }>,
+    ) {
       const { operationId, commandKind } = action.payload;
+      const submittedAtRevision =
+        action.payload.submittedAtRevision ?? state.snapshot?.revision ?? null;
+      const currentRevision = state.snapshot?.revision ?? null;
+      if (
+        submittedAtRevision !== null &&
+        currentRevision !== null &&
+        shouldAcceptSnapshot(submittedAtRevision, currentRevision)
+      ) {
+        return;
+      }
       if (state.pendingCommandReceipts[operationId] !== undefined) {
         state.staleNotifications.commandReceipts += 1;
         recordError(
@@ -258,7 +293,7 @@ export const coreSlice = createSlice({
       state.pendingCommandReceipts[operationId] = {
         operationId,
         commandKind,
-        submittedAtRevision: state.snapshot?.revision ?? null,
+        submittedAtRevision,
         observedEffectKind: null,
       };
     },
@@ -269,6 +304,10 @@ export const coreSlice = createSlice({
         return;
       }
       delete state.pendingCommandReceipts[operationId];
+    },
+    commandInvocationFailed(state, action: PayloadAction<DesktopErrorDto>) {
+      state.pendingCommandReceipts = {};
+      recordError(state, action.payload);
     },
     commandFailureObserved(
       state,

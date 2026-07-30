@@ -1,9 +1,14 @@
+import { createSelector } from "@reduxjs/toolkit";
+
 import type { RootState } from "./store";
 
 export const selectCoreSnapshot = (state: RootState) => state.core.snapshot;
 export const selectBridgeLifecycle = (state: RootState) => state.core.bridgeLifecycle;
-export const selectPendingCommandReceipts = (state: RootState) =>
-  Object.values(state.core.pendingCommandReceipts);
+const selectPendingCommandReceiptMap = (state: RootState) => state.core.pendingCommandReceipts;
+export const selectPendingCommandReceipts = createSelector(
+  [selectPendingCommandReceiptMap],
+  (receipts) => Object.values(receipts),
+);
 export const selectCoreErrors = (state: RootState) => state.core.errors;
 export const selectCoreDiagnostics = (state: RootState) => state.core.diagnostics;
 export const selectStaleNotificationCounters = (state: RootState) => state.core.staleNotifications;

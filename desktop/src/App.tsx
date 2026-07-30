@@ -10,6 +10,7 @@ import {
 import { useAppDispatch, useAppSelector } from "./app/store";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
 import { toDesktopBridgeError } from "./core/client";
+import { HostSetupScreen } from "./screens/HostSetupScreen";
 
 interface ShellConnectionState {
   connectionKind: "opened" | "reattached";
@@ -28,22 +29,13 @@ export function App() {
     const profileId = "main";
     let active = true;
     dispatch(coreActions.bridgeOpening({ profileId }));
-
     const unsubscribe = subscribeDesktopNotifications((notification) => {
       dispatch(coreActions.notificationReceived(notification));
     });
-
     ensureDesktopBridge(profileId)
       .then((bridgeConnection) => {
-        if (!active) {
-          return;
-        }
-        dispatch(
-          coreActions.bridgeReady({
-            profileId,
-            snapshot: bridgeConnection.snapshot,
-          }),
-        );
+        if (!active) return;
+        dispatch(coreActions.bridgeReady({ profileId, snapshot: bridgeConnection.snapshot }));
         setConnection({
           connectionKind: bridgeConnection.connectionKind,
           subscriptionId: bridgeConnection.notifications.subscriptionId,
@@ -54,7 +46,6 @@ export function App() {
           dispatch(coreActions.bridgeFailed(toDesktopBridgeError(error, "desktop bridge startup")));
         }
       });
-
     return () => {
       active = false;
       unsubscribe();
@@ -66,81 +57,39 @@ export function App() {
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#312e81_0%,#171229_42%,#100d1a_100%)] px-6 py-10 text-violet-50">
-      <section className="mx-auto max-w-3xl rounded-3xl border border-violet-300/20 bg-slate-950/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
-          Authoritative desktop state
-        </p>
-        <h1 className="mt-3 text-4xl font-bold tracking-tight">Silent Disco</h1>
-        <p className="mt-4 max-w-2xl text-base leading-7 text-violet-100/80">
-          Redux stores the latest complete Rust snapshot. Revision guards reject duplicate or older
-          notifications instead of reconstructing host lifecycle in React.
-        </p>
+      <section className="mx-auto max-w-6xl rounded-3xl border border-violet-300/20 bg-slate-950/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
+        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-violet-200/15 pb-5">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
+              Silent Disco desktop host
+            </p>
+            <h1 className="mt-2 text-4xl font-bold tracking-tight">Host control</h1>
+          </div>
+          {ready ? (
+            <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-violet-100/65">
+              <dt>Revision</dt>
+              <dd className="font-mono text-right text-cyan-200">{snapshot.revision}</dd>
+              <dt>Lifecycle</dt>
+              <dd className="font-mono text-right">{snapshot.hostLifecycle}</dd>
+              <dt>Stale rejected</dt>
+              <dd className="font-mono text-right">{staleNotifications.snapshots}</dd>
+            </dl>
+          ) : null}
+        </header>
 
-        <div className="mt-8 rounded-2xl border border-violet-200/15 bg-black/30 p-5">
-          <h2 className="text-lg font-semibold">Authoritative Rust connection</h2>
-
+        <div className="mt-7">
           {!ready && !failed ? (
-            <p className="mt-3 text-violet-100/75" role="status" aria-live="polite">
+            <p role="status" aria-live="polite">
               Opening or reattaching the main profile…
             </p>
           ) : null}
-
-          {ready ? (
-            <dl className="mt-4 grid gap-4 sm:grid-cols-2" aria-label="Desktop bridge status">
-              <div>
-                <dt className="text-sm text-violet-100/60">Profile connection</dt>
-                <dd className="mt-1 text-sm text-cyan-200">
-                  {connection.connectionKind === "opened"
-                    ? "Opened the main profile"
-                    : "Reattached to the running main profile"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-sm text-violet-100/60">Subscription ID</dt>
-                <dd className="mt-1 break-all font-mono text-sm text-cyan-200">
-                  {connection.subscriptionId}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-sm text-violet-100/60">Authoritative revision</dt>
-                <dd className="mt-1 break-all font-mono text-sm text-cyan-200">
-                  {snapshot.revision}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-sm text-violet-100/60">Host lifecycle</dt>
-                <dd className="mt-1 font-mono text-sm text-violet-100/80">
-                  {snapshot.hostLifecycle}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-sm text-violet-100/60">Stale snapshots rejected</dt>
-                <dd className="mt-1 font-mono text-sm text-violet-100/80">
-                  {staleNotifications.snapshots}
-                </dd>
-              </div>
-            </dl>
-          ) : null}
-
+          {ready ? <HostSetupScreen /> : null}
           {failed ? (
-            <div
-              className="mt-4 rounded-xl border border-red-300/30 bg-red-950/40 p-4"
-              role="alert"
-            >
-              <p className="font-semibold text-red-100">Desktop bridge startup failed</p>
-              <p className="mt-2 text-sm leading-6 text-red-100/80">
-                {latestError?.message ?? "The desktop bridge failed without an error payload."}
+            <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/40 p-4">
+              <p className="font-semibold">Desktop bridge startup failed</p>
+              <p className="mt-2 text-sm">
+                {latestError?.message ?? "No structured error was returned."}
               </p>
-            </div>
-          ) : null}
-
-          {!failed && latestError !== null ? (
-            <div
-              className="mt-4 rounded-xl border border-amber-300/30 bg-amber-950/40 p-4"
-              role="alert"
-            >
-              <p className="font-semibold text-amber-100">Core command or bridge error</p>
-              <p className="mt-2 text-sm leading-6 text-amber-100/80">{latestError.message}</p>
             </div>
           ) : null}
         </div>
