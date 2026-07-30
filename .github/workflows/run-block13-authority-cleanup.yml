@@ -82,6 +82,16 @@ jobs:
 
       - name: Apply Block 13 authority cleanup
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/apply-block13-authority-cleanup.py")
+          text = path.read_text(encoding="utf-8")
+          old = 'write(memory_path, memory.rstrip() + entry + "\\n")'
+          new = 'write(memory_path, memory.rstrip() + entry.rstrip() + "\\n")'
+          if text.count(old) != 1:
+              raise SystemExit("expected one memory newline normalizer target")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
           python scripts/apply-block13-authority-cleanup.py
           git add -A
           git diff --check --cached
