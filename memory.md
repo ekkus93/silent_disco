@@ -318,3 +318,13 @@ Execution constraints for this session:
 - Unsupported effects return correlated structured failures rather than successful no-ops. Adapter panics are contained and reported as `ffi_panic_contained` failures.
 - Added bounded cancellation, queued-effect cancellation during shutdown, deterministic worker join, operation-correlation tests, stale-completion rejection coverage against the real core actor, diagnostics export tests, unsupported-effect tests, panic/error containment tests, cancellation tests, and shutdown ownership tests.
 - Guarded validation run: `30529942712`. Required gates: source-size invariant; shared Rust fmt/strict Clippy/all-feature tests; Android assemble, unit tests, and lint; desktop generated bindings, format, lint, typecheck, tests, build; desktop Rust fmt/strict Clippy/tests/check.
+
+## 2026-07-30 — Desktop Block 16 secure audio source selection complete
+
+- Source commit validated: `bf9664058c9ca239e6d1995d512782aed81c5921`.
+- Final implementation validation run: `30539622045`.
+- Added backend-owned native file selection for one explicit WAV, FLAC, or MP3 source; cancellation remains distinct from failure and no unrestricted filesystem capability is exposed.
+- Inspection verifies canonicalized regular files, an 8 GiB size bound, bounded/sanitized display names, fixed-size content signatures, explicit unsupported formats, and opaque source IDs. Native paths remain only in a single backend registry and are cleared fail-visibly when the profile closes.
+- The authoritative actor receives only the redacted descriptor. Profile readiness waits for the acknowledged capability snapshot, and React waits for a newer Rust snapshot rather than mutating source state optimistically.
+- Tests cover cancellation, dialog failure, missing files, directories, empty/oversized files, Unicode bounds, deceptive extensions, malformed MP3 headers, canonicalization and permission failures, deterministic identities, registry rollback/clear, capability publication, and frontend cancellation/error behavior.
+- Automated validation passed source-size enforcement, generated-binding verification, frontend format/lint/typecheck/tests/build, Rust format/strict Clippy/tests/check, lockfile reproducibility, and Linux Tauri bundle creation. Native dialog interaction on a physical desktop session remains unclaimed.

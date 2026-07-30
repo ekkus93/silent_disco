@@ -307,9 +307,7 @@ enum CloseAction {
 ///
 /// # Errors
 ///
-/// Returns a structured desktop error for invalid profile IDs, path or lock failures,
-/// unavailable secure identity, storage or actor startup failure, bridge failure, or
-/// lifecycle races. Partial startup is cleaned up before the error is returned.
+/// Returns a structured error for profile, path, lock, identity, storage, actor, bridge, or lifecycle failure; partial startup is cleaned up before returning.
 #[tauri::command]
 pub async fn open_profile(
     app: AppHandle,
@@ -394,13 +392,11 @@ pub fn get_current_snapshot(app: AppHandle) -> Result<CoreSnapshotDto, DesktopEr
 
 /// Attaches or replaces the frontend notification channel for the ready profile.
 ///
-/// The current authoritative snapshot is dispatched first. Replacing a subscription stops
-/// and joins the old worker before the new subscription becomes active.
+/// The current snapshot is dispatched first; replacing a subscription stops and joins the old worker before the new subscription becomes active.
 ///
 /// # Errors
 ///
-/// Returns a structured error when no profile is ready, the bridge has failed, the worker
-/// cannot start, or the blocking attachment task fails.
+/// Returns a structured error when no profile is ready or bridge, worker start, or blocking attachment fails.
 #[tauri::command]
 pub async fn attach_notifications(
     app: AppHandle,
@@ -428,8 +424,7 @@ pub async fn attach_notifications(
 ///
 /// # Errors
 ///
-/// Returns a structured error when lifecycle state is unavailable, another open/close
-/// is in progress, the close worker fails, or actor/database/profile-lock cleanup fails.
+/// Returns a structured error for lifecycle, concurrent open/close, worker, actor, database, or profile-lock cleanup failure.
 #[tauri::command]
 pub async fn close_profile(app: AppHandle) -> Result<BridgeLifecycleDto, DesktopErrorDto> {
     let action = app.state::<DesktopAppState>().take_for_close()?;
@@ -698,7 +693,12 @@ mod tests {
             .expect("open profile");
 
         assert_eq!(response.snapshot.revision, "1");
-        assert!(response.snapshot.capabilities.audio_source_selection_available);
+        assert!(
+            response
+                .snapshot
+                .capabilities
+                .audio_source_selection_available
+        );
         assert!(response.snapshot.capabilities.secure_store_available);
         assert!(!response.snapshot.capabilities.audio_output_available);
         assert!(!response.snapshot.capabilities.local_network_available);
