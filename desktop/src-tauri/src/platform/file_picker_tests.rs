@@ -220,11 +220,26 @@ fn registry_is_single_slot_and_rolls_back_only_current_selection() {
     let first_id = first.descriptor().source_id.clone();
     let second_id = second.descriptor().source_id.clone();
     let registry = SelectedSourceRegistry::new();
-    assert!(registry.replace(first.clone()).expect("register first").is_none());
+    assert!(
+        registry
+            .replace(first.clone())
+            .expect("register first")
+            .is_none()
+    );
     let previous = registry.replace(second).expect("register second");
     registry
         .restore_if_current(&second_id, previous)
         .expect("restore first");
-    assert!(registry.resolve(&first_id).expect("resolve first").is_some());
-    assert!(registry.resolve(&second_id).expect("resolve second").is_none());
+    assert!(
+        registry
+            .resolve(&first_id)
+            .expect("resolve first")
+            .is_some()
+    );
+    assert!(
+        registry
+            .resolve(&second_id)
+            .expect("resolve second")
+            .is_none()
+    );
 }
