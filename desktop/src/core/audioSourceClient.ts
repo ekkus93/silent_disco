@@ -23,6 +23,10 @@ export class DesktopAudioSourceError extends Error implements DesktopErrorDto {
   }
 }
 
+export function toDesktopAudioSourceError(error: unknown): DesktopAudioSourceError {
+  return new DesktopAudioSourceError(toDesktopBridgeError(error, "select_audio_source"));
+}
+
 export async function selectAudioSource(
   expectedRevision: string,
 ): Promise<CommandReceiptDto | null> {
@@ -30,6 +34,6 @@ export async function selectAudioSource(
   try {
     return await invoke<CommandReceiptDto | null>("select_audio_source", { request });
   } catch (error: unknown) {
-    throw new DesktopAudioSourceError(toDesktopBridgeError(error, "select_audio_source"));
+    throw toDesktopAudioSourceError(error);
   }
 }
