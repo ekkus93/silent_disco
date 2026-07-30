@@ -2,7 +2,6 @@
 """Move per-request approval lifetime into the Rust command contract."""
 
 from pathlib import Path
-from textwrap import dedent
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,213 +22,146 @@ def replace_once(path: str, label: str, old: str, new: str) -> None:
     write(path, content.replace(old, new))
 
 
+def replace_count(path: str, label: str, old: str, new: str, expected: int) -> None:
+    content = read(path)
+    count = content.count(old)
+    if count != expected:
+        raise SystemExit(f"{path} [{label}]: expected {expected} matches, found {count}")
+    write(path, content.replace(old, new))
+
+
 def update_command_records() -> None:
+    old = "    ApproveJoin { request_id: RequestId },\n"
+    new = (
+        "    ApproveJoin {\n"
+        "        request_id: RequestId,\n"
+        "        remember_for_future: bool,\n"
+        "    },\n"
+    )
     for path in (
         "rust/silent-disco-core/src/runtime/records.rs",
         "rust/silent-disco-core/src/runtime/records_v2.rs",
     ):
-        replace_once(
-            path,
-            "approve-command-payload",
-            "    ApproveJoin { request_id: RequestId },\n",
-            dedent(
-                """
-                    ApproveJoin {
-                        request_id: RequestId,
-                        remember_for_future: bool,
-                    },
-                """
-            ),
-        )
+        replace_once(path, "approve-command-payload", old, new)
 
 
 def update_actor_dispatch() -> None:
-    replace_once(
-        "rust/silent-disco-core/src/runtime/actor_runtime/state/commands.rs",
-        "approve-dispatch",
-        dedent(
-            """
-                        CoreCommand::ApproveJoin { request_id } => {
-                            self.approve_join(operation_id, request_id)
-                        }
-            """
-        ),
-        dedent(
-            """
-                        CoreCommand::ApproveJoin {
-                            request_id,
-                            remember_for_future,
-                        } => self.approve_join(operation_id, request_id, remember_for_future),
-            """
-        ),
+    path = "rust/silent-disco-core/src/runtime/actor_runtime/state/commands.rs"
+    compact = (
+        "            CoreCommand::ApproveJoin { request_id } => "
+        "self.approve_join(operation_id, request_id),\n"
     )
+    expanded = (
+        "            CoreCommand::ApproveJoin { request_id } => {\n"
+        "                self.approve_join(operation_id, request_id)\n"
+        "            }\n"
+    )
+    content = read(path)
+    if compact in content:
+        old = compact
+    elif expanded in content:
+        old = expanded
+    else:
+        raise SystemExit(f"{path} [approve-dispatch]: no supported fixture matched")
+    new = (
+        "            CoreCommand::ApproveJoin {\n"
+        "                request_id,\n"
+        "                remember_for_future,\n"
+        "            } => self.approve_join(operation_id, request_id, remember_for_future),\n"
+    )
+    write(path, content.replace(old, new, 1))
 
 
 def update_admission_policy() -> None:
     path = "rust/silent-disco-core/src/runtime/actor_runtime/state/admission.rs"
     replace_once(
         path,
+        "approval-import",
+        "    classify_delivery, classify_join_request, prepare_approval,\n",
+        "    classify_delivery, classify_join_request, prepare_explicit_approval,\n",
+    )
+    replace_once(
+        path,
         "approve-signature",
-        dedent(
-            """
-                    pub(super) fn approve_join(
-                        &mut self,
-                        operation_id: OperationId,
-                        request_id: RequestId,
-                    ) -> Result<ApplyOutcome, CoreError> {
-            """
+        (
+            "    pub(super) fn approve_join(\n"
+            "        &mut self,\n"
+            "        operation_id: OperationId,\n"
+            "        request_id: RequestId,\n"
+            "    ) -> Result<ApplyOutcome, CoreError> {\n"
         ),
-        dedent(
-            """
-                    pub(super) fn approve_join(
-                        &mut self,
-                        operation_id: OperationId,
-                        request_id: RequestId,
-                        remember_for_future: bool,
-                    ) -> Result<ApplyOutcome, CoreError> {
-            """
+        (
+            "    pub(super) fn approve_join(\n"
+            "        &mut self,\n"
+            "        operation_id: OperationId,\n"
+            "        request_id: RequestId,\n"
+            "        remember_for_future: bool,\n"
+            "    ) -> Result<ApplyOutcome, CoreError> {\n"
         ),
     )
     replace_once(
         path,
         "explicit-approval-preparation",
         "        match prepare_approval(&self.snapshot.host_draft, &request) {\n",
-        "        match prepare_approval(&request, remember_for_future) {\n",
+        "        match prepare_explicit_approval(&request, remember_for_future) {\n",
     )
 
     policy = "rust/silent-disco-core/src/runtime/host_admission.rs"
-    replace_once(
-        policy,
-        "approval-doc",
-        dedent(
-            '''
-            /// Plans an explicit approval without mutating the pending request.
-            ///
-            /// Durable trust is written before approval delivery whenever the host requested
-            /// "remember approved devices" and the listener is not already trusted.
-            #[must_use]
-            pub fn prepare_approval(draft: &HostDraft, request: &JoinRequestSummary) -> ApprovalPreparation {
-                if draft.remember_approved_devices && request.trust_state != TrustState::Trusted {
-            '''
-        ),
-        dedent(
-            '''
-            /// Plans an explicit approval without mutating the pending request.
-            ///
-            /// Durable trust is written before approval delivery only when this specific approval
-            /// requests future trust and the listener is not already trusted.
-            #[must_use]
-            pub fn prepare_approval(
-                request: &JoinRequestSummary,
-                remember_for_future: bool,
-            ) -> ApprovalPreparation {
-                if remember_for_future && request.trust_state != TrustState::Trusted {
-            '''
-        ),
+    old = (
+        "/// Plans an explicit approval without mutating the pending request.\n"
+        "///\n"
+        "/// Durable trust is written before approval delivery whenever the host requested\n"
+        "/// \"remember approved devices\" and the listener is not already trusted.\n"
+        "#[must_use]\n"
+        "pub fn prepare_approval(draft: &HostDraft, request: &JoinRequestSummary) -> ApprovalPreparation {\n"
+        "    if draft.remember_approved_devices && request.trust_state != TrustState::Trusted {\n"
+        "        ApprovalPreparation::PersistTrustFirst(TrustPersistenceRequest {\n"
+        "            request_id: request.request_id.clone(),\n"
+        "            device_id: request.device_id.clone(),\n"
+        "            display_name: request.display_name.clone(),\n"
+        "        })\n"
+        "    } else {\n"
+        "        ApprovalPreparation::Deliver(ApprovalDelivery {\n"
+        "            request_id: request.request_id.clone(),\n"
+        "            device_id: request.device_id.clone(),\n"
+        "            trusted_for_future: request.trust_state == TrustState::Trusted,\n"
+        "            persistence_failed: false,\n"
+        "        })\n"
+        "    }\n"
+        "}\n"
     )
-    replace_once(
-        policy,
-        "policy-unit-tests",
-        dedent(
-            """
-                #[test]
-                fn remember_policy_requires_persistence_before_delivery() {
-                    let draft = HostDraft {
-                        remember_approved_devices: true,
-                        ..HostDraft::default()
-                    };
-                    let request = request(TrustState::SessionOnly, true);
-
-                    let ApprovalPreparation::PersistTrustFirst(persistence) =
-                        prepare_approval(&draft, &request)
-                    else {
-                        panic!("approval must persist trust before delivery");
-                    };
-                    assert_eq!(persistence.request_id, request.request_id);
-                    assert_eq!(persistence.device_id, request.device_id);
-
-                    let delivery = approval_after_persistence(&persistence, TrustPersistenceOutcome::Committed);
-                    assert!(delivery.trusted_for_future);
-                    assert!(!delivery.persistence_failed);
-                }
-
-                #[test]
-                fn failed_persistence_falls_back_visibly_to_session_only_delivery() {
-                    let draft = HostDraft {
-                        remember_approved_devices: true,
-                        ..HostDraft::default()
-                    };
-                    let request = request(TrustState::SessionOnly, true);
-                    let ApprovalPreparation::PersistTrustFirst(persistence) =
-                        prepare_approval(&draft, &request)
-                    else {
-                        panic!("approval must persist trust before delivery");
-                    };
-
-                    let delivery = approval_after_persistence(&persistence, TrustPersistenceOutcome::Failed);
-                    assert!(!delivery.trusted_for_future);
-                    assert!(delivery.persistence_failed);
-                }
-
-                #[test]
-                fn session_only_approval_does_not_request_persistence() {
-                    let draft = HostDraft::default();
-                    let request = request(TrustState::SessionOnly, true);
-
-                    let ApprovalPreparation::Deliver(delivery) = prepare_approval(&draft, &request) else {
-                        panic!("session-only approval must deliver directly");
-                    };
-                    assert!(!delivery.trusted_for_future);
-                    assert!(!delivery.persistence_failed);
-                }
-            """
-        ),
-        dedent(
-            """
-                #[test]
-                fn explicit_future_trust_requires_persistence_before_delivery() {
-                    let request = request(TrustState::SessionOnly, true);
-
-                    let ApprovalPreparation::PersistTrustFirst(persistence) =
-                        prepare_approval(&request, true)
-                    else {
-                        panic!("approval must persist trust before delivery");
-                    };
-                    assert_eq!(persistence.request_id, request.request_id);
-                    assert_eq!(persistence.device_id, request.device_id);
-
-                    let delivery = approval_after_persistence(&persistence, TrustPersistenceOutcome::Committed);
-                    assert!(delivery.trusted_for_future);
-                    assert!(!delivery.persistence_failed);
-                }
-
-                #[test]
-                fn failed_persistence_falls_back_visibly_to_session_only_delivery() {
-                    let request = request(TrustState::SessionOnly, true);
-                    let ApprovalPreparation::PersistTrustFirst(persistence) =
-                        prepare_approval(&request, true)
-                    else {
-                        panic!("approval must persist trust before delivery");
-                    };
-
-                    let delivery = approval_after_persistence(&persistence, TrustPersistenceOutcome::Failed);
-                    assert!(!delivery.trusted_for_future);
-                    assert!(delivery.persistence_failed);
-                }
-
-                #[test]
-                fn approve_once_does_not_request_persistence() {
-                    let request = request(TrustState::SessionOnly, true);
-
-                    let ApprovalPreparation::Deliver(delivery) = prepare_approval(&request, false) else {
-                        panic!("approve-once must deliver directly");
-                    };
-                    assert!(!delivery.trusted_for_future);
-                    assert!(!delivery.persistence_failed);
-                }
-            """
-        ),
+    new = (
+        "/// Plans an approval using the host draft's default lifetime policy.\n"
+        "#[must_use]\n"
+        "pub fn prepare_approval(draft: &HostDraft, request: &JoinRequestSummary) -> ApprovalPreparation {\n"
+        "    prepare_explicit_approval(request, draft.remember_approved_devices)\n"
+        "}\n\n"
+        "/// Plans one explicit approval without mutating the pending request.\n"
+        "///\n"
+        "/// Durable trust is written before approval delivery only when this specific command\n"
+        "/// requests future trust and the listener is not already trusted.\n"
+        "#[must_use]\n"
+        "pub fn prepare_explicit_approval(\n"
+        "    request: &JoinRequestSummary,\n"
+        "    remember_for_future: bool,\n"
+        ") -> ApprovalPreparation {\n"
+        "    if remember_for_future && request.trust_state != TrustState::Trusted {\n"
+        "        ApprovalPreparation::PersistTrustFirst(TrustPersistenceRequest {\n"
+        "            request_id: request.request_id.clone(),\n"
+        "            device_id: request.device_id.clone(),\n"
+        "            display_name: request.display_name.clone(),\n"
+        "        })\n"
+        "    } else {\n"
+        "        ApprovalPreparation::Deliver(ApprovalDelivery {\n"
+        "            request_id: request.request_id.clone(),\n"
+        "            device_id: request.device_id.clone(),\n"
+        "            trusted_for_future: request.trust_state == TrustState::Trusted,\n"
+        "            persistence_failed: false,\n"
+        "        })\n"
+        "    }\n"
+        "}\n"
     )
+    replace_once(policy, "explicit-approval-policy", old, new)
 
 
 def update_ffi() -> None:
@@ -237,95 +169,72 @@ def update_ffi() -> None:
     replace_once(
         path,
         "ffi-approve-signature",
-        dedent(
-            """
-                pub fn approve_join(
-                    &self,
-                    expected_revision: u64,
-                    request_id: String,
-                ) -> Result<FfiCommandReceipt, FfiBridgeError> {
-            """
+        (
+            "    pub fn approve_join(\n"
+            "        &self,\n"
+            "        expected_revision: u64,\n"
+            "        request_id: String,\n"
+            "    ) -> Result<FfiCommandReceipt, FfiBridgeError> {\n"
         ),
-        dedent(
-            """
-                pub fn approve_join(
-                    &self,
-                    expected_revision: u64,
-                    request_id: String,
-                    remember_for_future: bool,
-                ) -> Result<FfiCommandReceipt, FfiBridgeError> {
-            """
+        (
+            "    pub fn approve_join(\n"
+            "        &self,\n"
+            "        expected_revision: u64,\n"
+            "        request_id: String,\n"
+            "        remember_for_future: bool,\n"
+            "    ) -> Result<FfiCommandReceipt, FfiBridgeError> {\n"
         ),
     )
     replace_once(
         path,
         "ffi-approve-command",
-        dedent(
-            """
-                        CoreCommand::ApproveJoin {
-                            request_id: request_id_from_string(request_id)?,
-                        },
-            """
+        (
+            "            CoreCommand::ApproveJoin {\n"
+            "                request_id: request_id_from_string(request_id)?,\n"
+            "            },\n"
         ),
-        dedent(
-            """
-                        CoreCommand::ApproveJoin {
-                            request_id: request_id_from_string(request_id)?,
-                            remember_for_future,
-                        },
-            """
+        (
+            "            CoreCommand::ApproveJoin {\n"
+            "                request_id: request_id_from_string(request_id)?,\n"
+            "                remember_for_future,\n"
+            "            },\n"
         ),
     )
 
 
 def update_tests() -> None:
     actor = "rust/silent-disco-core/tests/host_block12_actor_admission.rs"
-    content = read(actor)
-    occurrences = content.count("CoreCommand::ApproveJoin {")
-    if occurrences != 3:
-        raise SystemExit(f"{actor}: expected 3 approval commands, found {occurrences}")
-    first = dedent(
-        """
-                CoreCommand::ApproveJoin {
-                    request_id: request.request_id.clone(),
-                },
-        """
+    replace_count(
+        actor,
+        "approve-once-fixtures",
+        (
+            "        CoreCommand::ApproveJoin {\n"
+            "            request_id: request.request_id.clone(),\n"
+            "        },\n"
+        ),
+        (
+            "        CoreCommand::ApproveJoin {\n"
+            "            request_id: request.request_id.clone(),\n"
+            "            remember_for_future: false,\n"
+            "        },\n"
+        ),
+        2,
     )
-    if content.count(first) != 2:
-        raise SystemExit(f"{actor}: expected two approve-once fixtures")
-    content = content.replace(
-        first,
-        dedent(
-            """
-                    CoreCommand::ApproveJoin {
-                        request_id: request.request_id.clone(),
-                        remember_for_future: false,
-                    },
-            """
+    replace_once(
+        actor,
+        "durable-approval-fixture",
+        (
+            "        CoreCommand::ApproveJoin {\n"
+            "            request_id: request.request_id,\n"
+            "        },\n"
+        ),
+        (
+            "        CoreCommand::ApproveJoin {\n"
+            "            request_id: request.request_id,\n"
+            "            remember_for_future: true,\n"
+            "        },\n"
         ),
     )
-    remembered = dedent(
-        """
-                CoreCommand::ApproveJoin {
-                    request_id: request.request_id,
-                },
-        """
-    )
-    if content.count(remembered) != 1:
-        raise SystemExit(f"{actor}: expected one durable approval fixture")
-    content = content.replace(
-        remembered,
-        dedent(
-            """
-                    CoreCommand::ApproveJoin {
-                        request_id: request.request_id,
-                        remember_for_future: true,
-                    },
-            """
-        ),
-    )
-    write(actor, content)
-
     replace_once(
         "rust/silent-disco-ffi/tests/host_admission.rs",
         "ffi-approve-call",
@@ -334,27 +243,12 @@ def update_tests() -> None:
     )
 
 
-def update_automation_source() -> None:
-    path = "scripts/apply-block13-rust-admission.py"
-    content = read(path)
-    content = content.replace(
-        "CoreCommand::ApproveJoin { request_id } => {\n                        self.approve_join(operation_id, request_id)\n                    }",
-        "CoreCommand::ApproveJoin {\n                        request_id,\n                        remember_for_future,\n                    } => self.approve_join(operation_id, request_id, remember_for_future),",
-    )
-    content = content.replace(
-        ".approve_join(pending.revision, \"request-ffi-1\".to_owned())",
-        ".approve_join(pending.revision, \"request-ffi-1\".to_owned(), false)",
-    )
-    write(path, content)
-
-
 def main() -> None:
     update_command_records()
     update_actor_dispatch()
     update_admission_policy()
     update_ffi()
     update_tests()
-    update_automation_source()
 
 
 if __name__ == "__main__":
