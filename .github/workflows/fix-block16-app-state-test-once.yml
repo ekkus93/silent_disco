@@ -24,24 +24,27 @@ jobs:
           fetch-depth: 0
 
       - name: Update authoritative startup snapshot assertion
-        shell: python
+        shell: bash
         run: |
+          set -euo pipefail
+          python - <<'PY'
           from pathlib import Path
 
           path = Path("desktop/src-tauri/src/app_state.rs")
           text = path.read_text()
           old = '''        assert_eq!(response.snapshot.revision, "0");
-          assert_eq!(state.current_snapshot().expect("snapshot").revision, "0");
-'''
+                  assert_eq!(state.current_snapshot().expect("snapshot").revision, "0");
+          '''
           new = '''        assert_eq!(response.snapshot.revision, "1");
-          assert!(response.snapshot.capabilities.audio_source_selection_available);
-          assert!(response.snapshot.capabilities.secure_store_available);
-          assert!(!response.snapshot.capabilities.audio_output_available);
-          assert_eq!(state.current_snapshot().expect("snapshot").revision, "1");
-'''
+                  assert!(response.snapshot.capabilities.audio_source_selection_available);
+                  assert!(response.snapshot.capabilities.secure_store_available);
+                  assert!(!response.snapshot.capabilities.audio_output_available);
+                  assert_eq!(state.current_snapshot().expect("snapshot").revision, "1");
+          '''
           if text.count(old) != 1:
               raise SystemExit("expected app-state assertion block was not found exactly once")
           path.write_text(text.replace(old, new))
+          PY
 
       - name: Commit fix and remove one-shot workflow
         shell: bash
