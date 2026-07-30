@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   validate-and-finalize:
-    if: github.event.pull_request.number == 47
+    if: github.event.pull_request.head.ref == 'agent/desktop-block16-closure'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
