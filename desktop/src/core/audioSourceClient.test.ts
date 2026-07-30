@@ -27,10 +27,22 @@ describe("desktop audio source client", () => {
       message: "permission denied",
     });
 
-    await expect(selectAudioSource("18")).rejects.toMatchObject({
-      code: "desktop.audio_source.permission_denied",
-      message: "permission denied",
-      retryable: true,
-    });
+    try {
+      await selectAudioSource("18");
+      throw new Error("audio source selection unexpectedly succeeded");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(Error);
+      const structured = error as Error & {
+        code?: string;
+        subsystem?: string;
+        severity?: string;
+        retryable?: boolean;
+      };
+      expect(structured.message).toBe("permission denied");
+      expect(structured.code).toBe("desktop.audio_source.permission_denied");
+      expect(structured.subsystem).toBe("audio_source");
+      expect(structured.severity).toBe("error");
+      expect(structured.retryable).toBe(true);
+    }
   });
 });
