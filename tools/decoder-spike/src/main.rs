@@ -136,7 +136,7 @@ fn decode_opened(
         decode_micros: decode_started.elapsed().as_micros(),
         progress,
     };
-    report_for_opened(arguments, &opened, metrics, disposition)
+    report_for_opened(arguments, &opened, &metrics, disposition)
 }
 
 fn decode_packets(
@@ -173,7 +173,7 @@ fn decode_packets(
 fn report_for_opened(
     arguments: &Arguments,
     opened: &OpenedDecoder,
-    metrics: DecodeMetrics,
+    metrics: &DecodeMetrics,
     disposition: DecodeDisposition,
 ) -> DecodeReport {
     let (status, error_class, error_detail, cancellation_requested) = match disposition {
