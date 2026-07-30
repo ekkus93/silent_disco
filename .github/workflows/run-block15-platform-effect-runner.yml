@@ -115,6 +115,7 @@ jobs:
           path.write_text(text, encoding="utf-8")
           PY
           python scripts/apply-block15-platform-effect-runner.py
+          (cd desktop/src-tauri && cargo fmt --all)
           git add -A
           git diff --check --cached
 
