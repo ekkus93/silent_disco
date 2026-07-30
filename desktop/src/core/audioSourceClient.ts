@@ -1,9 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type {
-  CommandReceiptDto,
-  RevisionCommandRequest,
-} from "./generated/desktop-bindings";
+import type { CommandReceiptDto, RevisionCommandRequest } from "./generated/desktop-bindings";
 
 export async function selectAudioSource(
   expectedRevision: string,
