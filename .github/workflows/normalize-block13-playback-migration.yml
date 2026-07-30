@@ -49,13 +49,17 @@ jobs:
           content = path.read_text(encoding="utf-8")
           old_trigger = '      - "scripts/apply-block13-android-host-cutover.py"'
           new_trigger = '      - "scripts/fixtures/apply-block13-android-host-cutover.py.txt"'
-          old_run = "      - name: Apply Android host cutover\n        run: python3 scripts/apply-block13-android-host-cutover.py"
+          old_run = '''      - name: Apply Android host cutover
+        run: |
+          python3 scripts/apply-block13-android-host-cutover.py
+          python3 scripts/fix-block13-android-host-cutover.py'''
           new_run = '''      - name: Apply Android host cutover
         run: |
           cp scripts/fixtures/apply-block13-android-host-cutover.py.txt \\
             scripts/.apply-block13-android-host-cutover.py
           python3 scripts/.apply-block13-android-host-cutover.py
-          rm scripts/.apply-block13-android-host-cutover.py'''
+          rm scripts/.apply-block13-android-host-cutover.py
+          python3 scripts/fix-block13-android-host-cutover.py'''
           for old, new, label in (
               (old_trigger, new_trigger, "trigger"),
               (old_run, new_run, "run step"),
