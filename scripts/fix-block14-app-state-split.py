@@ -81,7 +81,7 @@ use tauri::State;
 /// Selects the host role through the revision-aware authoritative actor.
 #[tauri::command]
 pub fn select_host_role(
-    state: State<'_, DesktopAppState>,
+    state: &State<'_, DesktopAppState>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
     let RevisionCommandRequest { expected_revision } = request;
@@ -94,7 +94,7 @@ pub fn select_host_role(
 /// Applies one typed host-draft patch without allowing native paths through IPC.
 #[tauri::command]
 pub fn update_host_draft(
-    state: State<'_, DesktopAppState>,
+    state: &State<'_, DesktopAppState>,
     request: UpdateHostDraftRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
     let UpdateHostDraftRequest {
@@ -132,7 +132,7 @@ pub fn update_host_draft(
 /// Requests host-session creation. Queue admission is not reported as session success.
 #[tauri::command]
 pub fn create_host_session(
-    state: State<'_, DesktopAppState>,
+    state: &State<'_, DesktopAppState>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
     let RevisionCommandRequest { expected_revision } = request;
