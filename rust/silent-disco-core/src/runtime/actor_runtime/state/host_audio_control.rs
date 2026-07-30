@@ -91,6 +91,17 @@ impl ActorState {
             | AudioEvent::Underrun { .. } => {}
         }
 
+        if self.snapshot.host_lifecycle == HostLifecycle::WaitingForListeners
+            && matches!(
+                &event,
+                AudioEvent::PlaybackStateChanged(PlaybackState::Playing)
+            )
+        {
+            let outcome = self.apply_audio(event)?;
+            self.snapshot.host_lifecycle = HostLifecycle::Streaming;
+            return Ok(outcome);
+        }
+
         self.apply_audio_with_host_lifecycle(event)
     }
 }
