@@ -1,4 +1,5 @@
 pub mod audio_device;
+pub(crate) mod capabilities;
 pub mod diagnostics_export;
 pub mod discovery;
 pub mod effect_runner;
