@@ -6,8 +6,8 @@ pub use handle::FfiCoreHandle;
 pub use types::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreNotification, FfiCoreObserver, FfiCoreSnapshot,
-    FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiListenerSummary,
-    FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState, FfiStorageEffect,
-    FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState, FfiTrustState,
-    FfiTuningPatch, FfiTuningSettings,
+    FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiJoinRequestInput,
+    FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState,
+    FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState,
+    FfiTrustState, FfiTuningPatch, FfiTuningSettings,
 };

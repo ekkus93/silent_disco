@@ -1,6 +1,6 @@
 use silent_disco_ffi::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCoreHandle,
-    FfiCoreNotification, FfiCoreObserver, FfiDeliveryReport, FfiHostDraft, FfiJoinRequest,
+    FfiCoreNotification, FfiCoreObserver, FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput,
     FfiPlatformCompletion, FfiPlatformEffect, FfiTransportEffect, FfiTrustState,
 };
 use std::sync::{Arc, Condvar, Mutex};
@@ -113,12 +113,12 @@ fn uniffi_admission_reaches_delivery_first_actor_handlers() {
     let waiting = observer.wait_for_snapshot(4);
 
     handle
-        .submit_join_request(FfiJoinRequest {
+        .submit_join_request(FfiJoinRequestInput {
             request_id: "request-ffi-1".to_owned(),
             device_id: "listener-ffi-1".to_owned(),
             display_name: "Listener FFI".to_owned(),
             trust_state: FfiTrustState::SessionOnly,
-            invite_code_valid: true,
+            invite_code: None,
             received_at_ms: 100,
         })
         .expect("submit join request");

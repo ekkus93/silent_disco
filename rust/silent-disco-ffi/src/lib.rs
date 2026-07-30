@@ -23,9 +23,9 @@ pub use host_control::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,
     FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest,
-    FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState,
-    FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState,
-    FfiTrustState, FfiTuningPatch, FfiTuningSettings,
+    FfiJoinRequestInput, FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect,
+    FfiPlaybackState, FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect,
+    FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
 };
 pub use sync::{
     FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange, FfiSyncObservation,

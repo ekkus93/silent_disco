@@ -1,10 +1,11 @@
 use super::types::{
     FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
-    FfiDeliveryReport, FfiHostDraft, FfiJoinRequest, FfiListenerSummary, FfiPlatformCompletion,
-    FfiPlaybackState, FfiTransportState, FfiTuningPatch, FfiTuningSettings,
+    FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
+    FfiPlatformCompletion, FfiPlaybackState, FfiTransportState, FfiTuningPatch, FfiTuningSettings,
 };
 use silent_disco_core::domain::{
-    DeviceId, MonotonicMillis, OperationId, RequestId, SyncConfidence, TransportState, TrustState,
+    ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SyncConfidence,
+    TransportState, TrustState,
 };
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
@@ -213,14 +214,21 @@ impl FfiCoreHandle {
         Ok(())
     }
 
-    pub fn submit_join_request(&self, request: FfiJoinRequest) -> Result<(), FfiBridgeError> {
+    pub fn submit_join_request(&self, request: FfiJoinRequestInput) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
+        let snapshot = self.handle.current_snapshot()?;
+        let invite_code_valid = match snapshot.host_draft.approval_mode {
+            ApprovalMode::InviteCode => {
+                snapshot.host_draft.invite_code.as_deref() == request.invite_code.as_deref()
+            }
+            ApprovalMode::Manual | ApprovalMode::TrustedDevices => true,
+        };
         let request = JoinRequestSummary::new(
             request_id_from_string(request.request_id)?,
             device_id_from_string(request.device_id)?,
             request.display_name,
             TrustState::try_from(request.trust_state)?,
-            request.invite_code_valid,
+            invite_code_valid,
             MonotonicMillis::new(request.received_at_ms),
         )
         .map_err(|error| FfiBridgeError::Core(error.to_string()))?;

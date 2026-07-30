@@ -107,6 +107,16 @@ pub struct FfiJoinRequest {
     pub received_at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiJoinRequestInput {
+    pub request_id: String,
+    pub device_id: String,
+    pub display_name: String,
+    pub trust_state: FfiTrustState,
+    pub invite_code: Option<String>,
+    pub received_at_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FfiSynchronizationSummary {
     pub confidence: String,
