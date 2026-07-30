@@ -96,8 +96,9 @@ mod tests {
 
     fn ready_host() -> ActorState {
         let mut state = ActorState::new(DeviceId::new("host-audio-test").expect("valid device ID"));
+        state.host_session_id =
+            Some(SessionId::new("session-audio-test").expect("valid session ID"));
         state.snapshot.selected_role = Some(AppRole::Host);
-        state.host_session_id = Some(SessionId::new("session-audio-test").expect("valid session ID"));
         state.snapshot.host_lifecycle = HostLifecycle::Ready;
         state.snapshot.playback_state = PlaybackState::Stopped;
         state
