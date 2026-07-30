@@ -115,12 +115,21 @@ jobs:
               "#[derive(Serialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct CapabilityExport {\n": "#[derive(Serialize)]\n#[serde(rename_all = \"camelCase\")]\n#[allow(\n    clippy::struct_excessive_bools,\n    reason = \"the stable diagnostics wire record mirrors the core capability snapshot\"\n)]\nstruct CapabilityExport {\n",
               "#[cfg(test)]\npub(super) mod test_support {\n    pub(super) use super::{\n        DesktopPlatformEffectDispatcher, DesktopPlatformEffectExecutor,\n        DesktopPlatformEffectInbox, DesktopPlatformEffectRunner, DesktopPlatformEventSink,\n    };\n}\n": "",
               "'''use super::effect_runner::test_support::{\n    DesktopPlatformEffectDispatcher, DesktopPlatformEffectExecutor, DesktopPlatformEffectInbox,\n    DesktopPlatformEffectRunner, DesktopPlatformEventSink,\n};\n": "'''use super::effect_runner::{\n    DesktopPlatformEffectDispatcher, DesktopPlatformEffectExecutor, DesktopPlatformEffectInbox,\n    DesktopPlatformEffectRunner, DesktopPlatformEventSink,\n};\n",
-              "use std::sync::{Arc, Mutex};\n": "use std::sync::Arc;\n",
           }
           for old, new in replacements.items():
               if text.count(old) != 1:
                   raise SystemExit(f"expected one preflight replacement for {old!r}, found {text.count(old)}")
               text = text.replace(old, new, 1)
+
+          test_sync_import = "use std::sync::{Arc, Mutex};\n"
+          if text.count(test_sync_import) != 2:
+              raise SystemExit(
+                  f"expected two Arc/Mutex imports before narrowing, found {text.count(test_sync_import)}"
+              )
+          head, separator, tail = text.rpartition(test_sync_import)
+          if not separator:
+              raise SystemExit("test Arc/Mutex import was not found")
+          text = head + "use std::sync::Arc;\n" + tail
 
           start = text.index("#[test]\nfn production_capabilities_and_unsupported_discovery_are_explicit()")
           end = text.index("#[test]\nfn unsupported_effect_returns_correlated_visible_failure()", start)
