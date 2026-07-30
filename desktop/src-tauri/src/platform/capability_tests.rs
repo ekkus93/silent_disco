@@ -1,9 +1,12 @@
+use super::capabilities::{desktop_capabilities, publish_desktop_capabilities};
 use super::effect_runner::{DesktopPlatformAdapters, DesktopPlatformEffectExecutor};
 use super::paths::DesktopProfilePaths;
 use crate::profile::ProfileId;
-use silent_disco_core::domain::OperationId;
+use silent_disco_core::domain::{DeviceId, OperationId};
+use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
-    PermissionCapability, PlatformEffect, PlatformEffectRequest, PlatformOperationCompletion,
+    CoreActorConfig, CoreActorRuntime, PermissionCapability, PlatformEffect,
+    PlatformEffectRequest, PlatformOperationCompletion,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -64,8 +67,30 @@ fn production_adapter_advertises_only_implemented_block16_audio_selection() {
     let PlatformOperationCompletion::CapabilitiesResolved(capabilities) = completion else {
         panic!("unexpected capability completion");
     };
+    assert_eq!(capabilities, desktop_capabilities());
     assert!(capabilities.audio_source_selection_available);
     assert!(capabilities.secure_store_available);
     assert!(!capabilities.audio_output_available);
     assert!(!capabilities.local_network_available);
+}
+
+#[test]
+fn startup_publication_updates_the_authoritative_actor_snapshot() {
+    let actor = CoreActorRuntime::start(
+        CoreActorConfig::new(DeviceId::new("desktop-capability-test").expect("valid device ID")),
+        |_notification| Ok::<(), CoreError>(()),
+    )
+    .expect("start actor");
+    let handle = actor.handle();
+
+    publish_desktop_capabilities(&handle).expect("publish desktop capabilities");
+
+    assert_eq!(
+        handle
+            .current_snapshot()
+            .expect("authoritative snapshot")
+            .capabilities,
+        desktop_capabilities()
+    );
+    actor.shutdown().expect("shutdown actor");
 }
