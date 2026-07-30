@@ -8,7 +8,7 @@ on:
       - .github/workflows/desktop-block19-source-snapshot.yml
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 concurrency:
@@ -69,3 +69,86 @@ jobs:
           path: silent-disco-block19-source.tgz
           if-no-files-found: error
           retention-days: 1
+
+      - name: Materialize connector-readable source chunks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+
+          output = Path("docs/generated/desktop-block19-source")
+          if output.exists():
+              shutil.rmtree(output)
+          output.mkdir(parents=True)
+
+          roots = [
+              Path("rust"),
+              Path("desktop/src-tauri"),
+              Path("tools/decoder-spike"),
+              Path("app/src/main/java/com/ekkus/silentdisco/core/audio"),
+          ]
+          extras = [
+              Path("Cargo.toml"),
+              Path("rust/Cargo.toml"),
+              Path("desktop/src-tauri/Cargo.toml"),
+              Path("tools/decoder-spike/Cargo.toml"),
+              Path("docs/DESKTOP_BLOCK18_DECODER_DECISION.md"),
+              Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md"),
+          ]
+          suffixes = {".rs", ".toml", ".kt", ".md", ".json", ".yml", ".yaml"}
+          files = []
+          for root in roots:
+              if root.exists():
+                  files.extend(
+                      path for path in root.rglob("*")
+                      if path.is_file()
+                      and path.suffix in suffixes
+                      and "target" not in path.parts
+                      and "build" not in path.parts
+                  )
+          files.extend(path for path in extras if path.exists())
+          files = sorted(set(files), key=lambda path: path.as_posix())
+
+          limit = 450_000
+          chunks = []
+          current = []
+          current_size = 0
+          for path in files:
+              try:
+                  text = path.read_text()
+              except UnicodeDecodeError:
+                  continue
+              entry = f"\n===== BEGIN {path.as_posix()} =====\n{text}\n===== END {path.as_posix()} =====\n"
+              if current and current_size + len(entry) > limit:
+                  chunks.append("".join(current))
+                  current = []
+                  current_size = 0
+              current.append(entry)
+              current_size += len(entry)
+          if current:
+              chunks.append("".join(current))
+
+          manifest = [
+              f"input_sha={Path('BLOCK19_SNAPSHOT_INPUT.txt').read_text().strip()}",
+              f"file_count={len(files)}",
+              f"chunk_count={len(chunks)}",
+              "files:",
+          ]
+          manifest.extend(path.as_posix() for path in files)
+          (output / "manifest.txt").write_text("\n".join(manifest) + "\n")
+          for index, chunk in enumerate(chunks):
+              (output / f"chunk-{index:03d}.txt").write_text(chunk)
+          PY
+
+      - name: Commit temporary source chunks
+        run: |
+          set -euo pipefail
+          git add docs/generated/desktop-block19-source
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Materialize Desktop Block 19 source snapshot"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
