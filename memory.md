@@ -343,7 +343,8 @@ Execution constraints for this session:
 ## 2026-07-30 — Desktop Block 18 decoder decision complete
 
 - Evidence commit: `0cecbc38cfca68620131ed4c072968896fac2e65`.
-- Guarded validation run: `30576293784`.
+- Guarded revalidation run: `30589549529`.
+- Revalidated input commit: `a5e07308e0fc5fdb0bca36b04c58112036643e98`; its only source-equivalent addition was this temporary audit workflow, removed by the completion commit.
 - Selected decoder: `symphonia = 0.6.0`, default features disabled, features `wav`, `pcm`, `flac`, `mp3`, `id3v1`, `id3v2`; license `MPL-2.0`.
 - Selected ownership: shared Rust streaming decoder (shared Block 23 Path B), with no automatic platform, HTML, Web Audio, TypeScript, or FFmpeg fallback.
 - Initial formats: WAV/PCM, native FLAC, and MP3. Desktop Block 19 will convert source-native planar buffers incrementally into bounded 48 kHz stereo PCM16 little-endian chunks.

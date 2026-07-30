@@ -1082,7 +1082,7 @@ Prohibited:
 - [x] rejected alternatives;
 - [x] removal plan for any temporary adapter.
 
-**Completion evidence:** Symphonia `0.6.0` with minimal WAV/PCM, FLAC, MP3, and ID3 features was compiled and measured against deterministic valid, corrupt, truncated, oversized-metadata, and cancellation fixtures. Shared Rust streaming decode was selected after the complete regression matrix passed in GitHub Actions run `30576293784` from evidence commit `0cecbc38cfca68620131ed4c072968896fac2e65`. Results are recorded in `docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.md`; measurements are specific to the CI host and are not universal product limits.
+**Completion evidence:** Symphonia `0.6.0` with minimal WAV/PCM, FLAC, MP3, and ID3 features was compiled and measured against deterministic valid, corrupt, truncated, oversized-metadata, and cancellation fixtures. Shared Rust streaming decode was selected in evidence commit `0cecbc38cfca68620131ed4c072968896fac2e65`; the executable spike and complete regression matrix were freshly revalidated in GitHub Actions run `30589549529` against audit input `a5e07308e0fc5fdb0bca36b04c58112036643e98`. Results are recorded in `docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.md`; measurements are specific to the CI host and are not universal product limits.
 
 **Acceptance:** One explicit decoder path is selected with executable evidence.
 
