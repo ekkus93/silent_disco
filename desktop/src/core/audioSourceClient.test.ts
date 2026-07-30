@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DesktopAudioSourceError, selectAudioSource } from "./audioSourceClient";
+import {
+  DesktopAudioSourceError,
+  selectAudioSource,
+  toDesktopAudioSourceError,
+} from "./audioSourceClient";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
@@ -18,8 +22,8 @@ describe("desktop audio source client", () => {
     });
   });
 
-  it("normalizes a structured native inspection failure", async () => {
-    invokeMock.mockRejectedValue({
+  it("normalizes a structured native inspection failure", () => {
+    const structured = toDesktopAudioSourceError({
       code: "desktop.audio_source.permission_denied",
       subsystem: "audio_source",
       severity: "error",
@@ -27,14 +31,8 @@ describe("desktop audio source client", () => {
       message: "permission denied",
     });
 
-    const rejection = await selectAudioSource("18").then(
-      () => null,
-      (error: unknown) => error,
-    );
-    const structured = rejection as DesktopAudioSourceError;
-    expect(rejection !== null).toBe(true);
-    expect(rejection instanceof Error).toBe(true);
-    expect(rejection instanceof DesktopAudioSourceError).toBe(true);
+    expect(structured instanceof Error).toBe(true);
+    expect(structured instanceof DesktopAudioSourceError).toBe(true);
     expect(structured.message).toBe("permission denied");
     expect(structured.code).toBe("desktop.audio_source.permission_denied");
     expect(structured.subsystem).toBe("audio_source");
