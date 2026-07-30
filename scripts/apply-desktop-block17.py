@@ -1,96 +1,115 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
+import json
 from pathlib import Path
 import subprocess
 
-BLOCK17_TRANSFORM_COMMIT = "f1aceea1a8813b0103ae6a8e1141ad91cc8d5aa8"
-BLOCK17_VALIDATED_INPUT = "7948e62a6526a84c3b4fceacc7971acd9c8e9bbb"
-BLOCK17_VALIDATION_RUN = "30576293784"
+EVIDENCE_COMMIT = "0cecbc38cfca68620131ed4c072968896fac2e65"
+VALIDATION_RUN = "30576293784"
+TODO_PATH = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+SHARED_TODO_PATH = Path("docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md")
+MEMORY_PATH = Path("memory.md")
+RESULTS_PATH = Path("docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.json")
 
 
-def run(*command: str, cwd: str | None = None) -> None:
-    subprocess.run(command, cwd=cwd, check=True)
+def run(*command: str) -> None:
+    subprocess.run(command, check=True)
 
 
 def output(*command: str) -> str:
     return subprocess.check_output(command, text=True).strip()
 
 
-def block17_pending_count() -> int:
-    text = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md").read_text()
-    start = text.index("## Block 17 — Implement atomic source staging")
-    end = text.index("## Block 18 — Resolve the decoder decision gate", start)
-    return text[start:end].count("- [ ]")
+def verify_evidence() -> dict[str, object]:
+    run("git", "cat-file", "-e", f"{EVIDENCE_COMMIT}^{{commit}}")
+    run("git", "merge-base", "--is-ancestor", EVIDENCE_COMMIT, "HEAD")
+    results = json.loads(RESULTS_PATH.read_text())
+    candidate = results["candidate"]
+    decision = results["decision"]
+    if candidate["crate"] != "symphonia" or candidate["version"] != "0.6.0":
+        raise SystemExit("unexpected Block 18 decoder candidate")
+    if decision["ownership"] != "shared Rust streaming decoder":
+        raise SystemExit("unexpected Block 18 ownership decision")
+    return results
 
 
-def verify_block17_validation_ancestry() -> None:
-    run("git", "cat-file", "-e", f"{BLOCK17_VALIDATED_INPUT}^{{commit}}")
-    run("git", "merge-base", "--is-ancestor", BLOCK17_VALIDATED_INPUT, "HEAD")
-    run("git", "cat-file", "-e", f"{BLOCK17_TRANSFORM_COMMIT}^{{commit}}")
-
-
-def apply_validated_block17_transform() -> None:
-    source = subprocess.check_output(
-        [
-            "git",
-            "show",
-            f"{BLOCK17_TRANSFORM_COMMIT}:scripts/apply-desktop-block17.py",
-        ],
-        text=True,
-    )
-    namespace = {"__name__": "__main__", "__file__": "scripts/apply-desktop-block17.py"}
-    exec(compile(source, "scripts/apply-desktop-block17.py", "exec"), namespace)
-
-
-def record_block17_completion() -> None:
-    todo = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
-    text = todo.read_text()
-    start = text.index("## Block 17 — Implement atomic source staging")
-    end = text.index("## Block 18 — Resolve the decoder decision gate", start)
+def complete_desktop_todo() -> None:
+    text = TODO_PATH.read_text()
+    start = text.index("## Block 18 — Resolve the decoder decision gate")
+    end = text.index("## Block 19 — Implement bounded streaming decode", start)
     block = text[start:end]
-    if block.count("- [ ]") != 20:
-        raise SystemExit("Block 17 checklist changed during finalization")
+    pending = block.count("- [ ]")
+    if pending == 0:
+        raise SystemExit("Desktop Block 18 is already checked")
+    if pending != 23:
+        raise SystemExit(f"expected 23 pending Desktop Block 18 entries, found {pending}")
     block = block.replace("- [ ]", "- [x]")
-    evidence = (
-        "**Completion evidence:** Atomic, content-addressed source staging; bounded progress; "
-        "explicit cancellation; verified reuse; strict owned-temp startup cleanup; frontend "
-        f"integration; and the complete regression matrix passed in GitHub Actions run "
-        f"`{BLOCK17_VALIDATION_RUN}` from validated input commit "
-        f"`{BLOCK17_VALIDATED_INPUT}`. Native file-dialog interaction was not performed by "
-        "this CI run.\n\n"
-    )
-    marker = (
-        "**Acceptance:** The core receives a stable app-owned source path with no destructive "
-        "or silent recovery."
-    )
+    marker = "**Acceptance:** One explicit decoder path is selected with executable evidence."
     if block.count(marker) != 1:
-        raise SystemExit("Block 17 acceptance marker mismatch")
-    todo.write_text(text[:start] + block.replace(marker, evidence + marker) + text[end:])
+        raise SystemExit("Desktop Block 18 acceptance marker mismatch")
+    evidence = (
+        "**Completion evidence:** Symphonia `0.6.0` with minimal WAV/PCM, FLAC, MP3, "
+        "and ID3 features was compiled and measured against deterministic valid, corrupt, "
+        "truncated, oversized-metadata, and cancellation fixtures. Shared Rust streaming "
+        f"decode was selected after the complete regression matrix passed in GitHub Actions "
+        f"run `{VALIDATION_RUN}` from evidence commit `{EVIDENCE_COMMIT}`. Results are recorded "
+        "in `docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.md`; measurements are "
+        "specific to the CI host and are not universal product limits.\n\n"
+    )
+    TODO_PATH.write_text(text[:start] + block.replace(marker, evidence + marker) + text[end:])
 
-    memory = Path("memory.md")
-    existing = memory.read_text()
-    heading = "## 2026-07-30 — Desktop Block 17 atomic source staging complete"
+
+def coordinate_shared_block() -> None:
+    text = SHARED_TODO_PATH.read_text()
+    marker = (
+        "**Acceptance:** One documented production decoder ownership model exists with "
+        "performance/device evidence."
+    )
+    note = (
+        "**Desktop Block 18 coordination:** Path B (shared Rust decoding) is selected. The "
+        "desktop Symphonia spike and decision record are complete, but shared Block 23 remains "
+        "open until Android bridge overhead, mobile physical-device format parity, iOS file-access "
+        "constraints, and removal of the temporary platform decoder path are recorded. No hidden "
+        "fallback is introduced during that migration.\n\n"
+    )
+    if note.strip() in text:
+        raise SystemExit("shared Block 23 coordination note already exists")
+    if text.count(marker) != 1:
+        raise SystemExit("shared Block 23 acceptance marker mismatch")
+    SHARED_TODO_PATH.write_text(text.replace(marker, note + marker))
+
+
+def record_memory(results: dict[str, object]) -> None:
+    existing = MEMORY_PATH.read_text()
+    heading = "## 2026-07-30 — Desktop Block 18 decoder decision complete"
     if heading in existing:
-        raise SystemExit("Block 17 completion entry already exists")
+        raise SystemExit("Desktop Block 18 memory entry already exists")
+    cases = results["cases"]
+    features = ", ".join(f"`{feature}`" for feature in results["candidate"]["features"])
     entry = f"""
 
 {heading}
 
-- Validated input commit: `{BLOCK17_VALIDATED_INPUT}`.
-- Guarded validation run: `{BLOCK17_VALIDATION_RUN}`.
-- Source selection copies the inspected file into the active profile's `sources/` directory through an owned temporary file, fixed 64 KiB buffers, streaming SHA-256, length/signature verification, file and directory synchronization, and no-clobber atomic publication.
-- Stable source IDs and filenames are content-addressed. Existing staged content is reused only after full regular-file, length, and hash verification; mismatches and collisions fail visibly without overwriting data.
-- Staging supports bounded 10 Hz progress events, explicit cancellation, profile-close cancellation/join, and deterministic cleanup that preserves both primary and cleanup failures.
-- Startup removes only strict, provably owned incomplete regular temporary files. Unrelated files, symbolic links, and non-file entries are never silently deleted.
-- Tests cover success, cancellation, source failure during copy, destination write failure, hash mismatch, collision, verified reuse, incomplete-temp cleanup, cleanup refusal, original preservation, progress throttling, and cancellation control.
-- Validation passed source-size enforcement; shared Rust format/strict Clippy/tests; Android builds, ABI packaging, unit tests, lint, and instrumentation; generated desktop bindings, format/lint/typecheck/tests/build; desktop Rust strict gates; exact lockfiles; and Linux Tauri bundle creation. Native file-dialog interaction on a physical desktop session remains unclaimed.
+- Evidence commit: `{EVIDENCE_COMMIT}`.
+- Guarded validation run: `{VALIDATION_RUN}`.
+- Selected decoder: `symphonia = 0.6.0`, default features disabled, features {features}; license `MPL-2.0`.
+- Selected ownership: shared Rust streaming decoder (shared Block 23 Path B), with no automatic platform, HTML, Web Audio, TypeScript, or FFmpeg fallback.
+- Initial formats: WAV/PCM, native FLAC, and MP3. Desktop Block 19 will convert source-native planar buffers incrementally into bounded 48 kHz stereo PCM16 little-endian chunks.
+- Valid-fixture realtime factors on this CI host: WAV `{cases['wav']['realtime_factor']:.1f}x`, FLAC `{cases['flac']['realtime_factor']:.1f}x`, MP3 `{cases['mp3']['realtime_factor']:.1f}x`.
+- Peak RSS on this CI host: WAV `{cases['wav']['peak_rss_kib'] / 1024:.1f}` MiB, FLAC `{cases['flac']['peak_rss_kib'] / 1024:.1f}` MiB, MP3 `{cases['mp3']['peak_rss_kib'] / 1024:.1f}` MiB, and the 2 MiB metadata MP3 `{cases['metadata']['peak_rss_kib'] / 1024:.1f}` MiB.
+- Corrupt and truncated fixtures failed visibly; cooperative cancellation stopped at a decoder packet boundary. These measurements are environment-specific evidence, not product-wide performance limits.
+- Shared Block 23 remains open for Android bridge overhead, physical mobile evidence, iOS file-access constraints, and removal of the temporary platform decoder path.
 """
-    memory.write_text(existing.rstrip() + entry)
+    MEMORY_PATH.write_text(existing.rstrip() + entry)
 
 
-def configure_git() -> None:
+def commit_completion() -> None:
+    run("bash", "scripts/check-source-file-line-counts.sh")
+    run("git", "rm", ".github/workflows/desktop-block17-observable.yml")
+    run("git", "rm", "scripts/apply-desktop-block17.py")
+    run("git", "add", "-A")
+    run("git", "diff", "--cached", "--check")
     run("git", "config", "user.name", "github-actions[bot]")
     run(
         "git",
@@ -98,91 +117,20 @@ def configure_git() -> None:
         "user.email",
         "41898282+github-actions[bot]@users.noreply.github.com",
     )
-
-
-def push_current_commit(parent: str) -> None:
+    parent = output("git", "rev-parse", "HEAD")
     remote = output("git", "ls-remote", "origin", "refs/heads/master").split()[0]
     if remote != parent:
-        raise SystemExit(f"master moved from {parent} to {remote}; refusing to push")
+        raise SystemExit(f"master moved from {parent} to {remote}; refusing completion")
+    run("git", "commit", "-m", "Complete Desktop Block 18 decoder decision")
     run("git", "push", "origin", "HEAD:master")
 
 
-def finalize_block17_if_needed() -> None:
-    pending = block17_pending_count()
-    if pending == 0:
-        memory = Path("memory.md").read_text()
-        if "## 2026-07-30 — Desktop Block 17 atomic source staging complete" not in memory:
-            raise SystemExit("Block 17 is checked but its completion record is missing")
-        return
-    if pending != 20:
-        raise SystemExit(f"unexpected pending Block 17 task count: {pending}")
-
-    verify_block17_validation_ancestry()
-    apply_validated_block17_transform()
-    run("cargo", "fmt", "--manifest-path", "rust/Cargo.toml", "--all")
-    run("cargo", "fmt", "--manifest-path", "desktop/src-tauri/Cargo.toml", "--all")
-    run("npm", "install", "--package-lock-only", "--ignore-scripts", cwd="desktop")
-    run("npm", "ci", cwd="desktop")
-    run("npm", "run", "format", cwd="desktop")
-    run("cargo", "generate-lockfile", cwd="desktop/src-tauri")
-    run("bash", "scripts/check-source-file-line-counts.sh")
-    record_block17_completion()
-
-    for path in (
-        ".github/workflows/desktop-block17-finalize-validated.yml",
-        ".github/workflows/finalize-desktop-block17-push.yml",
-        ".github/workflows/desktop-block17-workflow-run-finalize.yml",
-        "scripts/finalize-desktop-block17.trigger",
-    ):
-        run("git", "rm", "--ignore-unmatch", path)
-    run("git", "rm", "-r", "--ignore-unmatch", "scripts/block17-payload")
-
-    run("git", "add", "-A")
-    run("git", "diff", "--cached", "--check")
-    configure_git()
-    parent = output("git", "rev-parse", "HEAD")
-    run("git", "commit", "-m", "Complete Desktop Block 17 atomic source staging")
-    push_current_commit(parent)
-
-
-def install_spike_dependencies() -> None:
-    run("sudo", "apt-get", "update")
-    run(
-        "sudo",
-        "apt-get",
-        "install",
-        "--yes",
-        "--no-install-recommends",
-        "ffmpeg",
-        "time",
-    )
-
-
-def commit_block18_evidence() -> None:
-    install_spike_dependencies()
-    run("bash", "scripts/run-desktop-block18-spike.sh")
-    run("bash", "scripts/check-source-file-line-counts.sh")
-
-    evidence_paths = (
-        "tools/decoder-spike/Cargo.lock",
-        "docs/DESKTOP_BLOCK18_DECODER_DECISION.md",
-        "docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.json",
-        "docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.md",
-    )
-    run("git", "add", *evidence_paths)
-    run("git", "diff", "--cached", "--check")
-    if subprocess.run(["git", "diff", "--cached", "--quiet"], check=False).returncode == 0:
-        return
-
-    configure_git()
-    parent = output("git", "rev-parse", "HEAD")
-    run("git", "commit", "-m", "Record Desktop Block 18 decoder spike evidence")
-    push_current_commit(parent)
-
-
 def main() -> None:
-    finalize_block17_if_needed()
-    commit_block18_evidence()
+    results = verify_evidence()
+    complete_desktop_todo()
+    coordinate_shared_block()
+    record_memory(results)
+    commit_completion()
 
 
 if __name__ == "__main__":
