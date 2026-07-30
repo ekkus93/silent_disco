@@ -39,6 +39,7 @@ interface HostCoreController : AutoCloseable {
     suspend fun removeListener(listenerId: String)
     suspend fun endHostSession()
     suspend fun retryRecoverableFailure()
+    suspend fun transitionPlaybackState(state: FfiPlaybackState): FfiCoreSnapshot
 
     fun submitJoinRequest(request: FfiJoinRequestInput)
     fun submitListenerConnected(listener: FfiListenerSummary)
@@ -123,6 +124,16 @@ class UniFfiHostCoreController(
     override suspend fun retryRecoverableFailure() = submitRevisionCommand { handle, revision ->
         handle.retryRecoverableFailure(revision)
     }
+
+    override suspend fun transitionPlaybackState(state: FfiPlaybackState): FfiCoreSnapshot =
+        withContext(Dispatchers.IO) {
+            commandMutex.withLock {
+                val handle = openHandle()
+                val currentRevision = currentSnapshot(handle).revision
+                handle.playbackStateChanged(state)
+                awaitPlaybackSnapshot(currentRevision, state)
+            }
+        }
 
     override fun submitJoinRequest(request: FfiJoinRequestInput) = withOpenHandle { handle ->
         handle.submitJoinRequest(request)
@@ -228,6 +239,15 @@ class UniFfiHostCoreController(
         withTimeout(SNAPSHOT_TIMEOUT_MS) {
             snapshots.filterNotNull().first { it.revision > acceptedAtRevision }
         }
+
+    private suspend fun awaitPlaybackSnapshot(
+        previousRevision: ULong,
+        state: FfiPlaybackState,
+    ): FfiCoreSnapshot = withTimeout(SNAPSHOT_TIMEOUT_MS) {
+        snapshots.filterNotNull().first { snapshot ->
+            snapshot.revision > previousRevision && snapshot.playbackState == state
+        }
+    }
 
     private companion object {
         const val SNAPSHOT_TIMEOUT_MS = 5_000L
