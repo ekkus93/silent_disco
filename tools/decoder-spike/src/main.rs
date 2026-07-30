@@ -54,10 +54,7 @@ struct DecodeMetrics {
 enum DecodeDisposition {
     Decoded,
     Cancelled,
-    Failed {
-        class: &'static str,
-        detail: String,
-    },
+    Failed { class: &'static str, detail: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,9 +179,7 @@ fn report_for_opened(
     let (status, error_class, error_detail, cancellation_requested) = match disposition {
         DecodeDisposition::Decoded => ("decoded", None, None, false),
         DecodeDisposition::Cancelled => ("cancelled", None, None, true),
-        DecodeDisposition::Failed { class, detail } => {
-            ("error", Some(class), Some(detail), false)
-        }
+        DecodeDisposition::Failed { class, detail } => ("error", Some(class), Some(detail), false),
     };
     DecodeReport {
         path: arguments.path.clone(),
@@ -203,11 +198,7 @@ fn report_for_opened(
     }
 }
 
-fn open_failure_report(
-    arguments: &Arguments,
-    startup_micros: u128,
-    error: &Error,
-) -> DecodeReport {
+fn open_failure_report(arguments: &Arguments, startup_micros: u128, error: &Error) -> DecodeReport {
     DecodeReport {
         path: arguments.path.clone(),
         status: "error",
