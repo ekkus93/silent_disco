@@ -27,8 +27,9 @@ jobs:
           rustup default 1.97.1
 
       - name: Apply authoritative snapshot closure
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
 
           def replace_once(path: str, old: str, new: str) -> None:
@@ -82,6 +83,7 @@ jobs:
               "    publish_desktop_capabilities(&handle).expect(\"publish desktop capabilities\");\n\n    assert_eq!(\n        handle\n            .current_snapshot()\n            .expect(\"authoritative snapshot\")\n            .capabilities,\n        desktop_capabilities()\n    );",
               "    let published =\n        publish_desktop_capabilities(&handle).expect(\"publish desktop capabilities\");\n\n    assert_eq!(published.capabilities, desktop_capabilities());\n    assert_eq!(\n        handle.current_snapshot().expect(\"authoritative snapshot\"),\n        published\n    );",
           )
+          PY
 
       - name: Format desktop Rust
         run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
