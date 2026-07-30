@@ -99,6 +99,7 @@ class UniFfiHostCoreController(
                 )
             }
             handle.createHostSession(snapshot.revision)
+            Unit
         }
     }
 
