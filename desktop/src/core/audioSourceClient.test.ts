@@ -31,13 +31,13 @@ describe("desktop audio source client", () => {
       await selectAudioSource("18");
       throw new Error("audio source selection unexpectedly succeeded");
     } catch (error: unknown) {
-      expect(error).toBeInstanceOf(Error);
       const structured = error as Error & {
         code?: string;
         subsystem?: string;
         severity?: string;
         retryable?: boolean;
       };
+      expect(error instanceof Error).toBe(true);
       expect(structured.message).toBe("permission denied");
       expect(structured.code).toBe("desktop.audio_source.permission_denied");
       expect(structured.subsystem).toBe("audio_source");
