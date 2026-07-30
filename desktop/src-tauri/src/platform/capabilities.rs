@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 const CAPABILITY_STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 const CAPABILITY_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+/// Returns the exact desktop capabilities implemented by the current platform adapters.
 #[must_use]
 pub(crate) const fn desktop_capabilities() -> CapabilitySnapshot {
     CapabilitySnapshot {
@@ -19,6 +20,7 @@ pub(crate) const fn desktop_capabilities() -> CapabilitySnapshot {
     }
 }
 
+/// Publishes capabilities through the actor and waits for authoritative snapshot evidence.
 pub(crate) fn publish_desktop_capabilities(handle: &CoreActorHandle) -> Result<(), CoreError> {
     let expected = desktop_capabilities();
     handle.submit_platform_event(PlatformEvent::CapabilityStateChanged(expected))?;
