@@ -1,0 +1,217 @@
+name: Finalize Desktop Block 13 Playback Authority
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/run-block13-playback-authority-final.yml"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: block13-playback-authority-final
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record validation start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Final Rust playback-authority validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+
+      - name: Normalize migration harnesses
+        run: |
+          set -euo pipefail
+          mkdir -p scripts/fixtures
+          if [[ -f scripts/apply-block13-android-host-cutover.py ]]; then
+            git mv scripts/apply-block13-android-host-cutover.py \
+              scripts/fixtures/apply-block13-android-host-cutover.py.txt
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/run-block13-android-host-cutover.yml")
+          content = path.read_text(encoding="utf-8")
+          old_trigger = '      - "scripts/apply-block13-android-host-cutover.py"'
+          new_trigger = '      - "scripts/fixtures/apply-block13-android-host-cutover.py.txt"'
+          old_run = '''      - name: Apply Android host cutover
+        run: |
+          python3 scripts/apply-block13-android-host-cutover.py
+          python3 scripts/fix-block13-android-host-cutover.py'''
+          new_run = '''      - name: Apply Android host cutover
+        run: |
+          cp scripts/fixtures/apply-block13-android-host-cutover.py.txt \\
+            scripts/.apply-block13-android-host-cutover.py
+          python3 scripts/.apply-block13-android-host-cutover.py
+          rm scripts/.apply-block13-android-host-cutover.py
+          python3 scripts/fix-block13-android-host-cutover.py'''
+          for old, new, label in (
+              (old_trigger, new_trigger, "trigger"),
+              (old_run, new_run, "run step"),
+          ):
+              if old in content:
+                  if content.count(old) != 1:
+                      raise SystemExit(f"Android cutover workflow {label} is ambiguous")
+                  content = content.replace(old, new)
+              elif new not in content:
+                  raise SystemExit(f"Android cutover workflow {label} fixture mismatch")
+          path.write_text(content, encoding="utf-8")
+          PY
+          if [[ -f scripts/apply-block13-playback-authority.py ]]; then
+            git mv scripts/apply-block13-playback-authority.py \
+              scripts/fixtures/apply-block13-playback-authority.py.txt
+          fi
+
+      - name: Apply playback authority migration
+        run: |
+          set -euo pipefail
+          if ! grep -q "StartHostPlayback" rust/silent-disco-core/src/runtime/effects.rs; then
+            cp scripts/fixtures/apply-block13-playback-authority.py.txt \
+              scripts/.apply-block13-playback-authority.py
+            python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/.apply-block13-playback-authority.py")
+          content = path.read_text(encoding="utf-8")
+          old = '''    count = content.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              write(path, content.replace(old, new))
+          '''
+          new = '''    count = content.count(old)
+              import_header = (
+                  path == "rust/silent-disco-core/src/runtime/effects.rs"
+                  and old.startswith("use crate::domain::{DeviceId")
+              )
+              if count != 1 and not (import_header and count == 2):
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              write(path, content.replace(old, new, 1))
+          '''
+          if content.count(old) != 1:
+              raise SystemExit("migration helper fixture mismatch")
+          path.write_text(content.replace(old, new), encoding="utf-8")
+          PY
+            python3 scripts/.apply-block13-playback-authority.py
+            rm scripts/.apply-block13-playback-authority.py
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("rust/silent-disco-core/src/runtime/actor_runtime/state/admission.rs")
+          content = path.read_text(encoding="utf-8")
+          if "PendingTransportOperation::StartHostPlayback" not in content:
+              disconnect = "            PendingTransportOperation::DisconnectListener { listener_id } => {"
+              if content.count(disconnect) != 1:
+                  raise SystemExit("admission.rs: disconnect arm fixture mismatch")
+              start = content.index(disconnect)
+              boundary = "\n        }\n\n        if self\n            .snapshot\n            .last_error"
+              end = content.find(boundary, start)
+              if end < 0:
+                  raise SystemExit("admission.rs: post-match boundary not found")
+              playback_arms = '''
+              PendingTransportOperation::StartHostPlayback
+              | PendingTransportOperation::PauseHostPlayback
+              | PendingTransportOperation::ResumeHostPlayback
+              | PendingTransportOperation::StopHostPlayback => {
+                  return Err(invalid_state(
+                      "host playback completion was routed to admission handling",
+                      Some(operation_id),
+                  ));
+              }
+          '''
+              path.write_text(content[:end] + playback_arms + content[end:], encoding="utf-8")
+          PY
+          cd rust
+          cargo +1.97.1 fmt --all
+
+      - name: Check patch and source size
+        run: |
+          git diff --check
+          bash scripts/check-source-file-line-counts.sh
+
+      - name: Run strict Clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee ../block13-playback-clippy.log
+
+      - name: Run Rust and FFI tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd rust
+          cargo +1.97.1 test --workspace --all-features 2>&1 | tee ../block13-playback-tests.log
+
+      - name: Generate and verify Kotlin bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="${GITHUB_WORKSPACE}/app/build/generated/uniffiKotlin"
+          rm -rf "${output}"
+          bash scripts/generate-uniffi-kotlin.sh "${output}"
+          generated="${output}/com/ekkus/silentdisco/core/uniffi/silent_disco_ffi.kt"
+          grep -q "data class StartHostPlayback" "${generated}"
+          grep -q "data class PauseHostPlayback" "${generated}"
+          grep -q "fun startHostPlayback" "${generated}"
+          grep -q "fun transportOperationFailed" "${generated}"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block13-playback-authority-final-diagnostics
+          path: |
+            block13-playback-clippy.log
+            block13-playback-tests.log
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Commit validated playback authority
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A rust scripts .github/workflows/run-block13-android-host-cutover.yml
+          git commit -m "Make host playback commands Rust-authoritative"
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git rebase origin/master
+            if git push origin HEAD:master; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          exit 1
+
+      - name: Record validation success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh issue comment 45 --body "Final Rust playback-authority validation passed and committed \`${COMMIT_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Record validation failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Final Rust playback-authority validation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
