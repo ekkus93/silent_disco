@@ -6,9 +6,7 @@ use super::failure::{DesktopPlatformFailure, core_error};
 use super::paths::DesktopProfilePaths;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use silent_disco_core::domain::OperationId;
-use silent_disco_core::error::{
-    CoreError, CoreErrorCode, ErrorSeverity, MAX_ERROR_MESSAGE_BYTES,
-};
+use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity, MAX_ERROR_MESSAGE_BYTES};
 use silent_disco_core::runtime::{
     CapabilitySnapshot, CoreActorHandle, CoreNotification, CoreObserver, CoreSnapshot,
     PlatformEffect, PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion,
