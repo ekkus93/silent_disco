@@ -12,7 +12,7 @@ permissions:
 jobs:
   apply-and-validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check out pull request
         uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.97.1
 
-      - name: Apply authoritative snapshot closure
+      - name: Apply complete Block 16 closure
         shell: bash
         run: |
           python - <<'PY'
@@ -36,6 +36,7 @@ jobs:
                   raise SystemExit(f"{path}: expected one replacement, found {count}")
               target.write_text(text.replace(old, new, 1))
 
+          # Return the exact post-publication authoritative snapshot from startup.
           replace_once(
               "desktop/src-tauri/src/platform/capabilities.rs",
               "use silent_disco_core::runtime::{CapabilitySnapshot, CoreActorHandle, PlatformEvent};",
@@ -51,7 +52,6 @@ jobs:
               "        if handle.current_snapshot()?.capabilities == expected {\n            return Ok(());\n        }",
               "        let snapshot = handle.current_snapshot()?;\n        if snapshot.capabilities == expected {\n            return Ok(snapshot);\n        }",
           )
-
           replace_once(
               "desktop/src-tauri/src/platform/effect_runner.rs",
               "    ) -> Result<Self, CoreError> {",
@@ -62,7 +62,6 @@ jobs:
               "        if let Err(primary) = publish_desktop_capabilities(&handle) {\n            return match runner.shutdown() {\n                Ok(()) => Err(primary),\n                Err(cleanup) => Err(append_startup_cleanup(primary, cleanup)),\n            };\n        }\n        Ok(runner)",
               "        let snapshot = match publish_desktop_capabilities(&handle) {\n            Ok(snapshot) => snapshot,\n            Err(primary) => {\n                return match runner.shutdown() {\n                    Ok(()) => Err(primary),\n                    Err(cleanup) => Err(append_startup_cleanup(primary, cleanup)),\n                };\n            }\n        };\n        Ok((runner, snapshot))",
           )
-
           replace_once(
               "desktop/src-tauri/src/app_state.rs",
               "    let platform_runner = match DesktopPlatformEffectRunner::start(\n        platform_inbox,\n        platform_dispatcher,\n        handle.clone(),\n        paths.clone(),\n    ) {\n        Ok(runner) => runner,",
@@ -73,11 +72,69 @@ jobs:
               "        assert_eq!(response.snapshot.revision, \"0\");\n        assert_eq!(state.current_snapshot().expect(\"snapshot\").revision, \"0\");",
               "        assert_eq!(response.snapshot.revision, \"1\");\n        assert!(response.snapshot.capabilities.audio_source_selection_available);\n        assert!(response.snapshot.capabilities.secure_store_available);\n        assert!(!response.snapshot.capabilities.audio_output_available);\n        assert!(!response.snapshot.capabilities.local_network_available);\n        let current = state.current_snapshot().expect(\"snapshot\");\n        assert_eq!(current.revision, response.snapshot.revision);\n        assert_eq!(current.capabilities, response.snapshot.capabilities);",
           )
-
           replace_once(
               "desktop/src-tauri/src/platform/capability_tests.rs",
               "    publish_desktop_capabilities(&handle).expect(\"publish desktop capabilities\");\n\n    assert_eq!(\n        handle\n            .current_snapshot()\n            .expect(\"authoritative snapshot\")\n            .capabilities,\n        desktop_capabilities()\n    );",
               "    let published =\n        publish_desktop_capabilities(&handle).expect(\"publish desktop capabilities\");\n\n    assert_eq!(published.capabilities, desktop_capabilities());\n    assert_eq!(\n        handle.current_snapshot().expect(\"authoritative snapshot\"),\n        published\n    );",
+          )
+
+          # Scope the retained native source path to the active profile lifecycle.
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker.rs",
+              "        Ok(selected.replace(source))\n    }\n\n    pub(crate) fn restore_if_current(",
+              "        Ok(selected.replace(source))\n    }\n\n    pub(crate) fn clear(&self) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {\n        let mut selected = self.selected.lock().map_err(|_| registry_error())?;\n        Ok(selected.take())\n    }\n\n    pub(crate) fn restore_if_current(",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker.rs",
+              "    fn pick_file(&self) -> Result<Option<PathBuf>, DesktopErrorDto> {\n        let selected = self",
+              "    fn pick_file(&self) -> Result<Option<PathBuf>, DesktopErrorDto> {\n        // The pinned plugin reports native close/cancel as `None` and exposes no separate picker\n        // backend-error channel. Path conversion and every post-selection failure remain explicit.\n        let selected = self",
+          )
+          replace_once(
+              "desktop/src-tauri/src/app_state.rs",
+              "use crate::platform::identity::{",
+              "use crate::platform::file_picker::SelectedSourceRegistry;\nuse crate::platform::identity::{",
+          )
+          replace_once(
+              "desktop/src-tauri/src/app_state.rs",
+              "    app.state::<DesktopAppState>().finish_close(result)?;\n    Ok(BridgeLifecycleDto::Closed)\n}\n\nfn open_runtime(",
+              "    let registry_cleanup = app\n        .state::<SelectedSourceRegistry>()\n        .clear()\n        .map(|_| ());\n    app.state::<DesktopAppState>()\n        .finish_close(merge_close_results(result, registry_cleanup))?;\n    Ok(BridgeLifecycleDto::Closed)\n}\n\nfn merge_close_results(\n    primary: Result<(), DesktopErrorDto>,\n    registry_cleanup: Result<(), DesktopErrorDto>,\n) -> Result<(), DesktopErrorDto> {\n    match (primary, registry_cleanup) {\n        (Ok(()), Ok(())) => Ok(()),\n        (Err(primary), Ok(())) => Err(primary),\n        (Ok(()), Err(cleanup)) => Err(cleanup),\n        (Err(primary), Err(cleanup)) => Err(append_cleanup(primary, Some(cleanup))),\n    }\n}\n\nfn open_runtime(",
+          )
+
+          # Strengthen the secure-selection regression suite.
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "use crate::dto::DesktopErrorDto;\n",
+              "use crate::dto::DesktopErrorDto;\nuse silent_disco_core::runtime::MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES;\n",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "    fn open(&self, path: &Path) -> io::Result<OpenedAudioFile> {\n        let file = File::open(path)?;\n        let metadata = file.metadata()?;\n        Ok(OpenedAudioFile::new(\n            Box::new(file),\n            metadata.file_type().is_file(),\n            metadata.len(),\n        ))\n    }",
+              "    fn open(&self, path: &Path) -> io::Result<OpenedAudioFile> {\n        let metadata = fs::metadata(path)?;\n        if !metadata.file_type().is_file() {\n            return Ok(OpenedAudioFile::new(\n                Box::new(io::empty()),\n                false,\n                metadata.len(),\n            ));\n        }\n        let file = File::open(path)?;\n        let opened_metadata = file.metadata()?;\n        Ok(OpenedAudioFile::new(\n            Box::new(file),\n            opened_metadata.file_type().is_file(),\n            opened_metadata.len(),\n        ))\n    }",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "struct SyntheticBoundary {",
+              "struct CanonicalizeFailingBoundary(io::ErrorKind);\n\nimpl AudioFileBoundary for CanonicalizeFailingBoundary {\n    fn open(&self, _path: &Path) -> io::Result<OpenedAudioFile> {\n        panic!(\"open must not run after canonicalization failure\");\n    }\n\n    fn canonicalize(&self, _path: &Path) -> io::Result<PathBuf> {\n        Err(io::Error::from(self.0))\n    }\n}\n\nstruct SyntheticBoundary {",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "    let error = select_and_inspect(\n        &FixedDialog(Ok(Some(root.0.clone()))),\n        &SyntheticBoundary {\n            regular: false,\n            byte_length: 4096,\n            bytes: Vec::new(),\n        },\n    )",
+              "    let error = select_and_inspect(\n        &FixedDialog(Ok(Some(root.0.clone()))),\n        &SystemBoundary,\n    )",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "#[test]\nfn oversized_file_is_rejected_before_reading_payload() {",
+              "#[test]\nfn empty_file_is_rejected() {\n    let error = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(\"empty.wav\")))),\n        &SyntheticBoundary {\n            regular: true,\n            byte_length: 0,\n            bytes: Vec::new(),\n        },\n    )\n    .expect_err(\"empty source must fail\");\n    assert_eq!(error.code, \"desktop.audio_source.empty\");\n}\n\n#[test]\nfn canonicalization_failure_is_explicit() {\n    let error = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(\"unavailable.wav\")))),\n        &CanonicalizeFailingBoundary(io::ErrorKind::PermissionDenied),\n    )\n    .expect_err(\"canonicalization failure must remain visible\");\n    assert_eq!(error.code, \"desktop.audio_source.permission_denied\");\n}\n\n#[test]\nfn oversized_file_is_rejected_before_reading_payload() {",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "#[test]\nfn deceptive_extension_is_rejected_by_content_signature() {",
+              "#[test]\nfn long_unicode_name_is_truncated_on_a_character_boundary() {\n    let name = format!(\"{}.flac\", \"界\".repeat(100));\n    let source = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(name)))),\n        &SyntheticBoundary {\n            regular: true,\n            byte_length: 8,\n            bytes: b\"fLaCdata\".to_vec(),\n        },\n    )\n    .expect(\"inspect bounded Unicode source\")\n    .expect(\"source selected\");\n    assert!(source.descriptor().display_name.len() <= MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES);\n    assert!(source.descriptor().display_name.is_char_boundary(source.descriptor().display_name.len()));\n}\n\n#[test]\nfn control_characters_are_sanitized_from_display_name() {\n    let source = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(\"bad\\u{0007}name.flac\")))),\n        &SyntheticBoundary {\n            regular: true,\n            byte_length: 8,\n            bytes: b\"fLaCdata\".to_vec(),\n        },\n    )\n    .expect(\"inspect sanitized source\")\n    .expect(\"source selected\");\n    assert_eq!(source.descriptor().display_name, \"bad name.flac\");\n}\n\n#[test]\nfn canonical_source_identity_is_deterministic_and_input_sensitive() {\n    let first = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(\"same.wav\")))),\n        &SyntheticBoundary {\n            regular: true,\n            byte_length: 16,\n            bytes: b\"RIFF\\0\\0\\0\\0WAVEdata\".to_vec(),\n        },\n    )\n    .expect(\"inspect first\")\n    .expect(\"first selected\");\n    let same = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(\"same.wav\")))),\n        &SyntheticBoundary {\n            regular: true,\n            byte_length: 16,\n            bytes: b\"RIFF\\0\\0\\0\\0WAVEdata\".to_vec(),\n        },\n    )\n    .expect(\"inspect same\")\n    .expect(\"same selected\");\n    let different = select_and_inspect(\n        &FixedDialog(Ok(Some(PathBuf::from(\"same.wav\")))),\n        &SyntheticBoundary {\n            regular: true,\n            byte_length: 17,\n            bytes: b\"RIFF\\0\\0\\0\\0WAVEdata\".to_vec(),\n        },\n    )\n    .expect(\"inspect different\")\n    .expect(\"different selected\");\n    assert_eq!(first.descriptor().source_id, same.descriptor().source_id);\n    assert_ne!(first.descriptor().source_id, different.descriptor().source_id);\n}\n\n#[test]\nfn deceptive_extension_is_rejected_by_content_signature() {",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/file_picker_tests.rs",
+              "    assert!(\n        registry\n            .resolve(&second_id)\n            .expect(\"resolve second\")\n            .is_none()\n    );\n}",
+              "    assert!(\n        registry\n            .resolve(&second_id)\n            .expect(\"resolve second\")\n            .is_none()\n    );\n    let cleared = registry\n        .clear()\n        .expect(\"clear registry\")\n        .expect(\"first source retained before clear\");\n    assert_eq!(cleared.descriptor().source_id, first_id);\n    assert!(\n        registry\n            .resolve(&first_id)\n            .expect(\"resolve after clear\")\n            .is_none()\n    );\n}",
           )
           PY
 
@@ -97,12 +154,14 @@ jobs:
           cp desktop/src-tauri/src/platform/capabilities.rs block16-patch/desktop/src-tauri/src/platform/
           cp desktop/src-tauri/src/platform/effect_runner.rs block16-patch/desktop/src-tauri/src/platform/
           cp desktop/src-tauri/src/platform/capability_tests.rs block16-patch/desktop/src-tauri/src/platform/
+          cp desktop/src-tauri/src/platform/file_picker.rs block16-patch/desktop/src-tauri/src/platform/
+          cp desktop/src-tauri/src/platform/file_picker_tests.rs block16-patch/desktop/src-tauri/src/platform/
           cp desktop/src-tauri/src/app_state.rs block16-patch/desktop/src-tauri/src/
 
       - name: Upload validated source artifact
         uses: actions/upload-artifact@v4
         with:
-          name: block16-authoritative-snapshot-patch
+          name: block16-complete-source-patch
           path: block16-patch
           if-no-files-found: error
           retention-days: 1
