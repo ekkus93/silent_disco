@@ -73,7 +73,7 @@ pub async fn select_audio_source(
         Ok(receipt) => Ok(Some(receipt)),
         Err(primary) => {
             if let Err(rollback) = registry.restore_if_current(&source_id, previous) {
-                return Err(append_registration_rollback(primary, rollback));
+                return Err(append_registration_rollback(&primary, &rollback));
             }
             Err(primary)
         }
@@ -161,8 +161,8 @@ fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopError
 }
 
 fn append_registration_rollback(
-    primary: DesktopErrorDto,
-    rollback: DesktopErrorDto,
+    primary: &DesktopErrorDto,
+    rollback: &DesktopErrorDto,
 ) -> DesktopErrorDto {
     DesktopErrorDto::new(
         &primary.code,
