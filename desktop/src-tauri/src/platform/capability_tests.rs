@@ -5,8 +5,8 @@ use crate::profile::ProfileId;
 use silent_disco_core::domain::{DeviceId, OperationId};
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
-    CoreActorConfig, CoreActorRuntime, PermissionCapability, PlatformEffect,
-    PlatformEffectRequest, PlatformOperationCompletion,
+    CoreActorConfig, CoreActorRuntime, PermissionCapability, PlatformEffect, PlatformEffectRequest,
+    PlatformOperationCompletion,
 };
 use std::fs;
 use std::path::PathBuf;
