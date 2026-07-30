@@ -76,16 +76,17 @@ use silent_disco_core::domain::{AppRole, ApprovalMode};
 use silent_disco_core::runtime::{
     AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch, SnapshotRevision,
 };
-use tauri::{AppHandle, Manager};
+use tauri::State;
 
 /// Selects the host role through the revision-aware authoritative actor.
 #[tauri::command]
 pub fn select_host_role(
-    app: AppHandle,
+    state: State<'_, DesktopAppState>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    app.state::<DesktopAppState>().submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
+    let RevisionCommandRequest { expected_revision } = request;
+    state.submit_core_command(
+        parse_snapshot_revision(&expected_revision)?,
         CoreCommand::SelectRole { role: AppRole::Host },
     )
 }
@@ -93,10 +94,17 @@ pub fn select_host_role(
 /// Applies one typed host-draft patch without allowing native paths through IPC.
 #[tauri::command]
 pub fn update_host_draft(
-    app: AppHandle,
+    state: State<'_, DesktopAppState>,
     request: UpdateHostDraftRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    let approval_mode = ApprovalMode::from_wire_name(&request.approval_mode).map_err(|error| {
+    let UpdateHostDraftRequest {
+        expected_revision,
+        session_name,
+        approval_mode,
+        invite_code,
+        remember_approved_devices,
+    } = request;
+    let approval_mode = ApprovalMode::from_wire_name(&approval_mode).map_err(|error| {
         DesktopErrorDto::new(
             "desktop.host.invalid_approval_mode",
             "validation",
@@ -105,18 +113,18 @@ pub fn update_host_draft(
             &error.to_string(),
         )
     })?;
-    let invite_code = match request.invite_code {
+    let invite_code = match invite_code {
         Some(code) => InviteCodePatch::Set(code),
         None => InviteCodePatch::Clear,
     };
-    app.state::<DesktopAppState>().submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
+    state.submit_core_command(
+        parse_snapshot_revision(&expected_revision)?,
         CoreCommand::UpdateHostDraft(HostDraftPatch {
-            session_name: Some(request.session_name),
+            session_name: Some(session_name),
             approval_mode: Some(approval_mode),
             invite_code,
             audio_source: AudioSourcePatch::Unchanged,
-            remember_approved_devices: Some(request.remember_approved_devices),
+            remember_approved_devices: Some(remember_approved_devices),
         }),
     )
 }
@@ -124,11 +132,12 @@ pub fn update_host_draft(
 /// Requests host-session creation. Queue admission is not reported as session success.
 #[tauri::command]
 pub fn create_host_session(
-    app: AppHandle,
+    state: State<'_, DesktopAppState>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    app.state::<DesktopAppState>().submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
+    let RevisionCommandRequest { expected_revision } = request;
+    state.submit_core_command(
+        parse_snapshot_revision(&expected_revision)?,
         CoreCommand::CreateHostSession,
     )
 }
@@ -171,6 +180,15 @@ mod tests {
     }
 }
 ''',
+)
+
+replace_once(
+    "desktop/src-tauri/src/runtime_dto.rs",
+    "pub struct CapabilitySnapshotDto {\n",
+    """/// Stable IPC capability bitmap; booleans map directly to generated frontend flags.
+#[allow(clippy::struct_excessive_bools)]
+pub struct CapabilitySnapshotDto {
+""",
 )
 
 replace_once(
