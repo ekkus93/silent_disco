@@ -44,8 +44,6 @@ jobs:
             --exclude='app/.cxx' \
             -czf silent-disco-block19-source.tgz \
             BLOCK19_SNAPSHOT_INPUT.txt \
-            Cargo.toml \
-            Cargo.lock \
             rust \
             desktop \
             app \
@@ -86,7 +84,6 @@ jobs:
               Path("app/src/main/java/com/ekkus/silentdisco/core/audio"),
           ]
           extras = [
-              Path("Cargo.toml"),
               Path("rust/Cargo.toml"),
               Path("desktop/src-tauri/Cargo.toml"),
               Path("tools/decoder-spike/Cargo.toml"),
