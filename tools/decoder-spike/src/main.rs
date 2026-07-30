@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use symphonia::core::audio::Audio;
-use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
@@ -52,10 +52,9 @@ fn main() -> ExitCode {
 
 fn parse_arguments() -> Result<Arguments, String> {
     let mut arguments = env::args_os().skip(1);
-    let path = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| "usage: silent-disco-decoder-spike <path> [--cancel-after-frames N]".to_owned())?;
+    let path = arguments.next().map(PathBuf::from).ok_or_else(|| {
+        "usage: silent-disco-decoder-spike <path> [--cancel-after-frames N]".to_owned()
+    })?;
 
     let mut cancel_after_frames = None;
     while let Some(argument) = arguments.next() {
