@@ -51,27 +51,32 @@ jobs:
           new_trigger = '      - "scripts/fixtures/apply-block13-android-host-cutover.py.txt"'
           old_run = "      - name: Apply Android host cutover\n        run: python3 scripts/apply-block13-android-host-cutover.py"
           new_run = '''      - name: Apply Android host cutover
-              run: |
-                cp scripts/fixtures/apply-block13-android-host-cutover.py.txt \\
-                  scripts/.apply-block13-android-host-cutover.py
-                python3 scripts/.apply-block13-android-host-cutover.py
-                rm scripts/.apply-block13-android-host-cutover.py'''
+        run: |
+          cp scripts/fixtures/apply-block13-android-host-cutover.py.txt \\
+            scripts/.apply-block13-android-host-cutover.py
+          python3 scripts/.apply-block13-android-host-cutover.py
+          rm scripts/.apply-block13-android-host-cutover.py'''
           for old, new, label in (
               (old_trigger, new_trigger, "trigger"),
               (old_run, new_run, "run step"),
           ):
-              if content.count(old) != 1:
+              if old in content:
+                  if content.count(old) != 1:
+                      raise SystemExit(f"Android cutover workflow {label} is ambiguous")
+                  content = content.replace(old, new)
+              elif new not in content:
                   raise SystemExit(f"Android cutover workflow {label} fixture mismatch")
-              content = content.replace(old, new)
           path.write_text(content, encoding="utf-8")
           PY
-          if [[ -f scripts/apply-block13-playback-authority.py ]]; then
-            git mv scripts/apply-block13-playback-authority.py \
-              scripts/fixtures/apply-block13-playback-authority.py.txt
-          fi
-          cp scripts/fixtures/apply-block13-playback-authority.py.txt \
-            scripts/.apply-block13-playback-authority.py
-          python3 - <<'PY'
+          if ! grep -q "StartHostPlayback" \
+            rust/silent-disco-core/src/runtime/effects.rs; then
+            if [[ -f scripts/apply-block13-playback-authority.py ]]; then
+              git mv scripts/apply-block13-playback-authority.py \
+                scripts/fixtures/apply-block13-playback-authority.py.txt
+            fi
+            cp scripts/fixtures/apply-block13-playback-authority.py.txt \
+              scripts/.apply-block13-playback-authority.py
+            python3 - <<'PY'
           from pathlib import Path
 
           path = Path("scripts/.apply-block13-playback-authority.py")
@@ -94,24 +99,24 @@ jobs:
               raise SystemExit("migration helper fixture mismatch")
           path.write_text(content.replace(old, new), encoding="utf-8")
           PY
-          python3 scripts/.apply-block13-playback-authority.py
-          rm scripts/.apply-block13-playback-authority.py
+            python3 scripts/.apply-block13-playback-authority.py
+            rm scripts/.apply-block13-playback-authority.py
+          fi
           python3 - <<'PY'
           from pathlib import Path
 
           path = Path("rust/silent-disco-core/src/runtime/actor_runtime/state/admission.rs")
           content = path.read_text(encoding="utf-8")
-          disconnect = "            PendingTransportOperation::DisconnectListener { listener_id } => {"
-          if content.count(disconnect) != 1:
-              raise SystemExit("admission.rs: disconnect arm fixture mismatch")
-          if "PendingTransportOperation::StartHostPlayback" in content:
-              raise SystemExit("admission.rs: playback arm already present")
-          start = content.index(disconnect)
-          boundary = "\n        }\n\n        if self\n            .snapshot\n            .last_error"
-          end = content.find(boundary, start)
-          if end < 0:
-              raise SystemExit("admission.rs: post-match boundary not found")
-          playback_arms = '''
+          if "PendingTransportOperation::StartHostPlayback" not in content:
+              disconnect = "            PendingTransportOperation::DisconnectListener { listener_id } => {"
+              if content.count(disconnect) != 1:
+                  raise SystemExit("admission.rs: disconnect arm fixture mismatch")
+              start = content.index(disconnect)
+              boundary = "\n        }\n\n        if self\n            .snapshot\n            .last_error"
+              end = content.find(boundary, start)
+              if end < 0:
+                  raise SystemExit("admission.rs: post-match boundary not found")
+              playback_arms = '''
               PendingTransportOperation::StartHostPlayback
               | PendingTransportOperation::PauseHostPlayback
               | PendingTransportOperation::ResumeHostPlayback
@@ -122,10 +127,10 @@ jobs:
                   ));
               }
           '''
-          path.write_text(
-              content[:end] + playback_arms + content[end:],
-              encoding="utf-8",
-          )
+              path.write_text(
+                  content[:end] + playback_arms + content[end:],
+                  encoding="utf-8",
+              )
           PY
           cd rust
           cargo +1.97.1 fmt --all
@@ -181,6 +186,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A rust scripts .github/workflows/run-block13-android-host-cutover.yml
+          if git diff --cached --quiet; then
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git commit -m "Make host playback commands Rust-authoritative"
           for attempt in 1 2 3; do
             git fetch origin master
@@ -198,7 +207,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           COMMIT_SHA: ${{ steps.commit.outputs.sha }}
         run: |
-          gh issue comment 45 --body "Rust playback-authority validation passed and committed \`${COMMIT_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh issue comment 45 --body "Rust playback-authority validation passed at \`${COMMIT_SHA}\`: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Record validation failure
         if: failure()
