@@ -14,14 +14,15 @@ impl ActorState {
 
         match &event {
             AudioEvent::PlaybackStateChanged(PlaybackState::Buffering) => {
-                if self.snapshot.host_lifecycle != HostLifecycle::Ready
-                    || !matches!(
-                        self.snapshot.playback_state,
-                        PlaybackState::Stopped | PlaybackState::Ready
-                    )
-                {
+                if !matches!(
+                    self.snapshot.host_lifecycle,
+                    HostLifecycle::Ready | HostLifecycle::WaitingForListeners
+                ) || !matches!(
+                    self.snapshot.playback_state,
+                    PlaybackState::Stopped | PlaybackState::Ready
+                ) {
                     return Err(invalid_state(
-                        "host playback can begin buffering only from a ready stopped session",
+                        "host playback can begin buffering only from an active stopped session",
                         None,
                     ));
                 }
@@ -29,13 +30,20 @@ impl ActorState {
             AudioEvent::PlaybackStateChanged(PlaybackState::Playing) => {
                 if !matches!(
                     self.snapshot.host_lifecycle,
-                    HostLifecycle::Ready | HostLifecycle::Paused | HostLifecycle::Streaming
+                    HostLifecycle::Ready
+                        | HostLifecycle::WaitingForListeners
+                        | HostLifecycle::Paused
+                        | HostLifecycle::Streaming
                 ) || !matches!(
                     self.snapshot.playback_state,
-                    PlaybackState::Buffering | PlaybackState::Paused | PlaybackState::Playing
+                    PlaybackState::Stopped
+                        | PlaybackState::Ready
+                        | PlaybackState::Buffering
+                        | PlaybackState::Paused
+                        | PlaybackState::Playing
                 ) {
                     return Err(invalid_state(
-                        "host playback can enter playing only after buffering or from paused",
+                        "host playback can enter playing only from an active stopped, buffered, or paused session",
                         None,
                     ));
                 }
@@ -134,6 +142,18 @@ mod tests {
             .expect("stop is legal while streaming");
         assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
         assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::WaitingForListeners);
+    }
+
+    #[test]
+    fn host_can_start_while_waiting_for_listeners() {
+        let mut state = ready_host();
+        state.snapshot.host_lifecycle = HostLifecycle::WaitingForListeners;
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("playing is legal while waiting for listeners");
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Playing);
+        assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::Streaming);
     }
 
     #[test]
