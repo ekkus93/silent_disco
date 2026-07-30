@@ -44,6 +44,29 @@ jobs:
           fi
           cp scripts/fixtures/apply-block13-playback-authority.py.txt \
             scripts/.apply-block13-playback-authority.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/.apply-block13-playback-authority.py")
+          content = path.read_text(encoding="utf-8")
+          old = '''    count = content.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              write(path, content.replace(old, new))
+          '''
+          new = '''    count = content.count(old)
+              import_header = (
+                  path == "rust/silent-disco-core/src/runtime/effects.rs"
+                  and old.startswith("use crate::domain::{DeviceId")
+              )
+              if count != 1 and not (import_header and count == 2):
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              write(path, content.replace(old, new, 1))
+          '''
+          if content.count(old) != 1:
+              raise SystemExit("migration helper fixture mismatch")
+          path.write_text(content.replace(old, new), encoding="utf-8")
+          PY
           python3 scripts/.apply-block13-playback-authority.py
           rm scripts/.apply-block13-playback-authority.py
           python3 - <<'PY'
