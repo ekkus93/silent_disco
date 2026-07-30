@@ -1,0 +1,285 @@
+name: Guarded Desktop Block 17 implementation
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: guarded-desktop-block17
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+
+jobs:
+  rust-and-source:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/run-desktop-block17'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+      - name: Apply deterministic Block 17 implementation
+        run: python3 scripts/apply-desktop-block17.py
+      - name: Format Rust
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+      - name: Enforce source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+      - name: Run shared Rust strict gates
+        working-directory: rust
+        run: |
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+
+  desktop:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/run-desktop-block17'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+      - name: Install Linux Tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+      - name: Apply deterministic Block 17 implementation
+        run: python3 scripts/apply-desktop-block17.py
+      - name: Generate exact lockfiles
+        run: |
+          cd desktop
+          npm install --package-lock-only --ignore-scripts
+          cd src-tauri
+          cargo generate-lockfile
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Create binding-generator frontend placeholder
+        run: |
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco Block 17 validation</title>\n' > desktop/dist/index.html
+      - name: Verify generated bindings
+        working-directory: desktop
+        run: npm run bindings:check
+      - name: Format and validate frontend
+        working-directory: desktop
+        run: |
+          npm run format
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
+      - name: Format desktop Rust and enforce source size
+        run: |
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          bash scripts/check-source-file-line-counts.sh
+      - name: Run desktop Rust strict gates
+        working-directory: desktop/src-tauri
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+          cargo check --all-features
+      - name: Build Linux bundles
+        working-directory: desktop
+        run: npm run tauri build
+
+  android:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/run-desktop-block17'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "${RUST_VERSION}" --profile minimal
+      - name: Apply deterministic Block 17 implementation
+        run: python3 scripts/apply-desktop-block17.py
+      - name: Build Android variants and tests
+        run: |
+          ./gradlew assembleDebug assemblePocDebug assembleRelease assembleDebugAndroidTest \
+            --stacktrace --console=plain
+      - name: Verify packaged Rust ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "$apk"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "$apk" "lib/$abi/libsilent_disco_ffi.so" | grep -Fx "lib/$abi/libsilent_disco_ffi.so"
+            done
+          done
+      - name: Run Android unit tests and lint
+        run: ./gradlew test lintDebug --stacktrace --console=plain
+
+  android-instrumentation:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/run-desktop-block17'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "${RUST_VERSION}" --profile minimal
+      - name: Apply deterministic Block 17 implementation
+        run: python3 scripts/apply-desktop-block17.py
+      - name: Run managed-device instrumentation suite
+        run: |
+          ./gradlew pixel2api29DebugAndroidTest \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=software \
+            --stacktrace --console=plain
+
+  finalize:
+    if: github.event.issue.number == 45 && github.event.comment.body == '/run-desktop-block17'
+    needs:
+      - rust-and-source
+      - desktop
+      - android
+      - android-instrumentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component rustfmt
+          rustup default "${RUST_VERSION}"
+      - name: Require unchanged validated base
+        run: |
+          git fetch origin master
+          test "$(git rev-parse origin/master)" = "${GITHUB_SHA}"
+      - name: Apply and normalize exact validated implementation
+        run: |
+          python3 scripts/apply-desktop-block17.py
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          cd desktop
+          npm install --package-lock-only --ignore-scripts
+          npm ci
+          npm run format
+          cd src-tauri
+          cargo generate-lockfile
+          cd ../..
+          bash scripts/check-source-file-line-counts.sh
+      - name: Record Block 17 completion
+        env:
+          VALIDATION_RUN: ${{ github.run_id }}
+          VALIDATED_INPUT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          todo = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+          text = todo.read_text()
+          start = text.index("## Block 17 — Implement atomic source staging")
+          end = text.index("## Block 18 — Implement source decode and packet production", start)
+          block = text[start:end]
+          count = block.count("- [ ]")
+          if count != 19:
+              raise SystemExit(f"expected 19 unchecked Block 17 tasks, found {count}")
+          block = block.replace("- [ ]", "- [x]")
+          evidence = (
+              "**Completion evidence:** Atomic, content-addressed source staging; bounded progress; "
+              "explicit cancellation; verified reuse; strict owned-temp startup cleanup; frontend "
+              f"integration; and the complete regression matrix passed in GitHub Actions run "
+              f"`{os.environ['VALIDATION_RUN']}` from validated input commit "
+              f"`{os.environ['VALIDATED_INPUT_SHA']}`. Native file-dialog interaction was not "
+              "performed by this CI run.\n\n"
+          )
+          marker = "**Acceptance:** The core receives a stable app-owned source path with no destructive or silent recovery."
+          if block.count(marker) != 1:
+              raise SystemExit("Block 17 acceptance marker mismatch")
+          block = block.replace(marker, evidence + marker)
+          todo.write_text(text[:start] + block + text[end:])
+
+          memory = Path("memory.md")
+          entry = f'''\n\n## 2026-07-30 — Desktop Block 17 atomic source staging complete
+
+          - Validated input commit: `{os.environ['VALIDATED_INPUT_SHA']}`.
+          - Guarded validation run: `{os.environ['VALIDATION_RUN']}`.
+          - Source selection now copies the inspected file into the active profile's `sources/` directory through an owned temporary file, fixed 64 KiB buffers, streaming SHA-256, length/signature verification, file and directory synchronization, and no-clobber atomic publication.
+          - Stable source IDs and filenames are content-addressed. Existing staged content is reused only after full regular-file, length, and hash verification; mismatches and collisions fail visibly without overwriting data.
+          - Staging supports bounded 10 Hz progress events, explicit cancellation, profile-close cancellation/join, and deterministic cleanup that preserves both primary and cleanup failures.
+          - Startup removes only strict, provably owned incomplete regular temporary files. Unrelated files, symbolic links, and non-file entries are never silently deleted.
+          - Tests cover success, cancellation, source failure during copy, destination write failure, hash mismatch, collision, verified reuse, incomplete-temp cleanup, cleanup refusal, original preservation, progress throttling, and cancellation control.
+          - Validation passed source-size enforcement; shared Rust format/strict Clippy/tests; Android builds, ABI packaging, unit tests, lint, and instrumentation; generated desktop bindings, format/lint/typecheck/tests/build; desktop Rust strict gates; exact lockfiles; and Linux Tauri bundle creation. Native file-dialog interaction on a physical desktop session remains unclaimed.\n'''
+          memory.write_text(memory.read_text().rstrip() + entry)
+          PY
+      - name: Commit production implementation and remove guard machinery
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/desktop-block17-guarded.yml scripts/apply-desktop-block17.py
+          git add -A
+          git commit -m "Complete Desktop Block 17 atomic source staging"
+          git push origin HEAD:master
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 45 --body "Desktop Block 17 passed all guarded validation gates and was committed from Actions run ${GITHUB_RUN_ID}."
