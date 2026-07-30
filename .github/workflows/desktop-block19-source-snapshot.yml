@@ -139,7 +139,6 @@ jobs:
         run: |
           set -euo pipefail
           git add docs/generated/desktop-block19-source
-          git diff --cached --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit -m "Materialize Desktop Block 19 source snapshot"
