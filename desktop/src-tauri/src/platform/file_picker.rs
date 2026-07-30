@@ -10,6 +10,7 @@ use tauri_plugin_dialog::DialogExt;
 
 pub(crate) const MAX_AUDIO_SOURCE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const SOURCE_SIGNATURE_BYTES: usize = 16;
+const HEX: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AudioContainer {
@@ -220,10 +221,10 @@ fn inspect_source(
     let safe_name = bounded_display_name(path)?;
     let canonical_path = files
         .canonicalize(path)
-        .map_err(|error| map_io_error(error, "canonicalize the selected audio source"))?;
+        .map_err(|error| map_io_error(&error, "canonicalize the selected audio source"))?;
     let mut opened = files
         .open(&canonical_path)
-        .map_err(|error| map_io_error(error, "open the selected audio source"))?;
+        .map_err(|error| map_io_error(&error, "open the selected audio source"))?;
     if !opened.is_regular_file {
         return Err(source_error(
             "desktop.audio_source.not_regular_file",
@@ -250,7 +251,7 @@ fn inspect_source(
     let signature_length = opened
         .reader
         .read(&mut signature)
-        .map_err(|error| map_io_error(error, "inspect the selected audio source"))?;
+        .map_err(|error| map_io_error(&error, "inspect the selected audio source"))?;
     let container = detect_container(&signature[..signature_length]).ok_or_else(|| {
         source_error(
             "desktop.audio_source.unsupported",
@@ -361,7 +362,6 @@ fn source_identity(path: &Path, byte_length: u64, container: AudioContainer) -> 
     let digest = hasher.finalize();
     let mut encoded = String::with_capacity(47);
     encoded.push_str("desktop-source-");
-    const HEX: &[u8; 16] = b"0123456789abcdef";
     for byte in digest.iter().take(16) {
         encoded.push(char::from(HEX[usize::from(byte >> 4)]));
         encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
@@ -388,7 +388,7 @@ fn update_path_hash(hasher: &mut Sha256, path: &Path) {
     hasher.update(path.to_string_lossy().as_bytes());
 }
 
-fn map_io_error(error: io::Error, operation: &str) -> DesktopErrorDto {
+fn map_io_error(error: &io::Error, operation: &str) -> DesktopErrorDto {
     let (code, retryable) = match error.kind() {
         io::ErrorKind::NotFound => ("desktop.audio_source.not_found", true),
         io::ErrorKind::PermissionDenied => ("desktop.audio_source.permission_denied", true),
