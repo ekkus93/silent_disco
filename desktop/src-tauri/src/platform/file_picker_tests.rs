@@ -194,6 +194,20 @@ fn deceptive_extension_is_rejected_by_content_signature() {
 }
 
 #[test]
+fn malformed_mpeg_sync_is_rejected() {
+    let error = select_and_inspect(
+        &FixedDialog(Ok(Some(PathBuf::from("false-sync.mp3")))),
+        &SyntheticBoundary {
+            regular: true,
+            byte_length: 4,
+            bytes: vec![0xff, 0xfb, 0xf0, 0x00],
+        },
+    )
+    .expect_err("reserved bitrate index must not identify MP3");
+    assert_eq!(error.code, "desktop.audio_source.unsupported");
+}
+
+#[test]
 fn permission_denied_is_explicit() {
     let error = select_and_inspect(
         &FixedDialog(Ok(Some(PathBuf::from("private.wav")))),
