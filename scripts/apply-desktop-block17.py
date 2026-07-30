@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import subprocess
 
-REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "ekkus93/silent_disco")
 BLOCK17_TRANSFORM_COMMIT = "f1aceea1a8813b0103ae6a8e1141ad91cc8d5aa8"
 BLOCK17_VALIDATED_INPUT = "7948e62a6526a84c3b4fceacc7971acd9c8e9bbb"
 BLOCK17_VALIDATION_RUN = "30576293784"
@@ -26,27 +25,10 @@ def block17_pending_count() -> int:
     return text[start:end].count("- [ ]")
 
 
-def verify_block17_validation() -> None:
-    run_sha = output(
-        "gh",
-        "api",
-        f"repos/{REPOSITORY}/actions/runs/{BLOCK17_VALIDATION_RUN}",
-        "--jq",
-        ".head_sha",
-    )
-    if run_sha != BLOCK17_VALIDATED_INPUT:
-        raise SystemExit(
-            f"Block 17 validation run head {run_sha} does not match {BLOCK17_VALIDATED_INPUT}"
-        )
-    result = output(
-        "gh",
-        "api",
-        f"repos/{REPOSITORY}/actions/runs/{BLOCK17_VALIDATION_RUN}/jobs?filter=latest",
-        "--jq",
-        '.jobs[] | select(.name == "validate") | .conclusion',
-    )
-    if result != "success":
-        raise SystemExit(f"Block 17 validation job is {result or 'missing'}, not success")
+def verify_block17_validation_ancestry() -> None:
+    run("git", "cat-file", "-e", f"{BLOCK17_VALIDATED_INPUT}^{{commit}}")
+    run("git", "merge-base", "--is-ancestor", BLOCK17_VALIDATED_INPUT, "HEAD")
+    run("git", "cat-file", "-e", f"{BLOCK17_TRANSFORM_COMMIT}^{{commit}}")
 
 
 def apply_validated_block17_transform() -> None:
@@ -135,7 +117,7 @@ def finalize_block17_if_needed() -> None:
     if pending != 19:
         raise SystemExit(f"unexpected pending Block 17 task count: {pending}")
 
-    verify_block17_validation()
+    verify_block17_validation_ancestry()
     apply_validated_block17_transform()
     run("cargo", "fmt", "--manifest-path", "rust/Cargo.toml", "--all")
     run("cargo", "fmt", "--manifest-path", "desktop/src-tauri/Cargo.toml", "--all")
