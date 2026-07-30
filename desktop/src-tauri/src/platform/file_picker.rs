@@ -1,8 +1,6 @@
 use crate::dto::DesktopErrorDto;
 use sha2::{Digest, Sha256};
-use silent_disco_core::runtime::{
-    AudioSourceDescriptor, MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES,
-};
+use silent_disco_core::runtime::{AudioSourceDescriptor, MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES};
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -194,10 +192,7 @@ impl AudioFileBoundary for SystemAudioFileBoundary {
 pub(crate) fn pick_and_inspect<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
-    select_and_inspect(
-        &TauriAudioFileDialog::new(app),
-        &SystemAudioFileBoundary,
-    )
+    select_and_inspect(&TauriAudioFileDialog::new(app), &SystemAudioFileBoundary)
 }
 
 pub(crate) fn select_and_inspect(
@@ -256,19 +251,16 @@ fn inspect_source(
         )
     })?;
     let source_id = source_identity(&canonical_path, opened.byte_length, container);
-    let descriptor = AudioSourceDescriptor::new(
-        source_id,
-        safe_name,
-        Some(opened.byte_length),
-        None,
-    )
-    .map_err(|error| {
-        source_error(
-            "desktop.audio_source.invalid_descriptor",
-            false,
-            &format!("inspected audio source metadata is invalid: {error}"),
-        )
-    })?;
+    let descriptor =
+        AudioSourceDescriptor::new(source_id, safe_name, Some(opened.byte_length), None).map_err(
+            |error| {
+                source_error(
+                    "desktop.audio_source.invalid_descriptor",
+                    false,
+                    &format!("inspected audio source metadata is invalid: {error}"),
+                )
+            },
+        )?;
     Ok(InspectedAudioSource {
         descriptor,
         canonical_path,
