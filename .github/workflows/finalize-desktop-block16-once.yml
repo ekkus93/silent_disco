@@ -7,6 +7,9 @@ on:
     paths:
       - ".github/workflows/finalize-desktop-block16-once.yml"
   workflow_dispatch:
+  issue_comment:
+    types:
+      - created
 
 permissions:
   contents: write
@@ -22,6 +25,7 @@ env:
 
 jobs:
   validate-and-finalize:
+    if: github.event_name != 'issue_comment' || (github.event.issue.number == 45 && github.event.comment.body == '/run-block16-final')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
