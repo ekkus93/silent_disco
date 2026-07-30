@@ -22,6 +22,82 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.97.1
 
+      - name: Rebase patch generator on current master
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/block16_finish_patch.py")
+          text = path.read_text()
+          start_marker = '''replace_once(
+              "desktop/src-tauri/src/platform/effect_runner.rs",'''
+          end_marker = '''replace_once(
+              "desktop/src-tauri/src/app_state.rs",'''
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''replace_once(
+              "desktop/src-tauri/src/platform/effect_runner.rs",
+              """    pub(crate) fn start(
+                  inbox: DesktopPlatformEffectInbox,
+                  dispatcher: DesktopPlatformEffectDispatcher,
+                  handle: CoreActorHandle,
+                  paths: DesktopProfilePaths,
+              ) -> Result<Self, CoreError> {
+                  let capability_handle = handle.clone();
+                  let runner = Self::start_with_components(
+                      inbox,
+                      dispatcher,
+                      Arc::new(handle),
+                      Arc::new(DesktopPlatformAdapters::new(paths)),
+                  )?;
+                  if let Err(primary) = publish_desktop_capabilities(&capability_handle) {
+                      return match runner.shutdown() {
+                          Ok(()) => Err(primary),
+                          Err(cleanup) => Err(append_startup_cleanup(primary, &cleanup)),
+                      };
+                  }
+                  Ok(runner)
+              }
+          """,
+              """    pub(crate) fn start(
+                  inbox: DesktopPlatformEffectInbox,
+                  dispatcher: DesktopPlatformEffectDispatcher,
+                  handle: CoreActorHandle,
+                  paths: DesktopProfilePaths,
+              ) -> Result<(Self, CoreSnapshot), CoreError> {
+                  let capability_handle = handle.clone();
+                  let runner = Self::start_with_components(
+                      inbox,
+                      dispatcher,
+                      Arc::new(handle),
+                      Arc::new(DesktopPlatformAdapters::new(paths)),
+                  )?;
+                  let snapshot = match publish_desktop_capabilities(&capability_handle) {
+                      Ok(snapshot) => snapshot,
+                      Err(primary) => {
+                          return match runner.shutdown() {
+                              Ok(()) => Err(primary),
+                              Err(cleanup) => Err(append_startup_cleanup(primary, &cleanup)),
+                          };
+                      }
+                  };
+                  Ok((runner, snapshot))
+              }
+          """,
+          )
+          '''
+          text = text[:start] + replacement + text[end:]
+          old_assertion = '''    assert!(source
+                  .descriptor()
+                  .display_name
+                  .is_char_boundary(source.descriptor().display_name.len()));'''
+          new_assertion = '''    assert!(source.descriptor().display_name.ends_with('界'));'''
+          if text.count(old_assertion) != 1:
+              raise SystemExit("expected one Unicode-boundary assertion")
+          path.write_text(text.replace(old_assertion, new_assertion, 1))
+          PY
+
       - name: Apply complete Block 16 closure
         run: python scripts/block16_finish_patch.py
 
