@@ -19,6 +19,8 @@ pub mod profile_metadata;
 pub mod storage_inspection;
 
 #[cfg(test)]
+mod capability_tests;
+#[cfg(test)]
 mod effect_runner_tests;
 #[cfg(test)]
 mod file_picker_tests;
