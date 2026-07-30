@@ -7,6 +7,7 @@ import {
   selectPendingCommandReceipts,
 } from "../app/selectors";
 import { useAppDispatch, useAppSelector } from "../app/store";
+import { selectAudioSource } from "../core/audioSourceClient";
 import {
   createHostSession,
   selectHostRole,
@@ -56,12 +57,11 @@ export function HostSetupScreen() {
   const [draft, setDraft] = useState<EditableDraft | null>(null);
   const [draftRevision, setDraftRevision] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [selectingSource, setSelectingSource] = useState(false);
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
 
   useEffect(() => {
-    if (snapshot === null || snapshot.revision === draftRevision) {
-      return;
-    }
+    if (snapshot === null || snapshot.revision === draftRevision) return;
     if (draft === null || !dirty || draftMatchesSnapshot(draft, snapshot)) {
       setDraft(editableFromSnapshot(snapshot));
       setDirty(false);
@@ -70,9 +70,7 @@ export function HostSetupScreen() {
   }, [dirty, draft, draftRevision, snapshot]);
 
   useEffect(() => {
-    if (snapshot === null || snapshot.selectedRole !== null) {
-      return;
-    }
+    if (snapshot === null || snapshot.selectedRole !== null) return;
     let active = true;
     selectHostRole(snapshot.revision)
       .then((receipt) => {
@@ -118,6 +116,9 @@ export function HostSetupScreen() {
   const createPending = pendingCommands.some(
     (command) => command.commandKind === "create_host_session",
   );
+  const sourcePending = pendingCommands.some(
+    (command) => command.commandKind === "select_audio_source",
+  );
 
   const submitDraft = async () => {
     const request: UpdateHostDraftRequest = {
@@ -140,6 +141,28 @@ export function HostSetupScreen() {
       dispatch(
         coreActions.commandInvocationFailed(toDesktopBridgeError(error, "update host draft")),
       );
+    }
+  };
+
+  const chooseSource = async () => {
+    setSelectingSource(true);
+    try {
+      const receipt = await selectAudioSource(snapshot.revision);
+      if (receipt !== null) {
+        dispatch(
+          coreActions.commandPending({
+            operationId: receipt.operationId,
+            commandKind: "select_audio_source",
+            submittedAtRevision: receipt.acceptedAtRevision,
+          }),
+        );
+      }
+    } catch (error: unknown) {
+      dispatch(
+        coreActions.commandInvocationFailed(toDesktopBridgeError(error, "select audio source")),
+      );
+    } finally {
+      setSelectingSource(false);
     }
   };
 
@@ -196,7 +219,7 @@ export function HostSetupScreen() {
           Create a silent disco
         </h2>
         <p className="mt-3 max-w-2xl text-violet-100/75">
-          Edit locally, then submit one typed patch. The screen does not claim success until a newer
+          Edit locally, then submit typed commands. The screen does not claim success until a newer
           Rust snapshot arrives.
         </p>
       </div>
@@ -301,6 +324,14 @@ export function HostSetupScreen() {
 
           <div className="flex flex-wrap gap-3">
             <button
+              type="button"
+              onClick={() => void chooseSource()}
+              disabled={!canSubmit || selectingSource}
+              className="rounded-xl border border-cyan-300/40 px-4 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {selectingSource ? "Opening audio picker…" : "Select audio file"}
+            </button>
+            <button
               type="submit"
               disabled={!canSubmit || !dirty}
               className="rounded-xl bg-cyan-300 px-4 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
@@ -329,13 +360,21 @@ export function HostSetupScreen() {
           <SummaryCard title="Selected audio source">
             {snapshot.hostDraft.audioSource === null ? (
               <>
-                <p>No staged source selected.</p>
-                <p className="mt-2 text-sm text-amber-200">
-                  Secure file selection arrives in Block 16; Rust therefore keeps creation disabled.
+                <p>No inspected source selected.</p>
+                <p className="mt-2 text-sm text-violet-100/65">
+                  Select one WAV, FLAC, or MP3 file. Rust validates the regular-file status, size,
+                  bounded name, canonical identity, and content signature before registration.
                 </p>
               </>
             ) : (
-              <p>{snapshot.hostDraft.audioSource.displayName}</p>
+              <>
+                <p>{snapshot.hostDraft.audioSource.displayName}</p>
+                {snapshot.hostDraft.audioSource.byteLength !== null ? (
+                  <p className="mt-1 font-mono text-xs text-violet-100/55">
+                    {snapshot.hostDraft.audioSource.byteLength} bytes
+                  </p>
+                ) : null}
+              </>
             )}
             {validationByField.has("audioSource") ? (
               <p className="mt-2 text-sm text-amber-200">{validationByField.get("audioSource")}</p>
@@ -361,11 +400,15 @@ export function HostSetupScreen() {
         </aside>
       </div>
 
-      {pending ? (
+      {pending || selectingSource ? (
         <p role="status" aria-live="polite" className="rounded-xl border border-cyan-300/25 p-3">
-          {createPending
-            ? "Create request accepted by the queue. Waiting for a newer Rust snapshot…"
-            : "Host settings are pending authoritative Rust evidence…"}
+          {selectingSource
+            ? "Waiting for the native audio file dialog…"
+            : createPending
+              ? "Create request accepted by the queue. Waiting for a newer Rust snapshot…"
+              : sourcePending
+                ? "Source registration accepted by the queue. Waiting for a newer Rust snapshot…"
+                : "Host settings are pending authoritative Rust evidence…"}
         </p>
       ) : null}
 
