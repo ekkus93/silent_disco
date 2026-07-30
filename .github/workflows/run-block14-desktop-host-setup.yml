@@ -9,6 +9,7 @@ on:
     paths:
       - "scripts/apply-block14-desktop-host-setup.py"
       - "scripts/fix-block14-app-state-split.py"
+      - "scripts/fix-block14-frontend-fixtures.py"
       - ".github/workflows/run-block14-desktop-host-setup.yml"
 
 permissions:
@@ -84,6 +85,7 @@ jobs:
         run: |
           python scripts/apply-block14-desktop-host-setup.py
           python scripts/fix-block14-app-state-split.py
+          python scripts/fix-block14-frontend-fixtures.py
 
       - name: Install frontend dependencies
         working-directory: desktop
@@ -152,6 +154,7 @@ jobs:
           git diff --check --cached
           test ! -e scripts/apply-block14-desktop-host-setup.py
           test ! -e scripts/fix-block14-app-state-split.py
+          test ! -e scripts/fix-block14-frontend-fixtures.py
           test ! -e .github/workflows/run-block14-desktop-host-setup.yml
           test -f desktop/src/screens/HostSetupScreen.tsx
           test -f desktop/src/screens/HostSetupScreen.test.tsx
