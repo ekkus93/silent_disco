@@ -76,15 +76,34 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
     hostStreamJob = viewModelScope.launch {
         var previousSendElapsedMs: Long? = null
         var consecutiveAudioSendFailures = 0
-        val packetDurationMs = latestPackets.firstOrNull()?.let { it.samplesPerPacket * 1_000L / it.sampleRate } ?: 20L
-        latestPackets.forEachIndexed { index, packet ->
+        var presentationOffsetMs = 0L
+        var pauseStartedAtMs: Long? = null
+        val packetDurationMs = latestPackets.firstOrNull()?.let {
+            it.samplesPerPacket * 1_000L / it.sampleRate
+        } ?: 20L
+        latestPackets.forEachIndexed { index, originalPacket ->
             while (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
+                if (pauseStartedAtMs == null) {
+                    pauseStartedAtMs = SystemClock.elapsedRealtime()
+                }
                 delay(PAUSE_POLL_INTERVAL_MS)
+            }
+            pauseStartedAtMs?.let { startedAt ->
+                presentationOffsetMs += SystemClock.elapsedRealtime() - startedAt
+                pauseStartedAtMs = null
+                previousSendElapsedMs = null
             }
             if (_uiState.value.hostPlaybackState in setOf(PlaybackState.STOPPED, PlaybackState.ERROR)) {
                 return@launch
             }
 
+            val packet = if (presentationOffsetMs == 0L) {
+                originalPacket
+            } else {
+                originalPacket.copy(
+                    hostPresentationTimeMs = originalPacket.hostPresentationTimeMs + presentationOffsetMs,
+                )
+            }
             val now = SystemClock.elapsedRealtime()
             previousSendElapsedMs?.let { previous ->
                 val sendGap = now - previous
