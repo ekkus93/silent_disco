@@ -28,4 +28,15 @@ old = "#[derive(Debug, Clone, PartialEq, Eq)]\npub(crate) struct StagingResult"
 new = "#[derive(Debug, Clone)]\npub(crate) struct StagingResult"
 if text.count(old) != 1:
     raise SystemExit("source_staging.rs: StagingResult derive anchor mismatch")
+text = text.replace(old, new, 1)
+old = "    pub reused_existing: bool,\n"
+new = "    #[cfg_attr(not(test), allow(dead_code))]\n    pub reused_existing: bool,\n"
+if text.count(old) != 1:
+    raise SystemExit("source_staging.rs: reuse marker anchor mismatch")
 staging.write_text(text.replace(old, new, 1))
+
+tests = Path("desktop/src-tauri/src/app_state_tests.rs")
+text = tests.read_text()
+if not text.startswith("\n"):
+    raise SystemExit("app_state_tests.rs: expected one leading split newline")
+tests.write_text(text[1:])
