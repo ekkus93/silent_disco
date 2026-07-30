@@ -13,6 +13,8 @@ pub mod identity;
 pub mod paths;
 pub mod profile_lock;
 pub mod profile_metadata;
+pub(crate) mod source_staging;
+pub(crate) mod source_staging_control;
 #[allow(
     clippy::unnested_or_patterns,
     reason = "the test keeps complete result variants visually separate"

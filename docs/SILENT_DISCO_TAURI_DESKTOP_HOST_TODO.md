@@ -1004,29 +1004,31 @@ pub fn stage_source(
 
 ### 17.2 Requirements
 
-- [ ] bounded copy buffer;
-- [ ] progress aggregation at a bounded UI rate;
-- [ ] cancellation;
-- [ ] temporary file in destination filesystem;
-- [ ] collision-safe final naming;
-- [ ] verify byte length;
-- [ ] compute a streaming hash if selected;
-- [ ] atomic rename;
-- [ ] never delete original source;
-- [ ] preserve primary and cleanup errors;
-- [ ] startup cleanup only removes provably incomplete owned temporary files.
+- [x] bounded copy buffer;
+- [x] progress aggregation at a bounded UI rate;
+- [x] cancellation;
+- [x] temporary file in destination filesystem;
+- [x] collision-safe final naming;
+- [x] verify byte length;
+- [x] compute a streaming hash if selected;
+- [x] atomic rename;
+- [x] never delete original source;
+- [x] preserve primary and cleanup errors;
+- [x] startup cleanup only removes provably incomplete owned temporary files.
 
 ### 17.3 Tests
 
-- [ ] successful copy;
-- [ ] cancellation;
-- [ ] source disappears mid-copy;
-- [ ] destination full or write failure through injectable boundary;
-- [ ] hash/length mismatch;
-- [ ] collision;
-- [ ] incomplete temporary cleanup;
-- [ ] existing staged source reuse only after verification;
-- [ ] source outside profile remains untouched.
+- [x] successful copy;
+- [x] cancellation;
+- [x] source disappears mid-copy;
+- [x] destination full or write failure through injectable boundary;
+- [x] hash/length mismatch;
+- [x] collision;
+- [x] incomplete temporary cleanup;
+- [x] existing staged source reuse only after verification;
+- [x] source outside profile remains untouched.
+
+**Completion evidence:** Atomic, content-addressed source staging; bounded progress; explicit cancellation; verified reuse; strict owned-temp startup cleanup; frontend integration; and the complete regression matrix passed in GitHub Actions run `30576293784` from validated input commit `7948e62a6526a84c3b4fceacc7971acd9c8e9bbb`. Native file-dialog interaction was not performed by this CI run.
 
 **Acceptance:** The core receives a stable app-owned source path with no destructive or silent recovery.
 

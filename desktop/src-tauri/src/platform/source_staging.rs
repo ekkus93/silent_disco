@@ -22,9 +22,10 @@ const TEMP_RANDOM_BYTES: usize = 12;
 const CONTENT_SOURCE_PREFIX: &str = "desktop-staged-sha256-";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct StagingResult {
     pub source: InspectedAudioSource,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub reused_existing: bool,
 }
 
@@ -36,73 +37,17 @@ pub(super) struct CopySummary {
 }
 
 pub(crate) fn stage_audio_source(
-    source: InspectedAudioSource,
+    source: &InspectedAudioSource,
     sources_directory: &Path,
     operation: &SourceStagingOperation,
     progress: &dyn SourceStagingProgressSink,
 ) -> Result<StagingResult, DesktopErrorDto> {
     operation.ensure_not_cancelled()?;
-    let sources_directory = fs::canonicalize(sources_directory).map_err(|error| {
-        staging_io_error(
-            "desktop.audio_source.staging_directory_unavailable",
-            false,
-            "canonicalize the profile source directory",
-            &error,
-        )
-    })?;
-    let source_path = source.canonical_path().to_path_buf();
-    let expected_length = source.descriptor().byte_length.ok_or_else(|| {
-        staging_error(
-            "desktop.audio_source.staging_length_missing",
-            false,
-            "the inspected audio source did not include a byte length",
-        )
-    })?;
+    let sources_directory = canonicalize_staging_directory(sources_directory)?;
+    let expected_length = inspected_source_length(source)?;
     let expected_container = source.container();
-    let mut input = File::open(&source_path).map_err(|error| {
-        staging_io_error(
-            "desktop.audio_source.staging_source_open_failed",
-            true,
-            "open the inspected audio source for staging",
-            &error,
-        )
-    })?;
-    let source_metadata = input.metadata().map_err(|error| {
-        staging_io_error(
-            "desktop.audio_source.staging_source_metadata_failed",
-            true,
-            "inspect the opened audio source before staging",
-            &error,
-        )
-    })?;
-    if !source_metadata.file_type().is_file() {
-        return Err(staging_error(
-            "desktop.audio_source.staging_source_changed",
-            true,
-            "the inspected audio source is no longer a regular file",
-        ));
-    }
-    if source_metadata.len() != expected_length {
-        return Err(staging_error(
-            "desktop.audio_source.staging_source_changed",
-            true,
-            "the audio source length changed after inspection",
-        ));
-    }
-
-    let mut temporary = Builder::new()
-        .prefix(TEMP_PREFIX)
-        .suffix(TEMP_SUFFIX)
-        .rand_bytes(TEMP_RANDOM_BYTES)
-        .tempfile_in(&sources_directory)
-        .map_err(|error| {
-            staging_io_error(
-                "desktop.audio_source.staging_temp_create_failed",
-                true,
-                "create an owned temporary source file",
-                &error,
-            )
-        })?;
+    let mut input = open_staging_source(source, expected_length)?;
+    let mut temporary = create_staging_temporary(&sources_directory)?;
 
     let copied = match copy_stream(
         &mut input,
@@ -114,66 +59,159 @@ pub(crate) fn stage_audio_source(
         Ok(copied) => copied,
         Err(primary) => return Err(close_temporary(temporary, primary)),
     };
-    let copied_container = detect_container(&copied.signature).ok_or_else(|| {
+    let copied_container = match validate_copied_container(&copied.signature, expected_container) {
+        Ok(container) => container,
+        Err(primary) => return Err(close_temporary(temporary, primary)),
+    };
+    if let Err(primary) = flush_and_verify_temporary(&mut temporary, &copied, copied_container) {
+        return Err(close_temporary(temporary, primary));
+    }
+
+    let digest_hex = encode_hex(&copied.digest);
+    let descriptor = match build_staged_descriptor(source, &copied, &digest_hex) {
+        Ok(descriptor) => descriptor,
+        Err(primary) => return Err(close_temporary(temporary, primary)),
+    };
+    publish_staged_source(
+        temporary,
+        &sources_directory,
+        &copied,
+        copied_container,
+        &digest_hex,
+        descriptor,
+    )
+}
+
+fn canonicalize_staging_directory(path: &Path) -> Result<std::path::PathBuf, DesktopErrorDto> {
+    fs::canonicalize(path).map_err(|error| {
+        staging_io_error(
+            "desktop.audio_source.staging_directory_unavailable",
+            false,
+            "canonicalize the profile source directory",
+            &error,
+        )
+    })
+}
+
+fn inspected_source_length(source: &InspectedAudioSource) -> Result<u64, DesktopErrorDto> {
+    source.descriptor().byte_length.ok_or_else(|| {
+        staging_error(
+            "desktop.audio_source.staging_length_missing",
+            false,
+            "the inspected audio source did not include a byte length",
+        )
+    })
+}
+
+fn open_staging_source(
+    source: &InspectedAudioSource,
+    expected_length: u64,
+) -> Result<File, DesktopErrorDto> {
+    let input = File::open(source.canonical_path()).map_err(|error| {
+        staging_io_error(
+            "desktop.audio_source.staging_source_open_failed",
+            true,
+            "open the inspected audio source for staging",
+            &error,
+        )
+    })?;
+    let metadata = input.metadata().map_err(|error| {
+        staging_io_error(
+            "desktop.audio_source.staging_source_metadata_failed",
+            true,
+            "inspect the opened audio source before staging",
+            &error,
+        )
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(staging_error(
+            "desktop.audio_source.staging_source_changed",
+            true,
+            "the inspected audio source is no longer a regular file",
+        ));
+    }
+    if metadata.len() != expected_length {
+        return Err(staging_error(
+            "desktop.audio_source.staging_source_changed",
+            true,
+            "the audio source length changed after inspection",
+        ));
+    }
+    Ok(input)
+}
+
+fn create_staging_temporary(sources_directory: &Path) -> Result<NamedTempFile, DesktopErrorDto> {
+    Builder::new()
+        .prefix(TEMP_PREFIX)
+        .suffix(TEMP_SUFFIX)
+        .rand_bytes(TEMP_RANDOM_BYTES)
+        .tempfile_in(sources_directory)
+        .map_err(|error| {
+            staging_io_error(
+                "desktop.audio_source.staging_temp_create_failed",
+                true,
+                "create an owned temporary source file",
+                &error,
+            )
+        })
+}
+
+fn validate_copied_container(
+    signature: &[u8],
+    expected_container: AudioContainer,
+) -> Result<AudioContainer, DesktopErrorDto> {
+    let actual = detect_container(signature).ok_or_else(|| {
         staging_error(
             "desktop.audio_source.staging_source_changed",
             true,
             "the audio source signature became unsupported while staging",
         )
-    });
-    let copied_container = match copied_container {
-        Ok(container) if container == expected_container => container,
-        Ok(_) => {
-            return Err(close_temporary(
-                temporary,
-                staging_error(
-                    "desktop.audio_source.staging_source_changed",
-                    true,
-                    "the audio source container changed after inspection",
-                ),
-            ));
-        }
-        Err(primary) => return Err(close_temporary(temporary, primary)),
-    };
+    })?;
+    if actual != expected_container {
+        return Err(staging_error(
+            "desktop.audio_source.staging_source_changed",
+            true,
+            "the audio source container changed after inspection",
+        ));
+    }
+    Ok(actual)
+}
 
-    if let Err(error) = temporary.as_file_mut().flush() {
-        return Err(close_temporary(
-            temporary,
-            staging_io_error(
-                "desktop.audio_source.staging_flush_failed",
-                true,
-                "flush the staged temporary file",
-                &error,
-            ),
-        ));
-    }
-    if let Err(error) = temporary.as_file().sync_all() {
-        return Err(close_temporary(
-            temporary,
-            staging_io_error(
-                "desktop.audio_source.staging_sync_failed",
-                true,
-                "synchronize the staged temporary file",
-                &error,
-            ),
-        ));
-    }
-    if let Err(primary) = verify_open_file(
+fn flush_and_verify_temporary(
+    temporary: &mut NamedTempFile,
+    copied: &CopySummary,
+    copied_container: AudioContainer,
+) -> Result<(), DesktopErrorDto> {
+    temporary.as_file_mut().flush().map_err(|error| {
+        staging_io_error(
+            "desktop.audio_source.staging_flush_failed",
+            true,
+            "flush the staged temporary file",
+            &error,
+        )
+    })?;
+    temporary.as_file().sync_all().map_err(|error| {
+        staging_io_error(
+            "desktop.audio_source.staging_sync_failed",
+            true,
+            "synchronize the staged temporary file",
+            &error,
+        )
+    })?;
+    verify_open_file(
         temporary.as_file_mut(),
         copied.byte_length,
         &copied.digest,
         copied_container,
-    ) {
-        return Err(close_temporary(temporary, primary));
-    }
+    )
+}
 
-    let digest_hex = encode_hex(&copied.digest);
-    let final_path = sources_directory.join(format!(
-        "{}.{}",
-        digest_hex,
-        copied_container.extension()
-    ));
-    let descriptor = AudioSourceDescriptor::new(
+fn build_staged_descriptor(
+    source: &InspectedAudioSource,
+    copied: &CopySummary,
+    digest_hex: &str,
+) -> Result<AudioSourceDescriptor, DesktopErrorDto> {
+    AudioSourceDescriptor::new(
         format!("{CONTENT_SOURCE_PREFIX}{digest_hex}"),
         source.descriptor().display_name.clone(),
         Some(copied.byte_length),
@@ -185,8 +223,19 @@ pub(crate) fn stage_audio_source(
             false,
             &format!("staged source descriptor is invalid: {error}"),
         )
-    })?;
+    })
+}
 
+fn publish_staged_source(
+    temporary: NamedTempFile,
+    sources_directory: &Path,
+    copied: &CopySummary,
+    copied_container: AudioContainer,
+    digest_hex: &str,
+    descriptor: AudioSourceDescriptor,
+) -> Result<StagingResult, DesktopErrorDto> {
+    let final_path =
+        sources_directory.join(format!("{}.{}", digest_hex, copied_container.extension()));
     if final_path.exists() {
         let result = reuse_existing(
             temporary,
@@ -196,7 +245,7 @@ pub(crate) fn stage_audio_source(
             copied_container,
             descriptor,
         )?;
-        sync_directory(&sources_directory)?;
+        sync_directory(sources_directory)?;
         return Ok(result);
     }
 
@@ -211,7 +260,7 @@ pub(crate) fn stage_audio_source(
                 )
             })?;
             drop(published);
-            sync_directory(&sources_directory)?;
+            sync_directory(sources_directory)?;
             let canonical_path = fs::canonicalize(&final_path).map_err(|error| {
                 staging_io_error(
                     "desktop.audio_source.staging_publish_verify_failed",
@@ -230,16 +279,15 @@ pub(crate) fn stage_audio_source(
             })
         }
         Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
-            let temporary = error.file;
             let result = reuse_existing(
-                temporary,
+                error.file,
                 &final_path,
                 copied.byte_length,
                 &copied.digest,
                 copied_container,
                 descriptor,
             )?;
-            sync_directory(&sources_directory)?;
+            sync_directory(sources_directory)?;
             Ok(result)
         }
         Err(error) => {
@@ -332,7 +380,7 @@ pub(super) fn copy_stream<R: Read, W: Write>(
         total_bytes: expected_length,
     })?;
 
-    let mut buffer = [0_u8; COPY_BUFFER_BYTES];
+    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES].into_boxed_slice();
     let mut signature = Vec::with_capacity(SOURCE_SIGNATURE_BYTES);
     let mut digest = Sha256::new();
     let mut copied = 0_u64;
@@ -463,7 +511,7 @@ fn verify_open_file(
             &error,
         )
     })?;
-    let mut buffer = [0_u8; COPY_BUFFER_BYTES];
+    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES].into_boxed_slice();
     let mut signature = Vec::with_capacity(SOURCE_SIGNATURE_BYTES);
     let mut digest = Sha256::new();
     let mut length = 0_u64;
@@ -550,11 +598,7 @@ fn reuse_existing(
         )
     })?;
     Ok(StagingResult {
-        source: InspectedAudioSource::from_staged(
-            descriptor,
-            canonical_path,
-            expected_container,
-        ),
+        source: InspectedAudioSource::from_staged(descriptor, canonical_path, expected_container),
         reused_existing: true,
     })
 }

@@ -1,6 +1,10 @@
 use crate::app_state::DesktopAppState;
 use crate::dto::DesktopErrorDto;
 use crate::platform::file_picker::{SelectedSourceRegistry, pick_and_inspect};
+use crate::platform::source_staging::stage_audio_source;
+use crate::platform::source_staging_control::{
+    SourceStagingControl, TauriSourceStagingProgressSink,
+};
 use crate::runtime_dto::{CommandReceiptDto, RevisionCommandRequest, UpdateHostDraftRequest};
 use silent_disco_core::domain::{AppRole, ApprovalMode};
 use silent_disco_core::runtime::{
@@ -24,14 +28,14 @@ pub fn select_host_role(
     )
 }
 
-/// Opens one backend-owned file dialog, inspects one source, and registers its opaque descriptor.
+/// Opens one backend-owned file dialog, stages one source, and registers its opaque descriptor.
 ///
-/// Cancellation returns `Ok(None)` and is never reported as success or failure. Queue admission of
-/// the resulting draft patch returns `Some(receipt)`; the frontend still waits for a newer snapshot.
+/// Dialog cancellation returns `Ok(None)`. Staging copies into the active profile through an owned
+/// temporary file, verifies content, and atomically publishes before the actor sees the descriptor.
 ///
 /// # Errors
 ///
-/// Returns a structured validation, dialog, filesystem, source-inspection, registry, actor, or
+/// Returns a structured validation, dialog, filesystem, staging, registry, actor, cancellation, or
 /// blocking-worker failure. Native paths never enter the command response or core command.
 #[tauri::command]
 pub async fn select_audio_source(
@@ -55,6 +59,24 @@ pub async fn select_audio_source(
         return Ok(None);
     };
 
+    let operation = app.state::<SourceStagingControl>().begin()?;
+    let sources_directory = app.state::<DesktopAppState>().source_staging_directory()?;
+    let staging_app = app.clone();
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        let progress = TauriSourceStagingProgressSink::new(staging_app);
+        stage_audio_source(&source, &sources_directory, &operation, &progress)
+    })
+    .await
+    .map_err(|error| {
+        DesktopErrorDto::new(
+            "desktop.audio_source.staging_worker_failed",
+            "audio_source",
+            "error",
+            true,
+            &format!("audio source staging worker failed: {error}"),
+        )
+    })??;
+    let source = staged.source;
     let descriptor = source.descriptor().clone();
     let source_id = descriptor.source_id.clone();
     let registry = app.state::<SelectedSourceRegistry>();
@@ -78,6 +100,13 @@ pub async fn select_audio_source(
             Err(primary)
         }
     }
+}
+
+/// Requests cancellation of the active bounded source-staging operation.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn cancel_audio_source_staging(state: State<'_, SourceStagingControl>) -> bool {
+    state.cancel()
 }
 
 /// Applies one typed host-draft patch without allowing native paths through IPC.

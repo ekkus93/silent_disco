@@ -92,11 +92,7 @@ impl SourceStagingControl {
     #[must_use]
     pub(crate) fn cancel(&self) -> bool {
         self.inner.cancelled.store(true, Ordering::Release);
-        self.inner
-            .state
-            .lock()
-            .map(|state| state.active)
-            .unwrap_or(true)
+        self.inner.state.lock().map_or(true, |state| state.active)
     }
 
     pub(crate) fn cancel_and_wait(&self) -> Result<(), DesktopErrorDto> {

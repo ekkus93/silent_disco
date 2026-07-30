@@ -109,7 +109,7 @@ fn staging_publishes_verified_content_and_preserves_original() {
     let progress = RecordingProgress::default();
 
     let result = stage_audio_source(
-        inspected_source(&source_path, &bytes),
+        &inspected_source(&source_path, &bytes),
         &sources,
         &operation,
         &progress,
@@ -118,27 +118,38 @@ fn staging_publishes_verified_content_and_preserves_original() {
 
     assert!(!result.reused_existing);
     assert!(result.source.canonical_path().starts_with(&sources));
-    assert_eq!(fs::read(result.source.canonical_path()).expect("staged"), bytes);
-    assert_eq!(fs::read(&source_path).expect("original after stage"), original);
-    assert!(result
-        .source
-        .descriptor()
-        .source_id
-        .starts_with("desktop-staged-sha256-"));
+    assert_eq!(
+        fs::read(result.source.canonical_path()).expect("staged"),
+        bytes
+    );
+    assert_eq!(
+        fs::read(&source_path).expect("original after stage"),
+        original
+    );
+    assert!(
+        result
+            .source
+            .descriptor()
+            .source_id
+            .starts_with("desktop-staged-sha256-")
+    );
     let events = progress.events();
     assert_eq!(events.first().expect("initial").copied_bytes, 0);
     assert_eq!(
         events.last().expect("final").copied_bytes,
         bytes.len() as u64
     );
-    assert!(events.len() <= 2, "rapid copies must not emit unbounded progress");
-    assert!(fs::read_dir(&sources)
-        .expect("read sources")
-        .all(|entry| !entry
+    assert!(
+        events.len() <= 2,
+        "rapid copies must not emit unbounded progress"
+    );
+    assert!(fs::read_dir(&sources).expect("read sources").all(|entry| {
+        !entry
             .expect("entry")
             .file_name()
             .to_string_lossy()
-            .starts_with(TEMP_PREFIX)));
+            .starts_with(TEMP_PREFIX)
+    }));
 }
 
 #[test]
@@ -154,7 +165,7 @@ fn verified_existing_content_is_reused_without_overwrite() {
 
     let first_operation = control.begin().expect("first operation");
     let first = stage_audio_source(
-        inspected_source(&source_path, &bytes),
+        &inspected_source(&source_path, &bytes),
         &sources,
         &first_operation,
         &progress,
@@ -166,7 +177,7 @@ fn verified_existing_content_is_reused_without_overwrite() {
 
     let second_operation = control.begin().expect("second operation");
     let second = stage_audio_source(
-        inspected_source(&source_path, &bytes),
+        &inspected_source(&source_path, &bytes),
         &sources,
         &second_operation,
         &progress,
@@ -194,7 +205,7 @@ fn content_address_collision_fails_without_replacing_existing_file() {
     let operation = control.begin().expect("operation");
 
     let error = stage_audio_source(
-        inspected_source(&source_path, &bytes),
+        &inspected_source(&source_path, &bytes),
         &sources,
         &operation,
         &RecordingProgress::default(),
@@ -218,7 +229,7 @@ struct CancellingReader {
 impl Read for CancellingReader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         if self.reads == 1 {
-            self.control.cancel();
+            let _ = self.control.cancel();
         }
         self.reads += 1;
         self.cursor.read(buffer)
@@ -258,10 +269,7 @@ struct VanishingReader {
 impl Read for VanishingReader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         if self.failed {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "source vanished",
-            ));
+            return Err(io::Error::new(io::ErrorKind::NotFound, "source vanished"));
         }
         self.failed = true;
         let limit = buffer.len().min(32);
@@ -389,10 +397,7 @@ fn startup_cleanup_refuses_owned_looking_symlink() {
 
     let error = cleanup_incomplete_sources(&sources).expect_err("refuse symlink");
 
-    assert_eq!(
-        error.code,
-        "desktop.audio_source.staging_cleanup_refused"
-    );
+    assert_eq!(error.code, "desktop.audio_source.staging_cleanup_refused");
     assert_eq!(fs::read(target).expect("target"), b"preserve me");
 }
 
@@ -407,9 +412,6 @@ fn startup_cleanup_refuses_owned_looking_non_file() {
 
     let error = cleanup_incomplete_sources(&sources).expect_err("refuse non-file");
 
-    assert_eq!(
-        error.code,
-        "desktop.audio_source.staging_cleanup_refused"
-    );
+    assert_eq!(error.code, "desktop.audio_source.staging_cleanup_refused");
     assert!(owned.is_dir());
 }

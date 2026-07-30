@@ -9,7 +9,7 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
 
 pub(crate) const MAX_AUDIO_SOURCE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const SOURCE_SIGNATURE_BYTES: usize = 16;
+pub(crate) const SOURCE_SIGNATURE_BYTES: usize = 16;
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +20,14 @@ pub(crate) enum AudioContainer {
 }
 
 impl AudioContainer {
+    pub(crate) const fn extension(self) -> &'static str {
+        match self {
+            Self::Wav => "wav",
+            Self::Flac => "flac",
+            Self::Mp3 => "mp3",
+        }
+    }
+
     const fn identity_tag(self) -> &'static [u8] {
         match self {
             Self::Wav => b"wav",
@@ -40,6 +48,19 @@ impl InspectedAudioSource {
     #[must_use]
     pub(crate) fn descriptor(&self) -> &AudioSourceDescriptor {
         &self.descriptor
+    }
+
+    #[must_use]
+    pub(crate) fn from_staged(
+        descriptor: AudioSourceDescriptor,
+        canonical_path: PathBuf,
+        container: AudioContainer,
+    ) -> Self {
+        Self {
+            descriptor,
+            canonical_path,
+            container,
+        }
     }
 
     #[allow(
@@ -284,7 +305,7 @@ fn inspect_source(
     })
 }
 
-fn detect_container(signature: &[u8]) -> Option<AudioContainer> {
+pub(crate) fn detect_container(signature: &[u8]) -> Option<AudioContainer> {
     if signature.len() >= 12
         && (&signature[..4] == b"RIFF" || &signature[..4] == b"RF64")
         && &signature[8..12] == b"WAVE"

@@ -328,3 +328,14 @@ Execution constraints for this session:
 - The authoritative actor receives only the redacted descriptor. Profile readiness waits for the acknowledged capability snapshot, and React waits for a newer Rust snapshot rather than mutating source state optimistically.
 - Tests cover cancellation, dialog failure, missing files, directories, empty/oversized files, Unicode bounds, deceptive extensions, malformed MP3 headers, canonicalization and permission failures, deterministic identities, registry rollback/clear, capability publication, and frontend cancellation/error behavior.
 - Automated validation passed source-size enforcement, generated-binding verification, frontend format/lint/typecheck/tests/build, Rust format/strict Clippy/tests/check, lockfile reproducibility, and Linux Tauri bundle creation. Native dialog interaction on a physical desktop session remains unclaimed.
+
+## 2026-07-30 — Desktop Block 17 atomic source staging complete
+
+- Validated input commit: `7948e62a6526a84c3b4fceacc7971acd9c8e9bbb`.
+- Guarded validation run: `30576293784`.
+- Source selection copies the inspected file into the active profile's `sources/` directory through an owned temporary file, fixed 64 KiB buffers, streaming SHA-256, length/signature verification, file and directory synchronization, and no-clobber atomic publication.
+- Stable source IDs and filenames are content-addressed. Existing staged content is reused only after full regular-file, length, and hash verification; mismatches and collisions fail visibly without overwriting data.
+- Staging supports bounded 10 Hz progress events, explicit cancellation, profile-close cancellation/join, and deterministic cleanup that preserves both primary and cleanup failures.
+- Startup removes only strict, provably owned incomplete regular temporary files. Unrelated files, symbolic links, and non-file entries are never silently deleted.
+- Tests cover success, cancellation, source failure during copy, destination write failure, hash mismatch, collision, verified reuse, incomplete-temp cleanup, cleanup refusal, original preservation, progress throttling, and cancellation control.
+- Validation passed source-size enforcement; shared Rust format/strict Clippy/tests; Android builds, ABI packaging, unit tests, lint, and instrumentation; generated desktop bindings, format/lint/typecheck/tests/build; desktop Rust strict gates; exact lockfiles; and Linux Tauri bundle creation. Native file-dialog interaction on a physical desktop session remains unclaimed.

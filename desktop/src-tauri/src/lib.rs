@@ -50,12 +50,14 @@ pub fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state::DesktopAppState::new())
         .manage(platform::file_picker::SelectedSourceRegistry::new())
+        .manage(platform::source_staging_control::SourceStagingControl::new())
         .invoke_handler(tauri::generate_handler![
             get_core_smoke,
             app_state::open_profile,
             app_state::get_current_snapshot,
             host_commands::select_host_role,
             host_commands::select_audio_source,
+            host_commands::cancel_audio_source_staging,
             host_commands::update_host_draft,
             host_commands::create_host_session,
             app_state::attach_notifications,
