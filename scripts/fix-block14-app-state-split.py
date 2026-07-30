@@ -79,9 +79,10 @@ use silent_disco_core::runtime::{
 use tauri::State;
 
 /// Selects the host role through the revision-aware authoritative actor.
+#[allow(clippy::needless_pass_by_value)] // Tauri command extraction requires State by value.
 #[tauri::command]
 pub fn select_host_role(
-    state: &State<'_, DesktopAppState>,
+    state: State<'_, DesktopAppState>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
     let RevisionCommandRequest { expected_revision } = request;
@@ -92,9 +93,10 @@ pub fn select_host_role(
 }
 
 /// Applies one typed host-draft patch without allowing native paths through IPC.
+#[allow(clippy::needless_pass_by_value)] // Tauri command extraction requires State by value.
 #[tauri::command]
 pub fn update_host_draft(
-    state: &State<'_, DesktopAppState>,
+    state: State<'_, DesktopAppState>,
     request: UpdateHostDraftRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
     let UpdateHostDraftRequest {
@@ -130,9 +132,10 @@ pub fn update_host_draft(
 }
 
 /// Requests host-session creation. Queue admission is not reported as session success.
+#[allow(clippy::needless_pass_by_value)] // Tauri command extraction requires State by value.
 #[tauri::command]
 pub fn create_host_session(
-    state: &State<'_, DesktopAppState>,
+    state: State<'_, DesktopAppState>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
     let RevisionCommandRequest { expected_revision } = request;
