@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TYPES = ROOT / "rust/silent-disco-ffi/src/host_control/types.rs"
 HANDLE = ROOT / "rust/silent-disco-ffi/src/host_control/handle.rs"
+HOST_MOD = ROOT / "rust/silent-disco-ffi/src/host_control/mod.rs"
 LIB = ROOT / "rust/silent-disco-ffi/src/lib.rs"
 TEST = ROOT / "rust/silent-disco-ffi/tests/host_admission.rs"
 
@@ -38,8 +39,14 @@ pub struct FfiJoinRequestInput {
 
 def export_input_record() -> None:
     replace_once(
+        HOST_MOD,
+        "host-module-join-input-export",
+        "FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiListenerSummary,",
+        "FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiJoinRequestInput,\n    FfiListenerSummary,",
+    )
+    replace_once(
         LIB,
-        "join-input-export",
+        "crate-join-input-export",
         "FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest,",
         "FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest,\n    FfiJoinRequestInput,",
     )
