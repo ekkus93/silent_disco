@@ -30,6 +30,7 @@ jobs:
 
           path = Path("scripts/block16_finish_patch.py")
           text = path.read_text()
+
           start_marker = '''replace_once(
               "desktop/src-tauri/src/platform/effect_runner.rs",'''
           end_marker = '''replace_once(
@@ -88,6 +89,29 @@ jobs:
           )
           '''
           text = text[:start] + replacement + text[end:]
+
+          old_import_call = '''replace_once(
+              "desktop/src-tauri/src/app_state.rs",
+              "use crate::platform::identity::{",
+              """use crate::platform::file_picker::SelectedSourceRegistry;
+          use crate::platform::identity::{""",
+          )'''
+          new_import_call = '''replace_once(
+              "desktop/src-tauri/src/app_state.rs",
+              """use crate::platform::effect_runner::{
+              DesktopCoreObserver, DesktopPlatformEffectDispatcher, DesktopPlatformEffectRunner,
+          };
+          use crate::platform::identity::{""",
+              """use crate::platform::effect_runner::{
+              DesktopCoreObserver, DesktopPlatformEffectDispatcher, DesktopPlatformEffectRunner,
+          };
+          use crate::platform::file_picker::SelectedSourceRegistry;
+          use crate::platform::identity::{""",
+          )'''
+          if text.count(old_import_call) != 1:
+              raise SystemExit("expected one app-state import patch call")
+          text = text.replace(old_import_call, new_import_call, 1)
+
           old_assertion = '''    assert!(source
                   .descriptor()
                   .display_name
