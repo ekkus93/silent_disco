@@ -1,0 +1,106 @@
+name: Finish Desktop Block 16
+
+on:
+  push:
+    branches:
+      - agent/finish-desktop-block16
+    paths:
+      - .github/workflows/block16-finish.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/finish-desktop-block16
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.97.1
+
+      - name: Apply authoritative snapshot closure
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              target.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "desktop/src-tauri/src/platform/capabilities.rs",
+              "use silent_disco_core::runtime::{CapabilitySnapshot, CoreActorHandle, PlatformEvent};",
+              "use silent_disco_core::runtime::{CapabilitySnapshot, CoreActorHandle, CoreSnapshot, PlatformEvent};",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/capabilities.rs",
+              "pub(crate) fn publish_desktop_capabilities(handle: &CoreActorHandle) -> Result<(), CoreError> {",
+              "pub(crate) fn publish_desktop_capabilities(\n    handle: &CoreActorHandle,\n) -> Result<CoreSnapshot, CoreError> {",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/capabilities.rs",
+              "        if handle.current_snapshot()?.capabilities == expected {\n            return Ok(());\n        }",
+              "        let snapshot = handle.current_snapshot()?;\n        if snapshot.capabilities == expected {\n            return Ok(snapshot);\n        }",
+          )
+
+          replace_once(
+              "desktop/src-tauri/src/platform/effect_runner.rs",
+              "    ) -> Result<Self, CoreError> {",
+              "    ) -> Result<(Self, CoreSnapshot), CoreError> {",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/effect_runner.rs",
+              "        if let Err(primary) = publish_desktop_capabilities(&handle) {\n            return match runner.shutdown() {\n                Ok(()) => Err(primary),\n                Err(cleanup) => Err(append_startup_cleanup(primary, cleanup)),\n            };\n        }\n        Ok(runner)",
+              "        let snapshot = match publish_desktop_capabilities(&handle) {\n            Ok(snapshot) => snapshot,\n            Err(primary) => {\n                return match runner.shutdown() {\n                    Ok(()) => Err(primary),\n                    Err(cleanup) => Err(append_startup_cleanup(primary, cleanup)),\n                };\n            }\n        };\n        Ok((runner, snapshot))",
+          )
+
+          replace_once(
+              "desktop/src-tauri/src/app_state.rs",
+              "    let platform_runner = match DesktopPlatformEffectRunner::start(\n        platform_inbox,\n        platform_dispatcher,\n        handle.clone(),\n        paths.clone(),\n    ) {\n        Ok(runner) => runner,",
+              "    let (platform_runner, current_snapshot) = match DesktopPlatformEffectRunner::start(\n        platform_inbox,\n        platform_dispatcher,\n        handle.clone(),\n        paths.clone(),\n    ) {\n        Ok(started) => started,",
+          )
+          replace_once(
+              "desktop/src-tauri/src/app_state.rs",
+              "        assert_eq!(response.snapshot.revision, \"0\");\n        assert_eq!(state.current_snapshot().expect(\"snapshot\").revision, \"0\");",
+              "        assert_eq!(response.snapshot.revision, \"1\");\n        assert!(response.snapshot.capabilities.audio_source_selection_available);\n        assert!(response.snapshot.capabilities.secure_store_available);\n        assert!(!response.snapshot.capabilities.audio_output_available);\n        assert!(!response.snapshot.capabilities.local_network_available);\n        let current = state.current_snapshot().expect(\"snapshot\");\n        assert_eq!(current.revision, response.snapshot.revision);\n        assert_eq!(current.capabilities, response.snapshot.capabilities);",
+          )
+
+          replace_once(
+              "desktop/src-tauri/src/platform/capability_tests.rs",
+              "    publish_desktop_capabilities(&handle).expect(\"publish desktop capabilities\");\n\n    assert_eq!(\n        handle\n            .current_snapshot()\n            .expect(\"authoritative snapshot\")\n            .capabilities,\n        desktop_capabilities()\n    );",
+              "    let published =\n        publish_desktop_capabilities(&handle).expect(\"publish desktop capabilities\");\n\n    assert_eq!(published.capabilities, desktop_capabilities());\n    assert_eq!(\n        handle.current_snapshot().expect(\"authoritative snapshot\"),\n        published\n    );",
+          )
+
+      - name: Format desktop Rust
+        run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+
+      - name: Check desktop Rust
+        run: |
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml --all-features
+          cargo check --manifest-path desktop/src-tauri/Cargo.toml --all-features
+
+      - name: Commit validated patch
+        run: |
+          rm .github/workflows/block16-finish.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add desktop/src-tauri/src/platform/capabilities.rs \
+                  desktop/src-tauri/src/platform/effect_runner.rs \
+                  desktop/src-tauri/src/platform/capability_tests.rs \
+                  desktop/src-tauri/src/app_state.rs \
+                  .github/workflows/block16-finish.yml
+          git commit -m "Return acknowledged desktop capability snapshot"
+          git push origin HEAD:agent/finish-desktop-block16
