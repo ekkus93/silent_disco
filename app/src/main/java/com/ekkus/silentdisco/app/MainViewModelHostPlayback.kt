@@ -78,10 +78,24 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
         var consecutiveAudioSendFailures = 0
         var presentationOffsetMs = 0L
         var pauseStartedAtMs: Long? = null
+        var authoritativePlaybackObserved = false
         val packetDurationMs = latestPackets.firstOrNull()?.let {
             it.samplesPerPacket * 1_000L / it.sampleRate
         } ?: 20L
         latestPackets.forEachIndexed { index, originalPacket ->
+            while (!authoritativePlaybackObserved) {
+                when (_uiState.value.hostPlaybackState) {
+                    PlaybackState.PLAYING,
+                    PlaybackState.PAUSED,
+                    -> authoritativePlaybackObserved = true
+                    PlaybackState.ERROR -> return@launch
+                    PlaybackState.STOPPED,
+                    PlaybackState.BUFFERING,
+                    PlaybackState.READY,
+                    PlaybackState.UNDERRUN,
+                    -> delay(PAUSE_POLL_INTERVAL_MS)
+                }
+            }
             while (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
                 if (pauseStartedAtMs == null) {
                     pauseStartedAtMs = SystemClock.elapsedRealtime()
