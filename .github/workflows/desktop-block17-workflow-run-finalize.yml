@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   finalize:
-    if: github.event.workflow_run.id == 30576293784
     runs-on: ubuntu-24.04
     env:
       VALIDATED_INPUT_SHA: 7948e62a6526a84c3b4fceacc7971acd9c8e9bbb
@@ -32,8 +31,10 @@ jobs:
       - name: Verify validated run and allowed repository delta
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
+          test "${EVENT_RUN_ID}" = "${VALIDATION_RUN}"
 
           run_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" --jq '.head_sha')"
           test "${run_sha}" = "${VALIDATED_INPUT_SHA}"
