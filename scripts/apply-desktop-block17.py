@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from pathlib import Path
-import shutil
 import subprocess
 
 BASE_INSTALLER_COMMIT = "34e5d932c8001ef079b05a5b6337799990fb0a96"
@@ -22,7 +20,3 @@ installer = installer.replace(
     '"pub mod profile_lock;\\npub(crate) mod source_staging;\\npub(crate) mod source_staging_control;\\n",',
 )
 exec(compile(installer, "scripts/apply-desktop-block17.py", "exec"))
-
-payload = Path("scripts/block17-payload")
-if payload.exists():
-    shutil.rmtree(payload)
