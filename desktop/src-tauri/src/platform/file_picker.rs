@@ -1,7 +1,7 @@
 use crate::dto::DesktopErrorDto;
 use sha2::{Digest, Sha256};
 use silent_disco_core::runtime::{AudioSourceDescriptor, MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -175,12 +175,20 @@ pub(crate) struct SystemAudioFileBoundary;
 
 impl AudioFileBoundary for SystemAudioFileBoundary {
     fn open(&self, path: &Path) -> io::Result<OpenedAudioFile> {
+        let metadata = fs::metadata(path)?;
+        if !metadata.file_type().is_file() {
+            return Ok(OpenedAudioFile::new(
+                Box::new(io::empty()),
+                false,
+                metadata.len(),
+            ));
+        }
         let file = File::open(path)?;
-        let metadata = file.metadata()?;
+        let opened_metadata = file.metadata()?;
         Ok(OpenedAudioFile::new(
             Box::new(file),
-            metadata.file_type().is_file(),
-            metadata.len(),
+            opened_metadata.file_type().is_file(),
+            opened_metadata.len(),
         ))
     }
 
@@ -210,8 +218,11 @@ fn inspect_source(
     files: &dyn AudioFileBoundary,
 ) -> Result<InspectedAudioSource, DesktopErrorDto> {
     let safe_name = bounded_display_name(path)?;
+    let canonical_path = files
+        .canonicalize(path)
+        .map_err(|error| map_io_error(error, "canonicalize the selected audio source"))?;
     let mut opened = files
-        .open(path)
+        .open(&canonical_path)
         .map_err(|error| map_io_error(error, "open the selected audio source"))?;
     if !opened.is_regular_file {
         return Err(source_error(
@@ -235,9 +246,6 @@ fn inspect_source(
         ));
     }
 
-    let canonical_path = files
-        .canonicalize(path)
-        .map_err(|error| map_io_error(error, "canonicalize the selected audio source"))?;
     let mut signature = [0_u8; SOURCE_SIGNATURE_BYTES];
     let signature_length = opened
         .reader
@@ -285,11 +293,18 @@ fn detect_container(signature: &[u8]) -> Option<AudioContainer> {
 }
 
 fn has_mpeg_audio_frame_sync(signature: &[u8]) -> bool {
-    signature.len() >= 2
-        && signature[0] == 0xff
-        && signature[1] & 0xe0 == 0xe0
-        && signature[1] & 0x18 != 0x08
-        && signature[1] & 0x06 != 0
+    if signature.len() < 4 || signature[0] != 0xff || signature[1] & 0xe0 != 0xe0 {
+        return false;
+    }
+    let version = (signature[1] >> 3) & 0x03;
+    let layer = (signature[1] >> 1) & 0x03;
+    let bitrate_index = signature[2] >> 4;
+    let sample_rate_index = (signature[2] >> 2) & 0x03;
+    version != 0x01
+        && layer != 0
+        && bitrate_index != 0
+        && bitrate_index != 0x0f
+        && sample_rate_index != 0x03
 }
 
 fn bounded_display_name(path: &Path) -> Result<String, DesktopErrorDto> {
