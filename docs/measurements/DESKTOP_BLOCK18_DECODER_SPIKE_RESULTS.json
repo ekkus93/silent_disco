@@ -1,0 +1,161 @@
+{
+  "candidate": {
+    "crate": "symphonia",
+    "default_features": false,
+    "features": [
+      "wav",
+      "pcm",
+      "flac",
+      "mp3",
+      "id3v1",
+      "id3v2"
+    ],
+    "license": "MPL-2.0",
+    "version": "0.6.0"
+  },
+  "cases": {
+    "cancelled": {
+      "cancellation_requested": true,
+      "channels": 2,
+      "codec": "AudioCodecId(8192)",
+      "decode_micros": 370,
+      "error_class": null,
+      "error_detail": null,
+      "frames": 50688,
+      "packets": 11,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/reference.flac",
+      "peak_rss_kib": 3272,
+      "realtime_factor": 2854.054054054054,
+      "sample_rate_hz": 48000,
+      "source_sample_format": "None",
+      "startup_micros": 109,
+      "status": "cancelled"
+    },
+    "corrupt": {
+      "cancellation_requested": false,
+      "channels": null,
+      "codec": "unknown",
+      "decode_micros": 0,
+      "error_class": "unsupported",
+      "error_detail": "unsupported feature: core (probe): no suitable format reader found",
+      "frames": 0,
+      "packets": 0,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/corrupt.bin",
+      "peak_rss_kib": 2792,
+      "realtime_factor": null,
+      "sample_rate_hz": null,
+      "source_sample_format": "unknown",
+      "startup_micros": 74,
+      "status": "error"
+    },
+    "flac": {
+      "cancellation_requested": false,
+      "channels": 2,
+      "codec": "AudioCodecId(8192)",
+      "decode_micros": 4237,
+      "error_class": null,
+      "error_detail": null,
+      "frames": 576000,
+      "packets": 125,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/reference.flac",
+      "peak_rss_kib": 3164,
+      "realtime_factor": 2832.1925890960583,
+      "sample_rate_hz": 48000,
+      "source_sample_format": "None",
+      "startup_micros": 148,
+      "status": "decoded"
+    },
+    "metadata": {
+      "cancellation_requested": false,
+      "channels": 2,
+      "codec": "AudioCodecId(4102)",
+      "decode_micros": 12514,
+      "error_class": null,
+      "error_detail": null,
+      "frames": 576000,
+      "packets": 501,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/metadata-heavy.mp3",
+      "peak_rss_kib": 7104,
+      "realtime_factor": 958.9260028767779,
+      "sample_rate_hz": 48000,
+      "source_sample_format": "None",
+      "startup_micros": 10406,
+      "status": "decoded"
+    },
+    "mp3": {
+      "cancellation_requested": false,
+      "channels": 2,
+      "codec": "AudioCodecId(4102)",
+      "decode_micros": 12450,
+      "error_class": null,
+      "error_detail": null,
+      "frames": 576000,
+      "packets": 501,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/reference.mp3",
+      "peak_rss_kib": 3668,
+      "realtime_factor": 963.855421686747,
+      "sample_rate_hz": 48000,
+      "source_sample_format": "None",
+      "startup_micros": 102,
+      "status": "decoded"
+    },
+    "truncated": {
+      "cancellation_requested": false,
+      "channels": 2,
+      "codec": "AudioCodecId(8192)",
+      "decode_micros": 2024,
+      "error_class": "io",
+      "error_detail": "unexpected end of file",
+      "frames": 271872,
+      "packets": 59,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/truncated.flac",
+      "peak_rss_kib": 3332,
+      "realtime_factor": 2798.4189723320155,
+      "sample_rate_hz": 48000,
+      "source_sample_format": "None",
+      "startup_micros": 118,
+      "status": "error"
+    },
+    "wav": {
+      "cancellation_requested": false,
+      "channels": 2,
+      "codec": "AudioCodecId(264)",
+      "decode_micros": 2022,
+      "error_class": null,
+      "error_detail": null,
+      "frames": 576000,
+      "packets": 500,
+      "path": "/home/runner/work/silent_disco/silent_disco/target/desktop-block18-spike/fixtures/reference.wav",
+      "peak_rss_kib": 3084,
+      "realtime_factor": 5934.718100890208,
+      "sample_rate_hz": 48000,
+      "source_sample_format": "None",
+      "startup_micros": 80,
+      "status": "decoded"
+    }
+  },
+  "decision": {
+    "canonical_output": "48 kHz stereo PCM16 little-endian, produced incrementally",
+    "implementation_block": "Desktop Block 19 / shared decoder boundary",
+    "initial_formats": [
+      "WAV/PCM",
+      "FLAC",
+      "MP3"
+    ],
+    "ownership": "shared Rust streaming decoder",
+    "production_fallback": "none"
+  },
+  "environment": {
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+    "platform": "Linux-6.17.0-1020-azure-x86_64-with-glibc2.39",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+  },
+  "fixtures": {
+    "channels": 2,
+    "duration_seconds": 12,
+    "metadata_payload_bytes": 2097152,
+    "sample_rate_hz": 48000
+  },
+  "schema_version": 1
+}
