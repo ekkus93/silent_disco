@@ -1,37 +1,41 @@
 use crate::dto::DesktopErrorDto;
 use crate::notification_buffer::DesktopNotificationBuffer;
+use crate::platform::effect_runner::DesktopPlatformEffectRunner;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
 use silent_disco_core::runtime::CoreActorRuntime;
 use silent_disco_core::storage::{DatabaseWorker, StorageError};
 use std::sync::Arc;
 
-pub struct DesktopOwnedResources {
-    pub notifications: Arc<DesktopNotificationBuffer>,
-    pub actor: CoreActorRuntime,
-    pub database: DatabaseWorker,
-    pub lease: ProfileLease,
+pub(crate) struct DesktopOwnedResources {
+    pub(crate) platform_runner: DesktopPlatformEffectRunner,
+    pub(crate) notifications: Arc<DesktopNotificationBuffer>,
+    pub(crate) actor: CoreActorRuntime,
+    pub(crate) database: DatabaseWorker,
+    pub(crate) lease: ProfileLease,
 }
 
 /// Shuts down owned resources in dependency-safe order.
 ///
-/// The core observer remains available while the actor performs controlled shutdown because
-/// the actor emits its final authoritative notification during that phase. The notification
-/// dispatcher is closed immediately afterward, before storage and profile-lock release.
-/// Every cleanup phase is attempted. A later cleanup failure never overwrites an earlier
-/// failure; the returned bounded error describes every failed phase.
+/// Platform-effect admission stops first while the actor is still available to receive
+/// cancellation failures for queued operations. The actor then performs controlled shutdown,
+/// followed by the notification dispatcher, storage worker, and profile lease. Every cleanup
+/// phase is attempted; a later failure never overwrites an earlier one.
 ///
 /// # Errors
 ///
-/// Returns one bounded structured error when actor shutdown, notification-worker shutdown,
-/// database shutdown, or explicit profile-lock release fails. All later cleanup phases are
-/// still attempted.
-pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), DesktopErrorDto> {
+/// Returns one bounded structured error when platform-runner, actor, notification-worker,
+/// database, or explicit profile-lock cleanup fails.
+pub(crate) fn shutdown_owned_resources(
+    resources: DesktopOwnedResources,
+) -> Result<(), DesktopErrorDto> {
+    let platform_error = resources.platform_runner.shutdown().err();
     let actor_error = resources.actor.shutdown().err();
     let notification_error = resources.notifications.shutdown().err();
     let database_error = resources.database.stop_and_join().err();
     let lease_error = resources.lease.release().err();
 
-    if notification_error.is_none()
+    if platform_error.is_none()
+        && notification_error.is_none()
         && actor_error.is_none()
         && database_error.is_none()
         && lease_error.is_none()
@@ -40,6 +44,7 @@ pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), 
     }
 
     Err(cleanup_error(
+        platform_error.as_ref(),
         notification_error.as_ref(),
         actor_error.as_ref(),
         database_error.as_ref(),
@@ -49,7 +54,7 @@ pub fn shutdown_owned_resources(resources: DesktopOwnedResources) -> Result<(), 
 
 /// Cleans up database and profile-lock ownership after actor startup failed.
 #[must_use]
-pub fn cleanup_without_actor(
+pub(crate) fn cleanup_without_actor(
     database: DatabaseWorker,
     lease: ProfileLease,
     primary: DesktopErrorDto,
@@ -61,14 +66,14 @@ pub fn cleanup_without_actor(
 
 /// Releases a profile lease after an earlier startup stage failed.
 #[must_use]
-pub fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {
+pub(crate) fn cleanup_lease(lease: ProfileLease, primary: DesktopErrorDto) -> DesktopErrorDto {
     let lease_error = lease.release().err();
     combine_primary(primary, None, None, lease_error.as_ref())
 }
 
 /// Cleans up actor, database, and profile-lock ownership after startup failed.
 #[must_use]
-pub fn cleanup_with_actor(
+pub(crate) fn cleanup_with_actor(
     actor: CoreActorRuntime,
     database: DatabaseWorker,
     lease: ProfileLease,
@@ -86,6 +91,7 @@ pub fn cleanup_with_actor(
 }
 
 fn cleanup_error(
+    platform: Option<&silent_disco_core::error::CoreError>,
     notifications: Option<&silent_disco_core::error::CoreError>,
     actor: Option<&silent_disco_core::error::CoreError>,
     database: Option<&StorageError>,
@@ -97,7 +103,8 @@ fn cleanup_error(
         "fatal",
         false,
         &format!(
-            "desktop shutdown failed (notifications={}, actor={}, database={}, profile_lock={})",
+            "desktop shutdown failed (platform_runner={}, notifications={}, actor={}, database={}, profile_lock={})",
+            status(platform),
             status(notifications),
             status(actor),
             status(database),

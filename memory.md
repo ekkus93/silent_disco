@@ -307,3 +307,14 @@ Execution constraints for this session:
 - Removed the dormant `trustListener`/`trustRustListener` path and `manual-trust-*` operation IDs. Trusted-device persistence remains owned by the Rust `PersistTrustedDevice` storage-effect path.
 - Added `HostPlaybackAuthorityTest` for accepted ordering and rejection-side-effect suppression.
 - Guarded validation run: `30524538283`. Required gates: source-size invariant; shared Rust fmt/strict Clippy/all-feature tests; Android assemble, unit tests, and lint; desktop generated bindings, format, lint, typecheck, tests, build; desktop Rust fmt/strict Clippy/tests/check.
+
+## 2026-07-30 — Desktop Block 15 platform-effect runner
+
+- Base production commit: `cb540ea8262501b4177267e3f61c33b9cd583154`.
+- Added a bounded desktop platform-effect channel and one owned worker. The core observer diverts only `CoreNotification::Effect`; snapshots, transport effects, storage effects, errors, and diagnostics retain their existing bridge behavior.
+- Every completion returns through `CoreActorHandle::submit_platform_event` with the original operation ID. The runner never mutates `CoreSnapshot` or actor state directly.
+- Implemented real desktop capability resolution. Secure storage is available after profile identity startup; discovery, advertising, standard-IP transport, source selection/preparation, and native audio output remain explicitly unavailable until their dedicated blocks.
+- Implemented a real profile-owned diagnostics JSON export using a hashed filename, create-new temporary file, flush/sync, atomic rename, and directory sync. Native paths do not cross the completion or IPC boundary.
+- Unsupported effects return correlated structured failures rather than successful no-ops. Adapter panics are contained and reported as `ffi_panic_contained` failures.
+- Added bounded cancellation, queued-effect cancellation during shutdown, deterministic worker join, operation-correlation tests, stale-completion rejection coverage against the real core actor, diagnostics export tests, unsupported-effect tests, panic/error containment tests, cancellation tests, and shutdown ownership tests.
+- Guarded validation run: `30529942712`. Required gates: source-size invariant; shared Rust fmt/strict Clippy/all-feature tests; Android assemble, unit tests, and lint; desktop generated bindings, format, lint, typecheck, tests, build; desktop Rust fmt/strict Clippy/tests/check.

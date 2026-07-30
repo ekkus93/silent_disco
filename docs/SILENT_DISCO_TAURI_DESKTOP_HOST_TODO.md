@@ -895,35 +895,37 @@ desktop/src-tauri/src/platform/diagnostics_export.rs
 
 The runner:
 
-- [ ] receives `PlatformEffect` with operation ID;
-- [ ] routes only desktop-owned effects;
-- [ ] returns `PlatformEvent` with the same operation ID;
-- [ ] rejects unknown/unsupported effects visibly;
-- [ ] owns every spawned task;
-- [ ] supports cancellation and shutdown;
-- [ ] never mutates core state directly.
+- [x] receives `PlatformEffect` with operation ID;
+- [x] routes only desktop-owned effects;
+- [x] returns `PlatformEvent` with the same operation ID;
+- [x] rejects unknown/unsupported effects visibly;
+- [x] owns every spawned task;
+- [x] supports cancellation and shutdown;
+- [x] never mutates core state directly.
 
 ### 15.2 Implement initially supported effects
 
 At this stage implement only effects backed by real code, such as:
 
-- [ ] request/select source interaction where effect semantics require it;
-- [ ] diagnostics export path/save operation;
-- [ ] desktop capability state;
-- [ ] placeholder unsupported result for discovery/audio output only when the core explicitly expects an unsupported failure.
+- [x] request/select source interaction where effect semantics require it;
+- [x] diagnostics export path/save operation;
+- [x] desktop capability state;
+- [x] placeholder unsupported result for discovery/audio output only when the core explicitly expects an unsupported failure.
 
 Do not report unimplemented effects as successful no-ops.
 
 ### 15.3 Tests
 
-- [ ] operation correlation;
-- [ ] stale completion rejected by core;
-- [ ] unknown effect visible;
-- [ ] task panic/error contained and reported;
-- [ ] cancellation;
-- [ ] shutdown joins tasks.
+- [x] operation correlation;
+- [x] stale completion rejected by core;
+- [x] unknown effect visible;
+- [x] task panic/error contained and reported;
+- [x] cancellation;
+- [x] shutdown joins tasks.
 
 **Acceptance:** Desktop effects follow the same command/effect/completion contract as Android adapters.
+
+**Implementation status:** Complete. The desktop core observer now diverts only `PlatformEffect` notifications into a bounded, owned worker and leaves transport/storage effects on their existing paths. Capability resolution and profile-owned diagnostics JSON export are real operations. Discovery, advertising, network, source preparation, and native audio output remain fail-closed with correlated structured errors until their dedicated blocks; no unsupported effect reports success. Cancellation suppresses success, adapter panics are contained as failed events, shutdown cancels queued effects and joins the worker, and guarded Actions run `30529942712` passed the complete shared Rust, Android, desktop frontend/backend, and source-size regression matrix.
 
 ---
 

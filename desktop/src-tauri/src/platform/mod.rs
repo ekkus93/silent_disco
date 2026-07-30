@@ -1,3 +1,8 @@
+pub mod audio_device;
+pub mod diagnostics_export;
+pub mod discovery;
+pub mod effect_runner;
+mod failure;
 pub mod identity;
 #[allow(
     clippy::similar_names,
@@ -11,3 +16,6 @@ pub mod profile_metadata;
     reason = "the test keeps complete result variants visually separate"
 )]
 pub mod storage_inspection;
+
+#[cfg(test)]
+mod effect_runner_tests;

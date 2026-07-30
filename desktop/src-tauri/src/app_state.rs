@@ -1,6 +1,9 @@
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::notification_channel::TauriNotificationSink;
+use crate::platform::effect_runner::{
+    DesktopCoreObserver, DesktopPlatformEffectDispatcher, DesktopPlatformEffectRunner,
+};
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
 };
@@ -17,7 +20,7 @@ use crate::shutdown::{
 };
 use silent_disco_core::runtime::{
     CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreCommand, CoreCommandRequest,
-    CoreObserver, SnapshotRevision,
+    SnapshotRevision,
 };
 use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
 use std::sync::{Arc, Mutex};
@@ -506,8 +509,9 @@ fn open_runtime(
         }
     };
 
-    let observer_buffer = Arc::clone(&notifications);
-    let observer = move |notification| observer_buffer.on_notification(notification);
+    let (platform_dispatcher, platform_inbox) = DesktopPlatformEffectDispatcher::channel();
+    let observer =
+        DesktopCoreObserver::new(Arc::clone(&notifications), platform_dispatcher.clone());
     let actor =
         match CoreActorRuntime::start(CoreActorConfig::new(identity.device_id().clone()), observer)
         {
@@ -545,6 +549,19 @@ fn open_runtime(
         return Err(cleanup_with_actor(actor, database, lease, primary));
     }
 
+    let platform_runner = match DesktopPlatformEffectRunner::start(
+        platform_inbox,
+        platform_dispatcher,
+        handle.clone(),
+        paths.clone(),
+    ) {
+        Ok(runner) => runner,
+        Err(error) => {
+            let primary = DesktopErrorDto::from(error);
+            return Err(cleanup_with_actor(actor, database, lease, primary));
+        }
+    };
+
     let snapshot = CoreSnapshotDto::from(current_snapshot);
     Ok((
         ReadyRuntime {
@@ -553,6 +570,7 @@ fn open_runtime(
             handle,
             notifications: Arc::clone(&notifications),
             owned: DesktopOwnedResources {
+                platform_runner,
                 notifications,
                 actor,
                 database,
