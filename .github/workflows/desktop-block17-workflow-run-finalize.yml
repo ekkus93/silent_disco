@@ -1,0 +1,144 @@
+name: Finalize validated Desktop Block 17 after run
+
+on:
+  workflow_run:
+    workflows:
+      - Observable guarded Desktop Block 17 implementation
+    types:
+      - completed
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: finalize-desktop-block17
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.event.workflow_run.id == 30576293784
+    runs-on: ubuntu-24.04
+    env:
+      VALIDATED_INPUT_SHA: 7948e62a6526a84c3b4fceacc7971acd9c8e9bbb
+      VALIDATION_RUN: 30576293784
+    steps:
+      - name: Check out current master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Verify validated run and allowed repository delta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          run_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" --jq '.head_sha')"
+          test "${run_sha}" = "${VALIDATED_INPUT_SHA}"
+
+          validate_result="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}/jobs?filter=latest" \
+            --jq '.jobs[] | select(.name == "validate") | .conclusion')"
+          test "${validate_result}" = success
+
+          mapfile -t changed < <(git diff --name-only "${VALIDATED_INPUT_SHA}"..HEAD | sort)
+          expected=(
+            .github/workflows/desktop-block17-finalize-validated.yml
+            .github/workflows/desktop-block17-workflow-run-finalize.yml
+            .github/workflows/finalize-desktop-block17-push.yml
+            scripts/finalize-desktop-block17.trigger
+          )
+          if [[ "${changed[*]}" != "${expected[*]}" ]]; then
+            printf 'Unexpected changes since validated input:\n' >&2
+            printf '%s\n' "${changed[@]}" >&2
+            exit 1
+          fi
+
+      - name: Apply exact validated implementation
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-desktop-block17.py
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+          python3 scripts/check-source-file-size.py
+          git diff --check
+
+      - name: Record completion evidence
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          todo = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+          text = todo.read_text()
+          start = text.index("## Block 17 — Implement atomic source staging")
+          end = text.index("## Block 18 — Resolve the decoder decision gate", start)
+          block = text[start:end]
+          if block.count("- [ ]") != 19:
+              raise SystemExit("Block 17 checklist count changed")
+          block = block.replace("- [ ]", "- [x]")
+          evidence = (
+              "**Completion evidence:** Atomic, content-addressed source staging; bounded progress; "
+              "explicit cancellation; verified reuse; strict owned-temp startup cleanup; frontend "
+              f"integration; and the complete regression matrix passed in GitHub Actions run "
+              f"`{os.environ['VALIDATION_RUN']}` from validated input commit "
+              f"`{os.environ['VALIDATED_INPUT_SHA']}`. Native file-dialog interaction was not "
+              "performed by this CI run.\n\n"
+          )
+          marker = "**Acceptance:** The core receives a stable app-owned source path with no destructive or silent recovery."
+          if block.count(marker) != 1:
+              raise SystemExit("Block 17 acceptance marker mismatch")
+          block = block.replace(marker, evidence + marker)
+          todo.write_text(text[:start] + block + text[end:])
+
+          memory = Path("memory.md")
+          heading = "## 2026-07-30 — Desktop Block 17 atomic source staging complete"
+          existing = memory.read_text()
+          if heading in existing:
+              raise SystemExit("Block 17 completion memory entry already exists")
+          entry = f'''\n\n{heading}
+
+- Validated input commit: `{os.environ['VALIDATED_INPUT_SHA']}`.
+- Guarded validation run: `{os.environ['VALIDATION_RUN']}`.
+- Source selection copies the inspected file into the active profile's `sources/` directory through an owned temporary file, fixed 64 KiB buffers, streaming SHA-256, length/signature verification, file and directory synchronization, and no-clobber atomic publication.
+- Stable source IDs and filenames are content-addressed. Existing staged content is reused only after full regular-file, length, and hash verification; mismatches and collisions fail visibly without overwriting data.
+- Staging supports bounded 10 Hz progress events, explicit cancellation, profile-close cancellation/join, and deterministic cleanup that preserves both primary and cleanup failures.
+- Startup removes only strict, provably owned incomplete regular temporary files. Unrelated files, symbolic links, and non-file entries are never silently deleted.
+- Tests cover success, cancellation, source failure during copy, destination write failure, hash mismatch, collision, verified reuse, incomplete-temp cleanup, cleanup refusal, original preservation, progress throttling, and cancellation control.
+- Validation passed source-size enforcement; shared Rust format/strict Clippy/tests; Android builds, ABI packaging, unit tests, lint, and instrumentation; generated desktop bindings, format/lint/typecheck/tests/build; desktop Rust strict gates; exact lockfiles; and Linux Tauri bundle creation. Native file-dialog interaction on a physical desktop session remains unclaimed.
+'''
+          memory.write_text(existing.rstrip() + entry)
+          PY
+
+      - name: Commit implementation and remove temporary machinery
+        id: commit
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          current_sha="$(git rev-parse HEAD)"
+          test "${remote_sha}" = "${current_sha}"
+
+          git rm -r scripts/block17-payload
+          git rm scripts/apply-desktop-block17.py
+          git rm scripts/finalize-desktop-block17.trigger
+          git rm .github/workflows/desktop-block17-observable.yml
+          git rm .github/workflows/desktop-block17-finalize-validated.yml
+          git rm .github/workflows/finalize-desktop-block17-push.yml
+          git rm .github/workflows/desktop-block17-workflow-run-finalize.yml
+          git add -A
+          git diff --cached --check
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Complete Desktop Block 17 atomic source staging"
+          commit_sha="$(git rev-parse HEAD)"
+          echo "commit_sha=${commit_sha}" >> "${GITHUB_OUTPUT}"
+          git push origin HEAD:master
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
+        run: |
+          gh issue comment 45 --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 17 finalized at ${COMMIT_SHA} from validated Actions run ${VALIDATION_RUN}."
