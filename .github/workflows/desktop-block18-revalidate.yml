@@ -1,0 +1,289 @@
+name: Revalidate Desktop Block 18
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/desktop-block18-revalidate.yml
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: desktop-block18-revalidation
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+  TRACKING_ISSUE: "45"
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    steps:
+      - name: Check out exact master input
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Capture exact input
+        run: echo "BLOCK18_AUDIT_INPUT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+
+      - name: Publish start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 18 revalidation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} against ${BLOCK18_AUDIT_INPUT}."
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Install Android SDK, decoder, and Linux Tauri packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            ffmpeg \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            time \
+            wget
+
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run executable decoder spike
+        run: bash scripts/run-desktop-block18-spike.sh
+
+      - name: Verify decoder evidence semantics
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          results = json.loads(Path("docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.json").read_text())
+          candidate = results["candidate"]
+          decision = results["decision"]
+          if candidate != {
+              "crate": "symphonia",
+              "version": "0.6.0",
+              "default_features": False,
+              "features": ["wav", "pcm", "flac", "mp3", "id3v1", "id3v2"],
+              "license": "MPL-2.0",
+          }:
+              raise SystemExit(f"unexpected candidate: {candidate}")
+          if decision["ownership"] != "shared Rust streaming decoder":
+              raise SystemExit(f"unexpected ownership: {decision}")
+          if decision["production_fallback"] != "none":
+              raise SystemExit(f"unexpected fallback: {decision}")
+          for name in ("wav", "flac", "mp3", "metadata"):
+              case = results["cases"][name]
+              if case["status"] != "decoded" or case["frames"] < 570_000:
+                  raise SystemExit(f"invalid successful case {name}: {case}")
+              if case["sample_rate_hz"] != 48_000 or case["channels"] != 2:
+                  raise SystemExit(f"invalid decoded format {name}: {case}")
+          if results["cases"]["truncated"]["status"] != "error":
+              raise SystemExit("truncated fixture did not fail visibly")
+          if results["cases"]["corrupt"]["status"] != "error":
+              raise SystemExit("corrupt fixture did not fail visibly")
+          if results["cases"]["cancelled"]["status"] != "cancelled":
+              raise SystemExit("cancellation fixture did not cancel")
+          PY
+
+      - name: Restore committed host-specific measurements
+        run: |
+          git restore -- \
+            docs/DESKTOP_BLOCK18_DECODER_DECISION.md \
+            docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.json \
+            docs/measurements/DESKTOP_BLOCK18_DECODER_SPIKE_RESULTS.md \
+            tools/decoder-spike/Cargo.lock
+
+      - name: Enforce tracked source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Run shared Rust strict gates
+        working-directory: rust
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+
+      - name: Verify generated desktop bindings and frontend
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
+
+      - name: Run desktop Rust strict gates
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+          cargo check --all-features
+
+      - name: Build Linux desktop bundles
+        working-directory: desktop
+        run: npm run tauri build
+
+      - name: Build Android variants and test APK
+        run: |
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain
+
+      - name: Verify packaged Rust ABIs
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "${apk}"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "${apk}" "lib/${abi}/libsilent_disco_ffi.so" \
+                | grep -Fx "lib/${abi}/libsilent_disco_ffi.so"
+            done
+          done
+
+      - name: Run Android unit tests and lint
+        run: ./gradlew test lintDebug --stacktrace --console=plain
+
+      - name: Run Android instrumentation suite
+        run: |
+          ./gradlew pixel2api29DebugAndroidTest \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=software \
+            --stacktrace \
+            --console=plain
+
+      - name: Require reproducible tracked lockfiles
+        run: |
+          git diff --exit-code -- \
+            rust/Cargo.lock \
+            desktop/package-lock.json \
+            desktop/src-tauri/Cargo.lock \
+            tools/decoder-spike/Cargo.lock
+
+      - name: Correct Block 18 validation provenance
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          run_id = os.environ["GITHUB_RUN_ID"]
+          input_sha = os.environ["BLOCK18_AUDIT_INPUT"]
+
+          todo_path = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+          text = todo_path.read_text()
+          start = text.index("## Block 18 — Resolve the decoder decision gate")
+          end = text.index("## Block 19 — Implement bounded streaming decode", start)
+          block = text[start:end]
+          old = (
+              "Shared Rust streaming decode was selected after the complete regression matrix passed "
+              "in GitHub Actions run `30576293784` from evidence commit "
+              "`0cecbc38cfca68620131ed4c072968896fac2e65`."
+          )
+          new = (
+              "Shared Rust streaming decode was selected in evidence commit "
+              "`0cecbc38cfca68620131ed4c072968896fac2e65`; the executable spike and complete "
+              f"regression matrix were freshly revalidated in GitHub Actions run `{run_id}` "
+              f"against audit input `{input_sha}`."
+          )
+          if block.count(old) != 1:
+              raise SystemExit("Block 18 completion evidence text changed unexpectedly")
+          block = block.replace(old, new)
+          todo_path.write_text(text[:start] + block + text[end:])
+
+          memory_path = Path("memory.md")
+          memory = memory_path.read_text()
+          heading = "## 2026-07-30 — Desktop Block 18 decoder decision complete"
+          start = memory.index(heading)
+          section = memory[start:]
+          old_line = "- Guarded validation run: `30576293784`."
+          if section.count(old_line) != 1:
+              raise SystemExit("Block 18 memory validation line changed unexpectedly")
+          section = section.replace(
+              old_line,
+              f"- Guarded revalidation run: `{run_id}`.\n"
+              f"- Revalidated input commit: `{input_sha}`; its only source-equivalent addition was this temporary audit workflow, removed by the completion commit.",
+              1,
+          )
+          memory_path.write_text(memory[:start] + section)
+          PY
+
+      - name: Commit corrected evidence and remove audit workflow
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/desktop-block18-revalidate.yml
+          git add docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md memory.md
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Correct and revalidate Desktop Block 18 evidence"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 18 revalidation passed and corrected the provenance record: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 18 revalidation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
