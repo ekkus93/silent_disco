@@ -37,8 +37,35 @@ jobs:
       - name: Apply playback authority migration
         run: |
           set -euo pipefail
+          mkdir -p scripts/fixtures
+          if [[ -f scripts/apply-block13-android-host-cutover.py ]]; then
+            git mv scripts/apply-block13-android-host-cutover.py \
+              scripts/fixtures/apply-block13-android-host-cutover.py.txt
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/run-block13-android-host-cutover.yml")
+          content = path.read_text(encoding="utf-8")
+          old_trigger = '      - "scripts/apply-block13-android-host-cutover.py"'
+          new_trigger = '      - "scripts/fixtures/apply-block13-android-host-cutover.py.txt"'
+          old_run = "      - name: Apply Android host cutover\n        run: python3 scripts/apply-block13-android-host-cutover.py"
+          new_run = '''      - name: Apply Android host cutover
+              run: |
+                cp scripts/fixtures/apply-block13-android-host-cutover.py.txt \\
+                  scripts/.apply-block13-android-host-cutover.py
+                python3 scripts/.apply-block13-android-host-cutover.py
+                rm scripts/.apply-block13-android-host-cutover.py'''
+          for old, new, label in (
+              (old_trigger, new_trigger, "trigger"),
+              (old_run, new_run, "run step"),
+          ):
+              if content.count(old) != 1:
+                  raise SystemExit(f"Android cutover workflow {label} fixture mismatch")
+              content = content.replace(old, new)
+          path.write_text(content, encoding="utf-8")
+          PY
           if [[ -f scripts/apply-block13-playback-authority.py ]]; then
-            mkdir -p scripts/fixtures
             git mv scripts/apply-block13-playback-authority.py \
               scripts/fixtures/apply-block13-playback-authority.py.txt
           fi
@@ -153,8 +180,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A rust scripts/apply-block13-playback-authority.py \
-            scripts/fixtures/apply-block13-playback-authority.py.txt
+          git add -A rust scripts .github/workflows/run-block13-android-host-cutover.yml
           git commit -m "Make host playback commands Rust-authoritative"
           for attempt in 1 2 3; do
             git fetch origin master
