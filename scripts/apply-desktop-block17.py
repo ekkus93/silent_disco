@@ -50,7 +50,7 @@ def record_block17_completion() -> None:
     start = text.index("## Block 17 — Implement atomic source staging")
     end = text.index("## Block 18 — Resolve the decoder decision gate", start)
     block = text[start:end]
-    if block.count("- [ ]") != 19:
+    if block.count("- [ ]") != 20:
         raise SystemExit("Block 17 checklist changed during finalization")
     block = block.replace("- [ ]", "- [x]")
     evidence = (
@@ -114,7 +114,7 @@ def finalize_block17_if_needed() -> None:
         if "## 2026-07-30 — Desktop Block 17 atomic source staging complete" not in memory:
             raise SystemExit("Block 17 is checked but its completion record is missing")
         return
-    if pending != 19:
+    if pending != 20:
         raise SystemExit(f"unexpected pending Block 17 task count: {pending}")
 
     verify_block17_validation_ancestry()
