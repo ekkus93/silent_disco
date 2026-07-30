@@ -72,6 +72,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 internal fun MainViewModel.startHostPlaybackImpl() {
+    if (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
+        resumeHostPlaybackImpl()
+        return
+    }
+
     val selectedAudio = _uiState.value.hostForm.selectedAudio
     if (selectedAudio == null) {
         _uiState.value = _uiState.value.copy(lastError = "Choose an audio file before starting playback")
@@ -91,6 +96,16 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         refreshHostDiagnostics(streamState = PlaybackState.ERROR)
         return
     }
+
+    reportRustHostPlaybackState(PlaybackState.BUFFERING)
+    diagnosticsStore.updateHost {
+        it.copy(
+            streamState = PlaybackState.BUFFERING,
+            lastError = null,
+            metricsSummary = summarizeMetrics(),
+        )
+    }
+
     val sessionId = currentSessionId!!
     val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}").also {
         currentStreamId = it
@@ -155,25 +170,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
             lastError = null,
         )
         reportRustHostPlaybackState(PlaybackState.PLAYING)
-        viewModelScope.launch {
-            runCatching {
-                wifiDirectService.broadcastControl(
-                    ControlMessage.StreamStart(
-                        version = 1,
-                        sessionId = sessionId,
-                        streamId = streamId,
-                        hostStartTimeMs = latestPackets.first().hostPresentationTimeMs,
-                        sampleRate = decoded.format.sampleRate,
-                        channels = decoded.format.channelCount,
-                        samplesPerPacket = latestPackets.first().samplesPerPacket,
-                    ),
-                )
-            }.onSuccess { result ->
-                reportHostBroadcastDelivery("broadcast stream start", result, requireAnyPeer = false)
-            }.onFailure { error ->
-                handleHostControlFailure("broadcast stream start", error)
-            }
-        }
+        broadcastHostStreamStart(sessionId, streamId, decoded.format)
         refreshHostDiagnostics()
         startHostStreamingLoop(streamId)
     }.onFailure { error ->
@@ -184,6 +181,50 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         reportRustHostPlaybackState(PlaybackState.ERROR, message)
         diagnosticsStore.updateHost { it.copy(lastError = error.message, streamState = PlaybackState.ERROR) }
         refreshHostDiagnostics(streamState = PlaybackState.ERROR)
+    }
+}
+
+private fun MainViewModel.resumeHostPlaybackImpl() {
+    val sessionId = currentSessionId
+    val streamId = currentStreamId
+    val format = latestDecodedAudio?.format
+    if (sessionId == null || streamId == null || format == null || latestPackets.isEmpty()) {
+        val message = "Host stream cannot resume because prepared audio state is unavailable"
+        _uiState.value = _uiState.value.copy(lastError = message)
+        reportRustHostPlaybackState(PlaybackState.ERROR, message)
+        return
+    }
+    logger.i("stream.resume", "Resuming host stream")
+    metrics.increment("stream_resume")
+    reportRustHostPlaybackState(PlaybackState.PLAYING)
+    broadcastHostStreamStart(sessionId, streamId, format)
+    _uiState.value = _uiState.value.copy(lastMessage = "Host stream resumed", lastError = null)
+    refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
+}
+
+private fun MainViewModel.broadcastHostStreamStart(
+    sessionId: SessionId,
+    streamId: StreamId,
+    format: AudioFormatSpec,
+) {
+    viewModelScope.launch {
+        runCatching {
+            wifiDirectService.broadcastControl(
+                ControlMessage.StreamStart(
+                    version = 1,
+                    sessionId = sessionId,
+                    streamId = streamId,
+                    hostStartTimeMs = SystemClock.elapsedRealtime() + 100,
+                    sampleRate = format.sampleRate,
+                    channels = format.channelCount,
+                    samplesPerPacket = latestPackets.first().samplesPerPacket,
+                ),
+            )
+        }.onSuccess { result ->
+            reportHostBroadcastDelivery("broadcast stream start", result, requireAnyPeer = false)
+        }.onFailure { error ->
+            handleHostControlFailure("broadcast stream start", error)
+        }
     }
 }
 
@@ -228,11 +269,11 @@ internal fun MainViewModel.pauseHostPlaybackImpl() {
 
 internal fun MainViewModel.stopHostPlaybackImpl() {
     logger.i("stream.stop", "Stopping host stream")
+    reportRustHostPlaybackState(PlaybackState.STOPPED)
     hostStreamJob?.cancel()
     playbackJob?.cancel()
     resyncJob?.cancel()
     playbackEngine.stop()
-    reportRustHostPlaybackState(PlaybackState.STOPPED)
     metrics.increment("stream_stop")
     propagateListenerPlaybackState(
         playbackState = PlaybackState.STOPPED,
