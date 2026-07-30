@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { selectAudioSource } from "./audioSourceClient";
+import { DesktopAudioSourceError, selectAudioSource } from "./audioSourceClient";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
@@ -27,22 +27,18 @@ describe("desktop audio source client", () => {
       message: "permission denied",
     });
 
-    try {
-      await selectAudioSource("18");
-      throw new Error("audio source selection unexpectedly succeeded");
-    } catch (error: unknown) {
-      const structured = error as Error & {
-        code?: string;
-        subsystem?: string;
-        severity?: string;
-        retryable?: boolean;
-      };
-      expect(error instanceof Error).toBe(true);
-      expect(structured.message).toBe("permission denied");
-      expect(structured.code).toBe("desktop.audio_source.permission_denied");
-      expect(structured.subsystem).toBe("audio_source");
-      expect(structured.severity).toBe("error");
-      expect(structured.retryable).toBe(true);
-    }
+    const rejection = await selectAudioSource("18").then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const structured = rejection as DesktopAudioSourceError;
+    expect(rejection !== null).toBe(true);
+    expect(rejection instanceof Error).toBe(true);
+    expect(rejection instanceof DesktopAudioSourceError).toBe(true);
+    expect(structured.message).toBe("permission denied");
+    expect(structured.code).toBe("desktop.audio_source.permission_denied");
+    expect(structured.subsystem).toBe("audio_source");
+    expect(structured.severity).toBe("error");
+    expect(structured.retryable).toBe(true);
   });
 });
