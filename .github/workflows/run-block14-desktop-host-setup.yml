@@ -11,6 +11,7 @@ on:
       - "scripts/fix-block14-app-state-split.py"
       - "scripts/fix-block14-frontend-fixtures.py"
       - "scripts/fix-block14-test-hoisting-and-selector.py"
+      - "scripts/fix-block14-checkbox-accessibility.py"
       - ".github/workflows/run-block14-desktop-host-setup.yml"
 
 permissions:
@@ -88,6 +89,7 @@ jobs:
           python scripts/fix-block14-app-state-split.py
           python scripts/fix-block14-frontend-fixtures.py
           python scripts/fix-block14-test-hoisting-and-selector.py
+          python scripts/fix-block14-checkbox-accessibility.py
 
       - name: Install frontend dependencies
         working-directory: desktop
@@ -158,6 +160,7 @@ jobs:
           test ! -e scripts/fix-block14-app-state-split.py
           test ! -e scripts/fix-block14-frontend-fixtures.py
           test ! -e scripts/fix-block14-test-hoisting-and-selector.py
+          test ! -e scripts/fix-block14-checkbox-accessibility.py
           test ! -e .github/workflows/run-block14-desktop-host-setup.yml
           test -f desktop/src/screens/HostSetupScreen.tsx
           test -f desktop/src/screens/HostSetupScreen.test.tsx
