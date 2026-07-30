@@ -47,12 +47,15 @@ fn get_core_smoke(input: u64) -> CoreSmokeDto {
 /// successful process exit.
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state::DesktopAppState::new())
+        .manage(platform::file_picker::SelectedSourceRegistry::new())
         .invoke_handler(tauri::generate_handler![
             get_core_smoke,
             app_state::open_profile,
             app_state::get_current_snapshot,
             host_commands::select_host_role,
+            host_commands::select_audio_source,
             host_commands::update_host_draft,
             host_commands::create_host_session,
             app_state::attach_notifications,
