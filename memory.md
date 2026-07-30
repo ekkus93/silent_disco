@@ -296,3 +296,14 @@ Execution constraints for this session:
 - Desktop frontend format/lint/typecheck/tests/build lane: **success**
 - Desktop Rust format/Clippy/tests/check lane: **success**
 - Linux AppImage/DEB bundle lane: **success**
+
+## 2026-07-30 — Desktop Block 13 authority closure
+
+- Base commit: `acb15e42400a9c9a18ced1e5f27c3f130a5e54d8`.
+- Android host playback now serializes commands and awaits Rust-confirmed `BUFFERING`, `PLAYING`, `PAUSED`, and `STOPPED` snapshots before executing corresponding platform side effects.
+- Start may decode and packetize only after Rust accepts buffering; playback-engine start, control broadcast, and packet-loop launch occur only after Rust accepts playing.
+- Pause, resume, and stop perform no success-side effects when the Rust transition rejects, times out, or is cancelled.
+- Stop intentionally cancels a pending start/resume/pause command before requesting authoritative stopped state.
+- Removed the dormant `trustListener`/`trustRustListener` path and `manual-trust-*` operation IDs. Trusted-device persistence remains owned by the Rust `PersistTrustedDevice` storage-effect path.
+- Added `HostPlaybackAuthorityTest` for accepted ordering and rejection-side-effect suppression.
+- Guarded validation run: `30524538283`. Required gates: source-size invariant; shared Rust fmt/strict Clippy/all-feature tests; Android assemble, unit tests, and lint; desktop generated bindings, format, lint, typecheck, tests, build; desktop Rust fmt/strict Clippy/tests/check.

@@ -110,23 +110,6 @@ internal fun MainViewModel.removeRustListener(listenerId: String) {
     }
 }
 
-internal fun MainViewModel.trustRustListener(listenerId: String) {
-    val displayName = _uiState.value.approvedListeners
-        .firstOrNull { it.deviceId == listenerId }
-        ?.displayName
-        ?: listenerId
-    viewModelScope.launch {
-        runCatching { domainStore.trustDevice(listenerId, displayName) }
-            .onSuccess {
-                ensureRustHostCore().trustedDeviceUpdated(
-                    operationId = "manual-trust-${UUID.randomUUID()}",
-                    deviceId = listenerId,
-                )
-            }
-            .onFailure(::reportTrustedListenerPersistenceFailure)
-    }
-}
-
 internal fun MainViewModel.endRustHostSession() {
     viewModelScope.launch {
         runCatching { ensureRustHostCore().endHostSession() }

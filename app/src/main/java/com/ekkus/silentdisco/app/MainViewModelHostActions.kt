@@ -1,75 +1,23 @@
 package com.ekkus.silentdisco.app
 
-import android.app.Application
-import android.net.Uri
 import android.os.SystemClock
-import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
-import com.ekkus.silentdisco.core.audio.AudioFileAccessException
-import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
-import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
-import com.ekkus.silentdisco.core.audio.OboeBridge
-import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
-import com.ekkus.silentdisco.core.audio.PlaybackFrame
-import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.audio.packetizationStats
 import com.ekkus.silentdisco.core.audio.validatePacketBudget
-import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
-import com.ekkus.silentdisco.core.logging.AppLogger
-import com.ekkus.silentdisco.core.logging.DiagnosticsMetrics
-import com.ekkus.silentdisco.core.model.AppRole
-import com.ekkus.silentdisco.core.model.ApprovalMode
-import com.ekkus.silentdisco.core.model.HostLifecycleState
-import com.ekkus.silentdisco.core.model.JoinApprovalState
-import com.ekkus.silentdisco.core.model.JoinRequest
-import com.ekkus.silentdisco.core.model.ListenerDiagnosticsSnapshot
-import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
-import com.ekkus.silentdisco.core.model.SelectedAudioFile
-import com.ekkus.silentdisco.core.model.SessionInfo
-import com.ekkus.silentdisco.core.model.SyncQualityBadge
-import com.ekkus.silentdisco.core.model.SyncState
-import com.ekkus.silentdisco.core.model.TransportConnectionState
-import com.ekkus.silentdisco.core.model.TrustState
-import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
-import com.ekkus.silentdisco.core.permissions.AppPermission
-import com.ekkus.silentdisco.core.permissions.PermissionState
-import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.DeviceIdentity
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
-import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import com.ekkus.silentdisco.core.sync.HostTimeMapper
-import com.ekkus.silentdisco.core.sync.HostTimingService
-import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
-import com.ekkus.silentdisco.core.sync.ListenerSyncController
-import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
-import com.ekkus.silentdisco.core.transport.BleAdvertisement
-import com.ekkus.silentdisco.core.transport.BleDiscoveryService
-import com.ekkus.silentdisco.core.transport.BleOperation
-import com.ekkus.silentdisco.core.transport.BroadcastDeliverySeverity
-import com.ekkus.silentdisco.core.transport.SendAllResult
-import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
-import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
-import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
-import java.util.UUID
+import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 internal fun MainViewModel.startHostPlaybackImpl() {
     if (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
@@ -96,91 +44,75 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         refreshHostDiagnostics(streamState = PlaybackState.ERROR)
         return
     }
+    val sessionId = currentSessionId ?: return
 
-    reportRustHostPlaybackState(PlaybackState.BUFFERING)
-    diagnosticsStore.updateHost {
-        it.copy(
-            streamState = PlaybackState.BUFFERING,
-            lastError = null,
-            metricsSummary = summarizeMetrics(),
-        )
-    }
-
-    val sessionId = currentSessionId!!
-    val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}").also {
-        currentStreamId = it
-    }
-    runCatching {
-        latestDecodedAudio ?: decoder.decode(selectedAudio)
-    }.onSuccess { decoded ->
-        latestDecodedAudio = decoded
-        val totalBytes = decoded.chunks.sumOf { it.pcm16Le.size }
-        val combinedBytes = ByteArray(totalBytes).also { buf ->
-            var offset = 0
-            decoded.chunks.forEach { chunk ->
-                chunk.pcm16Le.copyInto(buf, offset)
-                offset += chunk.pcm16Le.size
+    launchHostPlaybackCommand("start host playback") {
+        afterAuthoritativeHostPlaybackState(FfiPlaybackState.BUFFERING) {
+            diagnosticsStore.updateHost {
+                it.copy(
+                    streamState = PlaybackState.BUFFERING,
+                    lastError = null,
+                    metricsSummary = summarizeMetrics(),
+                )
             }
+            refreshHostDiagnostics(streamState = PlaybackState.BUFFERING)
         }
-        val packetizer = PcmPacketizer(
-            sessionId = sessionId,
-            streamId = streamId,
-            format = decoded.format,
-        )
-        latestPackets = packetizer.packetize(
-            chunk = DecodedAudioChunk(
-                pcm16Le = combinedBytes,
-                firstSampleIndex = 0,
-                frameCount = combinedBytes.size / decoded.format.bytesPerFrame,
-            ),
-            hostPresentationStartMs = SystemClock.elapsedRealtime() + 500,
-        )
-        if (latestPackets.isEmpty()) {
-            error("Decoded stream produced no playable packets")
+
+        val decoded = try {
+            withContext(Dispatchers.IO) {
+                latestDecodedAudio ?: decoder.decode(selectedAudio)
+            }
+        } catch (error: Throwable) {
+            handleHostPlaybackPreparationFailure(error)
+            return@launchHostPlaybackCommand
         }
-        val packetBudget = latestPackets.validatePacketBudget()
-        val packetStats = latestPackets.packetizationStats()
-        if (!packetBudget.valid) {
-            error("Packet budget exceeded: ${packetBudget.maxPacketBytes} bytes")
+        latestDecodedAudio = decoded
+
+        val streamId = currentStreamId ?: StreamId("stream-${SystemClock.elapsedRealtime()}").also {
+            currentStreamId = it
         }
-        metrics.increment("stream_start")
-        metrics.recordTiming("packet_duration_ms", 20.0)
-        metrics.recordTiming("average_packet_bytes", packetStats.averagePacketBytes)
-        diagnosticsStore.updateHost {
-            it.copy(
-                packetSendCount = 0,
-                packetSendRatePerSecond = 0.0,
-                packetBudgetSummary = packetBudget.summary(),
-                streamState = PlaybackState.PLAYING,
-                lastContactElapsedMs = SystemClock.elapsedRealtime(),
-                metricsSummary = summarizeMetrics(),
+        val prepared = try {
+            prepareHostStream(decoded, sessionId, streamId)
+        } catch (error: Throwable) {
+            handleHostPlaybackPreparationFailure(error)
+            return@launchHostPlaybackCommand
+        }
+        latestPackets = prepared.packets
+
+        afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
+            val backend = try {
+                playbackEngine.start(decoded.format)
+            } catch (error: Throwable) {
+                handleHostPlaybackEngineFailure(error)
+                return@afterAuthoritativeHostPlaybackState
+            }
+            metrics.increment("stream_start")
+            metrics.recordTiming("packet_duration_ms", 20.0)
+            metrics.recordTiming("average_packet_bytes", prepared.averagePacketBytes)
+            diagnosticsStore.updateHost {
+                it.copy(
+                    packetSendCount = 0,
+                    packetSendRatePerSecond = 0.0,
+                    packetBudgetSummary = prepared.packetBudgetSummary,
+                    streamState = PlaybackState.PLAYING,
+                    lastContactElapsedMs = SystemClock.elapsedRealtime(),
+                    metricsSummary = summarizeMetrics(),
+                    lastError = null,
+                )
+            }
+            logger.i(
+                "stream.start",
+                "stream=${streamId.value} packets=${prepared.packets.size} " +
+                    "budget=${prepared.packetBudgetSummary}",
+            )
+            _uiState.value = _uiState.value.copy(
+                lastMessage = "Host stream started via $backend",
                 lastError = null,
             )
+            broadcastHostStreamStart(sessionId, streamId, decoded.format)
+            refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
+            startHostStreamingLoop(streamId)
         }
-        val backend = runCatching { playbackEngine.start(decoded.format) }.getOrElse { error ->
-            handleHostPlaybackEngineFailure(error)
-            return@onSuccess
-        }
-        logger.i(
-            "stream.start",
-            "stream=${streamId.value} packets=${latestPackets.size} budget=${packetBudget.summary()}",
-        )
-        _uiState.value = _uiState.value.copy(
-            lastMessage = "Host stream started via $backend",
-            lastError = null,
-        )
-        reportRustHostPlaybackState(PlaybackState.PLAYING)
-        broadcastHostStreamStart(sessionId, streamId, decoded.format)
-        refreshHostDiagnostics()
-        startHostStreamingLoop(streamId)
-    }.onFailure { error ->
-        metrics.increment("stream_start_error")
-        logger.e("stream.start", "Failed to start host playback", error)
-        val message = error.message ?: "Failed to decode audio file"
-        _uiState.value = _uiState.value.copy(lastError = message)
-        reportRustHostPlaybackState(PlaybackState.ERROR, message)
-        diagnosticsStore.updateHost { it.copy(lastError = error.message, streamState = PlaybackState.ERROR) }
-        refreshHostDiagnostics(streamState = PlaybackState.ERROR)
     }
 }
 
@@ -194,12 +126,16 @@ private fun MainViewModel.resumeHostPlaybackImpl() {
         reportRustHostPlaybackState(PlaybackState.ERROR, message)
         return
     }
-    logger.i("stream.resume", "Resuming host stream")
-    metrics.increment("stream_resume")
-    reportRustHostPlaybackState(PlaybackState.PLAYING)
-    broadcastHostStreamStart(sessionId, streamId, format)
-    _uiState.value = _uiState.value.copy(lastMessage = "Host stream resumed", lastError = null)
-    refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
+
+    launchHostPlaybackCommand("resume host playback") {
+        afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
+            logger.i("stream.resume", "Resuming host stream")
+            metrics.increment("stream_resume")
+            broadcastHostStreamStart(sessionId, streamId, format)
+            _uiState.value = _uiState.value.copy(lastMessage = "Host stream resumed", lastError = null)
+            refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
+        }
+    }
 }
 
 private fun MainViewModel.broadcastHostStreamStart(
@@ -229,83 +165,216 @@ private fun MainViewModel.broadcastHostStreamStart(
 }
 
 internal fun MainViewModel.pauseHostPlaybackImpl() {
-    logger.i("stream.pause", "Pausing host stream")
-    reportRustHostPlaybackState(PlaybackState.PAUSED)
-    metrics.increment("stream_pause")
-    propagateListenerPlaybackState(
-        playbackState = PlaybackState.PAUSED,
-        listenerState = _uiState.value.listenerState,
-        message = "Host paused the stream",
-    )
-    currentSessionId?.let { sessionId ->
-        currentStreamId?.let { streamId ->
-            viewModelScope.launch {
-                runCatching {
-                    wifiDirectService.broadcastControl(
-                        ControlMessage.Pause(
-                            version = 1,
-                            sessionId = sessionId,
-                            streamId = streamId,
-                            hostPauseTimeMs = SystemClock.elapsedRealtime(),
-                        ),
-                    )
-                }.onSuccess { result ->
-                    val warning = hostControlDeliveryMessage("Paused", "broadcast pause", result)
-                    if (warning != null) {
-                        _uiState.value = _uiState.value.copy(lastError = warning)
-                        diagnosticsStore.updateHost { it.copy(lastError = warning, metricsSummary = summarizeMetrics()) }
-                    } else {
-                        diagnosticsStore.updateHost { it.copy(lastError = null, metricsSummary = summarizeMetrics()) }
+    launchHostPlaybackCommand("pause host playback") {
+        afterAuthoritativeHostPlaybackState(FfiPlaybackState.PAUSED) {
+            logger.i("stream.pause", "Pausing host stream")
+            metrics.increment("stream_pause")
+            propagateListenerPlaybackState(
+                playbackState = PlaybackState.PAUSED,
+                listenerState = _uiState.value.listenerState,
+                message = "Host paused the stream",
+            )
+            currentSessionId?.let { sessionId ->
+                currentStreamId?.let { streamId ->
+                    viewModelScope.launch {
+                        runCatching {
+                            wifiDirectService.broadcastControl(
+                                ControlMessage.Pause(
+                                    version = 1,
+                                    sessionId = sessionId,
+                                    streamId = streamId,
+                                    hostPauseTimeMs = SystemClock.elapsedRealtime(),
+                                ),
+                            )
+                        }.onSuccess { result ->
+                            val warning = hostControlDeliveryMessage("Paused", "broadcast pause", result)
+                            if (warning != null) {
+                                _uiState.value = _uiState.value.copy(lastError = warning)
+                                diagnosticsStore.updateHost {
+                                    it.copy(lastError = warning, metricsSummary = summarizeMetrics())
+                                }
+                            } else {
+                                diagnosticsStore.updateHost {
+                                    it.copy(lastError = null, metricsSummary = summarizeMetrics())
+                                }
+                            }
+                            refreshHostDiagnostics()
+                        }.onFailure { error ->
+                            handleHostControlFailure("broadcast pause", error)
+                        }
                     }
-                    refreshHostDiagnostics()
-                }.onFailure { error ->
-                    handleHostControlFailure("broadcast pause", error)
                 }
             }
+            refreshHostDiagnostics(streamState = PlaybackState.PAUSED)
         }
     }
-    refreshHostDiagnostics(streamState = PlaybackState.PAUSED)
 }
 
 internal fun MainViewModel.stopHostPlaybackImpl() {
-    logger.i("stream.stop", "Stopping host stream")
-    reportRustHostPlaybackState(PlaybackState.STOPPED)
-    hostStreamJob?.cancel()
-    playbackJob?.cancel()
-    resyncJob?.cancel()
-    playbackEngine.stop()
-    metrics.increment("stream_stop")
-    propagateListenerPlaybackState(
-        playbackState = PlaybackState.STOPPED,
-        listenerState = _uiState.value.listenerState,
-        message = "Host stopped the stream",
-    )
-    currentSessionId?.let { sessionId ->
-        currentStreamId?.let { streamId ->
-            viewModelScope.launch {
-                runCatching {
-                    wifiDirectService.broadcastControl(
-                        ControlMessage.Stop(
-                            version = 1,
-                            sessionId = sessionId,
-                            streamId = streamId,
-                            hostStopTimeMs = SystemClock.elapsedRealtime(),
-                        ),
-                    )
-                }.onSuccess { result ->
-                    val warning = hostControlDeliveryMessage("Stopped", "broadcast stop", result)
-                    if (warning != null) {
-                        _uiState.value = _uiState.value.copy(lastError = warning)
-                        diagnosticsStore.updateHost { it.copy(lastError = warning, metricsSummary = summarizeMetrics()) }
-                    } else {
-                        diagnosticsStore.updateHost { it.copy(lastError = null, metricsSummary = summarizeMetrics()) }
+    launchHostPlaybackCommand("stop host playback", cancelExisting = true) {
+        afterAuthoritativeHostPlaybackState(FfiPlaybackState.STOPPED) {
+            logger.i("stream.stop", "Stopping host stream")
+            hostStreamJob?.cancel()
+            playbackJob?.cancel()
+            resyncJob?.cancel()
+            playbackEngine.stop()
+            metrics.increment("stream_stop")
+            propagateListenerPlaybackState(
+                playbackState = PlaybackState.STOPPED,
+                listenerState = _uiState.value.listenerState,
+                message = "Host stopped the stream",
+            )
+            currentSessionId?.let { sessionId ->
+                currentStreamId?.let { streamId ->
+                    viewModelScope.launch {
+                        runCatching {
+                            wifiDirectService.broadcastControl(
+                                ControlMessage.Stop(
+                                    version = 1,
+                                    sessionId = sessionId,
+                                    streamId = streamId,
+                                    hostStopTimeMs = SystemClock.elapsedRealtime(),
+                                ),
+                            )
+                        }.onSuccess { result ->
+                            val warning = hostControlDeliveryMessage("Stopped", "broadcast stop", result)
+                            if (warning != null) {
+                                _uiState.value = _uiState.value.copy(lastError = warning)
+                                diagnosticsStore.updateHost {
+                                    it.copy(lastError = warning, metricsSummary = summarizeMetrics())
+                                }
+                            } else {
+                                diagnosticsStore.updateHost {
+                                    it.copy(lastError = null, metricsSummary = summarizeMetrics())
+                                }
+                            }
+                            refreshHostDiagnostics()
+                        }.onFailure { error ->
+                            handleHostControlFailure("broadcast stop", error)
+                        }
                     }
-                    refreshHostDiagnostics()
-                }.onFailure { error ->
-                    handleHostControlFailure("broadcast stop", error)
                 }
             }
+            refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
         }
     }
-    refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
 }
+
+private fun MainViewModel.launchHostPlaybackCommand(
+    action: String,
+    cancelExisting: Boolean = false,
+    block: suspend () -> Unit,
+) {
+    val existing = hostPlaybackCommandJob
+    if (cancelExisting) {
+        existing?.cancel()
+    } else if (existing?.isActive == true) {
+        _uiState.value = _uiState.value.copy(
+            lastError = "Another host playback command is already pending",
+        )
+        return
+    }
+
+    val job = viewModelScope.launch {
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            reportHostPlaybackCommandFailure(action, error)
+        }
+    }
+    hostPlaybackCommandJob = job
+    job.invokeOnCompletion {
+        if (hostPlaybackCommandJob === job) {
+            hostPlaybackCommandJob = null
+        }
+    }
+}
+
+private suspend fun MainViewModel.afterAuthoritativeHostPlaybackState(
+    state: FfiPlaybackState,
+    afterAccepted: suspend () -> Unit,
+) {
+    runAfterAuthoritativeHostPlaybackTransition(
+        target = state,
+        transition = { target ->
+            ensureRustHostCore().transitionPlaybackState(target)
+            Unit
+        },
+        afterAccepted = afterAccepted,
+    )
+}
+
+private fun MainViewModel.prepareHostStream(
+    decoded: AudioDecodeResult,
+    sessionId: SessionId,
+    streamId: StreamId,
+): PreparedHostStream {
+    val totalBytes = decoded.chunks.sumOf { it.pcm16Le.size }
+    val combinedBytes = ByteArray(totalBytes).also { buffer ->
+        var offset = 0
+        decoded.chunks.forEach { chunk ->
+            chunk.pcm16Le.copyInto(buffer, offset)
+            offset += chunk.pcm16Le.size
+        }
+    }
+    val packetizer = PcmPacketizer(
+        sessionId = sessionId,
+        streamId = streamId,
+        format = decoded.format,
+    )
+    val packets = packetizer.packetize(
+        chunk = DecodedAudioChunk(
+            pcm16Le = combinedBytes,
+            firstSampleIndex = 0,
+            frameCount = combinedBytes.size / decoded.format.bytesPerFrame,
+        ),
+        hostPresentationStartMs = SystemClock.elapsedRealtime() + 500,
+    )
+    if (packets.isEmpty()) {
+        error("Decoded stream produced no playable packets")
+    }
+    val packetBudget = packets.validatePacketBudget()
+    if (!packetBudget.valid) {
+        error("Packet budget exceeded: ${packetBudget.maxPacketBytes} bytes")
+    }
+    val packetStats = packets.packetizationStats()
+    return PreparedHostStream(
+        packets = packets,
+        packetBudgetSummary = packetBudget.summary(),
+        averagePacketBytes = packetStats.averagePacketBytes,
+    )
+}
+
+private fun MainViewModel.handleHostPlaybackPreparationFailure(error: Throwable) {
+    metrics.increment("stream_start_error")
+    logger.e("stream.start", "Failed to prepare host playback", error)
+    val message = error.message ?: "Failed to decode audio file"
+    _uiState.value = _uiState.value.copy(lastError = message)
+    reportRustHostPlaybackState(PlaybackState.ERROR, message)
+    diagnosticsStore.updateHost {
+        it.copy(
+            lastError = message,
+            streamState = PlaybackState.ERROR,
+            metricsSummary = summarizeMetrics(),
+        )
+    }
+    refreshHostDiagnostics(streamState = PlaybackState.ERROR)
+}
+
+private fun MainViewModel.reportHostPlaybackCommandFailure(action: String, error: Throwable) {
+    val message = error.message ?: "Failed to $action"
+    logger.e("stream.authority", message, error)
+    _uiState.value = _uiState.value.copy(lastError = message)
+    diagnosticsStore.updateHost {
+        it.copy(lastError = message, metricsSummary = summarizeMetrics())
+    }
+    refreshHostDiagnostics()
+}
+
+private data class PreparedHostStream(
+    val packets: List<AudioPacket>,
+    val packetBudgetSummary: String,
+    val averagePacketBytes: Double,
+)

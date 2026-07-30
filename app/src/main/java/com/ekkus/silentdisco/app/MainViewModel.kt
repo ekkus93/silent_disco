@@ -63,7 +63,6 @@ import com.ekkus.silentdisco.core.transport.SendAllResult
 import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -108,6 +107,7 @@ class MainViewModel @JvmOverloads constructor(
     internal var latestPackets: List<AudioPacket> = emptyList()
     internal val pendingTransportPackets = ArrayDeque<AudioPacket>()
     internal var hostStreamJob: Job? = null
+    internal var hostPlaybackCommandJob: Job? = null
     internal var playbackJob: Job? = null
     internal var resyncJob: Job? = null
     internal var scanJob: Job? = null
@@ -176,12 +176,6 @@ class MainViewModel @JvmOverloads constructor(
     ) = approveRustJoinRequest(request, rememberForFuture)
 
     fun rejectJoinRequest(request: JoinRequest) = rejectRustJoinRequest(request)
-
-    fun trustListener(listenerId: String) = trustRustListener(listenerId)
-
-    internal fun trustedListenerPersistenceMessage(error: Throwable): String =
-        "Could not remember listener; approval remains session-only: " +
-            (error.message ?: "trusted-device persistence failed")
 
     fun removeListener(listenerId: String) = removeRustListener(listenerId)
 
@@ -368,6 +362,7 @@ class MainViewModel @JvmOverloads constructor(
     )
 
     override fun onCleared() {
+        hostPlaybackCommandJob?.cancel()
         bleService.stop()
         wifiDirectService.stop()
         hostCoreController?.close()

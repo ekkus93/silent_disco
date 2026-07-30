@@ -794,40 +794,42 @@ Before implementing the production Host UI, complete and verify Block 12 of the 
 
 ### 13.1 Verify Rust host draft validation
 
-- [ ] session name;
-- [ ] audio source requirement;
-- [ ] invite code;
-- [ ] approval mode;
-- [ ] tuning normalization;
-- [ ] cross-field constraints.
+- [x] session name;
+- [x] audio source requirement;
+- [x] invite code;
+- [x] approval mode;
+- [x] tuning normalization;
+- [x] cross-field constraints.
 
 ### 13.2 Verify host lifecycle
 
-- [ ] idle;
-- [ ] creating;
-- [ ] advertising/waiting;
-- [ ] ready;
-- [ ] streaming;
-- [ ] paused;
-- [ ] ending;
-- [ ] error/retry.
+- [x] idle;
+- [x] creating;
+- [x] advertising/waiting;
+- [x] ready;
+- [x] streaming;
+- [x] paused;
+- [x] ending;
+- [x] error/retry.
 
 ### 13.3 Verify approval logic
 
-- [ ] request deduplication;
-- [ ] trusted-device policy;
-- [ ] delivery-first approval;
-- [ ] delivery-first rejection;
-- [ ] stale request rejection;
-- [ ] partial and zero-recipient reporting.
+- [x] request deduplication;
+- [x] trusted-device policy;
+- [x] delivery-first approval;
+- [x] delivery-first rejection;
+- [x] stale request rejection;
+- [x] partial and zero-recipient reporting.
 
 ### 13.4 Preserve Android behavior
 
-- [ ] Android host UI routes through Rust according to the shared TODO;
-- [ ] Android tests pass;
-- [ ] no temporary desktop-only host reducer exists.
+- [x] Android host UI routes through Rust according to the shared TODO;
+- [x] Android tests pass;
+- [x] no temporary desktop-only host reducer exists.
 
 **Acceptance:** Host semantics are shared before the desktop exposes real host controls.
+
+**Implementation status:** Complete. The final authority closure makes Android start, resume, pause, and stop await a newer Rust-confirmed playback snapshot before any playback-engine, transport-broadcast, stream-loop, cancellation, or stop side effect. Transition rejection, timeout, and cancellation do not execute success-side effects. The dormant manual trusted-device bypass and its dead persistence helpers were removed; trusted-device persistence now occurs only through Rust storage effects. Guarded Actions run `30524538283` ran the shared Rust, Android, desktop frontend/backend, and source-size regression gates.
 
 ---
 
@@ -843,36 +845,38 @@ desktop/src/screens/HostSetupScreen.tsx
 
 Include:
 
-- [ ] session name;
-- [ ] approval mode;
-- [ ] invite code when applicable;
-- [ ] remember-approved-device setting;
-- [ ] selected source summary;
-- [ ] network interface policy summary;
-- [ ] local monitor preference placeholder only when supported;
-- [ ] advanced tuning navigation;
-- [ ] startup and draft validation errors.
+- [x] session name;
+- [x] approval mode;
+- [x] invite code when applicable;
+- [x] remember-approved-device setting;
+- [x] selected source summary;
+- [x] network interface policy summary;
+- [x] local monitor preference placeholder only when supported;
+- [x] advanced tuning navigation;
+- [x] startup and draft validation errors.
 
 ### 14.2 Draft behavior
 
-- [ ] text entry may remain local until submitted as a typed patch;
-- [ ] core validation result is authoritative;
-- [ ] fields display core validation without duplicating rules;
-- [ ] create button derives from core capability;
-- [ ] command submission shows pending, not success;
-- [ ] stale revision rejection refreshes snapshot and preserves safe user edits.
+- [x] text entry may remain local until submitted as a typed patch;
+- [x] core validation result is authoritative;
+- [x] fields display core validation without duplicating rules;
+- [x] create button derives from core capability;
+- [x] command submission shows pending, not success;
+- [x] stale revision rejection refreshes snapshot and preserves safe user edits.
 
 ### 14.3 Tests
 
-- [ ] keyboard navigation;
-- [ ] approval-mode conditional controls;
-- [ ] core validation display;
-- [ ] pending create state;
-- [ ] create rejection;
-- [ ] no transition to hosting without newer snapshot;
-- [ ] screen-reader labels.
+- [x] keyboard navigation;
+- [x] approval-mode conditional controls;
+- [x] core validation display;
+- [x] pending create state;
+- [x] create rejection;
+- [x] no transition to hosting without newer snapshot;
+- [x] screen-reader labels.
 
 **Acceptance:** A desktop user can edit and submit a real Rust-owned host draft.
+
+**Implementation status:** Complete on `master` at commit `acb15e42400a9c9a18ced1e5f27c3f130a5e54d8`. Guarded Actions run `30522530161` passed generated bindings, source-size enforcement, shared Rust formatting/strict Clippy/tests, desktop formatting/lint/typecheck/tests/build, desktop Rust formatting/strict Clippy/tests/check, and Android assemble/unit-tests/lint.
 
 ---
 
