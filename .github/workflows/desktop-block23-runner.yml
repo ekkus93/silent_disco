@@ -55,6 +55,11 @@ jobs:
           python3 .github/block23-adapt.py
           python3 .github/block23-client-adapt.py
 
+      - name: Seed frontend distribution for binding compilation
+        run: |
+          mkdir -p desktop/dist
+          printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
+
       - name: Apply, validate, document, and publish Block 23
         run: bash .github/block23-validation.sh
 
