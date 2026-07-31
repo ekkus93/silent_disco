@@ -122,6 +122,9 @@ git rm --ignore-unmatch \
   .github/workflows/desktop-block23.yml \
   .github/workflows/desktop-block23-runner.yml \
   .github/workflows/desktop-block23-inspect.yml \
+  .github/workflows/desktop-block23-diagnostics.yml \
+  .github/workflows/desktop-block23-frontend-diagnostics.yml \
+  .github/workflows/desktop-block23-source-snapshot.yml \
   .github/block23-adapt.py \
   .github/block23-client-adapt.py \
   .github/block23-storage-runner-adapt.py \
@@ -149,6 +152,7 @@ allowed = {
     'desktop/src-tauri/src/platform/network.rs',
     'desktop/src-tauri/src/platform/storage_effect_runner.rs',
     'desktop/src-tauri/src/platform/storage_effect_runner_tests.rs',
+    'desktop/src/App.test.tsx',
     'desktop/src/core/client.ts',
     'desktop/src/core/generated/desktop-bindings.ts',
     'desktop/src/screens/HostSessionScreen.tsx',
@@ -160,6 +164,9 @@ allowed = {
     '.github/workflows/desktop-block23.yml',
     '.github/workflows/desktop-block23-runner.yml',
     '.github/workflows/desktop-block23-inspect.yml',
+    '.github/workflows/desktop-block23-diagnostics.yml',
+    '.github/workflows/desktop-block23-frontend-diagnostics.yml',
+    '.github/workflows/desktop-block23-source-snapshot.yml',
     '.github/block23-adapt.py',
     '.github/block23-client-adapt.py',
     '.github/block23-storage-runner-adapt.py',
