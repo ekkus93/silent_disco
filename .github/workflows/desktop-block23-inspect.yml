@@ -21,32 +21,8 @@ jobs:
       - name: Announce inspection run
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body "Desktop Block 23 approval-delivery inspection: Actions run $GITHUB_RUN_ID against $(git rev-parse HEAD)"
-      - name: Apply exact generated payload and print approval path
+        run: gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body "Desktop Block 23 effect payload inspection: Actions run $GITHUB_RUN_ID"
+      - name: Print effect routing payload block
         run: |
-          mkdir -p desktop/dist
-          printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
-          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
-          python3 .github/block23-adapt.py
-          python3 .github/block23-client-adapt.py
-          python3 .github/apply-block23.py
-          python3 .github/block23-storage-runner-adapt.py
-          echo '=== GENERATED ADMISSION TEST ==='
-          cat desktop/src-tauri/src/platform/host_transport_admission_tests.rs
-          echo '=== GENERATED HOST TRANSPORT APPROVAL EFFECT ==='
-          python3 - <<'PY'
-          from pathlib import Path
-          text = Path('desktop/src-tauri/src/platform/host_transport.rs').read_text()
-          for needle in (
-              'TransportEffectRequest::DeliverApproval',
-              'CoreTransportEvent::DeliveryCompleted',
-              'send_pending_control',
-          ):
-              print(f'--- matches for {needle} ---')
-              lines = text.splitlines()
-              for index, line in enumerate(lines):
-                  if needle in line:
-                      start = max(0, index - 18)
-                      end = min(len(lines), index + 35)
-                      print('\n'.join(f'{n + 1:04d}: {lines[n]}' for n in range(start, end)))
-          PY
+          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > /tmp/apply-block23.py
+          nl -ba /tmp/apply-block23.py | sed -n '1400,1535p'
