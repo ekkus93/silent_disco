@@ -255,3 +255,53 @@ print(
     'aligned DesktopErrorDto shapes, completed authoritative fixtures, retained '
     'strict listener typing, and narrowed internal Rust interfaces'
 )
+
+# Align App integration expectations with the loaded authoritative host-session UI
+# and keep the listener transition fixture type-safe without non-null assertions.
+app_test_path = Path('desktop/src/App.test.tsx')
+app_test = app_test_path.read_text(encoding='utf-8')
+loaded_heading_old = '    expect(await screen.findByRole("heading", { name: "Host session" })).toBeVisible();'
+loaded_heading_new = '    expect(await screen.findByRole("heading", { name: "Oakland Night" })).toBeVisible();'
+if app_test.count(loaded_heading_old) != 1:
+    raise RuntimeError(
+        'App.test.tsx: expected one stale loading-heading assertion'
+    )
+app_test = app_test.replace(loaded_heading_old, loaded_heading_new, 1)
+app_test_path.write_text(app_test, encoding='utf-8')
+
+screen_test_path = Path('desktop/src/screens/HostSessionScreen.test.tsx')
+screen_test = screen_test_path.read_text(encoding='utf-8')
+listener_fixture_old = '''            {
+              ...fixture().connectedListeners[0]!,
+              deviceId: "listener-1",
+              displayName: "Listener One",
+              trustState: "session_only",
+            },'''
+listener_fixture_new = '''            {
+              deviceId: "listener-1",
+              displayName: "Listener One",
+              trustState: "session_only",
+              transportState: "connected",
+              lastContactMs: "500",
+              lastContactAgeMs: "250",
+              syncConfidence: "good",
+              estimatedOffsetMs: "-2.5",
+              roundTripTimeMs: "18",
+              driftPpm: "1.2",
+              lastControlDeliveryState: "ok",
+              retryAvailable: false,
+              resyncAvailable: false,
+              canRemove: true,
+              lastError: null,
+            },'''
+if screen_test.count(listener_fixture_old) != 1:
+    raise RuntimeError(
+        'HostSessionScreen.test.tsx: expected one non-null listener fixture spread'
+    )
+screen_test = screen_test.replace(listener_fixture_old, listener_fixture_new, 1)
+screen_test_path.write_text(screen_test, encoding='utf-8')
+
+print(
+    'adapted generated Block 23 frontend tests: assert the loaded authoritative '
+    'session-name heading and use an explicit typed connected-listener fixture'
+)
