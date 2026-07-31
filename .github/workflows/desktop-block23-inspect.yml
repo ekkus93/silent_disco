@@ -1,0 +1,23 @@
+name: Desktop Block 23 payload inspection
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.body == '/inspect-desktop-block23-effect'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - name: Print effect routing payload block
+        run: |
+          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > /tmp/apply-block23.py
+          nl -ba /tmp/apply-block23.py | sed -n '1400,1535p'
