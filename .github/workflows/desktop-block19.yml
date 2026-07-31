@@ -14,7 +14,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out master
         uses: actions/checkout@v4
@@ -26,6 +26,17 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component clippy
           rustup default 1.97.1
 
+      - name: Install Linux Tauri development packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+
       - name: Run desktop Clippy with compact diagnostics
         id: clippy
         continue-on-error: true
@@ -36,14 +47,14 @@ jobs:
             > /tmp/desktop-clippy.log 2>&1
           status=$?
           echo "status=${status}" >> "${GITHUB_OUTPUT}"
-          tail -100 /tmp/desktop-clippy.log > /tmp/desktop-clippy-tail.log
+          tail -120 /tmp/desktop-clippy.log > /tmp/desktop-clippy-tail.log
 
       - name: Publish exact diagnostic
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo 'Desktop Block 19 desktop Clippy diagnostic:'
+            echo 'Desktop Block 19 desktop Clippy diagnostic with Linux dependencies:'
             echo '```text'
             cat /tmp/desktop-clippy-tail.log
             echo '```'
