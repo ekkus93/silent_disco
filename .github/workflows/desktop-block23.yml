@@ -49,6 +49,51 @@ jobs:
           gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
             --body "Desktop Block 23 guarded implementation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
 
+      - name: Correct current bindings patch anchor
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/block23-validation.sh')
+          content = path.read_text(encoding='utf-8')
+          needle = "python3 .github/apply-block23.py\nrm .github/apply-block23.py\n"
+          replacement = r'''python3 - <<'PATCHPY'
+          from pathlib import Path
+
+          patch_path = Path('.github/apply-block23.py')
+          patch = patch_path.read_text(encoding='utf-8')
+          old = '''replace_once(
+              "desktop/src-tauri/src/bindings.rs",
+              \'''    PlatformEffectDto, RevisionCommandRequest, UpdateHostDraftRequest,
+          };\''',
+              \'''    ApproveJoinRequest, JoinRequestCommandRequest, ListenerCommandRequest,
+              PlatformEffectDto, RevisionCommandRequest, UpdateHostDraftRequest,
+          };\''',
+          )'''
+          new = '''replace_once(
+              "desktop/src-tauri/src/bindings.rs",
+              \'''    HostDraftValidationDto, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
+              RevisionCommandRequest, UpdateHostDraftRequest,
+          };\''',
+              \'''    ApproveJoinRequest, HostDraftValidationDto, JoinRequestCommandRequest,
+              ListenerCommandRequest, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
+              RevisionCommandRequest, UpdateHostDraftRequest,
+          };\''',
+          )'''
+          count = patch.count(old)
+          if count != 1:
+              raise SystemExit(f'expected one stale bindings anchor, found {count}')
+          patch_path.write_text(patch.replace(old, new), encoding='utf-8')
+          PATCHPY
+          python3 .github/apply-block23.py
+          rm .github/apply-block23.py
+          '''
+          count = content.count(needle)
+          if count != 1:
+              raise SystemExit(f'expected one validator execution anchor, found {count}')
+          path.write_text(content.replace(needle, replacement), encoding='utf-8')
+          PY
+
       - name: Apply, validate, document, and publish Block 23
         run: bash .github/block23-validation.sh
 
