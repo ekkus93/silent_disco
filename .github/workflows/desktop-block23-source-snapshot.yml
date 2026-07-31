@@ -14,6 +14,9 @@ jobs:
       github.event.issue.number == 45 &&
       github.event.comment.body == '/snapshot-desktop-block23-v2'
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      RUST_VERSION: "1.97.1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,27 +31,45 @@ jobs:
           python3 .github/apply-block23.py
           rm .github/apply-block23.py
           python3 .github/block23-storage-runner-adapt.py
-      - name: Package relevant generated sources
+      - name: Install Rust and Linux dependencies
         run: |
-          tar -czf /tmp/block23-generated-sources.tar.gz \
-            desktop/src-tauri/src/host_session_dto.rs \
-            desktop/src-tauri/src/platform/host_transport.rs \
-            desktop/src-tauri/src/platform/host_transport_events.rs \
-            desktop/src-tauri/src/platform/network_error.rs \
-            desktop/src/App.test.tsx \
-            desktop/src/screens/HostSessionScreen.tsx \
-            desktop/src/screens/HostSessionScreen.test.tsx \
-            desktop/src/screens/ListenerDetailScreen.tsx \
-            desktop/src/core/generated/desktop-bindings.ts
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
+      - name: Run exact Tauri clippy gate
+        id: clippy
+        continue-on-error: true
+        working-directory: desktop/src-tauri
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/block23-tauri-clippy.log
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: block23-generated-sources
-          path: /tmp/block23-generated-sources.tar.gz
+          name: block23-tauri-clippy-log
+          path: /tmp/block23-tauri-clippy.log
           if-no-files-found: error
           retention-days: 1
-      - name: Announce snapshot
+      - name: Publish exact diagnostic excerpt
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          CLIPPY_OUTCOME: ${{ steps.clippy.outcome }}
         run: |
-          gh issue comment 45 --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 generated-source snapshot published by Actions run $GITHUB_RUN_ID against $(git rev-parse HEAD). No implementation changes were committed."
+          {
+            printf 'Desktop Block 23 Tauri clippy diagnostic completed in Actions run %s against exact input `%s`. Outcome: `%s`.\n\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" "$CLIPPY_OUTCOME"
+            printf '```text\n'
+            if [[ -f /tmp/block23-tauri-clippy.log ]]; then
+              tail -n 160 /tmp/block23-tauri-clippy.log
+            else
+              printf 'Clippy log was not produced.\n'
+            fi
+            printf '```\n'
+          } > /tmp/block23-tauri-clippy-comment.md
+          gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body-file /tmp/block23-tauri-clippy-comment.md
+      - name: Fail when clippy failed
+        if: steps.clippy.outcome != 'success'
+        run: exit 1
