@@ -1,0 +1,197 @@
+name: Validate Desktop Block 21 candidate
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: desktop-block21-candidate
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+  TRACKING_ISSUE: "45"
+  PAYLOAD_SHA256: "7109769b3a4a4475949bf4721dcf4720c7c4f008ddd89ffef1ff0b67ca263e0c"
+
+jobs:
+  validate:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.body == '/run-desktop-block21-candidate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Capture exact input and announce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "BLOCK21_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 21 candidate validation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
+
+      - name: Materialize checksum-verified candidate
+        run: |
+          set -euo pipefail
+          cat .github/desktop-block21-source/part-*.b64 | base64 --decode > /tmp/block21.tar.gz
+          echo "$PAYLOAD_SHA256  /tmp/block21.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/block21.tar.gz
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"candidate repair anchor count {count}: {path}: {old[:80]!r}")
+              target.write_text(source.replace(old, new))
+
+          replace_once(
+              "desktop/src-tauri/src/platform/network.rs",
+              "        pub(super) kind: NetworkErrorKind,",
+              "        kind: NetworkErrorKind,",
+          )
+          replace_once(
+              "desktop/src-tauri/src/platform/network_tests.rs",
+              """use super::network::{
+              AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkAddressClassDto,
+              NetworkErrorKind, NetworkInterfaceProvider, SetNetworkBindPreferenceRequest, TestHostPorts,
+          };
+          """,
+              """use super::network::{
+              AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkErrorKind,
+              NetworkInterfaceProvider, TestHostPorts,
+          };
+          use super::network_dto::{NetworkAddressClassDto, SetNetworkBindPreferenceRequest};
+          """,
+          )
+          apply = Path(".github/apply-block21.py")
+          source = apply.read_text()
+          source = source.replace(
+              """insert_after(
+              \"desktop/src-tauri/src/platform/mod.rs\",
+              '#[cfg(test)]\\n#[path = \"identity_tests.rs\"]\\nmod identity_tests;\\n',
+              '#[cfg(test)]\\n#[path = \"network_tests.rs\"]\\nmod network_tests;\\n',
+          )""",
+              """insert_after(
+              \"desktop/src-tauri/src/platform/mod.rs\",
+              '#[cfg(test)]\\n#[path = \"file_picker_tests.rs\"]\\nmod file_picker_tests;\\n',
+              '#[cfg(test)]\\n#[path = \"network_tests.rs\"]\\nmod network_tests;\\n',
+          )""",
+          )
+          source = source.replace(
+              """            host_commands::create_host_session,
+              notification_command::emit_core_notification,""",
+              """            host_commands::create_host_session,
+              app_state::attach_notifications,""",
+          )
+          source = source.replace(
+              """            host_commands::create_host_session,
+              host_commands::get_host_network_state,
+              host_commands::set_host_network_preference,
+              notification_command::emit_core_notification,""",
+              """            host_commands::create_host_session,
+              host_commands::get_host_network_state,
+              host_commands::set_host_network_preference,
+              app_state::attach_notifications,""",
+          )
+          apply.write_text(source)
+          PY
+          python3 .github/apply-block21.py
+
+      - name: Install toolchains and Linux dependencies
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt
+          rustup default "$RUST_VERSION"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Format, lock, and generate bindings
+        run: |
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco Block 21 validation</title>\n' > desktop/dist/index.html
+          cd desktop
+          npm ci
+          npm run bindings:generate
+          npx biome format --write src/core/client.ts src/core/generated/desktop-bindings.ts
+
+      - name: Run strict desktop Rust and network-policy gates
+        run: |
+          set -o pipefail
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml \
+            --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/block21-clippy.log
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml \
+            --all-features -- --nocapture 2>&1 | tee /tmp/block21-tests.log
+          cargo check --manifest-path desktop/src-tauri/Cargo.toml --all-features
+          bash scripts/check-source-file-line-counts.sh
+
+      - name: Run frontend bridge gates
+        working-directory: desktop
+        run: |
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
+
+      - name: Commit validated candidate directly to master
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/desktop-block21-candidate.yml
+          git rm -r .github/desktop-block21-source
+          git rm .github/apply-block21.py
+          git add \
+            desktop/src-tauri/Cargo.toml \
+            desktop/src-tauri/Cargo.lock \
+            desktop/src-tauri/src \
+            desktop/src/core/client.ts \
+            desktop/src/core/generated/desktop-bindings.ts
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Implement desktop network bind policy candidate (Desktop Block 21)"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test "$remote_sha" = "$(git rev-parse HEAD^)"
+          git push origin HEAD:master
+          echo "BLOCK21_CANDIDATE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 21 focused candidate gates passed in Actions run $GITHUB_RUN_ID. Candidate $BLOCK21_CANDIDATE was committed directly to master; temporary payload and workflow files were removed."
+
+      - name: Publish compact failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Desktop Block 21 candidate validation failed in Actions run $GITHUB_RUN_ID against $BLOCK21_INPUT. No source candidate was committed."
+            echo
+            echo '```text'
+            tail -120 /tmp/block21-clippy.log 2>/dev/null || true
+            tail -160 /tmp/block21-tests.log 2>/dev/null || true
+            echo '```'
+          } > /tmp/block21-failure.md
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/block21-failure.md
