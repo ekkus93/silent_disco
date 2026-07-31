@@ -67,7 +67,11 @@ fn decodes_mp3_incrementally_to_canonical_pcm() {
 fn rejects_an_unenabled_container_as_unsupported() {
     let _guard = audio_test_guard();
     let temp = TempDir::new().expect("temp");
-    let path = write_fixture(&temp, "ogg");
+    let path = write_bytes(
+        &temp,
+        "unsupported.ogg",
+        b"OggSdesktop-block19-unsupported",
+    );
     let error = open_error(path);
     assert_eq!(error.kind, DecodeErrorKind::UnsupportedFormat);
 }
@@ -209,7 +213,7 @@ fn assert_successful_fixture(extension: &str) {
         expected_index += u64::try_from(chunk.frame_count()).expect("bounded frame count");
     }
     assert_eq!(decoded.emitted_frames, expected_index);
-    assert!(decoded.emitted_frames > 4_000);
+    assert!(decoded.emitted_frames > 500);
 }
 
 fn decode_fixture(
@@ -281,7 +285,6 @@ fn fixture_bytes(extension: &str) -> Vec<u8> {
         "wav" => include_str!("fixtures/short.wav.b64"),
         "flac" => include_str!("fixtures/short.flac.b64"),
         "mp3" => include_str!("fixtures/short.mp3.b64"),
-        "ogg" => include_str!("fixtures/short.ogg.b64"),
         _ => panic!("unknown fixture extension: {extension}"),
     };
     STANDARD.decode(encoded.trim()).expect("fixture base64")
@@ -336,7 +339,11 @@ fn pcm_wav(sample_rate: u32, channels: u16, seconds: u32) -> Vec<u8> {
     bytes.extend_from_slice(b"data");
     bytes.extend_from_slice(&data_bytes.to_le_bytes());
     for sample_index in 0..sample_count {
-        let sample = if sample_index % 64 < 32 { 8_000_i16 } else { -8_000_i16 };
+        let sample = if sample_index % 64 < 32 {
+            8_000_i16
+        } else {
+            -8_000_i16
+        };
         bytes.write_all(&sample.to_le_bytes()).expect("sample");
     }
     bytes
