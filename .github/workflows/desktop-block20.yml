@@ -53,6 +53,27 @@ jobs:
             -e 's/^mod virtual;$/mod virtual_transport;/' \
             -e 's/^pub use virtual::{/pub use virtual_transport::{/' \
             rust/silent-disco-core/src/transport/mod.rs
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("rust/silent-disco-core/src/transport/socket/shared.rs")
+          source = path.read_text()
+          replacements = [
+              (
+                  """                            drop(on_outcome(ReadControlOutcome::Rejected(\n                                TransportError::protocol(TransportChannel::Control, &error),\n                            ));\n""",
+                  """                            drop(on_outcome(ReadControlOutcome::Rejected(\n                                TransportError::protocol(TransportChannel::Control, &error),\n                            )));\n""",
+              ),
+              (
+                  """                drop(on_outcome(ReadControlOutcome::Rejected(TransportError::io(\n                    TransportErrorKind::Io,\n                    TransportChannel::Control,\n                    \"failed to read control connection\",\n                    &error,\n                )));\n""",
+                  """                drop(on_outcome(ReadControlOutcome::Rejected(TransportError::io(\n                    TransportErrorKind::Io,\n                    TransportChannel::Control,\n                    \"failed to read control connection\",\n                    &error,\n                ))));\n""",
+              ),
+          ]
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit("Block 20 parser repair anchor changed unexpectedly")
+              source = source.replace(old, new)
+          path.write_text(source)
+          PY
           grep -Fqx 'pub mod transport;' rust/silent-disco-core/src/lib.rs
           grep -Fqx 'mod virtual_transport;' rust/silent-disco-core/src/transport/mod.rs
 
@@ -62,7 +83,9 @@ jobs:
           rustup default "${RUST_VERSION}"
 
       - name: Format candidate
-        run: cargo fmt --manifest-path rust/Cargo.toml --all 2>&1 | tee /tmp/block20-format.log
+        run: |
+          set -o pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all 2>&1 | tee /tmp/block20-format.log
 
       - name: Enforce source-size invariant
         run: bash scripts/check-source-file-line-counts.sh
