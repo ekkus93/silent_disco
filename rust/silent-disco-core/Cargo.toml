@@ -12,6 +12,10 @@ rusqlite = { version = "=0.40.1", features = ["bundled"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
+symphonia = { version = "=0.6.0", default-features = false, features = ["wav", "pcm", "flac", "mp3", "id3v1", "id3v2"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "=3.27.0"
