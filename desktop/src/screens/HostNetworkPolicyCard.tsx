@@ -126,7 +126,7 @@ export function HostNetworkPolicyCard({
   };
 
   const controlsDisabled = disabled || loading || saving || snapshot?.activeBinding !== null;
-  const resolved = snapshot?.resolvedSelection;
+  const resolved = snapshot?.resolvedSelection ?? null;
 
   return (
     <section
