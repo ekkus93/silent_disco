@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > /tmp/apply-block23.py
-python3 /tmp/apply-block23.py
+cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
+python3 .github/apply-block23.py
+rm .github/apply-block23.py
 
 rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
 rustup default "${RUST_VERSION}"
