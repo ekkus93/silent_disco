@@ -1148,33 +1148,35 @@ Do not implement desktop production transport before the shared runtime passes i
 
 ### 20.1 Verify shared runtime
 
-- [ ] TCP control listener/client;
-- [ ] UDP sync endpoint;
-- [ ] UDP audio endpoint;
-- [ ] bounded send/receive queues;
-- [ ] explicit bind/connect errors;
-- [ ] worker stop/join;
-- [ ] protocol-v2 framing;
-- [ ] malformed/oversized rejection;
-- [ ] peer authorization;
-- [ ] delivery accounting;
-- [ ] loopback multi-listener tests.
+- [x] TCP control listener/client;
+- [x] UDP sync endpoint;
+- [x] UDP audio endpoint;
+- [x] bounded send/receive queues;
+- [x] explicit bind/connect errors;
+- [x] worker stop/join;
+- [x] protocol-v2 framing;
+- [x] malformed/oversized rejection;
+- [x] peer authorization;
+- [x] delivery accounting;
+- [x] loopback multi-listener tests.
 
 ### 20.2 Verify dependency injection needed by Lab Mode
 
-- [ ] transport boundary can be replaced by virtual transport in tests;
-- [ ] production runtime remains the default in production build;
-- [ ] no global socket singleton prevents multiple Lab nodes;
-- [ ] clock dependency remains injectable.
+- [x] transport boundary can be replaced by virtual transport in tests;
+- [x] production runtime remains the default in production build;
+- [x] no global socket singleton prevents multiple Lab nodes;
+- [x] clock dependency remains injectable.
 
 ### 20.3 Preserve Android
 
-- [ ] Android transport migration tests pass;
-- [ ] no second desktop framing implementation exists.
+- [x] Android transport migration tests pass;
+- [x] no second desktop framing implementation exists.
 
 **Acceptance:** Shared Rust owns production socket and delivery semantics.
 
 ---
+
+**Completion evidence:** Actions run `30605377851` passed against direct-master input `09366180e01f65aba04bed2f95d54fb648449fcb`. See `docs/DESKTOP_BLOCK20_TRANSPORT_RUNTIME.md`.
 
 ## Block 21 — Add desktop network-interface and bind policy
 

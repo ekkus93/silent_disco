@@ -361,3 +361,12 @@ Execution constraints for this session:
 - Repository execution policy remains direct work on `master`; no branch or PR was used.
 - Validation run: `30599085238`.
 - Validated input commit: `4c05e5763b1771fc2c7a04690d46b8c76665aa43`.
+
+## 2026-07-30 — Desktop Block 20 shared transport runtime complete
+
+- Shared Rust owns TCP control and UDP synchronization/audio runtime semantics.
+- Protocol framing, bounds, authorization, accounting, queues, failures, shutdown/join, and virtual transport/clock behavior are covered.
+- Desktop interface and bind-selection work remains in Block 21.
+- Direct `master` work; no branch or PR.
+- Validation run: `30605377851`.
+- Validated input: `09366180e01f65aba04bed2f95d54fb648449fcb`.

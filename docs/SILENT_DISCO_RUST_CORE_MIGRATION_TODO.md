@@ -1089,45 +1089,47 @@ Do not copy this blindly; adapt it to the final handle API and Oboe lifecycle.
 
 ### 19.1 Create bounded transport runtime
 
-- [ ] TCP control listener/client.
-- [ ] UDP synchronization endpoint.
-- [ ] UDP audio endpoint.
-- [ ] bounded send/receive queues.
-- [ ] explicit bind/connect/listen failures.
-- [ ] worker stop/join.
-- [ ] byte and packet counters.
+- [x] TCP control listener/client.
+- [x] UDP synchronization endpoint.
+- [x] UDP audio endpoint.
+- [x] bounded send/receive queues.
+- [x] explicit bind/connect/listen failures.
+- [x] worker stop/join.
+- [x] byte and packet counters.
 
 ### 19.2 Integrate Rust framing
 
-- [ ] Control uses protocol-v2 framed messages.
-- [ ] UDP uses validated fixed headers.
-- [ ] Oversized packets rejected before allocation.
-- [ ] Malformed packet counters.
-- [ ] Session/stream authorization checks before actor events.
+- [x] Control uses protocol-v2 framed messages.
+- [x] UDP uses validated fixed headers.
+- [x] Oversized packets rejected before allocation.
+- [x] Malformed packet counters.
+- [x] Session/stream authorization checks before actor events.
 
 ### 19.3 Delivery reporting
 
-- [ ] Host broadcast reports peer count, success count, failure count.
-- [ ] Zero peers is not success.
-- [ ] Partial delivery is explicit.
-- [ ] Repeated peer failure has bounded, visible removal/recovery policy.
-- [ ] No log-only socket errors.
+- [x] Host broadcast reports peer count, success count, failure count.
+- [x] Zero peers is not success.
+- [x] Partial delivery is explicit.
+- [x] Repeated peer failure has bounded, visible removal/recovery policy.
+- [x] No log-only socket errors.
 
 ### 19.4 Transport tests
 
-- [ ] loopback host/listener;
-- [ ] partial/truncated frames;
-- [ ] oversized frame;
-- [ ] wrong version;
-- [ ] UDP loss/reorder simulation;
-- [ ] backpressure;
-- [ ] disconnect during stream;
-- [ ] shutdown under load;
-- [ ] multi-listener delivery accounting.
+- [x] loopback host/listener;
+- [x] partial/truncated frames;
+- [x] oversized frame;
+- [x] wrong version;
+- [x] UDP loss/reorder simulation;
+- [x] backpressure;
+- [x] disconnect during stream;
+- [x] shutdown under load;
+- [x] multi-listener delivery accounting.
 
 **Acceptance:** Host-independent Rust integration test completes discovery-independent join, sync, and packet exchange over loopback sockets.
 
 ---
+
+**Desktop Block 20 evidence:** Actions run `30605377851` passed against direct-master input `09366180e01f65aba04bed2f95d54fb648449fcb`.
 
 ## Block 20 — Convert Android networking to platform adapters
 
