@@ -18,38 +18,6 @@ env:
   TRACKING_ISSUE: "45"
 
 jobs:
-  inspect-approval:
-    if: >-
-      github.event.issue.number == 45 &&
-      github.event.comment.body == '/extract-desktop-block23-approval'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: master
-      - name: Apply exact generated payload
-        run: |
-          mkdir -p desktop/dist
-          printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
-          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
-          python3 .github/block23-adapt.py
-          python3 .github/block23-client-adapt.py
-          python3 .github/apply-block23.py
-          python3 .github/block23-storage-runner-adapt.py
-          mkdir -p /tmp/block23-approval
-          cp desktop/src-tauri/src/platform/host_transport.rs /tmp/block23-approval/
-          cp desktop/src-tauri/src/platform/host_transport_admission_tests.rs /tmp/block23-approval/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: block23-approval-generated
-          path: /tmp/block23-approval
-      - name: Announce extraction
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 approval extraction completed in Actions run $GITHUB_RUN_ID against $(git rev-parse HEAD)."
-
   validate:
     if: >-
       github.event.issue.number == 45 &&
