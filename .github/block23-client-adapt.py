@@ -233,6 +233,14 @@ fn persist_trusted_device(
 if storage_text.count(trusted_helper_anchor) != 1:
     raise RuntimeError('storage_effect_runner.rs: expected one trusted-device helper anchor')
 storage_text = storage_text.replace(trusted_helper_anchor, settings_helper, 1)
+
+display_name_move = '            current.display_name = display_name;'
+display_name_clone = '            current.display_name = display_name.clone();'
+if storage_text.count(display_name_move) != 1:
+    raise RuntimeError(
+        'storage_effect_runner.rs: expected one trusted-device display-name move'
+    )
+storage_text = storage_text.replace(display_name_move, display_name_clone, 1)
 storage_path.write_text(storage_text, encoding='utf-8')
 '''
 
@@ -241,6 +249,6 @@ print(
     'adapted Block 23 frontend/current-layout payload: removed 3 stale client calls, '
     'appended 3 current-layout client patches, corrected the first host-session DTO '
     'import, aligned the observer constructor order, removed the obsolete playback '
-    'transport-effect arm, fixed three listener routing borrow/move conflicts, and '
-    'restored settings persistence in the generated storage runner'
+    'transport-effect arm, fixed three listener routing borrow/move conflicts, '
+    'restored settings persistence, and fixed the trusted-device display-name borrow'
 )
