@@ -1,0 +1,156 @@
+name: Desktop Block 23 frontend diagnostics
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: desktop-block23-frontend-diagnostics
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+  TRACKING_ISSUE: "45"
+
+jobs:
+  diagnose-frontend:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.body == '/diagnose-desktop-block23-frontend-v2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Capture exact input and announce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "BLOCK23_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 23 frontend diagnostics started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). This run cannot publish implementation changes."
+
+      - name: Prepare and apply current-layout payload
+        id: payload
+        continue-on-error: true
+        run: |
+          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
+          python3 .github/block23-adapt.py
+          python3 .github/block23-client-adapt.py
+          mkdir -p desktop/dist
+          printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
+          python3 .github/apply-block23.py
+          rm .github/apply-block23.py
+          python3 .github/block23-storage-runner-adapt.py
+
+      - name: Install Rust and Linux build dependencies
+        id: toolchain
+        if: steps.payload.outcome == 'success'
+        continue-on-error: true
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
+
+      - name: Install frontend dependencies and normalize generated tree
+        id: prepare_frontend
+        if: steps.toolchain.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run bindings:generate
+          npm run format
+
+      - name: Generated bindings check
+        id: bindings_check
+        if: steps.prepare_frontend.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: npm run bindings:check
+
+      - name: Frontend formatting check
+        id: format_check
+        if: steps.bindings_check.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: npm run format:check
+
+      - name: Frontend lint
+        id: lint
+        if: steps.format_check.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: npm run lint
+
+      - name: Frontend typecheck
+        id: typecheck
+        if: steps.lint.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: npm run typecheck
+
+      - name: Frontend tests
+        id: tests
+        if: steps.typecheck.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: npm test -- --run
+
+      - name: Frontend production build
+        id: build
+        if: steps.tests.outcome == 'success'
+        continue-on-error: true
+        working-directory: desktop
+        run: npm run build
+
+      - name: Publish frontend diagnostic result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAYLOAD: ${{ steps.payload.outcome }}
+          TOOLCHAIN: ${{ steps.toolchain.outcome }}
+          PREPARE_FRONTEND: ${{ steps.prepare_frontend.outcome }}
+          BINDINGS_CHECK: ${{ steps.bindings_check.outcome }}
+          FORMAT_CHECK: ${{ steps.format_check.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+        run: |
+          outcomes=$(cat <<EOF
+          payload=${PAYLOAD}
+          toolchain=${TOOLCHAIN}
+          prepare_frontend=${PREPARE_FRONTEND}
+          bindings_check=${BINDINGS_CHECK}
+          format_check=${FORMAT_CHECK}
+          lint=${LINT}
+          typecheck=${TYPECHECK}
+          tests=${TESTS}
+          build=${BUILD}
+          EOF
+          )
+          first_failed=$(printf '%s\n' "$outcomes" | awk -F= '$2 == "failure" || $2 == "cancelled" { print $1; exit }')
+          if [[ -z "$first_failed" && "$BUILD" == "success" ]]; then
+            body="Desktop Block 23 frontend diagnostics passed every frontend gate in Actions run $GITHUB_RUN_ID against $BLOCK23_INPUT."
+          else
+            [[ -n "$first_failed" ]] || first_failed="workflow_setup_or_unknown"
+            body="Desktop Block 23 frontend diagnostics found first failing gate '$first_failed' in Actions run $GITHUB_RUN_ID against $BLOCK23_INPUT. No implementation or completion evidence was committed."
+          fi
+          printf '%s\n\n%s\n' "$body" "$outcomes" > /tmp/block23-frontend-diagnostic-comment.txt
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/block23-frontend-diagnostic-comment.txt
