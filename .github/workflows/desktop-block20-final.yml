@@ -1,0 +1,68 @@
+name: Final Desktop Block 20 validation
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: desktop-block20-final-validation
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+  TRACKING_ISSUE: "45"
+
+jobs:
+  validate:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.body == '/run-desktop-block20-final'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Capture exact input and announce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "BLOCK20_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Final Desktop Block 20 repository validation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
+
+      - name: Run complete matrix and commit evidence
+        run: bash .github/block20-full-validation.sh
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 20 passed in Actions run $GITHUB_RUN_ID and committed $BLOCK20_COMMIT directly to master. Focused transport/fault tests, full Rust/desktop/Linux/Android/ABI/instrumentation gates, evidence, and cleanup all passed."
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Final Desktop Block 20 validation failed in Actions run $GITHUB_RUN_ID against $BLOCK20_INPUT. No completion evidence was committed; continue directly on master from the first failed command."
