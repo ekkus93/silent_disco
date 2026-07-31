@@ -85,9 +85,10 @@ git diff --exit-code -- desktop/package-lock.json tools/decoder-spike/Cargo.lock
 
 python3 .github/block20-complete.py
 
-git rm \
+git rm --ignore-unmatch \
   .github/workflows/desktop-block20.yml \
   .github/workflows/desktop-block20-full.yml \
+  .github/workflows/desktop-block20-final.yml \
   .github/block20-full-validation.sh \
   .github/block20-complete.py
 git rm --ignore-unmatch .github/desktop-block20-*.py
