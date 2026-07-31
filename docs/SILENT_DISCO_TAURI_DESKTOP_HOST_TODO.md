@@ -1220,12 +1220,12 @@ Do not implement desktop production transport before the shared runtime passes i
 
 Expose bounded safe data:
 
-- [ ] host address;
-- [ ] control/sync/audio ports;
-- [ ] session identifier or invitation payload;
-- [ ] protocol version;
-- [ ] invite-code requirement;
-- [ ] expiration where applicable.
+- [x] host address;
+- [x] control/sync/audio ports;
+- [x] session identifier or invitation payload;
+- [x] protocol version;
+- [x] invite-code requirement;
+- [x] expiration where applicable.
 
 ### 22.2 Add Host Session screen
 
@@ -1237,27 +1237,29 @@ desktop/src/screens/HostSessionScreen.tsx
 
 Show:
 
-- [ ] authoritative host state;
-- [ ] manual connection information;
-- [ ] copy controls;
-- [ ] pending join requests;
-- [ ] connected listeners;
-- [ ] playback controls disabled until supported;
-- [ ] visible transport errors;
-- [ ] end-session action.
+- [x] authoritative host state;
+- [x] manual connection information;
+- [x] copy controls;
+- [x] pending join requests;
+- [x] connected listeners;
+- [x] playback controls disabled until supported;
+- [x] visible transport errors;
+- [x] end-session action.
 
 ### 22.3 Add control-only loopback test
 
-- [ ] desktop host creates session;
-- [ ] shared test listener connects manually;
-- [ ] protocol hello/join exchange succeeds;
-- [ ] join request appears in snapshot;
-- [ ] no audio success is claimed;
-- [ ] disconnect is visible.
+- [x] desktop host creates session;
+- [x] shared test listener connects manually;
+- [x] protocol hello/join exchange succeeds;
+- [x] join request appears in snapshot;
+- [x] no audio success is claimed;
+- [x] disconnect is visible.
 
 **Acceptance:** A listener can reach the desktop host without mDNS.
 
 ---
+
+**Completion evidence:** Actions run `30620932603` passed against direct-master input `3f9b90aca0549e5870b34d12cee83c514a2ccd40`. See `docs/DESKTOP_BLOCK22_MANUAL_ENDPOINT_HOST_WORKFLOW.md`.
 
 ## Block 23 — Implement desktop join approval and listener management UI
 

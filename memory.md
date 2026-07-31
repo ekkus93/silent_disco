@@ -383,3 +383,17 @@ Execution constraints for this session:
 - Direct `master` work; no branch or PR.
 - Final validation run: `30613572498`.
 - Validated input: `fd081a1574f54956754adcd40c0578933e468c1f`.
+
+## 2026-07-31 — Desktop Block 22 manual endpoint host workflow complete
+
+- Desktop exposes authoritative manual host connection information without requiring mDNS.
+- The DTO combines the shared-core session advertisement with the actual bound control/synchronization/audio endpoint.
+- The desktop transport worker feeds real join/disconnect events into the authoritative actor.
+- Pre-approval TCP Hello does not grant UDP synchronization or audio authorization.
+- Host Session UI shows connection details, copy controls, pending and connected listeners, visible failures, disabled future playback controls, and revision-aware end-session behavior.
+- Shared handshake commit: `4c132f28f8807dd5afb6a791f747f96515051d67`.
+- Runtime/DTO commit: `47724cd6a4f931f14b003cb7bed249546b8fbdf7`.
+- Host Session UI commit: `88e2b851feba8a06cdd0016ef840f48762d3a94c`.
+- Direct `master` work; no branch or PR.
+- Final validation run: `30620932603`.
+- Validated input: `3f9b90aca0549e5870b34d12cee83c514a2ccd40`.
