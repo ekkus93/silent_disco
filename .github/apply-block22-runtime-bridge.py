@@ -106,11 +106,11 @@ replace_once(
 )
 replace_once(
     "desktop/src-tauri/src/bindings.rs",
-    "        declaration::<SetNetworkBindPreferenceRequest>(),\n",
-    """        declaration::<SetNetworkBindPreferenceRequest>(),
-        declaration::<HostConnectionDto>(),
-        declaration::<PendingJoinRequestDto>(),
-        declaration::<ConnectedListenerDto>(),
-        declaration::<HostSessionSnapshotDto>(),
+    "        declaration::<SetNetworkBindPreferenceRequest>(&config),\n",
+    """        declaration::<SetNetworkBindPreferenceRequest>(&config),
+        declaration::<HostConnectionDto>(&config),
+        declaration::<PendingJoinRequestDto>(&config),
+        declaration::<ConnectedListenerDto>(&config),
+        declaration::<HostSessionSnapshotDto>(&config),
 """,
 )
