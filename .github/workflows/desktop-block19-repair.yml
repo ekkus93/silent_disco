@@ -1,0 +1,92 @@
+name: Repair Desktop Block 19 Clippy ownership
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/desktop-block19-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Apply ownership repairs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          decoder = Path("rust/silent-disco-core/src/audio/decoder.rs")
+          text = decoder.read_text()
+          old_call = """                run_decoder_worker(
+                    opened,
+                    sender,
+                    config,
+"""
+          new_call = """                run_decoder_worker(
+                    opened,
+                    &sender,
+                    config,
+"""
+          old_signature = """fn run_decoder_worker(
+    mut opened: OpenedDecoder,
+    sender: SyncSender<DecodedPcmChunk>,
+"""
+          new_signature = """fn run_decoder_worker(
+    mut opened: OpenedDecoder,
+    sender: &SyncSender<DecodedPcmChunk>,
+"""
+          if text.count(old_call) != 1 or text.count(old_signature) != 1:
+              raise SystemExit("decoder ownership boundaries changed unexpectedly")
+          decoder.write_text(text.replace(old_call, new_call, 1).replace(old_signature, new_signature, 1))
+
+          source = Path("rust/silent-disco-core/src/audio/source.rs")
+          text = source.read_text()
+          signature = "fn map_io_error(error: io::Error, operation: &str) -> DecodeError {"
+          if text.count(signature) != 1:
+              raise SystemExit("source error mapper boundary changed unexpectedly")
+          call_count = text.count("map_io_error(error,")
+          if call_count < 5:
+              raise SystemExit(f"expected map_io_error call sites, found {call_count}")
+          text = text.replace(signature, "fn map_io_error(error: &io::Error, operation: &str) -> DecodeError {", 1)
+          text = text.replace("map_io_error(error,", "map_io_error(&error,")
+          source.write_text(text)
+
+          validator = Path(".github/workflows/desktop-block19.yml")
+          validator.write_text(validator.read_text().rstrip() + "\n# retry after Clippy ownership repairs\n")
+          PY
+
+      - name: Validate repaired shared core
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.97.1
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo clippy --manifest-path rust/Cargo.toml -p silent-disco-core --all-targets --all-features -- -D warnings
+
+      - name: Commit repairs directly to master
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/desktop-block19-repair.yml
+          git add \
+            .github/workflows/desktop-block19.yml \
+            rust/silent-disco-core/src/audio/decoder.rs \
+            rust/silent-disco-core/src/audio/source.rs
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Repair Desktop Block 19 Clippy ownership"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
