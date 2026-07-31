@@ -1,0 +1,52 @@
+name: Repair Desktop Block 19 compile
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/desktop-block19-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Apply compile repair and retrigger validation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          decoder = Path("rust/silent-disco-core/src/audio/decoder.rs")
+          text = decoder.read_text()
+          needle = "use super::source::{\n"
+          replacement = "use super::resampler::StereoResampler;\nuse super::source::{\n"
+          if "use super::resampler::StereoResampler;" in text:
+              raise SystemExit("resampler import already present")
+          if text.count(needle) != 1:
+              raise SystemExit("decoder import boundary changed unexpectedly")
+          decoder.write_text(text.replace(needle, replacement, 1))
+
+          validator = Path(".github/workflows/desktop-block19.yml")
+          workflow = validator.read_text()
+          validator.write_text(workflow.rstrip() + "\n# retry: missing resampler import repaired\n")
+          PY
+          git rm .github/workflows/desktop-block19-repair.yml
+          git add rust/silent-disco-core/src/audio/decoder.rs .github/workflows/desktop-block19.yml
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Repair Desktop Block 19 resampler import"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
