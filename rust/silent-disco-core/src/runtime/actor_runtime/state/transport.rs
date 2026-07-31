@@ -102,11 +102,17 @@ impl ActorState {
         device_id: &DeviceId,
         error: Option<CoreError>,
     ) -> Result<ApplyOutcome, CoreError> {
-        let previous = self.snapshot.listeners.len();
+        let previous_listeners = self.snapshot.listeners.len();
+        let previous_requests = self.snapshot.pending_join_requests.len();
         self.snapshot
             .listeners
             .retain(|listener| &listener.device_id != device_id);
-        if previous != self.snapshot.listeners.len()
+        self.snapshot
+            .pending_join_requests
+            .retain(|request| &request.device_id != device_id);
+        let listener_removed = previous_listeners != self.snapshot.listeners.len();
+        let request_removed = previous_requests != self.snapshot.pending_join_requests.len();
+        if listener_removed
             && self.snapshot.listeners.is_empty()
             && self.snapshot.host_lifecycle == HostLifecycle::Ready
         {
@@ -120,7 +126,7 @@ impl ActorState {
                 stop_requested: false,
             });
         }
-        if previous == self.snapshot.listeners.len() {
+        if !listener_removed && !request_removed {
             return Ok(ApplyOutcome::default());
         }
         Ok(ApplyOutcome::changed())

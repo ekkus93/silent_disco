@@ -272,6 +272,32 @@ impl SocketHostTransport {
         })
     }
 
+    fn pending_peer_for_device(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<Arc<PeerState>, TransportError> {
+        let peers = self.peers.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "peer registry is poisoned",
+            )
+        })?;
+        peers
+            .values()
+            .find(|peer| {
+                peer.active.load(Ordering::Acquire) && peer.device_id().as_ref() == Some(device_id)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                TransportError::new(
+                    TransportErrorKind::PeerNotFound,
+                    TransportChannel::Control,
+                    "identified pending control peer is not connected",
+                )
+            })
+    }
+
     fn peer_for_device(&self, device_id: &DeviceId) -> Result<Arc<PeerState>, TransportError> {
         let routes = self.routes.lock().map_err(|_| {
             TransportError::new(
@@ -522,6 +548,34 @@ impl HostTransportNode for SocketHostTransport {
             ));
         };
         route.peer.close()
+    }
+
+    fn send_pending_control(
+        &self,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        if message.session_id() != &self.session_id {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "outbound pending control message belongs to a different session",
+            ));
+        }
+        let peer = self.pending_peer_for_device(device_id)?;
+        let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
+            .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
+        let result = peer.sender.send(bytes);
+        self.record_peer_result(&peer, &result);
+        match result {
+            Ok(written) => {
+                TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
+            }
+            Err(error) => {
+                self.counters.delivery_failure();
+                Err(error)
+            }
+        }
     }
 
     fn send_control(

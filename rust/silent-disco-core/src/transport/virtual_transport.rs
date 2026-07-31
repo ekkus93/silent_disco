@@ -175,6 +175,7 @@ impl VirtualHostTransport {
         &self,
         target: Option<&DeviceId>,
         message: &ControlMessage,
+        authorized_only: bool,
     ) -> Result<TransportDelivery, TransportError> {
         if message.session_id() != &self.session_id {
             return Err(unauthorized(TransportChannel::Control));
@@ -189,14 +190,19 @@ impl VirtualHostTransport {
             .listeners
             .iter()
             .filter(|(device_id, listener)| {
-                listener.authorized && target.is_none_or(|target| target == *device_id)
+                (!authorized_only || listener.authorized)
+                    && target.is_none_or(|target| target == *device_id)
             })
             .collect();
         if target.is_some() && listeners.is_empty() {
             return Err(TransportError::new(
                 TransportErrorKind::PeerNotFound,
                 TransportChannel::Control,
-                "virtual authorized peer is not connected",
+                if authorized_only {
+                    "virtual authorized peer is not connected"
+                } else {
+                    "virtual identified pending peer is not connected"
+                },
             ));
         }
         let intended = to_u32(listeners.len(), TransportChannel::Control)?;
@@ -396,19 +402,27 @@ impl HostTransportNode for VirtualHostTransport {
         )
     }
 
+    fn send_pending_control(
+        &self,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.deliver_control(Some(device_id), message, false)
+    }
+
     fn send_control(
         &self,
         device_id: &DeviceId,
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError> {
-        self.deliver_control(Some(device_id), message)
+        self.deliver_control(Some(device_id), message, true)
     }
 
     fn broadcast_control(
         &self,
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError> {
-        self.deliver_control(None, message)
+        self.deliver_control(None, message, true)
     }
 
     fn broadcast_sync(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError> {

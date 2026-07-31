@@ -19,6 +19,15 @@ pub trait HostTransportNode: Send {
         routes: ListenerDatagramRoutes,
     ) -> Result<(), TransportError>;
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError>;
+    /// Sends one control message to an identified TCP peer before datagram authorization.
+    ///
+    /// This is intentionally narrower than `send_control`: it supports the pre-approval
+    /// `Hello` exchange without granting synchronization or audio routes.
+    fn send_pending_control(
+        &self,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError>;
     fn send_control(
         &self,
         device_id: &DeviceId,

@@ -98,6 +98,14 @@ impl HostTransportNode for FaultInjectingHostTransport {
         self.inner.disconnect_peer(device_id)
     }
 
+    fn send_pending_control(
+        &self,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.send_pending_control(device_id, message)
+    }
+
     fn send_control(
         &self,
         device_id: &DeviceId,

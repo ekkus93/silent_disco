@@ -104,6 +104,14 @@ impl HostTransportNode for FakeHostNode {
         panic!("unused fake host operation")
     }
 
+    fn send_pending_control(
+        &self,
+        _device_id: &DeviceId,
+        _message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        panic!("unused fake host operation")
+    }
+
     fn send_control(
         &self,
         _device_id: &DeviceId,

@@ -28,6 +28,61 @@ fn production_factory_is_socket_runtime() {
 }
 
 #[test]
+fn pending_control_peer_receives_hello_before_datagram_authorization() {
+    let session_id = id_session("manual-endpoint-session");
+    let device_id = id_device("manual-endpoint-listener");
+    let factory = SocketTransportFactory;
+    let clock = Arc::new(SystemTransportClock::default());
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("manual endpoint host should bind");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("manual endpoint listener should connect");
+
+    listener
+        .send_control(&join_request(
+            &session_id,
+            &device_id,
+            "Manual Endpoint Listener",
+        ))
+        .expect("join request should reach the host");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let hello = ControlMessage::Hello(Hello {
+        session_id: session_id.clone(),
+        session_name: "Manual Endpoint Session".to_owned(),
+        host_name: "Desktop Host".to_owned(),
+        approval_required: true,
+    });
+    let delivery = host
+        .send_pending_control(&device_id, &hello)
+        .expect("identified pending peer should receive TCP Hello");
+    assert_eq!(delivery.report.intended_peers, 1);
+    assert_eq!(delivery.report.successful_peers, 1);
+    wait_for_frame(&mut *listener, TransportChannel::Control, |frame| {
+        frame == &ProtocolFrame::Control(hello.clone())
+    });
+
+    assert_eq!(host.counters().audio_datagrams_sent, 0);
+    assert_eq!(listener.counters().audio_datagrams_received, 0);
+    listener.shutdown().expect("listener should stop");
+    host.shutdown().expect("host should stop");
+}
+
+#[test]
 fn socket_runtime_completes_multi_listener_join_sync_and_audio_exchange() {
     let session_id = id_session("socket-session");
     let clock = Arc::new(SystemTransportClock::default());
