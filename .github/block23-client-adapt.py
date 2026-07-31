@@ -163,12 +163,29 @@ transport_text = ''.join(transport_lines)
 if any(variant in transport_text for variant in playback_variants):
     raise RuntimeError('host_transport.rs: obsolete playback variants remain after correction')
 transport_path.write_text(transport_text, encoding='utf-8')
+
+# The delivery packet owns listener_id while send_pending_control also borrows
+# the routing identifier for the duration of the same call. Borrow a temporary
+# clone for routing so the original value can move into the packet exactly once.
+transport_text = transport_path.read_text(encoding='utf-8')
+pending_listener_borrow = "node.send_pending_control(\n            &listener_id,"
+cloned_pending_listener_borrow = "node.send_pending_control(\n            &listener_id.clone(),"
+pending_borrow_count = transport_text.count(pending_listener_borrow)
+if pending_borrow_count != 3:
+    raise RuntimeError(
+        f'host_transport.rs: expected three pending listener borrows, found {pending_borrow_count}'
+    )
+transport_text = transport_text.replace(
+    pending_listener_borrow,
+    cloned_pending_listener_borrow,
+)
+transport_path.write_text(transport_text, encoding='utf-8')
 '''
 
 PAYLOAD.write_text(source, encoding='utf-8')
 print(
     'adapted Block 23 frontend/current-layout payload: removed 3 stale client calls, '
     'appended 3 current-layout client patches, corrected the first host-session DTO '
-    'import, aligned the observer constructor order, and removed the obsolete '
-    'playback transport-effect arm'
+    'import, aligned the observer constructor order, removed the obsolete playback '
+    'transport-effect arm, and fixed three listener routing borrow/move conflicts'
 )
