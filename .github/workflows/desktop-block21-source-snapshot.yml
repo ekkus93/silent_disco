@@ -50,3 +50,5 @@ jobs:
         run: |
           gh issue comment 45 --repo "$GITHUB_REPOSITORY" \
             --body "Desktop Block 21 source snapshot created in Actions run $GITHUB_RUN_ID from direct-master input $BLOCK21_SOURCE_INPUT. No branch or PR is involved."
+
+# activation: 1
