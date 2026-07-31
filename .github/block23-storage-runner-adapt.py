@@ -318,7 +318,7 @@ def replace_clippy_once(path_name: str, old: str, new: str, label: str) -> None:
 replace_clippy_once(
     'desktop/src-tauri/src/host_session_dto.rs',
     'let last_contact_ms = value.last_contact.map(|time| time.get());',
-    'let last_contact_ms = value.last_contact.map(MonotonicMillis::get);',
+    'let last_contact_ms = value.last_contact.map(silent_disco_core::domain::MonotonicMillis::get);',
     'host-session redundant closure',
 )
 
