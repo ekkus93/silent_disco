@@ -71,16 +71,41 @@ export async function endHostSession(expectedRevision: string): Promise<CommandR
 ]
 source += '\n# Current frontend client compatibility patches.\n' + ''.join(patches)
 source += '''
-# Correct only the first host-session DTO import. The same text also occurs in
-# a generated test fixture, so replace_once's global uniqueness guard is not
-# appropriate for this specific compatibility correction.
+# Correct both production and test-module host-session DTO imports.
 dto_path = Path('desktop/src-tauri/src/host_session_dto.rs')
 dto_old = 'use crate::platform::network::ActiveHostSessionSnapshot;'
 dto_new = 'use crate::platform::host_transport::ActiveHostSessionSnapshot;'
 dto_text = dto_path.read_text(encoding='utf-8')
-if dto_old not in dto_text:
-    raise RuntimeError('host_session_dto.rs: stale snapshot import not found')
-dto_path.write_text(dto_text.replace(dto_old, dto_new, 1), encoding='utf-8')
+dto_count = dto_text.count(dto_old)
+if dto_count != 2:
+    raise RuntimeError(
+        f'host_session_dto.rs: expected two stale snapshot imports, found {dto_count}'
+    )
+dto_path.write_text(dto_text.replace(dto_old, dto_new), encoding='utf-8')
+
+# Align the generated admission test with the concrete transport factory type
+# and remove the clock type that is no longer used by the current fixture.
+admission_path = Path(
+    'desktop/src-tauri/src/platform/host_transport_admission_tests.rs'
+)
+admission_text = admission_path.read_text(encoding='utf-8')
+factory_old = 'connect_listener(&*factory, &session_id, &listener_id, endpoint)'
+factory_new = 'connect_listener(&factory, &session_id, &listener_id, endpoint)'
+if admission_text.count(factory_old) != 1:
+    raise RuntimeError(
+        'host_transport_admission_tests.rs: expected one stale factory dereference'
+    )
+admission_text = admission_text.replace(factory_old, factory_new, 1)
+unused_import = (
+    'ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SessionId,'
+)
+clean_import = 'ApprovalMode, DeviceId, OperationId, RequestId, SessionId,'
+if admission_text.count(unused_import) != 1:
+    raise RuntimeError(
+        'host_transport_admission_tests.rs: expected one unused clock import'
+    )
+admission_text = admission_text.replace(unused_import, clean_import, 1)
+admission_path.write_text(admission_text, encoding='utf-8')
 '''
 
 observer_old = """    let observer = DesktopCoreObserver::new(
@@ -247,7 +272,8 @@ storage_path.write_text(storage_text, encoding='utf-8')
 PAYLOAD.write_text(source, encoding='utf-8')
 print(
     'adapted Block 23 frontend/current-layout payload: removed 3 stale client calls, '
-    'appended 3 current-layout client patches, corrected the first host-session DTO '
+    'appended 3 current-layout client patches, corrected both host-session DTO '
+    'imports, fixed the admission-test factory borrow and removed its unused clock '
     'import, aligned the observer constructor order, removed the obsolete playback '
     'transport-effect arm, fixed three listener routing borrow/move conflicts, '
     'restored settings persistence, and fixed the trusted-device display-name borrow'
