@@ -42,9 +42,11 @@ jobs:
         run: |
           python3 -m py_compile \
             .github/apply-block22-runtime-network.py \
-            .github/apply-block22-runtime-bridge.py
+            .github/apply-block22-runtime-bridge.py \
+            .github/apply-block22-transport-timeout.py
           python3 .github/apply-block22-runtime-network.py
           python3 .github/apply-block22-runtime-bridge.py
+          python3 .github/apply-block22-transport-timeout.py
 
       - name: Install native desktop dependencies
         run: |
@@ -106,8 +108,10 @@ jobs:
             .github/workflows/desktop-block22-runtime.yml \
             .github/apply-block22-runtime-network.py \
             .github/apply-block22-runtime-bridge.py \
+            .github/apply-block22-transport-timeout.py \
             .github/block22-runtime.py.gz.b64
           git add \
+            rust/silent-disco-core/src/transport/types.rs \
             desktop/src-tauri/src/platform/host_join_projection.rs \
             desktop/src-tauri/src/platform/host_pending_handshake.rs \
             desktop/src-tauri/src/platform/host_transport.rs \
