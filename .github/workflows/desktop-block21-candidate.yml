@@ -96,7 +96,7 @@ jobs:
           source = source[:start] + registration + source[end:]
           start = source.index("# Register commands and module contract.")
           end = source.index("# Include new DTOs in deterministic bindings.", start)
-          command_registration = r'''# Register commands and module contract.
+          command_registration = r"""# Register commands and module contract.
           lib = "desktop/src-tauri/src/lib.rs"
           replace_once(
               lib,
@@ -108,7 +108,7 @@ jobs:
               app_state::attach_notifications,''',
           )
 
-          '''
+          """
           source = source[:start] + command_registration + source[end:]
           apply.write_text(source)
           PY
