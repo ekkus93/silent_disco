@@ -89,3 +89,5 @@ jobs:
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
             --body "Desktop Block 19 focused decoder repair failed in Actions run ${GITHUB_RUN_ID} against ${BLOCK19_INPUT}."
+
+# retry after fixing FLAC fixture padding
