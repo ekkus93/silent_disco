@@ -1,29 +1,27 @@
-name: Implement Desktop Block 19
+name: Validate Desktop Block 19
 
 on:
-  issue_comment:
-    types: [created]
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/desktop-block19.yml
 
 permissions:
   contents: write
   issues: write
 
 concurrency:
-  group: desktop-block19-implementation
+  group: desktop-block19-validation
   cancel-in-progress: false
 
 env:
   RUST_VERSION: "1.97.1"
   NODE_VERSION: "22.16.0"
   TRACKING_ISSUE: "45"
-  PAYLOAD_SHA256: "9750007263831c98440b192521f037d228a62d28868cb3ad71fcb78f289fedd1"
 
 jobs:
-  implement-and-validate:
-    if: >-
-      github.event.issue.number == 45 &&
-      github.event.comment.user.login == github.repository_owner &&
-      github.event.comment.body == '/run-desktop-block19'
+  validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
@@ -36,19 +34,40 @@ jobs:
       - name: Capture exact input
         run: echo "BLOCK19_INPUT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
 
-      - name: Apply guarded implementation payload
-        run: |
-          set -euo pipefail
-          base64 --decode .github/desktop-block19-payload.b64 > /tmp/block19-payload.tgz
-          echo "${PAYLOAD_SHA256}  /tmp/block19-payload.tgz" | sha256sum --check
-          tar -xzf /tmp/block19-payload.tgz
-
       - name: Publish start
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
-            --body "Desktop Block 19 guarded validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at input ${BLOCK19_INPUT}. The implementation will be committed only if every gate passes."
+            --body "Desktop Block 19 validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} against ${BLOCK19_INPUT}. Work is directly on master; no branch or PR is involved."
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Format implementation and synchronize lockfiles
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
+          cp rust/Cargo.lock /tmp/block19-rust.Cargo.lock
+          cp desktop/src-tauri/Cargo.lock /tmp/block19-desktop.Cargo.lock
+
+      - name: Run focused bounded decoder tests
+        working-directory: rust
+        run: cargo test -p silent-disco-core audio -- --nocapture
+
+      - name: Enforce tracked source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Run shared Rust strict gates
+        working-directory: rust
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -63,11 +82,6 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Install pinned Rust toolchain
-        run: |
-          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
-          rustup default "${RUST_VERSION}"
 
       - name: Install Android SDK and Linux Tauri packages
         run: |
@@ -95,29 +109,6 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-
-      - name: Format implementation and synchronize lockfiles
-        run: |
-          cargo fmt --manifest-path rust/Cargo.toml --all
-          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
-          cargo generate-lockfile --manifest-path rust/Cargo.toml
-          cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
-          cp rust/Cargo.lock /tmp/block19-rust.Cargo.lock
-          cp desktop/src-tauri/Cargo.lock /tmp/block19-desktop.Cargo.lock
-
-      - name: Run focused bounded decoder tests
-        working-directory: rust
-        run: cargo test -p silent-disco-core audio -- --nocapture
-
-      - name: Enforce tracked source-size invariant
-        run: bash scripts/check-source-file-line-counts.sh
-
-      - name: Run shared Rust strict gates
-        working-directory: rust
-        run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-features
 
       - name: Verify generated desktop bindings and frontend
         working-directory: desktop
@@ -200,6 +191,7 @@ jobs:
 
           design_path = Path("docs/DESKTOP_BLOCK19_STREAMING_DECODE.md")
           design = design_path.read_text()
+          design = design.replace("**Status:** Pending guarded validation", "**Status:** Complete", 1)
           design = design.replace("{{RUN_ID}}", run_id).replace("{{INPUT_SHA}}", input_sha)
           if "{{" in design:
               raise SystemExit("unresolved Block 19 design placeholder")
@@ -216,8 +208,8 @@ jobs:
           evidence = (
               "**Completion evidence:** The shared Rust worker, canonical conversion, bounded queue, "
               "desktop staged-source adapter, fixture/error/backpressure/lifecycle tests, and complete "
-              f"repository regression matrix passed in GitHub Actions run `{run_id}` against guarded "
-              f"input `{input_sha}`. Architecture and scope are recorded in "
+              f"repository regression matrix passed in GitHub Actions run `{run_id}` against direct-"
+              f"master input `{input_sha}`. Architecture and scope are recorded in "
               "`docs/DESKTOP_BLOCK19_STREAMING_DECODE.md`.\n\n"
           )
           if block.count(acceptance) != 1:
@@ -231,11 +223,11 @@ jobs:
           end = migration.index("### 14.2 Implement streaming packetizer", start)
           section = migration[start:end]
           section = section.replace("- [ ]", "- [x]")
-          note = (
+          section = section.rstrip() + (
+              "\n\n"
               f"**Desktop Block 19 evidence:** The bounded ingestion API passed Actions run `{run_id}` "
-              f"against `{input_sha}`. Packetization remains open in 14.2.\n\n"
+              f"against direct-master input `{input_sha}`. Packetization remains open in 14.2.\n\n"
           )
-          section = section.rstrip() + "\n\n" + note
           migration_path.write_text(migration[:start] + section + migration[end:])
 
           memory_path = Path("memory.md")
@@ -247,8 +239,9 @@ jobs:
               "backpressure, typed failures, cancellation, join, and cancel-on-drop are covered.\n"
               "- Desktop resolves the exact opaque staged source before starting the shared worker; "
               "packetization/playback wiring remains assigned to later blocks.\n"
-              f"- Guarded validation run: `{run_id}`.\n"
-              f"- Guarded input commit: `{input_sha}`.\n"
+              "- Repository execution policy remains direct work on `master`; no branch or PR was used.\n"
+              f"- Validation run: `{run_id}`.\n"
+              f"- Validated input commit: `{input_sha}`.\n"
           )
           memory_path.write_text(memory)
           PY
@@ -256,10 +249,11 @@ jobs:
       - name: Commit validated implementation and remove temporary machinery
         run: |
           set -euo pipefail
-          git rm .github/desktop-block19-payload.b64
           git rm .github/workflows/desktop-block19.yml
-          git rm .github/workflows/desktop-block19-source-snapshot.yml
-          git rm -r docs/generated/desktop-block19-source
+          git rm --ignore-unmatch .github/workflows/desktop-block19-source-snapshot.yml
+          git rm --ignore-unmatch .github/desktop-block19-payload.b64
+          git rm --ignore-unmatch .github/desktop-block19-payload-part-*.b64
+          git rm -r --ignore-unmatch docs/generated/desktop-block19-source
           git add \
             rust/silent-disco-core \
             rust/Cargo.lock \
@@ -271,7 +265,7 @@ jobs:
           git diff --cached --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "Implement bounded streaming decode (Desktop Block 19)"
+          git commit -m "Complete bounded streaming decode (Desktop Block 19)"
           remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
           parent_sha="$(git rev-parse HEAD^)"
           test "${remote_sha}" = "${parent_sha}"
@@ -283,7 +277,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
-            --body "Desktop Block 19 passed in Actions run ${GITHUB_RUN_ID} and committed ${BLOCK19_COMMIT}. Shared bounded WAV/FLAC/MP3 decode, canonical 48 kHz stereo PCM16 conversion, typed failures, queue-pressure visibility, cancellation/join, desktop staged-source preparation, full Rust/desktop/Linux/Android/ABI/instrumentation gates, and temporary-workflow cleanup all passed."
+            --body "Desktop Block 19 passed in Actions run ${GITHUB_RUN_ID} and committed ${BLOCK19_COMMIT} directly to master. Shared bounded WAV/FLAC/MP3 decode, canonical 48 kHz stereo PCM16 conversion, typed failures, queue-pressure visibility, cancellation/join, desktop staged-source preparation, complete Rust/desktop/Linux/Android/ABI/instrumentation gates, and temporary-file cleanup all passed."
 
       - name: Publish failure
         if: failure()
@@ -291,4 +285,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
-            --body "Desktop Block 19 guarded implementation failed in Actions run ${GITHUB_RUN_ID}. No product Block 19 commit was pushed; inspect the first failed gate before retrying."
+            --body "Desktop Block 19 validation failed in Actions run ${GITHUB_RUN_ID} against ${BLOCK19_INPUT}. No completion evidence was written; inspect the first failed gate and continue directly on master."
