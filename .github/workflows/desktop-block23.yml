@@ -5,100 +5,24 @@ on:
     types: [created]
 
 permissions:
-  contents: write
+  contents: read
   issues: write
 
-concurrency:
-  group: desktop-block23-validation
-  cancel-in-progress: false
-
-env:
-  RUST_VERSION: "1.97.1"
-  NODE_VERSION: "22.16.0"
-  TRACKING_ISSUE: "45"
-
 jobs:
-  validate:
+  inspect-effect-payload:
     if: >-
       github.event.issue.number == 45 &&
-      github.event.comment.body == '/run-desktop-block23'
+      github.event.comment.body == '/inspect-desktop-block23-effect-main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Capture exact input and announce
+      - name: Announce inspection run
         env:
           GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body "Desktop Block 23 main payload inspection: Actions run $GITHUB_RUN_ID"
+      - name: Print effect routing payload block
         run: |
-          echo "BLOCK23_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 guarded implementation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
-
-      - name: Adapt payload to current transport ownership layout
-        run: |
-          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
-          python3 - <<'PY'
-          import base64
-          from pathlib import Path
-
-          patch_path = Path('.github/apply-block23.py')
-          patch = patch_path.read_text(encoding='utf-8')
-          bindings_old = base64.b64decode('cmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycyIsCiAgICAnJycgICAgUGxhdGZvcm1FZmZlY3REdG8sIFJldmlzaW9uQ29tbWFuZFJlcXVlc3QsIFVwZGF0ZUhvc3REcmFmdFJlcXVlc3QsCn07JycnLAogICAgJycnICAgIEFwcHJvdmVKb2luUmVxdWVzdCwgSm9pblJlcXVlc3RDb21tYW5kUmVxdWVzdCwgTGlzdGVuZXJDb21tYW5kUmVxdWVzdCwKICAgIFBsYXRmb3JtRWZmZWN0RHRvLCBSZXZpc2lvbkNvbW1hbmRSZXF1ZXN0LCBVcGRhdGVIb3N0RHJhZnRSZXF1ZXN0LAp9OycnJywKKQ==').decode('utf-8')
-          bindings_new = base64.b64decode('cmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycyIsCiAgICAnJycgICAgSG9zdERyYWZ0VmFsaWRhdGlvbkR0bywgT3BlblByb2ZpbGVSZXF1ZXN0LCBPcGVuUHJvZmlsZVJlc3BvbnNlLCBQbGF0Zm9ybUVmZmVjdER0bywKICAgIFJldmlzaW9uQ29tbWFuZFJlcXVlc3QsIFVwZGF0ZUhvc3REcmFmdFJlcXVlc3QsCn07JycnLAogICAgJycnICAgIEFwcHJvdmVKb2luUmVxdWVzdCwgSG9zdERyYWZ0VmFsaWRhdGlvbkR0bywgSm9pblJlcXVlc3RDb21tYW5kUmVxdWVzdCwKICAgIExpc3RlbmVyQ29tbWFuZFJlcXVlc3QsIE9wZW5Qcm9maWxlUmVxdWVzdCwgT3BlblByb2ZpbGVSZXNwb25zZSwgUGxhdGZvcm1FZmZlY3REdG8sCiAgICBSZXZpc2lvbkNvbW1hbmRSZXF1ZXN0LCBVcGRhdGVIb3N0RHJhZnRSZXF1ZXN0LAp9OycnJywKKQ==').decode('utf-8')
-          if patch.count(bindings_old) != 1:
-              raise SystemExit('stale bindings anchor was not unique')
-          patch = patch.replace(bindings_old, bindings_new)
-
-          start_marker = '# Patch network ownership and clock propagation.'
-          end_marker = '# Route transport and storage notifications to owned workers.'
-          if patch.count(start_marker) != 1 or patch.count(end_marker) != 1:
-              raise SystemExit('ownership replacement markers were not unique')
-          before, tail = patch.split(start_marker, 1)
-          _, after = tail.split(end_marker, 1)
-          current_layout = base64.b64decode('IyBQYXRjaCBjdXJyZW50IG5ldHdvcmsgb3duZXJzaGlwIGFuZCBjbG9jayBwcm9wYWdhdGlvbi4KcmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9wbGF0Zm9ybS9ob3N0X3RyYW5zcG9ydC5ycyIsCiAgICAnJydwdWIoY3JhdGUpIHN0cnVjdCBIb3N0VHJhbnNwb3J0U3RhdHVzIHsKICAgIHB1YihjcmF0ZSkgcnVubmluZzogYm9vbCwKICAgIHB1YihjcmF0ZSkgbGFzdF9lcnJvcjogT3B0aW9uPFN0cmluZz4sCn0KCiNbZGVyaXZlKERlYnVnKV0nJycsCiAgICAnJydwdWIoY3JhdGUpIHN0cnVjdCBIb3N0VHJhbnNwb3J0U3RhdHVzIHsKICAgIHB1YihjcmF0ZSkgcnVubmluZzogYm9vbCwKICAgIHB1YihjcmF0ZSkgbGFzdF9lcnJvcjogT3B0aW9uPFN0cmluZz4sCn0KCnB1YihjcmF0ZSkgc3RydWN0IEFjdGl2ZUhvc3RTZXNzaW9uU25hcHNob3QgewogICAgcHViKGNyYXRlKSBhZHZlcnRpc2VtZW50OiBTZXNzaW9uQWR2ZXJ0aXNlbWVudCwKICAgIHB1YihjcmF0ZSkgZW5kcG9pbnQ6IHNpbGVudF9kaXNjb19jb3JlOjpydW50aW1lOjpOZXR3b3JrRW5kcG9pbnQsCiAgICBwdWIoY3JhdGUpIHdvcmtlcl9ydW5uaW5nOiBib29sLAogICAgcHViKGNyYXRlKSBsYXN0X2Vycm9yOiBPcHRpb248U3RyaW5nPiwKICAgIHB1YihjcmF0ZSkgb2JzZXJ2ZWRfYXRfbXM6IHU2NCwKfQoKI1tkZXJpdmUoRGVidWcpXScnJywKKQpyZXBsYWNlX29uY2UoCiAgICAiZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL25ldHdvcmsucnMiLAogICAgJycndXNlIHNpbGVudF9kaXNjb19jb3JlOjpydW50aW1lOjp7Q29yZUFjdG9ySGFuZGxlLCBOZXR3b3JrRW5kcG9pbnQsIFNlc3Npb25BZHZlcnRpc2VtZW50fTsnJycsCiAgICAnJyd1c2Ugc2lsZW50X2Rpc2NvX2NvcmU6OnJ1bnRpbWU6OnsKICAgIENvcmVBY3RvckhhbmRsZSwgTmV0d29ya0VuZHBvaW50LCBTZXNzaW9uQWR2ZXJ0aXNlbWVudCwgVHJhbnNwb3J0RWZmZWN0LAp9OycnJywKKQpyZXBsYWNlX29uY2UoCiAgICAiZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL25ldHdvcmsucnMiLAogICAgJycnICAgIEhvc3RUcmFuc3BvcnRDb25maWcsIFN5c3RlbVRyYW5zcG9ydENsb2NrLCBUcmFuc3BvcnRGYWN0b3J5LCBwcm9kdWN0aW9uX3RyYW5zcG9ydF9mYWN0b3J5LAp9OycnJywKICAgICcnJyAgICBIb3N0VHJhbnNwb3J0Q29uZmlnLCBTeXN0ZW1UcmFuc3BvcnRDbG9jaywgVHJhbnNwb3J0Q2xvY2ssIFRyYW5zcG9ydEZhY3RvcnksCiAgICBwcm9kdWN0aW9uX3RyYW5zcG9ydF9mYWN0b3J5LAp9OycnJywKKQpyZXBsYWNlX29uY2UoCiAgICAiZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL25ldHdvcmsucnMiLAogICAgJycnc3RydWN0IEFjdGl2ZUJpbmRpbmcgewogICAgc2VsZWN0ZWQ6IFNlbGVjdGVkQWRkcmVzcywKICAgIHJ1bnRpbWU6IERlc2t0b3BIb3N0VHJhbnNwb3J0UnVudGltZSwKfScnJywKICAgICcnJ3N0cnVjdCBBY3RpdmVCaW5kaW5nIHsKICAgIHNlbGVjdGVkOiBTZWxlY3RlZEFkZHJlc3MsCiAgICBhZHZlcnRpc2VtZW50OiBTZXNzaW9uQWR2ZXJ0aXNlbWVudCwKICAgIHJ1bnRpbWU6IERlc2t0b3BIb3N0VHJhbnNwb3J0UnVudGltZSwKfScnJywKKQpyZXBsYWNlX29uY2UoCiAgICAiZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL25ldHdvcmsucnMiLAogICAgJycnICAgICAgICBsZXQgbm9kZSA9IHNlbGYKICAgICAgICAgICAgLnRyYW5zcG9ydF9mYWN0b3J5CiAgICAgICAgICAgIC5iaW5kX2hvc3QoY29uZmlnLCBBcmM6Om5ldyhTeXN0ZW1UcmFuc3BvcnRDbG9jazo6ZGVmYXVsdCgpKSkKICAgICAgICAgICAgLm1hcF9lcnIofGVycm9yfCBEZXNrdG9wTmV0d29ya0Vycm9yOjp0cmFuc3BvcnQoJmVycm9yKSk/OycnJywKICAgICcnJyAgICAgICAgbGV0IGNsb2NrOiBBcmM8ZHluIFRyYW5zcG9ydENsb2NrPiA9CiAgICAgICAgICAgIEFyYzo6bmV3KFN5c3RlbVRyYW5zcG9ydENsb2NrOjpkZWZhdWx0KCkpOwogICAgICAgIGxldCBub2RlID0gc2VsZgogICAgICAgICAgICAudHJhbnNwb3J0X2ZhY3RvcnkKICAgICAgICAgICAgLmJpbmRfaG9zdChjb25maWcsIEFyYzo6Y2xvbmUoJmNsb2NrKSkKICAgICAgICAgICAgLm1hcF9lcnIofGVycm9yfCBEZXNrdG9wTmV0d29ya0Vycm9yOjp0cmFuc3BvcnQoJmVycm9yKSk/OycnJywKKQpyZXBsYWNlX29uY2UoCiAgICAiZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL25ldHdvcmsucnMiLAogICAgJycnICAgICAgICBsZXQgcnVudGltZSA9IERlc2t0b3BIb3N0VHJhbnNwb3J0UnVudGltZTo6c3RhcnQobm9kZSwgYWR2ZXJ0aXNlbWVudC5jbG9uZSgpLCBzaW5rKT87CiAgICAgICAgc3RhdGUuYWN0aXZlID0gU29tZShBY3RpdmVCaW5kaW5nIHsgc2VsZWN0ZWQsIHJ1bnRpbWUgfSk7JycnLAogICAgJycnICAgICAgICBsZXQgcnVudGltZSA9IERlc2t0b3BIb3N0VHJhbnNwb3J0UnVudGltZTo6c3RhcnQoCiAgICAgICAgICAgIG5vZGUsCiAgICAgICAgICAgIGFkdmVydGlzZW1lbnQuY2xvbmUoKSwKICAgICAgICAgICAgc2luaywKICAgICAgICAgICAgY2xvY2ssCiAgICAgICAgKT87CiAgICAgICAgc3RhdGUuYWN0aXZlID0gU29tZShBY3RpdmVCaW5kaW5nIHsKICAgICAgICAgICAgc2VsZWN0ZWQsCiAgICAgICAgICAgIGFkdmVydGlzZW1lbnQ6IGFkdmVydGlzZW1lbnQuY2xvbmUoKSwKICAgICAgICAgICAgcnVudGltZSwKICAgICAgICB9KTsnJycsCikKcmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9wbGF0Zm9ybS9uZXR3b3JrLnJzIiwKICAgICcnJyAgICAgICAgc3RhdGUKICAgICAgICAgICAgLmFjdGl2ZQogICAgICAgICAgICAuYXNfcmVmKCkKICAgICAgICAgICAgLm1hcCh8YWN0aXZlfCBhY3RpdmUucnVudGltZS5zbmFwc2hvdCgpLm1hcF9lcnIoRGVza3RvcE5ldHdvcmtFcnJvcjo6ZHRvKSkKICAgICAgICAgICAgLnRyYW5zcG9zZSgpJycnLAogICAgJycnICAgICAgICBsZXQgU29tZShhY3RpdmUpID0gc3RhdGUuYWN0aXZlLmFzX3JlZigpIGVsc2UgewogICAgICAgICAgICByZXR1cm4gT2soTm9uZSk7CiAgICAgICAgfTsKICAgICAgICBsZXQgc3RhdHVzID0gYWN0aXZlCiAgICAgICAgICAgIC5ydW50aW1lCiAgICAgICAgICAgIC5zdGF0dXMoKQogICAgICAgICAgICAubWFwX2VycihEZXNrdG9wTmV0d29ya0Vycm9yOjpkdG8pPzsKICAgICAgICBPayhTb21lKEFjdGl2ZUhvc3RTZXNzaW9uU25hcHNob3QgewogICAgICAgICAgICBhZHZlcnRpc2VtZW50OiBhY3RpdmUuYWR2ZXJ0aXNlbWVudC5jbG9uZSgpLAogICAgICAgICAgICBlbmRwb2ludDogYWN0aXZlLnJ1bnRpbWUuZW5kcG9pbnQoKSwKICAgICAgICAgICAgd29ya2VyX3J1bm5pbmc6IHN0YXR1cy5ydW5uaW5nLAogICAgICAgICAgICBsYXN0X2Vycm9yOiBzdGF0dXMubGFzdF9lcnJvciwKICAgICAgICAgICAgb2JzZXJ2ZWRfYXRfbXM6IGFjdGl2ZS5ydW50aW1lLm9ic2VydmVkX2F0KCkuZ2V0KCksCiAgICAgICAgfSkpJycnLAopCnJlcGxhY2Vfb25jZSgKICAgICJkZXNrdG9wL3NyYy10YXVyaS9zcmMvcGxhdGZvcm0vbmV0d29yay5ycyIsCiAgICAnJycgICAgcHViKGNyYXRlKSBmbiBzaHV0ZG93bigmc2VsZikgLT4gUmVzdWx0PCgpLCBDb3JlRXJyb3I+IHsnJycsCiAgICAnJycgICAgcHViKGNyYXRlKSBmbiBkaXNwYXRjaF90cmFuc3BvcnRfZWZmZWN0KAogICAgICAgICZzZWxmLAogICAgICAgIGVmZmVjdDogVHJhbnNwb3J0RWZmZWN0LAogICAgKSAtPiBSZXN1bHQ8KCksIENvcmVFcnJvcj4gewogICAgICAgIGxldCBvcGVyYXRpb25faWQgPSBlZmZlY3Qub3BlcmF0aW9uX2lkLmNsb25lKCk7CiAgICAgICAgbGV0IHN0YXRlID0gc2VsZi5zdGF0ZS5sb2NrKCkubWFwX2Vycih8X3wgewogICAgICAgICAgICBEZXNrdG9wTmV0d29ya0Vycm9yOjpwb2lzb25lZCgpLmNvcmVfZXJyb3IoU29tZShvcGVyYXRpb25faWQuY2xvbmUoKSkpCiAgICAgICAgfSk/OwogICAgICAgIGxldCBTb21lKGFjdGl2ZSkgPSBzdGF0ZS5hY3RpdmUuYXNfcmVmKCkgZWxzZSB7CiAgICAgICAgICAgIHJldHVybiBFcnIoCiAgICAgICAgICAgICAgICBEZXNrdG9wTmV0d29ya0Vycm9yOjp1bmF2YWlsYWJsZSgKICAgICAgICAgICAgICAgICAgICAidHJhbnNwb3J0IGVmZmVjdCByZXF1aXJlcyBhbiBhY3RpdmUgZGVza3RvcCBob3N0IHNlc3Npb24iLAogICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgLmNvcmVfZXJyb3IoU29tZShvcGVyYXRpb25faWQpKSwKICAgICAgICAgICAgKTsKICAgICAgICB9OwogICAgICAgIGFjdGl2ZS5ydW50aW1lLmRpc3BhdGNoKGVmZmVjdCkKICAgIH0KCiAgICBwdWIoY3JhdGUpIGZuIHNodXRkb3duKCZzZWxmKSAtPiBSZXN1bHQ8KCksIENvcmVFcnJvcj4geycnJywKKQo=').decode('utf-8')
-          patch_path.write_text(before + current_layout + chr(10) + end_marker + after, encoding='utf-8')
-          PY
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('.github/block23-validation.sh')
-          content = path.read_text(encoding='utf-8')
-          old = "cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py\npython3 .github/apply-block23.py\n"
-          new = "python3 .github/apply-block23.py\n"
-          if content.count(old) != 1:
-              raise SystemExit('validator payload execution preamble was not unique')
-          path.write_text(content.replace(old, new), encoding='utf-8')
-          PY
-
-      - name: Apply, validate, document, and publish Block 23
-        run: bash .github/block23-validation.sh
-
-      - name: Publish success
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 passed in Actions run $GITHUB_RUN_ID and committed $BLOCK23_COMMIT directly to master. Delivery-first approval/rejection/removal, trusted-device persistence, listener detail UI, full Rust/desktop/Linux/Android/ABI/instrumentation gates, evidence, and cleanup all passed."
-
-      - name: Publish failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 validation failed in Actions run $GITHUB_RUN_ID against $BLOCK23_INPUT. No implementation or completion evidence was committed; continue directly on master from the first failed command."
+          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > /tmp/apply-block23.py
+          nl -ba /tmp/apply-block23.py | sed -n '1400,1535p'
