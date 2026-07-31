@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { createAppStore } from "./app/store";
-import type { CoreNotificationDto, CoreSnapshotDto } from "./core/generated/desktop-bindings";
+import type {
+  CoreNotificationDto,
+  CoreSnapshotDto,
+  NetworkInterfaceSnapshotDto,
+} from "./core/generated/desktop-bindings";
 
 const {
   ensureDesktopBridgeMock,
@@ -15,6 +19,8 @@ const {
   selectHostRoleMock,
   updateHostDraftMock,
   createHostSessionMock,
+  getHostNetworkStateMock,
+  setHostNetworkPreferenceMock,
 } = vi.hoisted(() => ({
   ensureDesktopBridgeMock: vi.fn(),
   subscribeDesktopNotificationsMock: vi.fn(),
@@ -22,6 +28,8 @@ const {
   selectHostRoleMock: vi.fn(),
   updateHostDraftMock: vi.fn(),
   createHostSessionMock: vi.fn(),
+  getHostNetworkStateMock: vi.fn(),
+  setHostNetworkPreferenceMock: vi.fn(),
 }));
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
@@ -37,6 +45,8 @@ vi.mock("./core/client", async () => {
     selectHostRole: selectHostRoleMock,
     updateHostDraft: updateHostDraftMock,
     createHostSession: createHostSessionMock,
+    getHostNetworkState: getHostNetworkStateMock,
+    setHostNetworkPreference: setHostNetworkPreferenceMock,
   };
 });
 
@@ -77,6 +87,31 @@ const snapshot: CoreSnapshotDto = {
   shuttingDown: false,
 };
 
+const networkCandidate = {
+  interfaceName: "enp1s0",
+  interfaceIndex: 2,
+  address: "192.168.1.20",
+  prefixLength: 24,
+  classification: "private_lan" as const,
+  isDefaultRoute: true,
+  isActive: true,
+  isPhysical: true,
+  selectable: true,
+  rejectionReason: null,
+};
+
+const networkSnapshot: NetworkInterfaceSnapshotDto = {
+  preference: { mode: "automatic", interfaceName: null, address: null },
+  candidates: [networkCandidate],
+  automaticSelection: networkCandidate,
+  resolvedSelection: networkCandidate,
+  requiresExplicitSelection: false,
+  selectionError: null,
+  activeBinding: null,
+  activeBindingValid: false,
+  interfaceChange: null,
+};
+
 const connection = {
   connectionKind: "opened" as const,
   profile: null,
@@ -105,6 +140,10 @@ describe("App", () => {
     selectHostRoleMock.mockReset();
     updateHostDraftMock.mockReset();
     createHostSessionMock.mockReset();
+    getHostNetworkStateMock.mockReset();
+    setHostNetworkPreferenceMock.mockReset();
+    getHostNetworkStateMock.mockResolvedValue(networkSnapshot);
+    setHostNetworkPreferenceMock.mockResolvedValue(networkSnapshot);
     subscribeDesktopNotificationsMock.mockImplementation(
       (listener: (notification: CoreNotificationDto) => void) => {
         notificationListener = listener;
