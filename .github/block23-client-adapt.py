@@ -70,5 +70,16 @@ export async function endHostSession(expectedRevision: string): Promise<CommandR
     ),
 ]
 source += '\n# Current frontend client compatibility patches.\n' + ''.join(patches)
+source += (
+    '\n# Current host-session DTO import compatibility patch.\n'
+    + "replace_once('desktop/src-tauri/src/host_session_dto.rs', "
+    + repr('use crate::platform::network::ActiveHostSessionSnapshot;')
+    + ', '
+    + repr('use crate::platform::host_transport::ActiveHostSessionSnapshot;')
+    + ')\n'
+)
 PAYLOAD.write_text(source, encoding='utf-8')
-print('adapted Block 23 frontend client payload: removed 3 stale calls and appended 3 current-layout patches')
+print(
+    'adapted Block 23 frontend client payload: removed 3 stale calls, '
+    'appended 3 current-layout client patches, and corrected the host-session DTO import'
+)
