@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Trigger dependency-first validation.
 test -f .github/apply-block23.py
 python3 .github/apply-block23.py
 rm .github/apply-block23.py
