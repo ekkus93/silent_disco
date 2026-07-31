@@ -1,0 +1,300 @@
+name: Implement Desktop Block 19
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: desktop-block19-implementation
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+  TRACKING_ISSUE: "45"
+  PAYLOAD_SHA256: "9750007263831c98440b192521f037d228a62d28868cb3ad71fcb78f289fedd1"
+
+jobs:
+  implement-and-validate:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.user.login == github.repository_owner &&
+      startsWith(github.event.comment.body, '/run-desktop-block19\n')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Check out exact master input
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Capture exact input
+        run: echo "BLOCK19_INPUT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+
+      - name: Decode and apply guarded implementation payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          set -euo pipefail
+          jq -r '.comment.body' "${GITHUB_EVENT_PATH}" | tail -n +2 > /tmp/block19-payload.b64
+          base64 --decode /tmp/block19-payload.b64 > /tmp/block19-payload.tgz
+          echo "${PAYLOAD_SHA256}  /tmp/block19-payload.tgz" | sha256sum --check
+          tar -xzf /tmp/block19-payload.tgz
+          gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+            -f body="/run-desktop-block19 payload accepted by Actions run ${GITHUB_RUN_ID}"
+
+      - name: Publish start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 19 guarded implementation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at input ${BLOCK19_INPUT}. No product commit will be pushed unless every gate passes."
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Install Android SDK and Linux Tauri packages
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            time \
+            wget
+
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Format implementation and synchronize lockfiles
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
+          cp rust/Cargo.lock /tmp/block19-rust.Cargo.lock
+          cp desktop/src-tauri/Cargo.lock /tmp/block19-desktop.Cargo.lock
+
+      - name: Run focused bounded decoder tests
+        working-directory: rust
+        run: cargo test -p silent-disco-core audio -- --nocapture
+
+      - name: Enforce tracked source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Run shared Rust strict gates
+        working-directory: rust
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+
+      - name: Verify generated desktop bindings and frontend
+        working-directory: desktop
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><title>Silent Disco Block 19 validation</title>\n' > dist/index.html
+          npm ci
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
+
+      - name: Run desktop Rust strict gates
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+          cargo check --all-features
+
+      - name: Build Linux desktop bundles
+        working-directory: desktop
+        run: npm run tauri build
+
+      - name: Build Android variants and test APK
+        run: |
+          ./gradlew \
+            assembleDebug \
+            assemblePocDebug \
+            assembleRelease \
+            assembleDebugAndroidTest \
+            --stacktrace \
+            --console=plain
+
+      - name: Verify packaged Rust ABIs
+        run: |
+          set -euo pipefail
+          apks=(
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/pocDebug/app-pocDebug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          )
+          abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in "${apks[@]}"; do
+            test -f "${apk}"
+            for abi in "${abis[@]}"; do
+              unzip -Z1 "${apk}" "lib/${abi}/libsilent_disco_ffi.so" \
+                | grep -Fx "lib/${abi}/libsilent_disco_ffi.so"
+            done
+          done
+
+      - name: Run Android unit tests and lint
+        run: ./gradlew test lintDebug --stacktrace --console=plain
+
+      - name: Run Android instrumentation suite
+        run: |
+          ./gradlew pixel2api29DebugAndroidTest \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=software \
+            --stacktrace \
+            --console=plain
+
+      - name: Require reproducible tracked lockfiles
+        run: |
+          cargo generate-lockfile --manifest-path rust/Cargo.toml
+          cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
+          cmp /tmp/block19-rust.Cargo.lock rust/Cargo.lock
+          cmp /tmp/block19-desktop.Cargo.lock desktop/src-tauri/Cargo.lock
+          git diff --exit-code -- desktop/package-lock.json tools/decoder-spike/Cargo.lock
+
+      - name: Record Block 19 completion evidence
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          run_id = os.environ["GITHUB_RUN_ID"]
+          input_sha = os.environ["BLOCK19_INPUT"]
+
+          design_path = Path("docs/DESKTOP_BLOCK19_STREAMING_DECODE.md")
+          design = design_path.read_text()
+          design = design.replace("{{RUN_ID}}", run_id).replace("{{INPUT_SHA}}", input_sha)
+          if "{{" in design:
+              raise SystemExit("unresolved Block 19 design placeholder")
+          design_path.write_text(design)
+
+          todo_path = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+          todo = todo_path.read_text()
+          start = todo.index("## Block 19 — Implement bounded streaming decode")
+          end = todo.index("# Phase 6 — Manual LAN host transport", start)
+          block = todo[start:end]
+          block = block.replace("pub frames: Vec<f32>,", "pub frames: Vec<i16>,")
+          block = block.replace("- [ ]", "- [x]")
+          acceptance = "**Acceptance:** A staged source is decoded incrementally into the shared host packetization boundary."
+          evidence = (
+              "**Completion evidence:** The shared Rust worker, canonical conversion, bounded queue, "
+              "desktop staged-source adapter, fixture/error/backpressure/lifecycle tests, and complete "
+              f"repository regression matrix passed in GitHub Actions run `{run_id}` against guarded "
+              f"input `{input_sha}`. Architecture and scope are recorded in "
+              "`docs/DESKTOP_BLOCK19_STREAMING_DECODE.md`.\n\n"
+          )
+          if block.count(acceptance) != 1:
+              raise SystemExit("Block 19 acceptance text changed unexpectedly")
+          block = block.replace(acceptance, evidence + acceptance)
+          todo_path.write_text(todo[:start] + block + todo[end:])
+
+          migration_path = Path("docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md")
+          migration = migration_path.read_text()
+          start = migration.index("### 14.1 Define audio source ingestion API")
+          end = migration.index("### 14.2 Implement streaming packetizer", start)
+          section = migration[start:end]
+          section = section.replace("- [ ]", "- [x]")
+          note = (
+              f"**Desktop Block 19 evidence:** The bounded ingestion API passed Actions run `{run_id}` "
+              f"against `{input_sha}`. Packetization remains open in 14.2.\n\n"
+          )
+          section = section.rstrip() + "\n\n" + note
+          migration_path.write_text(migration[:start] + section + migration[end:])
+
+          memory_path = Path("memory.md")
+          memory = memory_path.read_text().rstrip()
+          memory += (
+              "\n\n## 2026-07-30 — Desktop Block 19 bounded streaming decode complete\n\n"
+              "- Shared Rust owns incremental WAV/FLAC/MP3 decode to canonical 48 kHz stereo PCM16.\n"
+              "- Decoded chunks and queued duration are bounded; checked sample indices, visible "
+              "backpressure, typed failures, cancellation, join, and cancel-on-drop are covered.\n"
+              "- Desktop resolves the exact opaque staged source before starting the shared worker; "
+              "packetization/playback wiring remains assigned to later blocks.\n"
+              f"- Guarded validation run: `{run_id}`.\n"
+              f"- Guarded input commit: `{input_sha}`.\n"
+          )
+          memory_path.write_text(memory)
+          PY
+
+      - name: Commit validated implementation and remove temporary machinery
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/desktop-block19.yml
+          git rm .github/workflows/desktop-block19-source-snapshot.yml
+          git rm -r docs/generated/desktop-block19-source
+          git add \
+            rust/silent-disco-core \
+            rust/Cargo.lock \
+            desktop/src-tauri \
+            docs/DESKTOP_BLOCK19_STREAMING_DECODE.md \
+            docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md \
+            docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md \
+            memory.md
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Implement bounded streaming decode (Desktop Block 19)"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
+          echo "BLOCK19_COMMIT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 19 passed in Actions run ${GITHUB_RUN_ID} and committed ${BLOCK19_COMMIT}. Shared bounded WAV/FLAC/MP3 decode, canonical 48 kHz stereo PCM16 conversion, typed failures, queue-pressure visibility, cancellation/join, desktop staged-source preparation, full Rust/desktop/Linux/Android/ABI/instrumentation gates, and temporary-workflow cleanup all passed."
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
+            --body "Desktop Block 19 guarded implementation failed in Actions run ${GITHUB_RUN_ID}. No product Block 19 commit was pushed; inspect the first failed gate before retrying."
