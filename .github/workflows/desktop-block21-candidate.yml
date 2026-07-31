@@ -41,78 +41,15 @@ jobs:
 
       - name: Materialize checksum-verified candidate
         run: |
-          set -euo pipefail
-          cat .github/desktop-block21-source/part-*.b64 | base64 --decode > /tmp/block21.tar.gz
-          echo "$PAYLOAD_SHA256  /tmp/block21.tar.gz" | sha256sum --check --strict
-          tar -xzf /tmp/block21.tar.gz
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path: str, old: str, new: str) -> None:
-              target = Path(path)
-              source = target.read_text()
-              count = source.count(old)
-              if count != 1:
-                  raise SystemExit(f"candidate repair anchor count {count}: {path}: {old[:80]!r}")
-              target.write_text(source.replace(old, new))
-
-          replace_once(
-              "desktop/src-tauri/src/platform/network.rs",
-              "        pub(super) kind: NetworkErrorKind,",
-              "        kind: NetworkErrorKind,",
-          )
-          replace_once(
-              "desktop/src-tauri/src/platform/network_tests.rs",
-              """use super::network::{
-              AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkAddressClassDto,
-              NetworkErrorKind, NetworkInterfaceProvider, SetNetworkBindPreferenceRequest, TestHostPorts,
-          };
-          """,
-              """use super::network::{
-              AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkErrorKind,
-              NetworkInterfaceProvider, TestHostPorts,
-          };
-          use super::network_dto::{NetworkAddressClassDto, SetNetworkBindPreferenceRequest};
-          """,
-          )
-
-          apply = Path(".github/apply-block21.py")
-          source = apply.read_text()
-          start = source.index("# Register the platform modules and tests.")
-          end = source.index("# Platform errors must preserve dynamic bind/interface details.", start)
-          registration = r'''# Register the platform modules and tests.
-          insert_after(
-              "desktop/src-tauri/src/platform/mod.rs",
-              "pub mod identity;\n",
-              "pub mod network;\npub mod network_dto;\n",
-          )
-          insert_after(
-              "desktop/src-tauri/src/platform/mod.rs",
-              '#[cfg(test)]\nmod file_picker_tests;\n',
-              '#[cfg(test)]\nmod network_tests;\n',
-          )
-
-          '''
-          source = source[:start] + registration + source[end:]
-          start = source.index("# Register commands and module contract.")
-          end = source.index("# Include new DTOs in deterministic bindings.", start)
-          command_registration = r"""# Register commands and module contract.
-          lib = "desktop/src-tauri/src/lib.rs"
-          replace_once(
-              lib,
-              '''            host_commands::create_host_session,
-              app_state::attach_notifications,''',
-              '''            host_commands::create_host_session,
-              host_commands::get_host_network_state,
-              host_commands::set_host_network_preference,
-              app_state::attach_notifications,''',
-          )
-
-          """
-          source = source[:start] + command_registration + source[end:]
-          apply.write_text(source)
-          PY
-          python3 .github/apply-block21.py
+          set -o pipefail
+          {
+            set -euo pipefail
+            cat .github/desktop-block21-source/part-*.b64 | base64 --decode > /tmp/block21.tar.gz
+            echo "$PAYLOAD_SHA256  /tmp/block21.tar.gz" | sha256sum --check --strict
+            tar -xzf /tmp/block21.tar.gz
+            python3 .github/prepare-block21.py
+            python3 .github/apply-block21.py
+          } 2>&1 | tee /tmp/block21-materialize.log
 
       - name: Install toolchains and Linux dependencies
         run: |
@@ -163,7 +100,7 @@ jobs:
           set -euo pipefail
           git rm .github/workflows/desktop-block21-candidate.yml
           git rm -r .github/desktop-block21-source
-          git rm .github/apply-block21.py
+          git rm .github/apply-block21.py .github/prepare-block21.py
           git add \
             desktop/src-tauri/Cargo.toml \
             desktop/src-tauri/Cargo.lock \
@@ -195,8 +132,9 @@ jobs:
             echo "Desktop Block 21 candidate validation failed in Actions run $GITHUB_RUN_ID against $BLOCK21_INPUT. No source candidate was committed."
             echo
             echo '```text'
-            tail -120 /tmp/block21-clippy.log 2>/dev/null || true
-            tail -160 /tmp/block21-tests.log 2>/dev/null || true
+            tail -100 /tmp/block21-materialize.log 2>/dev/null || true
+            tail -160 /tmp/block21-clippy.log 2>/dev/null || true
+            tail -180 /tmp/block21-tests.log 2>/dev/null || true
             echo '```'
           } > /tmp/block21-failure.md
           gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/block21-failure.md
