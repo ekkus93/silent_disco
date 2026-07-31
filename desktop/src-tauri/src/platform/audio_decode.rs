@@ -17,12 +17,10 @@ impl PreparedAudioSource {
         &self.descriptor
     }
 
-    #[must_use]
     pub(crate) fn decoder(&self) -> &StreamingDecodeHandle {
         &self.decoder
     }
 
-    #[must_use]
     pub(crate) fn into_decoder(self) -> StreamingDecodeHandle {
         self.decoder
     }
@@ -52,14 +50,14 @@ pub(crate) fn prepare_staged_audio_source(
         ));
     }
     let decoder = StreamingDecodeHandle::open(source.canonical_path(), config)
-        .map_err(map_shared_decode_error)?;
+        .map_err(|error| map_shared_decode_error(&error))?;
     Ok(PreparedAudioSource {
         descriptor: descriptor.clone(),
         decoder,
     })
 }
 
-fn map_shared_decode_error(error: DecodeError) -> DesktopErrorDto {
+fn map_shared_decode_error(error: &DecodeError) -> DesktopErrorDto {
     let (code, retryable) = match error.kind {
         DecodeErrorKind::InvalidConfiguration => {
             ("desktop.audio_decode.invalid_configuration", false)
