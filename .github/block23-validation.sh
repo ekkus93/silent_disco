@@ -4,11 +4,7 @@ set -euo pipefail
 test -f .github/apply-block23.py
 python3 .github/apply-block23.py
 rm .github/apply-block23.py
-
-echo '=== BLOCK23 GENERATED STORAGE EFFECT RUNNER TESTS ==='
-cat desktop/src-tauri/src/platform/storage_effect_runner_tests.rs
-echo '=== END BLOCK23 GENERATED STORAGE EFFECT RUNNER TESTS ==='
-exit 86
+python3 .github/block23-storage-runner-adapt.py
 
 rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
 rustup default "${RUST_VERSION}"
@@ -128,6 +124,8 @@ git rm --ignore-unmatch \
   .github/workflows/desktop-block23-inspect.yml \
   .github/block23-adapt.py \
   .github/block23-client-adapt.py \
+  .github/block23-storage-runner-adapt.py \
+  .github/block23-storage-inspect.py \
   .github/block23-inspect-payload.py \
   .github/block23-validation.sh \
   .github/block23-complete.py \
@@ -164,6 +162,8 @@ allowed = {
     '.github/workflows/desktop-block23-inspect.yml',
     '.github/block23-adapt.py',
     '.github/block23-client-adapt.py',
+    '.github/block23-storage-runner-adapt.py',
+    '.github/block23-storage-inspect.py',
     '.github/block23-inspect-payload.py',
     '.github/block23-validation.sh',
     '.github/block23-complete.py',
