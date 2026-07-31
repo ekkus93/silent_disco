@@ -5,51 +5,66 @@ on:
     types: [created]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
-  snapshot:
+  apply:
     if: >-
       github.event.issue.number == 45 &&
-      github.event.comment.body == '/snapshot-desktop-block23-v2'
+      github.event.comment.body == '/apply-desktop-block23-tauri-clippy-adapter-v1'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
-      - name: Apply current Block 23 payload
-        run: |
-          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
-          python3 .github/block23-adapt.py
-          python3 .github/block23-client-adapt.py
-          mkdir -p desktop/dist
-          printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
-          python3 .github/apply-block23.py
-          rm .github/apply-block23.py
-          python3 .github/block23-storage-runner-adapt.py
-      - name: Package relevant generated sources
-        run: |
-          tar -czf /tmp/block23-generated-sources.tar.gz \
-            desktop/src-tauri/src/host_session_dto.rs \
-            desktop/src-tauri/src/platform/host_transport.rs \
-            desktop/src-tauri/src/platform/host_transport_events.rs \
-            desktop/src-tauri/src/platform/network_error.rs \
-            desktop/src-tauri/src/platform/storage_effect_runner.rs \
-            desktop/src/App.test.tsx \
-            desktop/src/screens/HostSessionScreen.tsx \
-            desktop/src/screens/HostSessionScreen.test.tsx \
-            desktop/src/screens/ListenerDetailScreen.tsx \
-            desktop/src/core/generated/desktop-bindings.ts
-      - uses: actions/upload-artifact@v4
-        with:
-          name: block23-generated-sources
-          path: /tmp/block23-generated-sources.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-      - name: Announce snapshot
+          fetch-depth: 0
+      - name: Wire deterministic adapter and restore snapshot workflow
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue comment 45 --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 generated-source snapshot published by Actions run $GITHUB_RUN_ID against $(git rev-parse HEAD). No implementation changes were committed."
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          invocation_old = "python3 .github/block23-storage-runner-adapt.py\n"
+          invocation_new = invocation_old + "python3 .github/block23-tauri-clippy-adapt.py\n"
+          for name in (
+              ".github/block23-validation.sh",
+              ".github/workflows/desktop-block23-diagnostics.yml",
+              ".github/workflows/desktop-block23-frontend-diagnostics.yml",
+          ):
+              path = Path(name)
+              text = path.read_text(encoding="utf-8")
+              count = text.count(invocation_old)
+              if count != 1:
+                  raise SystemExit(f"{name}: expected one adapter invocation anchor, found {count}")
+              path.write_text(text.replace(invocation_old, invocation_new, 1), encoding="utf-8")
+
+          validation = Path(".github/block23-validation.sh")
+          text = validation.read_text(encoding="utf-8")
+          cleanup_old = "  .github/block23-storage-runner-adapt.py \\\n"
+          cleanup_new = cleanup_old + "  .github/block23-tauri-clippy-adapt.py \\\n"
+          if text.count(cleanup_old) != 1:
+              raise SystemExit("validation cleanup anchor is not unique")
+          text = text.replace(cleanup_old, cleanup_new, 1)
+          allowed_old = "    '.github/block23-storage-runner-adapt.py',\n"
+          allowed_new = allowed_old + "    '.github/block23-tauri-clippy-adapt.py',\n"
+          if text.count(allowed_old) != 1:
+              raise SystemExit("validation allowed-path anchor is not unique")
+          text = text.replace(allowed_old, allowed_new, 1)
+          validation.write_text(text, encoding="utf-8")
+
+          Path(".github/workflows/desktop-block23-tauri-clippy-diagnostic.yml").unlink()
+          snapshot = base64.b64decode("bmFtZTogRGVza3RvcCBCbG9jayAyMyBzb3VyY2Ugc25hcHNob3QKCm9uOgogIGlzc3VlX2NvbW1lbnQ6CiAgICB0eXBlczogW2NyZWF0ZWRdCgpwZXJtaXNzaW9uczoKICBjb250ZW50czogcmVhZAogIGlzc3Vlczogd3JpdGUKCmpvYnM6CiAgc25hcHNob3Q6CiAgICBpZjogPi0KICAgICAgZ2l0aHViLmV2ZW50Lmlzc3VlLm51bWJlciA9PSA0NSAmJgogICAgICBnaXRodWIuZXZlbnQuY29tbWVudC5ib2R5ID09ICcvc25hcHNob3QtZGVza3RvcC1ibG9jazIzLXYyJwogICAgcnVucy1vbjogdWJ1bnR1LTI0LjA0CiAgICBzdGVwczoKICAgICAgLSB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QHY0CiAgICAgICAgd2l0aDoKICAgICAgICAgIHJlZjogbWFzdGVyCiAgICAgIC0gbmFtZTogQXBwbHkgY3VycmVudCBCbG9jayAyMyBwYXlsb2FkCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBjYXQgLmdpdGh1Yi9hcHBseS1ibG9jazIzLnB5LnBhcnQtKiB8IGJhc2U2NCAtLWRlY29kZSB8IGd6aXAgLS1kZWNvbXByZXNzID4gLmdpdGh1Yi9hcHBseS1ibG9jazIzLnB5CiAgICAgICAgICBweXRob24zIC5naXRodWIvYmxvY2syMy1hZGFwdC5weQogICAgICAgICAgcHl0aG9uMyAuZ2l0aHViL2Jsb2NrMjMtY2xpZW50LWFkYXB0LnB5CiAgICAgICAgICBta2RpciAtcCBkZXNrdG9wL2Rpc3QKICAgICAgICAgIHByaW50ZiAnJXNcbicgJzwhZG9jdHlwZSBodG1sPjxodG1sPjxib2R5PjwvYm9keT48L2h0bWw+JyA+IGRlc2t0b3AvZGlzdC9pbmRleC5odG1sCiAgICAgICAgICBweXRob24zIC5naXRodWIvYXBwbHktYmxvY2syMy5weQogICAgICAgICAgcm0gLmdpdGh1Yi9hcHBseS1ibG9jazIzLnB5CiAgICAgICAgICBweXRob24zIC5naXRodWIvYmxvY2syMy1zdG9yYWdlLXJ1bm5lci1hZGFwdC5weQogICAgICAgICAgcHl0aG9uMyAuZ2l0aHViL2Jsb2NrMjMtdGF1cmktY2xpcHB5LWFkYXB0LnB5CiAgICAgIC0gbmFtZTogUGFja2FnZSByZWxldmFudCBnZW5lcmF0ZWQgc291cmNlcwogICAgICAgIHJ1bjogfAogICAgICAgICAgdGFyIC1jemYgL3RtcC9ibG9jazIzLWdlbmVyYXRlZC1zb3VyY2VzLnRhci5neiBcCiAgICAgICAgICAgIGRlc2t0b3Avc3JjLXRhdXJpL3NyYy9ob3N0X3Nlc3Npb25fZHRvLnJzIFwKICAgICAgICAgICAgZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL2hvc3RfdHJhbnNwb3J0LnJzIFwKICAgICAgICAgICAgZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL2hvc3RfdHJhbnNwb3J0X2V2ZW50cy5ycyBcCiAgICAgICAgICAgIGRlc2t0b3Avc3JjLXRhdXJpL3NyYy9wbGF0Zm9ybS9uZXR3b3JrX2Vycm9yLnJzIFwKICAgICAgICAgICAgZGVza3RvcC9zcmMtdGF1cmkvc3JjL3BsYXRmb3JtL3N0b3JhZ2VfZWZmZWN0X3J1bm5lci5ycyBcCiAgICAgICAgICAgIGRlc2t0b3Avc3JjL0FwcC50ZXN0LnRzeCBcCiAgICAgICAgICAgIGRlc2t0b3Avc3JjL3NjcmVlbnMvSG9zdFNlc3Npb25TY3JlZW4udHN4IFwKICAgICAgICAgICAgZGVza3RvcC9zcmMvc2NyZWVucy9Ib3N0U2Vzc2lvblNjcmVlbi50ZXN0LnRzeCBcCiAgICAgICAgICAgIGRlc2t0b3Avc3JjL3NjcmVlbnMvTGlzdGVuZXJEZXRhaWxTY3JlZW4udHN4IFwKICAgICAgICAgICAgZGVza3RvcC9zcmMvY29yZS9nZW5lcmF0ZWQvZGVza3RvcC1iaW5kaW5ncy50cwogICAgICAtIHVzZXM6IGFjdGlvbnMvdXBsb2FkLWFydGlmYWN0QHY0CiAgICAgICAgd2l0aDoKICAgICAgICAgIG5hbWU6IGJsb2NrMjMtZ2VuZXJhdGVkLXNvdXJjZXMKICAgICAgICAgIHBhdGg6IC90bXAvYmxvY2syMy1nZW5lcmF0ZWQtc291cmNlcy50YXIuZ3oKICAgICAgICAgIGlmLW5vLWZpbGVzLWZvdW5kOiBlcnJvcgogICAgICAgICAgcmV0ZW50aW9uLWRheXM6IDEKICAgICAgLSBuYW1lOiBBbm5vdW5jZSBzbmFwc2hvdAogICAgICAgIGVudjoKICAgICAgICAgIEdIX1RPS0VOOiAke3sgZ2l0aHViLnRva2VuIH19CiAgICAgICAgcnVuOiB8CiAgICAgICAgICBnaCBpc3N1ZSBjb21tZW50IDQ1IC0tcmVwbyAiJEdJVEhVQl9SRVBPU0lUT1JZIiBcCiAgICAgICAgICAgIC0tYm9keSAiRGVza3RvcCBCbG9jayAyMyBnZW5lcmF0ZWQtc291cmNlIHNuYXBzaG90IHB1Ymxpc2hlZCBieSBBY3Rpb25zIHJ1biAkR0lUSFVCX1JVTl9JRCBhZ2FpbnN0ICQoZ2l0IHJldi1wYXJzZSBIRUFEKS4gTm8gaW1wbGVtZW50YXRpb24gY2hhbmdlcyB3ZXJlIGNvbW1pdHRlZC4iCg==").decode("utf-8")
+          Path(".github/workflows/desktop-block23-source-snapshot.yml").write_text(snapshot, encoding="utf-8")
+          PY
+          git diff --check
+          git add -A
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Wire Block 23 Tauri clippy adapter"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test "$remote_sha" = "$(git rev-parse HEAD^)"
+          git push origin HEAD:master
+          gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body "Applied deterministic Block 23 Tauri clippy adapter wiring in commit $(git rev-parse HEAD)."
