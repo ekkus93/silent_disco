@@ -30,6 +30,14 @@ export type NetworkBindPreferenceDto = { mode: string, interfaceName: string | n
 
 export type SetNetworkBindPreferenceRequest = { mode: string, interfaceName: string | null, address: string | null, };
 
+export type HostConnectionDto = { hostAddress: string, controlPort: number, syncPort: number, audioPort: number, sessionId: string, protocolVersion: number, inviteCodeRequired: boolean, expiresAtMs: string | null, };
+
+export type PendingJoinRequestDto = { requestId: string, deviceId: string, displayName: string, trustState: string, inviteCodeValid: boolean, receivedAtMs: string, };
+
+export type ConnectedListenerDto = { deviceId: string, displayName: string, trustState: string, transportState: string, lastContactMs: string | null, estimatedOffsetMs: string | null, roundTripTimeMs: string | null, lastError: DesktopErrorDto | null, };
+
+export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, lastError: DesktopErrorDto | null, };
+
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, };
 
 export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null, };

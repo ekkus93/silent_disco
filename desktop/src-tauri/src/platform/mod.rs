@@ -10,6 +10,10 @@ pub mod discovery;
 pub mod effect_runner;
 mod failure;
 pub mod file_picker;
+mod host_join_projection;
+mod host_pending_handshake;
+pub(crate) mod host_transport;
+mod host_transport_events;
 pub mod identity;
 pub mod network;
 pub mod network_dto;
@@ -37,5 +41,7 @@ mod capability_tests;
 mod effect_runner_tests;
 #[cfg(test)]
 mod file_picker_tests;
+#[cfg(test)]
+mod host_transport_tests;
 #[cfg(test)]
 mod network_tests;

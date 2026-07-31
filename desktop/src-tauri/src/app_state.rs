@@ -1,4 +1,5 @@
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
+use crate::host_session_dto::HostSessionSnapshotDto;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::notification_channel::TauriNotificationSink;
 use crate::platform::effect_runner::{
@@ -184,6 +185,35 @@ impl DesktopAppState {
                 "no desktop profile is ready",
             )),
         }
+    }
+
+    pub(crate) fn host_session_snapshot(&self) -> Result<HostSessionSnapshotDto, DesktopErrorDto> {
+        let (handle, network) = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => {
+                    (ready.handle.clone(), Arc::clone(&ready.network))
+                }
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        let snapshot = handle.current_snapshot().map_err(DesktopErrorDto::from)?;
+        let active = network.active_host_session()?;
+        Ok(HostSessionSnapshotDto::from_parts(
+            &snapshot,
+            active.as_ref(),
+        ))
     }
 
     pub(crate) fn host_network_snapshot(

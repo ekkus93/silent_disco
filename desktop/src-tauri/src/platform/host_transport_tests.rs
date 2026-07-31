@@ -1,10 +1,6 @@
 use super::host_transport::DesktopHostTransportRuntime;
-use silent_disco_core::domain::{
-    AppRole, ApprovalMode, DeviceId, HostLifecycle, PlaybackState,
-};
-use silent_disco_core::protocol::{
-    ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame,
-};
+use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, HostLifecycle, PlaybackState};
+use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame};
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorRuntime, CoreCommand,
     CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch, PlatformEffectRequest,
@@ -33,10 +29,17 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
     .expect("start actor");
     let handle = actor.handle();
     next_snapshot(&receiver, 0);
-    submit(&handle, 0, CoreCommand::SelectRole { role: AppRole::Host });
+    submit(
+        &handle,
+        0,
+        CoreCommand::SelectRole {
+            role: AppRole::Host,
+        },
+    );
     next_snapshot(&receiver, 1);
-    let source = AudioSourceDescriptor::new("source-block22", "fixture.wav", Some(4096), Some(2000))
-        .expect("source");
+    let source =
+        AudioSourceDescriptor::new("source-block22", "fixture.wav", Some(4096), Some(2000))
+            .expect("source");
     submit(
         &handle,
         1,
@@ -53,7 +56,8 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
     let creating = next_snapshot(&receiver, 3);
     assert_eq!(creating.host_lifecycle, HostLifecycle::CreatingSession);
     let advertisement_effect = next_effect(&receiver);
-    let PlatformEffectRequest::StartAdvertising(advertisement) = advertisement_effect.request else {
+    let PlatformEffectRequest::StartAdvertising(advertisement) = advertisement_effect.request
+    else {
         panic!("expected start advertising effect");
     };
 
@@ -64,12 +68,9 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
             Arc::new(SystemTransportClock::default()),
         )
         .expect("bind desktop host");
-    let runtime = DesktopHostTransportRuntime::start(
-        node,
-        advertisement.clone(),
-        Arc::new(handle.clone()),
-    )
-    .expect("start desktop transport worker");
+    let runtime =
+        DesktopHostTransportRuntime::start(node, advertisement.clone(), Arc::new(handle.clone()))
+            .expect("start desktop transport worker");
     handle
         .submit_platform_event(PlatformEvent::OperationSucceeded {
             operation_id: advertisement_effect.operation_id,
@@ -101,19 +102,27 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
         .expect("send join request");
 
     wait_for_hello(&mut *listener, &advertisement.session_id);
-    let joined = wait_snapshot(&handle, |snapshot| snapshot.pending_join_requests.len() == 1);
+    let joined = wait_snapshot(&handle, |snapshot| {
+        snapshot.pending_join_requests.len() == 1
+    });
     assert_eq!(joined.pending_join_requests[0].device_id, listener_id);
     assert_eq!(joined.playback_state, PlaybackState::Stopped);
     assert_eq!(listener.counters().audio_datagrams_received, 0);
 
     listener.shutdown().expect("listener shutdown");
-    let disconnected = wait_snapshot(&handle, |snapshot| snapshot.pending_join_requests.is_empty());
+    let disconnected = wait_snapshot(&handle, |snapshot| {
+        snapshot.pending_join_requests.is_empty()
+    });
     assert!(disconnected.listeners.is_empty());
     runtime.shutdown().expect("desktop transport shutdown");
     actor.shutdown().expect("actor shutdown");
 }
 
-fn submit(handle: &silent_disco_core::runtime::CoreActorHandle, revision: u64, command: CoreCommand) {
+fn submit(
+    handle: &silent_disco_core::runtime::CoreActorHandle,
+    revision: u64,
+    command: CoreCommand,
+) {
     handle
         .submit_command(
             CoreCommandRequest::new(SnapshotRevision::new(revision), command).expect("command"),
@@ -137,7 +146,9 @@ fn next_snapshot(
     }
 }
 
-fn next_effect(receiver: &Receiver<CoreNotification>) -> silent_disco_core::runtime::PlatformEffect {
+fn next_effect(
+    receiver: &Receiver<CoreNotification>,
+) -> silent_disco_core::runtime::PlatformEffect {
     loop {
         match receiver.recv_timeout(TEST_TIMEOUT) {
             Ok(CoreNotification::Effect(effect)) => return effect,
@@ -158,7 +169,10 @@ fn wait_snapshot(
         if predicate(&snapshot) {
             return snapshot;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for actor state");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for actor state"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -180,6 +194,9 @@ fn wait_for_hello(
                 if error.kind == silent_disco_core::transport::TransportErrorKind::Timeout => {}
             Err(error) => panic!("listener transport failed: {error}"),
         }
-        assert!(Instant::now() < deadline, "timed out waiting for host Hello");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for host Hello"
+        );
     }
 }

@@ -1,4 +1,6 @@
 use super::failure::DesktopPlatformFailure;
+use super::host_transport::{ActiveHostSessionSnapshot, DesktopHostTransportRuntime};
+use super::host_transport_events::DesktopHostTransportEventSink;
 use super::network_dto::{
     NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
     NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
@@ -7,10 +9,9 @@ pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};
 use crate::dto::DesktopErrorDto;
 use netdev::Interface;
 use silent_disco_core::error::CoreError;
-use silent_disco_core::runtime::{NetworkEndpoint, SessionAdvertisement};
+use silent_disco_core::runtime::{CoreActorHandle, NetworkEndpoint, SessionAdvertisement};
 use silent_disco_core::transport::{
-    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportFactory,
-    production_transport_factory,
+    HostTransportConfig, SystemTransportClock, TransportFactory, production_transport_factory,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
@@ -176,8 +177,7 @@ pub(super) struct HostPorts {
 
 struct ActiveBinding {
     selected: SelectedAddress,
-    endpoint: NetworkEndpoint,
-    node: Box<dyn HostTransportNode>,
+    runtime: DesktopHostTransportRuntime,
 }
 
 struct NetworkState {
@@ -265,14 +265,27 @@ impl DesktopHostNetworkControl {
     pub(super) fn start_host(
         &self,
         advertisement: &SessionAdvertisement,
+        handle: CoreActorHandle,
     ) -> Result<NetworkEndpoint, DesktopPlatformFailure> {
-        self.start_host_inner(advertisement)
+        self.start_host_with_sink(advertisement, Arc::new(handle))
             .map_err(|error| error.platform_failure())
     }
 
+    #[cfg(test)]
     pub(super) fn start_host_inner(
         &self,
         advertisement: &SessionAdvertisement,
+    ) -> Result<NetworkEndpoint, DesktopNetworkError> {
+        self.start_host_with_sink(
+            advertisement,
+            Arc::new(super::host_transport_events::TestTransportEventSink),
+        )
+    }
+
+    fn start_host_with_sink(
+        &self,
+        advertisement: &SessionAdvertisement,
+        sink: Arc<dyn DesktopHostTransportEventSink>,
     ) -> Result<NetworkEndpoint, DesktopNetworkError> {
         let mut state = self
             .state
@@ -303,11 +316,8 @@ impl DesktopHostNetworkControl {
             let cleanup = node.shutdown().err();
             return Err(DesktopNetworkError::endpoint_mismatch(cleanup.as_ref()));
         }
-        state.active = Some(ActiveBinding {
-            selected,
-            endpoint,
-            node,
-        });
+        let runtime = DesktopHostTransportRuntime::start(node, advertisement.clone(), sink)?;
+        state.active = Some(ActiveBinding { selected, runtime });
         Ok(endpoint)
     }
 
@@ -321,15 +331,26 @@ impl DesktopHostNetworkControl {
             .state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned())?;
-        let Some(mut active) = state.active.take() else {
+        let Some(active) = state.active.take() else {
             return Err(DesktopNetworkError::invalid_state(
                 "desktop host network endpoint is not active",
             ));
         };
-        active
-            .node
-            .shutdown()
-            .map_err(|error| DesktopNetworkError::transport(&error))
+        active.runtime.shutdown()
+    }
+
+    pub(crate) fn active_host_session(
+        &self,
+    ) -> Result<Option<ActiveHostSessionSnapshot>, DesktopErrorDto> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        state
+            .active
+            .as_ref()
+            .map(|active| active.runtime.snapshot().map_err(DesktopNetworkError::dto))
+            .transpose()
     }
 
     pub(crate) fn shutdown(&self) -> Result<(), CoreError> {
@@ -383,10 +404,10 @@ fn snapshot_from(
     let selection_error = resolved.err().map(|error| error.message);
     let active_binding = active.map(|binding| NetworkBindingDto {
         interface_name: binding.selected.interface_name.clone(),
-        address: binding.endpoint.address.to_string(),
-        control_port: binding.endpoint.control_port,
-        sync_port: binding.endpoint.sync_port,
-        audio_port: binding.endpoint.audio_port,
+        address: binding.runtime.endpoint().address.to_string(),
+        control_port: binding.runtime.endpoint().control_port,
+        sync_port: binding.runtime.endpoint().sync_port,
+        audio_port: binding.runtime.endpoint().audio_port,
     });
     let active_binding_valid =
         active.is_none_or(|binding| validate_selected(interfaces, &binding.selected).is_ok());

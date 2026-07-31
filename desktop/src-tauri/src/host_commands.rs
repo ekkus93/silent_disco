@@ -1,5 +1,6 @@
 use crate::app_state::DesktopAppState;
 use crate::dto::DesktopErrorDto;
+use crate::host_session_dto::HostSessionSnapshotDto;
 use crate::platform::file_picker::{SelectedSourceRegistry, pick_and_inspect};
 use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
 use crate::platform::source_staging::stage_audio_source;
@@ -160,6 +161,28 @@ pub fn create_host_session(
     state.submit_core_command(
         parse_snapshot_revision(&expected_revision)?,
         CoreCommand::CreateHostSession,
+    )
+}
+
+/// Returns the authoritative active host workflow projection.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn get_host_session_state(
+    state: State<'_, DesktopAppState>,
+) -> Result<HostSessionSnapshotDto, DesktopErrorDto> {
+    state.host_session_snapshot()
+}
+
+/// Requests a revision-aware host-session shutdown.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn end_host_session(
+    state: State<'_, DesktopAppState>,
+    request: RevisionCommandRequest,
+) -> Result<CommandReceiptDto, DesktopErrorDto> {
+    state.submit_core_command(
+        parse_snapshot_revision(&request.expected_revision)?,
+        CoreCommand::EndHostSession,
     )
 }
 

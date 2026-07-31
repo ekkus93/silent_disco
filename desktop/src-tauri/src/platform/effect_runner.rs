@@ -215,6 +215,7 @@ impl DesktopPlatformEffectRunner {
             Arc::new(DesktopPlatformAdapters::new_with_network(
                 paths,
                 Arc::clone(&network),
+                capability_handle.clone(),
             )),
         )?;
         runner.network = Some(network);
@@ -336,22 +337,30 @@ pub(super) struct DesktopPlatformAdapters {
     paths: DesktopProfilePaths,
     capabilities: CapabilitySnapshot,
     network: Arc<DesktopHostNetworkControl>,
+    transport_events: Option<CoreActorHandle>,
 }
 
 impl DesktopPlatformAdapters {
     #[cfg(test)]
     pub(super) fn new(paths: DesktopProfilePaths) -> Self {
-        Self::new_with_network(paths, Arc::new(DesktopHostNetworkControl::production()))
+        Self {
+            paths,
+            capabilities: desktop_capabilities(),
+            network: Arc::new(DesktopHostNetworkControl::production()),
+            transport_events: None,
+        }
     }
 
     pub(super) fn new_with_network(
         paths: DesktopProfilePaths,
         network: Arc<DesktopHostNetworkControl>,
+        transport_events: CoreActorHandle,
     ) -> Self {
         Self {
             paths,
             capabilities: desktop_capabilities(),
             network,
+            transport_events: Some(transport_events),
         }
     }
 }
@@ -368,7 +377,17 @@ impl DesktopPlatformEffectExecutor for DesktopPlatformAdapters {
             ),
             PlatformEffectRequest::StartAdvertising(advertisement) => self
                 .network
-                .start_host(advertisement)
+                .start_host(
+                    advertisement,
+                    self.transport_events.clone().ok_or_else(|| {
+                        DesktopPlatformFailure::new(
+                            CoreErrorCode::WorkerStopped,
+                            "desktop host transport event sink is unavailable",
+                            ErrorSeverity::Error,
+                            true,
+                        )
+                    })?,
+                )
                 .map(|_| PlatformOperationCompletion::AdvertisingStarted),
             PlatformEffectRequest::StopAdvertising => self
                 .network

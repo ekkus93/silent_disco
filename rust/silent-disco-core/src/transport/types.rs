@@ -68,6 +68,12 @@ pub struct TransportError {
 }
 
 impl TransportError {
+    /// Creates a typed timeout result for an adapter whose wait interval elapsed.
+    #[must_use]
+    pub fn timeout(channel: TransportChannel, message: impl Into<String>) -> Self {
+        Self::new(TransportErrorKind::Timeout, channel, message)
+    }
+
     pub(crate) fn new(
         kind: TransportErrorKind,
         channel: TransportChannel,

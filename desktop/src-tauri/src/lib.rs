@@ -8,6 +8,7 @@ pub mod app_state;
 pub mod bindings;
 pub mod dto;
 mod host_commands;
+pub mod host_session_dto;
 pub mod notification_buffer;
 pub mod notification_channel;
 pub mod platform;
@@ -60,6 +61,8 @@ pub fn run() -> tauri::Result<()> {
             host_commands::cancel_audio_source_staging,
             host_commands::update_host_draft,
             host_commands::create_host_session,
+            host_commands::get_host_session_state,
+            host_commands::end_host_session,
             host_commands::get_host_network_state,
             host_commands::set_host_network_preference,
             app_state::attach_notifications,

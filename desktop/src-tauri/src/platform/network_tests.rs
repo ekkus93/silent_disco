@@ -136,7 +136,10 @@ impl HostTransportNode for FakeHostNode {
     }
 
     fn recv_event(&mut self, _timeout: Duration) -> Result<TransportEvent, TransportError> {
-        panic!("unused fake host operation")
+        Err(TransportError::timeout(
+            silent_disco_core::transport::TransportChannel::Runtime,
+            "fake host receive timed out",
+        ))
     }
 
     fn counters(&self) -> TransportCounters {

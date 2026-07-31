@@ -151,6 +151,11 @@ fn run_transport_worker(
 
 fn set_last_error(status: &Mutex<WorkerStatus>, message: &str) {
     if let Ok(mut status) = status.lock() {
-        status.last_error = Some(message.chars().take(MAX_VISIBLE_TRANSPORT_ERROR_CHARS).collect());
+        status.last_error = Some(
+            message
+                .chars()
+                .take(MAX_VISIBLE_TRANSPORT_ERROR_CHARS)
+                .collect(),
+        );
     }
 }
