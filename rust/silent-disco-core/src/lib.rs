@@ -14,6 +14,7 @@ pub mod protocol;
 pub mod runtime;
 pub mod storage;
 pub mod sync;
+pub mod transport;
 
 /// ABI-independent version information for the shared domain core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
