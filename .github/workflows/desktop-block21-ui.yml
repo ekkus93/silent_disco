@@ -40,12 +40,18 @@ jobs:
       - name: Apply Host Setup integration
         run: python3 .github/apply-block21-ui.py
 
+      - name: Split network error module
+        run: python3 .github/apply-block21-network-split.py
+
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
+
+      - name: Format split Rust modules
+        run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
 
       - uses: actions/setup-node@v4
         with:
@@ -73,14 +79,23 @@ jobs:
           npm test -- --run
           npm run build
 
+      - name: Run focused Rust network tests
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml platform::network_tests
+
       - name: Enforce source-size invariant
         run: bash scripts/check-source-file-line-counts.sh
 
       - name: Commit validated UI directly to master
         run: |
           set -euo pipefail
-          git rm .github/workflows/desktop-block21-ui.yml .github/apply-block21-ui.py
+          git rm \
+            .github/workflows/desktop-block21-ui.yml \
+            .github/apply-block21-ui.py \
+            .github/apply-block21-network-split.py
           git add \
+            desktop/src-tauri/src/platform/mod.rs \
+            desktop/src-tauri/src/platform/network.rs \
+            desktop/src-tauri/src/platform/network_error.rs \
             desktop/src/screens/HostNetworkPolicyCard.tsx \
             desktop/src/screens/HostNetworkPolicyCard.test.tsx \
             desktop/src/screens/HostSetupScreen.tsx \
@@ -99,7 +114,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 21 explicit-selection UI passed in Actions run $GITHUB_RUN_ID and committed $BLOCK21_UI_COMMIT directly to master. Bindings, format, lint, typecheck, frontend tests/build, accessibility-focused tests, and source-size checks passed."
+            --body "Desktop Block 21 explicit-selection UI passed in Actions run $GITHUB_RUN_ID and committed $BLOCK21_UI_COMMIT directly to master. Bindings, format, lint, typecheck, frontend tests/build, focused Rust network tests, accessibility-focused tests, and source-size checks passed."
 
       - name: Publish failure
         if: failure()
