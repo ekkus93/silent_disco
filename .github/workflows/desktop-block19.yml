@@ -37,24 +37,31 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev
 
-      - name: Run desktop Clippy with compact diagnostics
+      - name: Prepare Tauri frontend fixture
+        run: |
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Desktop Clippy diagnostic</title>\n' > desktop/dist/index.html
+
+      - name: Run desktop Clippy with full panic diagnostics
         id: clippy
         continue-on-error: true
+        env:
+          RUST_BACKTRACE: "1"
         run: |
           set +e
           cargo clippy --manifest-path desktop/src-tauri/Cargo.toml \
-            --all-targets --all-features --message-format=short -- -D warnings \
+            --all-targets --all-features -- -D warnings \
             > /tmp/desktop-clippy.log 2>&1
           status=$?
           echo "status=${status}" >> "${GITHUB_OUTPUT}"
-          tail -120 /tmp/desktop-clippy.log > /tmp/desktop-clippy-tail.log
+          tail -160 /tmp/desktop-clippy.log > /tmp/desktop-clippy-tail.log
 
       - name: Publish exact diagnostic
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo 'Desktop Block 19 desktop Clippy diagnostic with Linux dependencies:'
+            echo 'Desktop Block 19 desktop Clippy diagnostic with Tauri frontend fixture:'
             echo '```text'
             cat /tmp/desktop-clippy-tail.log
             echo '```'
