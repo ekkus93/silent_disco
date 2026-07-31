@@ -1,0 +1,127 @@
+name: Validate Desktop Block 22 UI
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: desktop-block22-ui
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.16.0"
+  RUST_VERSION: "1.97.1"
+  TRACKING_ISSUE: "45"
+
+jobs:
+  validate:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.body == '/run-desktop-block22-ui'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Capture exact input and announce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "BLOCK22_UI_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 22 Host Session UI validation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
+
+      - name: Apply UI integration
+        run: |
+          python3 -m py_compile .github/apply-block22-ui.py
+          python3 .github/apply-block22-ui.py
+
+      - name: Install native desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt
+          rustup default "$RUST_VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install and format UI candidate
+        working-directory: desktop
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><title>Silent Disco Block 22 UI validation</title>\n' > dist/index.html
+          npm ci
+          npx biome format --write \
+            src/App.tsx \
+            src/App.test.tsx \
+            src/core/client.ts \
+            src/screens/HostSessionScreen.tsx \
+            src/screens/HostSessionScreen.test.tsx
+
+      - name: Run frontend and binding gates
+        working-directory: desktop
+        run: |
+          npm run bindings:check
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+          npm run build
+
+      - name: Re-run authoritative control-only backend proof
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo test platform::host_transport_tests -- --nocapture
+          cargo check --all-features
+
+      - name: Enforce source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Commit validated Host Session UI directly to master
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/desktop-block22-ui.yml .github/apply-block22-ui.py
+          git add \
+            desktop/src/App.tsx \
+            desktop/src/App.test.tsx \
+            desktop/src/core/client.ts \
+            desktop/src/screens/HostSessionScreen.tsx \
+            desktop/src/screens/HostSessionScreen.test.tsx
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Add manual host session UI (Desktop Block 22)"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test "$remote_sha" = "$(git rev-parse HEAD^)"
+          git push origin HEAD:master
+          echo "BLOCK22_UI_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 22 Host Session UI passed in Actions run $GITHUB_RUN_ID and committed $BLOCK22_UI_COMMIT directly to master. Authoritative routing, endpoint copy controls, pending/connected listener rendering, disabled playback controls, visible failures, end-session handling, frontend gates, and the real loopback backend proof passed."
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 22 Host Session UI validation failed in Actions run $GITHUB_RUN_ID against $BLOCK22_UI_INPUT. Continue directly on master from the first failed gate."
