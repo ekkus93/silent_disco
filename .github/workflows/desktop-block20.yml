@@ -56,23 +56,75 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("rust/silent-disco-core/src/transport/socket/shared.rs")
-          source = path.read_text()
-          replacements = [
-              (
-                  """                            drop(on_outcome(ReadControlOutcome::Rejected(\n                                TransportError::protocol(TransportChannel::Control, &error),\n                            ));\n""",
-                  """                            drop(on_outcome(ReadControlOutcome::Rejected(\n                                TransportError::protocol(TransportChannel::Control, &error),\n                            )));\n""",
-              ),
-              (
-                  """                drop(on_outcome(ReadControlOutcome::Rejected(TransportError::io(\n                    TransportErrorKind::Io,\n                    TransportChannel::Control,\n                    \"failed to read control connection\",\n                    &error,\n                )));\n""",
-                  """                drop(on_outcome(ReadControlOutcome::Rejected(TransportError::io(\n                    TransportErrorKind::Io,\n                    TransportChannel::Control,\n                    \"failed to read control connection\",\n                    &error,\n                ))));\n""",
-              ),
-          ]
-          for old, new in replacements:
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text()
               if source.count(old) != 1:
-                  raise SystemExit("Block 20 parser repair anchor changed unexpectedly")
-              source = source.replace(old, new)
-          path.write_text(source)
+                  raise SystemExit(f"Block 20 repair anchor changed unexpectedly: {path}")
+              target.write_text(source.replace(old, new))
+
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/shared.rs",
+              """                            drop(on_outcome(ReadControlOutcome::Rejected(\n                                TransportError::protocol(TransportChannel::Control, &error),\n                            ));\n""",
+              """                            drop(on_outcome(ReadControlOutcome::Rejected(\n                                TransportError::protocol(TransportChannel::Control, &error),\n                            )));\n""",
+          )
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/shared.rs",
+              """                drop(on_outcome(ReadControlOutcome::Rejected(TransportError::io(\n                    TransportErrorKind::Io,\n                    TransportChannel::Control,\n                    \"failed to read control connection\",\n                    &error,\n                )));\n""",
+              """                drop(on_outcome(ReadControlOutcome::Rejected(TransportError::io(\n                    TransportErrorKind::Io,\n                    TransportChannel::Control,\n                    \"failed to read control connection\",\n                    &error,\n                ))));\n""",
+          )
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/host.rs",
+              "use super::host_workers::{spawn_accept_loop, spawn_udp_receiver, worker_registry_error};",
+              """use super::host_workers::{
+              shutting_down_error, spawn_accept_loop, spawn_udp_receiver, worker_registry_error,
+          };""",
+          )
+          nested_pattern = """            (TransportChannel::Synchronization, ProtocolFrame::SyncRequest(_))
+              | (TransportChannel::Synchronization, ProtocolFrame::SyncResponse(_))
+              | (TransportChannel::Audio, ProtocolFrame::Audio(_)) => {}
+          """
+          nested_replacement = """            (
+                  TransportChannel::Synchronization,
+                  ProtocolFrame::SyncRequest(_) | ProtocolFrame::SyncResponse(_),
+              )
+              | (TransportChannel::Audio, ProtocolFrame::Audio(_)) => {}
+          """
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/host.rs",
+              nested_pattern,
+              nested_replacement,
+          )
+          replace_once(
+              "rust/silent-disco-core/src/transport/virtual_transport.rs",
+              nested_pattern,
+              nested_replacement,
+          )
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/host_workers.rs",
+              "fn shutting_down_error() -> TransportError {",
+              "pub(super) fn shutting_down_error() -> TransportError {",
+          )
+          workers = Path("rust/silent-disco-core/src/transport/socket/host_workers.rs")
+          workers_source = workers.read_text()
+          if workers_source.count("peer_for_reader") != 12:
+              raise SystemExit("Block 20 reader-peer rename anchor changed unexpectedly")
+          workers.write_text(workers_source.replace("peer_for_reader", "reader_peer"))
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/listener.rs",
+              "use std::net::{Shutdown, SocketAddr, TcpStream, UdpSocket};",
+              "use std::net::{SocketAddr, TcpStream, UdpSocket};",
+          )
+          replace_once(
+              "rust/silent-disco-core/src/transport/socket/shared.rs",
+              "use std::net::{Shutdown, SocketAddr, TcpStream};",
+              "use std::net::{Shutdown, TcpStream};",
+          )
+          replace_once(
+              "rust/silent-disco-core/src/transport/types.rs",
+              "#[derive(Debug, Clone, PartialEq, Eq)]\npub enum TransportEvent {",
+              "#[derive(Clone, PartialEq, Eq)]\npub enum TransportEvent {",
+          )
           PY
           grep -Fqx 'pub mod transport;' rust/silent-disco-core/src/lib.rs
           grep -Fqx 'mod virtual_transport;' rust/silent-disco-core/src/transport/mod.rs
