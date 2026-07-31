@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod audio;
 pub mod domain;
 pub mod error;
 pub mod p2;
