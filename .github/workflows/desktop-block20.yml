@@ -54,14 +54,23 @@ jobs:
             -e 's/^pub use virtual::{/pub use virtual_transport::{/' \
             rust/silent-disco-core/src/transport/mod.rs
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           def replace_once(path: str, old: str, new: str) -> None:
               target = Path(path)
               source = target.read_text()
               if source.count(old) != 1:
-                  raise SystemExit(f"Block 20 repair anchor changed unexpectedly: {path}")
+                  raise SystemExit(f"Block 20 repair anchor changed unexpectedly: {path}: {old[:40]!r}")
               target.write_text(source.replace(old, new))
+
+          def regex_replace_once(path: str, pattern: str, replacement: str) -> None:
+              target = Path(path)
+              source = target.read_text()
+              repaired, count = re.subn(pattern, replacement, source, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"Block 20 regex repair count was {count}: {path}")
+              target.write_text(repaired)
 
           replace_once(
               "rust/silent-disco-core/src/transport/socket/shared.rs",
@@ -80,25 +89,27 @@ jobs:
               shutting_down_error, spawn_accept_loop, spawn_udp_receiver, worker_registry_error,
           };""",
           )
-          nested_pattern = """            (TransportChannel::Synchronization, ProtocolFrame::SyncRequest(_))
-              | (TransportChannel::Synchronization, ProtocolFrame::SyncResponse(_))
-              | (TransportChannel::Audio, ProtocolFrame::Audio(_)) => {}
-          """
-          nested_replacement = """            (
+          datagram_pattern = (
+              r"\(\s*TransportChannel::Synchronization,\s*ProtocolFrame::SyncRequest\(_\)\s*\)"
+              r"\s*\|\s*"
+              r"\(\s*TransportChannel::Synchronization,\s*ProtocolFrame::SyncResponse\(_\)\s*\)"
+              r"\s*\|\s*"
+              r"\(\s*TransportChannel::Audio,\s*ProtocolFrame::Audio\(_\)\s*\)\s*=>\s*\{\}"
+          )
+          datagram_replacement = """(
                   TransportChannel::Synchronization,
                   ProtocolFrame::SyncRequest(_) | ProtocolFrame::SyncResponse(_),
               )
-              | (TransportChannel::Audio, ProtocolFrame::Audio(_)) => {}
-          """
-          replace_once(
+              | (TransportChannel::Audio, ProtocolFrame::Audio(_)) => {}"""
+          regex_replace_once(
               "rust/silent-disco-core/src/transport/socket/host.rs",
-              nested_pattern,
-              nested_replacement,
+              datagram_pattern,
+              datagram_replacement,
           )
-          replace_once(
+          regex_replace_once(
               "rust/silent-disco-core/src/transport/virtual_transport.rs",
-              nested_pattern,
-              nested_replacement,
+              datagram_pattern,
+              datagram_replacement,
           )
           replace_once(
               "rust/silent-disco-core/src/transport/socket/host_workers.rs",
