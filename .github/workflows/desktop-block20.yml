@@ -18,7 +18,7 @@ concurrency:
 env:
   RUST_VERSION: "1.97.1"
   TRACKING_ISSUE: "45"
-  PAYLOAD_SHA256: "2990dfc35d857a1e66d03c8b5be8aa265ea93dae3aa1f667c9dcd2568053a5db"
+  PAYLOAD_SHA256: "8df02204f749d9f1c290583a1196f00776e67a1cf4a871f345d368140af43070"
 
 jobs:
   validate:
@@ -47,7 +47,14 @@ jobs:
           cat .github/desktop-block20-source/part-*.b64 | base64 --decode > /tmp/block20.tar.gz
           echo "${PAYLOAD_SHA256}  /tmp/block20.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/block20.tar.gz
+          mv rust/silent-disco-core/src/transport/virtual.rs \
+            rust/silent-disco-core/src/transport/virtual_transport.rs
+          sed -i \
+            -e 's/^mod virtual;$/mod virtual_transport;/' \
+            -e 's/^pub use virtual::{/pub use virtual_transport::{/' \
+            rust/silent-disco-core/src/transport/mod.rs
           grep -Fqx 'pub mod transport;' rust/silent-disco-core/src/lib.rs
+          grep -Fqx 'mod virtual_transport;' rust/silent-disco-core/src/transport/mod.rs
 
       - name: Install pinned Rust toolchain
         run: |
@@ -61,7 +68,6 @@ jobs:
         run: bash scripts/check-source-file-line-counts.sh
 
       - name: Run focused strict transport gates
-        id: focused
         run: |
           set -o pipefail
           cargo clippy --manifest-path rust/Cargo.toml -p silent-disco-core \
