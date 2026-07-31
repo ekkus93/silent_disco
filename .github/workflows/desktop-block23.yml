@@ -49,7 +49,7 @@ jobs:
           gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
             --body "Desktop Block 23 guarded implementation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
 
-      - name: Diagnose complete ownership patch block
+      - name: Inspect pre-ownership generated state
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -65,17 +65,23 @@ jobs:
           patch = patch_path.read_text(encoding='utf-8')
           old = base64.b64decode('cmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycyIsCiAgICAnJycgICAgUGxhdGZvcm1FZmZlY3REdG8sIFJldmlzaW9uQ29tbWFuZFJlcXVlc3QsIFVwZGF0ZUhvc3REcmFmdFJlcXVlc3QsCn07JycnLAogICAgJycnICAgIEFwcHJvdmVKb2luUmVxdWVzdCwgSm9pblJlcXVlc3RDb21tYW5kUmVxdWVzdCwgTGlzdGVuZXJDb21tYW5kUmVxdWVzdCwKICAgIFBsYXRmb3JtRWZmZWN0RHRvLCBSZXZpc2lvbkNvbW1hbmRSZXF1ZXN0LCBVcGRhdGVIb3N0RHJhZnRSZXF1ZXN0LAp9OycnJywKKQ==').decode('utf-8')
           new = base64.b64decode('cmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycyIsCiAgICAnJycgICAgSG9zdERyYWZ0VmFsaWRhdGlvbkR0bywgT3BlblByb2ZpbGVSZXF1ZXN0LCBPcGVuUHJvZmlsZVJlc3BvbnNlLCBQbGF0Zm9ybUVmZmVjdER0bywKICAgIFJldmlzaW9uQ29tbWFuZFJlcXVlc3QsIFVwZGF0ZUhvc3REcmFmdFJlcXVlc3QsCn07JycnLAogICAgJycnICAgIEFwcHJvdmVKb2luUmVxdWVzdCwgSG9zdERyYWZ0VmFsaWRhdGlvbkR0bywgSm9pblJlcXVlc3RDb21tYW5kUmVxdWVzdCwKICAgIExpc3RlbmVyQ29tbWFuZFJlcXVlc3QsIE9wZW5Qcm9maWxlUmVxdWVzdCwgT3BlblByb2ZpbGVSZXNwb25zZSwgUGxhdGZvcm1FZmZlY3REdG8sCiAgICBSZXZpc2lvbkNvbW1hbmRSZXF1ZXN0LCBVcGRhdGVIb3N0RHJhZnRSZXF1ZXN0LAp9OycnJywKKQ==').decode('utf-8')
-          count = patch.count(old)
-          if count != 1:
-              raise SystemExit(f'expected one stale bindings anchor, found {count}')
-          patch_path.write_text(patch.replace(old, new), encoding='utf-8')
+          if patch.count(old) != 1:
+              raise SystemExit('stale bindings anchor was not unique')
+          patch = patch.replace(old, new)
+          marker = '# Patch network ownership and clock propagation.'
+          if patch.count(marker) != 1:
+              raise SystemExit('ownership marker was not unique')
+          patch_path.write_text(patch.split(marker, 1)[0], encoding='utf-8')
           PATCHPY
-          nl -ba .github/apply-block23.py | sed -n '1300,1490p'
+          python3 .github/apply-block23.py
+          echo '=== GENERATED HOST TRANSPORT ==='
+          nl -ba desktop/src-tauri/src/platform/host_transport.rs
+          echo '=== CURRENT NETWORK OWNERSHIP REGION ==='
+          nl -ba desktop/src-tauri/src/platform/network.rs | sed -n '1,390p'
           exit 1
           '''
-          count = content.count(needle)
-          if count != 1:
-              raise SystemExit(f'expected one validator execution anchor, found {count}')
+          if content.count(needle) != 1:
+              raise SystemExit('validator execution anchor was not unique')
           path.write_text(content.replace(needle, replacement), encoding='utf-8')
           PY
 
