@@ -16,7 +16,7 @@ jobs:
   apply:
     if: >-
       github.event.issue.number == 45 &&
-      github.event.comment.body == '/apply-desktop-block23-typecheck-fixes-v2'
+      github.event.comment.body == '/apply-desktop-block23-typecheck-fixes-v3'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -25,127 +25,7 @@ jobs:
           fetch-depth: 0
       - name: Extend the post-payload adapter
         run: |
-          cat >> .github/block23-storage-runner-adapt.py <<'PY'
-
-# Keep the generated Rust/TypeScript contract and Block 23 fixtures aligned.
-bindings_path = Path('desktop/src-tauri/src/bindings.rs')
-bindings = bindings_path.read_text(encoding='utf-8')
-bindings_import_old = (
-    '    ConnectedListenerDto, HostConnectionDto, HostSessionSnapshotDto, PendingJoinRequestDto,\n'
-)
-bindings_import_new = (
-    '    ConnectedListenerDto, DeliveryReportDto, HostConnectionDto, HostSessionSnapshotDto,\n'
-    '    PendingJoinRequestDto,\n'
-)
-if bindings.count(bindings_import_old) != 1:
-    raise RuntimeError('bindings.rs: expected one host-session DTO import anchor')
-bindings = bindings.replace(bindings_import_old, bindings_import_new, 1)
-bindings_declaration_old = (
-    '        declaration::<ConnectedListenerDto>(&config),\n'
-    '        declaration::<HostSessionSnapshotDto>(&config),\n'
-)
-bindings_declaration_new = (
-    '        declaration::<ConnectedListenerDto>(&config),\n'
-    '        declaration::<DeliveryReportDto>(&config),\n'
-    '        declaration::<HostSessionSnapshotDto>(&config),\n'
-)
-if bindings.count(bindings_declaration_old) != 1:
-    raise RuntimeError('bindings.rs: expected one delivery declaration anchor')
-bindings = bindings.replace(bindings_declaration_old, bindings_declaration_new, 1)
-bindings_test_old = (
-    '        assert!(first.contains("export type CommandReceiptDto"));\n'
-)
-bindings_test_new = (
-    '        assert!(first.contains("export type CommandReceiptDto"));\n'
-    '        assert!(first.contains("export type DeliveryReportDto"));\n'
-)
-if bindings.count(bindings_test_old) != 1:
-    raise RuntimeError('bindings.rs: expected one binding assertion anchor')
-bindings = bindings.replace(bindings_test_old, bindings_test_new, 1)
-bindings_path.write_text(bindings, encoding='utf-8')
-
-app_test_path = Path('desktop/src/App.test.tsx')
-app_test = app_test_path.read_text(encoding='utf-8')
-app_fixture_old = '''  pendingJoinRequests: [],
-  connectedListeners: [],
-  playbackControlsEnabled: false,'''
-app_fixture_new = '''  pendingJoinRequests: [],
-  connectedListeners: [],
-  lastDelivery: null,
-  recoverableAction: null,
-  playbackControlsEnabled: false,'''
-if app_test.count(app_fixture_old) != 1:
-    raise RuntimeError('App.test.tsx: expected one host-session fixture anchor')
-app_test = app_test.replace(app_fixture_old, app_fixture_new, 1)
-app_test_path.write_text(app_test, encoding='utf-8')
-
-screen_path = Path('desktop/src/screens/HostSessionScreen.tsx')
-screen = screen_path.read_text(encoding='utf-8')
-synthetic_error_old = '''      message: "The control message was not delivered to the listener.",
-      operationId: null,
-      context: [],
-'''
-synthetic_error_new = '''      message: "The control message was not delivered to the listener.",
-'''
-if screen.count(synthetic_error_old) != 1:
-    raise RuntimeError('HostSessionScreen.tsx: expected one stale synthetic-error shape')
-screen = screen.replace(synthetic_error_old, synthetic_error_new, 1)
-screen_path.write_text(screen, encoding='utf-8')
-
-screen_test_path = Path('desktop/src/screens/HostSessionScreen.test.tsx')
-screen_test = screen_test_path.read_text(encoding='utf-8')
-invoke_error_old = '''  message: "join request is stale or no longer pending",
-  operationId: "command-9",
-  context: [],
-'''
-invoke_error_new = '''  message: "join request is stale or no longer pending",
-'''
-if screen_test.count(invoke_error_old) != 1:
-    raise RuntimeError('HostSessionScreen.test.tsx: expected one stale invoke-error shape')
-screen_test = screen_test.replace(invoke_error_old, invoke_error_new, 1)
-delivery_error_old = '''            message: "transport control delivery had no intended recipients",
-            operationId: "command-1",
-            context: [],
-'''
-delivery_error_new = '''            message: "transport control delivery had no intended recipients",
-'''
-if screen_test.count(delivery_error_old) != 1:
-    raise RuntimeError('HostSessionScreen.test.tsx: expected one stale delivery-error shape')
-screen_test = screen_test.replace(delivery_error_old, delivery_error_new, 1)
-listener_spread_old = '              ...fixture().connectedListeners[0],\n'
-listener_spread_new = '              ...fixture().connectedListeners[0]!,\n'
-if screen_test.count(listener_spread_old) != 1:
-    raise RuntimeError('HostSessionScreen.test.tsx: expected one indexed listener spread')
-screen_test = screen_test.replace(listener_spread_old, listener_spread_new, 1)
-screen_test_path.write_text(screen_test, encoding='utf-8')
-
-host_dto_path = Path('desktop/src-tauri/src/host_session_dto.rs')
-host_dto = host_dto_path.read_text(encoding='utf-8')
-from_parts_old = '    pub fn from_parts(\n'
-from_parts_new = '    pub(crate) fn from_parts(\n'
-if host_dto.count(from_parts_old) != 1:
-    raise RuntimeError('host_session_dto.rs: expected one projection visibility anchor')
-host_dto = host_dto.replace(from_parts_old, from_parts_new, 1)
-host_dto_path.write_text(host_dto, encoding='utf-8')
-
-transport_path = Path('desktop/src-tauri/src/platform/host_transport.rs')
-transport = transport_path.read_text(encoding='utf-8')
-for method in ('start', 'status', 'shutdown'):
-    old = f'    pub(crate) fn {method}'
-    new = f'    pub(super) fn {method}'
-    if transport.count(old) != 1:
-        raise RuntimeError(
-            f'host_transport.rs: expected one {method} visibility anchor'
-        )
-    transport = transport.replace(old, new, 1)
-transport_path.write_text(transport, encoding='utf-8')
-
-print(
-    'adapted generated Block 23 frontend contract: exported DeliveryReportDto, '
-    'aligned DesktopErrorDto shapes, completed authoritative fixtures, retained '
-    'strict listener typing, and narrowed internal Rust interfaces'
-)
-PY
+          printf '%s' 'CiMgS2VlcCB0aGUgZ2VuZXJhdGVkIFJ1c3QvVHlwZVNjcmlwdCBjb250cmFjdCBhbmQgQmxvY2sgMjMgZml4dHVyZXMgYWxpZ25lZC4KYmluZGluZ3NfcGF0aCA9IFBhdGgoJ2Rlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycycpCmJpbmRpbmdzID0gYmluZGluZ3NfcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKYmluZGluZ3NfaW1wb3J0X29sZCA9ICgKICAgICcgICAgQ29ubmVjdGVkTGlzdGVuZXJEdG8sIEhvc3RDb25uZWN0aW9uRHRvLCBIb3N0U2Vzc2lvblNuYXBzaG90RHRvLCBQZW5kaW5nSm9pblJlcXVlc3REdG8sXG4nCikKYmluZGluZ3NfaW1wb3J0X25ldyA9ICgKICAgICcgICAgQ29ubmVjdGVkTGlzdGVuZXJEdG8sIERlbGl2ZXJ5UmVwb3J0RHRvLCBIb3N0Q29ubmVjdGlvbkR0bywgSG9zdFNlc3Npb25TbmFwc2hvdER0byxcbicKICAgICcgICAgUGVuZGluZ0pvaW5SZXF1ZXN0RHRvLFxuJwopCmlmIGJpbmRpbmdzLmNvdW50KGJpbmRpbmdzX2ltcG9ydF9vbGQpICE9IDE6CiAgICByYWlzZSBSdW50aW1lRXJyb3IoJ2JpbmRpbmdzLnJzOiBleHBlY3RlZCBvbmUgaG9zdC1zZXNzaW9uIERUTyBpbXBvcnQgYW5jaG9yJykKYmluZGluZ3MgPSBiaW5kaW5ncy5yZXBsYWNlKGJpbmRpbmdzX2ltcG9ydF9vbGQsIGJpbmRpbmdzX2ltcG9ydF9uZXcsIDEpCmJpbmRpbmdzX2RlY2xhcmF0aW9uX29sZCA9ICgKICAgICcgICAgICAgIGRlY2xhcmF0aW9uOjo8Q29ubmVjdGVkTGlzdGVuZXJEdG8+KCZjb25maWcpLFxuJwogICAgJyAgICAgICAgZGVjbGFyYXRpb246OjxIb3N0U2Vzc2lvblNuYXBzaG90RHRvPigmY29uZmlnKSxcbicKKQpiaW5kaW5nc19kZWNsYXJhdGlvbl9uZXcgPSAoCiAgICAnICAgICAgICBkZWNsYXJhdGlvbjo6PENvbm5lY3RlZExpc3RlbmVyRHRvPigmY29uZmlnKSxcbicKICAgICcgICAgICAgIGRlY2xhcmF0aW9uOjo8RGVsaXZlcnlSZXBvcnREdG8+KCZjb25maWcpLFxuJwogICAgJyAgICAgICAgZGVjbGFyYXRpb246OjxIb3N0U2Vzc2lvblNuYXBzaG90RHRvPigmY29uZmlnKSxcbicKKQppZiBiaW5kaW5ncy5jb3VudChiaW5kaW5nc19kZWNsYXJhdGlvbl9vbGQpICE9IDE6CiAgICByYWlzZSBSdW50aW1lRXJyb3IoJ2JpbmRpbmdzLnJzOiBleHBlY3RlZCBvbmUgZGVsaXZlcnkgZGVjbGFyYXRpb24gYW5jaG9yJykKYmluZGluZ3MgPSBiaW5kaW5ncy5yZXBsYWNlKGJpbmRpbmdzX2RlY2xhcmF0aW9uX29sZCwgYmluZGluZ3NfZGVjbGFyYXRpb25fbmV3LCAxKQpiaW5kaW5nc190ZXN0X29sZCA9ICgKICAgICcgICAgICAgIGFzc2VydCEoZmlyc3QuY29udGFpbnMoImV4cG9ydCB0eXBlIENvbW1hbmRSZWNlaXB0RHRvIikpO1xuJwopCmJpbmRpbmdzX3Rlc3RfbmV3ID0gKAogICAgJyAgICAgICAgYXNzZXJ0IShmaXJzdC5jb250YWlucygiZXhwb3J0IHR5cGUgQ29tbWFuZFJlY2VpcHREdG8iKSk7XG4nCiAgICAnICAgICAgICBhc3NlcnQhKGZpcnN0LmNvbnRhaW5zKCJleHBvcnQgdHlwZSBEZWxpdmVyeVJlcG9ydER0byIpKTtcbicKKQppZiBiaW5kaW5ncy5jb3VudChiaW5kaW5nc190ZXN0X29sZCkgIT0gMToKICAgIHJhaXNlIFJ1bnRpbWVFcnJvcignYmluZGluZ3MucnM6IGV4cGVjdGVkIG9uZSBiaW5kaW5nIGFzc2VydGlvbiBhbmNob3InKQpiaW5kaW5ncyA9IGJpbmRpbmdzLnJlcGxhY2UoYmluZGluZ3NfdGVzdF9vbGQsIGJpbmRpbmdzX3Rlc3RfbmV3LCAxKQpiaW5kaW5nc19wYXRoLndyaXRlX3RleHQoYmluZGluZ3MsIGVuY29kaW5nPSd1dGYtOCcpCgphcHBfdGVzdF9wYXRoID0gUGF0aCgnZGVza3RvcC9zcmMvQXBwLnRlc3QudHN4JykKYXBwX3Rlc3QgPSBhcHBfdGVzdF9wYXRoLnJlYWRfdGV4dChlbmNvZGluZz0ndXRmLTgnKQphcHBfZml4dHVyZV9vbGQgPSAnJycgIHBlbmRpbmdKb2luUmVxdWVzdHM6IFtdLAogIGNvbm5lY3RlZExpc3RlbmVyczogW10sCiAgcGxheWJhY2tDb250cm9sc0VuYWJsZWQ6IGZhbHNlLCcnJwphcHBfZml4dHVyZV9uZXcgPSAnJycgIHBlbmRpbmdKb2luUmVxdWVzdHM6IFtdLAogIGNvbm5lY3RlZExpc3RlbmVyczogW10sCiAgbGFzdERlbGl2ZXJ5OiBudWxsLAogIHJlY292ZXJhYmxlQWN0aW9uOiBudWxsLAogIHBsYXliYWNrQ29udHJvbHNFbmFibGVkOiBmYWxzZSwnJycKaWYgYXBwX3Rlc3QuY291bnQoYXBwX2ZpeHR1cmVfb2xkKSAhPSAxOgogICAgcmFpc2UgUnVudGltZUVycm9yKCdBcHAudGVzdC50c3g6IGV4cGVjdGVkIG9uZSBob3N0LXNlc3Npb24gZml4dHVyZSBhbmNob3InKQphcHBfdGVzdCA9IGFwcF90ZXN0LnJlcGxhY2UoYXBwX2ZpeHR1cmVfb2xkLCBhcHBfZml4dHVyZV9uZXcsIDEpCmFwcF90ZXN0X3BhdGgud3JpdGVfdGV4dChhcHBfdGVzdCwgZW5jb2Rpbmc9J3V0Zi04JykKCnNjcmVlbl9wYXRoID0gUGF0aCgnZGVza3RvcC9zcmMvc2NyZWVucy9Ib3N0U2Vzc2lvblNjcmVlbi50c3gnKQpzY3JlZW4gPSBzY3JlZW5fcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKc3ludGhldGljX2Vycm9yX29sZCA9ICcnJyAgICAgIG1lc3NhZ2U6ICJUaGUgY29udHJvbCBtZXNzYWdlIHdhcyBub3QgZGVsaXZlcmVkIHRvIHRoZSBsaXN0ZW5lci4iLAogICAgICBvcGVyYXRpb25JZDogbnVsbCwKICAgICAgY29udGV4dDogW10sCicnJwpzeW50aGV0aWNfZXJyb3JfbmV3ID0gJycnICAgICAgbWVzc2FnZTogIlRoZSBjb250cm9sIG1lc3NhZ2Ugd2FzIG5vdCBkZWxpdmVyZWQgdG8gdGhlIGxpc3RlbmVyLiIsCicnJwppZiBzY3JlZW4uY291bnQoc3ludGhldGljX2Vycm9yX29sZCkgIT0gMToKICAgIHJhaXNlIFJ1bnRpbWVFcnJvcignSG9zdFNlc3Npb25TY3JlZW4udHN4OiBleHBlY3RlZCBvbmUgc3RhbGUgc3ludGhldGljLWVycm9yIHNoYXBlJykKc2NyZWVuID0gc2NyZWVuLnJlcGxhY2Uoc3ludGhldGljX2Vycm9yX29sZCwgc3ludGhldGljX2Vycm9yX25ldywgMSkKc2NyZWVuX3BhdGgud3JpdGVfdGV4dChzY3JlZW4sIGVuY29kaW5nPSd1dGYtOCcpCgpzY3JlZW5fdGVzdF9wYXRoID0gUGF0aCgnZGVza3RvcC9zcmMvc2NyZWVucy9Ib3N0U2Vzc2lvblNjcmVlbi50ZXN0LnRzeCcpCnNjcmVlbl90ZXN0ID0gc2NyZWVuX3Rlc3RfcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKaW52b2tlX2Vycm9yX29sZCA9ICcnJyAgbWVzc2FnZTogImpvaW4gcmVxdWVzdCBpcyBzdGFsZSBvciBubyBsb25nZXIgcGVuZGluZyIsCiAgb3BlcmF0aW9uSWQ6ICJjb21tYW5kLTkiLAogIGNvbnRleHQ6IFtdLAonJycKaW52b2tlX2Vycm9yX25ldyA9ICcnJyAgbWVzc2FnZTogImpvaW4gcmVxdWVzdCBpcyBzdGFsZSBvciBubyBsb25nZXIgcGVuZGluZyIsCicnJwppZiBzY3JlZW5fdGVzdC5jb3VudChpbnZva2VfZXJyb3Jfb2xkKSAhPSAxOgogICAgcmFpc2UgUnVudGltZUVycm9yKCdIb3N0U2Vzc2lvblNjcmVlbi50ZXN0LnRzeDogZXhwZWN0ZWQgb25lIHN0YWxlIGludm9rZS1lcnJvciBzaGFwZScpCnNjcmVlbl90ZXN0ID0gc2NyZWVuX3Rlc3QucmVwbGFjZShpbnZva2VfZXJyb3Jfb2xkLCBpbnZva2VfZXJyb3JfbmV3LCAxKQpkZWxpdmVyeV9lcnJvcl9vbGQgPSAnJycgICAgICAgICAgICBtZXNzYWdlOiAidHJhbnNwb3J0IGNvbnRyb2wgZGVsaXZlcnkgaGFkIG5vIGludGVuZGVkIHJlY2lwaWVudHMiLAogICAgICAgICAgICBvcGVyYXRpb25JZDogImNvbW1hbmQtMSIsCiAgICAgICAgICAgIGNvbnRleHQ6IFtdLAonJycKZGVsaXZlcnlfZXJyb3JfbmV3ID0gJycnICAgICAgICAgICAgbWVzc2FnZTogInRyYW5zcG9ydCBjb250cm9sIGRlbGl2ZXJ5IGhhZCBubyBpbnRlbmRlZCByZWNpcGllbnRzIiwKJycnCmlmIHNjcmVlbl90ZXN0LmNvdW50KGRlbGl2ZXJ5X2Vycm9yX29sZCkgIT0gMToKICAgIHJhaXNlIFJ1bnRpbWVFcnJvcignSG9zdFNlc3Npb25TY3JlZW4udGVzdC50c3g6IGV4cGVjdGVkIG9uZSBzdGFsZSBkZWxpdmVyeS1lcnJvciBzaGFwZScpCnNjcmVlbl90ZXN0ID0gc2NyZWVuX3Rlc3QucmVwbGFjZShkZWxpdmVyeV9lcnJvcl9vbGQsIGRlbGl2ZXJ5X2Vycm9yX25ldywgMSkKbGlzdGVuZXJfc3ByZWFkX29sZCA9ICcgICAgICAgICAgICAgIC4uLmZpeHR1cmUoKS5jb25uZWN0ZWRMaXN0ZW5lcnNbMF0sXG4nCmxpc3RlbmVyX3NwcmVhZF9uZXcgPSAnICAgICAgICAgICAgICAuLi5maXh0dXJlKCkuY29ubmVjdGVkTGlzdGVuZXJzWzBdISxcbicKaWYgc2NyZWVuX3Rlc3QuY291bnQobGlzdGVuZXJfc3ByZWFkX29sZCkgIT0gMToKICAgIHJhaXNlIFJ1bnRpbWVFcnJvcignSG9zdFNlc3Npb25TY3JlZW4udGVzdC50c3g6IGV4cGVjdGVkIG9uZSBpbmRleGVkIGxpc3RlbmVyIHNwcmVhZCcpCnNjcmVlbl90ZXN0ID0gc2NyZWVuX3Rlc3QucmVwbGFjZShsaXN0ZW5lcl9zcHJlYWRfb2xkLCBsaXN0ZW5lcl9zcHJlYWRfbmV3LCAxKQpzY3JlZW5fdGVzdF9wYXRoLndyaXRlX3RleHQoc2NyZWVuX3Rlc3QsIGVuY29kaW5nPSd1dGYtOCcpCgpob3N0X2R0b19wYXRoID0gUGF0aCgnZGVza3RvcC9zcmMtdGF1cmkvc3JjL2hvc3Rfc2Vzc2lvbl9kdG8ucnMnKQpob3N0X2R0byA9IGhvc3RfZHRvX3BhdGgucmVhZF90ZXh0KGVuY29kaW5nPSd1dGYtOCcpCmZyb21fcGFydHNfb2xkID0gJyAgICBwdWIgZm4gZnJvbV9wYXJ0cyhcbicKZnJvbV9wYXJ0c19uZXcgPSAnICAgIHB1YihjcmF0ZSkgZm4gZnJvbV9wYXJ0cyhcbicKaWYgaG9zdF9kdG8uY291bnQoZnJvbV9wYXJ0c19vbGQpICE9IDE6CiAgICByYWlzZSBSdW50aW1lRXJyb3IoJ2hvc3Rfc2Vzc2lvbl9kdG8ucnM6IGV4cGVjdGVkIG9uZSBwcm9qZWN0aW9uIHZpc2liaWxpdHkgYW5jaG9yJykKaG9zdF9kdG8gPSBob3N0X2R0by5yZXBsYWNlKGZyb21fcGFydHNfb2xkLCBmcm9tX3BhcnRzX25ldywgMSkKaG9zdF9kdG9fcGF0aC53cml0ZV90ZXh0KGhvc3RfZHRvLCBlbmNvZGluZz0ndXRmLTgnKQoKdHJhbnNwb3J0X3BhdGggPSBQYXRoKCdkZXNrdG9wL3NyYy10YXVyaS9zcmMvcGxhdGZvcm0vaG9zdF90cmFuc3BvcnQucnMnKQp0cmFuc3BvcnQgPSB0cmFuc3BvcnRfcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKZm9yIG1ldGhvZCBpbiAoJ3N0YXJ0JywgJ3N0YXR1cycsICdzaHV0ZG93bicpOgogICAgb2xkID0gZicgICAgcHViKGNyYXRlKSBmbiB7bWV0aG9kfScKICAgIG5ldyA9IGYnICAgIHB1YihzdXBlcikgZm4ge21ldGhvZH0nCiAgICBpZiB0cmFuc3BvcnQuY291bnQob2xkKSAhPSAxOgogICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcigKICAgICAgICAgICAgZidob3N0X3RyYW5zcG9ydC5yczogZXhwZWN0ZWQgb25lIHttZXRob2R9IHZpc2liaWxpdHkgYW5jaG9yJwogICAgICAgICkKICAgIHRyYW5zcG9ydCA9IHRyYW5zcG9ydC5yZXBsYWNlKG9sZCwgbmV3LCAxKQp0cmFuc3BvcnRfcGF0aC53cml0ZV90ZXh0KHRyYW5zcG9ydCwgZW5jb2Rpbmc9J3V0Zi04JykKCnByaW50KAogICAgJ2FkYXB0ZWQgZ2VuZXJhdGVkIEJsb2NrIDIzIGZyb250ZW5kIGNvbnRyYWN0OiBleHBvcnRlZCBEZWxpdmVyeVJlcG9ydER0bywgJwogICAgJ2FsaWduZWQgRGVza3RvcEVycm9yRHRvIHNoYXBlcywgY29tcGxldGVkIGF1dGhvcml0YXRpdmUgZml4dHVyZXMsIHJldGFpbmVkICcKICAgICdzdHJpY3QgbGlzdGVuZXIgdHlwaW5nLCBhbmQgbmFycm93ZWQgaW50ZXJuYWwgUnVzdCBpbnRlcmZhY2VzJwopCg==' | base64 --decode >> .github/block23-storage-runner-adapt.py
           rm .github/workflows/desktop-block23-apply-typecheck-fixes.yml
           git diff --check
       - name: Commit helper correction directly to master
@@ -154,9 +34,7 @@ PY
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/block23-storage-runner-adapt.py \
-            .github/workflows/desktop-block23-apply-typecheck-fixes.yml
+          git add .github/block23-storage-runner-adapt.py .github/workflows/desktop-block23-apply-typecheck-fixes.yml
           git commit -m "Fix Block 23 frontend contract generation"
           git push origin HEAD:master
-          gh issue comment 45 --repo "$GITHUB_REPOSITORY" \
-            --body "Applied deterministic Desktop Block 23 frontend contract and typecheck fixes in commit $(git rev-parse HEAD)."
+          gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body "Applied deterministic Desktop Block 23 frontend contract and typecheck fixes in commit $(git rev-parse HEAD)."
