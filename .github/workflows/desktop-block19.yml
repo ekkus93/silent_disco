@@ -23,7 +23,7 @@ jobs:
     if: >-
       github.event.issue.number == 45 &&
       github.event.comment.user.login == github.repository_owner &&
-      startsWith(github.event.comment.body, '/run-desktop-block19\n')
+      github.event.comment.body == '/run-desktop-block19'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
@@ -36,26 +36,19 @@ jobs:
       - name: Capture exact input
         run: echo "BLOCK19_INPUT=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
 
-      - name: Decode and apply guarded implementation payload
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMENT_ID: ${{ github.event.comment.id }}
+      - name: Apply guarded implementation payload
         run: |
           set -euo pipefail
-          jq -r '.comment.body' "${GITHUB_EVENT_PATH}" | tail -n +2 > /tmp/block19-payload.b64
-          base64 --decode /tmp/block19-payload.b64 > /tmp/block19-payload.tgz
+          base64 --decode .github/desktop-block19-payload.b64 > /tmp/block19-payload.tgz
           echo "${PAYLOAD_SHA256}  /tmp/block19-payload.tgz" | sha256sum --check
           tar -xzf /tmp/block19-payload.tgz
-          gh api --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
-            -f body="/run-desktop-block19 payload accepted by Actions run ${GITHUB_RUN_ID}"
 
       - name: Publish start
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
-            --body "Desktop Block 19 guarded implementation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at input ${BLOCK19_INPUT}. No product commit will be pushed unless every gate passes."
+            --body "Desktop Block 19 guarded validation started: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} at input ${BLOCK19_INPUT}. The implementation will be committed only if every gate passes."
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -263,6 +256,7 @@ jobs:
       - name: Commit validated implementation and remove temporary machinery
         run: |
           set -euo pipefail
+          git rm .github/desktop-block19-payload.b64
           git rm .github/workflows/desktop-block19.yml
           git rm .github/workflows/desktop-block19-source-snapshot.yml
           git rm -r docs/generated/desktop-block19-source
