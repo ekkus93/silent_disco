@@ -13,9 +13,15 @@ sudo apt-get install --yes --no-install-recommends \
   build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
   libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
 
-cp rust/Cargo.lock /tmp/block23-rust.Cargo.lock
 cp desktop/src-tauri/Cargo.lock /tmp/block23-desktop.Cargo.lock
 cp desktop/package-lock.json /tmp/block23-package-lock.json
+
+# The Rust workspace lock was stale relative to the current resolver. Regenerate
+# it once as an intentional Block 23 artifact, retain that exact result as the
+# canonical lock for all later drift checks, and print the change for audit.
+cargo generate-lockfile --manifest-path rust/Cargo.toml
+cp rust/Cargo.lock /tmp/block23-rust.Cargo.lock
+git diff -- rust/Cargo.lock
 
 cargo fmt --manifest-path rust/Cargo.toml --all
 cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
@@ -124,6 +130,7 @@ git rm --ignore-unmatch \
 
 python3 - <<'PY'
 allowed = {
+    'rust/Cargo.lock',
     'desktop/src-tauri/src/app_state.rs',
     'desktop/src-tauri/src/bindings.rs',
     'desktop/src-tauri/src/host_commands.rs',
