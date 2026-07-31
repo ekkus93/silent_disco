@@ -180,6 +180,10 @@ transport_text = transport_text.replace(
     cloned_pending_listener_borrow,
 )
 transport_path.write_text(transport_text, encoding='utf-8')
+
+print('=== BLOCK23 GENERATED STORAGE EFFECT RUNNER ===')
+print(Path('desktop/src-tauri/src/platform/storage_effect_runner.rs').read_text(encoding='utf-8'))
+print('=== END BLOCK23 GENERATED STORAGE EFFECT RUNNER ===')
 '''
 
 PAYLOAD.write_text(source, encoding='utf-8')
@@ -187,5 +191,6 @@ print(
     'adapted Block 23 frontend/current-layout payload: removed 3 stale client calls, '
     'appended 3 current-layout client patches, corrected the first host-session DTO '
     'import, aligned the observer constructor order, removed the obsolete playback '
-    'transport-effect arm, and fixed three listener routing borrow/move conflicts'
+    'transport-effect arm, fixed three listener routing borrow/move conflicts, and '
+    'enabled a read-only generated storage-runner diagnostic'
 )
