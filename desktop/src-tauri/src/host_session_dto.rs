@@ -39,7 +39,7 @@ pub struct ConnectedListenerDto {
     pub display_name: String,
     pub trust_state: String,
     pub transport_state: String,
-    pub last_contact_ms: String,
+    pub last_contact_ms: Option<String>,
     pub estimated_offset_ms: Option<String>,
     pub round_trip_time_ms: Option<String>,
     pub last_error: Option<DesktopErrorDto>,
@@ -127,13 +127,13 @@ impl From<&ListenerSummary> for ConnectedListenerDto {
             display_name: value.display_name.clone(),
             trust_state: value.trust_state.wire_name().to_owned(),
             transport_state: value.transport_state.wire_name().to_owned(),
-            last_contact_ms: value.last_contact.get().to_string(),
+            last_contact_ms: value.last_contact.map(|contact| contact.get().to_string()),
             estimated_offset_ms: value
-                .estimated_offset_ms
-                .map(|offset| offset.get().to_string()),
+                .synchronization
+                .map(|synchronization| synchronization.offset_ms.to_string()),
             round_trip_time_ms: value
-                .round_trip_time_ms
-                .map(|duration| duration.get().to_string()),
+                .synchronization
+                .map(|synchronization| synchronization.round_trip_ms.to_string()),
             last_error: value.last_error.as_ref().map(core_error_dto),
         }
     }
