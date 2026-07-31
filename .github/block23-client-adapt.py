@@ -100,9 +100,75 @@ source += (
     + f"replace_once('desktop/src-tauri/src/app_state.rs', {observer_old!r}, {observer_new!r})\n"
 )
 
+source += r'''
+# Remove the obsolete playback-effect match arm. Playback is not represented by
+# TransportEffectRequest in the current core; Block 23 owns only approval,
+# rejection, and listener-disconnect delivery effects.
+transport_path = Path('desktop/src-tauri/src/platform/host_transport.rs')
+transport_lines = transport_path.read_text(encoding='utf-8').splitlines(keepends=True)
+playback_variants = (
+    'TransportEffectRequest::StartHostPlayback',
+    'TransportEffectRequest::PauseHostPlayback',
+    'TransportEffectRequest::ResumeHostPlayback',
+    'TransportEffectRequest::StopHostPlayback',
+)
+start_matches = [
+    index
+    for index, line in enumerate(transport_lines)
+    if playback_variants[0] in line
+]
+if len(start_matches) != 1:
+    raise RuntimeError(
+        f'host_transport.rs: expected one obsolete playback arm, found {len(start_matches)}'
+    )
+playback_start = start_matches[0]
+playback_arrow = next(
+    (
+        index
+        for index in range(playback_start, len(transport_lines))
+        if '=> {' in transport_lines[index]
+    ),
+    None,
+)
+if playback_arrow is None:
+    raise RuntimeError('host_transport.rs: obsolete playback arm has no body')
+playback_header = ''.join(transport_lines[playback_start : playback_arrow + 1])
+for variant in playback_variants:
+    if variant not in playback_header:
+        raise RuntimeError(f'host_transport.rs: obsolete playback arm is missing {variant}')
+
+brace_depth = 0
+body_started = False
+playback_end = None
+for index in range(playback_arrow, len(transport_lines)):
+    segment = transport_lines[index]
+    if index == playback_arrow:
+        segment = segment.split('=>', 1)[1]
+    for character in segment:
+        if character == '{':
+            brace_depth += 1
+            body_started = True
+        elif character == '}':
+            brace_depth -= 1
+            if brace_depth < 0:
+                raise RuntimeError('host_transport.rs: malformed obsolete playback arm')
+    if body_started and brace_depth == 0:
+        playback_end = index
+        break
+if playback_end is None:
+    raise RuntimeError('host_transport.rs: obsolete playback arm body is unterminated')
+
+del transport_lines[playback_start : playback_end + 1]
+transport_text = ''.join(transport_lines)
+if any(variant in transport_text for variant in playback_variants):
+    raise RuntimeError('host_transport.rs: obsolete playback variants remain after correction')
+transport_path.write_text(transport_text, encoding='utf-8')
+'''
+
 PAYLOAD.write_text(source, encoding='utf-8')
 print(
-    'adapted Block 23 frontend client payload: removed 3 stale calls, '
-    'appended 3 current-layout client patches, corrected the first '
-    'host-session DTO import, and aligned the observer constructor order'
+    'adapted Block 23 frontend/current-layout payload: removed 3 stale client calls, '
+    'appended 3 current-layout client patches, corrected the first host-session DTO '
+    'import, aligned the observer constructor order, and removed the obsolete '
+    'playback transport-effect arm'
 )
