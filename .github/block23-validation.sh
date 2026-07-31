@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
+test -f .github/apply-block23.py
 python3 .github/apply-block23.py
 rm .github/apply-block23.py
 
@@ -113,12 +113,13 @@ python3 .github/block23-complete.py
 
 git rm --ignore-unmatch \
   .github/workflows/desktop-block23.yml \
+  .github/workflows/desktop-block23-inspect.yml \
+  .github/block23-adapt.py \
   .github/block23-validation.sh \
   .github/block23-complete.py \
   .github/apply-block23.py.part-*
 
 python3 - <<'PY'
-from pathlib import Path
 allowed = {
     'desktop/src-tauri/src/app_state.rs',
     'desktop/src-tauri/src/bindings.rs',
@@ -144,6 +145,8 @@ allowed = {
     'docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md',
     'memory.md',
     '.github/workflows/desktop-block23.yml',
+    '.github/workflows/desktop-block23-inspect.yml',
+    '.github/block23-adapt.py',
     '.github/block23-validation.sh',
     '.github/block23-complete.py',
     '.github/apply-block23.py.part-00',
