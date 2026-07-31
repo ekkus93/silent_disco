@@ -207,7 +207,10 @@ export function HostSessionScreen() {
               <dl className="mt-4">
                 <DetailRow label="Host address" value={snapshot.connection.hostAddress} />
                 <DetailRow label="Control port" value={String(snapshot.connection.controlPort)} />
-                <DetailRow label="Synchronization port" value={String(snapshot.connection.syncPort)} />
+                <DetailRow
+                  label="Synchronization port"
+                  value={String(snapshot.connection.syncPort)}
+                />
                 <DetailRow label="Audio port" value={String(snapshot.connection.audioPort)} />
                 <DetailRow label="Session ID" value={snapshot.connection.sessionId} />
                 <DetailRow
@@ -265,7 +268,8 @@ export function HostSessionScreen() {
                         {request.deviceId}
                       </p>
                       <p className="mt-2 text-sm">
-                        Trust: {request.trustState}; invite code: {request.inviteCodeValid ? "valid" : "not valid"}
+                        Trust: {request.trustState}; invite code:{" "}
+                        {request.inviteCodeValid ? "valid" : "not valid"}
                       </p>
                     </li>
                   ))}
@@ -284,7 +288,9 @@ export function HostSessionScreen() {
                 Connected listeners
               </h3>
               {snapshot.connectedListeners.length === 0 ? (
-                <p className="mt-3 text-sm text-violet-100/65">No approved listener is connected.</p>
+                <p className="mt-3 text-sm text-violet-100/65">
+                  No approved listener is connected.
+                </p>
               ) : (
                 <ul className="mt-3 space-y-3">
                   {snapshot.connectedListeners.map((listener) => (
@@ -316,7 +322,8 @@ export function HostSessionScreen() {
           >
             <legend className="px-1 text-xl font-semibold">Playback controls</legend>
             <p id="playback-disabled-explanation" className="mt-2 text-sm text-violet-100/65">
-              Audio playback and streaming controls are intentionally unavailable until the later audio pipeline blocks are validated.
+              Audio playback and streaming controls are intentionally unavailable until the later
+              audio pipeline blocks are validated.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
               <button type="button" className="rounded-lg border px-4 py-2">

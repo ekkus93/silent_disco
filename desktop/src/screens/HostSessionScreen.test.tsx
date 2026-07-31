@@ -158,8 +158,12 @@ describe("HostSessionScreen", () => {
     render(<HostSessionScreen />);
 
     expect(
-      await screen.findByText(/Waiting for the shared transport to report a successfully bound endpoint/),
+      await screen.findByText(
+        /Waiting for the shared transport to report a successfully bound endpoint/,
+      ),
     ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Copy connection details" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy connection details" }),
+    ).not.toBeInTheDocument();
   });
 });

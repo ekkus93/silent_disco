@@ -10,12 +10,24 @@ import {
 import { useAppDispatch, useAppSelector } from "./app/store";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
 import { toDesktopBridgeError } from "./core/client";
+import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
 
 interface ShellConnectionState {
   connectionKind: "opened" | "reattached";
   subscriptionId: string;
 }
+
+const ACTIVE_HOST_LIFECYCLES = new Set([
+  "creating_session",
+  "advertising",
+  "waiting_for_listeners",
+  "ready",
+  "streaming",
+  "paused",
+  "ending_session",
+  "error",
+]);
 
 export function App() {
   const dispatch = useAppDispatch();
@@ -83,7 +95,12 @@ export function App() {
               Opening or reattaching the main profile…
             </p>
           ) : null}
-          {ready ? <HostSetupScreen /> : null}
+          {ready && ACTIVE_HOST_LIFECYCLES.has(snapshot.hostLifecycle) ? (
+            <HostSessionScreen />
+          ) : null}
+          {ready && !ACTIVE_HOST_LIFECYCLES.has(snapshot.hostLifecycle) ? (
+            <HostSetupScreen />
+          ) : null}
           {failed ? (
             <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/40 p-4">
               <p className="font-semibold">Desktop bridge startup failed</p>

@@ -7,6 +7,7 @@ import type {
   CoreNotificationDto,
   CoreSnapshotDto,
   DesktopErrorDto,
+  HostSessionSnapshotDto,
   OpenProfileRequest,
   OpenProfileResponse,
   RevisionCommandRequest,
@@ -308,6 +309,15 @@ export async function updateHostDraft(request: UpdateHostDraftRequest): Promise<
 export async function createHostSession(expectedRevision: string): Promise<CommandReceiptDto> {
   const request: RevisionCommandRequest = { expectedRevision };
   return invokeDesktop<CommandReceiptDto>("create_host_session", { request });
+}
+
+export async function getHostSessionState(): Promise<HostSessionSnapshotDto> {
+  return invokeDesktop<HostSessionSnapshotDto>("get_host_session_state");
+}
+
+export async function endHostSession(expectedRevision: string): Promise<CommandReceiptDto> {
+  const request: RevisionCommandRequest = { expectedRevision };
+  return invokeDesktop<CommandReceiptDto>("end_host_session", { request });
 }
 
 export async function getHostNetworkState(): Promise<NetworkInterfaceSnapshotDto> {

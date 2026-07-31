@@ -9,6 +9,7 @@ import { createAppStore } from "./app/store";
 import type {
   CoreNotificationDto,
   CoreSnapshotDto,
+  HostSessionSnapshotDto,
   NetworkInterfaceSnapshotDto,
 } from "./core/generated/desktop-bindings";
 
@@ -19,6 +20,8 @@ const {
   selectHostRoleMock,
   updateHostDraftMock,
   createHostSessionMock,
+  getHostSessionStateMock,
+  endHostSessionMock,
   getHostNetworkStateMock,
   setHostNetworkPreferenceMock,
 } = vi.hoisted(() => ({
@@ -28,6 +31,8 @@ const {
   selectHostRoleMock: vi.fn(),
   updateHostDraftMock: vi.fn(),
   createHostSessionMock: vi.fn(),
+  getHostSessionStateMock: vi.fn(),
+  endHostSessionMock: vi.fn(),
   getHostNetworkStateMock: vi.fn(),
   setHostNetworkPreferenceMock: vi.fn(),
 }));
@@ -45,6 +50,8 @@ vi.mock("./core/client", async () => {
     selectHostRole: selectHostRoleMock,
     updateHostDraft: updateHostDraftMock,
     createHostSession: createHostSessionMock,
+    getHostSessionState: getHostSessionStateMock,
+    endHostSession: endHostSessionMock,
     getHostNetworkState: getHostNetworkStateMock,
     setHostNetworkPreference: setHostNetworkPreferenceMock,
   };
@@ -112,6 +119,30 @@ const networkSnapshot: NetworkInterfaceSnapshotDto = {
   interfaceChange: null,
 };
 
+const hostSessionSnapshot: HostSessionSnapshotDto = {
+  revision: "5",
+  hostLifecycle: "waiting_for_listeners",
+  transportState: "connected",
+  playbackState: "stopped",
+  sessionName: "Oakland Night",
+  connection: {
+    hostAddress: "192.168.1.20",
+    controlPort: 47000,
+    syncPort: 47001,
+    audioPort: 47002,
+    sessionId: "session-app-test",
+    protocolVersion: 2,
+    inviteCodeRequired: false,
+    expiresAtMs: null,
+  },
+  pendingJoinRequests: [],
+  connectedListeners: [],
+  playbackControlsEnabled: false,
+  transportWorkerRunning: true,
+  transportError: null,
+  lastError: null,
+};
+
 const connection = {
   connectionKind: "opened" as const,
   profile: null,
@@ -140,8 +171,12 @@ describe("App", () => {
     selectHostRoleMock.mockReset();
     updateHostDraftMock.mockReset();
     createHostSessionMock.mockReset();
+    getHostSessionStateMock.mockReset();
+    endHostSessionMock.mockReset();
     getHostNetworkStateMock.mockReset();
     setHostNetworkPreferenceMock.mockReset();
+    getHostSessionStateMock.mockResolvedValue(hostSessionSnapshot);
+    endHostSessionMock.mockResolvedValue({ operationId: "end-1", acceptedAtRevision: "5" });
     getHostNetworkStateMock.mockResolvedValue(networkSnapshot);
     setHostNetworkPreferenceMock.mockResolvedValue(networkSnapshot);
     subscribeDesktopNotificationsMock.mockImplementation(
@@ -175,7 +210,8 @@ describe("App", () => {
       });
     });
 
-    expect(screen.getByText(/Rust host lifecycle: waiting_for_listeners/)).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Host session" })).toBeVisible();
+    expect(screen.getByText("session-app-test")).toBeVisible();
     expect(store.getState().core.snapshot?.revision).toBe("5");
   });
 
