@@ -100,7 +100,8 @@ jobs:
           set -euo pipefail
           git rm .github/workflows/desktop-block21-candidate.yml
           git rm -r .github/desktop-block21-source
-          git rm .github/apply-block21.py .github/prepare-block21.py
+          rm -f .github/apply-block21.py
+          git rm .github/prepare-block21.py
           git add \
             desktop/src-tauri/Cargo.toml \
             desktop/src-tauri/Cargo.lock \
