@@ -29,7 +29,7 @@ impl OpenedDecoder {
     pub(super) fn open(path: &Path, config: StreamingDecodeConfig) -> Result<Self, DecodeError> {
         let metadata = path
             .metadata()
-            .map_err(|error| map_io_error(error, "inspect source"))?;
+            .map_err(|error| map_io_error(&error, "inspect source"))?;
         if !metadata.file_type().is_file() {
             return Err(DecodeError::new(
                 DecodeErrorKind::Io,
@@ -50,7 +50,7 @@ impl OpenedDecoder {
         }
 
         let metadata_prefixed = inspect_id3v2_prefix(path, metadata.len())?;
-        let source = File::open(path).map_err(|error| map_io_error(error, "open source"))?;
+        let source = File::open(path).map_err(|error| map_io_error(&error, "open source"))?;
         let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
         let mut hint = Hint::new();
         if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
@@ -143,11 +143,11 @@ pub(super) fn validate_declared_format(
 }
 
 fn inspect_id3v2_prefix(path: &Path, source_length: u64) -> Result<bool, DecodeError> {
-    let mut file = File::open(path).map_err(|error| map_io_error(error, "inspect metadata prefix"))?;
+    let mut file = File::open(path).map_err(|error| map_io_error(&error, "inspect metadata prefix"))?;
     let mut header = [0_u8; 10];
     let read = file
         .read(&mut header)
-        .map_err(|error| map_io_error(error, "inspect metadata prefix"))?;
+        .map_err(|error| map_io_error(&error, "inspect metadata prefix"))?;
     if read < 3 || header[..3] != *b"ID3" {
         return Ok(false);
     }
@@ -194,7 +194,7 @@ fn inspect_id3v2_prefix(path: &Path, source_length: u64) -> Result<bool, DecodeE
     Ok(true)
 }
 
-fn map_io_error(error: io::Error, operation: &str) -> DecodeError {
+fn map_io_error(error: &io::Error, operation: &str) -> DecodeError {
     let kind = if error.kind() == io::ErrorKind::UnexpectedEof {
         DecodeErrorKind::CorruptInput
     } else {
@@ -216,7 +216,7 @@ pub(super) fn map_symphonia_error(
                 format!("invalid source metadata: {error}"),
             )
         }
-        SymphoniaError::IoError(error) => map_io_error(error, "decode source"),
+        SymphoniaError::IoError(error) => map_io_error(&error, "decode source"),
         SymphoniaError::DecodeError(detail) => DecodeError::new(
             DecodeErrorKind::CorruptInput,
             format!("corrupt audio source: {detail}"),
