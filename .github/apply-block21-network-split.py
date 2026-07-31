@@ -9,8 +9,7 @@ network = NETWORK_PATH.read_text()
 network = network.replace(
     "use super::failure::DesktopPlatformFailure;\n",
     "use super::failure::DesktopPlatformFailure;\n"
-    "use super::network_error::DesktopNetworkError;\n"
-    "pub(super) use super::network_error::NetworkErrorKind;\n",
+    "pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};\n",
     1,
 )
 network = network.replace(
