@@ -75,8 +75,22 @@ jobs:
           use super::network_dto::{NetworkAddressClassDto, SetNetworkBindPreferenceRequest};
           """,
           )
+
           apply = Path(".github/apply-block21.py")
           source = apply.read_text()
+          old_modules = '''replace_once(
+              "desktop/src-tauri/src/platform/mod.rs",
+              "pub mod identity;\npub mod paths;",
+              "pub mod identity;\npub mod network;\npub mod network_dto;\npub mod paths;",
+          )'''
+          new_modules = '''insert_after(
+              "desktop/src-tauri/src/platform/mod.rs",
+              "pub mod identity;\n",
+              "pub mod network;\npub mod network_dto;\n",
+          )'''
+          if source.count(old_modules) != 1:
+              raise SystemExit("platform module registration repair anchor changed")
+          source = source.replace(old_modules, new_modules)
           source = source.replace(
               """insert_after(
               \"desktop/src-tauri/src/platform/mod.rs\",
@@ -85,7 +99,7 @@ jobs:
           )""",
               """insert_after(
               \"desktop/src-tauri/src/platform/mod.rs\",
-              '#[cfg(test)]\\n#[path = \"file_picker_tests.rs\"]\\nmod file_picker_tests;\\n',
+              '#[cfg(test)]\\nmod file_picker_tests;\\n',
               '#[cfg(test)]\\n#[path = \"network_tests.rs\"]\\nmod network_tests;\\n',
           )""",
           )
