@@ -286,3 +286,5 @@ jobs:
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
             --body "Desktop Block 19 full validation failed in Actions run ${GITHUB_RUN_ID} against ${BLOCK19_INPUT}. No completion evidence was written; inspect the first failed gate and continue directly on master."
+
+# retry after direct contents-API ownership repairs
