@@ -181,9 +181,59 @@ transport_text = transport_text.replace(
 )
 transport_path.write_text(transport_text, encoding='utf-8')
 
-print('=== BLOCK23 GENERATED STORAGE EFFECT RUNNER ===')
-print(Path('desktop/src-tauri/src/platform/storage_effect_runner.rs').read_text(encoding='utf-8'))
-print('=== END BLOCK23 GENERATED STORAGE EFFECT RUNNER ===')
+# Restore the current settings-persistence effect that predates Block 23's new
+# trusted-device persistence path.
+storage_path = Path('desktop/src-tauri/src/platform/storage_effect_runner.rs')
+storage_text = storage_path.read_text(encoding='utf-8')
+storage_import_old = (
+    'use silent_disco_core::storage::{DatabaseClient, StorageError, TrustedDevice};'
+)
+storage_import_new = (
+    'use silent_disco_core::storage::{'
+    'DatabaseClient, StorageError, StoredSettings, TrustedDevice};'
+)
+if storage_text.count(storage_import_old) != 1:
+    raise RuntimeError('storage_effect_runner.rs: expected one storage import anchor')
+storage_text = storage_text.replace(storage_import_old, storage_import_new, 1)
+
+trusted_match_anchor = '''        StorageEffectRequest::PersistTrustedDevice {
+            device_id,
+            display_name,
+        } => persist_trusted_device(database, device_id, display_name),'''
+settings_and_trusted_match = '''        StorageEffectRequest::PersistSettings { settings } => {
+            persist_settings(database, settings)
+        }
+        StorageEffectRequest::PersistTrustedDevice {
+            device_id,
+            display_name,
+        } => persist_trusted_device(database, device_id, display_name),'''
+if storage_text.count(trusted_match_anchor) != 1:
+    raise RuntimeError('storage_effect_runner.rs: expected one trusted-device match anchor')
+storage_text = storage_text.replace(
+    trusted_match_anchor,
+    settings_and_trusted_match,
+    1,
+)
+
+trusted_helper_anchor = '''fn persist_trusted_device(
+    database: &DatabaseClient,'''
+settings_helper = '''fn persist_settings(
+    database: &DatabaseClient,
+    settings: silent_disco_core::domain::TuningSettings,
+) -> Result<StorageCompletion, StorageError> {
+    database.save_settings(&StoredSettings {
+        tuning: settings,
+        updated_at_ms: unix_time_ms(),
+    })?;
+    Ok(StorageCompletion::SettingsSaved)
+}
+
+fn persist_trusted_device(
+    database: &DatabaseClient,'''
+if storage_text.count(trusted_helper_anchor) != 1:
+    raise RuntimeError('storage_effect_runner.rs: expected one trusted-device helper anchor')
+storage_text = storage_text.replace(trusted_helper_anchor, settings_helper, 1)
+storage_path.write_text(storage_text, encoding='utf-8')
 '''
 
 PAYLOAD.write_text(source, encoding='utf-8')
@@ -192,5 +242,5 @@ print(
     'appended 3 current-layout client patches, corrected the first host-session DTO '
     'import, aligned the observer constructor order, removed the obsolete playback '
     'transport-effect arm, fixed three listener routing borrow/move conflicts, and '
-    'enabled a read-only generated storage-runner diagnostic'
+    'restored settings persistence in the generated storage runner'
 )
