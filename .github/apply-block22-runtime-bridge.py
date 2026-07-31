@@ -12,8 +12,8 @@ def replace_once(path: str, old: str, new: str) -> None:
 
 replace_once(
     "desktop/src-tauri/src/app_state.rs",
-    "use crate::dto::{\n",
-    "use crate::host_session_dto::HostSessionSnapshotDto;\nuse crate::dto::{\n",
+    "use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};\n",
+    "use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};\nuse crate::host_session_dto::HostSessionSnapshotDto;\n",
 )
 app_state = Path("desktop/src-tauri/src/app_state.rs")
 source = app_state.read_text()
