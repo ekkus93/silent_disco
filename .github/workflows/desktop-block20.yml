@@ -210,3 +210,5 @@ jobs:
             echo '```'
           } > /tmp/block20-failure.md
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" --body-file /tmp/block20-failure.md
+
+# retry after removing superseded helper
