@@ -54,6 +54,7 @@ jobs:
           cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
           python3 .github/block23-adapt.py
           python3 .github/block23-client-adapt.py
+          python3 .github/block23-storage-inspect.py
 
       - name: Seed frontend distribution for binding compilation
         run: |
