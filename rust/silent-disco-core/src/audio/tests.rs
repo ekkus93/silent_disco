@@ -67,11 +67,7 @@ fn decodes_mp3_incrementally_to_canonical_pcm() {
 fn rejects_an_unenabled_container_as_unsupported() {
     let _guard = audio_test_guard();
     let temp = TempDir::new().expect("temp");
-    let path = write_bytes(
-        &temp,
-        "unsupported.ogg",
-        b"OggSdesktop-block19-unsupported",
-    );
+    let path = write_bytes(&temp, "unsupported.ogg", b"OggSdesktop-block19-unsupported");
     let error = open_error(path);
     assert_eq!(error.kind, DecodeErrorKind::UnsupportedFormat);
 }
@@ -201,7 +197,12 @@ fn assert_successful_fixture(extension: &str) {
             .count(),
         1
     );
-    assert!(decoded.chunks.last().is_some_and(|chunk| chunk.end_of_stream));
+    assert!(
+        decoded
+            .chunks
+            .last()
+            .is_some_and(|chunk| chunk.end_of_stream)
+    );
 
     let mut expected_index = 0_u64;
     for chunk in &decoded.chunks {

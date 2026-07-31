@@ -42,7 +42,10 @@ fn prepares_the_exact_registered_staged_source() {
     )
     .expect("prepare");
     assert_eq!(prepared.descriptor(), &descriptor);
-    assert_eq!(prepared.decoder().stream_info().format, AudioFormat::CANONICAL);
+    assert_eq!(
+        prepared.decoder().stream_info().format,
+        AudioFormat::CANONICAL
+    );
 
     let decoder = prepared.into_decoder();
     let mut expected_index = 0_u64;
@@ -61,13 +64,9 @@ fn prepares_the_exact_registered_staged_source() {
 
 #[test]
 fn refuses_a_source_id_that_is_not_registered() {
-    let descriptor = AudioSourceDescriptor::new(
-        "desktop-staged-missing",
-        "missing.wav",
-        Some(10),
-        None,
-    )
-    .expect("descriptor");
+    let descriptor =
+        AudioSourceDescriptor::new("desktop-staged-missing", "missing.wav", Some(10), None)
+            .expect("descriptor");
     let error = prepare_error(&SelectedSourceRegistry::new(), &descriptor);
     assert_eq!(error.code, "desktop.audio_decode.source_not_staged");
     assert!(error.retryable);

@@ -71,14 +71,15 @@ impl StereoResampler {
             })?;
 
             if end_of_stream {
-                let stream_numerator = u128::from(batch_end)
-                    .checked_mul(target_rate)
-                    .ok_or_else(|| {
-                        DecodeError::new(
-                            DecodeErrorKind::ResourceLimit,
-                            "resampler stream duration arithmetic overflowed",
-                        )
-                    })?;
+                let stream_numerator =
+                    u128::from(batch_end)
+                        .checked_mul(target_rate)
+                        .ok_or_else(|| {
+                            DecodeError::new(
+                                DecodeErrorKind::ResourceLimit,
+                                "resampler stream duration arithmetic overflowed",
+                            )
+                        })?;
                 if batch_end == 0 || position_numerator >= stream_numerator {
                     break;
                 }
@@ -96,8 +97,8 @@ impl StereoResampler {
                 clippy::cast_precision_loss,
                 reason = "linear interpolation intentionally converts a bounded integer remainder to f32"
             )]
-            let fraction = (position_numerator % target_rate) as f32
-                / CANONICAL_SAMPLE_RATE_HZ as f32;
+            let fraction =
+                (position_numerator % target_rate) as f32 / CANONICAL_SAMPLE_RATE_HZ as f32;
             output([
                 base_frame[0] + (next_frame[0] - base_frame[0]) * fraction,
                 base_frame[1] + (next_frame[1] - base_frame[1]) * fraction,

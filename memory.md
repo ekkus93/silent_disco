@@ -352,3 +352,12 @@ Execution constraints for this session:
 - Peak RSS on this CI host: WAV `3.0` MiB, FLAC `3.1` MiB, MP3 `3.6` MiB, and the 2 MiB metadata MP3 `6.9` MiB.
 - Corrupt and truncated fixtures failed visibly; cooperative cancellation stopped at a decoder packet boundary. These measurements are environment-specific evidence, not product-wide performance limits.
 - Shared Block 23 remains open for Android bridge overhead, physical mobile evidence, iOS file-access constraints, and removal of the temporary platform decoder path.
+
+## 2026-07-30 — Desktop Block 19 bounded streaming decode complete
+
+- Shared Rust owns incremental WAV/FLAC/MP3 decode to canonical 48 kHz stereo PCM16.
+- Decoded chunks and queued duration are bounded; checked sample indices, visible backpressure, typed failures, cancellation, join, and cancel-on-drop are covered.
+- Desktop resolves the exact opaque staged source before starting the shared worker; packetization/playback wiring remains assigned to later blocks.
+- Repository execution policy remains direct work on `master`; no branch or PR was used.
+- Validation run: `30599085238`.
+- Validated input commit: `4c05e5763b1771fc2c7a04690d46b8c76665aa43`.

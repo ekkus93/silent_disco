@@ -1100,7 +1100,7 @@ Required interface semantics:
 pub struct DecodedPcmChunk {
     pub format: AudioFormat,
     pub first_sample_index: SampleIndex,
-    pub frames: Vec<f32>,
+    pub frames: Vec<i16>,
     pub end_of_stream: bool,
 }
 ```
@@ -1109,30 +1109,32 @@ Use the actual shared format selected by Block 14; do not copy this type if it a
 
 ### 19.2 Requirements
 
-- [ ] bounded chunk frames;
-- [ ] bounded queued decoded duration;
-- [ ] checked frame/sample arithmetic;
-- [ ] explicit channel/sample-rate conversion policy;
-- [ ] no format change mid-stream without explicit event;
-- [ ] cancellation and join;
-- [ ] corrupt and unsupported errors distinguished;
-- [ ] source position and duration only when valid;
-- [ ] no entire-track allocation;
-- [ ] decoder backpressure visible.
+- [x] bounded chunk frames;
+- [x] bounded queued decoded duration;
+- [x] checked frame/sample arithmetic;
+- [x] explicit channel/sample-rate conversion policy;
+- [x] no format change mid-stream without explicit event;
+- [x] cancellation and join;
+- [x] corrupt and unsupported errors distinguished;
+- [x] source position and duration only when valid;
+- [x] no entire-track allocation;
+- [x] decoder backpressure visible.
 
 ### 19.3 Tests
 
-- [ ] WAV fixture;
-- [ ] FLAC fixture;
-- [ ] MP3 fixture;
-- [ ] truncated input;
-- [ ] invalid metadata;
-- [ ] empty source;
-- [ ] very short final chunk;
-- [ ] cancellation;
-- [ ] queue full;
-- [ ] restart with new stream/source;
-- [ ] no memory growth across repeated open/close.
+- [x] WAV fixture;
+- [x] FLAC fixture;
+- [x] MP3 fixture;
+- [x] truncated input;
+- [x] invalid metadata;
+- [x] empty source;
+- [x] very short final chunk;
+- [x] cancellation;
+- [x] queue full;
+- [x] restart with new stream/source;
+- [x] no memory growth across repeated open/close.
+
+**Completion evidence:** The shared Rust worker, canonical conversion, bounded queue, desktop staged-source adapter, fixture/error/backpressure/lifecycle tests, and complete repository regression matrix passed in GitHub Actions run `30599085238` against direct-master input `4c05e5763b1771fc2c7a04690d46b8c76665aa43`. Architecture and scope are recorded in `docs/DESKTOP_BLOCK19_STREAMING_DECODE.md`.
 
 **Acceptance:** A staged source is decoded incrementally into the shared host packetization boundary.
 

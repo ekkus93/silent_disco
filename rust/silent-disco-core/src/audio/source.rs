@@ -86,9 +86,12 @@ impl OpenedDecoder {
                 .as_ref()
                 .map(symphonia::core::audio::Channels::count),
         )?;
-        if audio_parameters.max_frames_per_packet.is_some_and(|frames| {
-            usize::try_from(frames).map_or(true, |value| value > MAX_DECODED_PACKET_FRAMES)
-        }) {
+        if audio_parameters
+            .max_frames_per_packet
+            .is_some_and(|frames| {
+                usize::try_from(frames).map_or(true, |value| value > MAX_DECODED_PACKET_FRAMES)
+            })
+        {
             return Err(DecodeError::new(
                 DecodeErrorKind::ResourceLimit,
                 "declared decoded packet size exceeds the bounded source-frame limit",
@@ -143,7 +146,8 @@ pub(super) fn validate_declared_format(
 }
 
 fn inspect_id3v2_prefix(path: &Path, source_length: u64) -> Result<bool, DecodeError> {
-    let mut file = File::open(path).map_err(|error| map_io_error(&error, "inspect metadata prefix"))?;
+    let mut file =
+        File::open(path).map_err(|error| map_io_error(&error, "inspect metadata prefix"))?;
     let mut header = [0_u8; 10];
     let read = file
         .read(&mut header)
@@ -203,10 +207,7 @@ fn map_io_error(error: &io::Error, operation: &str) -> DecodeError {
     DecodeError::new(kind, format!("could not {operation}: {error}"))
 }
 
-pub(super) fn map_symphonia_error(
-    error: SymphoniaError,
-    metadata_prefixed: bool,
-) -> DecodeError {
+pub(super) fn map_symphonia_error(error: SymphoniaError, metadata_prefixed: bool) -> DecodeError {
     match error {
         SymphoniaError::IoError(error)
             if metadata_prefixed && error.kind() == io::ErrorKind::UnexpectedEof =>

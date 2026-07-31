@@ -790,10 +790,12 @@ pub struct DecodedPcmChunk {
 }
 ```
 
-- [ ] Do not send one FFI call per frame.
-- [ ] Bound chunk frames and total queued source data.
-- [ ] Reject format changes mid-stream unless explicit reconfiguration exists.
-- [ ] Preserve source errors.
+- [x] Do not send one FFI call per frame.
+- [x] Bound chunk frames and total queued source data.
+- [x] Reject format changes mid-stream unless explicit reconfiguration exists.
+- [x] Preserve source errors.
+
+**Desktop Block 19 evidence:** The bounded ingestion API passed Actions run `30599085238` against direct-master input `4c05e5763b1771fc2c7a04690d46b8c76665aa43`. Packetization remains open in 14.2.
 
 ### 14.2 Implement streaming packetizer
 

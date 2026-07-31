@@ -45,9 +45,11 @@ impl SharedStatistics {
     }
 
     fn decrement_queued(&self) {
-        let result = self
-            .queued_chunks
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_sub(1));
+        let result =
+            self.queued_chunks
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                    value.checked_sub(1)
+                });
         debug_assert!(result.is_ok(), "decoded queue accounting underflowed");
     }
 }
@@ -362,9 +364,7 @@ impl Chunker {
             chunk_frames,
             queue_capacity_chunks,
             first_sample_index: 0,
-            current: Vec::with_capacity(
-                chunk_frames * AudioFormat::CANONICAL.samples_per_frame(),
-            ),
+            current: Vec::with_capacity(chunk_frames * AudioFormat::CANONICAL.samples_per_frame()),
             pending_full: None,
         }
     }
@@ -486,11 +486,12 @@ fn send_with_backpressure(
     let mut backpressure_recorded = false;
     loop {
         ensure_not_cancelled(cancellation)?;
-        let reserved = statistics.queued_chunks.fetch_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |queued| (queued < queue_capacity_chunks).then_some(queued + 1),
-        );
+        let reserved =
+            statistics
+                .queued_chunks
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+                    (queued < queue_capacity_chunks).then_some(queued + 1)
+                });
         if reserved.is_err() {
             record_backpressure(statistics, &mut backpressure_recorded);
             thread::sleep(BACKPRESSURE_POLL_INTERVAL);
@@ -533,10 +534,7 @@ fn map_to_stereo(samples: &[f32], channels: usize) -> Result<Vec<[f32; 2]>, Deco
             .collect()),
         2 => {
             let mut chunks = samples.chunks_exact(2);
-            let stereo = chunks
-                .by_ref()
-                .map(|frame| [frame[0], frame[1]])
-                .collect();
+            let stereo = chunks.by_ref().map(|frame| [frame[0], frame[1]]).collect();
             if chunks.remainder().is_empty() {
                 Ok(stereo)
             } else {

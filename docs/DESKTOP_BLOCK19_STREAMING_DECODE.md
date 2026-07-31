@@ -1,6 +1,6 @@
 # Desktop Block 19 — Bounded Streaming Decode
 
-**Status:** Pending guarded validation
+**Status:** Complete
 
 ## Decision carried forward
 
@@ -55,8 +55,8 @@ The guarded validation covers:
 
 ## Validation provenance
 
-- Guarded GitHub Actions run: `{{RUN_ID}}`
-- Guarded input commit: `{{INPUT_SHA}}`
+- Guarded GitHub Actions run: `30599085238`
+- Guarded input commit: `4c05e5763b1771fc2c7a04690d46b8c76665aa43`
 - Completion commit: written by the guarded workflow after all gates pass
 
 Block 25/shared migration Block 14 still owns streaming packetization and playback consumption. Block 19 supplies its bounded ingestion boundary; it does not claim packetizer completion.
