@@ -53,8 +53,8 @@ impl DesktopHostTransportRuntime {
             .spawn(move || {
                 run_transport_worker(
                     node,
-                    worker_advertisement,
-                    sink,
+                    &worker_advertisement,
+                    sink.as_ref(),
                     &worker_stop,
                     &worker_status,
                 )
@@ -106,8 +106,8 @@ impl DesktopHostTransportRuntime {
 
 fn run_transport_worker(
     mut node: Box<dyn HostTransportNode>,
-    advertisement: SessionAdvertisement,
-    sink: Arc<dyn DesktopHostTransportEventSink>,
+    advertisement: &SessionAdvertisement,
+    sink: &dyn DesktopHostTransportEventSink,
     stop: &AtomicBool,
     status: &Mutex<WorkerStatus>,
 ) -> Result<(), DesktopNetworkError> {
@@ -115,7 +115,7 @@ fn run_transport_worker(
     let mut primary = None;
     while !stop.load(Ordering::Acquire) {
         match node.recv_event(EVENT_POLL_INTERVAL) {
-            Ok(event) => match processor.process(event, node.as_ref(), &advertisement, sink.as_ref()) {
+            Ok(event) => match processor.process(event, node.as_ref(), advertisement, sink) {
                 Ok(Some(message)) => set_last_error(status, &message),
                 Ok(None) => {}
                 Err(error) => {
