@@ -195,7 +195,7 @@ fn export_filename_stem(export_id: &str) -> Result<String, DesktopPlatformFailur
     Ok(stem)
 }
 
-const fn failure(message: &'static str) -> DesktopPlatformFailure {
+fn failure(message: &'static str) -> DesktopPlatformFailure {
     DesktopPlatformFailure::new(
         CoreErrorCode::PlatformOperationFailed,
         message,

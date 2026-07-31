@@ -1,0 +1,835 @@
+use super::failure::DesktopPlatformFailure;
+use super::network_dto::{
+    NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
+    NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
+};
+use crate::dto::DesktopErrorDto;
+use netdev::Interface;
+use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
+use silent_disco_core::runtime::{NetworkEndpoint, SessionAdvertisement};
+use silent_disco_core::transport::{
+    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportError,
+    TransportErrorKind, TransportFactory, production_transport_factory,
+};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::{Arc, Mutex};
+
+const MAX_INTERFACE_RECORDS: usize = 256;
+const MAX_ADDRESS_RECORDS: usize = 1_024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub(super) struct InterfaceRecord {
+    pub name: String,
+    pub index: u32,
+    pub up: bool,
+    pub running: bool,
+    pub oper_up: bool,
+    pub loopback: bool,
+    pub point_to_point: bool,
+    pub tun: bool,
+    pub physical: bool,
+    pub default_route: bool,
+    pub addresses: Vec<AddressRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AddressRecord {
+    pub address: IpAddr,
+    pub prefix_length: u8,
+}
+
+pub(super) trait NetworkInterfaceProvider: Send + Sync + 'static {
+    fn interfaces(&self) -> Result<Vec<InterfaceRecord>, DesktopNetworkError>;
+}
+
+#[derive(Debug, Default)]
+struct NetdevNetworkInterfaceProvider;
+
+impl NetworkInterfaceProvider for NetdevNetworkInterfaceProvider {
+    fn interfaces(&self) -> Result<Vec<InterfaceRecord>, DesktopNetworkError> {
+        normalize_interfaces(netdev::get_interfaces())
+    }
+}
+
+fn normalize_interfaces(
+    interfaces: Vec<Interface>,
+) -> Result<Vec<InterfaceRecord>, DesktopNetworkError> {
+    if interfaces.len() > MAX_INTERFACE_RECORDS {
+        return Err(DesktopNetworkError::resource_limit(
+            "desktop network interface count exceeds the supported limit",
+        ));
+    }
+    let mut address_count = 0usize;
+    interfaces
+        .into_iter()
+        .map(|interface| {
+            let up = interface.is_up();
+            let running = interface.is_running();
+            let oper_up = interface.is_oper_up();
+            let loopback = interface.is_loopback();
+            let point_to_point = interface.is_point_to_point();
+            let tun = interface.is_tun();
+            let physical = interface.is_physical();
+            let default_route = interface.default;
+            let index = interface.index;
+            let name = interface.name.clone();
+            let mut addresses = Vec::with_capacity(interface.ipv4.len() + interface.ipv6.len());
+            for network in &interface.ipv4 {
+                addresses.push(AddressRecord {
+                    address: IpAddr::V4(network.addr()),
+                    prefix_length: network.prefix_len(),
+                });
+            }
+            for network in &interface.ipv6 {
+                addresses.push(AddressRecord {
+                    address: IpAddr::V6(network.addr()),
+                    prefix_length: network.prefix_len(),
+                });
+            }
+            address_count = address_count.saturating_add(addresses.len());
+            if address_count > MAX_ADDRESS_RECORDS {
+                return Err(DesktopNetworkError::resource_limit(
+                    "desktop network address count exceeds the supported limit",
+                ));
+            }
+            Ok(InterfaceRecord {
+                name,
+                index,
+                up,
+                running,
+                oper_up,
+                loopback,
+                point_to_point,
+                tun,
+                physical,
+                default_route,
+                addresses,
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BindPreference {
+    Automatic,
+    Explicit {
+        interface_name: String,
+        address: Ipv4Addr,
+    },
+}
+
+impl BindPreference {
+    fn dto(&self) -> NetworkBindPreferenceDto {
+        match self {
+            Self::Automatic => NetworkBindPreferenceDto {
+                mode: "automatic".to_owned(),
+                interface_name: None,
+                address: None,
+            },
+            Self::Explicit {
+                interface_name,
+                address,
+            } => NetworkBindPreferenceDto {
+                mode: "explicit".to_owned(),
+                interface_name: Some(interface_name.clone()),
+                address: Some(address.to_string()),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectedAddress {
+    interface_name: String,
+    interface_index: u32,
+    address: Ipv4Addr,
+    default_route: bool,
+    physical: bool,
+    prefix_length: u8,
+}
+
+impl SelectedAddress {
+    fn dto(&self) -> NetworkAddressCandidateDto {
+        NetworkAddressCandidateDto {
+            interface_name: self.interface_name.clone(),
+            interface_index: self.interface_index,
+            address: self.address.to_string(),
+            prefix_length: self.prefix_length,
+            classification: NetworkAddressClassDto::PrivateLan,
+            is_default_route: self.default_route,
+            is_active: true,
+            is_physical: self.physical,
+            selectable: true,
+            rejection_reason: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct HostPorts {
+    pub(super) control: u16,
+    pub(super) sync: u16,
+    pub(super) audio: u16,
+}
+
+struct ActiveBinding {
+    selected: SelectedAddress,
+    endpoint: NetworkEndpoint,
+    node: Box<dyn HostTransportNode>,
+}
+
+struct NetworkState {
+    preference: BindPreference,
+    active: Option<ActiveBinding>,
+}
+
+pub(crate) struct DesktopHostNetworkControl {
+    provider: Arc<dyn NetworkInterfaceProvider>,
+    transport_factory: Arc<dyn TransportFactory>,
+    ports: HostPorts,
+    state: Mutex<NetworkState>,
+}
+
+impl DesktopHostNetworkControl {
+    #[must_use]
+    pub(crate) fn production() -> Self {
+        Self::with_components(
+            Arc::new(NetdevNetworkInterfaceProvider),
+            Arc::new(production_transport_factory()),
+            HostPorts::default(),
+        )
+    }
+
+    pub(super) fn with_components(
+        provider: Arc<dyn NetworkInterfaceProvider>,
+        transport_factory: Arc<dyn TransportFactory>,
+        ports: HostPorts,
+    ) -> Self {
+        Self {
+            provider,
+            transport_factory,
+            ports,
+            state: Mutex::new(NetworkState {
+                preference: BindPreference::Automatic,
+                active: None,
+            }),
+        }
+    }
+
+    /// Returns a bounded, classified interface snapshot and detects changes to an active bind.
+    pub(crate) fn snapshot(&self) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+        let interfaces = self
+            .provider
+            .interfaces()
+            .map_err(DesktopNetworkError::dto)?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        Ok(snapshot_from(
+            &interfaces,
+            &state.preference,
+            state.active.as_ref(),
+        ))
+    }
+
+    /// Replaces the bind preference after validating it against the current interface snapshot.
+    pub(crate) fn set_preference(
+        &self,
+        request: &SetNetworkBindPreferenceRequest,
+    ) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+        let interfaces = self
+            .provider
+            .interfaces()
+            .map_err(DesktopNetworkError::dto)?;
+        let preference = parse_preference(request).map_err(DesktopNetworkError::dto)?;
+        if let BindPreference::Explicit { .. } = &preference {
+            select_address(&interfaces, &preference).map_err(DesktopNetworkError::dto)?;
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        if state.active.is_some() {
+            return Err(DesktopNetworkError::invalid_state(
+                "network bind preference cannot change while a host endpoint is active",
+            )
+            .dto());
+        }
+        state.preference = preference;
+        Ok(snapshot_from(&interfaces, &state.preference, None))
+    }
+
+    pub(super) fn start_host(
+        &self,
+        advertisement: &SessionAdvertisement,
+    ) -> Result<NetworkEndpoint, DesktopPlatformFailure> {
+        self.start_host_inner(advertisement)
+            .map_err(|error| error.platform_failure())
+    }
+
+    pub(super) fn start_host_inner(
+        &self,
+        advertisement: &SessionAdvertisement,
+    ) -> Result<NetworkEndpoint, DesktopNetworkError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned())?;
+        if state.active.is_some() {
+            return Err(DesktopNetworkError::invalid_state(
+                "desktop host network endpoint is already active",
+            ));
+        }
+        let initial = self.provider.interfaces()?;
+        let selected = select_address(&initial, &state.preference)?;
+        let refreshed = self.provider.interfaces()?;
+        validate_selected(&refreshed, &selected)?;
+
+        let mut config = HostTransportConfig::loopback(advertisement.session_id.clone());
+        config.bind_address = IpAddr::V4(selected.address);
+        config.control_port = self.ports.control;
+        config.sync_port = self.ports.sync;
+        config.audio_port = self.ports.audio;
+        let node = self
+            .transport_factory
+            .bind_host(config, Arc::new(SystemTransportClock::default()))
+            .map_err(|error| DesktopNetworkError::transport(&error))?;
+        let endpoint = node.endpoint();
+        if endpoint.address != IpAddr::V4(selected.address) {
+            let mut node = node;
+            let cleanup = node.shutdown().err();
+            return Err(DesktopNetworkError::endpoint_mismatch(cleanup.as_ref()));
+        }
+        state.active = Some(ActiveBinding {
+            selected,
+            endpoint,
+            node,
+        });
+        Ok(endpoint)
+    }
+
+    pub(super) fn stop_host(&self) -> Result<(), DesktopPlatformFailure> {
+        self.stop_host_inner()
+            .map_err(|error| error.platform_failure())
+    }
+
+    pub(super) fn stop_host_inner(&self) -> Result<(), DesktopNetworkError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned())?;
+        let Some(mut active) = state.active.take() else {
+            return Err(DesktopNetworkError::invalid_state(
+                "desktop host network endpoint is not active",
+            ));
+        };
+        active
+            .node
+            .shutdown()
+            .map_err(|error| DesktopNetworkError::transport(&error))
+    }
+
+    pub(crate) fn shutdown(&self) -> Result<(), CoreError> {
+        let active = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().core_error(None))?
+            .active
+            .is_some();
+        if !active {
+            return Ok(());
+        }
+        self.stop_host_inner()
+            .map_err(|error| error.core_error(None))
+    }
+}
+
+impl Drop for DesktopHostNetworkControl {
+    fn drop(&mut self) {
+        let active = self
+            .state
+            .get_mut()
+            .map_or(true, |state| state.active.is_some());
+        assert!(
+            !active || std::thread::panicking(),
+            "DesktopHostNetworkControl dropped with an active transport"
+        );
+    }
+}
+
+fn snapshot_from(
+    interfaces: &[InterfaceRecord],
+    preference: &BindPreference,
+    active: Option<&ActiveBinding>,
+) -> NetworkInterfaceSnapshotDto {
+    let mut candidates = address_candidates(interfaces);
+    candidates.sort_by(|left, right| {
+        left.interface_name
+            .cmp(&right.interface_name)
+            .then(left.interface_index.cmp(&right.interface_index))
+            .then(left.address.cmp(&right.address))
+    });
+    let automatic = select_address(interfaces, &BindPreference::Automatic);
+    let (automatic_selection, requires_explicit_selection) = match &automatic {
+        Ok(selected) => (Some(selected.dto()), false),
+        Err(error) if error.kind == NetworkErrorKind::Ambiguous => (None, true),
+        Err(_) => (None, false),
+    };
+    let resolved = select_address(interfaces, preference);
+    let resolved_selection = resolved.as_ref().ok().map(SelectedAddress::dto);
+    let selection_error = resolved.err().map(|error| error.message);
+    let active_binding = active.map(|binding| NetworkBindingDto {
+        interface_name: binding.selected.interface_name.clone(),
+        address: binding.endpoint.address.to_string(),
+        control_port: binding.endpoint.control_port,
+        sync_port: binding.endpoint.sync_port,
+        audio_port: binding.endpoint.audio_port,
+    });
+    let active_binding_valid =
+        active.is_none_or(|binding| validate_selected(interfaces, &binding.selected).is_ok());
+    let interface_change = if active.is_some() && !active_binding_valid {
+        Some("the active network interface or address is no longer available".to_owned())
+    } else {
+        None
+    };
+    NetworkInterfaceSnapshotDto {
+        preference: preference.dto(),
+        candidates,
+        automatic_selection,
+        resolved_selection,
+        requires_explicit_selection,
+        selection_error,
+        active_binding,
+        active_binding_valid,
+        interface_change,
+    }
+}
+
+fn address_candidates(interfaces: &[InterfaceRecord]) -> Vec<NetworkAddressCandidateDto> {
+    interfaces
+        .iter()
+        .flat_map(|interface| {
+            interface.addresses.iter().map(move |address| {
+                let class = classify(interface, address.address);
+                let active = is_active(interface);
+                let selectable = active
+                    && class == NetworkAddressClassDto::PrivateLan
+                    && address.address.is_ipv4();
+                let rejection_reason = if selectable {
+                    None
+                } else if !active {
+                    Some("interface is not active".to_owned())
+                } else if address.address.is_ipv6() {
+                    Some(
+                        "IPv6 host binding is not enabled in the initial desktop LAN baseline"
+                            .to_owned(),
+                    )
+                } else {
+                    Some(
+                        match class {
+                            NetworkAddressClassDto::Loopback => {
+                                "loopback addresses are not advertised"
+                            }
+                            NetworkAddressClassDto::LinkLocal => {
+                                "link-local addresses are not advertised"
+                            }
+                            NetworkAddressClassDto::Vpn => {
+                                "VPN interfaces require a later explicit policy"
+                            }
+                            NetworkAddressClassDto::Container => {
+                                "container interfaces are not advertised"
+                            }
+                            NetworkAddressClassDto::Other => "address is not a private LAN address",
+                            NetworkAddressClassDto::PrivateLan => "address is not selectable",
+                        }
+                        .to_owned(),
+                    )
+                };
+                NetworkAddressCandidateDto {
+                    interface_name: interface.name.clone(),
+                    interface_index: interface.index,
+                    address: address.address.to_string(),
+                    prefix_length: address.prefix_length,
+                    classification: class,
+                    is_default_route: interface.default_route,
+                    is_active: active,
+                    is_physical: interface.physical,
+                    selectable,
+                    rejection_reason,
+                }
+            })
+        })
+        .collect()
+}
+
+fn select_address(
+    interfaces: &[InterfaceRecord],
+    preference: &BindPreference,
+) -> Result<SelectedAddress, DesktopNetworkError> {
+    let mut selectable = interfaces
+        .iter()
+        .flat_map(|interface| {
+            interface.addresses.iter().filter_map(move |address| {
+                let IpAddr::V4(ipv4) = address.address else {
+                    return None;
+                };
+                (is_active(interface)
+                    && classify(interface, address.address) == NetworkAddressClassDto::PrivateLan)
+                    .then(|| SelectedAddress {
+                        interface_name: interface.name.clone(),
+                        interface_index: interface.index,
+                        address: ipv4,
+                        default_route: interface.default_route,
+                        physical: interface.physical,
+                        prefix_length: address.prefix_length,
+                    })
+            })
+        })
+        .collect::<Vec<_>>();
+    selectable.sort_by(|left, right| {
+        right
+            .default_route
+            .cmp(&left.default_route)
+            .then(left.interface_index.cmp(&right.interface_index))
+            .then(left.interface_name.cmp(&right.interface_name))
+            .then(left.address.octets().cmp(&right.address.octets()))
+    });
+    match preference {
+        BindPreference::Explicit {
+            interface_name,
+            address,
+        } => selectable
+            .into_iter()
+            .find(|candidate| {
+                &candidate.interface_name == interface_name && &candidate.address == address
+            })
+            .ok_or_else(|| {
+                DesktopNetworkError::unavailable(
+                    "the requested private-LAN interface address is unavailable",
+                )
+            }),
+        BindPreference::Automatic => match selectable.as_slice() {
+            [] => Err(DesktopNetworkError::unavailable(
+                "no active private-LAN IPv4 address is available for the desktop host",
+            )),
+            [single] => Ok(single.clone()),
+            many => {
+                let defaults = many
+                    .iter()
+                    .filter(|candidate| candidate.default_route)
+                    .collect::<Vec<_>>();
+                match defaults.as_slice() {
+                    [single] => Ok((*single).clone()),
+                    _ => Err(DesktopNetworkError::ambiguous(
+                        "multiple private-LAN addresses are eligible; select one explicitly",
+                    )),
+                }
+            }
+        },
+    }
+}
+
+fn validate_selected(
+    interfaces: &[InterfaceRecord],
+    selected: &SelectedAddress,
+) -> Result<(), DesktopNetworkError> {
+    let preference = BindPreference::Explicit {
+        interface_name: selected.interface_name.clone(),
+        address: selected.address,
+    };
+    select_address(interfaces, &preference).map(|_| ())
+}
+
+fn parse_preference(
+    request: &SetNetworkBindPreferenceRequest,
+) -> Result<BindPreference, DesktopNetworkError> {
+    match request.mode.as_str() {
+        "automatic" if request.interface_name.is_none() && request.address.is_none() => {
+            Ok(BindPreference::Automatic)
+        }
+        "explicit" => {
+            let interface_name = request.interface_name.as_deref().ok_or_else(|| {
+                DesktopNetworkError::invalid_argument(
+                    "explicit network preference requires an interface name",
+                )
+            })?;
+            if interface_name.is_empty()
+                || interface_name.len() > 128
+                || interface_name.trim() != interface_name
+            {
+                return Err(DesktopNetworkError::invalid_argument(
+                    "network interface name is invalid",
+                ));
+            }
+            let address = request.address.as_deref().ok_or_else(|| {
+                DesktopNetworkError::invalid_argument(
+                    "explicit network preference requires an IPv4 address",
+                )
+            })?;
+            let address = address.parse::<Ipv4Addr>().map_err(|_| {
+                DesktopNetworkError::invalid_argument(
+                    "explicit network preference address must be canonical IPv4",
+                )
+            })?;
+            Ok(BindPreference::Explicit {
+                interface_name: interface_name.to_owned(),
+                address,
+            })
+        }
+        _ => Err(DesktopNetworkError::invalid_argument(
+            "network preference must be automatic or a complete explicit selection",
+        )),
+    }
+}
+
+fn is_active(interface: &InterfaceRecord) -> bool {
+    interface.up && (interface.running || interface.oper_up)
+}
+
+fn classify(interface: &InterfaceRecord, address: IpAddr) -> NetworkAddressClassDto {
+    if interface.loopback || address.is_loopback() {
+        return NetworkAddressClassDto::Loopback;
+    }
+    if is_link_local(address) {
+        return NetworkAddressClassDto::LinkLocal;
+    }
+    if is_vpn(interface) {
+        return NetworkAddressClassDto::Vpn;
+    }
+    if is_container(interface) {
+        return NetworkAddressClassDto::Container;
+    }
+    if is_private_lan(address) {
+        return NetworkAddressClassDto::PrivateLan;
+    }
+    NetworkAddressClassDto::Other
+}
+
+fn is_link_local(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address.is_link_local(),
+        IpAddr::V6(address) => address.is_unicast_link_local(),
+    }
+}
+
+fn is_private_lan(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            address.is_private()
+                && !address.is_unspecified()
+                && !address.is_multicast()
+                && !address.is_broadcast()
+        }
+        IpAddr::V6(address) => is_unique_local(address),
+    }
+}
+
+fn is_unique_local(address: Ipv6Addr) -> bool {
+    address.octets()[0] & 0xfe == 0xfc
+}
+
+fn is_vpn(interface: &InterfaceRecord) -> bool {
+    if interface.tun || interface.point_to_point {
+        return true;
+    }
+    let name = interface.name.to_ascii_lowercase();
+    [
+        "tun",
+        "tap",
+        "wg",
+        "tailscale",
+        "utun",
+        "ppp",
+        "ipsec",
+        "zerotier",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+}
+
+fn is_container(interface: &InterfaceRecord) -> bool {
+    let name = interface.name.to_ascii_lowercase();
+    [
+        "docker", "br-", "veth", "podman", "cni", "virbr", "lxc", "lxd", "flannel",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NetworkErrorKind {
+    InvalidArgument,
+    InvalidState,
+    Unavailable,
+    Ambiguous,
+    ResourceLimit,
+    Transport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DesktopNetworkError {
+    pub(super) kind: NetworkErrorKind,
+    code: CoreErrorCode,
+    message: String,
+    retryable: bool,
+}
+
+impl DesktopNetworkError {
+    fn invalid_argument(message: impl Into<String>) -> Self {
+        Self::new(
+            NetworkErrorKind::InvalidArgument,
+            CoreErrorCode::InvalidArgument,
+            message,
+            false,
+        )
+    }
+
+    fn invalid_state(message: impl Into<String>) -> Self {
+        Self::new(
+            NetworkErrorKind::InvalidState,
+            CoreErrorCode::InvalidStateTransition,
+            message,
+            false,
+        )
+    }
+
+    fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(
+            NetworkErrorKind::Unavailable,
+            CoreErrorCode::TransportUnavailable,
+            message,
+            true,
+        )
+    }
+
+    fn ambiguous(message: impl Into<String>) -> Self {
+        Self::new(
+            NetworkErrorKind::Ambiguous,
+            CoreErrorCode::InvalidArgument,
+            message,
+            false,
+        )
+    }
+
+    fn resource_limit(message: impl Into<String>) -> Self {
+        Self::new(
+            NetworkErrorKind::ResourceLimit,
+            CoreErrorCode::ResourceLimitExceeded,
+            message,
+            false,
+        )
+    }
+
+    fn poisoned() -> Self {
+        Self::new(
+            NetworkErrorKind::InvalidState,
+            CoreErrorCode::WorkerStopped,
+            "desktop host network state mutex was poisoned",
+            false,
+        )
+    }
+
+    fn transport(error: &TransportError) -> Self {
+        let code = match error.kind {
+            TransportErrorKind::Bind | TransportErrorKind::Listen => {
+                CoreErrorCode::TransportUnavailable
+            }
+            TransportErrorKind::Timeout => CoreErrorCode::TransportTimeout,
+            TransportErrorKind::ShuttingDown | TransportErrorKind::WorkerPanicked => {
+                CoreErrorCode::ShutdownFailed
+            }
+            _ => CoreErrorCode::TransportConnectionFailed,
+        };
+        Self::new(NetworkErrorKind::Transport, code, error.to_string(), true)
+    }
+
+    fn endpoint_mismatch(cleanup: Option<&TransportError>) -> Self {
+        let message = cleanup.map_or_else(
+            || "shared transport returned an endpoint for a different bind address".to_owned(),
+            |cleanup| format!(
+                "shared transport returned an endpoint for a different bind address; cleanup also failed: {cleanup}"
+            ),
+        );
+        Self::new(
+            NetworkErrorKind::Transport,
+            CoreErrorCode::TransportUnavailable,
+            message,
+            false,
+        )
+    }
+
+    fn new(
+        kind: NetworkErrorKind,
+        code: CoreErrorCode,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            kind,
+            code,
+            message: message.into(),
+            retryable,
+        }
+    }
+
+    fn platform_failure(&self) -> DesktopPlatformFailure {
+        DesktopPlatformFailure::new(
+            self.code,
+            self.message.clone(),
+            ErrorSeverity::Error,
+            self.retryable,
+        )
+    }
+
+    fn dto(self) -> DesktopErrorDto {
+        DesktopErrorDto::new(
+            &format!("desktop.network.{}", self.code.stable_name()),
+            "transport",
+            "error",
+            self.retryable,
+            &self.message,
+        )
+    }
+
+    fn core_error(self, operation_id: Option<silent_disco_core::domain::OperationId>) -> CoreError {
+        let message = bounded_error_message(&self.message);
+        CoreError::new(
+            self.code,
+            message,
+            ErrorSeverity::Error,
+            self.retryable,
+            operation_id,
+        )
+        .expect("bounded desktop network error")
+    }
+}
+
+fn bounded_error_message(message: &str) -> String {
+    let mut output = String::new();
+    for character in message.chars() {
+        let next = character.len_utf8();
+        if output.len().saturating_add(next) > silent_disco_core::error::MAX_ERROR_MESSAGE_BYTES {
+            break;
+        }
+        output.push(character);
+    }
+    if output.is_empty() {
+        "desktop network operation failed".to_owned()
+    } else {
+        output
+    }
+}
+
+impl fmt::Display for DesktopNetworkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for DesktopNetworkError {}
+
+#[cfg(test)]
+pub(super) use HostPorts as TestHostPorts;

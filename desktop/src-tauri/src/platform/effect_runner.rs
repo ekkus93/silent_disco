@@ -3,6 +3,7 @@ use super::capabilities::{desktop_capabilities, publish_desktop_capabilities};
 use super::diagnostics_export;
 use super::discovery;
 use super::failure::{DesktopPlatformFailure, core_error};
+use super::network::DesktopHostNetworkControl;
 use super::paths::DesktopProfilePaths;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use silent_disco_core::domain::OperationId;
@@ -189,6 +190,7 @@ impl CoreObserver for DesktopCoreObserver {
 pub(crate) struct DesktopPlatformEffectRunner {
     dispatcher: DesktopPlatformEffectDispatcher,
     join: Option<JoinHandle<Result<(), CoreError>>>,
+    network: Option<Arc<DesktopHostNetworkControl>>,
 }
 
 impl DesktopPlatformEffectRunner {
@@ -203,14 +205,19 @@ impl DesktopPlatformEffectRunner {
         dispatcher: DesktopPlatformEffectDispatcher,
         handle: CoreActorHandle,
         paths: DesktopProfilePaths,
+        network: Arc<DesktopHostNetworkControl>,
     ) -> Result<(Self, CoreSnapshot), CoreError> {
         let capability_handle = handle.clone();
-        let runner = Self::start_with_components(
+        let mut runner = Self::start_with_components(
             inbox,
             dispatcher,
             Arc::new(handle),
-            Arc::new(DesktopPlatformAdapters::new(paths)),
+            Arc::new(DesktopPlatformAdapters::new_with_network(
+                paths,
+                Arc::clone(&network),
+            )),
         )?;
+        runner.network = Some(network);
         let snapshot = match publish_desktop_capabilities(&capability_handle) {
             Ok(snapshot) => snapshot,
             Err(primary) => {
@@ -243,6 +250,7 @@ impl DesktopPlatformEffectRunner {
         Ok(Self {
             dispatcher,
             join: Some(join),
+            network: None,
         })
     }
 
@@ -284,7 +292,11 @@ impl DesktopPlatformEffectRunner {
                 None,
             )),
         };
-        signal_error.or(worker_error).map_or(Ok(()), Err)
+        let network_error = self
+            .network
+            .take()
+            .and_then(|network| network.shutdown().err());
+        combine_shutdown_errors(signal_error.or(worker_error), network_error)
     }
 }
 
@@ -323,13 +335,23 @@ pub(super) trait DesktopPlatformEffectExecutor: Send + Sync + 'static {
 pub(super) struct DesktopPlatformAdapters {
     paths: DesktopProfilePaths,
     capabilities: CapabilitySnapshot,
+    network: Arc<DesktopHostNetworkControl>,
 }
 
 impl DesktopPlatformAdapters {
+    #[cfg(test)]
     pub(super) fn new(paths: DesktopProfilePaths) -> Self {
+        Self::new_with_network(paths, Arc::new(DesktopHostNetworkControl::production()))
+    }
+
+    pub(super) fn new_with_network(
+        paths: DesktopProfilePaths,
+        network: Arc<DesktopHostNetworkControl>,
+    ) -> Self {
         Self {
             paths,
             capabilities: desktop_capabilities(),
+            network,
         }
     }
 }
@@ -344,9 +366,15 @@ impl DesktopPlatformEffectExecutor for DesktopPlatformAdapters {
             PlatformEffectRequest::RequestCapabilities(_) => Ok(
                 PlatformOperationCompletion::CapabilitiesResolved(self.capabilities),
             ),
-            PlatformEffectRequest::StartAdvertising(_)
-            | PlatformEffectRequest::StopAdvertising
-            | PlatformEffectRequest::StartDiscovery(_)
+            PlatformEffectRequest::StartAdvertising(advertisement) => self
+                .network
+                .start_host(advertisement)
+                .map(|_| PlatformOperationCompletion::AdvertisingStarted),
+            PlatformEffectRequest::StopAdvertising => self
+                .network
+                .stop_host()
+                .map(|()| PlatformOperationCompletion::AdvertisingStopped),
+            PlatformEffectRequest::StartDiscovery(_)
             | PlatformEffectRequest::StopDiscovery
             | PlatformEffectRequest::EstablishNetwork(_)
             | PlatformEffectRequest::ReleaseNetwork => {
@@ -373,6 +401,42 @@ impl DesktopPlatformEffectExecutor for DesktopPlatformAdapters {
             }
         }
     }
+}
+
+fn combine_shutdown_errors(
+    primary: Option<CoreError>,
+    cleanup: Option<CoreError>,
+) -> Result<(), CoreError> {
+    match (primary, cleanup) {
+        (None, None) => Ok(()),
+        (Some(error), None) | (None, Some(error)) => Err(error),
+        (Some(primary), Some(cleanup)) => {
+            let message = format!(
+                "{}; network transport cleanup also failed: {}",
+                primary.message, cleanup.message
+            );
+            let fallback = primary.clone();
+            Err(CoreError::new(
+                primary.code,
+                bounded_runner_message(&message),
+                primary.severity,
+                primary.retryable || cleanup.retryable,
+                primary.operation_id.clone(),
+            )
+            .unwrap_or(fallback))
+        }
+    }
+}
+
+fn bounded_runner_message(message: &str) -> String {
+    let mut output = String::new();
+    for character in message.chars() {
+        if output.len().saturating_add(character.len_utf8()) > MAX_ERROR_MESSAGE_BYTES {
+            break;
+        }
+        output.push(character);
+    }
+    output
 }
 
 fn run_worker(

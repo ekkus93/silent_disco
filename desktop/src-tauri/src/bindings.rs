@@ -2,6 +2,10 @@ use crate::dto::{
     BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto, MigrationSummaryDto, ProfileSummaryDto,
     StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
 };
+use crate::platform::network_dto::{
+    NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
+    NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
+};
 use crate::runtime_dto::{
     AttachNotificationResponse, AudioSourceSummaryDto, CapabilitySnapshotDto, CommandReceiptDto,
     CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto, DiagnosticFieldDto, HostDraftDto,
@@ -38,6 +42,12 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<OpenProfileRequest>(&config),
         declaration::<RevisionCommandRequest>(&config),
         declaration::<UpdateHostDraftRequest>(&config),
+        declaration::<NetworkAddressClassDto>(&config),
+        declaration::<NetworkAddressCandidateDto>(&config),
+        declaration::<NetworkBindPreferenceDto>(&config),
+        declaration::<SetNetworkBindPreferenceRequest>(&config),
+        declaration::<NetworkBindingDto>(&config),
+        declaration::<NetworkInterfaceSnapshotDto>(&config),
         declaration::<CommandReceiptDto>(&config),
         declaration::<AudioSourceSummaryDto>(&config),
         declaration::<HostDraftDto>(&config),

@@ -11,6 +11,8 @@ pub mod effect_runner;
 mod failure;
 pub mod file_picker;
 pub mod identity;
+pub mod network;
+pub mod network_dto;
 #[allow(
     clippy::similar_names,
     reason = "canonical profile and profiles roots are distinct security boundaries"
@@ -34,3 +36,5 @@ mod capability_tests;
 mod effect_runner_tests;
 #[cfg(test)]
 mod file_picker_tests;
+#[cfg(test)]
+mod network_tests;

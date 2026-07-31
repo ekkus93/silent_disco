@@ -60,6 +60,8 @@ pub fn run() -> tauri::Result<()> {
             host_commands::cancel_audio_source_staging,
             host_commands::update_host_draft,
             host_commands::create_host_session,
+            host_commands::get_host_network_state,
+            host_commands::set_host_network_preference,
             app_state::attach_notifications,
             app_state::close_profile
         ])

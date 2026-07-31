@@ -1,6 +1,7 @@
 use crate::app_state::DesktopAppState;
 use crate::dto::DesktopErrorDto;
 use crate::platform::file_picker::{SelectedSourceRegistry, pick_and_inspect};
+use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
 use crate::platform::source_staging::stage_audio_source;
 use crate::platform::source_staging_control::{
     SourceStagingControl, TauriSourceStagingProgressSink,
@@ -160,6 +161,25 @@ pub fn create_host_session(
         parse_snapshot_revision(&expected_revision)?,
         CoreCommand::CreateHostSession,
     )
+}
+
+/// Lists classified network addresses and the current bind policy for the ready profile.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn get_host_network_state(
+    state: State<'_, DesktopAppState>,
+) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+    state.host_network_snapshot()
+}
+
+/// Replaces the automatic or explicit host bind preference after current-snapshot validation.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_host_network_preference(
+    state: State<'_, DesktopAppState>,
+    request: SetNetworkBindPreferenceRequest,
+) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+    state.set_host_network_preference(&request)
 }
 
 fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopErrorDto> {

@@ -22,6 +22,18 @@ export type RevisionCommandRequest = { expectedRevision: string, };
 
 export type UpdateHostDraftRequest = { expectedRevision: string, sessionName: string, approvalMode: string, inviteCode: string | null, rememberApprovedDevices: boolean, };
 
+export type NetworkAddressClassDto = "loopback" | "link_local" | "private_lan" | "vpn" | "container" | "other";
+
+export type NetworkAddressCandidateDto = { interfaceName: string, interfaceIndex: number, address: string, prefixLength: number, classification: NetworkAddressClassDto, isDefaultRoute: boolean, isActive: boolean, isPhysical: boolean, selectable: boolean, rejectionReason: string | null, };
+
+export type NetworkBindPreferenceDto = { mode: string, interfaceName: string | null, address: string | null, };
+
+export type SetNetworkBindPreferenceRequest = { mode: string, interfaceName: string | null, address: string | null, };
+
+export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, };
+
+export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null, };
+
 export type CommandReceiptDto = { operationId: string, acceptedAtRevision: string, };
 
 export type AudioSourceSummaryDto = { sourceId: string, displayName: string, byteLength: string | null, durationMs: string | null, };

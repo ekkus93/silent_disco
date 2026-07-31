@@ -10,6 +10,8 @@ import type {
   OpenProfileRequest,
   OpenProfileResponse,
   RevisionCommandRequest,
+  NetworkInterfaceSnapshotDto,
+  SetNetworkBindPreferenceRequest,
   UpdateHostDraftRequest,
 } from "./generated/desktop-bindings";
 
@@ -306,6 +308,16 @@ export async function updateHostDraft(request: UpdateHostDraftRequest): Promise<
 export async function createHostSession(expectedRevision: string): Promise<CommandReceiptDto> {
   const request: RevisionCommandRequest = { expectedRevision };
   return invokeDesktop<CommandReceiptDto>("create_host_session", { request });
+}
+
+export async function getHostNetworkState(): Promise<NetworkInterfaceSnapshotDto> {
+  return invokeDesktop<NetworkInterfaceSnapshotDto>("get_host_network_state");
+}
+
+export async function setHostNetworkPreference(
+  request: SetNetworkBindPreferenceRequest,
+): Promise<NetworkInterfaceSnapshotDto> {
+  return invokeDesktop<NetworkInterfaceSnapshotDto>("set_host_network_preference", { request });
 }
 
 export async function closeProfile(): Promise<BridgeLifecycleDto> {

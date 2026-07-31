@@ -8,6 +8,8 @@ use crate::platform::file_picker::SelectedSourceRegistry;
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
 };
+use crate::platform::network::DesktopHostNetworkControl;
+use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
 use crate::platform::paths::{DesktopProfilePaths, resolve_profile_paths};
 use crate::platform::profile_lock::ProfileLease;
 use crate::platform::source_staging::cleanup_incomplete_sources;
@@ -52,6 +54,7 @@ struct ReadyRuntime {
     _identity: DesktopIdentity,
     handle: CoreActorHandle,
     notifications: Arc<DesktopNotificationBuffer>,
+    network: Arc<DesktopHostNetworkControl>,
     owned: DesktopOwnedResources,
 }
 
@@ -181,6 +184,55 @@ impl DesktopAppState {
                 "no desktop profile is ready",
             )),
         }
+    }
+
+    pub(crate) fn host_network_snapshot(
+        &self,
+    ) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+        let network = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        network.snapshot()
+    }
+
+    pub(crate) fn set_host_network_preference(
+        &self,
+        request: &SetNetworkBindPreferenceRequest,
+    ) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+        let network = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        network.set_preference(request)
     }
 
     pub(crate) fn submit_core_command(
@@ -586,11 +638,13 @@ fn open_runtime(
         return Err(cleanup_with_actor(actor, database, lease, primary));
     }
 
+    let network = Arc::new(DesktopHostNetworkControl::production());
     let (platform_runner, current_snapshot) = match DesktopPlatformEffectRunner::start(
         platform_inbox,
         platform_dispatcher,
         handle.clone(),
         paths.clone(),
+        Arc::clone(&network),
     ) {
         Ok(started) => started,
         Err(error) => {
@@ -607,6 +661,7 @@ fn open_runtime(
             _identity: identity,
             handle,
             notifications: Arc::clone(&notifications),
+            network,
             owned: DesktopOwnedResources {
                 platform_runner,
                 notifications,
