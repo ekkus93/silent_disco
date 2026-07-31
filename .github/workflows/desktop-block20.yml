@@ -2,8 +2,8 @@ name: Validate Desktop Block 20 full repository
 
 on:
   push:
-    branches: [master]
-    paths: [.github/workflows/desktop-block20.yml]
+    branches:
+      - master
 
 permissions:
   contents: write
