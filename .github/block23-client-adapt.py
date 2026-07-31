@@ -196,17 +196,17 @@ if storage_text.count(storage_import_old) != 1:
     raise RuntimeError('storage_effect_runner.rs: expected one storage import anchor')
 storage_text = storage_text.replace(storage_import_old, storage_import_new, 1)
 
-trusted_match_anchor = '''        StorageEffectRequest::PersistTrustedDevice {
+trusted_match_anchor = """        StorageEffectRequest::PersistTrustedDevice {
             device_id,
             display_name,
-        } => persist_trusted_device(database, device_id, display_name),'''
-settings_and_trusted_match = '''        StorageEffectRequest::PersistSettings { settings } => {
+        } => persist_trusted_device(database, device_id, display_name),"""
+settings_and_trusted_match = """        StorageEffectRequest::PersistSettings { settings } => {
             persist_settings(database, settings)
         }
         StorageEffectRequest::PersistTrustedDevice {
             device_id,
             display_name,
-        } => persist_trusted_device(database, device_id, display_name),'''
+        } => persist_trusted_device(database, device_id, display_name),"""
 if storage_text.count(trusted_match_anchor) != 1:
     raise RuntimeError('storage_effect_runner.rs: expected one trusted-device match anchor')
 storage_text = storage_text.replace(
@@ -215,9 +215,9 @@ storage_text = storage_text.replace(
     1,
 )
 
-trusted_helper_anchor = '''fn persist_trusted_device(
-    database: &DatabaseClient,'''
-settings_helper = '''fn persist_settings(
+trusted_helper_anchor = """fn persist_trusted_device(
+    database: &DatabaseClient,"""
+settings_helper = """fn persist_settings(
     database: &DatabaseClient,
     settings: silent_disco_core::domain::TuningSettings,
 ) -> Result<StorageCompletion, StorageError> {
@@ -229,7 +229,7 @@ settings_helper = '''fn persist_settings(
 }
 
 fn persist_trusted_device(
-    database: &DatabaseClient,'''
+    database: &DatabaseClient,"""
 if storage_text.count(trusted_helper_anchor) != 1:
     raise RuntimeError('storage_effect_runner.rs: expected one trusted-device helper anchor')
 storage_text = storage_text.replace(trusted_helper_anchor, settings_helper, 1)
