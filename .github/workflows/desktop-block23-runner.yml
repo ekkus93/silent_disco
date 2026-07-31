@@ -1,4 +1,4 @@
-name: Desktop Block 23 clean runner
+name: Desktop Block 23 clippy wiring
 
 on:
   issue_comment:
@@ -8,72 +8,30 @@ permissions:
   contents: write
   issues: write
 
-concurrency:
-  group: desktop-block23-clean-runner
-  cancel-in-progress: false
-
-env:
-  RUST_VERSION: "1.97.1"
-  NODE_VERSION: "22.16.0"
-  TRACKING_ISSUE: "45"
-
 jobs:
-  validate:
+  wire:
     if: >-
       github.event.issue.number == 45 &&
-      github.event.comment.body == '/run-desktop-block23-v2'
+      github.event.comment.body == '/wire-desktop-block23-tauri-clippy-v1'
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Capture exact input and announce
+      - name: Restore workflows and wire adapter
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "BLOCK23_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 clean runner started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
-
-      - name: Prepare current-layout implementation payload
-        run: |
-          cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > .github/apply-block23.py
-          python3 .github/block23-adapt.py
-          python3 .github/block23-client-adapt.py
-
-      - name: Seed frontend distribution for binding compilation
-        run: |
-          mkdir -p desktop/dist
-          printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
-
-      - name: Apply, validate, document, and publish Block 23
-        run: bash .github/block23-validation.sh
-
-      - name: Publish success
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 passed in Actions run $GITHUB_RUN_ID and committed $BLOCK23_COMMIT directly to master. Delivery-first approval/rejection/removal, trusted-device persistence, listener detail UI, full Rust/desktop/Linux/Android/ABI/instrumentation gates, evidence, and cleanup all passed."
-
-      - name: Publish failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
-            --body "Desktop Block 23 clean runner failed in Actions run $GITHUB_RUN_ID against $BLOCK23_INPUT. No implementation or completion evidence was committed; continue directly on master from the first failed command."
+          python3 .github/wire-block23-tauri-clippy.py
+          git diff --check
+          git add -A
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Wire Block 23 Tauri clippy adapter"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test "$remote_sha" = "$(git rev-parse HEAD^)"
+          git push origin HEAD:master
+          gh issue comment 45 --repo "$GITHUB_REPOSITORY" \
+            --body "Wired the deterministic Block 23 Tauri clippy adapter and restored all temporary workflows in commit $(git rev-parse HEAD)."
