@@ -2,10 +2,13 @@ mod boundary;
 mod clock;
 mod socket;
 mod types;
+mod virtual_fault;
 mod virtual_transport;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod virtual_fault_tests;
 
 pub use boundary::{HostTransportNode, ListenerTransportNode, TransportFactory};
 pub use clock::{ManualTransportClock, SystemTransportClock, TransportClock};
@@ -18,6 +21,7 @@ pub use types::{
     TransportChannel, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
     TransportEvent, TransportPeer,
 };
+pub use virtual_fault::{FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig};
 pub use virtual_transport::{VirtualTransportFactory, VirtualTransportNetwork};
 
 /// Returns the production standard-IP transport factory.
