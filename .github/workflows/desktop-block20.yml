@@ -18,7 +18,7 @@ concurrency:
 env:
   RUST_VERSION: "1.97.1"
   TRACKING_ISSUE: "45"
-  PAYLOAD_SHA256: "8df02204f749d9f1c290583a1196f00776e67a1cf4a871f345d368140af43070"
+  PAYLOAD_SHA256: "2990dfc35d857a1e66d03c8b5be8aa265ea93dae3aa1f667c9dcd2568053a5db"
 
 jobs:
   validate:
@@ -55,7 +55,7 @@ jobs:
           rustup default "${RUST_VERSION}"
 
       - name: Format candidate
-        run: cargo fmt --manifest-path rust/Cargo.toml --all
+        run: cargo fmt --manifest-path rust/Cargo.toml --all 2>&1 | tee /tmp/block20-format.log
 
       - name: Enforce source-size invariant
         run: bash scripts/check-source-file-line-counts.sh
@@ -101,6 +101,7 @@ jobs:
             echo "Desktop Block 20 focused candidate validation failed in Actions run ${GITHUB_RUN_ID} against ${BLOCK20_INPUT}. No source candidate was committed."
             echo
             echo '```text'
+            tail -80 /tmp/block20-format.log 2>/dev/null || true
             tail -80 /tmp/block20-clippy.log 2>/dev/null || true
             tail -80 /tmp/block20-tests.log 2>/dev/null || true
             echo '```'
