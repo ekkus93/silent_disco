@@ -81,10 +81,27 @@ dto_text = dto_path.read_text(encoding='utf-8')
 if dto_old not in dto_text:
     raise RuntimeError('host_session_dto.rs: stale snapshot import not found')
 dto_path.write_text(dto_text.replace(dto_old, dto_new, 1), encoding='utf-8')
+
+# Match DesktopCoreObserver::new's current constructor order.
+replace_once(
+    'desktop/src-tauri/src/app_state.rs',
+    '''    let observer = DesktopCoreObserver::new(
+        Arc::clone(&notifications),
+        platform_dispatcher.clone(),
+        storage_dispatcher.clone(),
+        Arc::clone(&network),
+    );''',
+    '''    let observer = DesktopCoreObserver::new(
+        Arc::clone(&notifications),
+        platform_dispatcher.clone(),
+        Arc::clone(&network),
+        storage_dispatcher.clone(),
+    );''',
+)
 '''
 PAYLOAD.write_text(source, encoding='utf-8')
 print(
     'adapted Block 23 frontend client payload: removed 3 stale calls, '
-    'appended 3 current-layout client patches, and corrected the first '
-    'host-session DTO import'
+    'appended 3 current-layout client patches, corrected the first '
+    'host-session DTO import, and aligned the observer constructor order'
 )
