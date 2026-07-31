@@ -370,3 +370,16 @@ Execution constraints for this session:
 - Direct `master` work; no branch or PR.
 - Validation run: `30605377851`.
 - Validated input: `09366180e01f65aba04bed2f95d54fb648449fcb`.
+
+## 2026-07-31 — Desktop Block 21 network bind policy complete
+
+- Desktop hosting enumerates bounded interface snapshots and classifies loopback, link-local, private LAN, VPN, container, and other addresses.
+- Automatic selection is restricted to an unambiguous active private-LAN IPv4 candidate; ambiguity requires explicit user selection.
+- Explicit preferences are revalidated immediately before the shared Rust transport binds TCP control and UDP synchronization/audio endpoints.
+- Actual bound addresses and ports, interface changes, bind failures, partial cleanup, and cleanup failures remain visible and typed.
+- Host Setup now includes an accessible network-policy card and blocks session creation until the network selection is ready.
+- Implementation commit: `bef33cab2798c41172eced93747ecf73927dcd90`.
+- Focused publication run: `30613180304`.
+- Direct `master` work; no branch or PR.
+- Final validation run: `30613572498`.
+- Validated input: `fd081a1574f54956754adcd40c0578933e468c1f`.

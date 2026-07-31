@@ -1182,35 +1182,37 @@ Do not implement desktop production transport before the shared runtime passes i
 
 ### 21.1 Enumerate safe candidate interfaces
 
-- [ ] list active interfaces and addresses through a reviewed Rust/platform API;
-- [ ] classify loopback, link-local, private LAN, VPN, container, and other addresses;
-- [ ] apply a documented automatic selection policy;
-- [ ] allow explicit user selection when ambiguous;
-- [ ] never advertise every interface blindly;
-- [ ] handle interface changes visibly.
+- [x] list active interfaces and addresses through a reviewed Rust/platform API;
+- [x] classify loopback, link-local, private LAN, VPN, container, and other addresses;
+- [x] apply a documented automatic selection policy;
+- [x] allow explicit user selection when ambiguous;
+- [x] never advertise every interface blindly;
+- [x] handle interface changes visibly.
 
 ### 21.2 Bind through shared transport
 
-- [ ] pass validated bind preference to core/transport API;
-- [ ] report actual bound addresses and ports;
-- [ ] no success until sockets bind;
-- [ ] release partially bound endpoints after failure;
-- [ ] preserve cleanup errors.
+- [x] pass validated bind preference to core/transport API;
+- [x] report actual bound addresses and ports;
+- [x] no success until sockets bind;
+- [x] release partially bound endpoints after failure;
+- [x] preserve cleanup errors.
 
 ### 21.3 Tests
 
-- [ ] loopback-only environment;
-- [ ] one LAN interface;
-- [ ] multiple LAN interfaces;
-- [ ] VPN present;
-- [ ] container interface present;
-- [ ] requested address disappears;
-- [ ] port already in use;
-- [ ] IPv4/IPv6 policy according to selected baseline.
+- [x] loopback-only environment;
+- [x] one LAN interface;
+- [x] multiple LAN interfaces;
+- [x] VPN present;
+- [x] container interface present;
+- [x] requested address disappears;
+- [x] port already in use;
+- [x] IPv4/IPv6 policy according to selected baseline.
 
 **Acceptance:** The desktop host exposes intentional, real LAN connection information.
 
 ---
+
+**Completion evidence:** Actions run `30613572498` passed against direct-master input `fd081a1574f54956754adcd40c0578933e468c1f`. See `docs/DESKTOP_BLOCK21_NETWORK_BIND_POLICY.md`.
 
 ## Block 22 — Implement manual endpoint host workflow
 
