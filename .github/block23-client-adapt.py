@@ -71,20 +71,20 @@ export async function endHostSession(expectedRevision: string): Promise<CommandR
 ]
 source += '\n# Current frontend client compatibility patches.\n' + ''.join(patches)
 source += '''
-# Correct only the top-level host-session DTO import. The same text also occurs
-# in a generated test fixture, so replace_once's global uniqueness guard is not
+# Correct only the first host-session DTO import. The same text also occurs in
+# a generated test fixture, so replace_once's global uniqueness guard is not
 # appropriate for this specific compatibility correction.
 dto_path = Path('desktop/src-tauri/src/host_session_dto.rs')
 dto_old = 'use crate::platform::network::ActiveHostSessionSnapshot;'
 dto_new = 'use crate::platform::host_transport::ActiveHostSessionSnapshot;'
 dto_text = dto_path.read_text(encoding='utf-8')
-if not dto_text.startswith(dto_old + '\\n'):
-    raise RuntimeError('host_session_dto.rs: expected stale top-level snapshot import')
+if dto_old not in dto_text:
+    raise RuntimeError('host_session_dto.rs: stale snapshot import not found')
 dto_path.write_text(dto_text.replace(dto_old, dto_new, 1), encoding='utf-8')
 '''
 PAYLOAD.write_text(source, encoding='utf-8')
 print(
     'adapted Block 23 frontend client payload: removed 3 stale calls, '
-    'appended 3 current-layout client patches, and corrected the top-level '
+    'appended 3 current-layout client patches, and corrected the first '
     'host-session DTO import'
 )
