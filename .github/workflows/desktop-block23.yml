@@ -3,6 +3,10 @@ name: Desktop Block 23 listener management
 on:
   issue_comment:
     types: [created]
+  push:
+    branches: [master]
+    paths:
+      - ".github/block23-validation.sh"
 
 permissions:
   contents: write
@@ -21,8 +25,11 @@ env:
 jobs:
   validate:
     if: >-
-      github.event.issue.number == 45 &&
-      github.event.comment.body == '/run-desktop-block23'
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.number == 45 &&
+       github.event.comment.body == '/run-desktop-block23') ||
+      (github.event_name == 'push' &&
+       contains(github.event.head_commit.message, '[run-block23]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
