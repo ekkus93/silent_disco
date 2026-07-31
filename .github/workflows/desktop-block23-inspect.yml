@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   inspect:
@@ -17,6 +18,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: master
+      - name: Announce inspection run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 45 --repo "$GITHUB_REPOSITORY" --body "Desktop Block 23 effect payload inspection: Actions run $GITHUB_RUN_ID"
       - name: Print effect routing payload block
         run: |
           cat .github/apply-block23.py.part-* | base64 --decode | gzip --decompress > /tmp/apply-block23.py
