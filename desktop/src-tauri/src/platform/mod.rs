@@ -1,4 +1,9 @@
 pub mod audio_device;
+#[allow(
+    dead_code,
+    reason = "Desktop Block 25 consumes the bounded prepared PCM stream"
+)]
+pub(crate) mod audio_decode;
 pub(crate) mod capabilities;
 pub mod diagnostics_export;
 pub mod discovery;
@@ -21,6 +26,8 @@ pub(crate) mod source_staging_control;
 )]
 pub mod storage_inspection;
 
+#[cfg(test)]
+mod audio_decode_tests;
 #[cfg(test)]
 mod capability_tests;
 #[cfg(test)]
