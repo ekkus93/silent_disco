@@ -29,6 +29,11 @@ replace_once(
 use super::network_dto::{NetworkAddressClassDto, SetNetworkBindPreferenceRequest};
 """,
 )
+replace_once(
+    "desktop/src-tauri/src/platform/diagnostics_export.rs",
+    "const fn failure(message: &'static str) -> DesktopPlatformFailure {",
+    "fn failure(message: &'static str) -> DesktopPlatformFailure {",
+)
 
 apply_path = Path(".github/apply-block21.py")
 source = apply_path.read_text()
