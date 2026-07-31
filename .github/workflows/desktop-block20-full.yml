@@ -196,41 +196,29 @@ Desktop-specific interface enumeration, bind selection, lifecycle orchestration,
           desktop_path = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
           desktop = desktop_path.read_text()
           start = desktop.index("## Block 20")
-          candidates = [
-              desktop.find("## Block 21", start),
-              desktop.find("# Phase", start + 1),
-          ]
+          candidates = [desktop.find("## Block 21", start), desktop.find("# Phase", start + 1)]
           ends = [value for value in candidates if value != -1]
           end = min(ends) if ends else len(desktop)
-          block = desktop[start:end]
-          block = block.replace("- [ ]", "- [x]")
-          evidence = (
-              f"\n**Completion evidence:** Shared production socket and virtual transport semantics "
-              f"passed GitHub Actions run `{run_id}` against direct-master input `{input_sha}`. "
-              "See `docs/DESKTOP_BLOCK20_TRANSPORT_RUNTIME.md`.\n"
-          )
+          block = desktop[start:end].replace("- [ ]", "- [x]")
           if "**Completion evidence:**" not in block:
-              block = block.rstrip() + "\n" + evidence + "\n"
+              block = block.rstrip() + (
+                  f"\n\n**Completion evidence:** Shared production socket and virtual transport semantics "
+                  f"passed GitHub Actions run `{run_id}` against direct-master input `{input_sha}`. "
+                  "See `docs/DESKTOP_BLOCK20_TRANSPORT_RUNTIME.md`.\n\n"
+              )
           desktop_path.write_text(desktop[:start] + block + desktop[end:])
 
           migration_path = Path("docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md")
           migration = migration_path.read_text()
-          headings = [
-              "## Block 19",
-              "### 19.",
-          ]
-          start = -1
-          for heading in headings:
-              start = migration.find(heading)
-              if start != -1:
-                  break
+          start = migration.find("## Block 19")
+          if start == -1:
+              start = migration.find("### 19.")
           if start == -1:
               raise SystemExit("shared migration Block 19 heading not found")
           next_block = migration.find("## Block 20", start + 1)
           if next_block == -1:
               next_block = len(migration)
-          section = migration[start:next_block]
-          section = section.replace("- [ ]", "- [x]")
+          section = migration[start:next_block].replace("- [ ]", "- [x]")
           if "Desktop Block 20 evidence" not in section:
               section = section.rstrip() + (
                   f"\n\n**Desktop Block 20 evidence:** Shared transport runtime passed Actions "
@@ -287,3 +275,5 @@ Desktop-specific interface enumeration, bind selection, lifecycle orchestration,
         run: |
           gh issue comment "${TRACKING_ISSUE}" --repo "${GITHUB_REPOSITORY}" \
             --body "Desktop Block 20 full validation failed in Actions run ${GITHUB_RUN_ID} against ${BLOCK20_INPUT}. No completion evidence was written; continue directly on master from the first failed gate."
+
+# activation push
