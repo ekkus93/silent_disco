@@ -16,6 +16,7 @@ env:
   RUST_VERSION: "1.97.1"
   NODE_VERSION: "22.16.0"
   TRACKING_ISSUE: "45"
+  VALIDATION_LAYOUT: "dependency-first"
 
 jobs:
   validate:
