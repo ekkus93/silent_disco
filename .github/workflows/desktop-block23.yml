@@ -57,29 +57,14 @@ jobs:
           path = Path('.github/block23-validation.sh')
           content = path.read_text(encoding='utf-8')
           needle = "python3 .github/apply-block23.py\nrm .github/apply-block23.py\n"
-          replacement = r'''python3 - <<'PATCHPY'
+          replacement = '''python3 - <<'PATCHPY'
+          import base64
           from pathlib import Path
 
           patch_path = Path('.github/apply-block23.py')
           patch = patch_path.read_text(encoding='utf-8')
-          old = '''replace_once(
-              "desktop/src-tauri/src/bindings.rs",
-              \'''    PlatformEffectDto, RevisionCommandRequest, UpdateHostDraftRequest,
-          };\''',
-              \'''    ApproveJoinRequest, JoinRequestCommandRequest, ListenerCommandRequest,
-              PlatformEffectDto, RevisionCommandRequest, UpdateHostDraftRequest,
-          };\''',
-          )'''
-          new = '''replace_once(
-              "desktop/src-tauri/src/bindings.rs",
-              \'''    HostDraftValidationDto, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
-              RevisionCommandRequest, UpdateHostDraftRequest,
-          };\''',
-              \'''    ApproveJoinRequest, HostDraftValidationDto, JoinRequestCommandRequest,
-              ListenerCommandRequest, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
-              RevisionCommandRequest, UpdateHostDraftRequest,
-          };\''',
-          )'''
+          old = base64.b64decode('cmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycyIsCiAgICAnJycgICAgUGxhdGZvcm1FZmZlY3REdG8sIFJldmlzaW9uQ29tbWFuZFJlcXVlc3QsIFVwZGF0ZUhvc3REcmFmdFJlcXVlc3QsCn07JycnLAogICAgJycnICAgIEFwcHJvdmVKb2luUmVxdWVzdCwgSm9pblJlcXVlc3RDb21tYW5kUmVxdWVzdCwgTGlzdGVuZXJDb21tYW5kUmVxdWVzdCwKICAgIFBsYXRmb3JtRWZmZWN0RHRvLCBSZXZpc2lvbkNvbW1hbmRSZXF1ZXN0LCBVcGRhdGVIb3N0RHJhZnRSZXF1ZXN0LAp9OycnJywKKQ==').decode('utf-8')
+          new = base64.b64decode('cmVwbGFjZV9vbmNlKAogICAgImRlc2t0b3Avc3JjLXRhdXJpL3NyYy9iaW5kaW5ncy5ycyIsCiAgICAnJycgICAgSG9zdERyYWZ0VmFsaWRhdGlvbkR0bywgT3BlblByb2ZpbGVSZXF1ZXN0LCBPcGVuUHJvZmlsZVJlc3BvbnNlLCBQbGF0Zm9ybUVmZmVjdER0bywKICAgIFJldmlzaW9uQ29tbWFuZFJlcXVlc3QsIFVwZGF0ZUhvc3REcmFmdFJlcXVlc3QsCn07JycnLAogICAgJycnICAgIEFwcHJvdmVKb2luUmVxdWVzdCwgSG9zdERyYWZ0VmFsaWRhdGlvbkR0bywgSm9pblJlcXVlc3RDb21tYW5kUmVxdWVzdCwKICAgIExpc3RlbmVyQ29tbWFuZFJlcXVlc3QsIE9wZW5Qcm9maWxlUmVxdWVzdCwgT3BlblByb2ZpbGVSZXNwb25zZSwgUGxhdGZvcm1FZmZlY3REdG8sCiAgICBSZXZpc2lvbkNvbW1hbmRSZXF1ZXN0LCBVcGRhdGVIb3N0RHJhZnRSZXF1ZXN0LAp9OycnJywKKQ==').decode('utf-8')
           count = patch.count(old)
           if count != 1:
               raise SystemExit(f'expected one stale bindings anchor, found {count}')
