@@ -1,0 +1,62 @@
+name: Clean stale branches
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/cleanup-stale-branches.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Delete stale branch refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branches=(
+            "agent/block16-final-validated"
+            "agent/desktop-block16-closure"
+            "agent/enforce-source-files-under-800-lines"
+            "agent/finish-desktop-block16"
+            "ralph/desktop-block10"
+            "__dummy_should_not_create"
+            "cleanup-trigger-do-not-keep"
+          )
+
+          for branch in "${branches[@]}"; do
+            if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}"
+            fi
+          done
+
+          for branch in "${branches[@]}"; do
+            if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+              echo "branch still exists: ${branch}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Remove cleanup workflow from master
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cleanup-stale-branches.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Remove temporary branch cleanup workflow"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          parent_sha="$(git rev-parse HEAD^)"
+          test "${remote_sha}" = "${parent_sha}"
+          git push origin HEAD:master
