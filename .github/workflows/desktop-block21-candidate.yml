@@ -78,31 +78,22 @@ jobs:
 
           apply = Path(".github/apply-block21.py")
           source = apply.read_text()
-          old_modules = '''replace_once(
-              "desktop/src-tauri/src/platform/mod.rs",
-              "pub mod identity;\npub mod paths;",
-              "pub mod identity;\npub mod network;\npub mod network_dto;\npub mod paths;",
-          )'''
-          new_modules = '''insert_after(
+          start = source.index("# Register the platform modules and tests.")
+          end = source.index("# Platform errors must preserve dynamic bind/interface details.", start)
+          registration = r'''# Register the platform modules and tests.
+          insert_after(
               "desktop/src-tauri/src/platform/mod.rs",
               "pub mod identity;\n",
               "pub mod network;\npub mod network_dto;\n",
-          )'''
-          if source.count(old_modules) != 1:
-              raise SystemExit("platform module registration repair anchor changed")
-          source = source.replace(old_modules, new_modules)
-          source = source.replace(
-              """insert_after(
-              \"desktop/src-tauri/src/platform/mod.rs\",
-              '#[cfg(test)]\\n#[path = \"identity_tests.rs\"]\\nmod identity_tests;\\n',
-              '#[cfg(test)]\\n#[path = \"network_tests.rs\"]\\nmod network_tests;\\n',
-          )""",
-              """insert_after(
-              \"desktop/src-tauri/src/platform/mod.rs\",
-              '#[cfg(test)]\\nmod file_picker_tests;\\n',
-              '#[cfg(test)]\\n#[path = \"network_tests.rs\"]\\nmod network_tests;\\n',
-          )""",
           )
+          insert_after(
+              "desktop/src-tauri/src/platform/mod.rs",
+              '#[cfg(test)]\nmod file_picker_tests;\n',
+              '#[cfg(test)]\nmod network_tests;\n',
+          )
+
+          '''
+          source = source[:start] + registration + source[end:]
           source = source.replace(
               """            host_commands::create_host_session,
               notification_command::emit_core_notification,""",
