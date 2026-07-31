@@ -8,6 +8,11 @@ rm .github/apply-block23.py
 rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
 rustup default "${RUST_VERSION}"
 
+sudo apt-get update
+sudo apt-get install --yes --no-install-recommends \
+  build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+  libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
+
 cp rust/Cargo.lock /tmp/block23-rust.Cargo.lock
 cp desktop/src-tauri/Cargo.lock /tmp/block23-desktop.Cargo.lock
 cp desktop/package-lock.json /tmp/block23-package-lock.json
@@ -49,11 +54,6 @@ bash scripts/check-source-file-line-counts.sh
   cargo clippy --workspace --all-targets --all-features -- -D warnings
   cargo test --workspace --all-features
 )
-
-sudo apt-get update
-sudo apt-get install --yes --no-install-recommends \
-  build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
-  libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf time wget
 
 (
   cd desktop
