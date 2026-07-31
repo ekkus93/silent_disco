@@ -5,6 +5,11 @@ test -f .github/apply-block23.py
 python3 .github/apply-block23.py
 rm .github/apply-block23.py
 
+echo '=== BLOCK23 GENERATED STORAGE EFFECT RUNNER TESTS ==='
+cat desktop/src-tauri/src/platform/storage_effect_runner_tests.rs
+echo '=== END BLOCK23 GENERATED STORAGE EFFECT RUNNER TESTS ==='
+exit 86
+
 rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
 rustup default "${RUST_VERSION}"
 
