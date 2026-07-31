@@ -1,0 +1,148 @@
+name: Validate Desktop Block 22 runtime
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: desktop-block22-runtime
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.97.1"
+  NODE_VERSION: "22.16.0"
+  TRACKING_ISSUE: "45"
+
+jobs:
+  validate:
+    if: >-
+      github.event.issue.number == 45 &&
+      github.event.comment.body == '/run-desktop-block22-runtime'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Capture exact input and announce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "BLOCK22_RUNTIME_INPUT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 22 runtime/DTO validation started in Actions run $GITHUB_RUN_ID against direct-master input $(git rev-parse HEAD). No branch or PR is involved."
+
+      - name: Apply runtime integration
+        run: |
+          python3 -m py_compile \
+            .github/apply-block22-runtime-network.py \
+            .github/apply-block22-runtime-bridge.py
+          python3 .github/apply-block22-runtime-network.py
+          python3 .github/apply-block22-runtime-bridge.py
+
+      - name: Install native desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget
+
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt
+          rustup default "$RUST_VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Format candidate and install frontend dependencies
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco Block 22 runtime validation</title>\n' > desktop/dist/index.html
+          cd desktop
+          npm ci
+
+      - name: Run focused control-only desktop loopback test
+        working-directory: desktop/src-tauri
+        run: cargo test platform::host_transport_tests -- --nocapture
+
+      - name: Run desktop backend quality gates
+        working-directory: desktop/src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+          cargo check --all-features
+
+      - name: Generate and verify Rust-derived TypeScript bindings
+        working-directory: desktop
+        run: |
+          npm run bindings:generate
+          npm run bindings:check
+
+      - name: Run shared Rust compatibility gates
+        working-directory: rust
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+
+      - name: Enforce source-size invariant
+        run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Commit validated runtime and DTO directly to master
+        run: |
+          set -euo pipefail
+          git rm \
+            .github/workflows/desktop-block22-runtime.yml \
+            .github/apply-block22-runtime-network.py \
+            .github/apply-block22-runtime-bridge.py \
+            .github/block22-runtime.py.gz.b64
+          git add \
+            desktop/src-tauri/src/platform/host_join_projection.rs \
+            desktop/src-tauri/src/platform/host_pending_handshake.rs \
+            desktop/src-tauri/src/platform/host_transport.rs \
+            desktop/src-tauri/src/platform/host_transport_events.rs \
+            desktop/src-tauri/src/platform/host_transport_tests.rs \
+            desktop/src-tauri/src/platform/mod.rs \
+            desktop/src-tauri/src/platform/network.rs \
+            desktop/src-tauri/src/platform/network_tests.rs \
+            desktop/src-tauri/src/platform/effect_runner.rs \
+            desktop/src-tauri/src/app_state.rs \
+            desktop/src-tauri/src/host_session_dto.rs \
+            desktop/src-tauri/src/host_commands.rs \
+            desktop/src-tauri/src/lib.rs \
+            desktop/src-tauri/src/bindings.rs \
+            desktop/src/core/generated/desktop-bindings.ts
+          git diff --cached --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "Add manual host endpoint runtime (Desktop Block 22)"
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test "$remote_sha" = "$(git rev-parse HEAD^)"
+          git push origin HEAD:master
+          echo "BLOCK22_RUNTIME_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Publish success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 22 runtime/DTO slice passed in Actions run $GITHUB_RUN_ID and committed $BLOCK22_RUNTIME_COMMIT directly to master. Real transport events reach the authoritative actor, manual endpoint DTO/bindings are generated, and the control-only loopback join/Hello/disconnect test passed."
+
+      - name: Publish failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "Desktop Block 22 runtime/DTO validation failed in Actions run $GITHUB_RUN_ID against $BLOCK22_RUNTIME_INPUT. Continue directly on master from the first failed gate."
