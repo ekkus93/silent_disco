@@ -1,49 +1,4 @@
-from pathlib import Path
-
-NETWORK_PATH = Path("desktop/src-tauri/src/platform/network.rs")
-MOD_PATH = Path("desktop/src-tauri/src/platform/mod.rs")
-ERROR_PATH = Path("desktop/src-tauri/src/platform/network_error.rs")
-
-network = NETWORK_PATH.read_text()
-
-network = network.replace(
-    "use super::failure::DesktopPlatformFailure;\n",
-    "use super::failure::DesktopPlatformFailure;\n"
-    "pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};\n",
-    1,
-)
-network = network.replace(
-    "use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};\n",
-    "use silent_disco_core::error::CoreError;\n",
-    1,
-)
-network = network.replace(
-    "    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportError,\n"
-    "    TransportErrorKind, TransportFactory, production_transport_factory,\n",
-    "    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportFactory,\n"
-    "    production_transport_factory,\n",
-    1,
-)
-network = network.replace("use std::fmt;\n", "", 1)
-
-start_marker = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(super) enum NetworkErrorKind"
-end_marker = "#[cfg(test)]\npub(super) use HostPorts as TestHostPorts;"
-start = network.find(start_marker)
-end = network.find(end_marker)
-if start == -1 or end == -1 or end <= start:
-    raise SystemExit("Block 21 network error extraction markers were not found")
-network = network[:start] + network[end:]
-NETWORK_PATH.write_text(network)
-
-mod_source = MOD_PATH.read_text()
-needle = "pub mod network;\npub mod network_dto;\n"
-replacement = "pub mod network;\nmod network_error;\npub mod network_dto;\n"
-if needle not in mod_source:
-    raise SystemExit("Block 21 platform module insertion point was not found")
-MOD_PATH.write_text(mod_source.replace(needle, replacement, 1))
-
-ERROR_PATH.write_text(
-    """use super::failure::DesktopPlatformFailure;
+use super::failure::DesktopPlatformFailure;
 use crate::dto::DesktopErrorDto;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::transport::{TransportError, TransportErrorKind};
@@ -223,5 +178,3 @@ impl fmt::Display for DesktopNetworkError {
 }
 
 impl std::error::Error for DesktopNetworkError {}
-"""
-)

@@ -13,6 +13,7 @@ pub mod file_picker;
 pub mod identity;
 pub mod network;
 pub mod network_dto;
+mod network_error;
 #[allow(
     clippy::similar_names,
     reason = "canonical profile and profiles roots are distinct security boundaries"

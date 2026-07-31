@@ -15,6 +15,7 @@ import {
   updateHostDraft,
 } from "../core/client";
 import type { UpdateHostDraftRequest } from "../core/generated/desktop-bindings";
+import { HostNetworkPolicyCard } from "./HostNetworkPolicyCard";
 
 type ApprovalMode = "manual" | "trusted_devices" | "invite_code";
 
@@ -58,6 +59,7 @@ export function HostSetupScreen() {
   const [draftRevision, setDraftRevision] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [selectingSource, setSelectingSource] = useState(false);
+  const [networkReady, setNetworkReady] = useState(false);
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
 
   useEffect(() => {
@@ -112,7 +114,7 @@ export function HostSetupScreen() {
   const lifecycleAllowsSetup =
     snapshot.hostLifecycle === "idle" || snapshot.hostLifecycle === "error";
   const canSubmit = snapshot.selectedRole === "host" && lifecycleAllowsSetup && !pending;
-  const canCreate = canSubmit && !dirty && snapshot.canCreateHostSession;
+  const canCreate = canSubmit && !dirty && snapshot.canCreateHostSession && networkReady;
   const createPending = pendingCommands.some(
     (command) => command.commandKind === "create_host_session",
   );
@@ -381,13 +383,11 @@ export function HostSetupScreen() {
             ) : null}
           </SummaryCard>
 
-          <SummaryCard title="Network interface policy">
-            <p>
-              {snapshot.capabilities.localNetworkAvailable
-                ? "Automatic private-LAN selection; explicit interface policy arrives in Block 21."
-                : "Local-network capability has not been confirmed by the platform runner."}
-            </p>
-          </SummaryCard>
+          <HostNetworkPolicyCard
+            available={snapshot.capabilities.localNetworkAvailable}
+            disabled={!lifecycleAllowsSetup || pending}
+            onReadinessChange={setNetworkReady}
+          />
 
           {snapshot.capabilities.audioOutputAvailable ? (
             <SummaryCard title="Local monitor">

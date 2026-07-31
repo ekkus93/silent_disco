@@ -206,8 +206,7 @@ export function HostNetworkPolicyCard({
 
           {snapshot.activeBinding !== null ? (
             <p className="text-sm text-emerald-200">
-              Bound {snapshot.activeBinding.interfaceName} at {snapshot.activeBinding.address} · TCP
-              {" "}
+              Bound {snapshot.activeBinding.interfaceName} at {snapshot.activeBinding.address} · TCP{" "}
               {snapshot.activeBinding.controlPort} · sync UDP {snapshot.activeBinding.syncPort} ·
               audio UDP {snapshot.activeBinding.audioPort}
             </p>

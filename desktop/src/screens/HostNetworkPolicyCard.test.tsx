@@ -65,9 +65,7 @@ beforeEach(() => {
 describe("HostNetworkPolicyCard", () => {
   it("reports a single automatic private-LAN address as ready", async () => {
     const readiness = vi.fn();
-    render(
-      <HostNetworkPolicyCard available disabled={false} onReadinessChange={readiness} />,
-    );
+    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={readiness} />);
 
     expect(await screen.findByText(/Ready to bind enp1s0 at 192\.168\.1\.20/)).toBeInTheDocument();
     await waitFor(() => expect(readiness).toHaveBeenLastCalledWith(true));
@@ -86,9 +84,7 @@ describe("HostNetworkPolicyCard", () => {
       }),
     );
     const readiness = vi.fn();
-    render(
-      <HostNetworkPolicyCard available disabled={false} onReadinessChange={readiness} />,
-    );
+    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={readiness} />);
 
     const select = await screen.findByLabelText("Host network interface");
     expect(select).toHaveValue("automatic");
@@ -156,7 +152,9 @@ describe("HostNetworkPolicyCard", () => {
     );
 
     render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
-    expect(await screen.findByText("the requested address is no longer active")).toBeInTheDocument();
+    expect(
+      await screen.findByText("the requested address is no longer active"),
+    ).toBeInTheDocument();
     expect(screen.getByText("the active interface snapshot changed")).toBeInTheDocument();
   });
 });

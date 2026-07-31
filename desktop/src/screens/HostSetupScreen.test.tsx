@@ -9,20 +9,34 @@ import { createAppStore } from "../app/store";
 import type { CoreSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostSetupScreen } from "./HostSetupScreen";
 
-const { selectAudioSource, selectHostRole, updateHostDraft, createHostSession } = vi.hoisted(
-  () => ({
-    selectAudioSource: vi.fn(),
-    selectHostRole: vi.fn(),
-    updateHostDraft: vi.fn(),
-    createHostSession: vi.fn(),
-  }),
-);
+const {
+  selectAudioSource,
+  selectHostRole,
+  updateHostDraft,
+  createHostSession,
+  getHostNetworkState,
+  setHostNetworkPreference,
+} = vi.hoisted(() => ({
+  selectAudioSource: vi.fn(),
+  selectHostRole: vi.fn(),
+  updateHostDraft: vi.fn(),
+  createHostSession: vi.fn(),
+  getHostNetworkState: vi.fn(),
+  setHostNetworkPreference: vi.fn(),
+}));
 
 vi.mock("../core/audioSourceClient", () => ({ selectAudioSource }));
 
 vi.mock("../core/client", async () => {
   const actual = await vi.importActual<typeof import("../core/client")>("../core/client");
-  return { ...actual, selectHostRole, updateHostDraft, createHostSession };
+  return {
+    ...actual,
+    selectHostRole,
+    updateHostDraft,
+    createHostSession,
+    getHostNetworkState,
+    setHostNetworkPreference,
+  };
 });
 
 function snapshot(overrides: Partial<CoreSnapshotDto> = {}): CoreSnapshotDto {
@@ -65,6 +79,32 @@ function snapshot(overrides: Partial<CoreSnapshotDto> = {}): CoreSnapshotDto {
   };
 }
 
+function networkSnapshot() {
+  const selected = {
+    interfaceName: "enp1s0",
+    interfaceIndex: 2,
+    address: "192.168.1.20",
+    prefixLength: 24,
+    classification: "private_lan" as const,
+    isDefaultRoute: true,
+    isActive: true,
+    isPhysical: true,
+    selectable: true,
+    rejectionReason: null,
+  };
+  return {
+    preference: { mode: "automatic", interfaceName: null, address: null },
+    candidates: [selected],
+    automaticSelection: selected,
+    resolvedSelection: selected,
+    requiresExplicitSelection: false,
+    selectionError: null,
+    activeBinding: null,
+    activeBindingValid: false,
+    interfaceChange: null,
+  };
+}
+
 function renderScreen(initial = snapshot()) {
   const store = createAppStore();
   store.dispatch(coreActions.bridgeOpening({ profileId: "main" }));
@@ -83,6 +123,8 @@ beforeEach(() => {
   selectHostRole.mockResolvedValue({ operationId: "role-1", acceptedAtRevision: "4" });
   updateHostDraft.mockResolvedValue({ operationId: "draft-1", acceptedAtRevision: "4" });
   createHostSession.mockResolvedValue({ operationId: "create-1", acceptedAtRevision: "4" });
+  getHostNetworkState.mockResolvedValue(networkSnapshot());
+  setHostNetworkPreference.mockResolvedValue(networkSnapshot());
 });
 
 describe("HostSetupScreen", () => {
@@ -184,7 +226,9 @@ describe("HostSetupScreen", () => {
 
   it("keeps create pending until a newer Rust snapshot is observed", async () => {
     const store = renderScreen();
-    fireEvent.click(screen.getByRole("button", { name: "Create session" }));
+    const create = screen.getByRole("button", { name: "Create session" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
     await waitFor(() => expect(createHostSession).toHaveBeenCalledWith("4"));
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("Waiting for a newer Rust snapshot"),
@@ -203,7 +247,9 @@ describe("HostSetupScreen", () => {
   it("shows invocation rejection and never advances lifecycle locally", async () => {
     createHostSession.mockRejectedValue(new Error("stale revision"));
     const store = renderScreen();
-    fireEvent.click(screen.getByRole("button", { name: "Create session" }));
+    const create = screen.getByRole("button", { name: "Create session" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("stale revision"));
     expect(store.getState().core.snapshot?.hostLifecycle).toBe("idle");
   });

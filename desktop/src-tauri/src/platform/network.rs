@@ -3,15 +3,15 @@ use super::network_dto::{
     NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
     NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
 };
+pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};
 use crate::dto::DesktopErrorDto;
 use netdev::Interface;
-use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
+use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{NetworkEndpoint, SessionAdvertisement};
 use silent_disco_core::transport::{
-    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportError,
-    TransportErrorKind, TransportFactory, production_transport_factory,
+    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportFactory,
+    production_transport_factory,
 };
-use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
@@ -658,178 +658,6 @@ fn is_container(interface: &InterfaceRecord) -> bool {
     .iter()
     .any(|prefix| name.starts_with(prefix))
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum NetworkErrorKind {
-    InvalidArgument,
-    InvalidState,
-    Unavailable,
-    Ambiguous,
-    ResourceLimit,
-    Transport,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DesktopNetworkError {
-    pub(super) kind: NetworkErrorKind,
-    code: CoreErrorCode,
-    message: String,
-    retryable: bool,
-}
-
-impl DesktopNetworkError {
-    fn invalid_argument(message: impl Into<String>) -> Self {
-        Self::new(
-            NetworkErrorKind::InvalidArgument,
-            CoreErrorCode::InvalidArgument,
-            message,
-            false,
-        )
-    }
-
-    fn invalid_state(message: impl Into<String>) -> Self {
-        Self::new(
-            NetworkErrorKind::InvalidState,
-            CoreErrorCode::InvalidStateTransition,
-            message,
-            false,
-        )
-    }
-
-    fn unavailable(message: impl Into<String>) -> Self {
-        Self::new(
-            NetworkErrorKind::Unavailable,
-            CoreErrorCode::TransportUnavailable,
-            message,
-            true,
-        )
-    }
-
-    fn ambiguous(message: impl Into<String>) -> Self {
-        Self::new(
-            NetworkErrorKind::Ambiguous,
-            CoreErrorCode::InvalidArgument,
-            message,
-            false,
-        )
-    }
-
-    fn resource_limit(message: impl Into<String>) -> Self {
-        Self::new(
-            NetworkErrorKind::ResourceLimit,
-            CoreErrorCode::ResourceLimitExceeded,
-            message,
-            false,
-        )
-    }
-
-    fn poisoned() -> Self {
-        Self::new(
-            NetworkErrorKind::InvalidState,
-            CoreErrorCode::WorkerStopped,
-            "desktop host network state mutex was poisoned",
-            false,
-        )
-    }
-
-    fn transport(error: &TransportError) -> Self {
-        let code = match error.kind {
-            TransportErrorKind::Bind | TransportErrorKind::Listen => {
-                CoreErrorCode::TransportUnavailable
-            }
-            TransportErrorKind::Timeout => CoreErrorCode::TransportTimeout,
-            TransportErrorKind::ShuttingDown | TransportErrorKind::WorkerPanicked => {
-                CoreErrorCode::ShutdownFailed
-            }
-            _ => CoreErrorCode::TransportConnectionFailed,
-        };
-        Self::new(NetworkErrorKind::Transport, code, error.to_string(), true)
-    }
-
-    fn endpoint_mismatch(cleanup: Option<&TransportError>) -> Self {
-        let message = cleanup.map_or_else(
-            || "shared transport returned an endpoint for a different bind address".to_owned(),
-            |cleanup| format!(
-                "shared transport returned an endpoint for a different bind address; cleanup also failed: {cleanup}"
-            ),
-        );
-        Self::new(
-            NetworkErrorKind::Transport,
-            CoreErrorCode::TransportUnavailable,
-            message,
-            false,
-        )
-    }
-
-    fn new(
-        kind: NetworkErrorKind,
-        code: CoreErrorCode,
-        message: impl Into<String>,
-        retryable: bool,
-    ) -> Self {
-        Self {
-            kind,
-            code,
-            message: message.into(),
-            retryable,
-        }
-    }
-
-    fn platform_failure(&self) -> DesktopPlatformFailure {
-        DesktopPlatformFailure::new(
-            self.code,
-            self.message.clone(),
-            ErrorSeverity::Error,
-            self.retryable,
-        )
-    }
-
-    fn dto(self) -> DesktopErrorDto {
-        DesktopErrorDto::new(
-            &format!("desktop.network.{}", self.code.stable_name()),
-            "transport",
-            "error",
-            self.retryable,
-            &self.message,
-        )
-    }
-
-    fn core_error(self, operation_id: Option<silent_disco_core::domain::OperationId>) -> CoreError {
-        let message = bounded_error_message(&self.message);
-        CoreError::new(
-            self.code,
-            message,
-            ErrorSeverity::Error,
-            self.retryable,
-            operation_id,
-        )
-        .expect("bounded desktop network error")
-    }
-}
-
-fn bounded_error_message(message: &str) -> String {
-    let mut output = String::new();
-    for character in message.chars() {
-        let next = character.len_utf8();
-        if output.len().saturating_add(next) > silent_disco_core::error::MAX_ERROR_MESSAGE_BYTES {
-            break;
-        }
-        output.push(character);
-    }
-    if output.is_empty() {
-        "desktop network operation failed".to_owned()
-    } else {
-        output
-    }
-}
-
-impl fmt::Display for DesktopNetworkError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for DesktopNetworkError {}
 
 #[cfg(test)]
 pub(super) use HostPorts as TestHostPorts;
