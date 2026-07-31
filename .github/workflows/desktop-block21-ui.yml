@@ -54,6 +54,8 @@ jobs:
       - name: Install and format focused UI
         working-directory: desktop
         run: |
+          mkdir -p dist
+          printf '<!doctype html><title>Silent Disco Block 21 UI validation</title>\n' > dist/index.html
           npm ci
           npx biome format --write \
             src/screens/HostNetworkPolicyCard.tsx \
