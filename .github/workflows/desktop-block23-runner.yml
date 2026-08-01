@@ -61,32 +61,7 @@ jobs:
           printf '%s\n' '<!doctype html><html><body></body></html>' > desktop/dist/index.html
 
       - name: Apply, validate, document, and publish Block 23
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          validation = Path('.github/block23-validation.sh')
-          text = validation.read_text(encoding='utf-8')
-          old = '''python3 .github/block23-complete.py
-
-git rm --ignore-unmatch \\
-'''
-          new = '''python3 .github/block23-complete.py
-
-# TypeScript project builds leave disposable incremental compiler caches. They
-# are not release artifacts and must not enter the Block 23 completion commit.
-rm -f \\
-  desktop/tsconfig.app.tsbuildinfo \\
-  desktop/tsconfig.node.tsbuildinfo
-
-git rm --ignore-unmatch \\
-'''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f'publisher cleanup anchor: expected one target, found {count}')
-          validation.write_text(text.replace(old, new, 1), encoding='utf-8')
-          PY
-          bash .github/block23-validation.sh
+        run: bash .github/block23-validation.sh
 
       - name: Publish success
         env:
