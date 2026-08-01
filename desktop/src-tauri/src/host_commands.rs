@@ -7,8 +7,11 @@ use crate::platform::source_staging::stage_audio_source;
 use crate::platform::source_staging_control::{
     SourceStagingControl, TauriSourceStagingProgressSink,
 };
-use crate::runtime_dto::{CommandReceiptDto, RevisionCommandRequest, UpdateHostDraftRequest};
-use silent_disco_core::domain::{AppRole, ApprovalMode};
+use crate::runtime_dto::{
+    ApproveJoinRequest, CommandReceiptDto, JoinRequestCommandRequest, ListenerCommandRequest,
+    RevisionCommandRequest, UpdateHostDraftRequest,
+};
+use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, RequestId};
 use silent_disco_core::runtime::{
     AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch, SnapshotRevision,
 };
@@ -173,6 +176,52 @@ pub fn get_host_session_state(
     state.host_session_snapshot()
 }
 
+/// Requests delivery-first approval of one pending listener.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn approve_join_request(
+    state: State<'_, DesktopAppState>,
+    request: ApproveJoinRequest,
+) -> Result<CommandReceiptDto, DesktopErrorDto> {
+    state.submit_core_command(
+        parse_snapshot_revision(&request.expected_revision)?,
+        CoreCommand::ApproveJoin {
+            request_id: parse_request_id(&request.request_id)?,
+            remember_for_future: request.remember_for_future,
+        },
+    )
+}
+
+/// Requests delivery-first rejection of one pending listener.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn reject_join_request(
+    state: State<'_, DesktopAppState>,
+    request: JoinRequestCommandRequest,
+) -> Result<CommandReceiptDto, DesktopErrorDto> {
+    state.submit_core_command(
+        parse_snapshot_revision(&request.expected_revision)?,
+        CoreCommand::RejectJoin {
+            request_id: parse_request_id(&request.request_id)?,
+        },
+    )
+}
+
+/// Requests delivery-first removal of one connected listener.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn remove_listener(
+    state: State<'_, DesktopAppState>,
+    request: ListenerCommandRequest,
+) -> Result<CommandReceiptDto, DesktopErrorDto> {
+    state.submit_core_command(
+        parse_snapshot_revision(&request.expected_revision)?,
+        CoreCommand::RemoveListener {
+            listener_id: parse_device_id(&request.listener_id)?,
+        },
+    )
+}
+
 /// Requests a revision-aware host-session shutdown.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
@@ -232,6 +281,30 @@ fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopError
         })
 }
 
+fn parse_request_id(value: &str) -> Result<RequestId, DesktopErrorDto> {
+    RequestId::new(value.to_owned()).map_err(|error| {
+        DesktopErrorDto::new(
+            "desktop.command.invalid_request_id",
+            "validation",
+            "error",
+            false,
+            &error.to_string(),
+        )
+    })
+}
+
+fn parse_device_id(value: &str) -> Result<DeviceId, DesktopErrorDto> {
+    DeviceId::new(value.to_owned()).map_err(|error| {
+        DesktopErrorDto::new(
+            "desktop.command.invalid_listener_id",
+            "validation",
+            "error",
+            false,
+            &error.to_string(),
+        )
+    })
+}
+
 fn append_registration_rollback(
     primary: &DesktopErrorDto,
     rollback: &DesktopErrorDto,
@@ -250,7 +323,7 @@ fn append_registration_rollback(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_snapshot_revision;
+    use super::{parse_device_id, parse_request_id, parse_snapshot_revision};
 
     #[test]
     fn revision_parser_accepts_only_canonical_decimal() {
@@ -259,5 +332,13 @@ mod tests {
         assert!(parse_snapshot_revision("").is_err());
         assert!(parse_snapshot_revision("01").is_err());
         assert!(parse_snapshot_revision("-1").is_err());
+    }
+
+    #[test]
+    fn admission_identifiers_are_validated_before_actor_submission() {
+        assert!(parse_request_id("request-1").is_ok());
+        assert!(parse_request_id(" bad ").is_err());
+        assert!(parse_device_id("listener-1").is_ok());
+        assert!(parse_device_id("").is_err());
     }
 }

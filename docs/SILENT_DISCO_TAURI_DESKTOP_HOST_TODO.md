@@ -1265,11 +1265,11 @@ Show:
 
 ### 23.1 Pending requests
 
-- [ ] render core request ID, safe device summary, age, trust, and invite status;
-- [ ] approve/reject commands include expected snapshot revision;
-- [ ] one pending operation per request;
-- [ ] stale request failure remains visible;
-- [ ] do not remove request optimistically.
+- [x] render core request ID, safe device summary, age, trust, and invite status;
+- [x] approve/reject commands include expected snapshot revision;
+- [x] one pending operation per request;
+- [x] stale request failure remains visible;
+- [x] do not remove request optimistically.
 
 ### 23.2 Connected listeners
 
@@ -1281,27 +1281,29 @@ desktop/src/screens/ListenerDetailScreen.tsx
 
 Show:
 
-- [ ] lifecycle;
-- [ ] last contact;
-- [ ] sync confidence;
-- [ ] RTT/offset summaries;
-- [ ] delivery state;
-- [ ] retry/resync capability;
-- [ ] last structured failure;
-- [ ] remove/disconnect action only when core allows it.
+- [x] lifecycle;
+- [x] last contact;
+- [x] sync confidence;
+- [x] RTT/offset summaries;
+- [x] delivery state;
+- [x] retry/resync capability;
+- [x] last structured failure;
+- [x] remove/disconnect action only when core allows it.
 
 ### 23.3 Tests
 
-- [ ] approve success after delivery confirmation;
-- [ ] approval zero-recipient failure;
-- [ ] approval partial delivery;
-- [ ] rejection delivery failure;
-- [ ] stale request;
-- [ ] trusted-device policy;
-- [ ] duplicate click prevention;
-- [ ] keyboard and screen-reader behavior.
+- [x] approve success after delivery confirmation;
+- [x] approval zero-recipient failure;
+- [x] approval partial delivery;
+- [x] rejection delivery failure;
+- [x] stale request;
+- [x] trusted-device policy;
+- [x] duplicate click prevention;
+- [x] keyboard and screen-reader behavior.
 
 **Acceptance:** Desktop listener management uses the shared delivery-first policy.
+
+**Completion evidence:** Actions run `30678111276` passed against direct-master input `8f9d156d5d94cba7178cc01ad8cb546d691da003`. The run validated revision-aware approval/rejection/removal, real pending-control delivery, trusted-device persistence, authoritative UI reconciliation, Linux bundle creation, shared Rust, Android builds/tests/lint, ABI packaging, and Android instrumentation. See `docs/DESKTOP_BLOCK23_LISTENER_MANAGEMENT.md`. Physical Android-to-desktop control interoperability remains Block 24.
 
 ---
 

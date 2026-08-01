@@ -397,3 +397,11 @@ Execution constraints for this session:
 - Direct `master` work; no branch or PR.
 - Final validation run: `30620932603`.
 - Validated input: `3f9b90aca0549e5870b34d12cee83c514a2ccd40`.
+
+## 2026-07-31 — Desktop Block 23 listener management complete
+
+- Completed revision-aware desktop approval, rejection, and listener removal on direct `master`.
+- Added bounded desktop transport-effect and storage-effect execution. Delivery and persistence failures are correlated and fail-visible; React never executes transport or storage effects.
+- Added authoritative request age, listener synchronization/delivery details, pending-operation reconciliation, trusted-device policy, duplicate-action prevention, and accessible listener-management UI.
+- Guarded Actions run `30678111276` passed against exact input `8f9d156d5d94cba7178cc01ad8cb546d691da003` with the complete Rust, desktop, Linux bundle, Android build/test/lint/ABI, managed-device instrumentation, generated-binding, lockfile, and source-size matrix.
+- Physical Android control-plane interoperability remains Desktop Block 24.

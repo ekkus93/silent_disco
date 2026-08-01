@@ -137,6 +137,8 @@ const hostSessionSnapshot: HostSessionSnapshotDto = {
   },
   pendingJoinRequests: [],
   connectedListeners: [],
+  lastDelivery: null,
+  recoverableAction: null,
   playbackControlsEnabled: false,
   transportWorkerRunning: true,
   transportError: null,
@@ -210,7 +212,7 @@ describe("App", () => {
       });
     });
 
-    expect(await screen.findByRole("heading", { name: "Host session" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Oakland Night" })).toBeVisible();
     expect(screen.getByText("session-app-test")).toBeVisible();
     expect(store.getState().core.snapshot?.revision).toBe("5");
   });

@@ -1,39 +1,32 @@
-import "@testing-library/jest-dom/vitest";
-
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { HostSessionSnapshotDto } from "../core/generated/desktop-bindings";
+import * as client from "../core/client";
+import type { DesktopErrorDto, HostSessionSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostSessionScreen } from "./HostSessionScreen";
 
-const { getHostSessionState, endHostSession, writeText } = vi.hoisted(() => ({
-  getHostSessionState: vi.fn(),
-  endHostSession: vi.fn(),
-  writeText: vi.fn(),
-}));
+vi.mock("../core/client");
 
-vi.mock("../core/client", async () => {
-  const actual = await vi.importActual<typeof import("../core/client")>("../core/client");
-  return {
-    ...actual,
-    getHostSessionState,
-    endHostSession,
-  };
-});
+const invokeError: DesktopErrorDto = {
+  code: "core.invalid_state_transition",
+  subsystem: "validation",
+  severity: "error",
+  retryable: false,
+  message: "join request is stale or no longer pending",
+};
 
-function hostSession(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSnapshotDto {
+function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSnapshotDto {
   return {
     revision: "12",
     hostLifecycle: "waiting_for_listeners",
-    transportState: "connected",
+    transportState: "advertising",
     playbackState: "stopped",
-    sessionName: "Oakland Night",
+    sessionName: "Manual Session",
     connection: {
-      hostAddress: "192.168.1.20",
-      controlPort: 47000,
-      syncPort: 47001,
-      audioPort: 47002,
-      sessionId: "session-block22",
+      hostAddress: "192.168.1.50",
+      controlPort: 4100,
+      syncPort: 4101,
+      audioPort: 4102,
+      sessionId: "session-1",
       protocolVersion: 2,
       inviteCodeRequired: false,
       expiresAtMs: null,
@@ -41,25 +34,40 @@ function hostSession(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessi
     pendingJoinRequests: [
       {
         requestId: "request-1",
-        deviceId: "listener-pending",
-        displayName: "Pending phone",
+        deviceId: "listener-1",
+        displayName: "Listener One",
         trustState: "session_only",
         inviteCodeValid: true,
         receivedAtMs: "100",
+        ageMs: "2500",
       },
     ],
     connectedListeners: [
       {
-        deviceId: "listener-connected",
-        displayName: "Connected phone",
+        deviceId: "listener-2",
+        displayName: "Listener Two",
         trustState: "trusted",
         transportState: "connected",
-        lastContactMs: "120",
-        estimatedOffsetMs: "2",
-        roundTripTimeMs: "8",
+        lastContactMs: "500",
+        lastContactAgeMs: "250",
+        syncConfidence: "good",
+        estimatedOffsetMs: "-2.5",
+        roundTripTimeMs: "18",
+        driftPpm: "1.2",
+        lastControlDeliveryState: "ok",
+        retryAvailable: false,
+        resyncAvailable: false,
+        canRemove: true,
         lastError: null,
       },
     ],
+    lastDelivery: {
+      intendedPeers: 1,
+      successfulPeers: 1,
+      failedPeers: 0,
+      severity: "ok",
+    },
+    recoverableAction: null,
     playbackControlsEnabled: false,
     transportWorkerRunning: true,
     transportError: null,
@@ -70,100 +78,228 @@ function hostSession(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessi
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getHostSessionState.mockResolvedValue(hostSession());
-  endHostSession.mockResolvedValue({ operationId: "end-1", acceptedAtRevision: "12" });
-  writeText.mockResolvedValue(undefined);
-  Object.defineProperty(navigator, "clipboard", {
-    configurable: true,
-    value: { writeText },
+  vi.mocked(client.getHostSessionState).mockResolvedValue(fixture());
+  vi.mocked(client.approveJoinRequest).mockResolvedValue({
+    operationId: "command-1",
+    acceptedAtRevision: "12",
+  });
+  vi.mocked(client.rejectJoinRequest).mockResolvedValue({
+    operationId: "command-2",
+    acceptedAtRevision: "12",
+  });
+  vi.mocked(client.removeListener).mockResolvedValue({
+    operationId: "command-3",
+    acceptedAtRevision: "12",
+  });
+  vi.mocked(client.endHostSession).mockResolvedValue({
+    operationId: "command-4",
+    acceptedAtRevision: "12",
   });
 });
 
-describe("HostSessionScreen", () => {
-  it("renders authoritative connection, listener, and disabled playback state", async () => {
+describe("HostSessionScreen Block 23", () => {
+  it("renders safe request identity, age, trust, invite and accessible decisions", async () => {
     render(<HostSessionScreen />);
-
-    expect(await screen.findByRole("heading", { name: "Host session" })).toBeVisible();
-    expect(screen.getByText("192.168.1.20")).toBeVisible();
-    expect(screen.getByText("47000")).toBeVisible();
-    expect(screen.getByText("47001")).toBeVisible();
-    expect(screen.getByText("47002")).toBeVisible();
-    expect(screen.getByText("session-block22")).toBeVisible();
-    expect(screen.getByText("Pending phone")).toBeVisible();
-    expect(screen.getByText("Connected phone")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Play" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    expect(await screen.findByText("Listener One")).toBeInTheDocument();
+    expect(screen.getByText("Request request-1")).toBeInTheDocument();
+    expect(screen.getByText("Age: 3 s")).toBeInTheDocument();
+    expect(screen.getByText("Trust: session_only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: "Remember this device" })).toBeEnabled();
   });
 
-  it("copies the host address and bounded connection details", async () => {
+  it("does not remove a request optimistically and blocks duplicate approval", async () => {
+    let resolveApproval:
+      | ((value: { operationId: string; acceptedAtRevision: string }) => void)
+      | undefined;
+    vi.mocked(client.approveJoinRequest).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveApproval = resolve;
+        }),
+    );
     render(<HostSessionScreen />);
-    await screen.findByText("session-block22");
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy host address" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("192.168.1.20"));
-    expect(screen.getByRole("status")).toHaveTextContent("Host address copied");
+    expect(client.approveJoinRequest).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Listener One")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Copy connection details" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
-    expect(writeText.mock.calls[1]?.[0]).toContain('"controlPort": 47000');
-    expect(writeText.mock.calls[1]?.[0]).toContain('"protocolVersion": 2');
+    resolveApproval?.({
+      operationId: "command-approval",
+      acceptedAtRevision: "12",
+    });
+    expect(
+      await screen.findByText("Waiting for approval delivery confirmation…"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Listener One")).toBeInTheDocument();
   });
 
-  it("submits the end command once with the authoritative revision", async () => {
+  it("removes a request only after delivery-confirmed authoritative state", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({
+          revision: "14",
+          pendingJoinRequests: [],
+          connectedListeners: [
+            ...fixture().connectedListeners,
+            {
+              deviceId: "listener-1",
+              displayName: "Listener One",
+              trustState: "session_only",
+              transportState: "connected",
+              lastContactMs: "500",
+              lastContactAgeMs: "250",
+              syncConfidence: "good",
+              estimatedOffsetMs: "-2.5",
+              roundTripTimeMs: "18",
+              driftPpm: "1.2",
+              lastControlDeliveryState: "ok",
+              retryAvailable: false,
+              resyncAvailable: false,
+              canRemove: true,
+              lastError: null,
+            },
+          ],
+        }),
+      );
     render(<HostSessionScreen />);
-    const end = await screen.findByRole("button", { name: "End session" });
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
+    expect(screen.getByText("Listener One")).toBeInTheDocument();
 
-    fireEvent.click(end);
-    fireEvent.click(end);
-    await waitFor(() => expect(endHostSession).toHaveBeenCalledWith("12"));
-    expect(endHostSession).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Ending session…" })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Waiting for a newer Rust lifecycle");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() =>
+      expect(
+        screen.getByText("Listener approval was confirmed by the Rust core."),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Request request-1")).not.toBeInTheDocument();
   });
 
-  it("keeps transport and core failures visible", async () => {
-    getHostSessionState.mockResolvedValue(
-      hostSession({
-        transportError: "control worker stopped",
-        lastError: {
-          code: "core.transport.failed",
-          subsystem: "transport",
-          severity: "error",
-          retryable: true,
-          message: "listener delivery failed",
-        },
+  it("keeps a zero-recipient approval actionable and visible", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({
+          revision: "13",
+          lastDelivery: {
+            intendedPeers: 0,
+            successfulPeers: 0,
+            failedPeers: 0,
+            severity: "zero_peers",
+          },
+          lastError: {
+            code: "core.transport_delivery_failed",
+            subsystem: "transport",
+            severity: "error",
+            retryable: true,
+            message: "transport control delivery had no intended recipients",
+          },
+        }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+
+    expect(
+      await screen.findByText("transport control delivery had no intended recipients"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Request request-1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+
+  it("commits partial delivery but keeps the warning visible", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({
+          revision: "14",
+          pendingJoinRequests: [],
+          lastDelivery: {
+            intendedPeers: 2,
+            successfulPeers: 1,
+            failedPeers: 1,
+            severity: "partial_failure",
+          },
+        }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+
+    expect(await screen.findByText(/Last delivery: 1 of 2 succeeded/)).toBeInTheDocument();
+    expect(screen.queryByText("Request request-1")).not.toBeInTheDocument();
+  });
+
+  it("keeps rejection delivery failure and stale request failure visible", async () => {
+    vi.mocked(client.rejectJoinRequest).mockRejectedValueOnce(invokeError);
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+
+    expect(
+      await screen.findByText("join request is stale or no longer pending"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Request request-1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
+
+  it("passes the explicit trusted-device policy to Rust", async () => {
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Remember this device" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() =>
+      expect(client.approveJoinRequest).toHaveBeenCalledWith({
+        expectedRevision: "12",
+        requestId: "request-1",
+        rememberForFuture: true,
       }),
     );
-    render(<HostSessionScreen />);
-
-    expect(await screen.findByText("control worker stopped")).toBeVisible();
-    expect(screen.getByText("listener delivery failed")).toBeVisible();
   });
 
-  it("shows an end-session rejection and re-enables the action", async () => {
-    endHostSession.mockRejectedValue(new Error("stale revision"));
+  it("shows listener detail metrics and waits for removal confirmation", async () => {
     render(<HostSessionScreen />);
-    const end = await screen.findByRole("button", { name: "End session" });
+    await screen.findByText("Listener Two");
+    fireEvent.click(screen.getByRole("button", { name: "View Listener Two" }));
+    expect(screen.getByRole("heading", { name: "Listener Two" })).toBeInTheDocument();
+    expect(screen.getByText("good")).toBeInTheDocument();
+    expect(screen.getByText("-2.5 ms")).toBeInTheDocument();
+    expect(screen.getByText("18 ms")).toBeInTheDocument();
 
-    fireEvent.click(end);
-    expect(await screen.findByRole("alert")).toHaveTextContent("stale revision");
-    expect(screen.getByRole("button", { name: "End session" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove listener" }));
+    expect(client.removeListener).toHaveBeenCalledWith({
+      expectedRevision: "12",
+      listenerId: "listener-2",
+    });
+    expect(
+      await screen.findByRole("button", {
+        name: "Waiting for disconnect delivery…",
+      }),
+    ).toBeDisabled();
+    expect(screen.getByRole("heading", { name: "Listener Two" })).toBeInTheDocument();
   });
 
-  it("does not claim connection success before an endpoint exists", async () => {
-    getHostSessionState.mockResolvedValue(
-      hostSession({ connection: null, transportWorkerRunning: false }),
-    );
+  it("keeps command failures visible across successful refreshes", async () => {
+    vi.mocked(client.rejectJoinRequest).mockRejectedValueOnce(invokeError);
     render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await screen.findByText("join request is stale or no longer pending");
 
-    expect(
-      await screen.findByText(
-        /Waiting for the shared transport to report a successfully bound endpoint/,
-      ),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Copy connection details" }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(client.getHostSessionState).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("join request is stale or no longer pending")).toBeInTheDocument();
   });
 });

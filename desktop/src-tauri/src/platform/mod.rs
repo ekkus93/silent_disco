@@ -27,6 +27,7 @@ pub mod profile_lock;
 pub mod profile_metadata;
 pub(crate) mod source_staging;
 pub(crate) mod source_staging_control;
+pub(crate) mod storage_effect_runner;
 #[allow(
     clippy::unnested_or_patterns,
     reason = "the test keeps complete result variants visually separate"
@@ -42,6 +43,10 @@ mod effect_runner_tests;
 #[cfg(test)]
 mod file_picker_tests;
 #[cfg(test)]
+mod host_transport_admission_tests;
+#[cfg(test)]
 mod host_transport_tests;
 #[cfg(test)]
 mod network_tests;
+#[cfg(test)]
+mod storage_effect_runner_tests;

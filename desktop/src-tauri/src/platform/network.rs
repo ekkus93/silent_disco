@@ -9,9 +9,12 @@ pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};
 use crate::dto::DesktopErrorDto;
 use netdev::Interface;
 use silent_disco_core::error::CoreError;
-use silent_disco_core::runtime::{CoreActorHandle, NetworkEndpoint, SessionAdvertisement};
+use silent_disco_core::runtime::{
+    CoreActorHandle, NetworkEndpoint, SessionAdvertisement, TransportEffect,
+};
 use silent_disco_core::transport::{
-    HostTransportConfig, SystemTransportClock, TransportFactory, production_transport_factory,
+    HostTransportConfig, SystemTransportClock, TransportClock, TransportFactory,
+    production_transport_factory,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
@@ -177,6 +180,7 @@ pub(super) struct HostPorts {
 
 struct ActiveBinding {
     selected: SelectedAddress,
+    advertisement: SessionAdvertisement,
     runtime: DesktopHostTransportRuntime,
 }
 
@@ -306,9 +310,10 @@ impl DesktopHostNetworkControl {
         config.control_port = self.ports.control;
         config.sync_port = self.ports.sync;
         config.audio_port = self.ports.audio;
+        let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
         let node = self
             .transport_factory
-            .bind_host(config, Arc::new(SystemTransportClock::default()))
+            .bind_host(config, Arc::clone(&clock))
             .map_err(|error| DesktopNetworkError::transport(&error))?;
         let endpoint = node.endpoint();
         if endpoint.address != IpAddr::V4(selected.address) {
@@ -316,8 +321,12 @@ impl DesktopHostNetworkControl {
             let cleanup = node.shutdown().err();
             return Err(DesktopNetworkError::endpoint_mismatch(cleanup.as_ref()));
         }
-        let runtime = DesktopHostTransportRuntime::start(node, advertisement.clone(), sink)?;
-        state.active = Some(ActiveBinding { selected, runtime });
+        let runtime = DesktopHostTransportRuntime::start(node, advertisement.clone(), sink, clock)?;
+        state.active = Some(ActiveBinding {
+            selected,
+            advertisement: advertisement.clone(),
+            runtime,
+        });
         Ok(endpoint)
     }
 
@@ -346,11 +355,35 @@ impl DesktopHostNetworkControl {
             .state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned().dto())?;
-        state
-            .active
-            .as_ref()
-            .map(|active| active.runtime.snapshot().map_err(DesktopNetworkError::dto))
-            .transpose()
+        let Some(active) = state.active.as_ref() else {
+            return Ok(None);
+        };
+        let status = active.runtime.status().map_err(DesktopNetworkError::dto)?;
+        Ok(Some(ActiveHostSessionSnapshot {
+            advertisement: active.advertisement.clone(),
+            endpoint: active.runtime.endpoint(),
+            worker_running: status.running,
+            last_error: status.last_error,
+            observed_at_ms: active.runtime.observed_at().get(),
+        }))
+    }
+
+    pub(crate) fn dispatch_transport_effect(
+        &self,
+        effect: TransportEffect,
+    ) -> Result<(), CoreError> {
+        let operation_id = effect.operation_id.clone();
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().core_error(Some(operation_id.clone())))?;
+        let Some(active) = state.active.as_ref() else {
+            return Err(DesktopNetworkError::unavailable(
+                "transport effect requires an active desktop host session",
+            )
+            .core_error(Some(operation_id)));
+        };
+        active.runtime.dispatch(effect)
     }
 
     pub(crate) fn shutdown(&self) -> Result<(), CoreError> {

@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 import type {
+  ApproveJoinRequest,
   AttachNotificationResponse,
   BridgeLifecycleDto,
   CommandReceiptDto,
@@ -8,6 +9,8 @@ import type {
   CoreSnapshotDto,
   DesktopErrorDto,
   HostSessionSnapshotDto,
+  JoinRequestCommandRequest,
+  ListenerCommandRequest,
   OpenProfileRequest,
   OpenProfileResponse,
   RevisionCommandRequest,
@@ -313,6 +316,20 @@ export async function createHostSession(expectedRevision: string): Promise<Comma
 
 export async function getHostSessionState(): Promise<HostSessionSnapshotDto> {
   return invokeDesktop<HostSessionSnapshotDto>("get_host_session_state");
+}
+
+export async function approveJoinRequest(request: ApproveJoinRequest): Promise<CommandReceiptDto> {
+  return invokeDesktop<CommandReceiptDto>("approve_join_request", { request });
+}
+
+export async function rejectJoinRequest(
+  request: JoinRequestCommandRequest,
+): Promise<CommandReceiptDto> {
+  return invokeDesktop<CommandReceiptDto>("reject_join_request", { request });
+}
+
+export async function removeListener(request: ListenerCommandRequest): Promise<CommandReceiptDto> {
+  return invokeDesktop<CommandReceiptDto>("remove_listener", { request });
 }
 
 export async function endHostSession(expectedRevision: string): Promise<CommandReceiptDto> {

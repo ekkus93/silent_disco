@@ -26,6 +26,34 @@ pub struct RevisionCommandRequest {
     pub expected_revision: String,
 }
 
+/// Revision-aware approval of one authoritative pending join request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct ApproveJoinRequest {
+    pub expected_revision: String,
+    pub request_id: String,
+    pub remember_for_future: bool,
+}
+
+/// Revision-aware rejection of one authoritative pending join request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct JoinRequestCommandRequest {
+    pub expected_revision: String,
+    pub request_id: String,
+}
+
+/// Revision-aware operation targeting one connected listener.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct ListenerCommandRequest {
+    pub expected_revision: String,
+    pub listener_id: String,
+}
+
 /// Typed host-draft update submitted by the desktop setup screen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

@@ -15,6 +15,9 @@ use crate::platform::paths::{DesktopProfilePaths, resolve_profile_paths};
 use crate::platform::profile_lock::ProfileLease;
 use crate::platform::source_staging::cleanup_incomplete_sources;
 use crate::platform::source_staging_control::SourceStagingControl;
+use crate::platform::storage_effect_runner::{
+    DesktopStorageEffectDispatcher, DesktopStorageEffectRunner,
+};
 use crate::profile::ProfileId;
 use crate::runtime_dto::{
     AttachNotificationResponse, CommandReceiptDto, CoreNotificationDto, CoreSnapshotDto,
@@ -628,9 +631,15 @@ fn open_runtime(
         }
     };
 
+    let network = Arc::new(DesktopHostNetworkControl::production());
     let (platform_dispatcher, platform_inbox) = DesktopPlatformEffectDispatcher::channel();
-    let observer =
-        DesktopCoreObserver::new(Arc::clone(&notifications), platform_dispatcher.clone());
+    let (storage_dispatcher, storage_inbox) = DesktopStorageEffectDispatcher::channel();
+    let observer = DesktopCoreObserver::new(
+        Arc::clone(&notifications),
+        platform_dispatcher.clone(),
+        Arc::clone(&network),
+        storage_dispatcher.clone(),
+    );
     let actor =
         match CoreActorRuntime::start(CoreActorConfig::new(identity.device_id().clone()), observer)
         {
@@ -668,7 +677,19 @@ fn open_runtime(
         return Err(cleanup_with_actor(actor, database, lease, primary));
     }
 
-    let network = Arc::new(DesktopHostNetworkControl::production());
+    let storage_runner = match DesktopStorageEffectRunner::start(
+        storage_inbox,
+        storage_dispatcher,
+        Arc::new(handle.clone()),
+        database.client(),
+    ) {
+        Ok(runner) => runner,
+        Err(error) => {
+            let primary = DesktopErrorDto::from(error);
+            return Err(cleanup_with_actor(actor, database, lease, primary));
+        }
+    };
+
     let (platform_runner, current_snapshot) = match DesktopPlatformEffectRunner::start(
         platform_inbox,
         platform_dispatcher,
@@ -678,7 +699,10 @@ fn open_runtime(
     ) {
         Ok(started) => started,
         Err(error) => {
-            let primary = DesktopErrorDto::from(error);
+            let mut primary = DesktopErrorDto::from(error);
+            if let Err(storage_error) = storage_runner.shutdown() {
+                primary = append_cleanup(primary, Some(DesktopErrorDto::from(storage_error)));
+            }
             return Err(cleanup_with_actor(actor, database, lease, primary));
         }
     };
@@ -694,6 +718,7 @@ fn open_runtime(
             network,
             owned: DesktopOwnedResources {
                 platform_runner,
+                storage_runner,
                 notifications,
                 actor,
                 database,

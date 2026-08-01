@@ -5,6 +5,7 @@ use super::discovery;
 use super::failure::{DesktopPlatformFailure, core_error};
 use super::network::DesktopHostNetworkControl;
 use super::paths::DesktopProfilePaths;
+use super::storage_effect_runner::DesktopStorageEffectDispatcher;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use silent_disco_core::domain::OperationId;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity, MAX_ERROR_MESSAGE_BYTES};
@@ -161,6 +162,8 @@ impl DesktopPlatformEffectDispatcher {
 pub(crate) struct DesktopCoreObserver {
     notifications: Arc<DesktopNotificationBuffer>,
     platform_effects: DesktopPlatformEffectDispatcher,
+    transport_effects: Arc<DesktopHostNetworkControl>,
+    storage_effects: DesktopStorageEffectDispatcher,
 }
 
 impl DesktopCoreObserver {
@@ -168,10 +171,14 @@ impl DesktopCoreObserver {
     pub(crate) fn new(
         notifications: Arc<DesktopNotificationBuffer>,
         platform_effects: DesktopPlatformEffectDispatcher,
+        transport_effects: Arc<DesktopHostNetworkControl>,
+        storage_effects: DesktopStorageEffectDispatcher,
     ) -> Self {
         Self {
             notifications,
             platform_effects,
+            transport_effects,
+            storage_effects,
         }
     }
 }
@@ -180,6 +187,10 @@ impl CoreObserver for DesktopCoreObserver {
     fn on_notification(&self, notification: CoreNotification) -> Result<(), CoreError> {
         match notification {
             CoreNotification::Effect(effect) => self.platform_effects.dispatch(effect),
+            CoreNotification::TransportEffect(effect) => {
+                self.transport_effects.dispatch_transport_effect(effect)
+            }
+            CoreNotification::StorageEffect(effect) => self.storage_effects.dispatch(effect),
             other => self.notifications.on_notification(other),
         }
     }

@@ -20,6 +20,12 @@ export type OpenProfileRequest = { profileId: string, };
 
 export type RevisionCommandRequest = { expectedRevision: string, };
 
+export type ApproveJoinRequest = { expectedRevision: string, requestId: string, rememberForFuture: boolean, };
+
+export type JoinRequestCommandRequest = { expectedRevision: string, requestId: string, };
+
+export type ListenerCommandRequest = { expectedRevision: string, listenerId: string, };
+
 export type UpdateHostDraftRequest = { expectedRevision: string, sessionName: string, approvalMode: string, inviteCode: string | null, rememberApprovedDevices: boolean, };
 
 export type NetworkAddressClassDto = "loopback" | "link_local" | "private_lan" | "vpn" | "container" | "other";
@@ -32,11 +38,13 @@ export type SetNetworkBindPreferenceRequest = { mode: string, interfaceName: str
 
 export type HostConnectionDto = { hostAddress: string, controlPort: number, syncPort: number, audioPort: number, sessionId: string, protocolVersion: number, inviteCodeRequired: boolean, expiresAtMs: string | null, };
 
-export type PendingJoinRequestDto = { requestId: string, deviceId: string, displayName: string, trustState: string, inviteCodeValid: boolean, receivedAtMs: string, };
+export type PendingJoinRequestDto = { requestId: string, deviceId: string, displayName: string, trustState: string, inviteCodeValid: boolean, receivedAtMs: string, ageMs: string, };
 
-export type ConnectedListenerDto = { deviceId: string, displayName: string, trustState: string, transportState: string, lastContactMs: string | null, estimatedOffsetMs: string | null, roundTripTimeMs: string | null, lastError: DesktopErrorDto | null, };
+export type ConnectedListenerDto = { deviceId: string, displayName: string, trustState: string, transportState: string, lastContactMs: string | null, lastContactAgeMs: string | null, syncConfidence: string | null, estimatedOffsetMs: string | null, roundTripTimeMs: string | null, driftPpm: string | null, lastControlDeliveryState: string, retryAvailable: boolean, resyncAvailable: boolean, canRemove: boolean, lastError: DesktopErrorDto | null, };
 
-export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, lastError: DesktopErrorDto | null, };
+export type DeliveryReportDto = { intendedPeers: number, successfulPeers: number, failedPeers: number, severity: string, };
+
+export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, lastError: DesktopErrorDto | null, };
 
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, };
 

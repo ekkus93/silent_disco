@@ -68,9 +68,13 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
             Arc::new(SystemTransportClock::default()),
         )
         .expect("bind desktop host");
-    let runtime =
-        DesktopHostTransportRuntime::start(node, advertisement.clone(), Arc::new(handle.clone()))
-            .expect("start desktop transport worker");
+    let runtime = DesktopHostTransportRuntime::start(
+        node,
+        advertisement.clone(),
+        Arc::new(handle.clone()),
+        Arc::new(SystemTransportClock::default()),
+    )
+    .expect("start desktop transport worker");
     handle
         .submit_platform_event(PlatformEvent::OperationSucceeded {
             operation_id: advertisement_effect.operation_id,

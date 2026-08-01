@@ -3,17 +3,19 @@ use crate::dto::{
     StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
 };
 use crate::host_session_dto::{
-    ConnectedListenerDto, HostConnectionDto, HostSessionSnapshotDto, PendingJoinRequestDto,
+    ConnectedListenerDto, DeliveryReportDto, HostConnectionDto, HostSessionSnapshotDto,
+    PendingJoinRequestDto,
 };
 use crate::platform::network_dto::{
     NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
     NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
 };
 use crate::runtime_dto::{
-    AttachNotificationResponse, AudioSourceSummaryDto, CapabilitySnapshotDto, CommandReceiptDto,
-    CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto, DiagnosticFieldDto, HostDraftDto,
-    HostDraftValidationDto, OpenProfileRequest, OpenProfileResponse, PlatformEffectDto,
-    RevisionCommandRequest, UpdateHostDraftRequest,
+    ApproveJoinRequest, AttachNotificationResponse, AudioSourceSummaryDto, CapabilitySnapshotDto,
+    CommandReceiptDto, CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto, DiagnosticFieldDto,
+    HostDraftDto, HostDraftValidationDto, JoinRequestCommandRequest, ListenerCommandRequest,
+    OpenProfileRequest, OpenProfileResponse, PlatformEffectDto, RevisionCommandRequest,
+    UpdateHostDraftRequest,
 };
 use std::fmt;
 use ts_rs::{Config, TS};
@@ -44,6 +46,9 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<StorageInspectionDto>(&config),
         declaration::<OpenProfileRequest>(&config),
         declaration::<RevisionCommandRequest>(&config),
+        declaration::<ApproveJoinRequest>(&config),
+        declaration::<JoinRequestCommandRequest>(&config),
+        declaration::<ListenerCommandRequest>(&config),
         declaration::<UpdateHostDraftRequest>(&config),
         declaration::<NetworkAddressClassDto>(&config),
         declaration::<NetworkAddressCandidateDto>(&config),
@@ -52,6 +57,7 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<HostConnectionDto>(&config),
         declaration::<PendingJoinRequestDto>(&config),
         declaration::<ConnectedListenerDto>(&config),
+        declaration::<DeliveryReportDto>(&config),
         declaration::<HostSessionSnapshotDto>(&config),
         declaration::<NetworkBindingDto>(&config),
         declaration::<NetworkInterfaceSnapshotDto>(&config),
@@ -113,7 +119,11 @@ mod tests {
         assert!(first.contains("export type StorageInspectionDto"));
         assert!(first.contains("export type HostDraftDto"));
         assert!(first.contains("export type UpdateHostDraftRequest"));
+        assert!(first.contains("export type ApproveJoinRequest"));
+        assert!(first.contains("export type JoinRequestCommandRequest"));
+        assert!(first.contains("export type ListenerCommandRequest"));
         assert!(first.contains("export type CommandReceiptDto"));
+        assert!(first.contains("export type DeliveryReportDto"));
         assert!(first.contains("export type CoreSnapshotDto"));
         assert!(first.contains("export type OpenProfileResponse"));
         assert!(first.contains("export type AttachNotificationResponse"));

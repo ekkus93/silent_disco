@@ -2,12 +2,14 @@ use crate::dto::DesktopErrorDto;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::effect_runner::DesktopPlatformEffectRunner;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
+use crate::platform::storage_effect_runner::DesktopStorageEffectRunner;
 use silent_disco_core::runtime::CoreActorRuntime;
 use silent_disco_core::storage::{DatabaseWorker, StorageError};
 use std::sync::Arc;
 
 pub(crate) struct DesktopOwnedResources {
     pub(crate) platform_runner: DesktopPlatformEffectRunner,
+    pub(crate) storage_runner: DesktopStorageEffectRunner,
     pub(crate) notifications: Arc<DesktopNotificationBuffer>,
     pub(crate) actor: CoreActorRuntime,
     pub(crate) database: DatabaseWorker,
@@ -29,12 +31,14 @@ pub(crate) fn shutdown_owned_resources(
     resources: DesktopOwnedResources,
 ) -> Result<(), DesktopErrorDto> {
     let platform_error = resources.platform_runner.shutdown().err();
+    let storage_error = resources.storage_runner.shutdown().err();
     let actor_error = resources.actor.shutdown().err();
     let notification_error = resources.notifications.shutdown().err();
     let database_error = resources.database.stop_and_join().err();
     let lease_error = resources.lease.release().err();
 
     if platform_error.is_none()
+        && storage_error.is_none()
         && notification_error.is_none()
         && actor_error.is_none()
         && database_error.is_none()
@@ -45,6 +49,7 @@ pub(crate) fn shutdown_owned_resources(
 
     Err(cleanup_error(
         platform_error.as_ref(),
+        storage_error.as_ref(),
         notification_error.as_ref(),
         actor_error.as_ref(),
         database_error.as_ref(),
@@ -92,6 +97,7 @@ pub(crate) fn cleanup_with_actor(
 
 fn cleanup_error(
     platform: Option<&silent_disco_core::error::CoreError>,
+    storage: Option<&silent_disco_core::error::CoreError>,
     notifications: Option<&silent_disco_core::error::CoreError>,
     actor: Option<&silent_disco_core::error::CoreError>,
     database: Option<&StorageError>,
@@ -103,8 +109,9 @@ fn cleanup_error(
         "fatal",
         false,
         &format!(
-            "desktop shutdown failed (platform_runner={}, notifications={}, actor={}, database={}, profile_lock={})",
+            "desktop shutdown failed (platform_runner={}, storage_runner={}, notifications={}, actor={}, database={}, profile_lock={})",
             status(platform),
+            status(storage),
             status(notifications),
             status(actor),
             status(database),
