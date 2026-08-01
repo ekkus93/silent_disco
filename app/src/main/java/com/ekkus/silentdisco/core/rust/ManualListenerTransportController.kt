@@ -103,9 +103,7 @@ class ManualListenerTransportController : AutoCloseable {
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
-                    // A transport that already connected can only report the connection
-                    // ending, not a fresh configuration failure - always Disconnected here.
-                    _connectState.value = ManualConnectUiState.Disconnected(error.message)
+                    _connectState.value = mapPostConnectionFailure(error)
                     break
                 }
                 if (event != null) {
@@ -142,3 +140,16 @@ class ManualListenerTransportController : AutoCloseable {
 
     private fun nowMs(): ULong = System.currentTimeMillis().toULong()
 }
+
+/**
+ * Maps any exception surfaced while polling an already-connected transport.
+ *
+ * The poll loop only starts after `connect()` and `sendJoinRequest()` have already
+ * succeeded, so every exception it can observe - including `Closed`/`ShuttingDown` -
+ * represents the connection ending, never a fresh configuration failure. Mapping any
+ * of them to `Failed` would render a real "host ended session" as an indistinguishable
+ * connection error.
+ */
+internal fun mapPostConnectionFailure(
+    error: FfiListenerTransportException,
+): ManualConnectUiState.Disconnected = ManualConnectUiState.Disconnected(error.message)
