@@ -3,6 +3,7 @@ mod decoder;
 mod jitter_buffer;
 mod packetizer;
 mod packetizer_worker;
+mod render_ring;
 mod resampler;
 mod scheduler;
 mod source;
@@ -29,6 +30,12 @@ pub use packetizer_worker::{
     PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
     StreamingPacketizeConfig, StreamingPacketizeHandle,
 };
+pub use render_ring::{
+    DEFAULT_RING_CAPACITY_FRAMES, DEFAULT_TARGET_FILL_FRAMES, MAX_RING_CAPACITY_FRAMES,
+    MIN_RING_CAPACITY_FRAMES, RENDER_CHANNELS, RenderReadOutcome, RenderRing, RenderRingConfig,
+    RenderRingConfigError, RenderRingConfigErrorKind, RenderRingConsumer, RenderRingProducer,
+    RenderRingSnapshot,
+};
 pub use scheduler::{
     BufferHealth, DEFAULT_HARD_RESYNC_THRESHOLD_MS, DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS,
     DEFAULT_STARTUP_BUFFER_TARGET_MS, OffsetUpdateOutcome, PlaybackScheduler, ScheduledFrame,
@@ -47,6 +54,8 @@ mod concealment_tests;
 mod jitter_buffer_tests;
 #[cfg(test)]
 mod packetizer_tests;
+#[cfg(test)]
+mod render_ring_tests;
 #[cfg(test)]
 mod scheduler_tests;
 #[cfg(test)]

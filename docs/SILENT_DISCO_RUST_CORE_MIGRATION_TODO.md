@@ -898,47 +898,51 @@ pub struct DecodedPcmChunk {
 
 ### 16.1 Add render format and capacity validation
 
-- [ ] 48 kHz stereo float32 interleaved internal format.
-- [ ] one-second default capacity.
-- [ ] 400 ms default target fill.
-- [ ] hard minimum/maximum configuration bounds.
-- [ ] checked frame/sample/byte arithmetic.
+- [x] 48 kHz stereo float32 interleaved internal format.
+- [x] one-second default capacity.
+- [x] 400 ms default target fill.
+- [x] hard minimum/maximum configuration bounds.
+- [x] checked frame/sample/byte arithmetic.
 
 ### 16.2 Implement SPSC ownership
 
 Use a proven SPSC implementation or an internally reviewed bounded implementation.
 
-- [ ] Exactly one producer.
-- [ ] Exactly one consumer registration.
-- [ ] No unread-frame overwrite.
-- [ ] No allocation during read/write after initialization.
-- [ ] No blocking consumer operation.
-- [ ] Cache-line/atomic behavior documented where relevant.
+- [x] Exactly one producer.
+- [x] Exactly one consumer registration.
+- [x] No unread-frame overwrite.
+- [x] No allocation during read/write after initialization.
+- [x] No blocking consumer operation.
+- [x] Cache-line/atomic behavior documented where relevant.
 
 ### 16.3 Implement telemetry
 
 Atomic counters:
 
-- [ ] frames produced;
-- [ ] frames requested;
-- [ ] frames supplied from ring;
-- [ ] silence-filled frames;
-- [ ] underrun callbacks;
-- [ ] ring-full events;
-- [ ] callback count;
-- [ ] contained panic count.
+- [x] frames produced;
+- [x] frames requested;
+- [x] frames supplied from ring;
+- [x] silence-filled frames;
+- [x] underrun callbacks;
+- [x] ring-full events;
+- [x] callback count;
+- [x] contained panic count.
 
 ### 16.4 Add concurrency tests
 
-- [ ] empty read;
-- [ ] full write;
-- [ ] partial write/read;
-- [ ] wraparound;
-- [ ] producer faster than consumer;
-- [ ] consumer faster than producer;
-- [ ] repeated start/stop;
-- [ ] thread sanitizer or equivalent host stress where available;
-- [ ] no data reordering or duplication.
+- [x] empty read;
+- [x] full write;
+- [x] partial write/read;
+- [x] wraparound;
+- [x] producer faster than consumer;
+- [x] consumer faster than producer;
+- [x] repeated start/stop;
+- [x] thread sanitizer or equivalent host stress where available;
+- [x] no data reordering or duplication.
+
+**Implementation note (2026-08-01):** `audio::RenderRing` (`rust/silent-disco-core/src/audio/render_ring.rs`) is an internally reviewed bounded SPSC implementation (no third-party ring-buffer dependency was added) built entirely from safe Rust: each sample slot is a plain `AtomicU32` holding an `f32`'s bit pattern (`to_bits`/`from_bits`), so no `unsafe` block appears anywhere in this module even though this workspace denies `unsafe_code` — that denial holds with zero exceptions here, unlike the JNI-facing FFI modules that need `#![allow(unsafe_code)]` just for the `#[unsafe(no_mangle)]` attribute. `RenderRing::split(self)` consumes the ring and returns exactly one `RenderRingProducer` and one `RenderRingConsumer`; neither implements `Clone`, so the type system — not a runtime check — guarantees exactly one of each ever exists. The module's doc comment explains the batch-release/acquire ordering in full (why the producer's `read_index` load and the consumer's `write_index` load must be `Acquire`, why each side's own index can be `Relaxed`, and why `write_index - read_index` can never underflow from either side).
+
+12 tests in `render_ring_tests.rs`, including two genuine multi-threaded stress tests (`producer_faster_than_consumer_never_corrupts_or_loses_data`, `consumer_faster_than_producer_fills_silence_without_corrupting_later_data`) using real `std::thread` producer/consumer threads and ragged, non-divisor batch sizes to exercise wraparound under contention; both assert the exact received sample sequence against a strictly monotonic expected sequence, which would fail on any reordering, duplication, or corruption. Re-run 8× in release mode with no failures. Literal ThreadSanitizer was not run: this project's pinned toolchain (`rust/rust-toolchain.toml`, 1.97.1) is a stable release and TSan requires a nightly toolchain with `-Z sanitizer=thread`, which is not wired into this repository's build; the two threaded stress tests above are the practical "or equivalent host stress" this environment can actually run and verify.
 
 **Acceptance:** Ring behavior is deterministic, bounded, nonblocking for the consumer, and stress tested.
 
