@@ -270,6 +270,14 @@ impl JitterBuffer {
         Some(datagram)
     }
 
+    /// Forcibly advances past the next-expected sequence without emitting a
+    /// packet, for a caller (concealment policy or scheduler) that has
+    /// decided to stop waiting for it. Any later arrival for the skipped
+    /// sequence is rejected as already-emitted.
+    pub fn skip_expected_sequence(&mut self) {
+        self.next_expected_sequence += 1;
+    }
+
     /// Number of sequences between the next-expected sequence and the
     /// earliest currently buffered packet, i.e. packets that have not
     /// arrived yet but are already known to be missing from the gap.
@@ -281,6 +289,24 @@ impl JitterBuffer {
             }
             _ => 0,
         }
+    }
+
+    /// Presentation-time span, in milliseconds, between the earliest and
+    /// latest currently buffered packets. Zero when fewer than two packets
+    /// are buffered.
+    #[must_use]
+    pub fn buffered_span_ms(&self) -> u64 {
+        let mut times = self
+            .packets
+            .values()
+            .map(|datagram| datagram.host_presentation_time_ms.get());
+        let Some(first) = times.next() else {
+            return 0;
+        };
+        let (min, max) = times.fold((first, first), |(min, max), time| {
+            (min.min(time), max.max(time))
+        });
+        max - min
     }
 
     /// The sequence this buffer will emit next via [`Self::pop_in_order`].

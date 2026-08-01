@@ -846,39 +846,47 @@ pub struct DecodedPcmChunk {
 
 ### 15.2 Port concealment policy
 
-- [ ] silence/zero concealment for missing PCM packets;
-- [ ] monotonic sequence/sample/timestamp progression;
-- [ ] concealment counter;
-- [ ] bounded consecutive concealment before desync/rebuffer;
-- [ ] no use of prior non-silence samples as accidental data leakage.
+- [x] silence/zero concealment for missing PCM packets;
+- [x] monotonic sequence/sample/timestamp progression;
+- [x] concealment counter;
+- [x] bounded consecutive concealment before desync/rebuffer;
+- [x] no use of prior non-silence samples as accidental data leakage.
+
+**Implementation note (2026-08-01):** `audio::ConcealmentPolicy` (`rust/silent-disco-core/src/audio/concealment.rs`) synthesizes a fresh zero-filled `Vec<i16>` per gap (never reuses or caches a prior buffer, verified by a dedicated pointer-identity test) and tracks cumulative/consecutive concealment counters, signalling `ConcealmentOutcome::HardResyncRequired` once a configurable consecutive bound (default 5, hard ceiling 200) is reached. Monotonic sequence/sample/timestamp progression through a gap is the scheduler's responsibility (15.3): it computes the missing slot's sequence, sample index, and presentation time formulaically from the stream's fixed geometry, the same way the packetizer would have, so concealed and real frames are indistinguishable in their metadata progression. 7 new tests in `audio/concealment_tests.rs`.
 
 ### 15.3 Implement scheduler
 
-- [ ] host-to-local presentation mapping;
-- [ ] startup buffer target;
-- [ ] low/high water behavior;
-- [ ] periodic resync decisions;
-- [ ] hard-resync threshold;
-- [ ] render-ring producer pacing;
-- [ ] explicit stop/reset per stream.
+- [x] host-to-local presentation mapping;
+- [x] startup buffer target;
+- [x] low/high water behavior;
+- [x] periodic resync decisions;
+- [x] hard-resync threshold;
+- [x] render-ring producer pacing;
+- [x] explicit stop/reset per stream.
+
+**Implementation note (2026-08-01):** `audio::PlaybackScheduler` (`rust/silent-disco-core/src/audio/scheduler.rs`) owns one `JitterBuffer` and one `ConcealmentPolicy` per stream and exposes `submit_packet`/`poll(local_now_ms)`. `poll` is a `Buffering -> Playing -> (AwaitingRebuffer -> Buffering via rebuffer()) -> Stopped` state machine: it accumulates `startup_buffer_target_ms` (default 400ms) of buffered span before playing, maps each packet's host presentation time to local time via a caller-supplied offset (`host_time - offset`), delivers a real frame or synthesizes a concealed one at each slot's deadline, reports `BufferHealth::{Low,Normal,High}` against configurable low/high water marks (defaults 200ms/700ms), and treats `apply_offset_update` (periodic resync) deltas beyond a configurable hard-resync threshold (default 120ms, matching the existing approved Kotlin `hardResyncThresholdMs`) the same as a concealment-bound breach: both pause the scheduler in `AwaitingRebuffer` until an explicit `rebuffer()` call, which preserves already-buffered packets. Render-ring producer pacing is satisfied by `poll`'s contract (no allocation beyond one `Vec<i16>` per frame, no I/O, no blocking — safe to call at packet-duration cadence); the render ring itself is Block 16. `stop()` is explicit and idempotent; stream restart is a new `PlaybackScheduler` instance, matching the packetizer's own precedent. 18 new tests in `audio/scheduler_tests.rs`.
 
 ### 15.4 Add deterministic clock injection
 
-- [ ] Unit tests control monotonic time.
-- [ ] No direct Android clock dependencies.
-- [ ] Overflow and long-session duration tests.
+- [x] Unit tests control monotonic time.
+- [x] No direct Android clock dependencies.
+- [x] Overflow and long-session duration tests.
+
+**Implementation note (2026-08-01):** `PlaybackScheduler::poll` takes `local_now_ms: u64` as a plain parameter rather than reading a real clock, matching the existing `ClockSyncEstimator::decision(&self, now: ...)` precedent in `sync/estimator.rs` — every scheduler test drives time explicitly and there is no Android/system clock dependency anywhere in `audio/scheduler.rs`. One dedicated test exercises multi-year monotonic values and `u64::MAX` through the host-to-local mapping to confirm no panic and correct results at realistic long-session scale.
 
 ### 15.5 Add tests
 
-- [ ] out-of-order packets;
-- [ ] duplicate packets;
-- [ ] missing packet concealment;
-- [ ] late drops;
-- [ ] invalid identity;
-- [ ] underrun transition;
-- [ ] hard resync;
-- [ ] bounded memory under hostile packet sequence;
-- [ ] scheduler shutdown.
+- [x] out-of-order packets;
+- [x] duplicate packets;
+- [x] missing packet concealment;
+- [x] late drops;
+- [x] invalid identity;
+- [x] underrun transition;
+- [x] hard resync;
+- [x] bounded memory under hostile packet sequence;
+- [x] scheduler shutdown.
+
+**Implementation note (2026-08-01):** Coverage across `jitter_buffer_tests.rs`, `concealment_tests.rs`, and `scheduler_tests.rs` (this block plus 15.1) satisfies every item: out-of-order/duplicate/late-drop/invalid-identity at the jitter-buffer layer, missing-packet concealment and hard-resync/underrun transition at the scheduler layer, a hostile far-future-sequence flood rejected by the bounded reorder window, and explicit `stop()` shutdown semantics.
 
 **Acceptance:** Rust scheduler reproduces or intentionally improves approved Kotlin behavior with executable tests.
 

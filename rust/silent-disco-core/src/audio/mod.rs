@@ -1,11 +1,18 @@
+mod concealment;
 mod decoder;
 mod jitter_buffer;
 mod packetizer;
 mod packetizer_worker;
 mod resampler;
+mod scheduler;
 mod source;
 mod types;
 
+pub use concealment::{
+    ConcealmentConfigError, ConcealmentConfigErrorKind, ConcealmentOutcome, ConcealmentPolicy,
+    ConcealmentStatistics, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
+    MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT,
+};
 pub use decoder::StreamingDecodeHandle;
 pub use jitter_buffer::{
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig,
@@ -22,6 +29,11 @@ pub use packetizer_worker::{
     PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
     StreamingPacketizeConfig, StreamingPacketizeHandle,
 };
+pub use scheduler::{
+    BufferHealth, DEFAULT_HARD_RESYNC_THRESHOLD_MS, DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS,
+    DEFAULT_STARTUP_BUFFER_TARGET_MS, OffsetUpdateOutcome, PlaybackScheduler, ScheduledFrame,
+    SchedulerConfig, SchedulerConfigError, SchedulerConfigErrorKind, SchedulerPoll,
+};
 pub use types::{
     AudioFormat, AudioSampleFormat, CANONICAL_CHANNELS, CANONICAL_SAMPLE_RATE_HZ,
     DEFAULT_DECODE_CHUNK_FRAMES, DEFAULT_DECODE_QUEUE_CHUNKS, DecodeError, DecodeErrorKind,
@@ -30,8 +42,12 @@ pub use types::{
 };
 
 #[cfg(test)]
+mod concealment_tests;
+#[cfg(test)]
 mod jitter_buffer_tests;
 #[cfg(test)]
 mod packetizer_tests;
+#[cfg(test)]
+mod scheduler_tests;
 #[cfg(test)]
 mod tests;

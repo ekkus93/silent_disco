@@ -1,0 +1,365 @@
+use super::{
+    BufferHealth, DEFAULT_HARD_RESYNC_THRESHOLD_MS, JitterBufferRejectionKind, OffsetUpdateOutcome,
+    PlaybackScheduler, SchedulerConfig, SchedulerConfigErrorKind, SchedulerPoll,
+};
+use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
+use crate::protocol::{AudioCodec, AudioDatagram};
+
+const PACKET_DURATION_MS: u32 = 20;
+const SAMPLES_PER_PACKET: u32 = 960;
+const CHANNELS: u16 = 2;
+const HOST_START_MS: u64 = 1_000;
+
+fn session() -> SessionId {
+    SessionId::new("session-scheduler").expect("session id")
+}
+
+fn stream() -> StreamId {
+    StreamId::new("stream-scheduler").expect("stream id")
+}
+
+fn config() -> SchedulerConfig {
+    SchedulerConfig::new(
+        session(),
+        stream(),
+        PACKET_DURATION_MS,
+        HOST_START_MS,
+        SAMPLES_PER_PACKET,
+        CHANNELS,
+    )
+}
+
+fn payload_for(sample_value: i16) -> Vec<u8> {
+    (0..usize::try_from(SAMPLES_PER_PACKET).expect("fits usize") * usize::from(CHANNELS))
+        .flat_map(|_| sample_value.to_le_bytes())
+        .collect()
+}
+
+fn datagram(sequence: u64, sample_value: i16) -> AudioDatagram {
+    let host_time = HOST_START_MS + sequence * u64::from(PACKET_DURATION_MS);
+    AudioDatagram {
+        session_id: session(),
+        stream_id: stream(),
+        sequence: PacketSequence::new(sequence),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: CHANNELS,
+        samples_per_packet: SAMPLES_PER_PACKET,
+        first_sample_index: SampleIndex::new(sequence * u64::from(SAMPLES_PER_PACKET)),
+        host_presentation_time_ms: MonotonicMillis::new(host_time),
+        payload: payload_for(sample_value),
+    }
+}
+
+#[test]
+fn remains_buffering_until_the_startup_target_is_reached() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    scheduler.submit_packet(datagram(0, 1)).expect("accepted");
+
+    match scheduler.poll(HOST_START_MS) {
+        SchedulerPoll::Buffering { buffered_ms } => assert_eq!(buffered_ms, 0),
+        other => panic!("expected Buffering, got {other:?}"),
+    }
+}
+
+#[test]
+fn transitions_to_playing_and_delivers_frames_once_the_startup_target_is_reached() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    for sequence in 0..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+
+    match scheduler.poll(HOST_START_MS) {
+        SchedulerPoll::Frame { frame, .. } => {
+            assert_eq!(frame.sequence, 0);
+            assert!(!frame.concealed);
+        }
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
+fn maps_host_presentation_time_to_local_time_using_the_configured_offset() {
+    let mut scheduler = PlaybackScheduler::new(config(), 50.0).expect("valid scheduler");
+    for sequence in 0..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+
+    assert!(matches!(scheduler.poll(949), SchedulerPoll::Waiting { .. }));
+    match scheduler.poll(950) {
+        SchedulerPoll::Frame { frame, .. } => assert_eq!(frame.sequence, 0),
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
+fn returns_waiting_when_polled_before_the_next_presentation_deadline() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    for sequence in 0..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+    let _ = scheduler.poll(HOST_START_MS);
+
+    match scheduler.poll(HOST_START_MS + 1) {
+        SchedulerPoll::Waiting { .. } => {}
+        other => panic!("expected Waiting, got {other:?}"),
+    }
+}
+
+#[test]
+fn reports_low_buffer_health_once_span_drops_below_the_low_water_mark() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 40;
+    cfg.low_water_ms = 30;
+    cfg.high_water_ms = 100;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in 0..=2 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+
+    match scheduler.poll(HOST_START_MS) {
+        SchedulerPoll::Frame { buffer_health, .. } => assert_eq!(buffer_health, BufferHealth::Low),
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
+fn reports_high_buffer_health_once_span_exceeds_the_high_water_mark() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 40;
+    cfg.low_water_ms = 10;
+    cfg.high_water_ms = 50;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in 0..=5 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+
+    match scheduler.poll(HOST_START_MS) {
+        SchedulerPoll::Frame { buffer_health, .. } => {
+            assert_eq!(buffer_health, BufferHealth::High);
+        }
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
+fn conceals_a_missing_packet_once_its_presentation_deadline_arrives_and_progresses_monotonically() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    for sequence in 1..=21 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+
+    match scheduler.poll(HOST_START_MS) {
+        SchedulerPoll::Frame { frame, .. } => {
+            assert_eq!(frame.sequence, 0);
+            assert_eq!(frame.first_sample_index, 0);
+            assert_eq!(frame.host_presentation_time_ms, HOST_START_MS);
+            assert!(frame.concealed);
+            assert!(frame.samples.iter().all(|&sample| sample == 0));
+            assert_eq!(
+                frame.samples.len(),
+                usize::try_from(SAMPLES_PER_PACKET).expect("fits usize") * usize::from(CHANNELS)
+            );
+        }
+        other => panic!("expected a concealed Frame, got {other:?}"),
+    }
+
+    match scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)) {
+        SchedulerPoll::Frame { frame, .. } => {
+            assert_eq!(frame.sequence, 1);
+            assert_eq!(frame.first_sample_index, u64::from(SAMPLES_PER_PACKET));
+            assert_eq!(
+                frame.host_presentation_time_ms,
+                HOST_START_MS + u64::from(PACKET_DURATION_MS)
+            );
+            assert!(!frame.concealed);
+        }
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
+fn signals_awaiting_rebuffer_after_the_consecutive_concealment_bound_is_reached() {
+    let mut cfg = config();
+    cfg.max_consecutive_concealed_packets = 2;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+
+    let first = scheduler.poll(HOST_START_MS);
+    assert!(matches!(first, SchedulerPoll::Frame { ref frame, .. } if frame.concealed));
+
+    let second = scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS));
+    assert!(matches!(second, SchedulerPoll::AwaitingRebuffer));
+    assert!(scheduler.is_awaiting_rebuffer());
+
+    let third = scheduler.poll(HOST_START_MS + 2 * u64::from(PACKET_DURATION_MS));
+    assert!(matches!(third, SchedulerPoll::AwaitingRebuffer));
+}
+
+#[test]
+fn rebuffer_resumes_playback_and_preserves_already_buffered_packets() {
+    let mut cfg = config();
+    cfg.max_consecutive_concealed_packets = 1;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+
+    assert!(matches!(
+        scheduler.poll(HOST_START_MS),
+        SchedulerPoll::AwaitingRebuffer
+    ));
+
+    scheduler.rebuffer(0.0);
+    assert!(!scheduler.is_awaiting_rebuffer());
+
+    scheduler.submit_packet(datagram(1, 1)).expect("accepted");
+    match scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)) {
+        SchedulerPoll::Frame { frame, .. } => {
+            assert_eq!(frame.sequence, 1);
+            assert!(!frame.concealed);
+        }
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
+fn applies_a_small_offset_change_as_a_soft_correction() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    let outcome = scheduler.apply_offset_update(10.0);
+    assert_eq!(outcome, OffsetUpdateOutcome::SoftCorrected);
+    assert!(!scheduler.is_awaiting_rebuffer());
+}
+
+#[test]
+fn applies_a_large_offset_change_as_a_hard_resync() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    let outcome = scheduler.apply_offset_update(DEFAULT_HARD_RESYNC_THRESHOLD_MS + 1.0);
+    assert_eq!(outcome, OffsetUpdateOutcome::HardResyncRequired);
+    assert!(scheduler.is_awaiting_rebuffer());
+    assert!(matches!(
+        scheduler.poll(HOST_START_MS),
+        SchedulerPoll::AwaitingRebuffer
+    ));
+}
+
+#[test]
+fn stop_is_explicit_and_idempotent() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    scheduler.stop();
+    assert!(scheduler.is_stopped());
+    assert!(matches!(
+        scheduler.poll(HOST_START_MS),
+        SchedulerPoll::Stopped
+    ));
+
+    scheduler.stop();
+    assert!(scheduler.is_stopped());
+}
+
+#[test]
+fn submit_packet_rejects_a_packet_from_the_wrong_session() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    let mut wrong = datagram(0, 1);
+    wrong.session_id = SessionId::new("session-other").expect("session id");
+
+    let error = scheduler
+        .submit_packet(wrong)
+        .expect_err("wrong session must be rejected");
+    assert_eq!(error.kind, JitterBufferRejectionKind::WrongSession);
+}
+
+#[test]
+fn submit_packet_rejects_a_duplicate_sequence() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    scheduler.submit_packet(datagram(0, 1)).expect("accepted");
+
+    let error = scheduler
+        .submit_packet(datagram(0, 1))
+        .expect_err("duplicate must be rejected");
+    assert_eq!(error.kind, JitterBufferRejectionKind::Duplicate);
+}
+
+#[test]
+fn rejects_a_hostile_flood_of_far_future_sequences() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+
+    let error = scheduler
+        .submit_packet(datagram(1_000_000, 1))
+        .expect_err("far-future sequence must be rejected");
+    assert_eq!(error.kind, JitterBufferRejectionKind::ReorderWindowExceeded);
+}
+
+#[test]
+fn rejects_an_invalid_packet_duration() {
+    let mut cfg = config();
+    cfg.packet_duration_ms = 0;
+
+    let error = PlaybackScheduler::new(cfg, 0.0).expect_err("invalid duration must be rejected");
+    assert_eq!(error.kind, SchedulerConfigErrorKind::InvalidPacketDuration);
+}
+
+#[test]
+fn rejects_zero_samples_per_packet() {
+    let mut cfg = config();
+    cfg.samples_per_packet = 0;
+
+    let error =
+        PlaybackScheduler::new(cfg, 0.0).expect_err("invalid samples per packet must be rejected");
+    assert_eq!(
+        error.kind,
+        SchedulerConfigErrorKind::InvalidSamplesPerPacket
+    );
+}
+
+#[test]
+fn rejects_water_marks_that_are_not_strictly_ordered() {
+    let mut cfg = config();
+    cfg.low_water_ms = 700;
+    cfg.high_water_ms = 200;
+
+    let error =
+        PlaybackScheduler::new(cfg, 0.0).expect_err("inverted water marks must be rejected");
+    assert_eq!(error.kind, SchedulerConfigErrorKind::InvalidWaterMarks);
+}
+
+#[test]
+fn host_to_local_time_mapping_stays_correct_over_multi_year_sessions_and_never_panics() {
+    let ten_years_ms: u64 = 10 * 365 * 24 * 60 * 60 * 1_000;
+    assert_eq!(
+        super::scheduler::host_to_local_ms(ten_years_ms, 0.0),
+        ten_years_ms
+    );
+    assert_eq!(
+        super::scheduler::host_to_local_ms(ten_years_ms, 100.0),
+        ten_years_ms - 100
+    );
+
+    // Must not panic even at the extreme end of the monotonic millisecond range.
+    let _ = super::scheduler::host_to_local_ms(u64::MAX, 0.0);
+    let _ = super::scheduler::host_to_local_ms(u64::MAX, -1_000_000.0);
+    let _ = super::scheduler::host_to_local_ms(0, f64::MAX);
+}
+
+#[test]
+fn rejects_a_non_positive_hard_resync_threshold() {
+    let mut cfg = config();
+    cfg.hard_resync_threshold_ms = 0.0;
+
+    let error =
+        PlaybackScheduler::new(cfg, 0.0).expect_err("non-positive threshold must be rejected");
+    assert_eq!(
+        error.kind,
+        SchedulerConfigErrorKind::InvalidHardResyncThreshold
+    );
+}
