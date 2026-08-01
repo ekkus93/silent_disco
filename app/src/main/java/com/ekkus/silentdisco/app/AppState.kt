@@ -11,6 +11,8 @@ import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerDiagnosticsSnapshot
 import com.ekkus.silentdisco.core.model.ListenerInfo
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+import com.ekkus.silentdisco.core.model.ManualConnectUiState
+import com.ekkus.silentdisco.core.model.ManualEndpointFormState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.core.model.SessionInfo
@@ -71,6 +73,8 @@ data class AppUiState(
     val connectionProgress: ConnectionProgressState = ConnectionProgressState(),
     val discoveredSessions: List<SessionInfo> = emptyList(),
     val selectedSession: SessionInfo? = null,
+    val manualEndpointForm: ManualEndpointFormState = ManualEndpointFormState(),
+    val manualConnectState: ManualConnectUiState = ManualConnectUiState.Idle,
     val pendingJoinRequests: List<JoinRequest> = emptyList(),
     val approvedListeners: List<ListenerInfo> = emptyList(),
     val hostPlaybackState: PlaybackState = PlaybackState.STOPPED,

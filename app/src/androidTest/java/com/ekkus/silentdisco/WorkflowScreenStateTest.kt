@@ -113,6 +113,25 @@ class WorkflowScreenStateTest {
     }
 
     @Test
+    fun connectManuallyActionOnlyAppearsWhenCallbackProvided() {
+        composeRule.setContent {
+            SilentDiscoTheme {
+                NearbySessionsScreen(
+                    uiState = AppUiState(storageState = StorageInitializationState.READY),
+                    permissionRequired = false,
+                    onBack = {},
+                    onRequestPermission = {},
+                    onRefresh = {},
+                    onSelectSession = {},
+                    onConnectManually = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("nearby-connect-manually").assertIsDisplayed()
+    }
+
+    @Test
     fun discoveryShowsPlainLanguageResultBadge() {
         val session = SessionInfo(
             id = "session-1",

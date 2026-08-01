@@ -46,6 +46,7 @@ import com.ekkus.silentdisco.feature.host.HostDashboardScreen
 import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
 import com.ekkus.silentdisco.feature.host.InviteSessionSheet
 import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
+import com.ekkus.silentdisco.feature.listener.ManualEndpointScreen
 import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.feature.p2.QrHostInvitationDialog
@@ -425,7 +426,25 @@ fun SilentDiscoApp(
                         navController.navigateSingleTop(AppRoutes.SessionJoin)
                     },
                     onScanQr = ::launchQrScanner,
+                    onConnectManually = {
+                        navController.navigateSingleTop(AppRoutes.ManualConnect)
+                    },
                     trustedVerifiedSessionIds = p2UiState.trustedVerifiedSessionIds(),
+                )
+            }
+
+            composable(AppRoutes.ManualConnect) {
+                val cancelManualConnect: () -> Unit = {
+                    viewModel.cancelManualEndpointConnect()
+                    navController.popBackStack()
+                }
+                ManualEndpointScreen(
+                    uiState = uiState,
+                    onBack = cancelManualConnect,
+                    onInputChanged = viewModel::updateManualEndpointInput,
+                    onInviteCodeChanged = viewModel::updateManualEndpointInviteCode,
+                    onConnect = viewModel::connectManualEndpoint,
+                    onCancel = cancelManualConnect,
                 )
             }
 

@@ -52,6 +52,7 @@ fun NearbySessionsScreen(
     onRefresh: () -> Unit,
     onSelectSession: (SessionInfo) -> Unit,
     onScanQr: (() -> Unit)? = null,
+    onConnectManually: (() -> Unit)? = null,
     trustedVerifiedSessionIds: Set<String> = emptySet(),
 ) {
     Column(
@@ -67,6 +68,14 @@ fun NearbySessionsScreen(
                 }
             },
             actions = {
+                if (onConnectManually != null) {
+                    TextButton(
+                        onClick = onConnectManually,
+                        modifier = Modifier.testTag("nearby-connect-manually"),
+                    ) {
+                        Text("Connect manually")
+                    }
+                }
                 if (onScanQr != null) {
                     TextButton(
                         onClick = onScanQr,

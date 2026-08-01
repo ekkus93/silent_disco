@@ -11,6 +11,7 @@ object AppRoutes {
     const val HostDashboard = "host_dashboard"
     const val NearbySessions = "nearby_sessions"
     const val SessionJoin = "session_join"
+    const val ManualConnect = "manual_connect"
     const val ListenerPlayback = "listener_playback"
     const val ConnectionHelp = "connection_help"
     const val AdvancedDiagnostics = "advanced_diagnostics"

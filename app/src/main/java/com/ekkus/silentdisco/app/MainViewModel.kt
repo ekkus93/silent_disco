@@ -41,6 +41,7 @@ import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.rust.HostCoreController
+import com.ekkus.silentdisco.core.rust.ManualListenerTransportController
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
 import com.ekkus.silentdisco.core.protocol.AudioPacket
@@ -87,6 +88,7 @@ class MainViewModel @JvmOverloads constructor(
     internal val bleService = BleDiscoveryService(application)
     internal val wifiDirectService = WifiDirectTransportService(application, logger)
     internal val hostTimingService = HostTimingService()
+    internal val manualListenerController = ManualListenerTransportController()
 
     internal val _uiState = MutableStateFlow(
         AppUiState(
@@ -121,6 +123,7 @@ class MainViewModel @JvmOverloads constructor(
         observeTransport()
         observeDiscovery()
         observeBleFailures()
+        observeManualEndpointConnection()
     }
 
     fun selectRole(role: AppRole) {
@@ -211,6 +214,14 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun requestJoin() = requestJoinImpl()
+
+    fun updateManualEndpointInput(raw: String) = updateManualEndpointInputImpl(raw)
+
+    fun updateManualEndpointInviteCode(code: String) = updateManualEndpointInviteCodeImpl(code)
+
+    fun connectManualEndpoint() = connectManualEndpointImpl()
+
+    fun cancelManualEndpointConnect() = cancelManualEndpointConnectImpl()
 
     fun updateInviteCode(code: String) {
         _uiState.value = _uiState.value.copy(
@@ -365,6 +376,7 @@ class MainViewModel @JvmOverloads constructor(
         hostPlaybackCommandJob?.cancel()
         bleService.stop()
         wifiDirectService.stop()
+        manualListenerController.close()
         hostCoreController?.close()
         runBlocking(Dispatchers.IO) { domainStore.close() }
         super.onCleared()
