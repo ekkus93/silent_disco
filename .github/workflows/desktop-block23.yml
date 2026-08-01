@@ -85,4 +85,4 @@ jobs:
           gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" \
             --body "Desktop Block 23 guarded publisher failed in Actions run $GITHUB_RUN_ID against $BLOCK23_INPUT. No implementation or completion evidence was committed; continue directly on master from the first failed command."
 
-# Final trigger revision: supersede stale-base publishers.
+# Final trigger revision: rerun after completion evidence hygiene fix.
