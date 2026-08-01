@@ -1315,33 +1315,35 @@ This block requires a physical Android device.
 
 Record:
 
-- [ ] desktop OS/hardware;
-- [ ] Android model/version;
-- [ ] application build SHA;
-- [ ] Wi-Fi access point/router;
-- [ ] desktop connection type;
-- [ ] IP addresses;
-- [ ] firewall configuration;
-- [ ] exact commands.
+- [x] desktop OS/hardware;
+- [x] Android model/version;
+- [x] application build SHA;
+- [x] Wi-Fi access point/router (same private-LAN subnet, no isolation confirmed by IP/ping);
+- [x] desktop connection type;
+- [x] IP addresses;
+- [ ] firewall configuration (not independently inspected; no interactive `sudo` available in this
+      session — no interference observed in any scenario, but the configuration itself is
+      unverified);
+- [x] exact commands.
 
 ### 24.2 Run control tests
 
-- [ ] desktop creates host session;
-- [ ] Android uses manual endpoint;
-- [ ] join request reaches desktop;
-- [ ] approve succeeds;
-- [ ] reject path succeeds in a separate run;
-- [ ] disconnect is visible on both sides;
-- [ ] desktop end-session is visible on Android;
-- [ ] invalid endpoint fails clearly;
-- [ ] wrong protocol version fails clearly.
+- [x] desktop creates host session;
+- [x] Android uses manual endpoint;
+- [x] join request reaches desktop;
+- [x] approve succeeds;
+- [x] reject path succeeds in a separate run;
+- [x] disconnect is visible on both sides;
+- [x] desktop end-session is visible on Android;
+- [x] invalid endpoint fails clearly;
+- [x] wrong protocol version fails clearly.
 
 ### 24.3 Preserve evidence
 
-- [ ] record results in `memory.md`;
-- [ ] export diagnostics for failures;
-- [ ] add regression test for each code defect found;
-- [ ] do not mark audio interoperability complete.
+- [x] record results in `memory.md`;
+- [x] export diagnostics for failures;
+- [x] add regression test for each code defect found;
+- [x] do not mark audio interoperability complete.
 
 **Acceptance:** One Android listener completes a real control-plane session with the desktop host over the LAN.
 
