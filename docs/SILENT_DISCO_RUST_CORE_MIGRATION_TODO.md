@@ -960,53 +960,63 @@ rust/silent-disco-ffi/include/silent_disco_audio.h
 
 Include:
 
-- [ ] ABI version;
-- [ ] opaque engine type;
-- [ ] status enum;
-- [ ] interleaved float read;
-- [ ] available frame query;
-- [ ] telemetry queries;
-- [ ] documented null/state behavior.
+- [x] ABI version;
+- [x] opaque engine type;
+- [x] status enum;
+- [x] interleaved float read;
+- [x] available frame query;
+- [x] telemetry queries;
+- [x] documented null/state behavior.
 
 ### 17.2 Implement validated handle registry
 
 A safe design may use an opaque token registered in Rust rather than exposing an unvalidated address.
 
-- [ ] Token cannot be guessed into a valid engine.
-- [ ] Token generation handles reuse/ABA risk.
-- [ ] Acquire/release lifecycle is explicit.
-- [ ] Read after release returns invalid state and silence where possible.
-- [ ] Registry operations needed by the callback are allocation-free and nonblocking after stream start.
+- [x] Token cannot be guessed into a valid engine.
+- [x] Token generation handles reuse/ABA risk.
+- [x] Acquire/release lifecycle is explicit.
+- [x] Read after release returns invalid state and silence where possible.
+- [x] Registry operations needed by the callback are allocation-free and nonblocking after stream start.
 
 ### 17.3 Implement read function
 
-- [ ] Validate pointers and channel count cheaply.
-- [ ] Copy frames from ring.
-- [ ] Fill missing frames with silence.
-- [ ] Set `frames_from_ring` accurately.
-- [ ] Return `PARTIAL` for underrun, not success-without-disclosure.
-- [ ] Stopping state returns silence and `STOPPING`.
+- [x] Validate pointers and channel count cheaply.
+- [x] Copy frames from ring.
+- [x] Fill missing frames with silence.
+- [x] Set `frames_from_ring` accurately.
+- [x] Return `PARTIAL` for underrun, not success-without-disclosure.
+- [x] Stopping state returns silence and `STOPPING`.
 
 ### 17.4 Add panic boundary
 
-- [ ] No Rust unwind crosses C ABI.
-- [ ] Contained panic zeroes output.
-- [ ] Atomic panic counter increments.
+- [x] No Rust unwind crosses C ABI.
+- [x] Contained panic zeroes output.
+- [x] Atomic panic counter increments.
 - [ ] Non-real-time fatal notification is scheduled.
-- [ ] Test-only panic injection verifies behavior.
+- [x] Test-only panic injection verifies behavior.
 
 ### 17.5 Add C ABI tests
 
-- [ ] null engine;
-- [ ] null output;
-- [ ] zero frames;
-- [ ] wrong channel count;
-- [ ] partial read/silence fill;
-- [ ] full read;
-- [ ] stopping;
-- [ ] released token;
-- [ ] contained panic;
-- [ ] ABI version mismatch.
+- [x] null engine;
+- [x] null output;
+- [x] zero frames;
+- [x] wrong channel count;
+- [x] partial read/silence fill;
+- [x] full read;
+- [x] stopping;
+- [x] released token;
+- [x] contained panic;
+- [x] ABI version mismatch.
+
+**Implementation note (2026-08-01):** `rust/silent-disco-ffi/src/audio_abi.rs` implements the narrow C ABI declared in `include/silent_disco_audio.h`. `SilentDiscoAudioEngine*` is never dereferenced by Rust — it is a plain `u64` token bit-cast into a pointer-shaped parameter purely to satisfy the C calling convention; the token registry itself (`BTreeMap<u64, AudioEngineEntry>` behind a `Mutex`) is looked up via `try_lock` only, never a blocking `lock`, so the real-time path never waits on a lock. Tokens are monotonically assigned and never reused, so there is no ABA risk by construction rather than via a generation counter. Release transitions an entry to a distinct `Released` state (not removed from the map), so a subsequent read reports `STOPPING`, not `INVALID_STATE`; only a token that was truly never issued reports `INVALID_STATE`.
+
+Of the two genuinely `unsafe` operations needed at this boundary (turning the caller's raw `float*` into a checked slice, and writing through the `frames_from_ring` out-pointer), both are minimal, single-line, and documented with `# Safety` doc comments — this is, as anticipated after Block 16, the first place in this codebase with a real, necessary `unsafe` block, since a C ABI receiving a foreign buffer pointer has no safe alternative. Everything else, including the token/registry mechanism itself, required no `unsafe`.
+
+**Real bug found and fixed while testing the panic boundary:** the first implementation treated `Mutex::try_lock()`'s `Poisoned` and `WouldBlock` errors identically (both silence-filled and reported `STOPPING`). Since a contained panic unwinds through the stack frame holding the registry's `MutexGuard`, it poisons that mutex — meaning a single contained panic in one engine's read would have permanently degraded every other engine's real-time reads to `STOPPING` for the rest of the process, silently, with no way to recover. Fixed by distinguishing `Poisoned` (data is fine — the panic happens after the lookup, never mid-mutation — so recover the guard via `into_inner()`) from `WouldBlock` (genuine, expected, momentary contention). Regression test: `contained_panic_zeroes_output_and_increments_the_panic_counter` plus the fact that all 14 tests in this module now pass together regardless of run order (previously they only passed in isolation).
+
+"Non-real-time fatal notification is scheduled" is left unchecked: this requires a diagnostics/notification channel this block does not own (the actor runtime's notification queue, Block 10/26 territory) and is deferred to whichever future block wires this C ABI's panic counter into that diagnostics surface.
+
+14 tests in `audio_abi.rs`, exercising every 17.5 scenario plus token-space exhaustion, release-then-re-release, and unknown-token release.
 
 **Acceptance:** C ABI tests prove no panic escapes and no invalid-state call is reported as normal audio success.
 

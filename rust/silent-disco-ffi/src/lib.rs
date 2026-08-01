@@ -13,6 +13,7 @@ uniffi::setup_scaffolding!();
 mod android_abi;
 mod android_database_abi;
 mod android_p2_abi;
+mod audio_abi;
 mod host_control;
 mod listener_transport;
 mod sync;
@@ -20,6 +21,7 @@ mod sync;
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
 
 pub use android_abi::{CORE_ABI_VERSION, silent_disco_core_abi_version};
+pub use audio_abi::AUDIO_ABI_VERSION;
 pub use host_control::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,
