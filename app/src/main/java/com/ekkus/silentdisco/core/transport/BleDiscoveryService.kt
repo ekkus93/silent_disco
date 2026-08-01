@@ -93,7 +93,8 @@ class BleDiscoveryService(
             logger.w("ble.advertise", message)
             return BleOperationResult.failed(message)
         }
-        val serviceData = BleAdvertisementCodec.encode(advertisement)
+        val deviceName = if (hasConnectPermission()) bluetoothAdapter?.name.orEmpty() else ""
+        val serviceData = BleAdvertisementCodec.encode(advertisement, deviceName)
         val callback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
                 logger.i("ble.advertise", "Advertising session ${advertisement.sessionId.take(8)}")
@@ -115,8 +116,7 @@ class BleDiscoveryService(
                     .addServiceUuid(BleAdvertisementCodec.serviceUuid)
                     .build(),
                 AdvertiseData.Builder()
-                    .setIncludeDeviceName(true)
-                    .addServiceData(BleAdvertisementCodec.serviceUuid, serviceData)
+                    .addServiceData(BleAdvertisementCodec.serviceDataUuid, serviceData)
                     .build(),
                 callback,
             )
@@ -149,15 +149,14 @@ class BleDiscoveryService(
         _discoveredSessions.value = emptyList()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val serviceData = result.scanRecord?.getServiceData(BleAdvertisementCodec.serviceUuid) ?: return
-                val parsed = BleAdvertisementCodec.decode(
-                    payload = serviceData,
-                    fallbackHostName = result.scanRecord?.deviceName ?: safeBluetoothName(result) ?: "Nearby host",
-                ) ?: return
+                val serviceData = result.scanRecord?.getServiceData(BleAdvertisementCodec.serviceDataUuid) ?: return
+                val parsed = BleAdvertisementCodec.decode(payload = serviceData) ?: return
                 val session = SessionInfo(
                     id = parsed.sessionId,
                     name = parsed.sessionName.ifBlank { "Silent Disco ${parsed.sessionId.take(4)}" },
-                    hostDeviceName = parsed.hostName.ifBlank { safeBluetoothName(result) ?: "Nearby host" },
+                    hostDeviceName = parsed.hostName.ifBlank {
+                        result.scanRecord?.deviceName ?: safeBluetoothName(result) ?: "Nearby host"
+                    },
                     approvalMode = when {
                         parsed.inviteCodeRequired -> ApprovalMode.INVITE_CODE
                         parsed.approvalRequired -> ApprovalMode.MANUAL
@@ -286,42 +285,107 @@ class BleDiscoveryService(
 }
 
 internal object BleAdvertisementCodec {
+    /**
+     * Used only to filter scan results ("Service UUID" advertising-data
+     * structure, carried in the primary packet); unaffected by
+     * [serviceDataUuid] below.
+     */
     val serviceUuid: ParcelUuid = ParcelUuid(UUID.fromString("ae9b7098-6835-4a39-948a-27da5d77fd6f"))
 
-    fun encode(advertisement: BleAdvertisement): ByteArray {
+    /**
+     * A 16-bit UUID used purely as a compact "Service Data" envelope key in
+     * the scan-response packet: a 128-bit UUID there costs 18 bytes of
+     * fixed overhead (1-byte length + 1-byte type + 16-byte UUID) before any
+     * payload, which alone exceeds the legacy 31-byte scan-response limit
+     * once combined with even a short host/session name. A 16-bit UUID
+     * costs only 4 bytes of overhead, leaving enough room for both names.
+     * `0xFFF0` falls in the Bluetooth SIG's block reserved for
+     * non-interoperable/private use (never allocated to a real product), so
+     * this deliberately does not claim a real assigned UUID. A collision
+     * with an unrelated device advertising the same 16-bit UUID would only
+     * ever fail this codec's version/size checks below and be silently
+     * ignored -- an acceptable, low-risk tradeoff since BLE here is
+     * discovery/metadata assistance only, never the primary data path.
+     */
+    val serviceDataUuid: ParcelUuid = ParcelUuid(UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb"))
+
+    private const val PROTOCOL_VERSION = 2
+    private const val SESSION_ID_BYTES = 6
+    private const val MAX_HOST_NAME_BYTES = 10
+    private const val MAX_SESSION_NAME_BYTES = 6
+
+    // version + flags + truncated session id + host-name length + session-name length, before any name bytes.
+    private const val MIN_PAYLOAD_BYTES = 1 + 1 + SESSION_ID_BYTES + 1 + 1
+
+    /**
+     * `hostDeviceName` is the OS-level Bluetooth adapter name (what
+     * [android.bluetooth.le.AdvertiseData.Builder.setIncludeDeviceName]
+     * would have exposed), passed in explicitly and truncated to a fixed
+     * size here for deterministic packet sizing -- the adapter name's
+     * actual length is user/OEM-controlled and cannot be trusted to fit on
+     * its own. [BleAdvertisement.hostName] is a separate, app-level
+     * identifier and is not what listeners need to resolve a Wi-Fi Direct
+     * peer by device name.
+     */
+    fun encode(advertisement: BleAdvertisement, hostDeviceName: String): ByteArray {
         val sessionUuid = runCatching { UUID.fromString(advertisement.sessionId) }.getOrElse {
             UUID.nameUUIDFromBytes(advertisement.sessionId.encodeToByteArray())
         }
         val flags = ((if (advertisement.approvalRequired) 1 else 0) or
             (if (advertisement.inviteCodeRequired) 1 shl 1 else 0)).toByte()
-        val nameBytes = advertisement.sessionName.encodeToByteArray()
-        val truncatedName = nameBytes.copyOfRange(0, minOf(nameBytes.size, 8))
-        return ByteBuffer.allocate(1 + 1 + 16 + 1 + truncatedName.size).apply {
-            put(1)
+        val sessionIdShort = ByteBuffer.allocate(16)
+            .putLong(sessionUuid.mostSignificantBits)
+            .putLong(sessionUuid.leastSignificantBits)
+            .array()
+            .copyOfRange(0, SESSION_ID_BYTES)
+        val hostNameBytes = truncateUtf8(hostDeviceName, MAX_HOST_NAME_BYTES)
+        val sessionNameBytes = truncateUtf8(advertisement.sessionName, MAX_SESSION_NAME_BYTES)
+        return ByteBuffer.allocate(MIN_PAYLOAD_BYTES + hostNameBytes.size + sessionNameBytes.size).apply {
+            put(PROTOCOL_VERSION.toByte())
             put(flags)
-            putLong(sessionUuid.mostSignificantBits)
-            putLong(sessionUuid.leastSignificantBits)
-            put(truncatedName.size.toByte())
-            put(truncatedName)
+            put(sessionIdShort)
+            put(hostNameBytes.size.toByte())
+            put(hostNameBytes)
+            put(sessionNameBytes.size.toByte())
+            put(sessionNameBytes)
         }.array()
     }
 
-    fun decode(payload: ByteArray, fallbackHostName: String): BleAdvertisement? {
-        if (payload.size < 19) return null
+    /**
+     * The decoded `sessionId` is a hex encoding of the truncated
+     * [SESSION_ID_BYTES]-byte identifier, not a reconstructed UUID string:
+     * it is only ever used as a local, opaque list/display key (see
+     * `SessionInfo.id`), never for protocol correctness, so the truncation
+     * here is a one-way, display-only shortening.
+     */
+    fun decode(payload: ByteArray): BleAdvertisement? {
+        if (payload.size < MIN_PAYLOAD_BYTES) return null
         val buffer = ByteBuffer.wrap(payload)
         val version = buffer.get().toInt()
-        if (version != 1) return null
+        if (version != PROTOCOL_VERSION) return null
         val flags = buffer.get().toInt()
-        val sessionId = UUID(buffer.long, buffer.long).toString()
-        val nameLength = buffer.get().toInt().coerceAtLeast(0)
-        val nameBytes = ByteArray(minOf(nameLength, buffer.remaining()))
-        buffer.get(nameBytes)
+        val sessionIdBytes = ByteArray(SESSION_ID_BYTES)
+        buffer.get(sessionIdBytes)
+        val sessionId = sessionIdBytes.joinToString(separator = "") { "%02x".format(it) }
+        val hostNameLength = buffer.get().toInt().coerceAtLeast(0)
+        if (hostNameLength > buffer.remaining()) return null
+        val hostNameBytes = ByteArray(hostNameLength)
+        buffer.get(hostNameBytes)
+        if (buffer.remaining() < 1) return null
+        val sessionNameLength = buffer.get().toInt().coerceAtLeast(0)
+        val sessionNameBytes = ByteArray(minOf(sessionNameLength, buffer.remaining()))
+        buffer.get(sessionNameBytes)
         return BleAdvertisement(
             sessionId = sessionId,
-            sessionName = nameBytes.toString(StandardCharsets.UTF_8),
-            hostName = fallbackHostName,
+            sessionName = sessionNameBytes.toString(StandardCharsets.UTF_8),
+            hostName = hostNameBytes.toString(StandardCharsets.UTF_8),
             approvalRequired = flags and 0x1 != 0,
             inviteCodeRequired = flags and 0x2 != 0,
         )
+    }
+
+    private fun truncateUtf8(value: String, maxBytes: Int): ByteArray {
+        val bytes = value.encodeToByteArray()
+        return bytes.copyOfRange(0, minOf(bytes.size, maxBytes))
     }
 }

@@ -46,9 +46,12 @@ class PermissionCatalogueTest {
     }
 
     @Test
-    fun requiredPermissions_api33_doesNotIncludeFineLocation() {
+    fun requiredPermissions_api33_alsoIncludesFineLocation() {
+        // Real-device testing (Samsung SM-A546E, Android 16) showed
+        // WifiP2pManager.createGroup still requires FineLocation internally
+        // even with NearbyWifiDevices granted -- see wifiDirectPermissions.
         val perms = PermissionCatalogue.requiredPermissions(sdkInt = 33)
-        assertThat(perms).doesNotContain(AppPermission.FineLocation)
+        assertThat(perms).contains(AppPermission.FineLocation)
     }
 
     @Test
@@ -84,10 +87,14 @@ class PermissionCatalogueTest {
     }
 
     @Test
-    fun wifiDirectPermissions_api33_usesNearbyWifi() {
+    fun wifiDirectPermissions_api33_requestsBothNearbyWifiAndFineLocation() {
+        // NEARBY_WIFI_DEVICES is the documented API-33+ replacement for
+        // FineLocation, but a physical device confirmed
+        // WifiP2pManager.createGroup fails (reason=0/ERROR) without
+        // FineLocation also granted -- request both, not either/or.
         val perms = PermissionCatalogue.wifiDirectPermissions(sdkInt = 33)
         assertThat(perms).contains(AppPermission.NearbyWifiDevices)
-        assertThat(perms).doesNotContain(AppPermission.FineLocation)
+        assertThat(perms).contains(AppPermission.FineLocation)
     }
 
     @Test

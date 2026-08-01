@@ -27,14 +27,7 @@ data class PermissionState(
 
 object PermissionCatalogue {
     fun requiredPermissions(sdkInt: Int = Build.VERSION.SDK_INT): List<AppPermission> = buildList {
-        // Wi-Fi Direct (NEARBY_WIFI_DEVICES requires API 33+; below that FineLocation covers it)
-        if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
-            add(AppPermission.NearbyWifiDevices)
-        } else {
-            add(AppPermission.FineLocation)
-        }
-        add(AppPermission.WifiState)
-        add(AppPermission.ChangeWifiState)
+        addAll(wifiDirectPermissions(sdkInt))
 
         // Bluetooth runtime permissions require API 31+
         if (sdkInt >= Build.VERSION_CODES.S) {
@@ -47,11 +40,18 @@ object PermissionCatalogue {
     }
 
     fun wifiDirectPermissions(sdkInt: Int = Build.VERSION.SDK_INT): List<AppPermission> = buildList {
+        // NEARBY_WIFI_DEVICES is the API-33+ replacement for FineLocation on
+        // paper, but real-device testing (Samsung SM-A546E, Android 16)
+        // showed WifiP2pManager.createGroup still fails internally
+        // (ActionListener#onFailure reason=0/ERROR) without FineLocation
+        // ALSO granted, even with NEARBY_WIFI_DEVICES granted -- some
+        // AOSP/OEM-internal WifiP2pManager/WifiPermissionsUtil codepath
+        // apparently still checks it directly. Request both rather than
+        // either/or.
         if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
             add(AppPermission.NearbyWifiDevices)
-        } else {
-            add(AppPermission.FineLocation)
         }
+        add(AppPermission.FineLocation)
         add(AppPermission.WifiState)
         add(AppPermission.ChangeWifiState)
     }

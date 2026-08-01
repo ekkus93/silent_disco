@@ -26,14 +26,17 @@ class PermissionRequestContextTest {
     }
 
     @Test
-    fun api33HostUsesNearbyWifiAndAllHostBluetoothPermissions() {
+    fun api33HostUsesNearbyWifiPlusFineLocationAndAllHostBluetoothPermissions() {
         val permissions = PermissionRequestContext.HOST_NEARBY.requiredPermissions(sdkInt = 33)
 
         assertThat(permissions).contains(AppPermission.NearbyWifiDevices)
+        // Real-device testing showed WifiP2pManager.createGroup still
+        // requires FineLocation internally even with NearbyWifiDevices
+        // granted -- see PermissionCatalogue.wifiDirectPermissions.
+        assertThat(permissions).contains(AppPermission.FineLocation)
         assertThat(permissions).contains(AppPermission.BluetoothScan)
         assertThat(permissions).contains(AppPermission.BluetoothAdvertise)
         assertThat(permissions).contains(AppPermission.BluetoothConnect)
-        assertThat(permissions).doesNotContain(AppPermission.FineLocation)
     }
 
     @Test
