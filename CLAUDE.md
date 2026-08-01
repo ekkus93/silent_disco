@@ -31,6 +31,8 @@ For desktop companion work, read and follow:
 
 Do not create additional assistant-generated design documents unless they are committed at the exact path referenced by one of these specs or TODOs.
 
+`README.md` and `.github/copilot-instructions.md` predate the Rust/Tauri migration and still describe an Android-only, Wi-Fi-Direct-primary app. They are stale — do not treat them as authoritative for current architecture.
+
 ## Confirmed project decisions
 
 - Use **Rust** for the shared authoritative domain/data core.
@@ -69,6 +71,8 @@ cargo test --workspace --all-features
 
 Do not claim these commands passed unless they were actually executed with the pinned toolchain.
 
+`rust/Cargo.toml` sets `[workspace.lints]` to deny `unsafe_code` and `clippy::all`, and warn on `clippy::pedantic`. Do not introduce `unsafe` blocks or leave pedantic warnings unaddressed without justification.
+
 ## Desktop companion (Tauri)
 
 `desktop/` is a Tauri 2 desktop companion app: Rust backend in `desktop/src-tauri`, React 19 + Redux Toolkit + Tailwind frontend in `desktop/src`. It is governed by the same architectural boundaries (presentation / platform adapters / authoritative Rust domain state / etc.) as the Android app.
@@ -81,6 +85,8 @@ npm run check
 ```
 
 This runs UniFFI bindings-check, Biome format/lint, `tsc`, Vitest, and a production build in sequence. Do not claim it passed unless it was actually executed.
+
+`desktop/biome.json` uses non-default formatting: 100-character line width, double quotes, semicolons always, and trailing commas everywhere.
 
 ## Core implementation priorities
 
@@ -248,6 +254,10 @@ For the Rust migration, use `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`:
 9. Record material decisions, failures, and device results in `memory.md`.
 
 For unrelated legacy work, use the relevant active TODO rather than automatically returning to `docs/TODO.md`.
+
+## Automated hooks
+
+`.claude/settings.json` runs hooks on every Write/Edit: `scripts/check-source-file-line-counts.sh` checks tracked source line counts, and edits under `desktop/` are auto-formatted with Biome. Both run without asking.
 
 ## Memory file
 
