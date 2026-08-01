@@ -1,11 +1,40 @@
 package com.ekkus.silentdisco.core.audio
 
+/**
+ * JNI bridge to the native `silentdisco` library, which owns one Oboe output
+ * stream reading from the shared Rust render ring via the narrow real-time C
+ * ABI (`include/silent_disco_audio.h`). Every `nativeOboe*` function here is
+ * non-real-time control-plane glue; the audio callback itself lives entirely
+ * in C++ and never crosses back into JNI.
+ */
 object OboeBridge {
     val loadResult: Result<Unit> = runCatching { System.loadLibrary("silentdisco") }
     val isAvailable: Boolean get() = loadResult.isSuccess
 
     external fun nativeGetAudioBackend(): String
     external fun nativeGetAudioStatus(): String
+
+    /** Opens the native Oboe output stream bound to `engineToken`; returns an `OboeAdapterStatus` code. */
+    external fun nativeOboeOpen(engineToken: Long): Int
+    external fun nativeOboeClose()
+    external fun nativeOboeIsOpen(): Boolean
+    external fun nativeOboeActualSampleRate(): Int
+    external fun nativeOboeActualChannelCount(): Int
+
+    /** Returns and clears the last fatal status observed by the real-time callback, or 0 if none. */
+    external fun nativeOboeTakeFatalStatus(): Int
+
+    /** Returns and clears whether the stream disconnected (e.g. a route change) since the last check. */
+    external fun nativeOboeTakeDisconnected(): Boolean
+
+    /** Cumulative reads that had to silence-fill at least one frame; 0 if not open. */
+    external fun nativeOboeUnderrunCount(): Long
+
+    /** Cumulative frames filled with silence because the ring lacked data; 0 if not open. */
+    external fun nativeOboeSilenceFilledFrames(): Long
+
+    /** Cumulative frames actually rendered from real ring contents; 0 if not open. */
+    external fun nativeOboeFramesRendered(): Long
 
     fun backendSummary(): String = if (isAvailable) {
         runCatching { nativeGetAudioBackend() }.getOrDefault("No native Oboe")

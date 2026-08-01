@@ -164,6 +164,12 @@ interface PlaybackEngine {
     fun stop()
 }
 
+/**
+ * Legacy Android `AudioTrack`-backed engine. No longer the production
+ * output path — [OboePlaybackEngine] is. Retained only as a reference
+ * implementation and for its existing JVM unit test coverage; not wired
+ * into [com.ekkus.silentdisco.app.MainViewModel].
+ */
 class AudioTrackPlaybackEngine : PlaybackEngine {
     private var audioTrack: AudioTrack? = null
     private var sampleRate: Int = 48_000
@@ -242,9 +248,3 @@ class AudioTrackPlaybackEngine : PlaybackEngine {
 
     fun statusSummary(): String = "writes=$writeCount, ${OboeBridge.statusSummary()}"
 }
-
-@Deprecated(
-    message = "Use AudioTrackPlaybackEngine. Playback output is Android AudioTrack-backed; the native Oboe bridge is diagnostics-only.",
-    replaceWith = ReplaceWith("AudioTrackPlaybackEngine"),
-)
-typealias OboePlaybackEngine = AudioTrackPlaybackEngine

@@ -163,9 +163,15 @@ fun DiagnosticsScreen(
                 expanded = outputExpanded,
                 onToggle = { outputExpanded = !outputExpanded },
             ) {
-                DiagnosticValue("Output", "Android AudioTrack")
+                DiagnosticValue("Output", "Oboe (native)")
                 DiagnosticValue("Native bridge availability", OboeBridge.backendSummary())
                 DiagnosticValue("Native bridge status", OboeBridge.statusSummary())
+                DiagnosticValue("Stream open", OboeBridge.nativeOboeIsOpen().toString())
+                DiagnosticValue("Actual sample rate", "${OboeBridge.nativeOboeActualSampleRate()} Hz")
+                DiagnosticValue("Actual channel count", OboeBridge.nativeOboeActualChannelCount().toString())
+                DiagnosticValue("Frames rendered", OboeBridge.nativeOboeFramesRendered().toString())
+                DiagnosticValue("Underrun count", OboeBridge.nativeOboeUnderrunCount().toString())
+                DiagnosticValue("Silence-filled frames", OboeBridge.nativeOboeSilenceFilledFrames().toString())
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {

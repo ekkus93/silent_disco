@@ -15,6 +15,6 @@ Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeGetAudioStatus(
         JNIEnv *env,
         jobject /* this */) {
     std::string status =
-            "Sample rate conversion and playback stream management should be built on this native boundary.";
+            "Oboe output stream management is implemented in OboeOutputAdapter, consuming the shared Rust render ring.";
     return env->NewStringUTF(status.c_str());
 }

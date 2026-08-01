@@ -1037,16 +1037,18 @@ app/src/main/cpp/OboeOutputAdapter.cpp
 
 Adapter responsibilities:
 
-- [ ] open low-latency output stream;
-- [ ] request float format;
-- [ ] request stereo/48 kHz where supported;
-- [ ] validate actual stream format;
-- [ ] hold engine token for stream lifetime;
-- [ ] call only `silent_disco_audio_read_interleaved_f32` in callback;
-- [ ] avoid JNI from callback;
-- [ ] treat partial read as silence-filled underrun already handled by Rust;
-- [ ] return callback continue/stop intentionally;
-- [ ] expose non-real-time start/stop/error methods.
+- [x] open low-latency output stream;
+- [x] request float format;
+- [x] request stereo/48 kHz where supported;
+- [x] validate actual stream format;
+- [x] hold engine token for stream lifetime;
+- [x] call only `silent_disco_audio_read_interleaved_f32` in callback;
+- [x] avoid JNI from callback;
+- [x] treat partial read as silence-filled underrun already handled by Rust;
+- [x] return callback continue/stop intentionally;
+- [x] expose non-real-time start/stop/error methods.
+
+**Implementation note (2026-08-01):** `OboeOutputAdapter` resolves `silent_disco_audio_read_interleaved_f32` (and the telemetry queries) via `dlopen("libsilent_disco_ffi.so", RTLD_NOW)` + `dlsym`, cached once per process, rather than linking the Rust cdylib at CMake build time — the cargo-ndk build and the CMake native build are independent Gradle tasks with no guaranteed ordering relative to each other, so build-time linking would be fragile. `CMakeLists.txt` gained `OboeOutputAdapter.cpp`/`OboeJniBridge.cpp` and a `target_include_directories` pointing at `rust/silent-disco-ffi/include` for the header declarations only.
 
 Conceptual callback:
 
@@ -1073,39 +1075,49 @@ Do not copy this blindly; adapt it to the final handle API and Oboe lifecycle.
 
 ### 18.2 Add Kotlin platform adapter
 
-- [ ] Kotlin starts/stops native output outside callback.
-- [ ] Startup result includes actual format/backend.
+- [x] Kotlin starts/stops native output outside callback.
+- [x] Startup result includes actual format/backend.
 - [ ] Failure is returned as `PlatformEvent::AudioOutputFailed`.
 - [ ] Route/disconnection errors become explicit events.
 - [ ] Kotlin never writes PCM frames.
 
+**Implementation note (2026-08-01) — scope decision:** `FfiPlatformEffect::StartAudioOutput`/`StopAudioOutput` and their `FfiPlatformCompletion` counterparts already exist on the Rust actor side but are hard-rejected by Kotlin today ("Platform effect is outside Android host Block 12") — nothing in this app currently drives audio playback through that effect system. Rather than build that wiring from scratch (a materially larger, separate undertaking) or ship an Oboe adapter that plays silence because nothing feeds the ring, this block took a deliberately scoped middle path, confirmed with the user: `OboePlaybackEngine` (`app/src/main/java/.../core/audio/OboePlaybackEngine.kt`) implements the existing `PlaybackEngine` interface exactly like `AudioTrackPlaybackEngine` did, so failures surface as ordinary Kotlin exceptions through the same `handleHostPlaybackEngineFailure`/`runCatching` call sites that already existed — not through `PlatformEvent::AudioOutputFailed`. Kotlin's existing decode/schedule pipeline (`AudioFileDecoder` → `PcmPacketizer` → `ListenerPlaybackScheduler`) is unchanged and still decides *what* plays and *when*; `OboePlaybackEngine.write()` converts each already-scheduled frame's PCM16LE payload to interleaved float32 and pushes it into the Rust render ring via the new `FfiAudioOutputHandle` (`rust/silent-disco-ffi/src/audio_output.rs`) — so Kotlin does not write to any audio hardware API (AudioTrack is gone from the path), but it does still touch and convert sample data, which is a real, disclosed deviation from "Kotlin never writes PCM frames" taken literally. `OboeOutputAdapter::takeDisconnected()` exists and is wired through to Kotlin (`OboeBridge.nativeOboeTakeDisconnected()`), but nothing polls it into a surfaced UI event yet. Rust's own `PlaybackScheduler`/`JitterBuffer` (Blocks 14-15) remain unused by this production path; deciding whether they take over decode/schedule timing is explicitly Block 23's job ("Select and implement the long-term audio decoder boundary"), not this block's.
+
 ### 18.3 Enforce shutdown order
 
 - [ ] Rust marks stopping and emits stop effect.
-- [ ] Kotlin/C++ stops and closes Oboe.
-- [ ] Confirm callback quiescence.
+- [x] Kotlin/C++ stops and closes Oboe.
+- [x] Confirm callback quiescence.
 - [ ] Report `AudioOutputStopped`.
-- [ ] Rust releases engine token.
-- [ ] Tests detect callback-after-release.
+- [x] Rust releases engine token.
+- [x] Tests detect callback-after-release.
+
+**Implementation note (2026-08-01):** `stream_->stop()`/`close()` in `OboeOutputAdapter::close()` block synchronously until the callback thread is no longer running (Oboe's documented contract), so by the time `OboePlaybackEngine.stop()` returns, the real-time callback is provably quiescent — verified by the instrumented `no_callback_fires_after_stop_returns` test. `FfiAudioOutputHandle::release()` (renamed from an earlier `close()` that collided with UniFFI's own auto-generated disposal method of the same name) marks the render-ring token released; `released_token_reports_stopping_and_silence` (Rust) and `dropping_the_handle_releases_its_token` (Rust) cover callback-after-release. The two unchecked items are the same `PlatformEvent`/effect-system gap noted in 18.2.
 
 ### 18.4 Remove production `AudioTrackPlaybackEngine`
 
-- [ ] Oboe/Rust path becomes the only production listener output path.
-- [ ] Do not retain `AudioTrackPlaybackEngine` as a silent fallback.
+- [x] Oboe/Rust path becomes the only production listener output path.
+- [x] Do not retain `AudioTrackPlaybackEngine` as a silent fallback.
 - [ ] A debug-only comparison engine may exist only behind explicit build flag and visible diagnostics.
-- [ ] Remove obsolete Oboe diagnostic strings that imply playback is native when it is not.
+- [x] Remove obsolete Oboe diagnostic strings that imply playback is native when it is not.
+
+**Implementation note (2026-08-01):** `MainViewModel`'s default `playbackEngine` is now `OboePlaybackEngine()`, not `AudioTrackPlaybackEngine()`; `AudioTrackPlaybackEngine` remains in `PlaybackScheduling.kt` (doc comment updated to say so explicitly) only as a reference implementation with its existing JVM test coverage — it is not referenced anywhere in production wiring, and there is no build-flag-gated comparison mode (the third bullet's "may" is permissive; this block chose the simpler option of not building one at all rather than leaving it unwired-but-reachable). `native-lib.cpp`'s `nativeGetAudioStatus()` string and the diagnostics screen's "Output"/native-bridge fields were updated to describe the real Oboe adapter instead of the prior "should be built on this boundary" placeholder text.
 
 ### 18.5 Add Android tests
 
-- [ ] open/start/stop repeatedly;
-- [ ] underrun reports diagnostics;
+- [x] open/start/stop repeatedly;
+- [x] underrun reports diagnostics;
 - [ ] stream disconnect reports failure;
 - [ ] background/foreground handling;
-- [ ] no callback after release;
+- [x] no callback after release;
 - [ ] ABI mismatch fails startup;
-- [ ] instrumented playback with generated test tone on physical device.
+- [x] instrumented playback with generated test tone on physical device.
 
-**Acceptance:** Android production playback is Oboe consuming Rust-owned PCM; no Kotlin frame-write path remains.
+**Implementation note (2026-08-01):** `app/src/androidTest/java/.../core/audio/OboePlaybackEngineInstrumentedTest.kt` (4 tests) runs entirely on a physical device (Samsung SM-A546E, Android 16): opens a real Oboe stream and confirms a real non-zero sample rate/channel count are granted; generates and pushes a 440 Hz sine test tone through the full pipeline (Kotlin PCM16→float32 conversion → `FfiAudioOutputHandle` → Rust render ring → C ABI → real Oboe callback) for a full second, confirming `frames_rendered > 0` and no fatal status; opens/starts/stops the stream 3× in a row confirming no residual native state; and confirms the stream is fully closed (hence no callback can fire) immediately after `stop()` returns. All 4 passed, verified via the actual XML/HTML test report, not just "BUILD SUCCESSFUL". `DiagnosticsScreen` now also surfaces `frames_rendered`/`underrun_count`/`silence_filled_frames` from the render ring's telemetry. Left unchecked and not implemented: a UI-surfaced "stream disconnected" event (the underlying flag exists, see 18.2), Activity background/foreground lifecycle handling for the Oboe stream, and an explicit ABI-version-mismatch startup check (nothing currently compares `silent_disco_audio_abi_version()` against a Kotlin-side expected constant before opening a stream).
+
+**Known pre-existing, unrelated issue found while manually testing the full host UI flow on-device:** starting a session via the app's own "Start a session" UI fails ("The session could not be started") because BLE advertise fails (`code=1`) and Wi-Fi Direct group creation fails (`reason=0`) on this device, even after granting `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION`. This blocks the full manual UI path before it ever reaches audio playback and is unrelated to this block's changes (a discovery/transport-layer bug, not audio) — not investigated or fixed here; the instrumented test above validates the Oboe/render-ring path directly, bypassing this bug entirely.
+
+**Acceptance:** Android production playback is Oboe consuming Rust-owned PCM; no Kotlin frame-write path remains. **Substantially met**: Oboe/the render ring is now the only production output path and no Kotlin code writes PCM to `AudioTrack`, but Kotlin still performs PCM16→float32 conversion (see 18.2's scope-decision note) rather than being fully out of the sample-data path.
 
 ---
 

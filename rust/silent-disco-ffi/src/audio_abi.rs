@@ -112,7 +112,7 @@ fn try_lock_registry() -> Option<std::sync::MutexGuard<'static, AudioEngineRegis
 /// Stable failure taxonomy for the audio engine registry's control-plane
 /// operations (registration and release; never used by the real-time path).
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AudioAbiError {
+pub(crate) enum AudioAbiError {
     Config(RenderRingConfigError),
     TokenSpaceExhausted,
     UnknownToken,
@@ -132,14 +132,10 @@ impl From<RenderRingConfigError> for AudioAbiError {
 /// engine after release (a distinct, explicit released state), or has never
 /// existed at all.
 ///
-/// Not part of the real-time C ABI; this is the (future) control-plane
-/// entry point a non-real-time caller uses once per stream start.
-///
-/// Not yet called by any production path — Block 18 (the Oboe adapter) is
-/// what will hold the returned producer and hand the token to native audio
-/// setup code. Exercised directly by this module's own tests until then.
-#[allow(dead_code)]
-fn register_render_ring(
+/// Not part of the real-time C ABI; this is the control-plane entry point a
+/// non-real-time caller ([`crate::audio_output::FfiAudioOutputHandle`]) uses
+/// once per stream start.
+pub(crate) fn register_render_ring(
     config: RenderRingConfig,
 ) -> Result<(RenderRingProducer, u64), AudioAbiError> {
     let ring = RenderRing::new(config)?;
@@ -167,9 +163,8 @@ fn register_render_ring(
 /// as unknown. Releasing an unknown or already-released token is an
 /// explicit failure, not a silent no-op.
 ///
-/// Not yet called by any production path; see [`register_render_ring`].
-#[allow(dead_code)]
-fn release_render_ring(token: u64) -> Result<(), AudioAbiError> {
+/// See [`register_render_ring`].
+pub(crate) fn release_render_ring(token: u64) -> Result<(), AudioAbiError> {
     let mut registry = audio_engine_registry()
         .lock()
         .unwrap_or_else(PoisonError::into_inner);

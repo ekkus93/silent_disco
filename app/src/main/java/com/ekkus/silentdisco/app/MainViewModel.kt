@@ -12,8 +12,8 @@ import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
 import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
-import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
 import com.ekkus.silentdisco.core.audio.OboeBridge
+import com.ekkus.silentdisco.core.audio.OboePlaybackEngine
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
 import com.ekkus.silentdisco.core.audio.PlaybackFrame
@@ -75,7 +75,7 @@ import kotlinx.coroutines.runBlocking
 
 class MainViewModel @JvmOverloads constructor(
     application: Application,
-    internal val playbackEngine: PlaybackEngine = AudioTrackPlaybackEngine(),
+    internal val playbackEngine: PlaybackEngine = OboePlaybackEngine(),
     internal val domainStore: AndroidRustDomainStore = AndroidRustDomainStore(application),
     internal val hostCoreFactory: (String) -> HostCoreController = {
         UniFfiHostCoreController(it)
