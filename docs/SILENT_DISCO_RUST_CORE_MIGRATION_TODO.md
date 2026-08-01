@@ -834,13 +834,15 @@ pub struct DecodedPcmChunk {
 
 ### 15.1 Port packet validation and ordering
 
-- [ ] session/stream validation;
-- [ ] duplicate detection;
-- [ ] missing sequence accounting;
-- [ ] bounded reordering window;
-- [ ] late packet rejection;
-- [ ] stale stream rejection;
-- [ ] maximum buffered duration.
+- [x] session/stream validation;
+- [x] duplicate detection;
+- [x] missing sequence accounting;
+- [x] bounded reordering window;
+- [x] late packet rejection;
+- [x] stale stream rejection;
+- [x] maximum buffered duration.
+
+**Implementation note (2026-08-01):** `audio::JitterBuffer` (`rust/silent-disco-core/src/audio/jitter_buffer.rs`) implements this as new Rust architecture rather than a direct port: the existing Kotlin `AudioPacketBuffer`/`ListenerPlaybackScheduler` (`app/src/main/java/.../core/audio/{AudioPipeline,PlaybackScheduling}.kt`) has no duplicate detection (a same-sequence insert silently overwrites the sorted map), no bounded reordering window, no stale-stream rejection, and no maximum-buffered-duration bound — all four are genuinely new, not ported. `JitterBuffer::accept` validates session/stream identity, rejects duplicates and already-emitted (late) sequences, enforces a configurable reorder window (default 64 packets, hard ceiling 4096) and buffered-duration bound (default 2000ms, hard ceiling 60000ms), and `pop_in_order`/`missing_sequence_count` expose strict in-order emission and gap accounting for the concealment policy (15.2) and scheduler (15.3) to build on. 13 new tests in `audio/jitter_buffer_tests.rs`. Concealment/silence synthesis, presentation-time pacing, and deterministic clock injection are explicitly out of scope here and remain open in 15.2-15.5.
 
 ### 15.2 Port concealment policy
 
