@@ -14,6 +14,7 @@ mod android_abi;
 mod android_database_abi;
 mod android_p2_abi;
 mod host_control;
+mod listener_transport;
 mod sync;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
@@ -26,6 +27,11 @@ pub use host_control::{
     FfiJoinRequestInput, FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect,
     FfiPlaybackState, FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect,
     FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
+};
+pub use listener_transport::{
+    FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
+    FfiListenerTransportEvent, FfiListenerTransportHandle, FfiManualHostEndpoint,
+    parse_manual_host_endpoint,
 };
 pub use sync::{
     FfiSyncError, FfiSyncEstimator, FfiSyncEstimatorConfig, FfiSyncExchange, FfiSyncObservation,
