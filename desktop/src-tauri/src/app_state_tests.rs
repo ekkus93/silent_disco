@@ -79,8 +79,8 @@ fn opens_real_storage_actor_and_snapshot_then_shuts_down_idempotently() {
             .audio_source_selection_available
     );
     assert!(response.snapshot.capabilities.secure_store_available);
+    assert!(response.snapshot.capabilities.local_network_available);
     assert!(!response.snapshot.capabilities.audio_output_available);
-    assert!(!response.snapshot.capabilities.local_network_available);
     let current = state.current_snapshot().expect("snapshot");
     assert_eq!(current.revision, response.snapshot.revision);
     assert_eq!(current.capabilities, response.snapshot.capabilities);

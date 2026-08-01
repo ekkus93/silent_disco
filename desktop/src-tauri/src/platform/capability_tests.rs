@@ -43,7 +43,7 @@ impl Drop for TestDirectory {
 }
 
 #[test]
-fn production_adapter_advertises_only_implemented_block16_audio_selection() {
+fn production_adapter_advertises_only_implemented_capabilities() {
     let root = TestDirectory::new();
     let profile_id = ProfileId::parse("main").expect("valid profile ID");
     let paths = DesktopProfilePaths::from_trusted_app_local_data_root(&root.0, &profile_id)
@@ -70,8 +70,8 @@ fn production_adapter_advertises_only_implemented_block16_audio_selection() {
     assert_eq!(capabilities, desktop_capabilities());
     assert!(capabilities.audio_source_selection_available);
     assert!(capabilities.secure_store_available);
+    assert!(capabilities.local_network_available);
     assert!(!capabilities.audio_output_available);
-    assert!(!capabilities.local_network_available);
 }
 
 #[test]

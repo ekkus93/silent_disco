@@ -103,7 +103,9 @@ class ManualListenerTransportController : AutoCloseable {
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
-                    _connectState.value = ManualConnectUiState.Failed(error.message ?: "transport failed")
+                    // A transport that already connected can only report the connection
+                    // ending, not a fresh configuration failure - always Disconnected here.
+                    _connectState.value = ManualConnectUiState.Disconnected(error.message)
                     break
                 }
                 if (event != null) {
