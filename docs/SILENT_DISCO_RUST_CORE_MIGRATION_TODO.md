@@ -799,32 +799,34 @@ pub struct DecodedPcmChunk {
 
 ### 14.2 Implement streaming packetizer
 
-- [ ] 20 ms packet windows or explicit configurable packet duration.
-- [ ] Session/stream identity.
-- [ ] sequence and sample index.
-- [ ] future host presentation timestamp.
-- [ ] bounded payload size.
-- [ ] end-of-stream handling.
-- [ ] no full-track concatenation.
+- [x] 20 ms packet windows or explicit configurable packet duration.
+- [x] Session/stream identity.
+- [x] sequence and sample index.
+- [x] future host presentation timestamp.
+- [x] bounded payload size.
+- [x] end-of-stream handling.
+- [x] no full-track concatenation.
 
 ### 14.3 Add backpressure
 
-- [ ] Source queue is bounded.
-- [ ] Full queue returns backpressure/failure; no overwrite.
-- [ ] Packetizer worker has stop/join semantics.
+- [x] Source queue is bounded.
+- [x] Full queue returns backpressure/failure; no overwrite.
+- [x] Packetizer worker has stop/join semantics.
 - [ ] Host UI sees source/packetizer failure.
 
 ### 14.4 Add tests
 
-- [ ] exact packet boundaries;
-- [ ] partial final packet policy;
-- [ ] empty stream;
-- [ ] format mismatch;
-- [ ] queue full;
-- [ ] stream restart and stream-ID change;
-- [ ] compatibility fixture comparison.
+- [x] exact packet boundaries;
+- [x] partial final packet policy;
+- [x] empty stream;
+- [x] format mismatch;
+- [x] queue full;
+- [x] stream restart and stream-ID change;
+- [x] compatibility fixture comparison.
 
 **Acceptance:** Rust creates bounded packets incrementally and Kotlin no longer concatenates the complete decoded audio track for the new path.
+
+**Implementation note (2026-08-01):** `audio::Packetizer` (`rust/silent-disco-core/src/audio/packetizer.rs`) and `audio::StreamingPacketizeHandle` (`rust/silent-disco-core/src/audio/packetizer_worker.rs`) implement the bounded incremental transform and backpressure worker described above, mirroring `StreamingDecodeHandle`'s existing worker/cancellation pattern. 17 new tests in `audio/packetizer_tests.rs`, including a Kotlin-reference fixture comparison (`app/src/test/resources/rust-migration/packetization/pcm_packetization_v1.json`). The one remaining gap — a UniFFI binding and Kotlin/Compose surface so the Android host UI can see packetizer failures — is not yet built; no FFI wrapper exists for the packetizer worker at this point. That wiring, plus feeding the desktop/Android decoder output into this packetizer, is left for Block 25/26.
 
 ---
 

@@ -175,7 +175,10 @@ fn repeated_open_close_leaves_no_worker_or_queue_growth() {
     }
 }
 
-fn audio_test_guard() -> MutexGuard<'static, ()> {
+/// Serializes every test that opens a real decode worker, including
+/// packetizer-worker tests in the sibling `packetizer_tests` module, since
+/// both observe the shared `active_worker_count()` global.
+pub(super) fn audio_test_guard() -> MutexGuard<'static, ()> {
     AUDIO_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
