@@ -33,8 +33,8 @@ todo_path.write_text(todo[:start] + section + todo[end:], encoding="utf-8")
 (root / "docs/DESKTOP_BLOCK23_LISTENER_MANAGEMENT.md").write_text(
     f"""# Desktop Block 23 — Delivery-First Listener Management
 
-**Status:** Complete  
-**Validation run:** `{run_id}`  
+**Status:** Complete
+**Validation run:** `{run_id}`
 **Validated direct-master input:** `{input_sha}`
 
 ## Implemented behavior
@@ -80,7 +80,7 @@ entry = f"""
 - Physical Android control-plane interoperability remains Desktop Block 24.
 """
 if "Desktop Block 23 listener management complete" not in memory:
-    memory_path.write_text(memory.rstrip() + entry + "\n", encoding="utf-8")
+    memory_path.write_text(memory.rstrip() + entry, encoding="utf-8")
 
 # TypeScript project builds leave disposable incremental compiler caches. They
 # are not release artifacts and must not enter the completion commit.
