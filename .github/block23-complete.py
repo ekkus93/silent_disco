@@ -81,3 +81,8 @@ entry = f"""
 """
 if "Desktop Block 23 listener management complete" not in memory:
     memory_path.write_text(memory.rstrip() + entry + "\n", encoding="utf-8")
+
+# TypeScript project builds leave disposable incremental compiler caches. They
+# are not release artifacts and must not enter the completion commit.
+for cache_name in ("tsconfig.app.tsbuildinfo", "tsconfig.node.tsbuildinfo"):
+    (root / "desktop" / cache_name).unlink(missing_ok=True)
