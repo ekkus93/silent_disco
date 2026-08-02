@@ -3,8 +3,12 @@ import {
   approveJoinRequest,
   endHostSession,
   getHostSessionState,
+  pauseHostPlayback,
   rejectJoinRequest,
   removeListener,
+  resumeHostPlayback,
+  startHostPlayback,
+  stopHostPlayback,
 } from "../core/client";
 import type {
   CommandReceiptDto,
@@ -87,6 +91,7 @@ export function HostSessionScreen() {
   const [snapshot, setSnapshot] = useState<HostSessionSnapshotDto | null>(null);
   const [refreshFailure, setRefreshFailure] = useState<DesktopErrorDto | null>(null);
   const [endPending, setEndPending] = useState(false);
+  const [playbackPending, setPlaybackPending] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [remember, setRemember] = useState<Record<string, boolean>>({});
@@ -318,6 +323,35 @@ export function HostSessionScreen() {
     } catch (error) {
       setRefreshFailure(error as DesktopErrorDto);
       setEndPending(false);
+    }
+  }
+
+  async function controlPlayback(action: "start" | "pause" | "resume" | "stop") {
+    if (playbackPending) {
+      return;
+    }
+    setPlaybackPending(true);
+    try {
+      switch (action) {
+        case "start":
+          await startHostPlayback();
+          break;
+        case "pause":
+          await pauseHostPlayback();
+          break;
+        case "resume":
+          await resumeHostPlayback();
+          break;
+        case "stop":
+          await stopHostPlayback();
+          break;
+      }
+      setAnnouncement(`Playback ${action} requested.`);
+    } catch (error) {
+      setRefreshFailure(error as DesktopErrorDto);
+      setAnnouncement(`Playback ${action} failed.`);
+    } finally {
+      setPlaybackPending(false);
     }
   }
 
@@ -581,33 +615,64 @@ export function HostSessionScreen() {
           Playback controls
         </h2>
         <p className="mt-2 text-sm text-slate-400">
-          Playback remains disabled until the packetization and streaming blocks are complete.
+          Requires a selected audio source and an active host session.
         </p>
         <div className="mt-4 flex gap-2">
-          {["Play", "Pause", "Stop"].map((label) => (
-            <button
-              key={label}
-              type="button"
-              disabled={!snapshot.playbackControlsEnabled}
-              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {label}
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={() =>
+              void controlPlayback(snapshot.playbackState === "paused" ? "resume" : "start")
+            }
+            disabled={
+              playbackPending ||
+              !snapshot.playbackControlsEnabled ||
+              !["stopped", "ready", "paused"].includes(snapshot.playbackState)
+            }
+            className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {snapshot.playbackState === "paused" ? "Resume" : "Play"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void controlPlayback("pause")}
+            disabled={
+              playbackPending ||
+              !snapshot.playbackControlsEnabled ||
+              snapshot.playbackState !== "playing"
+            }
+            className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Pause
+          </button>
+          <button
+            type="button"
+            onClick={() => void controlPlayback("stop")}
+            disabled={
+              playbackPending ||
+              !snapshot.playbackControlsEnabled ||
+              !["playing", "paused", "buffering"].includes(snapshot.playbackState)
+            }
+            className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Stop
+          </button>
         </div>
       </section>
 
       {snapshot.lastDelivery ? (
         <p
+          role={snapshot.lastDelivery.successfulPeers === 0 ? "alert" : undefined}
           className={`mt-6 rounded-xl border p-4 text-sm ${
-            snapshot.lastDelivery.failedPeers > 0
-              ? "border-amber-500/60 bg-amber-950/30 text-amber-100"
-              : "border-emerald-500/60 bg-emerald-950/30 text-emerald-100"
+            snapshot.lastDelivery.successfulPeers === 0 && snapshot.lastDelivery.intendedPeers > 0
+              ? "border-rose-500/60 bg-rose-950/30 text-rose-100"
+              : snapshot.lastDelivery.failedPeers > 0
+                ? "border-amber-500/60 bg-amber-950/30 text-amber-100"
+                : "border-emerald-500/60 bg-emerald-950/30 text-emerald-100"
           }`}
         >
-          Last delivery: {snapshot.lastDelivery.successfulPeers} of{" "}
-          {snapshot.lastDelivery.intendedPeers} succeeded; {snapshot.lastDelivery.failedPeers}{" "}
-          failed ({snapshot.lastDelivery.severity}).
+          {snapshot.lastDelivery.successfulPeers === 0 && snapshot.lastDelivery.intendedPeers > 0
+            ? `Last delivery reached nobody: 0 of ${snapshot.lastDelivery.intendedPeers} listeners (${snapshot.lastDelivery.severity}).`
+            : `Last delivery: ${snapshot.lastDelivery.successfulPeers} of ${snapshot.lastDelivery.intendedPeers} succeeded; ${snapshot.lastDelivery.failedPeers} failed (${snapshot.lastDelivery.severity}).`}
         </p>
       ) : null}
       {snapshot.transportError ? (

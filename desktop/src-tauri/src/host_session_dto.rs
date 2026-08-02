@@ -117,6 +117,9 @@ impl HostSessionSnapshotDto {
                 | HostLifecycle::Streaming
                 | HostLifecycle::Paused
         );
+        let playback_controls_enabled = can_remove
+            && active.is_some_and(|value| value.worker_running)
+            && snapshot.host_draft.audio_source.is_some();
 
         Self {
             revision: snapshot.revision.get().to_string(),
@@ -149,7 +152,7 @@ impl HostSessionSnapshotDto {
                 .recoverable_action
                 .map(recoverable_action_name)
                 .map(str::to_owned),
-            playback_controls_enabled: false,
+            playback_controls_enabled,
             transport_worker_running: active.is_some_and(|value| value.worker_running),
             transport_error: active.and_then(|value| value.last_error.clone()),
             last_error: snapshot.last_error.clone().map(DesktopErrorDto::from),

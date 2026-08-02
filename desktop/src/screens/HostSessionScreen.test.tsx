@@ -95,6 +95,10 @@ beforeEach(() => {
     operationId: "command-4",
     acceptedAtRevision: "12",
   });
+  vi.mocked(client.startHostPlayback).mockResolvedValue(undefined);
+  vi.mocked(client.pauseHostPlayback).mockResolvedValue(undefined);
+  vi.mocked(client.resumeHostPlayback).mockResolvedValue(undefined);
+  vi.mocked(client.stopHostPlayback).mockResolvedValue(undefined);
 });
 
 describe("HostSessionScreen Block 23", () => {
@@ -301,5 +305,63 @@ describe("HostSessionScreen Block 23", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
     await waitFor(() => expect(client.getHostSessionState).toHaveBeenCalledTimes(2));
     expect(screen.getByText("join request is stale or no longer pending")).toBeInTheDocument();
+  });
+});
+
+describe("HostSessionScreen playback controls", () => {
+  it("disables all playback buttons when the core reports controls disabled", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ playbackControlsEnabled: false }),
+    );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    expect(screen.getByRole("button", { name: "Play" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
+  it("starts playback from a stopped, control-enabled session", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ playbackState: "stopped", playbackControlsEnabled: true }),
+    );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    await waitFor(() => expect(client.startHostPlayback).toHaveBeenCalled());
+  });
+
+  it("shows Resume instead of Play once paused, and pauses only while playing", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ playbackState: "playing", playbackControlsEnabled: true }),
+    );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    expect(screen.getByRole("button", { name: "Play" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(client.pauseHostPlayback).toHaveBeenCalled());
+
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ playbackState: "paused", playbackControlsEnabled: true }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    const resumeButton = await screen.findByRole("button", { name: "Resume" });
+    expect(resumeButton).toBeEnabled();
+    fireEvent.click(resumeButton);
+    await waitFor(() => expect(client.resumeHostPlayback).toHaveBeenCalled());
+  });
+
+  it("stops playback while playing and surfaces a failed stop", async () => {
+    vi.mocked(client.stopHostPlayback).mockRejectedValueOnce(invokeError);
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ playbackState: "playing", playbackControlsEnabled: true }),
+    );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(
+      await screen.findByText("join request is stale or no longer pending"),
+    ).toBeInTheDocument();
   });
 });

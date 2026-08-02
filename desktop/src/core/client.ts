@@ -318,6 +318,22 @@ export async function getHostSessionState(): Promise<HostSessionSnapshotDto> {
   return invokeDesktop<HostSessionSnapshotDto>("get_host_session_state");
 }
 
+export async function startHostPlayback(): Promise<void> {
+  return invokeDesktop<void>("start_host_playback");
+}
+
+export async function pauseHostPlayback(): Promise<void> {
+  return invokeDesktop<void>("pause_host_playback");
+}
+
+export async function resumeHostPlayback(): Promise<void> {
+  return invokeDesktop<void>("resume_host_playback");
+}
+
+export async function stopHostPlayback(): Promise<void> {
+  return invokeDesktop<void>("stop_host_playback");
+}
+
 export async function approveJoinRequest(request: ApproveJoinRequest): Promise<CommandReceiptDto> {
   return invokeDesktop<CommandReceiptDto>("approve_join_request", { request });
 }
