@@ -798,11 +798,32 @@ itself has not been rewired to call it -- it still drives its own
 `ManualConnectUiState` directly. Unifying that call site is a clearly scoped
 follow-up, not done this session.
 
+- [ ] **Confirmed consequential, 2026-08-02 real-device test:** `ManualEndpointScreen.kt`
+      (`feature/listener/ManualEndpointScreen.kt:136`) shows a static
+      "The host approved this device. Audio streaming is not part of this
+      build yet." message on every successful manual connection, regardless
+      of actual playback state -- it is not derived from any real state, so
+      it will say the same thing whether or not audio is flowing. Manual
+      connect is currently the *only* way an Android phone can reach the
+      desktop host (desktop does not broadcast BLE/Wi-Fi-Direct), so until
+      this screen is unified with the actor-driven playback pipeline
+      (`ListenerCoreController`/`ListenerPlaybackScheduler`/`OboePlaybackEngine`,
+      the same pipeline the BLE/Wi-Fi-Direct discovered-session path already
+      uses), no desktop-to-Android audio test can ever produce sound through
+      this screen, no matter what the desktop does correctly. This is the
+      single most consequential item in this note -- prioritize it over the
+      rest of the manual-endpoint unification if only one thing gets done.
+
 ### 13.4 Add parity/integration tests
 
 - [ ] Reproduce FIX3/FIX4/FIX5 listener hardening expectations in Rust tests.
 - [ ] Android tests verify UI actions map to Rust commands.
 - [x] Failure messages remain visible and are not overwritten by later success text.
+- [ ] `JoinApproved.trusted_for_future` (`runtime/records.rs`, documented inline
+      where the field is defined) is received but never persisted locally on
+      the listener side -- a listener always re-requests approval even when
+      the host remembered it. Low severity (host-side remembering already
+      works), but a real, tracked gap, not just a comment.
 
 Added Kotlin unit tests for the new pure functions (`nextListenerState`'s
 playback-tail seam, `FfiListenerLifecycle`/`FfiSessionAdvertisement` mapping),

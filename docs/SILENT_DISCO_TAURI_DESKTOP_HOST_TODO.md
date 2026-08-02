@@ -1552,6 +1552,29 @@ routing quirk is the leading unconfirmed hypothesis. Not chased further past
 main deliverable. This is a real, reproducible blocker for whoever attempts
 Block 28 next.
 
+**Update 2**: the `ECONNREFUSED` root cause above was found and resolved --
+it was the phone's Battery Saver mode (Android's per-app `netpolicy` was
+actively blocking the app's UID under `BATTERY_SAVER|APP_BACKGROUND`; `adb`/
+`nc` are exempt, which is why they worked while the app didn't). With
+Battery Saver off, a real 40-second stream over the real manual-connect path
+worked end to end: join, approval, and real audio broadcast all succeeded.
+
+- [ ] **New, more consequential blocker found this same session**: even with
+      the connection genuinely working, no sound was heard, because
+      `ManualEndpointScreen.kt` (`feature/listener/ManualEndpointScreen.kt:136`)
+      shows a static "Audio streaming is not part of this build yet" message
+      and was never wired to the real playback pipeline. Manual connect is
+      the *only* way to reach the desktop host at all (no BLE/Wi-Fi-Direct
+      broadcast from desktop), so this screen must be unified with the
+      actor-driven playback pipeline before Block 28 can produce any audible
+      result. Full detail and the primary tracking entry: shared Rust
+      migration TODO, Block 13.3 note (search `ManualEndpointScreen.kt:136`).
+      Also found: a silent-failure bug where `network.stop_playback()` can
+      report success even when the actor never actually reaches
+      `PlaybackState::Stopped` (`DesktopPlaybackStreamer::join()`'s
+      `drop(pump.join())` swallows a panicking/failing pump-thread exit) --
+      not yet fixed, see memory.md 2026-08-02 entries for the reproduction.
+
 ### 28.1 One listener
 
 - [ ] select supported WAV fixture;
@@ -1621,6 +1644,14 @@ Do not claim a maximum skew without measurement.
 # Phase 8 — mDNS and QR convenience
 
 ## Block 30 — Select and implement desktop mDNS publication
+
+This block is the home for the honest, fail-loud `"desktop session
+advertising/discovery is not implemented yet"` and
+`"desktop standard-IP transport is not implemented yet"` errors returned by
+`desktop/src-tauri/src/platform/discovery.rs`'s `unsupported_effect` --
+confirmed via a 2026-08-02 codebase sweep that these correctly return a real
+error rather than silently claiming success; they are simply unbuilt until
+this block.
 
 ### 30.1 Dependency gate
 
@@ -2470,6 +2501,14 @@ Future work includes:
 
 A production desktop listener requires a separate reviewed scope. Reuse the same actor, transport, scheduler, render ring, and desktop audio adapter. Do not infer completion from Lab virtual listener support.
 
+This block is the home for the honest, fail-loud
+`"desktop native audio output is not implemented yet"` error returned by
+`desktop/src-tauri/src/platform/audio_device.rs`'s `unsupported_effect` for
+`StartAudioOutput`/`StopAudioOutput` -- confirmed via a 2026-08-02 codebase
+sweep that this correctly returns a real error rather than silently claiming
+success. Desktop can *host* (broadcast) real audio today; it cannot yet
+*receive and play* audio as a listener, and that is what this block covers.
+
 ---
 
 # Final completion checklist
@@ -2485,7 +2524,10 @@ A production desktop listener requires a separate reviewed scope. Reuse the same
 - [ ] Manual LAN hosting works.
 - [ ] Android control interoperability works.
 - [ ] Bounded Rust audio transmission works.
-- [ ] One Android listener plays desktop-hosted audio.
+- [ ] One Android listener plays desktop-hosted audio. **Blocked on:**
+      `ManualEndpointScreen.kt`'s playback wiring -- see Block 28's "New,
+      more consequential blocker" note and the shared Rust migration TODO's
+      Block 13.3 note.
 - [ ] At least two Android listeners pass recorded validation.
 - [ ] mDNS and QR convenience work without replacing manual connection.
 - [ ] Optional local monitor uses the shared timeline.
