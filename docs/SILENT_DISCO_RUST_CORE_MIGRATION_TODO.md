@@ -1218,26 +1218,54 @@ Do not copy this blindly; adapt it to the final handle API and Oboe lifecycle.
 
 ## Block 20 — Convert Android networking to platform adapters
 
+Both host and listener Wi-Fi Direct roles now bind/connect the real Rust
+transport (`FfiHostTransportHandle`/`FfiListenerTransportHandle`) for
+join/approve/reject/disconnect/stream-start/pause/stop control-plane
+signaling; Wi-Fi Direct itself is establishment-only (group forms, address
+resolves, then hands off). Kotlin's hand-rolled `TcpServerChannel`/
+`TcpClientChannel` socket layer and its JSON `ControlMessage` wire protocol
+are deleted outright -- no migration feature flag, per an explicit decision
+to skip the flag and cut over directly. Sync and audio delivery are not
+exposed over the new transport yet (control-plane only this block); a host's
+audio broadcast and a listener's sync probe now honestly report zero
+recipients/a clear failure over Wi-Fi Direct instead of throwing, matching
+the pre-existing gap that Block 13 already left in the Rust-actor-driven
+listener path (nothing drove past `Approved` before this block either).
+
+Verified on a physical device: host-role advertising binds the real Rust
+transport, stream start/stop and session end all complete without error.
+This surfaced and fixed a genuine bug -- the very first bind attempt after
+a Wi-Fi Direct group forms consistently raced the OS still assigning the
+group-owner address to its interface (`Cannot assign requested address`);
+a bounded retry (5 attempts, 200ms apart) absorbs it. Listener-role
+discovery (BLE + Wi-Fi Direct) starts and stops cleanly with no nearby
+session to join in this environment. No second device was available to
+verify a real host<->listener join/approval/control handshake end-to-end.
+
 ### 20.1 Split discovery/establishment from socket transport
 
 Refactor existing Android services so they report facts:
 
-- [ ] BLE session advertisement/discovery.
-- [ ] Android NSD/mDNS discovery where implemented.
-- [ ] Wi-Fi Direct group/connection establishment.
-- [ ] resulting local/remote IP endpoint.
-- [ ] permission and platform failures.
+- [x] BLE session advertisement/discovery.
+- [ ] Android NSD/mDNS discovery where implemented (not implemented anywhere in this app; BLE + Wi-Fi Direct only).
+- [x] Wi-Fi Direct group/connection establishment.
+- [x] resulting local/remote IP endpoint.
+- [x] permission and platform failures.
 
 They must not own protocol state or authoritative lifecycle state.
 
 ### 20.2 Move TCP channel ownership out of Kotlin
 
-- [ ] Rust transport binds/connects after endpoint event.
-- [ ] Existing Kotlin `TcpServerChannel`/`TcpClientChannel` production use is removed after parity.
-- [ ] No duplicate messages through old and new transports.
-- [ ] Migration feature flag is removed after device validation.
+- [x] Rust transport binds/connects after endpoint event.
+- [x] Existing Kotlin `TcpServerChannel`/`TcpClientChannel` production use is removed after parity.
+- [x] No duplicate messages through old and new transports.
+- [ ] Migration feature flag is removed after device validation -- no flag was ever introduced (explicit user decision to cut over directly), so this item does not apply as written.
 
 ### 20.3 Add QR/manual endpoint fallback
+
+Untouched this block -- this is the pre-existing manual-endpoint path
+(`ManualListenerTransportController`/`FfiListenerTransportHandle`), not
+verified or modified in this session.
 
 - [ ] Core models a manual endpoint request.
 - [ ] Android UI can enter or scan endpoint/session information.
@@ -1246,12 +1274,12 @@ They must not own protocol state or authoritative lifecycle state.
 
 ### 20.4 Device tests
 
-- [ ] Android-to-Android same-LAN mode.
-- [ ] Android Wi-Fi Direct establishment feeding Rust sockets.
-- [ ] BLE discovery failure.
-- [ ] endpoint connection failure.
-- [ ] disconnect/reconnect.
-- [ ] partial delivery with multiple listeners.
+- [ ] Android-to-Android same-LAN mode -- needs a second device.
+- [ ] Android Wi-Fi Direct establishment feeding Rust sockets -- host-side bind verified single-device; full establishment needs a second device.
+- [ ] BLE discovery failure -- not exercised this session.
+- [ ] endpoint connection failure -- not exercised this session.
+- [ ] disconnect/reconnect -- not exercised this session.
+- [ ] partial delivery with multiple listeners -- needs multiple devices.
 
 **Acceptance:** Android-specific APIs establish/discover networks, while Rust owns protocol sockets and delivery semantics.
 
