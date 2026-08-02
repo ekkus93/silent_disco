@@ -315,29 +315,28 @@ import kotlinx.coroutines.runBlocking
         listenerCoreController?.transportFailed(message, retryable = true)
     }
 
+    /**
+     * Only BLE-advertised sessions are trusted as discovered sessions. Wi-Fi
+     * Direct's own peer list is not a signal that a peer is running Silent
+     * Disco at all -- it surfaces every nearby Wi-Fi-Direct-capable device
+     * (TVs, printers, other phones), and previously got merged in directly,
+     * rendering arbitrary nearby devices as joinable "sessions". Wi-Fi
+     * Direct is only used for establishment once a BLE-confirmed session has
+     * actually been selected (see `establishRustListenerNetwork`).
+     */
     internal fun MainViewModel.refreshDiscoveredSessions() {
         val bleSessions = bleService.discoveredSessions.value
-        val peerSessions = wifiDirectService.snapshot.value.peers.map {
-            SessionInfo(
-                id = "p2p-${it.deviceAddress.replace(":", "").lowercase()}",
-                name = "Nearby session (${it.deviceName})",
-                hostDeviceName = it.deviceName,
-                approvalMode = ApprovalMode.MANUAL,
-                inviteCodeRequired = false,
-            )
-        }
-        val merged = (bleSessions + peerSessions)
             .distinctBy { it.id }
             .sortedBy { it.name }
         val controller = listenerCoreController ?: return
         val known = controller.snapshots.value?.discoveredSessions.orEmpty()
             .map { it.sessionId }
             .toSet()
-        val mergedIds = merged.map { it.id }.toSet()
-        merged.filter { it.id !in known }.forEach { session ->
+        val bleSessionIds = bleSessions.map { it.id }.toSet()
+        bleSessions.filter { it.id !in known }.forEach { session ->
             controller.submitSessionDiscovered(session.toFfiSessionAdvertisement())
         }
-        (known - mergedIds).forEach { sessionId -> controller.submitSessionExpired(sessionId) }
+        (known - bleSessionIds).forEach { sessionId -> controller.submitSessionExpired(sessionId) }
     }
 
     internal fun MainViewModel.sendPendingJoinRequest() {
