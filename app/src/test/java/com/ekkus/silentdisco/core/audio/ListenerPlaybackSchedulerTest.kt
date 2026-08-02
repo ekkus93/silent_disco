@@ -80,7 +80,7 @@ class ListenerPlaybackSchedulerTest {
     }
 
     @Test
-    fun `concealment ramps the previous packet tail to silence instead of hard-cutting`() {
+    fun `concealment repeats the last real packet at reduced volume with smooth edges`() {
         val scheduler = ListenerPlaybackScheduler(
             mapper = HostTimeMapper(offsetMs = 0.0),
             thresholds = PlaybackThresholds(startupBufferMs = 20),
@@ -97,15 +97,44 @@ class ListenerPlaybackSchedulerTest {
 
         assertThat(concealed?.concealed).isTrue()
         val payload = concealed!!.packet.payload
-        val firstSample = readSample(payload, frame = 0, channel = 0)
-        val lastSample = readSample(payload, frame = payload.size / 4 - 1, channel = 0)
-        assertThat(firstSample).isGreaterThan(amplitude / 2)
-        assertThat(firstSample).isAtMost(amplitude.toInt())
-        assertThat(lastSample).isEqualTo(0)
-        // Strictly decreasing across the ramp, not a step.
-        val midSample = readSample(payload, frame = 120, channel = 0)
-        assertThat(midSample).isLessThan(firstSample)
-        assertThat(midSample).isGreaterThan(0)
+        // Entry continuity: starts exactly at the previously played sample.
+        assertThat(readSample(payload, frame = 0, channel = 0)).isEqualTo(amplitude.toInt())
+        // Body: the last real packet repeated at half volume, not silence.
+        assertThat(readSample(payload, frame = 480, channel = 0)).isEqualTo(amplitude / 2)
+        // Entry ramp blends between the two, no step.
+        assertThat(readSample(payload, frame = 120, channel = 0)).isEqualTo(6_000)
+        // Exit continuity: tail fades to zero for whatever follows.
+        assertThat(readSample(payload, frame = 959, channel = 0)).isEqualTo(0)
+    }
+
+    @Test
+    fun `consecutive concealments decay toward silence and reset after real audio`() {
+        val scheduler = ListenerPlaybackScheduler(
+            mapper = HostTimeMapper(offsetMs = 0.0),
+            thresholds = PlaybackThresholds(startupBufferMs = 20),
+            expectedSessionId = SessionId("session"),
+            expectedStreamId = StreamId("stream"),
+            nowProvider = { 0L },
+        )
+        val amplitude: Short = 8_000
+        scheduler.submit(packet(sequence = 0, hostTimeMs = 20, payload = constantPayload(amplitude)))
+        scheduler.submit(packet(sequence = 4, hostTimeMs = 100, payload = constantPayload(amplitude)))
+        assertThat(scheduler.poll(nowLocalTimeMs = 425)?.packet?.sequenceNumber).isEqualTo(0)
+
+        val firstConcealed = scheduler.poll(nowLocalTimeMs = 425)
+        val secondConcealed = scheduler.poll(nowLocalTimeMs = 425)
+        val thirdConcealed = scheduler.poll(nowLocalTimeMs = 425)
+        val resumed = scheduler.poll(nowLocalTimeMs = 425)
+        scheduler.submit(packet(sequence = 6, hostTimeMs = 140, payload = constantPayload(amplitude)))
+        val concealedAfterReset = scheduler.poll(nowLocalTimeMs = 425)
+
+        assertThat(readSample(firstConcealed!!.packet.payload, frame = 480, channel = 0)).isEqualTo(4_000)
+        assertThat(readSample(secondConcealed!!.packet.payload, frame = 480, channel = 0)).isEqualTo(2_000)
+        assertThat(readSample(thirdConcealed!!.packet.payload, frame = 480, channel = 0)).isEqualTo(1_000)
+        assertThat(resumed?.concealed).isFalse()
+        assertThat(resumed?.packet?.sequenceNumber).isEqualTo(4)
+        assertThat(concealedAfterReset?.concealed).isTrue()
+        assertThat(readSample(concealedAfterReset!!.packet.payload, frame = 480, channel = 0)).isEqualTo(4_000)
     }
 
     @Test
@@ -156,6 +185,63 @@ class ListenerPlaybackSchedulerTest {
         assertThat(readSample(first.packet.payload, frame = 300, channel = 0)).isEqualTo(amplitude.toInt())
         // Only the first frame fades; steady-state frames pass through intact.
         assertThat(readSample(second!!.packet.payload, frame = 0, channel = 0)).isEqualTo(amplitude.toInt())
+    }
+
+    @Test
+    fun `wide holes are skipped with a fade-in instead of concealed frame-by-frame`() {
+        val scheduler = ListenerPlaybackScheduler(
+            mapper = HostTimeMapper(offsetMs = 0.0),
+            thresholds = PlaybackThresholds(startupBufferMs = 20),
+            expectedSessionId = SessionId("session"),
+            expectedStreamId = StreamId("stream"),
+            nowProvider = { 0L },
+        )
+        val amplitude: Short = 8_000
+        scheduler.submit(packet(sequence = 0, hostTimeMs = 20, payload = constantPayload(amplitude)))
+        scheduler.submit(packet(sequence = 15, hostTimeMs = 320, payload = constantPayload(amplitude)))
+        scheduler.poll(nowLocalTimeMs = 425)
+
+        val resumed = scheduler.poll(nowLocalTimeMs = 425)
+
+        // Concealing 14 slots would queue 280ms of dead air ahead of the
+        // resume content; a wide hole must jump straight to the real frame.
+        assertThat(resumed?.concealed).isFalse()
+        assertThat(resumed?.packet?.sequenceNumber).isEqualTo(15)
+        assertThat(readSample(resumed!!.packet.payload, frame = 0, channel = 0)).isEqualTo(0)
+        assertThat(scheduler.snapshot().concealedPacketCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `an arrival outage is bridged with bounded decaying concealment then stops`() {
+        val scheduler = ListenerPlaybackScheduler(
+            mapper = HostTimeMapper(offsetMs = 0.0),
+            thresholds = PlaybackThresholds(startupBufferMs = 20),
+            expectedSessionId = SessionId("session"),
+            expectedStreamId = StreamId("stream"),
+            nowProvider = { 0L },
+        )
+        val amplitude: Short = 8_000
+        scheduler.submit(packet(sequence = 0, hostTimeMs = 20, payload = constantPayload(amplitude)))
+        scheduler.submit(packet(sequence = 1, hostTimeMs = 40, payload = constantPayload(amplitude)))
+        scheduler.poll(nowLocalTimeMs = 25)
+        scheduler.poll(nowLocalTimeMs = 45)
+
+        // Nothing else ever arrives. Concealment bridges the outage with
+        // decaying repeats, then stops for good instead of looping forever.
+        val frames = mutableListOf<PlaybackFrame?>()
+        for (step in 1..30) {
+            frames += scheduler.poll(nowLocalTimeMs = 45L + step * 20L)
+        }
+
+        val concealedFrames = frames.filterNotNull()
+        assertThat(concealedFrames).hasSize(25)
+        assertThat(concealedFrames.all { it.concealed }).isTrue()
+        assertThat(frames.takeLast(5).all { it == null }).isTrue()
+        // Decays: half volume, then quarter, and effectively silent well
+        // before the bridge bound.
+        assertThat(readSample(concealedFrames[0].packet.payload, frame = 480, channel = 0)).isEqualTo(4_000)
+        assertThat(readSample(concealedFrames[1].packet.payload, frame = 480, channel = 0)).isEqualTo(2_000)
+        assertThat(readSample(concealedFrames[10].packet.payload, frame = 480, channel = 0)).isEqualTo(amplitude / 256)
     }
 
     @Test
@@ -211,6 +297,52 @@ class ListenerPlaybackSchedulerTest {
         // Final frame ends at zero so engine stop never cuts mid-waveform.
         assertThat(readSample(drained[3].packet.payload, frame = 0, channel = 0)).isEqualTo(amplitude.toInt())
         assertThat(readSample(drained[3].packet.payload, frame = lastFrame, channel = 0)).isEqualTo(0)
+    }
+
+    @Test
+    fun `stale arrivals whose slot was already concealed are dropped, not played out of order`() {
+        val scheduler = ListenerPlaybackScheduler(
+            mapper = HostTimeMapper(offsetMs = 0.0),
+            thresholds = PlaybackThresholds(startupBufferMs = 20),
+            expectedSessionId = SessionId("session"),
+            expectedStreamId = StreamId("stream"),
+            nowProvider = { 0L },
+        )
+        scheduler.submit(packet(sequence = 0, hostTimeMs = 20))
+        scheduler.submit(packet(sequence = 3, hostTimeMs = 80))
+        // A write-lead caller polls ahead of real time: slots 0-3 are all
+        // emitted (0 and 3 real, 1 and 2 concealed) while wall-clock is
+        // still early.
+        assertThat(scheduler.poll(nowLocalTimeMs = 425)?.packet?.sequenceNumber).isEqualTo(0)
+        assertThat(scheduler.poll(nowLocalTimeMs = 425)?.concealed).isTrue()
+        assertThat(scheduler.poll(nowLocalTimeMs = 425)?.concealed).isTrue()
+        assertThat(scheduler.poll(nowLocalTimeMs = 425)?.packet?.sequenceNumber).isEqualTo(3)
+
+        // Sequence 1 arrives afterwards, still within its submit window. Its
+        // slot already played (concealed), so it must never be delivered --
+        // the poll instead moves on (here: the outage bridge concealing the
+        // next slot forward, since nothing after 3 ever arrives).
+        scheduler.submit(packet(sequence = 1, hostTimeMs = 40))
+        val next = scheduler.poll(nowLocalTimeMs = 425)
+
+        assertThat(next?.packet?.sequenceNumber).isNotEqualTo(1)
+        assertThat(next?.concealed).isTrue()
+        assertThat(scheduler.snapshot().lateDropCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `nextDeadlineMs reports the earliest buffered deadline`() {
+        val scheduler = ListenerPlaybackScheduler(
+            mapper = HostTimeMapper(offsetMs = 0.0),
+            thresholds = PlaybackThresholds(startupBufferMs = 20),
+            expectedSessionId = SessionId("session"),
+            expectedStreamId = StreamId("stream"),
+            nowProvider = { 0L },
+        )
+        assertThat(scheduler.nextDeadlineMs()).isNull()
+        scheduler.submit(packet(sequence = 1, hostTimeMs = 40))
+        scheduler.submit(packet(sequence = 0, hostTimeMs = 20))
+        assertThat(scheduler.nextDeadlineMs()).isEqualTo(20)
     }
 
     @Test

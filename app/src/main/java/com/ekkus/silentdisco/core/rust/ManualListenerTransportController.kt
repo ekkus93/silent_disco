@@ -52,6 +52,48 @@ private const val POLL_TIMEOUT_MS: ULong = 500uL
 private const val AUDIO_CODEC_NAME = "pcm16le"
 private const val MAX_PENDING_PACKETS = 256
 private const val PLAYBACK_RETRY_DELAY_MS = 10L
+
+/**
+ * How far ahead of each frame's presentation deadline it is written into the
+ * render ring. The ring's steady-state depth converges to this lead, giving
+ * the native Oboe callback a real cushion instead of the near-zero depth
+ * that write-at-deadline pacing left it (any writer-side jitter -- coroutine
+ * scheduling, the ~5ms JNI boxing per write, GC -- then starved the DAC for
+ * ~2ms at a time: hard native cuts no Kotlin-side concealment ramp can
+ * reach). Matches the ring's 400ms target fill; capacity is 1s.
+ */
+private const val RING_WRITE_LEAD_MS = 400L
+
+/**
+ * Upper bound on the stream-start silence prefill that aligns the first
+ * frame's ring position with its presentation deadline. Below ring capacity
+ * (1s) so the prefill plus the initial lookahead pop burst can never
+ * overflow the ring: max depth is max(prefill, lead) <= 800ms < 1s.
+ */
+private const val MAX_RING_PREFILL_MS = 800L
+
+/**
+ * Ring depth (48kHz frames, 400ms) at which the playback loop stops writing
+ * and waits for the native consumer to drain. Without this cap, a large
+ * startup backlog flushed through the lookahead pins the ring at full
+ * capacity for the whole stream -- maximal latency and a write stall on
+ * every single packet -- because full-ring backpressure is the only thing
+ * left to pace the writer. Matches the ring's configured target fill.
+ */
+private const val RING_TARGET_DEPTH_FRAMES = 19_200
+
+/**
+ * Milliseconds of silence to queue before the first real frame so it plays
+ * exactly at its deadline: the native callback consumes from the moment the
+ * stream opens, so a frame's play time is its write time plus current ring
+ * depth. Zero when the first frame is already due or late (the startup
+ * backlog case), preserving the existing play-immediately behavior.
+ */
+internal fun computeRingPrefillMs(
+    firstDeadlineMs: Long?,
+    nowMs: Long,
+    maxPrefillMs: Long = MAX_RING_PREFILL_MS,
+): Long = ((firstDeadlineMs ?: nowMs) - nowMs).coerceIn(0, maxPrefillMs)
 /**
  * How much scheduled-timeline span must be buffered before playback starts
  * (see [PlaybackThresholds.startupBufferMs]). Larger than the class default
@@ -66,6 +108,20 @@ private const val STARTUP_BUFFER_MS = 1_000L
 
 /** A stream announced before any real clock-sync sample landed; see [ManualListenerTransportController.beginPlayback]. */
 private data class PendingStream(val streamId: StreamId, val sampleRate: Int, val channelCount: Int)
+
+/**
+ * Platform hook keeping the device's network radio responsive for the
+ * lifetime of one live connection. Without it, Android Wi-Fi power save may
+ * buffer inbound packets at the access point for hundreds of milliseconds to
+ * seconds at a time -- observed on a real device as multi-second arrival
+ * outages mid-stream and as connection-start sync samples with RTTs far
+ * above the estimator's acceptance bound. Implementations must be idempotent
+ * in both directions.
+ */
+interface NetworkSessionLock {
+    fun acquire()
+    fun release()
+}
 
 /**
  * Android-facing wrapper around the shared Rust listener transport for one
@@ -84,6 +140,8 @@ class ManualListenerTransportController(
      * production feature.
      */
     private val debugRecordingDirectory: File? = null,
+    /** Held for the connection's lifetime; null when the platform provides none. */
+    private val networkSessionLock: NetworkSessionLock? = null,
 ) : AutoCloseable {
     private val handleRef = AtomicReference<FfiListenerTransportHandle?>(null)
     private var eventLoop: Job? = null
@@ -128,6 +186,14 @@ class ManualListenerTransportController(
     ) {
         withContext(Dispatchers.IO) {
             closeExistingHandle()
+            // Before the socket connect, not after approval: power-save
+            // latency also poisons the first clock-sync exchanges, and those
+            // begin the moment the connection is up.
+            try {
+                networkSessionLock?.acquire()
+            } catch (error: RuntimeException) {
+                logger.w("manual.network_lock", "acquire failed: ${error.message}")
+            }
             _connectState.value = ManualConnectUiState.Connecting
             val endpoint = try {
                 parseManualHostEndpoint(rawInput, nowMs())
@@ -366,18 +432,45 @@ class ManualListenerTransportController(
                         continue
                     }
                     started = true
+                    // Align the first frame's ring position with its deadline:
+                    // the native callback has been consuming (silence-filling)
+                    // since engine start, so whatever is written next plays
+                    // almost immediately. Queuing exactly (deadline - now) of
+                    // silence first makes the first frame play on time and
+                    // seeds the ring's intentional depth.
+                    val prefillNowMs = SystemClock.elapsedRealtime()
+                    val prefillMs = computeRingPrefillMs(activeScheduler.nextDeadlineMs(), prefillNowMs)
+                    if (prefillMs > 0) {
+                        val prefillFrames = (prefillMs * format.sampleRate / 1_000L).toInt()
+                        val prefilled = runCatching { playbackEngine.prefillSilence(prefillFrames) }
+                            .getOrElse { error ->
+                                handlePlaybackEngineFailure(error)
+                                return@launch
+                            }
+                        logger.i(
+                            "manual.audio.ring_prefill",
+                            "prefillMs=$prefillMs requestedFrames=$prefillFrames prefilledFrames=$prefilled",
+                        )
+                    }
                     _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PLAYING)
                 }
-                // `poll()` already gates release strictly by each frame's own
-                // scheduledLocalTimeMs -- a frame only ever comes back once it
-                // is actually due. Imposing a second, fixed-cadence delay on
-                // top of that would fight the scheduler's own timing: it could
-                // push a frame later than its real deadline, and any per-loop
-                // overhead (coroutine dispatch, GC) would compound over
-                // thousands of iterations into real drift, periodically
-                // starving the render ring's native consumer. So: drain
-                // whatever is due immediately, and only wait when nothing is.
-                val frame = activeScheduler.poll()
+                // Never write past the ring's intended depth: with the cap,
+                // even a large startup backlog settles the ring at the target
+                // cushion instead of pinning it full (maximal latency, a
+                // write stall on every packet).
+                if (playbackEngine.queuedDepthFrames() >= RING_TARGET_DEPTH_FRAMES) {
+                    delay(PLAYBACK_RETRY_DELAY_MS)
+                    continue
+                }
+                // Frames are released RING_WRITE_LEAD_MS ahead of their
+                // presentation deadline: the ring's FIFO position -- not the
+                // write moment -- decides when a frame actually plays, so the
+                // early hand-off keeps steady-state ring depth at the lead
+                // (a jitter cushion for the native consumer) without moving
+                // any frame's audible timing. Draining everything inside the
+                // lead window immediately, and only waiting when nothing is,
+                // avoids compounding per-loop overhead into drift.
+                val frame = activeScheduler.poll(SystemClock.elapsedRealtime() + RING_WRITE_LEAD_MS)
                 if (frame == null) {
                     delay(PLAYBACK_RETRY_DELAY_MS)
                     continue
@@ -548,6 +641,11 @@ class ManualListenerTransportController(
         handleRef.getAndSet(null)?.let { handle ->
             runCatching { handle.shutdown() }
             handle.close()
+        }
+        try {
+            networkSessionLock?.release()
+        } catch (error: RuntimeException) {
+            logger.w("manual.network_lock", "release failed: ${error.message}")
         }
     }
 

@@ -124,6 +124,27 @@ impl FfiAudioOutputHandle {
         self.with_inner(|inner| Ok(i64::try_from(inner.token).unwrap_or(i64::MAX)))
     }
 
+    /// Frames currently queued in the ring: written by the producer but not
+    /// yet consumed by the real-time reader. Lets the Kotlin pacing loop hold
+    /// the ring at an intentional depth (its jitter cushion) instead of
+    /// either writing at presentation time (near-zero depth, underrun-fragile)
+    /// or relying on full-ring backpressure (pinned depth, maximal latency,
+    /// constant write stalls).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiAudioOutputError::Closed`] if [`Self::release`] was
+    /// already called.
+    pub fn queued_frames(&self) -> Result<u32, FfiAudioOutputError> {
+        self.with_inner(|inner| {
+            let queued = inner
+                .producer
+                .capacity_frames()
+                .saturating_sub(inner.producer.free_frames());
+            Ok(u32::try_from(queued).unwrap_or(u32::MAX))
+        })
+    }
+
     /// Explicitly releases this render ring's consumer registration. Future
     /// real-time reads for this token report a stopping state and silence
     /// rather than being treated as unknown. Idempotent: closing an
@@ -181,6 +202,25 @@ mod tests {
             .push_frames(vec![1.0, 2.0, 3.0, 4.0])
             .expect("open handle accepts frames");
         assert_eq!(written, 2);
+    }
+
+    #[test]
+    fn queued_frames_tracks_pushed_but_unconsumed_frames() {
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        assert_eq!(handle.queued_frames().expect("open handle"), 0);
+
+        handle
+            .push_frames(vec![1.0, 2.0, 3.0, 4.0])
+            .expect("open handle accepts frames");
+        assert_eq!(handle.queued_frames().expect("open handle"), 2);
+
+        handle.release();
+        assert_eq!(
+            handle.queued_frames(),
+            Err(FfiAudioOutputError::Closed(
+                "audio output handle is closed".to_owned()
+            ))
+        );
     }
 
     #[test]

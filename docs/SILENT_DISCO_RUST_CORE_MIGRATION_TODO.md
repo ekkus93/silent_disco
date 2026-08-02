@@ -931,6 +931,19 @@ follow-up, not done this session.
       ordinary waveform slope) and only ~15ms soft dips at genuine loss
       points. See `memory.md`'s 2026-08-02T21:16:53Z entry.
 
+- [ ] **Superseded into a dedicated plan (2026-08-02):** the write-lead
+      below was implemented and device-validated in the Kotlin path the
+      same day (along with repetition concealment, wide-hole skip, a
+      bounded outage bridge, a ring depth cap, and a Wi-Fi low-latency
+      lock), but the user correctly flagged that all of this scheduling/
+      concealment/pacing logic belongs in the Rust core -- the Kotlin
+      implementation is the deprecated owner and none of it transfers to
+      the desktop listener. The full replacement plan, including porting
+      every device-verified behavior into `audio::PlaybackScheduler`/
+      `ConcealmentPolicy` and a new Rust scheduler-to-ring pump, is
+      `docs/SILENT_DISCO_LISTENER_PLAYBACK_RUST_MIGRATION_TODO.md`.
+      Treat that file as the authoritative continuation of this item.
+
 - [ ] Give the Rust render ring a bounded *intentional* write-lead
       (~`RENDER_RING_TARGET_FILL_FRAMES`, 400ms) instead of the current
       accidental depth. The confirmed remaining audible artifact

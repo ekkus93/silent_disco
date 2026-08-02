@@ -63,4 +63,22 @@ class ManualListenerTransportControllerTest {
 
         assertThat(state).isNotInstanceOf(ManualConnectUiState.Failed::class.java)
     }
+
+    @Test
+    fun ringPrefillCoversTheGapBetweenNowAndTheFirstDeadline() {
+        assertThat(computeRingPrefillMs(firstDeadlineMs = 1_300, nowMs = 1_000)).isEqualTo(300)
+    }
+
+    @Test
+    fun ringPrefillIsZeroWhenTheFirstFrameIsAlreadyDueOrLate() {
+        assertThat(computeRingPrefillMs(firstDeadlineMs = 1_000, nowMs = 1_000)).isEqualTo(0)
+        assertThat(computeRingPrefillMs(firstDeadlineMs = 400, nowMs = 1_000)).isEqualTo(0)
+        assertThat(computeRingPrefillMs(firstDeadlineMs = null, nowMs = 1_000)).isEqualTo(0)
+    }
+
+    @Test
+    fun ringPrefillIsClampedBelowRingCapacity() {
+        assertThat(computeRingPrefillMs(firstDeadlineMs = 5_000, nowMs = 1_000)).isEqualTo(800)
+        assertThat(computeRingPrefillMs(firstDeadlineMs = 5_000, nowMs = 1_000, maxPrefillMs = 100)).isEqualTo(100)
+    }
 }

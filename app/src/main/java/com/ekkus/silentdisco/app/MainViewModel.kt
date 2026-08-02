@@ -98,6 +98,7 @@ class MainViewModel @JvmOverloads constructor(
     internal val manualListenerController = ManualListenerTransportController(
         playbackEngine,
         application.getExternalFilesDir(null),
+        networkSessionLock = WifiLowLatencyNetworkLock(application),
     )
     internal val hostTransportController = HostTransportController()
     internal val listenerTransportController = ListenerTransportController()

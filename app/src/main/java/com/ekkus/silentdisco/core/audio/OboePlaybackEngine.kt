@@ -10,6 +10,7 @@ private const val PCM16_FULL_SCALE = 32_768.0f
 private const val OBOE_ADAPTER_STATUS_OK = 0
 private const val RING_FULL_RETRY_DELAY_MS = 2L
 private const val MAX_STALL_RETRIES = 500
+private const val PREFILL_CHUNK_FRAMES = 960
 
 /**
  * Production listener/host-monitor output: Oboe (native, via [OboeBridge])
@@ -58,8 +59,60 @@ class OboePlaybackEngine : PlaybackEngine {
      * signal for the caller's real-time pacing loop.
      */
     override fun write(frame: PlaybackFrame): Long {
-        val active = handle ?: error("Playback engine is not started")
         val samples = pcm16LeToFloat(frame.packet.payload, volume)
+        val framesWritten = pushFully(samples, stallLabel = "seq=${frame.packet.sequenceNumber}")
+        writeCount += 1
+        return framesWritten.toLong()
+    }
+
+    /**
+     * Queues silence directly into the render ring, in bounded chunks so no
+     * single UniFFI crossing boxes an unbounded `List<Float>`. Bypasses the
+     * PCM conversion and the debug recorder deliberately: prefill is ring
+     * alignment, not stream content.
+     */
+    override fun prefillSilence(frameCount: Int): Int {
+        if (frameCount <= 0) return 0
+        var remaining = frameCount
+        var prefilled = 0
+        val chunk = FloatArray(PREFILL_CHUNK_FRAMES * channelCount)
+        while (remaining > 0) {
+            val framesThisChunk = minOf(remaining, PREFILL_CHUNK_FRAMES)
+            val samples = if (framesThisChunk == PREFILL_CHUNK_FRAMES) {
+                chunk
+            } else {
+                FloatArray(framesThisChunk * channelCount)
+            }
+            prefilled += pushFully(samples, stallLabel = "prefill")
+            remaining -= framesThisChunk
+        }
+        return prefilled
+    }
+
+    /**
+     * Pushes every frame of [samples] into the ring, retrying the unwritten
+     * remainder until the ring accepts all of it.
+     *
+     * [FfiAudioOutputHandleInterface.pushFrames] returns only the count
+     * *actually* written -- a temporarily full ring can accept fewer frames
+     * than requested. An earlier implementation discarded that count
+     * entirely and always reported the whole frame as written, silently
+     * dropping whatever the ring didn't accept: audible as a dropped or
+     * corrupted note, not a clean gap. Retrying (with a short backoff so a
+     * full ring gets a chance to drain) makes this call genuinely block
+     * until the frame is fully queued, which is the correct backpressure
+     * signal for the caller's pacing loop.
+     *
+     * Only a genuine retry (the ring was observed full at least once)
+     * counts as a stall. Timing the whole call instead -- as an earlier
+     * version of this instrumentation did -- mostly measured the fixed
+     * per-call overhead of boxing samples into a `List<Float>` for the
+     * JNI/UniFFI crossing (~5ms on roughly half of all calls even with
+     * zero retries): a real cost, but not backpressure, and not what the
+     * stall diagnostic is for.
+     */
+    private fun pushFully(samples: FloatArray, stallLabel: String): Int {
+        val active = handle ?: error("Playback engine is not started")
         val totalFrames = samples.size / channelCount
         var framesWritten = 0
         var stallRetries = 0
@@ -80,28 +133,25 @@ class OboePlaybackEngine : PlaybackEngine {
             stallRetries = 0
             framesWritten += written.toInt()
         }
-        // Only a genuine retry (the ring was observed full at least once)
-        // counts as a stall. Timing the whole call instead -- as an earlier
-        // version of this instrumentation did -- mostly measured this
-        // call's own fixed per-call overhead (boxing `samples` into a
-        // `List<Float>` for the JNI/UniFFI crossing), which took ~5ms on
-        // roughly half of all calls even with zero retries: a real cost,
-        // but not backpressure, and not what this diagnostic is for.
         if (totalStallRetries > 0) {
             val elapsedMs = SystemClock.elapsedRealtime() - startedAtMs
             stallEventCount += 1
             stallTotalMs += elapsedMs
             logger.w(
                 "oboe.write_stall",
-                "seq=${frame.packet.sequenceNumber} elapsedMs=$elapsedMs retries=$totalStallRetries " +
+                "$stallLabel elapsedMs=$elapsedMs retries=$totalStallRetries " +
                     "stallEvents=$stallEventCount stallTotalMs=$stallTotalMs",
             )
         }
-        writeCount += 1
-        return framesWritten.toLong()
+        return framesWritten
     }
 
     override fun playbackPositionMs(frame: PlaybackFrame): Long = frame.localDeadlineMs
+
+    override fun queuedDepthFrames(): Int {
+        val active = handle ?: return 0
+        return active.queuedFrames().toInt()
+    }
 
     override fun stop() {
         OboeBridge.nativeOboeClose()

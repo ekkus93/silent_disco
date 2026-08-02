@@ -25,6 +25,28 @@ data class PlaybackThresholds(
  */
 private const val CONCEALMENT_RAMP_MS = 5
 
+/**
+ * Maximum consecutive concealment frames synthesized with no real audio
+ * arriving (an arrival outage, not an isolated hole). The decaying repeat
+ * reaches inaudibility within a handful of packets; the remainder writes
+ * zeros so the downstream queue's residual content is silence before it
+ * drains -- the eventual hardware-level cut then lands on zero samples
+ * instead of mid-waveform. Beyond this bound the outage is real dead air
+ * and synthesizing more buys nothing.
+ */
+private const val CONCEALMENT_BRIDGE_MAX_PACKETS = 25
+
+/**
+ * Sequence holes wider than this are skipped, not concealed frame-by-frame.
+ * Concealment frames are written into a FIFO queue ahead of the post-hole
+ * audio, so bridging a multi-second outage would replay the entire outage
+ * as queued silence before the resume content plays -- dragging playback
+ * seconds behind its deadlines. Past this width, jump straight to the
+ * post-hole frame (which is delivered at its own correct deadline) with a
+ * fade-in on the resume edge.
+ */
+private const val CONCEALMENT_SKIP_THRESHOLD_PACKETS = 10
+
 data class PlaybackTelemetry(
     val packetLossCount: Int = 0,
     val lateDropCount: Int = 0,
@@ -60,6 +82,8 @@ class ListenerPlaybackScheduler(
     private var lastPlaybackErrorMs: Long = 0
     private var highestSubmittedSequence: Long? = null
     private var fadeInNextRealFrame = true
+    private var lastRealPacket: AudioPacket? = null
+    private var consecutiveConcealments = 0
 
     fun submit(packet: AudioPacket): PlaybackTelemetry {
         if ((expectedSessionId != null && packet.sessionId != expectedSessionId) ||
@@ -97,6 +121,9 @@ class ListenerPlaybackScheduler(
     }
 
     fun canStart(): Boolean = buffer.isReady()
+
+    /** Scheduled local deadline of the earliest buffered frame, or null when empty. */
+    fun nextDeadlineMs(): Long? = buffer.peekFirst()?.scheduledLocalTimeMs
 
     /**
      * Drains and returns any buffered-but-not-yet-due frames in sequence
@@ -153,15 +180,38 @@ class ListenerPlaybackScheduler(
         concealedFrame(nowLocalTimeMs)?.let { concealed ->
             updateLastDelivered(nowLocalTimeMs, concealed)
             concealedPacketCount += 1
+            consecutiveConcealments += 1
             fadeInNextRealFrame = true
             return concealed
         }
-        val ready = buffer.popReady(nowLocalTimeMs) ?: run {
+        // A packet arriving after its slot was already emitted (delivered or
+        // concealed) can no longer play in order -- the ring is FIFO, and
+        // later content is already queued behind it. Playing it anyway would
+        // be an audible out-of-order blip; drop it visibly instead. The
+        // write-lead lookahead widens this stale window, but genuinely
+        // reordered packets normally arrive well inside the send-ahead
+        // horizon, long before their slot is even written.
+        var candidate = buffer.popReady(nowLocalTimeMs)
+        while (candidate != null &&
+            lastDeliveredSequence != null &&
+            candidate.packet.sequenceNumber <= lastDeliveredSequence!!
+        ) {
+            lateDropCount += 1
+            candidate = buffer.popReady(nowLocalTimeMs)
+        }
+        val ready = candidate ?: run {
             if (buffer.isReady()) {
                 underrunCount += 1
+            }
+            // Bridge an empty (or not-yet-due) buffer with bounded decaying
+            // concealment so an arrival outage fades to silence instead of
+            // the queue draining dry mid-waveform. The bound stops synthesis
+            // once the decay has long since reached zero.
+            if (consecutiveConcealments < CONCEALMENT_BRIDGE_MAX_PACKETS) {
                 concealedUnderflowFrame(nowLocalTimeMs)?.let { concealed ->
                     updateLastDelivered(nowLocalTimeMs, concealed)
                     concealedPacketCount += 1
+                    consecutiveConcealments += 1
                     fadeInNextRealFrame = true
                     return concealed
                 }
@@ -189,6 +239,8 @@ class ListenerPlaybackScheduler(
             packet = deliveredPacket,
             localDeadlineMs = ready.scheduledLocalTimeMs,
         )
+        lastRealPacket = ready.packet
+        consecutiveConcealments = 0
         updateLastDelivered(nowLocalTimeMs, frame)
         return frame
     }
@@ -204,6 +256,12 @@ class ListenerPlaybackScheduler(
         val nextReady = buffer.peekFirst() ?: return null
         val expectedSequence = previous.sequenceNumber + 1
         if (nextReady.packet.sequenceNumber <= expectedSequence || nextReady.scheduledLocalTimeMs > nowLocalTimeMs) {
+            return null
+        }
+        if (nextReady.packet.sequenceNumber - expectedSequence > CONCEALMENT_SKIP_THRESHOLD_PACKETS) {
+            // Too wide to bridge: skip the hole entirely and let the post-hole
+            // frame play at its own deadline, faded in.
+            fadeInNextRealFrame = true
             return null
         }
         return synthesizeConcealment(previous = previous, sequenceNumber = expectedSequence)
@@ -229,20 +287,27 @@ class ListenerPlaybackScheduler(
 
     private fun synthesizeConcealment(previous: AudioPacket, sequenceNumber: Long): PlaybackFrame {
         val packetDurationMs = (previous.samplesPerPacket * 1_000L / previous.sampleRate).coerceAtLeast(1L)
-        // Ramp the previous packet's final sample values down to zero instead
-        // of cutting straight to silence: the gap becomes a fade, not a click.
-        // A concealment following another concealment ramps from an
-        // already-zero tail, so multi-packet holes stay pure silence after
-        // the first fade with no special casing.
+        // Conceal by repeating the last real packet's audio at reduced volume
+        // rather than inserting silence: a 15-20ms silent hole in tonal
+        // content is plainly audible no matter how smoothly it is ramped,
+        // while a repeated waveform continues the sound through the gap.
+        // Each consecutive concealment halves the volume again, so a long
+        // outage decays to silence within a few packets instead of looping
+        // one packet forever. The payload starts exactly at the previously
+        // played frame's sample values (entry continuity) and fades its own
+        // tail to zero, so both gap edges stay click-free whatever follows.
+        val source = lastRealPacket ?: previous
         val concealedPacket = previous.copy(
             sequenceNumber = sequenceNumber,
             firstSampleIndex = previous.firstSampleIndex + previous.samplesPerPacket,
             hostPresentationTimeMs = previous.hostPresentationTimeMs + packetDurationMs,
-            payload = pcm16LeRampToSilence(
-                previousPayload = previous.payload,
+            payload = pcm16LeConcealmentPayload(
+                sourcePayload = source.payload,
+                previousTail = pcm16LeLastFrame(previous.payload, previous.channelCount),
                 frameCount = previous.samplesPerPacket,
                 channelCount = previous.channelCount,
                 rampFrames = rampFrames(previous.sampleRate),
+                attenuationShift = (consecutiveConcealments + 1).coerceAtMost(8),
             ),
             checksum = null,
         )
@@ -267,34 +332,60 @@ class ListenerPlaybackScheduler(
     )
 }
 
+/** Per-channel sample values of [payload]'s final frame, or null when it holds no complete frame. */
+internal fun pcm16LeLastFrame(payload: ByteArray, channelCount: Int): IntArray? {
+    val bytesPerFrame = channelCount * 2
+    val frames = payload.size / bytesPerFrame
+    if (frames == 0) return null
+    val lastFrameOffset = (frames - 1) * bytesPerFrame
+    return IntArray(channelCount) { channel ->
+        val byteIndex = lastFrameOffset + channel * 2
+        val low = payload[byteIndex].toInt() and 0xFF
+        val high = payload[byteIndex + 1].toInt() and 0xFF
+        ((high shl 8) or low).toShort().toInt()
+    }
+}
+
 /**
- * Builds a PCM16LE payload of [frameCount] frames that linearly ramps each
- * channel from [previousPayload]'s final frame values down to zero over
- * [rampFrames] frames, then stays silent. An empty or sub-frame previous
- * payload yields pure silence.
+ * Builds a concealment payload of [frameCount] frames: [sourcePayload] (the
+ * last real packet's audio) attenuated by `>> attenuationShift`, blended over
+ * the first [rampFrames] frames from [previousTail]'s exact sample values
+ * (entry continuity with whatever actually played last), and faded to zero
+ * over its final [rampFrames] frames (exit continuity with whatever plays
+ * next). Source content shorter than [frameCount] continues as silence.
  */
-internal fun pcm16LeRampToSilence(
-    previousPayload: ByteArray,
+internal fun pcm16LeConcealmentPayload(
+    sourcePayload: ByteArray,
+    previousTail: IntArray?,
     frameCount: Int,
     channelCount: Int,
     rampFrames: Int,
+    attenuationShift: Int,
 ): ByteArray {
     val bytesPerFrame = channelCount * 2
     val output = ByteArray(frameCount * bytesPerFrame)
-    val previousFrames = previousPayload.size / bytesPerFrame
-    if (previousFrames == 0) return output
-    val lastFrameOffset = (previousFrames - 1) * bytesPerFrame
+    val sourceFrames = sourcePayload.size / bytesPerFrame
     val effectiveRamp = rampFrames.coerceIn(1, frameCount)
-    for (channel in 0 until channelCount) {
-        val byteIndex = lastFrameOffset + channel * 2
-        val low = previousPayload[byteIndex].toInt() and 0xFF
-        val high = previousPayload[byteIndex + 1].toInt() and 0xFF
-        val lastValue = ((high shl 8) or low).toShort().toInt()
-        for (frame in 0 until effectiveRamp) {
-            val scaled = lastValue * (effectiveRamp - 1 - frame) / effectiveRamp
+    val tailRampStart = frameCount - effectiveRamp
+    for (frame in 0 until frameCount) {
+        for (channel in 0 until channelCount) {
+            var value = if (frame < sourceFrames) {
+                val byteIndex = frame * bytesPerFrame + channel * 2
+                val low = sourcePayload[byteIndex].toInt() and 0xFF
+                val high = sourcePayload[byteIndex + 1].toInt() and 0xFF
+                ((high shl 8) or low).toShort().toInt() shr attenuationShift
+            } else {
+                0
+            }
+            if (frame < effectiveRamp && previousTail != null) {
+                value = (value * frame + previousTail[channel] * (effectiveRamp - frame)) / effectiveRamp
+            }
+            if (frame >= tailRampStart) {
+                value = value * (frameCount - 1 - frame) / effectiveRamp
+            }
             val outIndex = frame * bytesPerFrame + channel * 2
-            output[outIndex] = (scaled and 0xFF).toByte()
-            output[outIndex + 1] = ((scaled shr 8) and 0xFF).toByte()
+            output[outIndex] = (value and 0xFF).toByte()
+            output[outIndex + 1] = ((value shr 8) and 0xFF).toByte()
         }
     }
     return output
@@ -359,6 +450,25 @@ interface PlaybackEngine {
     fun setVolume(value: Float)
     fun playbackPositionMs(frame: PlaybackFrame): Long
     fun stop()
+
+    /**
+     * Queues [frameCount] frames of silence ahead of the first real frame and
+     * returns how many were actually queued. Used at stream start to align
+     * the first frame's ring position with its presentation deadline, so the
+     * ring carries an intentional depth (jitter cushion) instead of playing
+     * whatever is written immediately. Engines without a queue to pre-fill
+     * return 0; the caller logs the result rather than assuming it worked.
+     */
+    fun prefillSilence(frameCount: Int): Int = 0
+
+    /**
+     * Frames currently queued but not yet played, or 0 for engines without a
+     * queryable queue. Lets the pacing loop cap the queue at an intentional
+     * depth instead of either writing at presentation time (near-zero depth,
+     * underrun-fragile) or relying on full-queue backpressure (pinned depth,
+     * maximal latency, constant write stalls).
+     */
+    fun queuedDepthFrames(): Int = 0
 }
 
 /**
