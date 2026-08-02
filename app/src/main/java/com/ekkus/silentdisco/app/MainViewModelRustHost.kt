@@ -504,13 +504,13 @@ private fun FfiTuningSettings.toRustStoredSettings() =
         updatedAtMs = System.currentTimeMillis(),
     )
 
-private fun ApprovalMode.toFfiApprovalMode(): FfiApprovalMode = when (this) {
+internal fun ApprovalMode.toFfiApprovalMode(): FfiApprovalMode = when (this) {
     ApprovalMode.MANUAL -> FfiApprovalMode.MANUAL
     ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER -> FfiApprovalMode.TRUSTED_DEVICES
     ApprovalMode.INVITE_CODE -> FfiApprovalMode.INVITE_CODE
 }
 
-private fun FfiApprovalMode.toAppApprovalMode(): ApprovalMode = when (this) {
+internal fun FfiApprovalMode.toAppApprovalMode(): ApprovalMode = when (this) {
     FfiApprovalMode.MANUAL -> ApprovalMode.MANUAL
     FfiApprovalMode.TRUSTED_DEVICES -> ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER
     FfiApprovalMode.INVITE_CODE -> ApprovalMode.INVITE_CODE

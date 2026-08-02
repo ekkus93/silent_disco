@@ -41,9 +41,11 @@ import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.rust.HostCoreController
+import com.ekkus.silentdisco.core.rust.ListenerCoreController
 import com.ekkus.silentdisco.core.rust.ManualListenerTransportController
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
+import com.ekkus.silentdisco.core.rust.UniFfiListenerCoreController
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.DeviceIdentity
@@ -79,6 +81,9 @@ class MainViewModel @JvmOverloads constructor(
     internal val domainStore: AndroidRustDomainStore = AndroidRustDomainStore(application),
     internal val hostCoreFactory: (String) -> HostCoreController = {
         UniFfiHostCoreController(it)
+    },
+    internal val listenerCoreFactory: (String) -> ListenerCoreController = {
+        UniFfiListenerCoreController(it)
     },
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
@@ -116,6 +121,8 @@ class MainViewModel @JvmOverloads constructor(
     internal var pendingSyncCorrelationId: Long? = null
     internal var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
     internal var hostCoreController: HostCoreController? = null
+    internal var listenerCoreController: ListenerCoreController? = null
+    internal var pendingEstablishNetworkOperationId: String? = null
     internal val localListenerDeviceId = "listener-device"
 
     init {
@@ -201,16 +208,25 @@ class MainViewModel @JvmOverloads constructor(
             return
         }
         _uiState.value = _uiState.value.copy(
-            selectedSession = session,
-            listenerState = ListenerLifecycleState.SESSION_SELECTED,
-            connectionProgress = _uiState.value.connectionProgress.copy(
-                currentState = ListenerLifecycleState.SESSION_SELECTED,
-                discovered = true,
-                inviteCode = "",
-            ),
+            connectionProgress = _uiState.value.connectionProgress.copy(inviteCode = ""),
             lastMessage = "Selected ${session.name}",
             lastError = null,
         )
+        if (session.id.startsWith(DEMO_SESSION_ID_PREFIX)) {
+            // Demo sessions are a BuildConfig.DEBUG-only simulation that never
+            // touches Rust (see requestJoinImpl's demo branch); Rust doesn't
+            // know about them, so select_session would just reject them.
+            _uiState.value = _uiState.value.copy(
+                selectedSession = session,
+                listenerState = ListenerLifecycleState.SESSION_SELECTED,
+                connectionProgress = _uiState.value.connectionProgress.copy(
+                    currentState = ListenerLifecycleState.SESSION_SELECTED,
+                    discovered = true,
+                ),
+            )
+            return
+        }
+        ensureRustListenerCore().selectSession(session.id)
     }
 
     fun requestJoin() = requestJoinImpl()
@@ -231,11 +247,9 @@ class MainViewModel @JvmOverloads constructor(
 
     fun cancelJoin() {
         clearScanState()
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.DISCONNECTED,
-            connectionProgress = ConnectionProgressState(currentState = ListenerLifecycleState.DISCONNECTED),
-            lastError = "Join cancelled",
-        )
+        pendingEstablishNetworkOperationId = null
+        _uiState.value = _uiState.value.copy(lastError = "Join cancelled")
+        listenerCoreController?.cancelJoin()
     }
 
     fun retryJoin() {
@@ -247,14 +261,7 @@ class MainViewModel @JvmOverloads constructor(
                 metricsSummary = summarizeMetrics(),
             )
         }
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.SCANNING,
-            connectionProgress = ConnectionProgressState(
-                currentState = ListenerLifecycleState.SCANNING,
-                discovered = true,
-            ),
-        )
-        scanForSessions()
+        listenerCoreController?.retryRecoverableFailure()
     }
 
     fun setLocalVolume(volume: Float) {
@@ -297,13 +304,10 @@ class MainViewModel @JvmOverloads constructor(
         pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
         pendingJoinRequestMessage = null
+        pendingEstablishNetworkOperationId = null
         logger.i("listener.disconnect", "Listener left session")
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.IDLE,
-            listenerPlaybackState = PlaybackState.STOPPED,
-            selectedSession = null,
-            connectionProgress = ConnectionProgressState(),
-        )
+        _uiState.value = _uiState.value.copy(listenerPlaybackState = PlaybackState.STOPPED)
+        listenerCoreController?.cancelJoin()
         diagnosticsStore.updateListener { ListenerDiagnosticsSnapshot() }
         refreshListenerDiagnostics()
     }
@@ -353,18 +357,24 @@ class MainViewModel @JvmOverloads constructor(
 
     internal fun hasListenerTransportPermissions(): Boolean =
         PermissionCatalogue.wifiDirectPermissions().all { hasPermission(it) } &&
-            PermissionCatalogue.bluetoothPermissions().all { hasPermission(it) }
+            PermissionCatalogue.bluetoothPermissions()
+                // Listeners scan and connect but never advertise -- matches
+                // PermissionRequestContext.LISTENER_NEARBY, which never
+                // requests BluetoothAdvertise, so it would otherwise never
+                // be granted through the listener's own request flow.
+                .filter { it != AppPermission.BluetoothAdvertise }
+                .all { hasPermission(it) }
 
     internal fun demoSessions(): List<SessionInfo> = listOf(
         SessionInfo(
-            id = "demo-session-alpha",
+            id = "${DEMO_SESSION_ID_PREFIX}alpha",
             name = "Back Patio Demo",
             hostDeviceName = "Pixel Host",
             approvalMode = ApprovalMode.MANUAL,
             inviteCodeRequired = false,
         ),
         SessionInfo(
-            id = "demo-session-beta",
+            id = "${DEMO_SESSION_ID_PREFIX}beta",
             name = "Invite Code Demo",
             hostDeviceName = "Galaxy Host",
             approvalMode = ApprovalMode.INVITE_CODE,
@@ -378,10 +388,14 @@ class MainViewModel @JvmOverloads constructor(
         wifiDirectService.stop()
         manualListenerController.close()
         hostCoreController?.close()
+        listenerCoreController?.close()
         runBlocking(Dispatchers.IO) { domainStore.close() }
         super.onCleared()
     }
 }
+
+/** Prefix for [MainViewModel.demoSessions], a BuildConfig.DEBUG-only simulation that never touches Rust. */
+internal const val DEMO_SESSION_ID_PREFIX = "demo-session-"
 
 internal fun RustStoredTuningSettings.toAppTuningSettings(): TuningSettings = TuningSettings(
     syncSampleWindow = syncSampleWindow,

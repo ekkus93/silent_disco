@@ -108,21 +108,9 @@ import kotlinx.coroutines.runBlocking
                 refreshDiscoveredSessions()
                 reportRustHostTransportState(snapshot.state)
                 handleTransportSnapshot(snapshot)
+                completeRustListenerNetworkEstablishment(snapshot)
                 if (pendingJoinRequestMessage != null && snapshot.state == TransportConnectionState.CONNECTED) {
                     sendPendingJoinRequest()
-                }
-                if (_uiState.value.listenerState == ListenerLifecycleState.SCANNING &&
-                    _uiState.value.discoveredSessions.isEmpty() &&
-                    snapshot.state == TransportConnectionState.DISCOVERING
-                ) {
-                    _uiState.value = _uiState.value.copy(lastMessage = "Scanning for nearby sessions...")
-                }
-                snapshot.lastError?.let { error ->
-                    if (_uiState.value.listenerState == ListenerLifecycleState.CONNECTING ||
-                        _uiState.value.listenerState == ListenerLifecycleState.SCANNING
-                    ) {
-                        _uiState.value = _uiState.value.copy(lastError = error.message)
-                    }
                 }
             }
         }
@@ -157,11 +145,7 @@ import kotlinx.coroutines.runBlocking
 
     internal fun MainViewModel.handleBleScanFailure(message: String) {
         clearScanState()
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.ERROR,
-            isScanning = false,
-            lastError = message,
-        )
+        listenerCoreController?.transportFailed(message, retryable = true)
         diagnosticsStore.updateListener { it.copy(lastError = message) }
         refreshListenerDiagnostics()
     }
@@ -204,26 +188,21 @@ import kotlinx.coroutines.runBlocking
     internal fun MainViewModel.handleJoinApprovalMessage(message: ControlMessage.JoinApproval) {
         if (message.listenerId != localListenerDeviceId) return
         _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.APPROVED,
-            connectionProgress = _uiState.value.connectionProgress.copy(
-                currentState = ListenerLifecycleState.APPROVED,
-                approved = true,
-                connected = true,
-            ),
             lastMessage = if (message.trustedForFuture) {
                 "Join approved; host remembered this device"
             } else {
                 "Join approved"
             },
-            lastError = null,
         )
+        listenerCoreController?.submitJoinApproved(message.trustedForFuture)
         refreshListenerDiagnostics()
         requestListenerSyncProbe(source = "Initial clock sync")
     }
 
     internal fun MainViewModel.handleJoinRejectionMessage(message: ControlMessage.JoinRejection) {
         if (message.listenerId != localListenerDeviceId) return
-        handleListenerConnectionFailure(message.reason)
+        stopListenerPlaybackForFailure(message.reason)
+        listenerCoreController?.submitJoinRejected(message.reason)
     }
 
     internal fun MainViewModel.handleRemotePause(message: ControlMessage.Pause) {
@@ -297,21 +276,18 @@ import kotlinx.coroutines.runBlocking
         refreshHostDiagnostics()
     }
 
-    internal fun MainViewModel.handleListenerConnectionFailure(message: String) {
+    /**
+     * Local resource cleanup shared by every listener failure path
+     * (transport failure, join rejection, host-initiated disconnect) --
+     * lifecycle state itself is reported to the Rust actor by each caller,
+     * not written here, so there is exactly one source of truth for it.
+     */
+    private fun MainViewModel.stopListenerPlaybackForFailure(message: String) {
         clearScanState()
         logger.w("transport.error", message)
         playbackJob?.cancel()
         resyncJob?.cancel()
         playbackEngine.stop()
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.ERROR,
-            listenerPlaybackState = PlaybackState.ERROR,
-            connectionProgress = _uiState.value.connectionProgress.copy(
-                buffered = false,
-                playing = false,
-            ),
-            lastError = message,
-        )
         diagnosticsStore.updateListener {
             it.copy(
                 playbackState = PlaybackState.ERROR,
@@ -322,33 +298,21 @@ import kotlinx.coroutines.runBlocking
         refreshListenerDiagnostics()
     }
 
+    internal fun MainViewModel.handleListenerConnectionFailure(message: String) {
+        stopListenerPlaybackForFailure(message)
+        listenerCoreController?.transportFailed(message, retryable = true)
+    }
+
     internal fun MainViewModel.handleListenerDisconnect(message: String) {
-        clearScanState()
-        playbackJob?.cancel()
-        resyncJob?.cancel()
-        playbackEngine.stop()
+        stopListenerPlaybackForFailure(message)
         listenerScheduler = null
         pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
         pendingJoinRequestMessage = null
-        logger.w("transport.disconnect", message)
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.DISCONNECTED,
-            listenerPlaybackState = PlaybackState.STOPPED,
-            connectionProgress = _uiState.value.connectionProgress.copy(
-                buffered = false,
-                playing = false,
-            ),
-            lastError = message,
-        )
-        diagnosticsStore.updateListener {
-            it.copy(
-                playbackState = PlaybackState.STOPPED,
-                lastError = message,
-                metricsSummary = summarizeMetrics(),
-            )
-        }
-        refreshListenerDiagnostics()
+        // No dedicated Rust event exists yet for a graceful host-initiated
+        // disconnect (only Failed); approximating with transportFailed means
+        // this surfaces as Error rather than Disconnected in the UI for now.
+        listenerCoreController?.transportFailed(message, retryable = true)
     }
 
     internal fun MainViewModel.refreshDiscoveredSessions() {
@@ -365,10 +329,15 @@ import kotlinx.coroutines.runBlocking
         val merged = (bleSessions + peerSessions)
             .distinctBy { it.id }
             .sortedBy { it.name }
-        _uiState.value = _uiState.value.copy(
-            discoveredSessions = merged,
-            connectionProgress = _uiState.value.connectionProgress.copy(discovered = merged.isNotEmpty()),
-        )
+        val controller = listenerCoreController ?: return
+        val known = controller.snapshots.value?.discoveredSessions.orEmpty()
+            .map { it.sessionId }
+            .toSet()
+        val mergedIds = merged.map { it.id }.toSet()
+        merged.filter { it.id !in known }.forEach { session ->
+            controller.submitSessionDiscovered(session.toFfiSessionAdvertisement())
+        }
+        (known - mergedIds).forEach { sessionId -> controller.submitSessionExpired(sessionId) }
     }
 
     internal fun MainViewModel.sendPendingJoinRequest() {
@@ -378,15 +347,8 @@ import kotlinx.coroutines.runBlocking
                 wifiDirectService.sendControlToHost(request)
             }.onSuccess {
                 pendingJoinRequestMessage = null
-                _uiState.value = _uiState.value.copy(
-                    listenerState = ListenerLifecycleState.AWAITING_APPROVAL,
-                    connectionProgress = _uiState.value.connectionProgress.copy(
-                        currentState = ListenerLifecycleState.AWAITING_APPROVAL,
-                        connected = true,
-                    ),
-                    lastMessage = "Join request sent",
-                    lastError = null,
-                )
+                _uiState.value = _uiState.value.copy(lastMessage = "Join request sent", lastError = null)
+                listenerCoreController?.submitAwaitingApproval()
             }.onFailure { error ->
                 handleListenerConnectionFailure(error.message ?: "Failed to send join request")
             }

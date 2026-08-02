@@ -767,24 +767,48 @@ SyncingClock states as 13.1.
 
 ### 13.3 Route Android listener UI through Rust
 
-The shared UniFFI surface (`FfiCoreHandle::start_discovery/stop_discovery/
-select_session/submit_join/cancel_join`, `submit_session_discovered/
-submit_session_expired/submit_awaiting_approval/submit_join_approved/
-submit_join_rejected`, and a typed `FfiListenerLifecycle` +
-`FfiSessionAdvertisement` on `FfiCoreSnapshot`) now exists for all four
-bullets below, but nothing in Kotlin calls it yet -- this sub-block is about
-Android actually routing through it, not the Rust surface existing.
+`MainViewModel` now drives BLE/Wi-Fi-Direct discovery, session selection,
+join/cancel/retry, and its own transport-failure paths through a new
+`ListenerCoreController`/`FfiCoreHandle` (mirroring the existing host
+controller), with `executeRustListenerPlatformEffect` giving the Rust
+`StartDiscovery`/`StopDiscovery`/`EstablishNetwork`/`ReleaseNetwork` effects
+real implementations (BLE scan, Wi-Fi Direct discovery/connect). Verified on
+a physical device: permission-missing failure and the discovery-success path
+(`discoveryActive` reaching the UI via a real Rust snapshot) both worked
+end-to-end; no second device was available to verify a real join/approval.
 
-- [ ] Discovery facts enter as platform events.
-- [ ] Join/cancel/retry/resync actions are Rust commands.
-- [ ] UI progress renders Rust snapshot.
-- [ ] Kotlin does not maintain duplicate listener lifecycle state.
+- [x] Discovery facts enter as platform events.
+- [x] Join/cancel/retry actions are Rust commands (resync is not -- it
+      depends on the same deferred sync/playback states as 13.1/13.2 and
+      still goes through Kotlin's own sync pipeline).
+- [x] UI progress renders Rust snapshot for idle/scanning/session-selected/
+      join-requested/awaiting-approval/approved/connecting/disconnected/error;
+      the playback-tail states remain Kotlin-owned per the 13.1 deferral, with
+      a guard (`nextListenerState`) so a stale Rust snapshot cannot silently
+      regress out of them.
+- [x] Kotlin no longer independently mutates listener lifecycle/discovered-
+      session state for the parts Rust now owns; `ConnectionProgressState`'s
+      discovery/join-progress booleans are derived from the Rust-driven
+      `listenerState` instead of being set at each call site.
+
+The BLE/Wi-Fi-Direct discovered-session path and the manual-endpoint path
+(`ManualListenerTransportController`/`FfiListenerTransportHandle`) both now
+report facts into this same actor, but the manual-endpoint UI entry point
+itself has not been rewired to call it -- it still drives its own
+`ManualConnectUiState` directly. Unifying that call site is a clearly scoped
+follow-up, not done this session.
 
 ### 13.4 Add parity/integration tests
 
 - [ ] Reproduce FIX3/FIX4/FIX5 listener hardening expectations in Rust tests.
 - [ ] Android tests verify UI actions map to Rust commands.
 - [x] Failure messages remain visible and are not overwritten by later success text.
+
+Added Kotlin unit tests for the new pure functions (`nextListenerState`'s
+playback-tail seam, `FfiListenerLifecycle`/`FfiSessionAdvertisement` mapping),
+but nothing yet exercises `MainViewModel` end-to-end asserting a UI action
+produced a specific Rust command -- the second bullet stays unchecked for
+that reason.
 
 The first bullet is left unchecked because the exact correspondence to the
 named Kotlin FIX3/FIX4/FIX5 commits was not independently confirmed this

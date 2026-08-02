@@ -75,72 +75,13 @@ internal fun MainViewModel.scanForSessionsImpl() {
     if (!requirePersistenceReady("scan for sessions")) return
     logger.i("listener.scan", "Scanning for nearby sessions")
     scanJob?.cancel()
-
-    if (!hasListenerTransportPermissions()) {
-        val message = "Missing nearby connectivity permissions for discovery"
-        wifiDirectService.fail(message, retryable = true)
-        _uiState.value = _uiState.value.copy(
-            isScanning = false,
-            listenerState = ListenerLifecycleState.ERROR,
-            lastError = message,
-        )
-        diagnosticsStore.updateListener { it.copy(lastError = message) }
-        refreshListenerDiagnostics()
-        return
-    }
-
-    _uiState.value = _uiState.value.copy(
-        isScanning = true,
-        listenerState = ListenerLifecycleState.SCANNING,
-        connectionProgress = _uiState.value.connectionProgress.copy(
-            currentState = ListenerLifecycleState.SCANNING,
-        ),
-        lastError = null,
-        lastMessage = "Scanning for nearby sessions…",
-    )
+    _uiState.value = _uiState.value.copy(lastMessage = "Scanning for nearby sessions…", lastError = null)
+    ensureRustListenerCore().startDiscovery()
 
     scanJob = viewModelScope.launch {
-        val bleStart = bleService.startScanning()
-        if (!bleStart.started) {
-            val message = bleStart.message ?: "BLE scan could not start"
-            wifiDirectService.fail(message, retryable = true)
-            _uiState.value = _uiState.value.copy(
-                isScanning = false,
-                listenerState = ListenerLifecycleState.ERROR,
-                lastError = message,
-            )
-            diagnosticsStore.updateListener { it.copy(lastError = message) }
-            refreshListenerDiagnostics()
-            return@launch
-        }
-
-        wifiDirectService.discoverPeers()
         val scanWindowMs = _uiState.value.tuningSettings.normalized().scanWindowMs
         delay(scanWindowMs)
         refreshDiscoveredSessions()
-
-        val discovered = _uiState.value.discoveredSessions
-        _uiState.value = _uiState.value.copy(
-            isScanning = false,
-            listenerState = if (_uiState.value.selectedSession == null) {
-                ListenerLifecycleState.IDLE
-            } else {
-                ListenerLifecycleState.SESSION_SELECTED
-            },
-            discoveredSessions = discovered,
-            connectionProgress = _uiState.value.connectionProgress.copy(
-                currentState = if (discovered.isEmpty()) {
-                    ListenerLifecycleState.IDLE
-                } else {
-                    ListenerLifecycleState.SESSION_SELECTED
-                },
-                discovered = discovered.isNotEmpty(),
-            ),
-            lastMessage = if (discovered.isEmpty()) "No nearby sessions found" else "Found ${discovered.size} session(s)",
-            lastError = null,
-        )
-        diagnosticsStore.updateListener { it.copy(lastError = null) }
-        refreshListenerDiagnostics()
     }
 }
 
@@ -167,23 +108,15 @@ internal fun MainViewModel.requestJoinImpl() {
         inviteCode = _uiState.value.connectionProgress.inviteCode.ifBlank { null },
     )
     logger.i("listener.join", "Join request created for ${request.sessionId.value}")
-    _uiState.value = _uiState.value.copy(
-        listenerState = ListenerLifecycleState.CONNECTING,
-        connectionProgress = _uiState.value.connectionProgress.copy(
-            currentState = ListenerLifecycleState.CONNECTING,
-            requested = true,
-        ),
-        lastMessage = "Connecting to host",
-        lastError = null,
-    )
+    _uiState.value = _uiState.value.copy(lastMessage = "Connecting to host", lastError = null)
     pendingJoinRequestMessage = request
-    val shouldSimulate = BuildConfig.DEBUG && session.id.startsWith("demo-session-")
+    val shouldSimulate = BuildConfig.DEBUG && session.id.startsWith(DEMO_SESSION_ID_PREFIX)
     if (shouldSimulate) {
         val shouldReject = session.inviteCodeRequired && request.inviteCode != "1234"
         simulateApprovalAndPlayback(session.id, shouldReject)
         return
     }
-    wifiDirectService.connectToSession(session)
+    ensureRustListenerCore().submitJoin(request.inviteCode)
 }
 
 internal fun MainViewModel.startTransportListenerPlayback(sessionId: SessionId, streamId: StreamId, format: AudioFormatSpec = AudioFormatSpec()) {

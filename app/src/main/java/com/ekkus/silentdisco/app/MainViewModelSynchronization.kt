@@ -181,14 +181,15 @@ import kotlinx.coroutines.runBlocking
     internal fun MainViewModel.handleSyncFailure(message: String) {
         logger.w("sync.error", message)
         metrics.increment("sync_establish_failure")
+        // Reported into Rust (rather than written locally) so a later Rust
+        // snapshot cannot silently revert this back to an earlier state.
+        listenerCoreController?.transportFailed(message, retryable = true)
         _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.ERROR,
             listenerPlaybackState = PlaybackState.ERROR,
             connectionProgress = _uiState.value.connectionProgress.copy(
                 buffered = false,
                 playing = false,
             ),
-            lastError = message,
         )
         diagnosticsStore.updateListener {
             it.copy(
