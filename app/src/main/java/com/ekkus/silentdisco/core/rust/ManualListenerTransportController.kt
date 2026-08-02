@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.rust
 
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
+import com.ekkus.silentdisco.core.audio.DebugPcmRecorder
 import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
@@ -22,6 +23,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiManualHostEndpoint
 import com.ekkus.silentdisco.core.uniffi.parseManualHostEndpoint
+import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,11 +62,19 @@ private data class PendingStream(val streamId: StreamId, val sampleRate: Int, va
  */
 class ManualListenerTransportController(
     private val playbackEngine: PlaybackEngine,
+    /**
+     * Directory for [DebugPcmRecorder] output (app-specific external storage,
+     * pullable via `adb pull` without root). Null disables recording. This is
+     * diagnostic-only instrumentation for this viability PoC, not a
+     * production feature.
+     */
+    private val debugRecordingDirectory: File? = null,
 ) : AutoCloseable {
     private val handleRef = AtomicReference<FfiListenerTransportHandle?>(null)
     private var eventLoop: Job? = null
     private var syncProbeJob: Job? = null
     private var playbackJob: Job? = null
+    private var debugRecorder: DebugPcmRecorder? = null
 
     private val _connectState = MutableStateFlow<ManualConnectUiState>(ManualConnectUiState.Idle)
     val connectState: StateFlow<ManualConnectUiState> = _connectState.asStateFlow()
@@ -302,6 +312,7 @@ class ManualListenerTransportController(
             handlePlaybackEngineFailure(error)
             return
         }
+        startDebugRecording(streamId, sampleRate, channelCount)
         _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.BUFFERING)
         playbackJob?.cancel()
         playbackJob = scope.launch(Dispatchers.IO) {
@@ -333,6 +344,10 @@ class ManualListenerTransportController(
                 if (frame.concealed) {
                     logger.w("manual.audio.concealed_frame", "synthesized silence at seq=${frame.packet.sequenceNumber}")
                 }
+                // Recorded exactly as handed to the engine -- same payload,
+                // same order -- so the saved file reflects precisely what
+                // this app believed it was playing, concealment included.
+                debugRecorder?.append(frame.packet.payload)
                 runCatching { playbackEngine.write(frame) }.onFailure { error ->
                     handlePlaybackEngineFailure(error)
                     return@launch
@@ -342,10 +357,27 @@ class ManualListenerTransportController(
         }
     }
 
+    private fun startDebugRecording(streamId: StreamId, sampleRate: Int, channelCount: Int) {
+        val directory = debugRecordingDirectory ?: return
+        debugRecorder?.finish()
+        val file = File(directory, "manual-listener-${streamId.value}.wav")
+        val recorder = DebugPcmRecorder(file)
+        recorder.start(sampleRate, channelCount)
+        debugRecorder = recorder
+        logger.i("manual.audio.recording_started", file.absolutePath)
+    }
+
+    private fun finishDebugRecording() {
+        val recorder = debugRecorder ?: return
+        debugRecorder = null
+        recorder.finish()
+    }
+
     private fun handleStreamStopped() {
         playbackJob?.cancel()
         playbackJob = null
         logPlaybackSummary()
+        finishDebugRecording()
         listenerScheduler = null
         pendingPackets.clear()
         runCatching { playbackEngine.stop() }
@@ -434,6 +466,7 @@ class ManualListenerTransportController(
         syncProbeJob = null
         if (listenerScheduler != null) {
             logPlaybackSummary()
+            finishDebugRecording()
             runCatching { playbackEngine.stop() }
         }
         listenerScheduler = null
