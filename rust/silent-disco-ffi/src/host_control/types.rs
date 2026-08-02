@@ -35,6 +35,24 @@ pub enum FfiHostLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiListenerLifecycle {
+    Idle,
+    Scanning,
+    SessionSelected,
+    JoinRequested,
+    AwaitingApproval,
+    Approved,
+    Connecting,
+    SyncingClock,
+    Buffering,
+    Playing,
+    Reconnecting,
+    Desynced,
+    Disconnected,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiTransportState {
     Idle,
     Discovering,
@@ -117,6 +135,19 @@ pub struct FfiJoinRequestInput {
     pub received_at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiSessionAdvertisement {
+    pub session_id: String,
+    pub host_device_id: String,
+    pub session_name: String,
+    pub approval_mode: FfiApprovalMode,
+    pub protocol_version: u16,
+    pub address: Option<String>,
+    pub control_port: Option<u16>,
+    pub sync_port: Option<u16>,
+    pub audio_port: Option<u16>,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FfiSynchronizationSummary {
     pub confidence: String,
@@ -177,9 +208,11 @@ pub struct FfiCoreSnapshot {
     pub selected_role: Option<FfiAppRole>,
     pub host_draft: FfiHostDraft,
     pub host_lifecycle: FfiHostLifecycle,
-    pub listener_lifecycle: String,
+    pub listener_lifecycle: FfiListenerLifecycle,
     pub transport_state: FfiTransportState,
     pub discovery_active: bool,
+    pub discovered_sessions: Vec<FfiSessionAdvertisement>,
+    pub selected_session: Option<String>,
     pub pending_join_requests: Vec<FfiJoinRequest>,
     pub listeners: Vec<FfiListenerSummary>,
     pub playback_state: FfiPlaybackState,

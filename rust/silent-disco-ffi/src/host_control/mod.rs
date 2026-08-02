@@ -7,7 +7,7 @@ pub use types::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreNotification, FfiCoreObserver, FfiCoreSnapshot,
     FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiJoinRequestInput,
-    FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState,
-    FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState,
-    FfiTrustState, FfiTuningPatch, FfiTuningSettings,
+    FfiListenerLifecycle, FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect,
+    FfiPlaybackState, FfiSessionAdvertisement, FfiStorageEffect, FfiSynchronizationSummary,
+    FfiTransportEffect, FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
 };

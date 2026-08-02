@@ -28,9 +28,10 @@ pub use host_control::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,
     FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest,
-    FfiJoinRequestInput, FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect,
-    FfiPlaybackState, FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect,
-    FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
+    FfiJoinRequestInput, FfiListenerLifecycle, FfiListenerSummary, FfiPlatformCompletion,
+    FfiPlatformEffect, FfiPlaybackState, FfiSessionAdvertisement, FfiStorageEffect,
+    FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState, FfiTrustState,
+    FfiTuningPatch, FfiTuningSettings,
 };
 pub use listener_transport::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,

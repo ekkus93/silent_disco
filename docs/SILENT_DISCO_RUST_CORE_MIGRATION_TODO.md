@@ -767,6 +767,14 @@ SyncingClock states as 13.1.
 
 ### 13.3 Route Android listener UI through Rust
 
+The shared UniFFI surface (`FfiCoreHandle::start_discovery/stop_discovery/
+select_session/submit_join/cancel_join`, `submit_session_discovered/
+submit_session_expired/submit_awaiting_approval/submit_join_approved/
+submit_join_rejected`, and a typed `FfiListenerLifecycle` +
+`FfiSessionAdvertisement` on `FfiCoreSnapshot`) now exists for all four
+bullets below, but nothing in Kotlin calls it yet -- this sub-block is about
+Android actually routing through it, not the Rust surface existing.
+
 - [ ] Discovery facts enter as platform events.
 - [ ] Join/cancel/retry/resync actions are Rust commands.
 - [ ] UI progress renders Rust snapshot.
@@ -776,7 +784,13 @@ SyncingClock states as 13.1.
 
 - [ ] Reproduce FIX3/FIX4/FIX5 listener hardening expectations in Rust tests.
 - [ ] Android tests verify UI actions map to Rust commands.
-- [ ] Failure messages remain visible and are not overwritten by later success text.
+- [x] Failure messages remain visible and are not overwritten by later success text.
+
+The first bullet is left unchecked because the exact correspondence to the
+named Kotlin FIX3/FIX4/FIX5 commits was not independently confirmed this
+session, even though the equivalent behaviors (transport-failure role
+classification, same-session reselection, retry-to-rescan) are covered by
+`listener_block13_actor_lifecycle.rs`.
 
 **Acceptance:** Host and listener lifecycle state are exclusively Rust-authoritative.
 

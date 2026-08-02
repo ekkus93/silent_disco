@@ -1,18 +1,20 @@
+use super::conversions::network_endpoint;
 use super::types::{
     FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
     FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
-    FfiPlatformCompletion, FfiPlaybackState, FfiTransportState, FfiTuningPatch, FfiTuningSettings,
+    FfiPlatformCompletion, FfiPlaybackState, FfiSessionAdvertisement, FfiTransportState,
+    FfiTuningPatch, FfiTuningSettings,
 };
 use silent_disco_core::domain::{
-    ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SyncConfidence,
+    ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SessionId, SyncConfidence,
     TransportState, TrustState,
 };
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreCommand,
     CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch, JoinRequestSummary,
-    ListenerSummary, PlatformEvent, SnapshotRevision, StorageCompletion, StorageEvent,
-    SynchronizationSummary, TransportEvent,
+    ListenerSummary, PlatformEvent, SessionAdvertisement, SnapshotRevision, StorageCompletion,
+    StorageEvent, SynchronizationSummary, TransportEvent,
 };
 use std::sync::{Arc, Mutex};
 
@@ -174,6 +176,45 @@ impl FfiCoreHandle {
         self.submit_command(expected_revision, CoreCommand::RetryRecoverableFailure)
     }
 
+    pub fn start_discovery(
+        &self,
+        expected_revision: u64,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(expected_revision, CoreCommand::StartDiscovery)
+    }
+
+    pub fn stop_discovery(
+        &self,
+        expected_revision: u64,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(expected_revision, CoreCommand::StopDiscovery)
+    }
+
+    pub fn select_session(
+        &self,
+        expected_revision: u64,
+        session_id: String,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(
+            expected_revision,
+            CoreCommand::SelectSession {
+                session_id: session_id_from_string(session_id)?,
+            },
+        )
+    }
+
+    pub fn submit_join(
+        &self,
+        expected_revision: u64,
+        invite_code: Option<String>,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(expected_revision, CoreCommand::SubmitJoin { invite_code })
+    }
+
+    pub fn cancel_join(&self, expected_revision: u64) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(expected_revision, CoreCommand::CancelJoin)
+    }
+
     pub fn platform_operation_succeeded(
         &self,
         operation_id: String,
@@ -213,6 +254,66 @@ impl FfiCoreHandle {
         self.ensure_open()?;
         self.handle
             .submit_transport_event(TransportEvent::StateChanged(state.into()))?;
+        Ok(())
+    }
+
+    pub fn submit_session_discovered(
+        &self,
+        session: FfiSessionAdvertisement,
+    ) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        let endpoint = match (
+            session.address,
+            session.control_port,
+            session.sync_port,
+            session.audio_port,
+        ) {
+            (Some(address), Some(control_port), Some(sync_port), Some(audio_port)) => Some(
+                network_endpoint(&address, control_port, sync_port, audio_port)?,
+            ),
+            _ => None,
+        };
+        let advertisement = SessionAdvertisement::new(
+            session_id_from_string(session.session_id)?,
+            device_id_from_string(session.host_device_id)?,
+            session.session_name,
+            session.approval_mode.into(),
+            session.protocol_version,
+            endpoint,
+        )
+        .map_err(|error| FfiBridgeError::Core(error.to_string()))?;
+        self.handle
+            .submit_platform_event(PlatformEvent::SessionDiscovered(advertisement))?;
+        Ok(())
+    }
+
+    pub fn submit_session_expired(&self, session_id: String) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        self.handle
+            .submit_platform_event(PlatformEvent::SessionExpired {
+                session_id: session_id_from_string(session_id)?,
+            })?;
+        Ok(())
+    }
+
+    pub fn submit_awaiting_approval(&self) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        self.handle
+            .submit_transport_event(TransportEvent::AwaitingApproval)?;
+        Ok(())
+    }
+
+    pub fn submit_join_approved(&self, trusted_for_future: bool) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        self.handle
+            .submit_transport_event(TransportEvent::JoinApproved { trusted_for_future })?;
+        Ok(())
+    }
+
+    pub fn submit_join_rejected(&self, reason: String) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        self.handle
+            .submit_transport_event(TransportEvent::JoinRejected { reason })?;
         Ok(())
     }
 
@@ -430,6 +531,10 @@ fn request_id_from_string(value: String) -> Result<RequestId, FfiBridgeError> {
 
 fn device_id_from_string(value: String) -> Result<DeviceId, FfiBridgeError> {
     DeviceId::new(value).map_err(|error| FfiBridgeError::Core(error.to_string()))
+}
+
+fn session_id_from_string(value: String) -> Result<SessionId, FfiBridgeError> {
+    SessionId::new(value).map_err(|error| FfiBridgeError::Core(error.to_string()))
 }
 
 fn operation_id_from_string(value: String) -> Result<OperationId, FfiBridgeError> {

@@ -1,22 +1,22 @@
 use super::types::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreNotification, FfiCoreSnapshot, FfiDeliveryReport,
-    FfiDiagnosticField, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiListenerSummary,
-    FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState, FfiStorageEffect,
-    FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState, FfiTrustState,
-    FfiTuningPatch, FfiTuningSettings,
+    FfiDiagnosticField, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiListenerLifecycle,
+    FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState,
+    FfiSessionAdvertisement, FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect,
+    FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
 };
 use silent_disco_core::domain::{
-    AppRole, ApprovalMode, HostLifecycle, MonotonicMillis, OperationId, PlaybackState,
-    TransportState, TrustState, TuningSettings,
+    AppRole, ApprovalMode, HostLifecycle, ListenerLifecycle, MonotonicMillis, OperationId,
+    PlaybackState, SessionId, TransportState, TrustState, TuningSettings,
 };
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
     AudioOutputInfo, AudioSourceDescriptor, CommandReceipt, CoreDiagnostic, CoreNotification,
     CoreSnapshot, DeliveryReport, NetworkEndpoint, PermissionCapability, PlatformEffect,
-    PlatformEffectRequest, PlatformOperationCompletion, RecoverableAction, StorageEffect,
-    StorageEffectRequest, SynchronizationSummary, TransportEffect, TransportEffectRequest,
-    TuningPatch,
+    PlatformEffectRequest, PlatformOperationCompletion, RecoverableAction, SessionAdvertisement,
+    StorageEffect, StorageEffectRequest, SynchronizationSummary, TransportEffect,
+    TransportEffectRequest, TuningPatch,
 };
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -100,6 +100,43 @@ impl From<HostLifecycle> for FfiHostLifecycle {
             HostLifecycle::Paused => Self::Paused,
             HostLifecycle::EndingSession => Self::EndingSession,
             HostLifecycle::Error => Self::Error,
+        }
+    }
+}
+
+impl From<ListenerLifecycle> for FfiListenerLifecycle {
+    fn from(value: ListenerLifecycle) -> Self {
+        match value {
+            ListenerLifecycle::Idle => Self::Idle,
+            ListenerLifecycle::Scanning => Self::Scanning,
+            ListenerLifecycle::SessionSelected => Self::SessionSelected,
+            ListenerLifecycle::JoinRequested => Self::JoinRequested,
+            ListenerLifecycle::AwaitingApproval => Self::AwaitingApproval,
+            ListenerLifecycle::Approved => Self::Approved,
+            ListenerLifecycle::Connecting => Self::Connecting,
+            ListenerLifecycle::SyncingClock => Self::SyncingClock,
+            ListenerLifecycle::Buffering => Self::Buffering,
+            ListenerLifecycle::Playing => Self::Playing,
+            ListenerLifecycle::Reconnecting => Self::Reconnecting,
+            ListenerLifecycle::Desynced => Self::Desynced,
+            ListenerLifecycle::Disconnected => Self::Disconnected,
+            ListenerLifecycle::Error => Self::Error,
+        }
+    }
+}
+
+impl From<SessionAdvertisement> for FfiSessionAdvertisement {
+    fn from(value: SessionAdvertisement) -> Self {
+        Self {
+            session_id: value.session_id.into_string(),
+            host_device_id: value.host_device_id.into_string(),
+            session_name: value.session_name,
+            approval_mode: value.approval_mode.into(),
+            protocol_version: value.protocol_version,
+            address: value.endpoint.map(|endpoint| endpoint.address.to_string()),
+            control_port: value.endpoint.map(|endpoint| endpoint.control_port),
+            sync_port: value.endpoint.map(|endpoint| endpoint.sync_port),
+            audio_port: value.endpoint.map(|endpoint| endpoint.audio_port),
         }
     }
 }
@@ -336,9 +373,15 @@ impl From<CoreSnapshot> for FfiCoreSnapshot {
             selected_role: value.selected_role.map(Into::into),
             host_draft,
             host_lifecycle: value.host_lifecycle.into(),
-            listener_lifecycle: value.listener_lifecycle.wire_name().to_owned(),
+            listener_lifecycle: value.listener_lifecycle.into(),
             transport_state: value.transport_state.into(),
             discovery_active: value.discovery_active,
+            discovered_sessions: value
+                .discovered_sessions
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            selected_session: value.selected_session.map(SessionId::into_string),
             pending_join_requests: value
                 .pending_join_requests
                 .into_iter()
