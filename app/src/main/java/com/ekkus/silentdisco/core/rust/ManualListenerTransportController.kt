@@ -2,8 +2,11 @@ package com.ekkus.silentdisco.core.rust
 
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
+import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
+import com.ekkus.silentdisco.core.audio.PlaybackTelemetry
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
+import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SyncState
@@ -75,6 +78,12 @@ class ManualListenerTransportController(
     private var pendingStream: PendingStream? = null
     private var listenerScheduler: ListenerPlaybackScheduler? = null
     private val pendingPackets = ArrayDeque<AudioPacket>()
+
+    private val logger = AppLogger("ManualListenerAudio")
+    private var lastReceivedSequence: Long? = null
+    private var receivedCount: Long = 0
+    private var writtenCount: Long = 0
+    private var lastTelemetry: PlaybackTelemetry = PlaybackTelemetry()
 
     suspend fun parse(rawInput: String): ManualEndpointParseResult = withContext(Dispatchers.Default) {
         try {
@@ -272,6 +281,10 @@ class ManualListenerTransportController(
      */
     private fun beginPlayback(scope: CoroutineScope, streamId: StreamId, sampleRate: Int, channelCount: Int) {
         val session = sessionId ?: return
+        receivedCount = 0
+        writtenCount = 0
+        lastReceivedSequence = null
+        lastTelemetry = PlaybackTelemetry()
         val mapper = HostTimeMapper(offsetMs = currentSyncState.offsetMs, skewPpm = currentSyncState.skewPpm)
         val scheduler = ListenerPlaybackScheduler(
             mapper = mapper,
@@ -317,10 +330,14 @@ class ManualListenerTransportController(
                     delay(PLAYBACK_RETRY_DELAY_MS)
                     continue
                 }
+                if (frame.concealed) {
+                    logger.w("manual.audio.concealed_frame", "synthesized silence at seq=${frame.packet.sequenceNumber}")
+                }
                 runCatching { playbackEngine.write(frame) }.onFailure { error ->
                     handlePlaybackEngineFailure(error)
                     return@launch
                 }
+                writtenCount += 1
             }
         }
     }
@@ -328,15 +345,47 @@ class ManualListenerTransportController(
     private fun handleStreamStopped() {
         playbackJob?.cancel()
         playbackJob = null
+        logPlaybackSummary()
         listenerScheduler = null
         pendingPackets.clear()
         runCatching { playbackEngine.stop() }
         _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
     }
 
+    /**
+     * Logs everything needed to objectively tell where audio went missing or
+     * wrong, rather than relying on a description of what it sounded like:
+     * how many packets actually arrived vs. were written to the engine, the
+     * scheduler's own loss/drop/conceal counters, and the native Oboe ring's
+     * own underrun/silence-fill counters (0 unless the ring genuinely ran
+     * dry -- confirms or rules out real-time starvation independently of
+     * anything the Kotlin-side scheduler observed).
+     */
+    private fun logPlaybackSummary() {
+        logger.i(
+            "manual.audio.summary",
+            "received=$receivedCount written=$writtenCount " +
+                "packetLoss=${lastTelemetry.packetLossCount} lateDrop=${lastTelemetry.lateDropCount} " +
+                "invalid=${lastTelemetry.invalidPacketCount} concealed=${lastTelemetry.concealedPacketCount} " +
+                "oboeUnderruns=${OboeBridge.nativeOboeUnderrunCount()} " +
+                "oboeSilenceFilledFrames=${OboeBridge.nativeOboeSilenceFilledFrames()} " +
+                "oboeFramesRendered=${OboeBridge.nativeOboeFramesRendered()}",
+        )
+    }
+
     private fun handleAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
         val session = sessionId ?: return
         val packet = mapAudioReceivedToPacket(event, session, protocolVersion)
+        receivedCount += 1
+        val previousSequence = lastReceivedSequence
+        if (previousSequence != null && packet.sequenceNumber != previousSequence + 1) {
+            logger.w(
+                "manual.audio.received_gap",
+                "expected seq ${previousSequence + 1} but received ${packet.sequenceNumber} " +
+                    "(network loss or reorder before the scheduler ever sees it)",
+            )
+        }
+        lastReceivedSequence = packet.sequenceNumber
         val scheduler = listenerScheduler
         if (scheduler == null) {
             pendingPackets += packet
@@ -345,7 +394,31 @@ class ManualListenerTransportController(
             }
             return
         }
-        scheduler.submit(packet)
+        logTelemetryChange(scheduler.submit(packet), packet.sequenceNumber)
+    }
+
+    /**
+     * [ListenerPlaybackScheduler.submit] returns a running telemetry
+     * snapshot, not just this call's outcome -- logs only the counters that
+     * actually changed since the last observation, tagged with the sequence
+     * number that caused the change, so a real drop/late-drop/invalid/
+     * concealment event is traceable to a specific packet instead of just a
+     * final aggregate count.
+     */
+    private fun logTelemetryChange(telemetry: PlaybackTelemetry, sequenceNumber: Long) {
+        if (telemetry.packetLossCount != lastTelemetry.packetLossCount) {
+            logger.w("manual.audio.packet_loss", "seq=$sequenceNumber total=${telemetry.packetLossCount}")
+        }
+        if (telemetry.lateDropCount != lastTelemetry.lateDropCount) {
+            logger.w("manual.audio.late_drop", "seq=$sequenceNumber total=${telemetry.lateDropCount}")
+        }
+        if (telemetry.invalidPacketCount != lastTelemetry.invalidPacketCount) {
+            logger.w("manual.audio.invalid_packet", "seq=$sequenceNumber total=${telemetry.invalidPacketCount}")
+        }
+        if (telemetry.concealedPacketCount != lastTelemetry.concealedPacketCount) {
+            logger.w("manual.audio.concealed", "seq=$sequenceNumber total=${telemetry.concealedPacketCount}")
+        }
+        lastTelemetry = telemetry
     }
 
     private fun handlePlaybackEngineFailure(error: Throwable) {
@@ -360,6 +433,7 @@ class ManualListenerTransportController(
         syncProbeJob?.cancel()
         syncProbeJob = null
         if (listenerScheduler != null) {
+            logPlaybackSummary()
             runCatching { playbackEngine.stop() }
         }
         listenerScheduler = null
