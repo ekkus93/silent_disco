@@ -9,9 +9,7 @@ import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
-import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
@@ -35,20 +33,11 @@ import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
-import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
-import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.DeviceIdentity
-import com.ekkus.silentdisco.core.protocol.SessionId
-import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
-import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
 import com.ekkus.silentdisco.core.sync.ListenerSyncController
@@ -97,114 +86,18 @@ internal fun MainViewModel.requestJoinImpl() {
         refreshListenerDiagnostics()
         return
     }
-    if (session.inviteCodeRequired && _uiState.value.connectionProgress.inviteCode.isBlank()) {
+    val inviteCode = _uiState.value.connectionProgress.inviteCode.ifBlank { null }
+    if (session.inviteCodeRequired && inviteCode == null) {
         _uiState.value = _uiState.value.copy(lastError = "Invite code required")
         return
     }
-    val request = ControlMessage.JoinRequest(
-        version = 1,
-        sessionId = SessionId(session.id),
-        device = DeviceIdentity(localListenerDeviceId, "This Android Listener"),
-        inviteCode = _uiState.value.connectionProgress.inviteCode.ifBlank { null },
-    )
-    logger.i("listener.join", "Join request created for ${request.sessionId.value}")
+    logger.i("listener.join", "Join request created for ${session.id}")
     _uiState.value = _uiState.value.copy(lastMessage = "Connecting to host", lastError = null)
-    pendingJoinRequestMessage = request
     val shouldSimulate = BuildConfig.DEBUG && session.id.startsWith(DEMO_SESSION_ID_PREFIX)
     if (shouldSimulate) {
-        val shouldReject = session.inviteCodeRequired && request.inviteCode != "1234"
+        val shouldReject = session.inviteCodeRequired && inviteCode != "1234"
         simulateApprovalAndPlayback(session.id, shouldReject)
         return
     }
-    ensureRustListenerCore().submitJoin(request.inviteCode)
-}
-
-internal fun MainViewModel.startTransportListenerPlayback(sessionId: SessionId, streamId: StreamId, format: AudioFormatSpec = AudioFormatSpec()) {
-    val mapper = HostTimeMapper(
-        offsetMs = _uiState.value.listenerSyncState.offsetMs,
-        skewPpm = _uiState.value.listenerSyncState.skewPpm,
-    )
-    listenerScheduler = ListenerPlaybackScheduler(
-        mapper = mapper,
-        thresholds = currentPlaybackThresholds(),
-        expectedSessionId = sessionId,
-        expectedStreamId = streamId,
-    )
-    pendingTransportPackets
-        .filter { it.sessionId == sessionId && it.streamId == streamId }
-        .forEach { packet -> listenerScheduler?.let { recordIncomingPacket(it, packet) } }
-    pendingTransportPackets.clear()
-    runCatching { playbackEngine.start(format) }.onFailure { error ->
-        handleListenerPlaybackEngineFailure(error)
-        return
-    }
-    playbackJob?.cancel()
-    playbackJob = viewModelScope.launch {
-        var started = false
-        var lastUnderrunCount = 0
-        while (_uiState.value.listenerState != ListenerLifecycleState.DISCONNECTED) {
-            if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
-                wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
-            ) {
-                handleListenerDisconnect("Transport disconnected during playback")
-                return@launch
-            }
-            val scheduler = listenerScheduler ?: return@launch
-            if (!started) {
-                if (!scheduler.canStart()) {
-                    delay(10)
-                    continue
-                }
-                started = true
-                _uiState.value = _uiState.value.copy(
-                    listenerState = ListenerLifecycleState.PLAYING,
-                    listenerPlaybackState = PlaybackState.PLAYING,
-                    connectionProgress = _uiState.value.connectionProgress.copy(
-                        currentState = ListenerLifecycleState.PLAYING,
-                        connected = true,
-                        approved = true,
-                        synced = true,
-                        buffered = true,
-                        playing = true,
-                    ),
-                )
-            }
-            val frame = scheduler.poll()
-            if (frame == null) {
-                delay(10)
-                continue
-            }
-            runCatching { playbackEngine.write(frame) }.onFailure { error ->
-                handleListenerPlaybackEngineFailure(error)
-                return@launch
-            }
-            val telemetry = scheduler.snapshot()
-            if (frame.concealed) {
-                logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
-            }
-            if (telemetry.underrunCount > lastUnderrunCount) {
-                logger.w("playback.underrun", "Underrun count=${telemetry.underrunCount}")
-                lastUnderrunCount = telemetry.underrunCount
-            }
-            diagnosticsStore.updateListener {
-                it.copy(
-                    playbackState = if (telemetry.underrunCount > 0) PlaybackState.UNDERRUN else PlaybackState.PLAYING,
-                    playbackPositionMs = playbackEngine.playbackPositionMs(frame),
-                    bufferDepthMs = telemetry.bufferDepthMs,
-                    packetLossCount = telemetry.packetLossCount,
-                    lateDropCount = telemetry.lateDropCount,
-                    underrunCount = telemetry.underrunCount,
-                    invalidPacketCount = telemetry.invalidPacketCount,
-                    concealedPacketCount = telemetry.concealedPacketCount,
-                    lastPacketSequence = telemetry.lastPlayedSequence,
-                    metricsSummary = summarizeMetrics(),
-                )
-            }
-            if (telemetry.shouldResync) {
-                _uiState.value = _uiState.value.copy(listenerState = ListenerLifecycleState.DESYNCED)
-            }
-            refreshListenerDiagnostics()
-            delay(20)
-        }
-    }
+    ensureRustListenerCore().submitJoin(inviteCode)
 }

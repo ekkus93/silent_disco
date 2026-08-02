@@ -17,60 +17,26 @@ import androidx.core.content.ContextCompat
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.TransportConnectionState
-import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
-import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 class WifiDirectTransportService(
     context: Context,
     private val logger: AppLogger = AppLogger(),
-    private val ports: TransportPorts = TransportPorts(),
 ) : SessionTransport {
     private val appContext = context.applicationContext
     private val manager = appContext.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager?
     private val channel = manager?.initialize(appContext, appContext.mainLooper, null)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _snapshot = MutableStateFlow(TransportSnapshot())
     override val snapshot: StateFlow<TransportSnapshot> = _snapshot.asStateFlow()
 
-    private val _controlMessages = MutableSharedFlow<ControlMessage>(extraBufferCapacity = 64)
-    override val controlMessages: SharedFlow<ControlMessage> = _controlMessages.asSharedFlow()
-    private val _syncRequests = MutableSharedFlow<SyncRequestPacket>(extraBufferCapacity = 64)
-    override val syncRequests: SharedFlow<SyncRequestPacket> = _syncRequests.asSharedFlow()
-    private val _syncResponses = MutableSharedFlow<SyncResponsePacket>(extraBufferCapacity = 64)
-    override val syncResponses: SharedFlow<SyncResponsePacket> = _syncResponses.asSharedFlow()
-    private val _audioPackets = MutableSharedFlow<AudioPacket>(extraBufferCapacity = 256)
-    override val audioPackets: SharedFlow<AudioPacket> = _audioPackets.asSharedFlow()
-
     private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
-    private val listenerControlRoutes = ConcurrentHashMap<String, String>()
     private var activeSession: SessionInfo? = null
     private var pendingConnectSession: SessionInfo? = null
     private var hosting = false
     private var receiverRegistered = false
-
-    private var controlServer: TcpServerChannel<ControlMessage>? = null
-    private var syncServer: TcpServerChannel<SyncRequestPacket>? = null
-    private var audioServer: TcpServerChannel<AudioPacket>? = null
-    private var syncResponseServer: TcpServerChannel<SyncResponsePacket>? = null
-
-    private var controlClient: TcpClientChannel<ControlMessage>? = null
-    private var syncClient: TcpClientChannel<SyncRequestPacket>? = null
-    private var syncResponseClient: TcpClientChannel<SyncResponsePacket>? = null
-    private var audioClient: TcpClientChannel<AudioPacket>? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -95,8 +61,6 @@ class WifiDirectTransportService(
         activeSession = session
         pendingConnectSession = null
         hosting = true
-        listenerControlRoutes.clear()
-        stopClientChannels()
         ensureReceiver()
         if (manager == null || channel == null) {
             val message = "Wi-Fi Direct manager unavailable on this device"
@@ -158,7 +122,6 @@ class WifiDirectTransportService(
         activeSession = session
         pendingConnectSession = session
         hosting = false
-        stopClientChannels()
         ensureReceiver()
         if (manager == null || channel == null) {
             fail("Wi-Fi Direct manager unavailable on this device", retryable = false)
@@ -193,77 +156,6 @@ class WifiDirectTransportService(
         }.onFailure { error ->
             fail(error.message ?: "Failed to connect to Wi-Fi Direct peer", retryable = true)
         }
-    }
-
-    override suspend fun sendControlToHost(message: ControlMessage) {
-        controlClient?.send(message) ?: error("Control channel is not connected")
-        recordHeartbeat()
-        updateByteCounts()
-    }
-
-
-override suspend fun sendControlToListener(
-    listenerId: String,
-    message: ControlMessage,
-): TargetedDeliveryResult {
-    val embeddedListenerId = message.targetListenerId()
-    if (embeddedListenerId != listenerId) {
-        return TargetedDeliveryResult.failed(
-            listenerId,
-            "Control message target does not match requested listener",
-        )
-    }
-    val remoteAddress = listenerControlRoutes[listenerId]
-        ?: return TargetedDeliveryResult.notFound(
-            listenerId,
-            "No control connection is associated with listener $listenerId",
-        )
-    val server = controlServer
-        ?: return TargetedDeliveryResult.failed(listenerId, "Control server is not active")
-    val delivery = server.sendTo(remoteAddress, message)
-    if (!delivery.peerFound || !delivery.delivered) {
-        listenerControlRoutes.remove(listenerId, remoteAddress)
-    }
-    recordHeartbeat()
-    updateByteCounts()
-    return when {
-        delivery.delivered -> TargetedDeliveryResult.delivered(listenerId)
-        delivery.peerFound -> TargetedDeliveryResult.failed(
-            listenerId,
-            delivery.errorMessage ?: "Targeted control delivery failed",
-        )
-        else -> TargetedDeliveryResult.notFound(
-            listenerId,
-            delivery.errorMessage ?: "Targeted listener connection is no longer active",
-        )
-    }
-}
-
-    override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
-        val result = controlServer?.sendAll(message) ?: error("Control server is not active")
-        recordHeartbeat()
-        updateByteCounts()
-        return result
-    }
-
-    override suspend fun sendSyncRequestToHost(packet: SyncRequestPacket) {
-        syncClient?.send(packet) ?: error("Sync request channel is not connected")
-        recordHeartbeat()
-        updateByteCounts()
-    }
-
-    override suspend fun broadcastSyncResponse(packet: SyncResponsePacket): SendAllResult {
-        val result = syncResponseServer?.sendAll(packet) ?: error("Sync response server is not active")
-        recordHeartbeat()
-        updateByteCounts()
-        return result
-    }
-
-    override suspend fun broadcastAudio(packet: AudioPacket): SendAllResult {
-        val result = audioServer?.sendAll(packet) ?: error("Audio server is not active")
-        recordHeartbeat()
-        updateByteCounts()
-        return result
     }
 
     override fun recordHeartbeat() {
@@ -307,8 +199,6 @@ override suspend fun sendControlToListener(
                 manager.stopPeerDiscovery(channel, null)
             }
         }
-        stopClientChannels()
-        stopServerChannels()
         unregisterReceiver()
         currentPeers.clear()
         _snapshot.value = TransportSnapshot(state = TransportConnectionState.DISCONNECTED)
@@ -414,140 +304,6 @@ override suspend fun sendControlToListener(
         }
     }
 
-    private fun startHostSockets() {
-        if (controlServer != null) return
-        controlServer = TcpServerChannel(
-            port = ports.control,
-            channelName = "control",
-            codec = ControlMessageCodec,
-            logger = logger,
-        ).also {
-            it.start()
-            observeControlServer(it)
-        }
-        syncServer = TcpServerChannel(
-            port = ports.sync,
-            channelName = "sync-request",
-            codec = SyncRequestPacketCodec,
-            logger = logger,
-        ).also {
-            it.start()
-            observeSyncServer(it)
-        }
-        syncResponseServer = TcpServerChannel(
-            port = ports.sync + 100,
-            channelName = "sync-response",
-            codec = SyncResponsePacketCodec,
-            logger = logger,
-        ).also {
-            it.start()
-            observeSyncResponseServer(it)
-        }
-        audioServer = TcpServerChannel(
-            port = ports.audio,
-            channelName = "audio",
-            codec = AudioPacketCodec,
-            logger = logger,
-        ).also {
-            it.start()
-            observeAudioServer(it)
-        }
-    }
-
-    private fun startClientSockets(hostAddress: String, session: SessionInfo) {
-        if (controlClient?.isConnected() == true && snapshot.value.hostAddressHint == hostAddress) return
-        stopClientChannels()
-        activeSession = session
-        controlClient = TcpClientChannel(
-            host = hostAddress,
-            port = ports.control,
-            channelName = "control",
-            codec = ControlMessageCodec,
-            logger = logger,
-        ).also {
-            it.connect()
-            observeControlClient(it)
-        }
-        syncClient = TcpClientChannel(
-            host = hostAddress,
-            port = ports.sync,
-            channelName = "sync-request",
-            codec = SyncRequestPacketCodec,
-            logger = logger,
-        ).also { it.connect() }
-        syncResponseClient = TcpClientChannel(
-            host = hostAddress,
-            port = ports.sync + 100,
-            channelName = "sync-response",
-            codec = SyncResponsePacketCodec,
-            logger = logger,
-        ).also {
-            it.connect()
-            observeSyncResponseClient(it)
-        }
-        audioClient = TcpClientChannel(
-            host = hostAddress,
-            port = ports.audio,
-            channelName = "audio",
-            codec = AudioPacketCodec,
-            logger = logger,
-        ).also {
-            it.connect()
-            observeAudioClient(it)
-        }
-    }
-
-
-private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
-    scope.launch {
-        server.incoming.collect { event ->
-            val message = event.message
-            if (message is ControlMessage.JoinRequest) {
-                listenerControlRoutes[message.device.deviceId] = event.remoteAddress
-            }
-            _controlMessages.emit(message)
-            recordHeartbeat()
-            updateByteCounts()
-            logger.d("transport.message", "Received message from ${event.remoteAddress}")
-        }
-    }
-}
-
-    private fun observeSyncServer(server: TcpServerChannel<SyncRequestPacket>) {
-        server.incoming.collectInto(_syncRequests::emit)
-    }
-
-    private fun observeSyncResponseServer(server: TcpServerChannel<SyncResponsePacket>) {
-        server.incoming.collectInto(_syncResponses::emit)
-    }
-
-    private fun observeAudioServer(server: TcpServerChannel<AudioPacket>) {
-        server.incoming.collectInto(_audioPackets::emit)
-    }
-
-    private fun observeControlClient(client: TcpClientChannel<ControlMessage>) {
-        client.incoming.collectInto(_controlMessages::emit)
-    }
-
-    private fun observeSyncResponseClient(client: TcpClientChannel<SyncResponsePacket>) {
-        client.incoming.collectInto(_syncResponses::emit)
-    }
-
-    private fun observeAudioClient(client: TcpClientChannel<AudioPacket>) {
-        client.incoming.collectInto(_audioPackets::emit)
-    }
-
-    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: suspend (T) -> Unit) {
-        scope.launch {
-            collect { event ->
-                emit(event.message)
-                recordHeartbeat()
-                updateByteCounts()
-                logger.d("transport.message", "Received message from ${event.remoteAddress}")
-            }
-        }
-    }
-
     private fun updateSnapshot(
         state: TransportConnectionState,
         peers: List<WifiDirectPeer>,
@@ -560,74 +316,11 @@ private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
             lastError = lastError,
             lastContactElapsedMs = SystemClock.elapsedRealtime(),
             hostAddressHint = hostAddressHint,
-            controlConnections = controlServer?.connectionCount() ?: if (controlClient?.isConnected() == true) 1 else 0,
-            syncConnections = (syncServer?.connectionCount() ?: 0) +
-                (syncResponseServer?.connectionCount() ?: 0) +
-                if (syncClient?.isConnected() == true || syncResponseClient?.isConnected() == true) 1 else 0,
-            audioConnections = audioServer?.connectionCount() ?: if (audioClient?.isConnected() == true) 1 else 0,
-            bytesSent = currentBytesSent(),
-            bytesReceived = currentBytesReceived(),
         )
     }
-
-    private fun updateByteCounts() {
-        _snapshot.value = _snapshot.value.copy(
-            bytesSent = currentBytesSent(),
-            bytesReceived = currentBytesReceived(),
-            controlConnections = controlServer?.connectionCount() ?: if (controlClient?.isConnected() == true) 1 else 0,
-            syncConnections = (syncServer?.connectionCount() ?: 0) +
-                (syncResponseServer?.connectionCount() ?: 0) +
-                if (syncClient?.isConnected() == true || syncResponseClient?.isConnected() == true) 1 else 0,
-            audioConnections = audioServer?.connectionCount() ?: if (audioClient?.isConnected() == true) 1 else 0,
-            lastContactElapsedMs = SystemClock.elapsedRealtime(),
-        )
-    }
-
-    private fun currentBytesSent(): Long =
-        (controlServer?.bytesSent() ?: 0L) +
-            (syncServer?.bytesSent() ?: 0L) +
-            (syncResponseServer?.bytesSent() ?: 0L) +
-            (audioServer?.bytesSent() ?: 0L) +
-            (controlClient?.bytesSent() ?: 0L) +
-            (syncClient?.bytesSent() ?: 0L) +
-            (syncResponseClient?.bytesSent() ?: 0L) +
-            (audioClient?.bytesSent() ?: 0L)
-
-    private fun currentBytesReceived(): Long =
-        (controlServer?.bytesReceived() ?: 0L) +
-            (syncServer?.bytesReceived() ?: 0L) +
-            (syncResponseServer?.bytesReceived() ?: 0L) +
-            (audioServer?.bytesReceived() ?: 0L) +
-            (controlClient?.bytesReceived() ?: 0L) +
-            (syncClient?.bytesReceived() ?: 0L) +
-            (syncResponseClient?.bytesReceived() ?: 0L) +
-            (audioClient?.bytesReceived() ?: 0L)
 
     private fun resolvePeerForSession(session: SessionInfo): WifiP2pDevice? =
         currentPeers.values.firstOrNull { it.deviceName == session.hostDeviceName } ?: currentPeers.values.firstOrNull()
-
-    private fun stopClientChannels() {
-        controlClient?.close()
-        controlClient = null
-        syncClient?.close()
-        syncClient = null
-        syncResponseClient?.close()
-        syncResponseClient = null
-        audioClient?.close()
-        audioClient = null
-    }
-
-    private fun stopServerChannels() {
-        listenerControlRoutes.clear()
-        controlServer?.close()
-        controlServer = null
-        syncServer?.close()
-        syncServer = null
-        syncResponseServer?.close()
-        syncResponseServer = null
-        audioServer?.close()
-        audioServer = null
-    }
 
     private fun ensureReceiver() {
         if (receiverRegistered) return
@@ -669,21 +362,6 @@ private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
         }
         return ContextCompat.checkSelfPermission(appContext, permission) == PackageManager.PERMISSION_GRANTED
     }
-
-
-private fun ControlMessage.targetListenerId(): String? = when (this) {
-    is ControlMessage.JoinApproval -> listenerId
-    is ControlMessage.JoinRejection -> listenerId
-    is ControlMessage.Heartbeat -> listenerId
-    is ControlMessage.Disconnect -> listenerId
-    is ControlMessage.ResyncNotice -> listenerId
-    is ControlMessage.Hello,
-    is ControlMessage.JoinRequest,
-    is ControlMessage.StreamStart,
-    is ControlMessage.Pause,
-    is ControlMessage.Stop,
-    -> null
-}
 
     private companion object {
         const val WIFI_DIRECT_GROUP_OWNER = "192.168.49.1"

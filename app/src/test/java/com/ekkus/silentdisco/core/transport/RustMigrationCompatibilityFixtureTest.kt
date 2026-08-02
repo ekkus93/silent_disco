@@ -18,8 +18,6 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
 import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.DeviceIdentity
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
@@ -44,25 +42,6 @@ class RustMigrationCompatibilityFixtureTest {
     private val json = Json {
         ignoreUnknownKeys = false
         classDiscriminator = "type"
-    }
-
-    @Test
-    fun controlMessageFixturesMatchProductionSerialization() {
-        val fixture = fixture("protocol/control_messages_v1.json")
-        assertThat(fixture.int("fixtureVersion")).isEqualTo(1)
-        val codec = JsonMessageCodec(ControlMessage.serializer())
-
-        fixture.getValue("messages").jsonArray.forEach { entryElement ->
-            val entry = entryElement.jsonObject
-            val name = entry.string("name")
-            val expectedWire = entry.getValue("wire").jsonObject
-            val message = controlMessage(name, expectedWire)
-            val encoded = codec.encode(message)
-            val actualWire = json.parseToJsonElement(encoded.decodeToString())
-
-            assertThat(actualWire).isEqualTo(expectedWire)
-            assertThat(codec.decode(encoded)).isEqualTo(message)
-        }
     }
 
     @Test
@@ -270,83 +249,6 @@ class RustMigrationCompatibilityFixtureTest {
             assertThat(actual.syncDriftThresholdMs).isWithin(0.000001).of(it.jsonPrimitive.double)
         }
         expected["scanWindowMs"]?.let { assertThat(actual.scanWindowMs).isEqualTo(it.jsonPrimitive.long) }
-    }
-
-    private fun controlMessage(name: String, wire: JsonObject): ControlMessage {
-        val sessionId = SessionId(wire.string("sessionId"))
-        return when (name) {
-            "hello" -> ControlMessage.Hello(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                sessionName = wire.string("sessionName"),
-                hostName = wire.string("hostName"),
-                approvalRequired = wire.boolean("approvalRequired"),
-            )
-            "join_request" -> {
-                val device = wire.getValue("device").jsonObject
-                ControlMessage.JoinRequest(
-                    version = wire.int("version"),
-                    sessionId = sessionId,
-                    device = DeviceIdentity(
-                        deviceId = device.string("deviceId"),
-                        displayName = device.string("displayName"),
-                    ),
-                    inviteCode = wire.optionalString("inviteCode"),
-                )
-            }
-            "join_approval" -> ControlMessage.JoinApproval(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                listenerId = wire.string("listenerId"),
-                trustedForFuture = wire.boolean("trustedForFuture"),
-            )
-            "join_rejection" -> ControlMessage.JoinRejection(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                listenerId = wire.string("listenerId"),
-                reason = wire.string("reason"),
-            )
-            "heartbeat" -> ControlMessage.Heartbeat(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                listenerId = wire.string("listenerId"),
-                sentAtElapsedMs = wire.long("sentAtElapsedMs"),
-            )
-            "stream_start" -> ControlMessage.StreamStart(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                streamId = StreamId(wire.string("streamId")),
-                hostStartTimeMs = wire.long("hostStartTimeMs"),
-                sampleRate = wire.int("sampleRate"),
-                channels = wire.int("channels"),
-                samplesPerPacket = wire.int("samplesPerPacket"),
-            )
-            "pause" -> ControlMessage.Pause(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                streamId = StreamId(wire.string("streamId")),
-                hostPauseTimeMs = wire.long("hostPauseTimeMs"),
-            )
-            "stop" -> ControlMessage.Stop(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                streamId = StreamId(wire.string("streamId")),
-                hostStopTimeMs = wire.long("hostStopTimeMs"),
-            )
-            "disconnect" -> ControlMessage.Disconnect(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                listenerId = wire.string("listenerId"),
-                reason = wire.string("reason"),
-            )
-            "resync_notice" -> ControlMessage.ResyncNotice(
-                version = wire.int("version"),
-                sessionId = sessionId,
-                listenerId = wire.string("listenerId"),
-                reason = wire.string("reason"),
-            )
-            else -> error("Unknown control fixture $name")
-        }
     }
 
     private fun session(id: String): SessionInfo = SessionInfo(

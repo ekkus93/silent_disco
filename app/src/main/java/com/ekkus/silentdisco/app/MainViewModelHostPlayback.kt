@@ -42,12 +42,7 @@ import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.DeviceIdentity
-import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
-import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
@@ -151,7 +146,11 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
                 return@launch
             }
             runCatching {
-                wifiDirectService.broadcastAudio(packet)
+                // Audio delivery is not yet exposed over the Rust host
+                // transport (control-plane only for this migration block) --
+                // reports honestly as zero recipients rather than attempting
+                // a send with nothing listening on the other end.
+                SendAllResult(peerCount = 0, successCount = 0, failureCount = 0)
             }.onSuccess { result ->
                 when {
                     result.peerCount == 0 -> {
@@ -216,22 +215,16 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
             listenerState = _uiState.value.listenerState,
             message = "Host stream reached end of file",
         )
-        currentSessionId?.let { sessionId ->
-            viewModelScope.launch {
-                runCatching {
-                    wifiDirectService.broadcastControl(
-                        ControlMessage.Stop(
-                            version = 1,
-                            sessionId = sessionId,
-                            streamId = streamId,
-                            hostStopTimeMs = SystemClock.elapsedRealtime(),
-                        ),
-                    )
-                }.onSuccess { result ->
-                    reportHostBroadcastDelivery("broadcast stream stop", result, requireAnyPeer = false)
-                }.onFailure { error ->
-                    handleHostControlFailure("broadcast stream stop", error)
-                }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                hostTransportController.broadcastStop(
+                    streamId = streamId.value,
+                    hostStopTimeMs = SystemClock.elapsedRealtime(),
+                )
+            }.onSuccess { delivery ->
+                reportHostBroadcastDelivery("broadcast stream stop", delivery.toSendAllResult(), requireAnyPeer = false)
+            }.onFailure { error ->
+                handleHostControlFailure("broadcast stream stop", error)
             }
         }
         refreshHostDiagnostics(streamState = PlaybackState.STOPPED)

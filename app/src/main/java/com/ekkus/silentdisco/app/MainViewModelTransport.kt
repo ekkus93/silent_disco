@@ -71,32 +71,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-    internal fun MainViewModel.observeTransport() {
-        viewModelScope.launch {
-            wifiDirectService.controlMessages.collect { message -> handleControlMessage(message) }
-        }
-        viewModelScope.launch {
-            wifiDirectService.syncRequests.collect { request ->
-                if (request.sessionId != currentSessionId) return@collect
-                viewModelScope.launch {
-                    runCatching {
-                        wifiDirectService.broadcastSyncResponse(hostTimingService.createResponse(request))
-                    }.onSuccess { result ->
-                        reportHostBroadcastDelivery("broadcast sync response", result, requireAnyPeer = true)
-                    }.onFailure { error ->
-                        handleHostControlFailure("broadcast sync response", error)
-                    }
-                }
-            }
-        }
-        viewModelScope.launch {
-            wifiDirectService.syncResponses.collect { response -> applySyncResponse(response) }
-        }
-        viewModelScope.launch {
-            wifiDirectService.audioPackets.collect { packet -> handleIncomingAudioPacket(packet) }
-        }
-    }
-
     internal fun MainViewModel.observeDiscovery() {
         viewModelScope.launch {
             bleService.discoveredSessions.collect {
@@ -123,7 +97,6 @@ import kotlinx.coroutines.runBlocking
                 reportRustHostTransportFailure(errorMessage, snapshot.lastError.retryable)
             }
             TransportSnapshotRole.LISTENER_FAILURE -> {
-                pendingJoinRequestMessage = null
                 handleListenerConnectionFailure(errorMessage)
             }
             TransportSnapshotRole.IGNORE -> Unit
@@ -158,80 +131,6 @@ import kotlinx.coroutines.runBlocking
         if (!hosting) return
         wifiDirectService.stop()
         reportRustHostTransportFailure(message, retryable = true)
-    }
-
-    internal fun MainViewModel.handleControlMessage(message: ControlMessage) {
-        when (message) {
-            is ControlMessage.JoinRequest -> handleJoinRequestMessage(message)
-            is ControlMessage.JoinApproval -> handleJoinApprovalMessage(message)
-            is ControlMessage.JoinRejection -> handleJoinRejectionMessage(message)
-            is ControlMessage.StreamStart -> handleRemoteStreamStart(message)
-            is ControlMessage.Pause -> handleRemotePause(message)
-            is ControlMessage.Stop -> handleRemoteStop(message)
-            is ControlMessage.Disconnect -> handleRemoteDisconnect(message)
-            is ControlMessage.Heartbeat -> wifiDirectService.recordHeartbeat()
-            is ControlMessage.ResyncNotice -> {
-                if (message.listenerId == localListenerDeviceId) {
-                    _uiState.value = _uiState.value.copy(lastMessage = message.reason)
-                }
-            }
-            is ControlMessage.Hello -> Unit
-        }
-    }
-
-    internal fun MainViewModel.handleJoinRequestMessage(message: ControlMessage.JoinRequest) {
-        submitRustJoinRequest(message)
-    }
-
-    internal fun MainViewModel.handleJoinApprovalMessage(message: ControlMessage.JoinApproval) {
-        if (message.listenerId != localListenerDeviceId) return
-        _uiState.value = _uiState.value.copy(
-            lastMessage = if (message.trustedForFuture) {
-                "Join approved; host remembered this device"
-            } else {
-                "Join approved"
-            },
-        )
-        listenerCoreController?.submitJoinApproved(message.trustedForFuture)
-        refreshListenerDiagnostics()
-        requestListenerSyncProbe(source = "Initial clock sync")
-    }
-
-    internal fun MainViewModel.handleJoinRejectionMessage(message: ControlMessage.JoinRejection) {
-        if (message.listenerId != localListenerDeviceId) return
-        stopListenerPlaybackForFailure(message.reason)
-        listenerCoreController?.submitJoinRejected(message.reason)
-    }
-
-    internal fun MainViewModel.handleRemotePause(message: ControlMessage.Pause) {
-        if (_uiState.value.selectedSession?.id != message.sessionId.value) return
-        propagateListenerPlaybackState(
-            playbackState = PlaybackState.PAUSED,
-            listenerState = _uiState.value.listenerState,
-            message = "Host paused the stream",
-        )
-    }
-
-    internal fun MainViewModel.handleRemoteStop(message: ControlMessage.Stop) {
-        if (_uiState.value.selectedSession?.id != message.sessionId.value) return
-        playbackJob?.cancel()
-        listenerScheduler = null
-        pendingTransportPackets.clear()
-        propagateListenerPlaybackState(
-            playbackState = PlaybackState.STOPPED,
-            listenerState = ListenerLifecycleState.CONNECTING,
-            message = "Host stopped the stream",
-        )
-        diagnosticsStore.updateListener {
-            it.copy(endOfStreamReached = true, playbackState = PlaybackState.STOPPED)
-        }
-        refreshListenerDiagnostics()
-    }
-
-    internal fun MainViewModel.handleRemoteDisconnect(message: ControlMessage.Disconnect) {
-        if (_uiState.value.selectedSession?.id != message.sessionId.value) return
-        if (message.listenerId != localListenerDeviceId && message.listenerId.isNotBlank()) return
-        handleListenerDisconnect(message.reason)
     }
 
     internal fun MainViewModel.reportHostBroadcastDelivery(
@@ -306,7 +205,6 @@ import kotlinx.coroutines.runBlocking
         listenerScheduler = null
         pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
-        pendingJoinRequestMessage = null
         // No dedicated Rust event exists yet for a graceful host-initiated
         // disconnect (only Failed); approximating with transportFailed means
         // this surfaces as Error rather than Disconnected in the UI for now.
@@ -335,19 +233,4 @@ import kotlinx.coroutines.runBlocking
             controller.submitSessionDiscovered(session.toFfiSessionAdvertisement())
         }
         (known - bleSessionIds).forEach { sessionId -> controller.submitSessionExpired(sessionId) }
-    }
-
-    internal fun MainViewModel.sendPendingJoinRequest() {
-        val request = pendingJoinRequestMessage ?: return
-        viewModelScope.launch {
-            runCatching {
-                wifiDirectService.sendControlToHost(request)
-            }.onSuccess {
-                pendingJoinRequestMessage = null
-                _uiState.value = _uiState.value.copy(lastMessage = "Join request sent", lastError = null)
-                listenerCoreController?.submitAwaitingApproval()
-            }.onFailure { error ->
-                handleListenerConnectionFailure(error.message ?: "Failed to send join request")
-            }
-        }
     }

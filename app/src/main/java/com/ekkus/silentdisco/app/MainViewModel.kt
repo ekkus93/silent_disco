@@ -123,7 +123,6 @@ class MainViewModel @JvmOverloads constructor(
     internal var resyncJob: Job? = null
     internal var scanJob: Job? = null
     internal var pendingSyncCorrelationId: Long? = null
-    internal var pendingJoinRequestMessage: ControlMessage.JoinRequest? = null
     internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
@@ -134,7 +133,6 @@ class MainViewModel @JvmOverloads constructor(
 
     init {
         initializeDomainPersistence()
-        observeTransport()
         observeDiscovery()
         observeBleFailures()
         observeManualEndpointConnection()
@@ -310,7 +308,6 @@ class MainViewModel @JvmOverloads constructor(
         listenerScheduler = null
         pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
-        pendingJoinRequestMessage = null
         pendingEstablishNetworkOperationId = null
         logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(listenerPlaybackState = PlaybackState.STOPPED)

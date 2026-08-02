@@ -13,7 +13,6 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
-import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.HostCoreController
@@ -192,22 +191,6 @@ internal fun MainViewModel.endRustHostSession() {
         runCatching { ensureRustHostCore().endHostSession() }
             .onFailure { reportRustHostCommandFailure("end host session", it) }
     }
-}
-
-internal fun MainViewModel.submitRustJoinRequest(message: ControlMessage.JoinRequest) {
-    if (message.sessionId != currentSessionId) return
-    runCatching {
-        ensureRustHostCore().submitJoinRequest(
-            FfiJoinRequestInput(
-                requestId = "${message.device.deviceId}-${message.sessionId.value}",
-                deviceId = message.device.deviceId,
-                displayName = message.device.displayName,
-                trustState = FfiTrustState.UNKNOWN,
-                inviteCode = message.inviteCode,
-                receivedAtMs = SystemClock.elapsedRealtime().toULong(),
-            ),
-        )
-    }.onFailure { reportRustHostCommandFailure("submit join request", it) }
 }
 
 internal fun MainViewModel.reportRustHostTransportState(state: TransportConnectionState) {

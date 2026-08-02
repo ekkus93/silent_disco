@@ -105,15 +105,10 @@ import kotlinx.coroutines.runBlocking
                 lastMessage = "$source sync probe sent",
                 lastError = null,
             )
-            viewModelScope.launch {
-                runCatching {
-                    wifiDirectService.sendSyncRequestToHost(request)
-                }.onSuccess {
-                    _uiState.value = _uiState.value.copy(lastMessage = "$source sync probe sent", lastError = null)
-                }.onFailure { error ->
-                    handleSyncFailure(error.message ?: "Failed to send sync probe")
-                }
-            }
+            // Clock sync sampling is not yet exposed over the Rust listener
+            // transport (control-plane only for this migration block) -- see
+            // FfiListenerTransportEvent's doc comment.
+            handleSyncFailure("Clock sync is not yet available over the migrated Wi-Fi Direct transport")
             return
         }
 

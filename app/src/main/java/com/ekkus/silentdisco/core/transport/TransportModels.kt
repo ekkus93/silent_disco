@@ -2,12 +2,13 @@ package com.ekkus.silentdisco.core.transport
 
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.SessionInfo
-import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
-import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+
+data class TransportPorts(
+    val control: Int = 41_000,
+    val sync: Int = 41_001,
+    val audio: Int = 41_002,
+)
 
 data class BleAdvertisement(
     val sessionId: String,
@@ -33,11 +34,6 @@ data class TransportSnapshot(
     val lastError: TransportError? = null,
     val lastContactElapsedMs: Long? = null,
     val retryCount: Int = 0,
-    val controlConnections: Int = 0,
-    val syncConnections: Int = 0,
-    val audioConnections: Int = 0,
-    val bytesSent: Long = 0,
-    val bytesReceived: Long = 0,
     val hostAddressHint: String? = null,
 )
 
@@ -60,42 +56,6 @@ data class SendAllResult(
     val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
 }
 
-
-data class TargetedDeliveryResult(
-    val listenerId: String,
-    val intendedPeerCount: Int,
-    val successCount: Int,
-    val failureCount: Int,
-    val message: String? = null,
-) {
-    val deliveredToTarget: Boolean
-        get() = intendedPeerCount == 1 && successCount == 1 && failureCount == 0
-
-    companion object {
-        fun delivered(listenerId: String) = TargetedDeliveryResult(
-            listenerId = listenerId,
-            intendedPeerCount = 1,
-            successCount = 1,
-            failureCount = 0,
-        )
-
-        fun notFound(listenerId: String, message: String) = TargetedDeliveryResult(
-            listenerId = listenerId,
-            intendedPeerCount = 0,
-            successCount = 0,
-            failureCount = 0,
-            message = message,
-        )
-
-        fun failed(listenerId: String, message: String) = TargetedDeliveryResult(
-            listenerId = listenerId,
-            intendedPeerCount = 1,
-            successCount = 0,
-            failureCount = 1,
-            message = message,
-        )
-    }
-}
 
 enum class BroadcastDeliverySeverity {
     OK,
@@ -122,24 +82,11 @@ fun classifyBroadcastDelivery(action: String, result: SendAllResult): BroadcastD
 
 interface SessionTransport {
     val snapshot: StateFlow<TransportSnapshot>
-    val controlMessages: SharedFlow<ControlMessage>
-    val syncRequests: SharedFlow<SyncRequestPacket>
-    val syncResponses: SharedFlow<SyncResponsePacket>
-    val audioPackets: SharedFlow<AudioPacket>
 
     fun startHost(session: SessionInfo): TransportOperationResult
     fun discoverPeers()
     fun cancelDiscovery() = stop()
     fun connectToSession(session: SessionInfo)
-    suspend fun sendControlToHost(message: ControlMessage)
-    suspend fun sendControlToListener(
-        listenerId: String,
-        message: ControlMessage,
-    ): TargetedDeliveryResult
-    suspend fun broadcastControl(message: ControlMessage): SendAllResult
-    suspend fun sendSyncRequestToHost(packet: SyncRequestPacket)
-    suspend fun broadcastSyncResponse(packet: SyncResponsePacket): SendAllResult
-    suspend fun broadcastAudio(packet: AudioPacket): SendAllResult
     fun recordHeartbeat()
     fun fail(message: String, retryable: Boolean)
     fun retry()

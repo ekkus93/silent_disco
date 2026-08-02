@@ -33,7 +33,6 @@ import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.core.model.SessionInfo
-import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
@@ -42,12 +41,8 @@ import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
-import com.ekkus.silentdisco.core.protocol.DeviceIdentity
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
-import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
@@ -70,40 +65,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-
-    internal fun MainViewModel.handleRemoteStreamStart(message: ControlMessage.StreamStart) {
-        if (_uiState.value.selectedSession?.id != message.sessionId.value) return
-        currentStreamId = message.streamId
-        _uiState.value = _uiState.value.copy(
-            listenerState = ListenerLifecycleState.BUFFERING,
-            listenerPlaybackState = PlaybackState.BUFFERING,
-            connectionProgress = _uiState.value.connectionProgress.copy(
-                currentState = ListenerLifecycleState.BUFFERING,
-                approved = true,
-                connected = true,
-                synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
-                buffered = false,
-                playing = false,
-            ),
-            lastMessage = "Host stream starting",
-            lastError = null,
-        )
-        val playbackFormat = AudioFormatSpec(sampleRate = message.sampleRate, channelCount = message.channels)
-        startTransportListenerPlayback(message.sessionId, message.streamId, playbackFormat)
-    }
-
-    internal fun MainViewModel.handleIncomingAudioPacket(packet: AudioPacket) {
-        if (_uiState.value.selectedSession?.id != packet.sessionId.value) return
-        val scheduler = listenerScheduler
-        if (scheduler == null) {
-            pendingTransportPackets += packet
-            while (pendingTransportPackets.size > 256) {
-                pendingTransportPackets.removeFirst()
-            }
-            return
-        }
-        recordIncomingPacket(scheduler, packet)
-    }
 
     internal fun MainViewModel.startListenerPlaybackSimulation(sessionId: String) {
         val packets = if (latestPackets.isNotEmpty()) {
