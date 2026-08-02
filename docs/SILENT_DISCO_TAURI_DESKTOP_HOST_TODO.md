@@ -1355,17 +1355,27 @@ Record:
 
 Verify:
 
-- [ ] bounded decoded PCM ingestion;
-- [ ] streaming packetizer;
-- [ ] session/stream identity;
-- [ ] sequence/sample index;
-- [ ] presentation timestamps;
-- [ ] bounded datagrams;
-- [ ] end-of-stream;
-- [ ] queue backpressure;
-- [ ] worker stop/join;
-- [ ] no full-track concatenation;
-- [ ] golden/compatibility tests.
+- [x] bounded decoded PCM ingestion;
+- [x] streaming packetizer;
+- [x] session/stream identity;
+- [x] sequence/sample index;
+- [x] presentation timestamps;
+- [x] bounded datagrams;
+- [x] end-of-stream;
+- [x] queue backpressure;
+- [x] worker stop/join;
+- [x] no full-track concatenation;
+- [x] golden/compatibility tests.
+
+Verified against the pre-existing shared `silent-disco-core` packetizer
+(`src/audio/packetizer.rs`, `packetizer_worker.rs`, committed in the earlier
+"Implement Rust streaming host audio packetizer (Block 14.2-14.4)" work) via
+its existing test suite (`packetizer_tests.rs`: full/short packets,
+end-of-stream, format-mismatch/zero-sample/oversized-datagram rejection,
+sequence/stream-id restart, worker backpressure/drain/join) and its existing
+golden vectors (`testdata/protocol/v2/audio_vectors.txt`,
+`boundary_vectors.txt`'s `max_audio_datagram`). No new packetizer code was
+needed; the desktop side only had to consume it (Block 26).
 
 Run shared Rust and Android gates.
 
@@ -1377,37 +1387,60 @@ Run shared Rust and Android gates.
 
 ### 26.1 Source-ready flow
 
-- [ ] file selection result is staged;
-- [ ] core receives stable descriptor;
-- [ ] decoder initialization reports real format;
-- [ ] core snapshot reports source ready only after success;
-- [ ] source failure preserves host draft and user recovery options.
+- [x] file selection result is staged;
+- [x] core receives stable descriptor;
+- [x] decoder initialization reports real format;
+- [x] core snapshot reports source ready only after success;
+- [x] source failure preserves host draft and user recovery options.
+
+Pre-existing from Blocks 17/19 (`source_staging.rs`, `audio_decode.rs`,
+`file_picker.rs`); this block only had to consume it via
+`prepare_staged_audio_source`, exercised again by the new end-to-end test.
 
 ### 26.2 Playback commands
 
 Wire:
 
-- [ ] start;
-- [ ] pause;
-- [ ] resume;
-- [ ] stop;
-- [ ] end of stream;
+- [x] start;
+- [x] pause;
+- [x] resume;
+- [x] stop;
+- [x] end of stream;
 - [ ] restart/new stream ID.
 
 The frontend remains pending until core state confirms each transition.
 
+`start`/`pause`/`resume`/`stop_host_playback` are synchronous Tauri commands
+that call `CoreActorHandle::submit_audio_event` directly, so by the time the
+frontend's `await` resolves the actor has already validated and applied the
+transition (unlike the async-delivery join/reject commands, there is no
+separate confirmation round trip to wait for). Natural end-of-stream converges
+on the same `Stop` broadcast + `Stopped` transition as an explicit stop
+(`playback_streamer.rs`'s `run_pump` exit path). Restarting with a *new*
+source after a stream completes is wired (`start_playback::start` always
+computes a fresh `stream_id`) but is not yet covered by a dedicated test --
+left unchecked.
+
 ### 26.3 Data flow
 
-- [ ] decoder feeds bounded chunks;
-- [ ] packetizer feeds bounded transport queue;
+- [x] decoder feeds bounded chunks;
+- [x] packetizer feeds bounded transport queue;
 - [ ] transport reports per-peer delivery;
 - [ ] queue pressure becomes snapshot/diagnostic state;
-- [ ] stop cancels and joins decoder/packetizer workers;
-- [ ] no PCM or datagram payload enters Tauri IPC.
+- [x] stop cancels and joins decoder/packetizer workers;
+- [x] no PCM or datagram payload enters Tauri IPC.
+
+Real-time audio/sync broadcast frames go through `host_transport.rs`'s
+`process_broadcast_frames`, which records only an aggregate last-error string
+on failure -- there is no structured per-peer `DeliveryReport` or queue-depth
+diagnostic for the playback broadcast path yet (control-plane messages like
+join approval already get per-peer `TransportDelivery` reporting; audio/sync
+frames do not). This is a real gap against CLAUDE.md's mandatory diagnostics
+list (queue depth/overflow) -- left unchecked rather than glossed over.
 
 ### 26.4 Tests
 
-- [ ] one loopback listener receives expected packet sequence;
+- [x] one loopback listener receives expected packet sequence;
 - [ ] pause stops future presentation progression according to policy;
 - [ ] resume behavior is explicit;
 - [ ] stop clears pending stream data;
@@ -1417,6 +1450,13 @@ The frontend remains pending until core state confirms each transition.
 - [ ] end-of-stream;
 - [ ] second source creates new stream identity.
 
+Only the happy-path end-to-end test
+(`start_playback_tests::desktop_host_streams_real_audio_and_answers_sync_requests`)
+exists so far: join, approval, `StreamStart`, real audio datagrams, a correct
+sync-response round trip, then an explicit `stop_playback`. The remaining
+items are real, unimplemented test gaps, not just undocumented behavior --
+left unchecked for a follow-up session.
+
 **Acceptance:** The desktop host transmits real bounded audio datagrams through shared Rust code.
 
 ---
@@ -1425,39 +1465,78 @@ The frontend remains pending until core state confirms each transition.
 
 ### 27.1 Playback controls
 
-- [ ] start/pause/resume/stop derive from core capabilities;
-- [ ] pending operation state;
+- [x] start/pause/resume/stop derive from core capabilities;
+- [x] pending operation state;
 - [ ] source name and validated duration;
 - [ ] position based on authoritative timeline;
 - [ ] end-of-stream state;
-- [ ] no HTML audio element.
+- [x] no HTML audio element.
+
+`HostSessionScreen`'s Play/Resume/Pause/Stop buttons derive their individual
+enabled state from `playbackControlsEnabled` (now real, from host lifecycle +
+transport-worker + selected-source state) and `playbackState`, and disable
+during an in-flight command. Not yet done: no display of the selected
+source's name/duration, no playback-position indicator (the actor already
+tracks `playbackPositionMs`; it is not surfaced in `HostSessionSnapshotDto`
+yet), and no distinct "ended naturally" indicator beyond the generic
+`playbackState` status card.
 
 ### 27.2 Delivery health
 
 Show bounded aggregate data:
 
-- [ ] intended peers;
-- [ ] successful peers;
-- [ ] failed peers;
-- [ ] partial delivery severity;
+- [x] intended peers;
+- [x] successful peers;
+- [x] failed peers;
+- [x] partial delivery severity;
 - [ ] queue pressure;
-- [ ] per-listener last failure;
-- [ ] zero-recipient warning.
+- [x] per-listener last failure;
+- [x] zero-recipient warning.
+
+Intended/successful/failed/severity and per-listener last failure predate
+this block; this block added a distinct zero-recipient banner (red, `role="alert"`)
+instead of folding it into the generic partial-failure amber styling. Queue
+pressure remains unimplemented (see the 26.3 note -- no queue-depth
+diagnostic exists yet for the playback broadcast path).
 
 ### 27.3 Tests
 
 - [ ] zero-recipient start policy;
-- [ ] partial delivery display;
-- [ ] failure not overwritten by later informational state;
+- [x] partial delivery display;
+- [x] failure not overwritten by later informational state;
 - [ ] stale command rejection;
-- [ ] stop pending;
+- [x] stop pending;
 - [ ] source completion.
+
+Partial-delivery display and failure-persistence-across-refresh were already
+tested pre-block (join/approval flows); this block added
+`HostSessionScreen playback controls` tests covering per-button
+enable/disable by `playbackState`, the Play-becomes-Resume-when-paused
+behavior, and a failed `stop` surfacing visibly. Not covered: a specific
+"zero recipients" *policy* test for starting playback with no listeners
+(today nothing prevents starting with zero listeners -- it is allowed and
+simply broadcasts to nobody), rejecting a stale/duplicate playback command,
+and a natural end-of-stream completion test.
 
 **Acceptance:** The desktop never presents packet submission as universal listener success.
 
 ---
 
 ## Block 28 — First physical desktop-to-Android audio test
+
+Not yet attempted. Blocks 25-27's automated work (packetizer verification,
+desktop playback wiring, UI wiring) is committed and gated, but this block
+specifically requires a human to confirm audio is actually audible and in
+sync on a real phone -- something this session cannot verify itself (no way
+to hear audio, and no GUI-automation tool available to drive the Tauri
+desktop window interactively). A real Android device (`adb devices` shows
+one attached) and the Android app (`com.ekkus.silentdisco`) are available in
+this environment, so a scripted, non-GUI variant (drive the real Rust
+backend directly, connect the real phone via its already-verified manual
+endpoint flow, inspect Android logcat for real packet/playback evidence)
+is possible as a sanity check, but that is not a substitute for a human
+actually listening to confirm sync -- do not check any box in this block
+from that alone.
 
 ### 28.1 One listener
 
