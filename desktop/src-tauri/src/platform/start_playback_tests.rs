@@ -249,18 +249,23 @@ fn join_and_approve_listener(
 /// machine's real LAN address, prints a real connection payload, and waits
 /// for an actual external listener (e.g. a phone on the same Wi-Fi network,
 /// pasting the printed payload into the app's "Connect manually" screen) to
-/// join before streaming ~10s of real audio to it. Run explicitly with:
+/// join before streaming a first long "song" (a 300Hz tone), then switching
+/// mid-session to a second, audibly distinct "song" (a 900Hz tone) -- the
+/// same stop -> update draft -> start sequence a real user changing tracks
+/// would trigger, including a fresh stream ID for the second song. Run
+/// explicitly with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener -- --ignored --nocapture`
 #[test]
 #[ignore = "requires a real external listener device on the same LAN, driven manually"]
-fn manual_real_android_listener_receives_streamed_audio() {
+fn manual_real_android_listener_plays_a_song_change() {
     let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
         panic!("no private LAN interface available for the manual device test");
     };
     let temp = TempDir::new().expect("temp");
-    let (descriptor, registry) = stage_long_source(&temp);
+    let registry = SelectedSourceRegistry::new();
+    let descriptor_a = stage_tone_source(&temp, &registry, "song-a", 300.0, 40);
     let (actor, handle, receiver, advertisement, network, endpoint) =
-        start_host_session(descriptor, interface_name, interface_index, address);
+        start_host_session(descriptor_a, interface_name, interface_index, address);
 
     eprintln!(
         "=== paste this connection payload into the Android app's Connect manually screen ==="
@@ -273,7 +278,7 @@ fn manual_real_android_listener_receives_streamed_audio() {
         advertisement.session_id.as_str(),
         advertisement.protocol_version,
     );
-    eprintln!("waiting up to 180s for a real join request...");
+    eprintln!("waiting up to 8 minutes for a real join request...");
 
     let deadline = Instant::now() + Duration::from_mins(8);
     let joined = loop {
@@ -306,11 +311,44 @@ fn manual_real_android_listener_receives_streamed_audio() {
     network
         .dispatch_transport_effect(approval_effect)
         .expect("dispatch join approval");
-    eprintln!("approved and authorized. starting playback...");
+    eprintln!("approved and authorized.");
 
+    eprintln!("=== song 1/2: \"song-a\", a 300Hz tone -- starting playback ===");
     start_playback::start(&handle, &network, &registry).expect("start playback");
-    eprintln!("playback started -- letting it run for 10s...");
-    std::thread::sleep(Duration::from_secs(10));
+    eprintln!("song-a playing for 40s...");
+    std::thread::sleep(Duration::from_secs(40));
+
+    eprintln!("=== switching songs: stopping song-a ===");
+    network.stop_playback().expect("stop playback");
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
+    });
+
+    let descriptor_b = stage_tone_source(&temp, &registry, "song-b", 900.0, 40);
+    let current = handle.current_snapshot().expect("current snapshot");
+    submit(
+        &handle,
+        current.revision.get(),
+        CoreCommand::UpdateHostDraft(HostDraftPatch {
+            session_name: None,
+            approval_mode: None,
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(descriptor_b.clone()),
+            remember_approved_devices: None,
+        }),
+    );
+    wait_snapshot(&handle, |snapshot| {
+        snapshot
+            .host_draft
+            .audio_source
+            .as_ref()
+            .is_some_and(|source| source.source_id == descriptor_b.source_id)
+    });
+
+    eprintln!("=== song 2/2: \"song-b\", a 900Hz tone -- starting playback ===");
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    eprintln!("song-b playing for 40s...");
+    std::thread::sleep(Duration::from_secs(40));
 
     eprintln!("stopping playback...");
     network.stop_playback().expect("stop playback");
@@ -319,19 +357,24 @@ fn manual_real_android_listener_receives_streamed_audio() {
     eprintln!("done.");
 }
 
-fn stage_long_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
-    let source_path = temp.path().join("source.wav");
-    fs::write(&source_path, long_pcm_wav()).expect("write source");
+fn stage_tone_source(
+    temp: &TempDir,
+    registry: &SelectedSourceRegistry,
+    source_id: &str,
+    frequency_hz: f64,
+    seconds: u32,
+) -> AudioSourceDescriptor {
+    let source_path = temp.path().join(format!("{source_id}.wav"));
+    fs::write(&source_path, tone_pcm_wav(frequency_hz, seconds)).expect("write source");
     let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
     let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
     let descriptor = AudioSourceDescriptor::new(
-        "desktop-block-playback-manual-source",
-        "source.wav",
+        format!("desktop-block-playback-manual-{source_id}"),
+        format!("{source_id}.wav"),
         Some(byte_length),
         None,
     )
     .expect("descriptor");
-    let registry = SelectedSourceRegistry::new();
     registry
         .replace(InspectedAudioSource::from_staged(
             descriptor.clone(),
@@ -339,13 +382,12 @@ fn stage_long_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRe
             AudioContainer::Wav,
         ))
         .expect("register staged source");
-    (descriptor, registry)
+    descriptor
 }
 
-fn long_pcm_wav() -> Vec<u8> {
+fn tone_pcm_wav(frequency_hz: f64, seconds: u32) -> Vec<u8> {
     let sample_rate = 44_100_u32;
     let channels = 1_u16;
-    let seconds = 15_u32;
     let frame_count = sample_rate * seconds;
     let data_bytes = frame_count * 2;
     let mut bytes = Vec::with_capacity(usize::try_from(data_bytes + 44).expect("capacity"));
@@ -361,7 +403,6 @@ fn long_pcm_wav() -> Vec<u8> {
     bytes.extend_from_slice(&16_u16.to_le_bytes());
     bytes.extend_from_slice(b"data");
     bytes.extend_from_slice(&data_bytes.to_le_bytes());
-    let frequency_hz = 440.0_f64;
     for index in 0..frame_count {
         let time = f64::from(index) / f64::from(sample_rate);
         let sample = (time * frequency_hz * std::f64::consts::TAU).sin() * 12_000.0;
