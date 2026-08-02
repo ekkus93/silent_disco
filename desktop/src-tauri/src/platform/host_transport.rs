@@ -4,7 +4,9 @@ use super::host_transport_events::{DesktopHostTransportEventSink, HostTransportE
 use super::network_error::DesktopNetworkError;
 use silent_disco_core::domain::{DeliverySeverity, MonotonicMillis};
 use silent_disco_core::error::CoreError;
-use silent_disco_core::protocol::{ControlMessage, Disconnect, JoinApproval, JoinRejection};
+use silent_disco_core::protocol::{
+    ControlMessage, Disconnect, JoinApproval, JoinRejection, ProtocolFrame,
+};
 use silent_disco_core::runtime::{
     DeliveryReport, SessionAdvertisement, TransportEffect, TransportEffectRequest,
     TransportEvent as CoreTransportEvent,
@@ -19,6 +21,11 @@ use std::time::Duration;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const TRANSPORT_EFFECT_QUEUE_CAPACITY: usize = 32;
 const MAX_EFFECTS_PER_TICK: usize = 8;
+/// Bounded output queue between a playback pump thread and this worker.
+/// Sized generously relative to the packetizer's own 32-frame default so a
+/// momentary transport stall doesn't immediately backpressure decoding.
+const BROADCAST_FRAME_QUEUE_CAPACITY: usize = 64;
+const MAX_BROADCAST_FRAMES_PER_TICK: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HostTransportStatus {
@@ -44,6 +51,7 @@ pub(crate) struct DesktopHostTransportRuntime {
     endpoint: silent_disco_core::runtime::NetworkEndpoint,
     stop: Arc<AtomicBool>,
     effect_sender: SyncSender<TransportEffect>,
+    broadcast_sender: SyncSender<ProtocolFrame>,
     status: Arc<SharedStatus>,
     clock: Arc<dyn TransportClock>,
     worker: Option<JoinHandle<Result<(), DesktopNetworkError>>>,
@@ -63,8 +71,10 @@ impl DesktopHostTransportRuntime {
             last_error: Mutex::new(None),
         });
         let (effect_sender, effect_receiver) = sync_channel(TRANSPORT_EFFECT_QUEUE_CAPACITY);
+        let (broadcast_sender, broadcast_receiver) = sync_channel(BROADCAST_FRAME_QUEUE_CAPACITY);
         let worker_stop = Arc::clone(&stop);
         let worker_status = Arc::clone(&status);
+        let worker_clock = Arc::clone(&clock);
         let worker = thread::Builder::new()
             .name("silent-disco-desktop-host-transport".to_owned())
             .spawn(move || {
@@ -73,8 +83,10 @@ impl DesktopHostTransportRuntime {
                     &advertisement,
                     &sink,
                     &effect_receiver,
+                    &broadcast_receiver,
                     &worker_stop,
                     &worker_status,
+                    &worker_clock,
                 )
             })
             .map_err(|error| {
@@ -86,10 +98,32 @@ impl DesktopHostTransportRuntime {
             endpoint,
             stop,
             effect_sender,
+            broadcast_sender,
             status,
             clock,
             worker: Some(worker),
         })
+    }
+
+    /// Enqueues one control/sync/audio frame for the worker thread to
+    /// broadcast on its next tick. Non-blocking: a full queue or a shut-down
+    /// worker is reported as an error rather than stalling the caller (a
+    /// playback pump thread), since audio delivery is inherently best-effort.
+    pub(super) fn broadcast_frame(&self, frame: ProtocolFrame) -> Result<(), DesktopNetworkError> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(DesktopNetworkError::unavailable(
+                "desktop host transport is shutting down",
+            ));
+        }
+        match self.broadcast_sender.try_send(frame) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(DesktopNetworkError::resource_limit(
+                "desktop host transport broadcast queue is full",
+            )),
+            Err(TrySendError::Disconnected(_)) => Err(DesktopNetworkError::unavailable(
+                "desktop host transport worker is unavailable",
+            )),
+        }
     }
 
     #[must_use]
@@ -154,18 +188,27 @@ impl DesktopHostTransportRuntime {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_transport_worker(
     mut node: Box<dyn HostTransportNode>,
     advertisement: &SessionAdvertisement,
     sink: &Arc<dyn DesktopHostTransportEventSink>,
     effect_receiver: &Receiver<TransportEffect>,
+    broadcast_receiver: &Receiver<ProtocolFrame>,
     stop: &AtomicBool,
     status: &SharedStatus,
+    clock: &Arc<dyn TransportClock>,
 ) -> Result<(), DesktopNetworkError> {
-    let mut processor = HostTransportEventProcessor::new();
+    let mut processor = HostTransportEventProcessor::new(Arc::clone(clock));
     let mut primary_error = None;
     while !stop.load(Ordering::Acquire) {
-        if let Err(error) = process_effects(&*node, &**sink, effect_receiver, status) {
+        if let Err(error) =
+            process_effects(&*node, &**sink, effect_receiver, status, &mut processor)
+        {
+            primary_error = Some(error);
+            break;
+        }
+        if let Err(error) = process_broadcast_frames(&*node, broadcast_receiver, status) {
             primary_error = Some(error);
             break;
         }
@@ -201,15 +244,50 @@ fn run_transport_worker(
         .map_or(Ok(()), Err)
 }
 
+/// Drains up to [`MAX_BROADCAST_FRAMES_PER_TICK`] frames queued by a
+/// playback pump thread (stream-start control, audio datagrams) and
+/// broadcasts each on the channel its `ProtocolFrame` variant belongs to.
+/// A per-frame delivery failure is recorded as the last error but does not
+/// stop the worker -- one dropped audio packet is not fatal to the stream,
+/// matching the Android host's per-packet broadcast-audio handling.
+fn process_broadcast_frames(
+    node: &dyn HostTransportNode,
+    receiver: &Receiver<ProtocolFrame>,
+    status: &SharedStatus,
+) -> Result<(), DesktopNetworkError> {
+    for _ in 0..MAX_BROADCAST_FRAMES_PER_TICK {
+        let frame = match receiver.try_recv() {
+            Ok(frame) => frame,
+            Err(TryRecvError::Empty) => return Ok(()),
+            Err(TryRecvError::Disconnected) => {
+                return Err(DesktopNetworkError::unavailable(
+                    "desktop host transport broadcast queue disconnected",
+                ));
+            }
+        };
+        let delivery = match &frame {
+            ProtocolFrame::Control(message) => node.broadcast_control(message),
+            ProtocolFrame::Audio(_) => node.broadcast_audio(&frame),
+            ProtocolFrame::SyncResponse(_) => node.broadcast_sync(&frame),
+            ProtocolFrame::SyncRequest(_) => continue, // the host never sends this frame kind
+        };
+        if let Err(error) = delivery {
+            set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn process_effects(
     node: &dyn HostTransportNode,
     sink: &dyn DesktopHostTransportEventSink,
     receiver: &Receiver<TransportEffect>,
     status: &SharedStatus,
+    processor: &mut HostTransportEventProcessor,
 ) -> Result<(), DesktopNetworkError> {
     for _ in 0..MAX_EFFECTS_PER_TICK {
         match receiver.try_recv() {
-            Ok(effect) => process_effect(node, sink, effect, status)?,
+            Ok(effect) => process_effect(node, sink, effect, status, processor)?,
             Err(TryRecvError::Empty) => return Ok(()),
             Err(TryRecvError::Disconnected) => {
                 return Err(DesktopNetworkError::unavailable(
@@ -226,48 +304,68 @@ fn process_effect(
     sink: &dyn DesktopHostTransportEventSink,
     effect: TransportEffect,
     status: &SharedStatus,
+    processor: &mut HostTransportEventProcessor,
 ) -> Result<(), DesktopNetworkError> {
     let operation_id = effect.operation_id;
+    let mut authorize: Option<(silent_disco_core::domain::DeviceId, u16, u16)> = None;
     let delivery = match effect.request {
         TransportEffectRequest::DeliverJoinApproval {
             session_id,
             listener_id,
             trusted_for_future,
             ..
-        } => node.send_pending_control(
-            &listener_id.clone(),
-            &ControlMessage::JoinApproval(JoinApproval {
-                session_id,
-                listener_id,
-                trusted_for_future,
-            }),
-        ),
+        } => {
+            if let Some((sync_port, audio_port)) = processor.take_pending_ports(&listener_id) {
+                authorize = Some((listener_id.clone(), sync_port, audio_port));
+            }
+            node.send_pending_control(
+                &listener_id.clone(),
+                &ControlMessage::JoinApproval(JoinApproval {
+                    session_id,
+                    listener_id,
+                    trusted_for_future,
+                }),
+            )
+        }
         TransportEffectRequest::DeliverJoinRejection {
             session_id,
             listener_id,
             reason_code,
             ..
-        } => node.send_pending_control(
-            &listener_id.clone(),
-            &ControlMessage::JoinRejection(JoinRejection {
-                session_id,
-                listener_id,
-                reason: reason_code,
-            }),
-        ),
+        } => {
+            processor.take_pending_ports(&listener_id);
+            node.send_pending_control(
+                &listener_id.clone(),
+                &ControlMessage::JoinRejection(JoinRejection {
+                    session_id,
+                    listener_id,
+                    reason: reason_code,
+                }),
+            )
+        }
         TransportEffectRequest::DisconnectListener {
             session_id,
             listener_id,
             reason_code,
-        } => node.send_pending_control(
-            &listener_id.clone(),
-            &ControlMessage::Disconnect(Disconnect {
-                session_id,
-                listener_id,
-                reason: reason_code,
-            }),
-        ),
+        } => {
+            processor.take_pending_ports(&listener_id);
+            node.send_pending_control(
+                &listener_id.clone(),
+                &ControlMessage::Disconnect(Disconnect {
+                    session_id,
+                    listener_id,
+                    reason: reason_code,
+                }),
+            )
+        }
     };
+
+    if let (Ok(delivery), Some((listener_id, sync_port, audio_port))) = (&delivery, authorize)
+        && delivery.report.successful_peers > 0
+        && let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port)
+    {
+        set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+    }
 
     let report = match delivery {
         Ok(delivery) => delivery.report,

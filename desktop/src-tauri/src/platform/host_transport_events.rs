@@ -4,13 +4,14 @@ use super::host_join_projection::PendingJoinProjection;
 use super::host_pending_handshake::send_pending_hello;
 use super::network_error::DesktopNetworkError;
 use silent_disco_core::error::CoreError;
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame};
+use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, SyncResponse};
 use silent_disco_core::runtime::{
     CoreActorHandle, CoreSnapshot, SessionAdvertisement, TransportEvent as CoreTransportEvent,
 };
 use silent_disco_core::transport::{
-    HostTransportNode, TransportChannel, TransportEvent as RuntimeTransportEvent,
+    HostTransportNode, TransportChannel, TransportClock, TransportEvent as RuntimeTransportEvent,
 };
+use std::sync::Arc;
 
 pub(super) trait DesktopHostTransportEventSink: Send + Sync + 'static {
     fn current_snapshot(&self) -> Result<CoreSnapshot, CoreError>;
@@ -29,13 +30,25 @@ impl DesktopHostTransportEventSink for CoreActorHandle {
 
 pub(super) struct HostTransportEventProcessor {
     pending: PendingJoinProjection,
+    clock: Arc<dyn TransportClock>,
 }
 
 impl HostTransportEventProcessor {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(clock: Arc<dyn TransportClock>) -> Self {
         Self {
             pending: PendingJoinProjection::new(),
+            clock,
         }
+    }
+
+    /// Removes and returns one pending listener's reported sync/audio
+    /// ports, for the caller to authorize datagram routing after a
+    /// successful join approval.
+    pub(super) fn take_pending_ports(
+        &mut self,
+        device_id: &silent_disco_core::domain::DeviceId,
+    ) -> Option<(u16, u16)> {
+        self.pending.take_ports(device_id)
     }
 
     pub(super) fn process(
@@ -56,6 +69,24 @@ impl HostTransportEventProcessor {
                     .pending
                     .register(request, received_at, advertisement, sink)?;
                 Ok(send_pending_hello(node, &device_id, advertisement))
+            }
+            RuntimeTransportEvent::FrameReceived {
+                channel: TransportChannel::Synchronization,
+                frame: ProtocolFrame::SyncRequest(request),
+                received_at,
+                ..
+            } => {
+                let response = ProtocolFrame::SyncResponse(SyncResponse {
+                    session_id: request.session_id,
+                    correlation_id: request.correlation_id,
+                    t1_listener_send_elapsed_ms: request.t1_listener_send_elapsed_ms,
+                    t2_host_receive_elapsed_ms: received_at,
+                    t3_host_send_elapsed_ms: self.clock.now(),
+                });
+                Ok(node
+                    .broadcast_sync(&response)
+                    .err()
+                    .map(|error| DesktopNetworkError::transport(&error).to_string()))
             }
             RuntimeTransportEvent::PeerDisconnected { peer, error, .. } => {
                 let Some(device_id) = peer.device_id else {

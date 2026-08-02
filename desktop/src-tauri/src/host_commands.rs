@@ -235,6 +235,39 @@ pub fn end_host_session(
     )
 }
 
+/// Starts real-time playback of the host draft's selected audio source:
+/// opens the shared decoder, spawns the shared packetizer, and begins
+/// broadcasting real audio/sync frames to connected listeners.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn start_host_playback(
+    state: State<'_, DesktopAppState>,
+    sources: State<'_, SelectedSourceRegistry>,
+) -> Result<(), DesktopErrorDto> {
+    state.start_host_playback(&sources)
+}
+
+/// Pauses the active playback stream after a validated actor transition.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn pause_host_playback(state: State<'_, DesktopAppState>) -> Result<(), DesktopErrorDto> {
+    state.pause_host_playback()
+}
+
+/// Resumes the active, paused playback stream after a validated actor transition.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn resume_host_playback(state: State<'_, DesktopAppState>) -> Result<(), DesktopErrorDto> {
+    state.resume_host_playback()
+}
+
+/// Stops the active playback stream and blocks until its pump thread exits.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn stop_host_playback(state: State<'_, DesktopAppState>) -> Result<(), DesktopErrorDto> {
+    state.stop_host_playback()
+}
+
 /// Lists classified network addresses and the current bind policy for the ready profile.
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]

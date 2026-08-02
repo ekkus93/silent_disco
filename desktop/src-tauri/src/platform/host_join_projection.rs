@@ -9,8 +9,18 @@ use silent_disco_core::runtime::{
 };
 use std::collections::HashMap;
 
+/// A pending join's listener-reported sync/audio UDP ports -- needed once
+/// (if) the join is approved, to call `authorize_peer_ports`. The host
+/// cannot discover these ports any other way (the listener's audio channel
+/// is receive-only and never sends a datagram the host could observe a
+/// source address from).
+struct PendingJoinPorts {
+    sync_port: u16,
+    audio_port: u16,
+}
+
 pub(super) struct PendingJoinProjection {
-    requests: HashMap<DeviceId, RequestId>,
+    requests: HashMap<DeviceId, PendingJoinPorts>,
     next_sequence: u64,
 }
 
@@ -42,7 +52,7 @@ impl PendingJoinProjection {
         let invite_code_valid = advertisement.approval_mode != ApprovalMode::InviteCode
             || request.invite_code.as_deref() == snapshot.host_draft.invite_code.as_deref();
         let summary = JoinRequestSummary::new(
-            request_id.clone(),
+            request_id,
             device_id.clone(),
             request.device.display_name,
             TrustState::SessionOnly,
@@ -52,11 +62,28 @@ impl PendingJoinProjection {
         .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
         sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary))
             .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
-        self.requests.insert(device_id.clone(), request_id);
+        self.requests.insert(
+            device_id.clone(),
+            PendingJoinPorts {
+                sync_port: request.sync_port,
+                audio_port: request.audio_port,
+            },
+        );
         Ok(device_id)
     }
 
     pub(super) fn remove(&mut self, device_id: &DeviceId) {
         self.requests.remove(device_id);
+    }
+
+    /// Removes and returns one pending listener's reported sync/audio ports,
+    /// for the caller to authorize datagram routing after a successful join
+    /// approval. Returns `None` if the listener never sent a `JoinRequest`
+    /// through this projection (e.g. test scaffolding), in which case
+    /// authorization is simply skipped rather than treated as an error.
+    pub(super) fn take_ports(&mut self, device_id: &DeviceId) -> Option<(u16, u16)> {
+        self.requests
+            .remove(device_id)
+            .map(|ports| (ports.sync_port, ports.audio_port))
     }
 }

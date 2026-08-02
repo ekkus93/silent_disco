@@ -243,6 +243,99 @@ impl DesktopAppState {
         network.snapshot()
     }
 
+    pub(crate) fn start_host_playback(
+        &self,
+        registry: &crate::platform::file_picker::SelectedSourceRegistry,
+    ) -> Result<(), DesktopErrorDto> {
+        let (handle, network) = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => {
+                    (ready.handle.clone(), Arc::clone(&ready.network))
+                }
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        crate::platform::start_playback::start(&handle, &network, registry)
+    }
+
+    pub(crate) fn pause_host_playback(&self) -> Result<(), DesktopErrorDto> {
+        let network = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        network.pause_playback()
+    }
+
+    pub(crate) fn resume_host_playback(&self) -> Result<(), DesktopErrorDto> {
+        let network = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        network.resume_playback()
+    }
+
+    pub(crate) fn stop_host_playback(&self) -> Result<(), DesktopErrorDto> {
+        let network = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        network.stop_playback()
+    }
+
     pub(crate) fn set_host_network_preference(
         &self,
         request: &SetNetworkBindPreferenceRequest,

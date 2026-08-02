@@ -6,17 +6,21 @@ use super::network_dto::{
     NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
 };
 pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};
+use super::playback_streamer::DesktopPlaybackStreamer;
 use crate::dto::DesktopErrorDto;
 use netdev::Interface;
+use silent_disco_core::domain::{MonotonicMillis, PlaybackState};
 use silent_disco_core::error::CoreError;
+use silent_disco_core::protocol::{ControlMessage, Pause, ProtocolFrame};
 use silent_disco_core::runtime::{
-    CoreActorHandle, NetworkEndpoint, SessionAdvertisement, TransportEffect,
+    AudioEvent, CoreActorHandle, NetworkEndpoint, SessionAdvertisement, TransportEffect,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, SystemTransportClock, TransportClock, TransportFactory,
     production_transport_factory,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 const MAX_INTERFACE_RECORDS: usize = 256;
@@ -182,6 +186,7 @@ struct ActiveBinding {
     selected: SelectedAddress,
     advertisement: SessionAdvertisement,
     runtime: DesktopHostTransportRuntime,
+    playback: Option<DesktopPlaybackStreamer>,
 }
 
 struct NetworkState {
@@ -326,6 +331,7 @@ impl DesktopHostNetworkControl {
             selected,
             advertisement: advertisement.clone(),
             runtime,
+            playback: None,
         });
         Ok(endpoint)
     }
@@ -340,12 +346,224 @@ impl DesktopHostNetworkControl {
             .state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned())?;
-        let Some(active) = state.active.take() else {
+        let Some(mut active) = state.active.take() else {
             return Err(DesktopNetworkError::invalid_state(
                 "desktop host network endpoint is not active",
             ));
         };
+        if let Some(playback) = active.playback.take() {
+            playback.request_stop();
+            playback.join();
+        }
         active.runtime.shutdown()
+    }
+
+    /// Resolves the current staged/decoded/packetized source into an active
+    /// playback stream, transitioning the actor to `Playing` and starting
+    /// the real-time broadcast pump. See [`DesktopPlaybackStreamer::start`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no host session is active, playback
+    /// is already active and still running, or the actor rejects the
+    /// `Playing` transition.
+    pub(crate) fn start_playback(
+        self: &Arc<Self>,
+        packetizer: silent_disco_core::audio::StreamingPacketizeHandle,
+        session_id: silent_disco_core::domain::SessionId,
+        stream_id: silent_disco_core::domain::StreamId,
+        handle: CoreActorHandle,
+    ) -> Result<(), DesktopErrorDto> {
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+            let Some(active) = state.active.as_mut() else {
+                return Err(DesktopNetworkError::unavailable(
+                    "starting playback requires an active desktop host session",
+                )
+                .dto());
+            };
+            match &active.playback {
+                Some(playback) if !playback.is_finished() => {
+                    return Err(DesktopNetworkError::invalid_state(
+                        "playback is already active for this host session",
+                    )
+                    .dto());
+                }
+                _ => {
+                    if let Some(finished) = active.playback.take() {
+                        finished.join();
+                    }
+                }
+            }
+        }
+        let streamer = DesktopPlaybackStreamer::start(
+            packetizer,
+            session_id,
+            stream_id,
+            Arc::clone(self),
+            handle,
+        )?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_mut() else {
+            return Err(DesktopNetworkError::unavailable(
+                "desktop host session ended while playback was starting",
+            )
+            .dto());
+        };
+        active.playback = Some(streamer);
+        Ok(())
+    }
+
+    /// Pauses the active playback stream after a validated actor transition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no playback is active or the actor
+    /// rejects the `Paused` transition (e.g. not currently playing).
+    pub(crate) fn pause_playback(&self) -> Result<(), DesktopErrorDto> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_mut() else {
+            return Err(DesktopNetworkError::unavailable(
+                "pausing playback requires an active desktop host session",
+            )
+            .dto());
+        };
+        let Some(playback) = active.playback.as_ref() else {
+            return Err(DesktopNetworkError::invalid_state("no playback is active").dto());
+        };
+        playback
+            .handle
+            .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+            .map_err(DesktopErrorDto::from)?;
+        let host_pause_time_ms = active.runtime.observed_at();
+        active
+            .runtime
+            .broadcast_frame(ProtocolFrame::Control(ControlMessage::Pause(Pause {
+                session_id: playback.session_id.clone(),
+                stream_id: playback.stream_id.clone(),
+                host_pause_time_ms,
+            })))
+            .map_err(DesktopNetworkError::dto)?;
+        playback.paused.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    /// Resumes the active, paused playback stream after a validated actor
+    /// transition, re-broadcasting the stream-start message so a listener
+    /// that missed frames while paused reconfirms format/presentation base.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no playback is active or the actor
+    /// rejects the `Playing` transition (e.g. not currently paused).
+    pub(crate) fn resume_playback(&self) -> Result<(), DesktopErrorDto> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_mut() else {
+            return Err(DesktopNetworkError::unavailable(
+                "resuming playback requires an active desktop host session",
+            )
+            .dto());
+        };
+        let Some(playback) = active.playback.as_ref() else {
+            return Err(DesktopNetworkError::invalid_state("no playback is active").dto());
+        };
+        playback
+            .handle
+            .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .map_err(DesktopErrorDto::from)?;
+        playback.paused.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    /// Signals the active playback stream to stop and blocks until its pump
+    /// thread performs the `Stop` broadcast, the `Stopped` actor transition,
+    /// and exits.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no playback is active.
+    pub(crate) fn stop_playback(&self) -> Result<(), DesktopErrorDto> {
+        let playback = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+            let Some(active) = state.active.as_mut() else {
+                return Err(DesktopNetworkError::unavailable(
+                    "stopping playback requires an active desktop host session",
+                )
+                .dto());
+            };
+            active
+                .playback
+                .take()
+                .ok_or_else(|| DesktopNetworkError::invalid_state("no playback is active").dto())?
+        };
+        playback.request_stop();
+        playback.join();
+        Ok(())
+    }
+
+    /// Returns the transport worker's current monotonic time, the same
+    /// clock basis used for sync responses -- callers computing a playback
+    /// timestamp (e.g. `host_start_time_ms`) must use this, not a fresh
+    /// clock, so presentation times remain comparable to sync samples.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no host session is active.
+    pub(crate) fn transport_now(&self) -> Result<MonotonicMillis, DesktopErrorDto> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_ref() else {
+            return Err(DesktopNetworkError::unavailable(
+                "desktop host network endpoint is not active",
+            )
+            .dto());
+        };
+        Ok(active.runtime.observed_at())
+    }
+
+    /// Enqueues one control/sync/audio frame for the host transport worker
+    /// to broadcast. Used by the playback pump thread, which is never
+    /// already holding this control's state lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no host session is active or the
+    /// worker's broadcast queue is full/unavailable.
+    pub(crate) fn broadcast_playback_frame(
+        &self,
+        frame: ProtocolFrame,
+    ) -> Result<(), DesktopErrorDto> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_ref() else {
+            return Err(DesktopNetworkError::unavailable(
+                "desktop host network endpoint is not active",
+            )
+            .dto());
+        };
+        active
+            .runtime
+            .broadcast_frame(frame)
+            .map_err(DesktopNetworkError::dto)
     }
 
     pub(crate) fn active_host_session(
