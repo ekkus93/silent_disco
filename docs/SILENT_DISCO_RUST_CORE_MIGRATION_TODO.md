@@ -798,21 +798,26 @@ itself has not been rewired to call it -- it still drives its own
 `ManualConnectUiState` directly. Unifying that call site is a clearly scoped
 follow-up, not done this session.
 
-- [ ] **Confirmed consequential, 2026-08-02 real-device test:** `ManualEndpointScreen.kt`
-      (`feature/listener/ManualEndpointScreen.kt:136`) shows a static
+- [x] **Fixed 2026-08-02** (commit `9c5c4f7`): `ManualEndpointScreen.kt`
+      (`feature/listener/ManualEndpointScreen.kt:136`) used to show a static
       "The host approved this device. Audio streaming is not part of this
       build yet." message on every successful manual connection, regardless
-      of actual playback state -- it is not derived from any real state, so
-      it will say the same thing whether or not audio is flowing. Manual
-      connect is currently the *only* way an Android phone can reach the
-      desktop host (desktop does not broadcast BLE/Wi-Fi-Direct), so until
-      this screen is unified with the actor-driven playback pipeline
-      (`ListenerCoreController`/`ListenerPlaybackScheduler`/`OboePlaybackEngine`,
-      the same pipeline the BLE/Wi-Fi-Direct discovered-session path already
-      uses), no desktop-to-Android audio test can ever produce sound through
-      this screen, no matter what the desktop does correctly. This is the
-      single most consequential item in this note -- prioritize it over the
-      rest of the manual-endpoint unification if only one thing gets done.
+      of actual playback state. Manual connect is the *only* way an Android
+      phone can reach the desktop host (desktop does not broadcast
+      BLE/Wi-Fi-Direct), so this was the single most consequential blocker on
+      ever hearing desktop-to-Android audio. Fixed by giving
+      `ManualListenerTransportController` its own real playback + clock-sync
+      lifecycle (reusing `ListenerPlaybackScheduler`/`HostTimeMapper`/the
+      shared `OboePlaybackEngine`, NOT the BLE path's Wi-Fi-Direct-entangled
+      orchestration) and a new `ManualConnectUiState.Streaming` state the
+      screen renders instead of the placeholder. Confirmed live on the real
+      device the same day: real join -> approval -> the screen genuinely
+      showing "Connected / Buffering..." driven by a real `StreamStarted`
+      event, then a clean "Host disconnected" once the desktop side ended
+      (a separate, already-tracked, pre-existing `stop_playback` bug, not
+      this change). Audible/in-sync confirmation from a human ear is still
+      the one thing this session cannot verify itself -- see desktop TODO
+      Block 28.
 
 ### 13.4 Add parity/integration tests
 

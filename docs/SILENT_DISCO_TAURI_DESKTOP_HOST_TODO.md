@@ -1559,21 +1559,25 @@ actively blocking the app's UID under `BATTERY_SAVER|APP_BACKGROUND`; `adb`/
 Battery Saver off, a real 40-second stream over the real manual-connect path
 worked end to end: join, approval, and real audio broadcast all succeeded.
 
-- [ ] **New, more consequential blocker found this same session**: even with
-      the connection genuinely working, no sound was heard, because
+- [x] **Fixed 2026-08-02** (Kotlin commit `9c5c4f7`, same day): even with the
+      connection genuinely working, no sound was heard, because
       `ManualEndpointScreen.kt` (`feature/listener/ManualEndpointScreen.kt:136`)
-      shows a static "Audio streaming is not part of this build yet" message
-      and was never wired to the real playback pipeline. Manual connect is
-      the *only* way to reach the desktop host at all (no BLE/Wi-Fi-Direct
-      broadcast from desktop), so this screen must be unified with the
-      actor-driven playback pipeline before Block 28 can produce any audible
-      result. Full detail and the primary tracking entry: shared Rust
-      migration TODO, Block 13.3 note (search `ManualEndpointScreen.kt:136`).
-      Also found: a silent-failure bug where `network.stop_playback()` can
+      showed a static "Audio streaming is not part of this build yet."
+      message and was never wired to the real playback pipeline. Fixed --
+      see shared Rust migration TODO's Block 13.3 note for the full change.
+      Confirmed live on the real device the same day: real join -> approval
+      -> the screen genuinely showing "Connected / Buffering..." driven by a
+      real `StreamStarted` event. **Not yet confirmed**: audible, in-sync
+      sound from a human ear -- the run that reached "Buffering" ended
+      (desktop side disconnected) before a human listened, due to the
+      still-unfixed `stop_playback` bug below cutting the song-change step
+      short. Retry with a human actually listening is the next real step for
+      this block.
+- [ ] **Still unfixed**: a silent-failure bug where `network.stop_playback()` can
       report success even when the actor never actually reaches
       `PlaybackState::Stopped` (`DesktopPlaybackStreamer::join()`'s
       `drop(pump.join())` swallows a panicking/failing pump-thread exit) --
-      not yet fixed, see memory.md 2026-08-02 entries for the reproduction.
+      see memory.md 2026-08-02 entries for the reproduction.
 
 ### 28.1 One listener
 
@@ -2524,10 +2528,11 @@ success. Desktop can *host* (broadcast) real audio today; it cannot yet
 - [ ] Manual LAN hosting works.
 - [ ] Android control interoperability works.
 - [ ] Bounded Rust audio transmission works.
-- [ ] One Android listener plays desktop-hosted audio. **Blocked on:**
-      `ManualEndpointScreen.kt`'s playback wiring -- see Block 28's "New,
-      more consequential blocker" note and the shared Rust migration TODO's
-      Block 13.3 note.
+- [ ] One Android listener plays desktop-hosted audio. `ManualEndpointScreen.kt`'s
+      playback wiring is now fixed and confirmed reaching real `Streaming`/
+      `Buffering` state live on-device (see Block 28) -- what remains is a
+      human actually listening to confirm audible, in-sync sound, plus the
+      still-unfixed `stop_playback` bug noted in Block 28.
 - [ ] At least two Android listeners pass recorded validation.
 - [ ] mDNS and QR convenience work without replacing manual connection.
 - [ ] Optional local monitor uses the shared timeline.
