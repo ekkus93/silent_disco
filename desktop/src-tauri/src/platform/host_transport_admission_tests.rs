@@ -192,6 +192,8 @@ fn send_join(listener: &dyn ListenerTransportNode, session_id: &SessionId, liste
                 display_name: "Block 23 listener".to_owned(),
             },
             invite_code: None,
+            sync_port: 0,
+            audio_port: 0,
         }))
         .expect("send join");
 }

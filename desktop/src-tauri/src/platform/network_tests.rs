@@ -100,6 +100,15 @@ impl HostTransportNode for FakeHostNode {
         panic!("unused fake host operation")
     }
 
+    fn authorize_peer_ports(
+        &self,
+        _device_id: &DeviceId,
+        _sync_port: u16,
+        _audio_port: u16,
+    ) -> Result<(), TransportError> {
+        panic!("unused fake host operation")
+    }
+
     fn disconnect_peer(&self, _device_id: &DeviceId) -> Result<(), TransportError> {
         panic!("unused fake host operation")
     }

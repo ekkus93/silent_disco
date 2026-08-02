@@ -102,6 +102,8 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
                 display_name: "Control-only listener".to_owned(),
             },
             invite_code: None,
+            sync_port: 0,
+            audio_port: 0,
         }))
         .expect("send join request");
 
