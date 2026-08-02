@@ -1,11 +1,21 @@
 use core::fmt;
 use std::error::Error;
 
+use super::ramp::{apply_fade_out_tail, blend_sample, last_frame};
+
 /// Default bound on consecutive concealed packets before playback signals
 /// that a hard resync/rebuffer is required.
 pub const DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS: u32 = 5;
 /// Hard ceiling on [`ConcealmentPolicy`]'s configured consecutive-concealment bound.
 pub const MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT: u32 = 200;
+/// Default amplitude-ramp length, in milliseconds, applied at both edges of
+/// every concealed frame.
+pub const DEFAULT_CONCEALMENT_RAMP_MS: u32 = 5;
+/// Hard ceiling on the configured concealment ramp, in frames.
+pub const MAX_CONCEALMENT_RAMP_FRAMES: u32 = 4_800;
+/// Largest right-shift applied to the repeated source packet. Beyond this the
+/// repetition is inaudible, so further attenuation buys nothing.
+const MAX_ATTENUATION_SHIFT: u32 = 8;
 
 /// Stable failure taxonomy for concealment policy configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +23,9 @@ pub enum ConcealmentConfigErrorKind {
     /// The configured consecutive-concealment bound is zero or exceeds
     /// [`MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT`].
     ConsecutiveBoundOutOfRange,
+    /// The configured ramp length is zero or exceeds
+    /// [`MAX_CONCEALMENT_RAMP_FRAMES`].
+    RampFramesOutOfRange,
 }
 
 /// Typed concealment configuration failure.
@@ -35,7 +48,7 @@ impl Error for ConcealmentConfigError {}
 /// Outcome of synthesizing one concealment frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConcealmentOutcome {
-    /// The gap was concealed with silence; playback may continue.
+    /// The gap was concealed; playback may continue.
     Concealed,
     /// The configured consecutive-concealment bound was reached; the caller
     /// must treat this as a hard desync and rebuffer before continuing.
@@ -48,33 +61,51 @@ pub struct ConcealmentStatistics {
     /// Total concealment frames synthesized across this policy's lifetime.
     pub total_concealed_packets: u64,
     /// Concealment frames synthesized back-to-back since the last real
-    /// packet delivery or the last [`ConcealmentPolicy::reset`].
+    /// packet delivery or the last [`ConcealmentPolicy::reset_consecutive_count`].
     pub consecutive_concealed_packets: u32,
     /// Number of times the consecutive bound was reached, requiring a hard
     /// resync/rebuffer.
     pub hard_resync_signals: u64,
 }
 
-/// Silence-concealment policy for missing PCM packets in exactly one stream.
+/// Concealment policy for missing PCM packets in exactly one stream.
 ///
-/// This policy only ever synthesizes fresh zero-filled silence; it never
-/// retains or replays a prior packet's samples, so a concealed frame can
-/// never leak previously played audio.
+/// A lost packet replaced by silence leaves an audible hole: at a 20ms packet
+/// duration the hole is plainly perceptible in tonal content no matter how
+/// smoothly its edges are ramped, and real-device listening confirmed it as
+/// the dominant source of reported "popping and static". Instead this policy
+/// repeats the last real packet's audio at progressively halved amplitude, so
+/// isolated losses continue the sound rather than interrupting it, while a
+/// sustained outage still decays to silence within a few packets rather than
+/// looping one packet indefinitely.
+///
+/// Every synthesized frame begins at the exact sample values the previously
+/// emitted frame ended on and fades its own tail to zero, so both seams are
+/// continuous regardless of what precedes or follows.
 #[derive(Debug)]
 pub struct ConcealmentPolicy {
     max_consecutive_concealed_packets: u32,
+    ramp_frames: usize,
     statistics: ConcealmentStatistics,
+    last_real_samples: Vec<i16>,
+    previous_tail: Vec<i16>,
 }
 
 impl ConcealmentPolicy {
-    /// Creates a concealment policy bounded by `max_consecutive_concealed_packets`.
+    /// Creates a concealment policy bounded by `max_consecutive_concealed_packets`
+    /// and shaping every synthesized frame's edges over `ramp_frames` frames.
     ///
     /// # Errors
     ///
     /// Returns [`ConcealmentConfigErrorKind::ConsecutiveBoundOutOfRange`] when
     /// `max_consecutive_concealed_packets` is zero or exceeds
-    /// [`MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT`].
-    pub fn new(max_consecutive_concealed_packets: u32) -> Result<Self, ConcealmentConfigError> {
+    /// [`MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT`], or
+    /// [`ConcealmentConfigErrorKind::RampFramesOutOfRange`] when `ramp_frames`
+    /// is zero or exceeds [`MAX_CONCEALMENT_RAMP_FRAMES`].
+    pub fn new(
+        max_consecutive_concealed_packets: u32,
+        ramp_frames: u32,
+    ) -> Result<Self, ConcealmentConfigError> {
         if max_consecutive_concealed_packets == 0
             || max_consecutive_concealed_packets > MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT
         {
@@ -86,40 +117,101 @@ impl ConcealmentPolicy {
                 ),
             });
         }
+        if ramp_frames == 0 || ramp_frames > MAX_CONCEALMENT_RAMP_FRAMES {
+            return Err(ConcealmentConfigError {
+                kind: ConcealmentConfigErrorKind::RampFramesOutOfRange,
+                message: format!(
+                    "concealment ramp of {ramp_frames} frames must be nonzero and within the \
+                     {MAX_CONCEALMENT_RAMP_FRAMES}-frame limit"
+                ),
+            });
+        }
         Ok(Self {
             max_consecutive_concealed_packets,
+            ramp_frames: usize::try_from(ramp_frames).unwrap_or(usize::MAX),
             statistics: ConcealmentStatistics::default(),
+            last_real_samples: Vec::new(),
+            previous_tail: Vec::new(),
         })
     }
 
-    /// Synthesizes exactly one silent, interleaved PCM frame for a missing
-    /// packet slot and reports whether the consecutive-concealment bound has
-    /// now been reached.
+    /// Synthesizes exactly one interleaved PCM frame for a missing packet slot
+    /// and reports whether the consecutive-concealment bound has now been
+    /// reached.
+    ///
+    /// The frame repeats the most recently delivered real packet attenuated by
+    /// one further halving per consecutive concealment, blended in from the
+    /// previously emitted frame's final sample values and faded out to zero.
+    /// Before any real packet has been delivered there is nothing to repeat and
+    /// the frame is silence.
     pub fn conceal(
         &mut self,
         samples_per_packet: u32,
         channels: u16,
     ) -> (Vec<i16>, ConcealmentOutcome) {
-        let sample_count = usize::try_from(samples_per_packet)
-            .unwrap_or(usize::MAX)
-            .saturating_mul(usize::from(channels));
-        let silence = vec![0_i16; sample_count];
+        let channel_count = usize::from(channels);
+        let frame_count = usize::try_from(samples_per_packet).unwrap_or(usize::MAX);
+        let attenuation_shift =
+            (self.statistics.consecutive_concealed_packets + 1).min(MAX_ATTENUATION_SHIFT);
+        let samples = self.build_payload(frame_count, channel_count, attenuation_shift);
 
+        self.previous_tail =
+            last_frame(&samples, channel_count).map_or_else(Vec::new, <[i16]>::to_vec);
         self.statistics.total_concealed_packets += 1;
         self.statistics.consecutive_concealed_packets += 1;
 
         if self.statistics.consecutive_concealed_packets >= self.max_consecutive_concealed_packets {
             self.statistics.hard_resync_signals += 1;
-            (silence, ConcealmentOutcome::HardResyncRequired)
+            (samples, ConcealmentOutcome::HardResyncRequired)
         } else {
-            (silence, ConcealmentOutcome::Concealed)
+            (samples, ConcealmentOutcome::Concealed)
         }
     }
 
-    /// Records that a real (non-concealed) packet was delivered, resetting
-    /// the consecutive-concealment count. Cumulative totals are unaffected.
-    pub fn record_delivery(&mut self) {
+    fn build_payload(
+        &self,
+        frame_count: usize,
+        channel_count: usize,
+        attenuation_shift: u32,
+    ) -> Vec<i16> {
+        let mut samples = vec![0_i16; frame_count.saturating_mul(channel_count)];
+        if channel_count == 0 || frame_count == 0 {
+            return samples;
+        }
+        let ramp = self.ramp_frames.clamp(1, frame_count);
+        let source_frames = self.last_real_samples.len() / channel_count;
+        let has_tail = self.previous_tail.len() == channel_count;
+
+        for frame in 0..frame_count {
+            for channel in 0..channel_count {
+                let index = frame * channel_count + channel;
+                let mut value = if frame < source_frames {
+                    self.last_real_samples[index] >> attenuation_shift
+                } else {
+                    0
+                };
+                if frame < ramp && has_tail {
+                    // Convex blend from the previously emitted frame's final
+                    // value toward the repeated content: the seam has no step.
+                    value = blend_sample(value, self.previous_tail[channel], frame, ramp);
+                }
+                samples[index] = value;
+            }
+        }
+        apply_fade_out_tail(&mut samples, channel_count, ramp);
+        samples
+    }
+
+    /// Records that a real (non-concealed) packet was delivered, resetting the
+    /// consecutive-concealment count and adopting `samples` as the source for
+    /// any subsequent concealment. Cumulative totals are unaffected.
+    pub fn record_delivery(&mut self, samples: &[i16], channels: u16) {
+        let channel_count = usize::from(channels);
         self.statistics.consecutive_concealed_packets = 0;
+        self.last_real_samples.clear();
+        self.last_real_samples.extend_from_slice(samples);
+        self.previous_tail =
+            last_frame(samples, channel_count).map_or_else(Vec::new, <[i16]>::to_vec);
     }
 
     /// Resets the consecutive-concealment count after an explicit rebuffer,

@@ -69,18 +69,35 @@ Pure-Rust, no wiring changes, fully unit-testable. Mirror the Kotlin tests
 in `app/src/test/java/com/ekkus/silentdisco/core/audio/ListenerPlaybackSchedulerTest.kt`
 — they encode the verified behaviors.
 
-- [ ] 1.1 Replace silence synthesis in `PlaybackScheduler`/`ConcealmentPolicy`
+- [x] 1.1 Replace silence synthesis in `PlaybackScheduler`/`ConcealmentPolicy`
       with decaying-repetition concealment (R4):
-  - [ ] Track the last real packet's samples and the consecutive-concealment
+  - [x] Track the last real packet's samples and the consecutive-concealment
         generation inside the scheduler.
-  - [ ] Synthesize: source samples attenuated by `>> (generation + 1)`
+  - [x] Synthesize: source samples attenuated by `>> (generation + 1)`
         (cap 8), entry ramp over 5 ms blending from the previously played
         frame's final sample values, tail fade over the final 5 ms to zero.
         Integer PCM16 math; port from Kotlin
         `pcm16LeConcealmentPayload` / `pcm16LeLastFrame`
         (`PlaybackScheduling.kt`) — but operate on `i16` samples directly,
         no byte packing.
-  - [ ] `ConcealmentOutcome::HardResyncRequired` semantics unchanged.
+  - [x] `ConcealmentOutcome::HardResyncRequired` semantics unchanged.
+
+  **Done:** state lives in `ConcealmentPolicy` (`last_real_samples`,
+  `previous_tail`), not the scheduler, so the repetition source and both
+  seam values stay with the policy that owns concealment. New
+  `audio/ramp.rs` holds the shared integer-PCM shaping (`blend_sample`,
+  `apply_fade_out_tail`, `last_frame`, `scale_sample`). `ConcealmentPolicy::new`
+  now takes `ramp_frames` (validated, new `RampFramesOutOfRange` error kind)
+  and `record_delivery` now takes the delivered samples; `SchedulerConfig`
+  gained `concealment_ramp_ms` (default 5) and derives ramp frames from the
+  stream's validated packet geometry. **Pre-existing bug found and fixed
+  while getting the gate green:** `audio_output.rs` tests mutated the
+  process-global engine registry without holding `audio_abi`'s
+  `registry_test_guard`, while `token_space_exhaustion_...` deliberately
+  rewrites the shared token counter — an intermittent
+  `STOPPING`-instead-of-`PARTIAL` failure in
+  `partial_read_fills_remaining_frames_with_silence_and_reports_partial`.
+  The guard is now crate-visible and held by every registry-touching test.
 - [ ] 1.2 Fade-in on resume and stream start (R5): first real frame after
       any concealed frame, and the first frame ever delivered, get a 5 ms
       linear fade-in applied to their samples before delivery.

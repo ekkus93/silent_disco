@@ -1,13 +1,23 @@
 use super::{
-    ConcealmentConfigErrorKind, ConcealmentOutcome, ConcealmentPolicy,
+    ConcealmentConfigErrorKind, ConcealmentOutcome, ConcealmentPolicy, MAX_CONCEALMENT_RAMP_FRAMES,
     MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT,
 };
 
+/// 960 stereo frames of a constant amplitude, matching a 20ms 48kHz packet.
+fn constant_packet(amplitude: i16) -> Vec<i16> {
+    vec![amplitude; 960 * 2]
+}
+
+fn sample_at(samples: &[i16], frame: usize, channel: usize) -> i16 {
+    samples[frame * 2 + channel]
+}
+
 #[test]
-fn conceals_with_fresh_silence_of_the_expected_length() {
-    let mut policy = ConcealmentPolicy::new(5).expect("valid policy");
+fn conceals_with_silence_before_any_real_packet_has_been_delivered() {
+    let mut policy = ConcealmentPolicy::new(5, 240).expect("valid policy");
     let (samples, outcome) = policy.conceal(960, 2);
 
+    // Nothing has been delivered yet, so there is nothing to repeat.
     assert_eq!(samples.len(), 960 * 2);
     assert!(samples.iter().all(|&sample| sample == 0));
     assert_eq!(outcome, ConcealmentOutcome::Concealed);
@@ -16,24 +26,93 @@ fn conceals_with_fresh_silence_of_the_expected_length() {
 }
 
 #[test]
-fn never_reuses_a_previous_buffer_across_calls() {
-    let mut policy = ConcealmentPolicy::new(5).expect("valid policy");
+fn repeats_the_last_real_packet_at_half_amplitude_with_continuous_seams() {
+    let mut policy = ConcealmentPolicy::new(5, 240).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+
+    let (samples, outcome) = policy.conceal(960, 2);
+
+    assert_eq!(outcome, ConcealmentOutcome::Concealed);
+    // Entry continuity: starts exactly where the delivered packet ended.
+    assert_eq!(sample_at(&samples, 0, 0), 8_000);
+    // Body: the delivered packet repeated one halving down, not silence.
+    assert_eq!(sample_at(&samples, 480, 0), 4_000);
+    // Entry ramp blends between the two without a step.
+    assert_eq!(sample_at(&samples, 120, 0), 6_000);
+    // Exit continuity: the tail reaches zero for whatever follows.
+    assert_eq!(sample_at(&samples, 959, 0), 0);
+}
+
+#[test]
+fn consecutive_concealments_halve_again_each_time_and_decay_toward_silence() {
+    let mut policy = ConcealmentPolicy::new(200, 240).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+
+    let (first, _) = policy.conceal(960, 2);
+    let (second, _) = policy.conceal(960, 2);
+    let (third, _) = policy.conceal(960, 2);
+    let (eighth, _) = {
+        for _ in 0..4 {
+            policy.conceal(960, 2);
+        }
+        policy.conceal(960, 2)
+    };
+
+    assert_eq!(sample_at(&first, 480, 0), 4_000);
+    assert_eq!(sample_at(&second, 480, 0), 2_000);
+    assert_eq!(sample_at(&third, 480, 0), 1_000);
+    // Attenuation saturates at eight halvings; by then the repeat is
+    // inaudible rather than looping one packet at a fixed floor forever.
+    assert_eq!(sample_at(&eighth, 480, 0), 8_000 >> 8);
+}
+
+#[test]
+fn a_concealment_run_starts_from_the_previous_concealed_tail_not_the_real_packet() {
+    let mut policy = ConcealmentPolicy::new(200, 240).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+    policy.conceal(960, 2);
+
+    let (second, _) = policy.conceal(960, 2);
+
+    // The prior concealed frame faded to zero, so this one must begin at zero
+    // rather than stepping back up to the real packet's amplitude.
+    assert_eq!(sample_at(&second, 0, 0), 0);
+    assert_eq!(sample_at(&second, 480, 0), 2_000);
+}
+
+#[test]
+fn record_delivery_restores_full_amplitude_repetition_for_the_next_gap() {
+    let mut policy = ConcealmentPolicy::new(200, 240).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+    policy.conceal(960, 2);
+    policy.conceal(960, 2);
+    policy.record_delivery(&constant_packet(6_000), 2);
+
+    let (samples, _) = policy.conceal(960, 2);
+
+    assert_eq!(policy.statistics().consecutive_concealed_packets, 1);
+    // Source is the newly delivered packet, and the decay generation reset.
+    assert_eq!(sample_at(&samples, 480, 0), 3_000);
+    assert_eq!(sample_at(&samples, 0, 0), 6_000);
+}
+
+#[test]
+fn each_call_allocates_its_own_buffer() {
+    let mut policy = ConcealmentPolicy::new(5, 2).expect("valid policy");
     let (first, _) = policy.conceal(4, 1);
     let (second, _) = policy.conceal(4, 1);
 
-    // Each call must allocate its own silent buffer rather than sharing or
-    // mutating a cached one; corrupting `first` must never affect `second`.
-    assert_eq!(first, vec![0_i16; 4]);
-    assert_eq!(second, vec![0_i16; 4]);
+    assert_eq!(first.len(), 4);
+    assert_eq!(second.len(), 4);
     assert_ne!(first.as_ptr(), second.as_ptr());
 }
 
 #[test]
 fn record_delivery_resets_the_consecutive_count_but_not_the_total() {
-    let mut policy = ConcealmentPolicy::new(5).expect("valid policy");
+    let mut policy = ConcealmentPolicy::new(5, 2).expect("valid policy");
     policy.conceal(4, 1);
     policy.conceal(4, 1);
-    policy.record_delivery();
+    policy.record_delivery(&[100, 100, 100, 100], 1);
 
     assert_eq!(policy.statistics().consecutive_concealed_packets, 0);
     assert_eq!(policy.statistics().total_concealed_packets, 2);
@@ -41,7 +120,7 @@ fn record_delivery_resets_the_consecutive_count_but_not_the_total() {
 
 #[test]
 fn signals_hard_resync_once_the_consecutive_bound_is_reached() {
-    let mut policy = ConcealmentPolicy::new(3).expect("valid policy");
+    let mut policy = ConcealmentPolicy::new(3, 2).expect("valid policy");
 
     assert_eq!(policy.conceal(4, 1).1, ConcealmentOutcome::Concealed);
     assert_eq!(policy.conceal(4, 1).1, ConcealmentOutcome::Concealed);
@@ -54,7 +133,7 @@ fn signals_hard_resync_once_the_consecutive_bound_is_reached() {
 
 #[test]
 fn reset_consecutive_count_allows_concealment_to_resume_after_a_rebuffer() {
-    let mut policy = ConcealmentPolicy::new(2).expect("valid policy");
+    let mut policy = ConcealmentPolicy::new(2, 2).expect("valid policy");
     policy.conceal(4, 1);
     policy.conceal(4, 1);
     policy.reset_consecutive_count();
@@ -64,8 +143,19 @@ fn reset_consecutive_count_allows_concealment_to_resume_after_a_rebuffer() {
 }
 
 #[test]
+fn a_ramp_longer_than_the_packet_still_produces_a_full_length_frame() {
+    let mut policy = ConcealmentPolicy::new(5, 4_000).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+
+    let (samples, _) = policy.conceal(960, 2);
+
+    assert_eq!(samples.len(), 960 * 2);
+    assert_eq!(sample_at(&samples, 959, 0), 0);
+}
+
+#[test]
 fn rejects_a_zero_consecutive_bound() {
-    let error = ConcealmentPolicy::new(0).expect_err("zero bound must be rejected");
+    let error = ConcealmentPolicy::new(0, 240).expect_err("zero bound must be rejected");
     assert_eq!(
         error.kind,
         ConcealmentConfigErrorKind::ConsecutiveBoundOutOfRange
@@ -74,10 +164,26 @@ fn rejects_a_zero_consecutive_bound() {
 
 #[test]
 fn rejects_an_oversized_consecutive_bound() {
-    let error = ConcealmentPolicy::new(MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT + 1)
+    let error = ConcealmentPolicy::new(MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT + 1, 240)
         .expect_err("oversized bound must be rejected");
     assert_eq!(
         error.kind,
         ConcealmentConfigErrorKind::ConsecutiveBoundOutOfRange
+    );
+}
+
+#[test]
+fn rejects_an_out_of_range_ramp() {
+    assert_eq!(
+        ConcealmentPolicy::new(5, 0)
+            .expect_err("zero ramp must be rejected")
+            .kind,
+        ConcealmentConfigErrorKind::RampFramesOutOfRange
+    );
+    assert_eq!(
+        ConcealmentPolicy::new(5, MAX_CONCEALMENT_RAMP_FRAMES + 1)
+            .expect_err("oversized ramp must be rejected")
+            .kind,
+        ConcealmentConfigErrorKind::RampFramesOutOfRange
     );
 }

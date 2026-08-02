@@ -2,9 +2,10 @@ use core::fmt;
 use std::error::Error;
 
 use super::{
-    ConcealmentOutcome, ConcealmentPolicy, DEFAULT_MAX_BUFFERED_DURATION_MS,
-    DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS, DEFAULT_MAX_REORDER_WINDOW, JitterBuffer,
-    JitterBufferConfig, JitterBufferRejection, MAX_PACKET_DURATION_MS, MIN_PACKET_DURATION_MS,
+    ConcealmentOutcome, ConcealmentPolicy, DEFAULT_CONCEALMENT_RAMP_MS,
+    DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
+    DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig, JitterBufferRejection,
+    MAX_PACKET_DURATION_MS, MIN_PACKET_DURATION_MS,
 };
 use crate::domain::{SessionId, StreamId};
 use crate::protocol::AudioDatagram;
@@ -55,6 +56,9 @@ pub struct SchedulerConfig {
     /// Consecutive concealed packets tolerated before a hard resync is
     /// required; forwarded to the internal [`ConcealmentPolicy`].
     pub max_consecutive_concealed_packets: u32,
+    /// Amplitude-ramp length, in milliseconds, applied at both edges of every
+    /// concealed frame so neither seam steps discontinuously.
+    pub concealment_ramp_ms: u32,
     /// Reorder window tolerated by the internal [`JitterBuffer`].
     pub max_reorder_window: u32,
     /// Maximum buffered duration tolerated by the internal [`JitterBuffer`].
@@ -84,6 +88,7 @@ impl SchedulerConfig {
             high_water_ms: DEFAULT_HIGH_WATER_MS,
             hard_resync_threshold_ms: DEFAULT_HARD_RESYNC_THRESHOLD_MS,
             max_consecutive_concealed_packets: DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
+            concealment_ramp_ms: DEFAULT_CONCEALMENT_RAMP_MS,
             max_reorder_window: DEFAULT_MAX_REORDER_WINDOW,
             max_buffered_duration_ms: DEFAULT_MAX_BUFFERED_DURATION_MS,
         }
@@ -275,11 +280,20 @@ impl PlaybackScheduler {
             kind: SchedulerConfigErrorKind::InvalidJitterBufferBounds,
             message: error.message,
         })?;
-        let concealment = ConcealmentPolicy::new(config.max_consecutive_concealed_packets)
-            .map_err(|error| SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidConcealmentBound,
-                message: error.message,
-            })?;
+        // The ramp is expressed in milliseconds but applied in frames; the
+        // stream's sample rate is implied by its validated packet geometry.
+        let ramp_frames = (config
+            .samples_per_packet
+            .saturating_mul(config.concealment_ramp_ms)
+            / config.packet_duration_ms)
+            .max(1);
+        let concealment =
+            ConcealmentPolicy::new(config.max_consecutive_concealed_packets, ramp_frames).map_err(
+                |error| SchedulerConfigError {
+                    kind: SchedulerConfigErrorKind::InvalidConcealmentBound,
+                    message: error.message,
+                },
+            )?;
 
         Ok(Self {
             config,
@@ -353,12 +367,14 @@ impl PlaybackScheduler {
         }
 
         if let Some(datagram) = self.jitter_buffer.pop_in_order() {
-            self.concealment.record_delivery();
+            let samples = decode_payload_samples(&datagram.payload);
+            self.concealment
+                .record_delivery(&samples, self.config.channels);
             let frame = ScheduledFrame {
                 sequence: datagram.sequence.get(),
                 first_sample_index: datagram.first_sample_index.get(),
                 host_presentation_time_ms: datagram.host_presentation_time_ms.get(),
-                samples: decode_payload_samples(&datagram.payload),
+                samples,
                 concealed: false,
             };
             return SchedulerPoll::Frame {

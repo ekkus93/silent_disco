@@ -191,9 +191,11 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::{FfiAudioOutputError, FfiAudioOutputHandle};
+    use crate::audio_abi::registry_test_guard;
 
     #[test]
     fn open_push_and_read_token_round_trip() {
+        let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
         let token = handle.engine_token().expect("open handle has a token");
         assert!(token > 0);
@@ -206,6 +208,7 @@ mod tests {
 
     #[test]
     fn queued_frames_tracks_pushed_but_unconsumed_frames() {
+        let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
         assert_eq!(handle.queued_frames().expect("open handle"), 0);
 
@@ -225,6 +228,7 @@ mod tests {
 
     #[test]
     fn release_is_idempotent_and_subsequent_calls_report_closed() {
+        let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
         handle.release();
         handle.release();
@@ -245,6 +249,7 @@ mod tests {
 
     #[test]
     fn rejects_an_invalid_configuration() {
+        let _guard = registry_test_guard();
         let error = FfiAudioOutputHandle::open(0, 0).expect_err("zero capacity must be rejected");
         assert!(matches!(
             error,
@@ -256,6 +261,7 @@ mod tests {
     fn dropping_the_handle_releases_its_token() {
         use crate::audio_abi::silent_disco_audio_read_interleaved_f32;
 
+        let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
         let token = handle.engine_token().expect("open handle has a token");
         drop(handle);

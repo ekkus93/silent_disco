@@ -3,6 +3,7 @@ mod decoder;
 mod jitter_buffer;
 mod packetizer;
 mod packetizer_worker;
+mod ramp;
 mod render_ring;
 mod resampler;
 mod scheduler;
@@ -11,8 +12,8 @@ mod types;
 
 pub use concealment::{
     ConcealmentConfigError, ConcealmentConfigErrorKind, ConcealmentOutcome, ConcealmentPolicy,
-    ConcealmentStatistics, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
-    MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT,
+    ConcealmentStatistics, DEFAULT_CONCEALMENT_RAMP_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
+    MAX_CONCEALMENT_RAMP_FRAMES, MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT,
 };
 pub use decoder::StreamingDecodeHandle;
 pub use jitter_buffer::{

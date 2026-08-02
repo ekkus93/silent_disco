@@ -135,6 +135,24 @@ impl From<RenderRingConfigError> for AudioAbiError {
 /// Not part of the real-time C ABI; this is the control-plane entry point a
 /// non-real-time caller ([`crate::audio_output::FfiAudioOutputHandle`]) uses
 /// once per stream start.
+/// Serializes every test that touches the process-global
+/// `AUDIO_ENGINE_REGISTRY`. Registration hands out tokens from one shared
+/// counter, `token_space_exhaustion_is_a_typed_failure_not_a_panic`
+/// deliberately rewrites that counter, and several tests assert on cumulative
+/// telemetry that a concurrently registered sibling engine would perturb.
+/// Every test in this crate that registers, releases, or reads through a
+/// token — including the `audio_output` handle tests, which reach the same
+/// registry through [`FfiAudioOutputHandle`](crate::audio_output::FfiAudioOutputHandle)
+/// — must hold this guard.
+#[cfg(test)]
+pub(crate) fn registry_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    GUARD
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
 pub(crate) fn register_render_ring(
     config: RenderRingConfig,
 ) -> Result<(RenderRingProducer, u64), AudioAbiError> {
@@ -357,19 +375,8 @@ mod tests {
         silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
     };
     use silent_disco_core::audio::RenderRingConfig;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
 
-    /// Serializes every test in this module: they all share the single
-    /// process-global `AUDIO_ENGINE_REGISTRY`, and several tests assert on
-    /// counts (e.g. panic counters) that must not be perturbed by a
-    /// concurrently running sibling test's engine.
-    fn registry_test_guard() -> MutexGuard<'static, ()> {
-        static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
-        GUARD
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use super::registry_test_guard;
 
     fn small_ring_config() -> RenderRingConfig {
         RenderRingConfig {
