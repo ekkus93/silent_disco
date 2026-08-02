@@ -66,6 +66,27 @@ pub(super) fn last_frame(samples: &[i16], channels: usize) -> Option<&[i16]> {
     Some(&samples[(frames - 1) * channels..frames * channels])
 }
 
+/// Linearly fades the first `ramp_frames` frames of `samples` up from zero,
+/// leaving later frames untouched. Used when real audio resumes after a gap
+/// (or starts mid-waveform), so the resume seam is a short ramp rather than a
+/// step.
+pub(super) fn apply_fade_in(samples: &mut [i16], channels: usize, ramp_frames: usize) {
+    if channels == 0 {
+        return;
+    }
+    let total_frames = samples.len() / channels;
+    if total_frames == 0 {
+        return;
+    }
+    let ramp = ramp_frames.clamp(1, total_frames);
+    for frame in 0..ramp {
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            samples[index] = scale_sample(samples[index], frame, ramp);
+        }
+    }
+}
+
 /// Linearly fades the final `ramp_frames` frames of `samples` down to zero,
 /// leaving earlier frames untouched. The ramp is clamped to the buffer's own
 /// length, so a buffer shorter than the requested ramp simply fades across

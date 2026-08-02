@@ -1,6 +1,6 @@
 use super::{
     BufferHealth, DEFAULT_HARD_RESYNC_THRESHOLD_MS, JitterBufferRejectionKind, OffsetUpdateOutcome,
-    PlaybackScheduler, SchedulerConfig, SchedulerConfigErrorKind, SchedulerPoll,
+    PlaybackScheduler, ScheduledFrame, SchedulerConfig, SchedulerConfigErrorKind, SchedulerPoll,
 };
 use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
 use crate::protocol::{AudioCodec, AudioDatagram};
@@ -362,4 +362,83 @@ fn rejects_a_non_positive_hard_resync_threshold() {
         error.kind,
         SchedulerConfigErrorKind::InvalidHardResyncThreshold
     );
+}
+
+/// Drives a scheduler past its startup buffer with `count` packets of
+/// `sample_value`, returning it ready to deliver sequence zero.
+fn buffered_scheduler(count: u64, sample_value: i16) -> PlaybackScheduler {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    for sequence in 0..count {
+        scheduler
+            .submit_packet(datagram(sequence, sample_value))
+            .expect("accepted");
+    }
+    scheduler
+}
+
+fn frame_at(poll: SchedulerPoll) -> ScheduledFrame {
+    match poll {
+        SchedulerPoll::Frame { frame, .. } => frame,
+        other => panic!("expected a frame, got {other:?}"),
+    }
+}
+
+/// Ramp length for the default config: 5ms of a 20ms/960-sample packet.
+const RAMP_FRAMES: usize = 240;
+
+#[test]
+fn the_first_frame_of_a_stream_fades_in_from_silence() {
+    let mut scheduler = buffered_scheduler(30, 8_000);
+
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    let second = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
+
+    // A stream opens at whatever sample its presentation timeline lands on,
+    // so the very first frame ramps up instead of stepping to full scale.
+    assert!(!first.concealed);
+    assert_eq!(first.samples[0], 0);
+    assert_eq!(first.samples[RAMP_FRAMES / 2 * 2], 4_000);
+    assert_eq!(first.samples[RAMP_FRAMES * 2], 8_000);
+    // Steady-state frames pass through untouched.
+    assert_eq!(second.samples[0], 8_000);
+}
+
+#[test]
+fn real_audio_resuming_after_concealment_fades_back_in() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    // Sequence 1 never arrives, so its slot is concealed and sequence 2
+    // resumes real audio afterwards.
+    for sequence in [
+        0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+    ] {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    let _first = frame_at(scheduler.poll(HOST_START_MS));
+    let concealed = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
+    let resumed = frame_at(scheduler.poll(HOST_START_MS + 2 * u64::from(PACKET_DURATION_MS)));
+
+    assert!(concealed.concealed);
+    assert!(!resumed.concealed);
+    assert_eq!(resumed.sequence, 2);
+    // The concealed frame faded to zero, so the resume seam ramps rather
+    // than stepping straight back to full amplitude.
+    assert_eq!(resumed.samples[0], 0);
+    assert_eq!(resumed.samples[RAMP_FRAMES * 2], 8_000);
+}
+
+#[test]
+fn a_rebuffered_stream_fades_its_next_real_frame_in() {
+    let mut scheduler = buffered_scheduler(30, 8_000);
+    let _first = frame_at(scheduler.poll(HOST_START_MS));
+
+    scheduler.rebuffer(0.0);
+    // Deliver enough span to leave Buffering again, then take the next frame.
+    let resumed = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
+
+    assert!(!resumed.concealed);
+    assert_eq!(resumed.samples[0], 0);
+    assert_eq!(resumed.samples[RAMP_FRAMES * 2], 8_000);
 }

@@ -98,9 +98,15 @@ in `app/src/test/java/com/ekkus/silentdisco/core/audio/ListenerPlaybackScheduler
   `STOPPING`-instead-of-`PARTIAL` failure in
   `partial_read_fills_remaining_frames_with_silence_and_reports_partial`.
   The guard is now crate-visible and held by every registry-touching test.
-- [ ] 1.2 Fade-in on resume and stream start (R5): first real frame after
+- [x] 1.2 Fade-in on resume and stream start (R5): first real frame after
       any concealed frame, and the first frame ever delivered, get a 5 ms
       linear fade-in applied to their samples before delivery.
+
+  **Done:** `PlaybackScheduler` tracks `fade_in_next_real_frame` (initially
+  true), sets it after every concealed frame and after `rebuffer()`, and
+  clears it once applied. `record_delivery` is called with the *unfaded*
+  samples so a later concealment repeats the real waveform rather than a
+  ramped copy. `ramp::apply_fade_in` added.
 - [ ] 1.3 Wide-hole skip policy (R6): when the next buffered sequence is
       more than `concealment_skip_threshold_packets` (config, default 10)
       ahead of the expected sequence, skip the hole via

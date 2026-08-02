@@ -1,6 +1,7 @@
 use core::fmt;
 use std::error::Error;
 
+use super::ramp::apply_fade_in;
 use super::{
     ConcealmentOutcome, ConcealmentPolicy, DEFAULT_CONCEALMENT_RAMP_MS,
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
@@ -153,9 +154,10 @@ pub struct ScheduledFrame {
     pub first_sample_index: u64,
     /// Host monotonic presentation time this frame was scheduled for.
     pub host_presentation_time_ms: u64,
-    /// Interleaved PCM samples, real or silence.
+    /// Interleaved PCM samples, delivered or synthesized.
     pub samples: Vec<i16>,
-    /// True when this frame is synthesized silence rather than a delivered packet.
+    /// True when this frame was synthesized to cover a missing packet rather
+    /// than decoded from a delivered one.
     pub concealed: bool,
 }
 
@@ -222,6 +224,10 @@ pub struct PlaybackScheduler {
     concealment: ConcealmentPolicy,
     state: SchedulerState,
     offset_ms: f64,
+    ramp_frames: usize,
+    /// Set whenever the next real frame would resume from silence or from
+    /// concealed content rather than continuing the previous real frame.
+    fade_in_next_real_frame: bool,
 }
 
 impl PlaybackScheduler {
@@ -301,6 +307,11 @@ impl PlaybackScheduler {
             concealment,
             state: SchedulerState::Buffering,
             offset_ms: initial_offset_ms,
+            ramp_frames: usize::try_from(ramp_frames).unwrap_or(usize::MAX),
+            // A stream's own first frame starts from silence and routinely
+            // begins mid-waveform (playback opens at whatever sample the
+            // presentation timeline lands on), so it is faded in too.
+            fade_in_next_real_frame: true,
         })
     }
 
@@ -367,9 +378,19 @@ impl PlaybackScheduler {
         }
 
         if let Some(datagram) = self.jitter_buffer.pop_in_order() {
-            let samples = decode_payload_samples(&datagram.payload);
+            let mut samples = decode_payload_samples(&datagram.payload);
+            // Record the packet as delivered *before* any fade, so a later
+            // concealment repeats the real waveform rather than a ramped copy.
             self.concealment
                 .record_delivery(&samples, self.config.channels);
+            if self.fade_in_next_real_frame {
+                apply_fade_in(
+                    &mut samples,
+                    usize::from(self.config.channels),
+                    self.ramp_frames,
+                );
+                self.fade_in_next_real_frame = false;
+            }
             let frame = ScheduledFrame {
                 sequence: datagram.sequence.get(),
                 first_sample_index: datagram.first_sample_index.get(),
@@ -387,6 +408,9 @@ impl PlaybackScheduler {
             .concealment
             .conceal(self.config.samples_per_packet, self.config.channels);
         self.jitter_buffer.skip_expected_sequence();
+        // Concealed content fades to zero, so whatever real audio resumes
+        // after it must fade back in rather than stepping up from silence.
+        self.fade_in_next_real_frame = true;
 
         match outcome {
             ConcealmentOutcome::Concealed => {
@@ -431,6 +455,8 @@ impl PlaybackScheduler {
         self.offset_ms = new_offset_ms;
         self.concealment.reset_consecutive_count();
         self.state = SchedulerState::Buffering;
+        // Playback resumes after a real interruption; fade back in.
+        self.fade_in_next_real_frame = true;
     }
 
     /// Explicitly stops this scheduler. Idempotent; a new stream requires a
