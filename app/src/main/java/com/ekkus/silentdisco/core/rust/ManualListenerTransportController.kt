@@ -43,7 +43,9 @@ private const val POLL_TIMEOUT_MS: ULong = 500uL
 private const val AUDIO_CODEC_NAME = "pcm16le"
 private const val MAX_PENDING_PACKETS = 256
 private const val PLAYBACK_RETRY_DELAY_MS = 10L
-private const val PLAYBACK_FRAME_INTERVAL_MS = 20L
+
+/** A stream announced before any real clock-sync sample landed; see [ManualListenerTransportController.beginPlayback]. */
+private data class PendingStream(val streamId: StreamId, val sampleRate: Int, val channelCount: Int)
 
 /**
  * Android-facing wrapper around the shared Rust listener transport for one
@@ -69,6 +71,8 @@ class ManualListenerTransportController(
     private var protocolVersion: Int = 0
     private var syncController: ListenerSyncController? = null
     private var currentSyncState: SyncState = SyncState()
+    private var hasSyncSample: Boolean = false
+    private var pendingStream: PendingStream? = null
     private var listenerScheduler: ListenerPlaybackScheduler? = null
     private val pendingPackets = ArrayDeque<AudioPacket>()
 
@@ -191,7 +195,7 @@ class ManualListenerTransportController(
             is FfiListenerTransportEvent.Paused ->
                 _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PAUSED)
             is FfiListenerTransportEvent.Stopped -> handleStreamStopped()
-            is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(event)
+            is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(scope, event)
             is FfiListenerTransportEvent.AudioReceived -> handleAudioReceived(event)
         }
     }
@@ -213,7 +217,7 @@ class ManualListenerTransportController(
         }
     }
 
-    private fun handleSyncResponse(event: FfiListenerTransportEvent.SyncResponseReceived) {
+    private fun handleSyncResponse(scope: CoroutineScope, event: FfiListenerTransportEvent.SyncResponseReceived) {
         val session = sessionId ?: return
         val controller = syncController ?: return
         currentSyncState = controller.onResponse(
@@ -226,18 +230,48 @@ class ManualListenerTransportController(
                 t3HostSendElapsedMs = event.t3HostSendElapsedMs.toLong(),
             ),
         )
+        if (!hasSyncSample) {
+            hasSyncSample = true
+            pendingStream?.let { pending ->
+                pendingStream = null
+                beginPlayback(scope, pending.streamId, pending.sampleRate, pending.channelCount)
+            }
+        }
     }
 
     /**
-     * Starts real playback of a just-announced stream. The mapper is built
-     * once from whatever sync estimate exists right now and frozen for this
-     * stream's whole lifetime -- later sync samples refine `currentSyncState`
-     * for the *next* stream, matching this codebase's existing accepted
-     * behavior for the BLE/Wi-Fi-Direct discovered-session path.
+     * A stream can be announced before this connection has ever completed a
+     * real clock-sync round trip (e.g. a host that starts playback moments
+     * after approving a listener). The default sync estimate (0ms offset) is
+     * essentially guaranteed wrong -- the host's and this device's monotonic
+     * clocks have unrelated epochs (process start vs. device boot) -- so
+     * starting playback against it would schedule every packet nonsensically
+     * (either all immediately "late" or all far in the future) with no
+     * audible result. Defer until [handleSyncResponse] reports the first
+     * real sample instead of ever building a mapper from a guess.
      */
     private fun handleStreamStarted(scope: CoroutineScope, event: FfiListenerTransportEvent.StreamStarted) {
-        val session = sessionId ?: return
         val streamId = StreamId(event.streamId)
+        val sampleRate = event.sampleRate.toInt()
+        val channelCount = event.channels.toInt()
+        if (!hasSyncSample) {
+            pendingStream = PendingStream(streamId, sampleRate, channelCount)
+            _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.BUFFERING)
+            return
+        }
+        beginPlayback(scope, streamId, sampleRate, channelCount)
+    }
+
+    /**
+     * Starts real playback of a stream once a real sync estimate is known.
+     * The mapper is built once from whatever sync estimate exists right now
+     * and frozen for this stream's whole lifetime -- later sync samples
+     * refine `currentSyncState` for the *next* stream, matching this
+     * codebase's existing accepted behavior for the BLE/Wi-Fi-Direct
+     * discovered-session path.
+     */
+    private fun beginPlayback(scope: CoroutineScope, streamId: StreamId, sampleRate: Int, channelCount: Int) {
+        val session = sessionId ?: return
         val mapper = HostTimeMapper(offsetMs = currentSyncState.offsetMs, skewPpm = currentSyncState.skewPpm)
         val scheduler = ListenerPlaybackScheduler(
             mapper = mapper,
@@ -250,7 +284,7 @@ class ManualListenerTransportController(
             .filter { it.sessionId == session && it.streamId == streamId }
             .forEach { scheduler.submit(it) }
         pendingPackets.clear()
-        val format = AudioFormatSpec(sampleRate = event.sampleRate.toInt(), channelCount = event.channels.toInt())
+        val format = AudioFormatSpec(sampleRate = sampleRate, channelCount = channelCount)
         runCatching { playbackEngine.start(format) }.onFailure { error ->
             handlePlaybackEngineFailure(error)
             return
@@ -269,6 +303,15 @@ class ManualListenerTransportController(
                     started = true
                     _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PLAYING)
                 }
+                // `poll()` already gates release strictly by each frame's own
+                // scheduledLocalTimeMs -- a frame only ever comes back once it
+                // is actually due. Imposing a second, fixed-cadence delay on
+                // top of that would fight the scheduler's own timing: it could
+                // push a frame later than its real deadline, and any per-loop
+                // overhead (coroutine dispatch, GC) would compound over
+                // thousands of iterations into real drift, periodically
+                // starving the render ring's native consumer. So: drain
+                // whatever is due immediately, and only wait when nothing is.
                 val frame = activeScheduler.poll()
                 if (frame == null) {
                     delay(PLAYBACK_RETRY_DELAY_MS)
@@ -278,7 +321,6 @@ class ManualListenerTransportController(
                     handlePlaybackEngineFailure(error)
                     return@launch
                 }
-                delay(PLAYBACK_FRAME_INTERVAL_MS)
             }
         }
     }
@@ -322,6 +364,8 @@ class ManualListenerTransportController(
         }
         listenerScheduler = null
         syncController = null
+        hasSyncSample = false
+        pendingStream = null
         pendingPackets.clear()
     }
 
