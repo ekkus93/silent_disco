@@ -447,14 +447,8 @@ impl SocketHostTransport {
         }
         TransportDelivery::new(intended, successful, failed, sent_bytes)
     }
-}
 
-impl HostTransportNode for SocketHostTransport {
-    fn endpoint(&self) -> NetworkEndpoint {
-        self.endpoint
-    }
-
-    fn authorize_peer(
+    fn authorize_peer_with_routes(
         &self,
         device_id: &DeviceId,
         routes: ListenerDatagramRoutes,
@@ -526,6 +520,59 @@ impl HostTransportNode for SocketHostTransport {
             },
         );
         Ok(())
+    }
+}
+
+impl HostTransportNode for SocketHostTransport {
+    fn endpoint(&self) -> NetworkEndpoint {
+        self.endpoint
+    }
+
+    fn authorize_peer(
+        &self,
+        device_id: &DeviceId,
+        routes: ListenerDatagramRoutes,
+    ) -> Result<(), TransportError> {
+        self.authorize_peer_with_routes(device_id, routes)
+    }
+
+    fn authorize_peer_ports(
+        &self,
+        device_id: &DeviceId,
+        sync_port: u16,
+        audio_port: u16,
+    ) -> Result<(), TransportError> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(shutting_down_error());
+        }
+        let peer_ip = {
+            let peers = self.peers.lock().map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "peer registry is poisoned",
+                )
+            })?;
+            peers
+                .values()
+                .find(|peer| {
+                    peer.active.load(Ordering::Acquire)
+                        && peer.device_id().as_ref() == Some(device_id)
+                })
+                .map(|peer| peer.remote.ip())
+        }
+        .ok_or_else(|| {
+            TransportError::new(
+                TransportErrorKind::PeerNotFound,
+                TransportChannel::Control,
+                "no pending control peer matches the requested device",
+            )
+        })?;
+        let routes = ListenerDatagramRoutes {
+            synchronization: SocketAddr::new(peer_ip, sync_port),
+            audio: SocketAddr::new(peer_ip, audio_port),
+        };
+        self.authorize_peer_with_routes(device_id, routes)
     }
 
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError> {

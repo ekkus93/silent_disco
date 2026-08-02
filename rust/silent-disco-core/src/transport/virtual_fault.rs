@@ -94,6 +94,16 @@ impl HostTransportNode for FaultInjectingHostTransport {
         self.inner.authorize_peer(device_id, routes)
     }
 
+    fn authorize_peer_ports(
+        &self,
+        device_id: &DeviceId,
+        sync_port: u16,
+        audio_port: u16,
+    ) -> Result<(), TransportError> {
+        self.inner
+            .authorize_peer_ports(device_id, sync_port, audio_port)
+    }
+
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError> {
         self.inner.disconnect_peer(device_id)
     }

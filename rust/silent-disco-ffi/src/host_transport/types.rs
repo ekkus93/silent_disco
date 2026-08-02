@@ -34,9 +34,9 @@ pub struct FfiHostTransportDelivery {
 
 /// One typed event surfaced from the shared Rust host transport.
 ///
-/// Control-plane only, mirroring `FfiListenerTransportEvent`'s scope:
-/// synchronization and audio datagrams are received by the underlying
-/// transport but not yet surfaced here.
+/// Mirrors `FfiListenerTransportEvent`'s scope: `SyncRequestReceived` now
+/// surfaces the synchronization datagrams the transport already receives
+/// internally, so a caller can compute and send a real response.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiHostTransportEvent {
     /// A listener's TCP control connection was accepted, before any
@@ -48,6 +48,11 @@ pub enum FfiHostTransportEvent {
         device_id: String,
         display_name: String,
         invite_code: Option<String>,
+        /// The listener's bound sync/audio UDP ports -- pass these to
+        /// `authorize_listener` if/when the join is approved, so the host
+        /// can actually route synchronization and audio datagrams to them.
+        sync_port: u16,
+        audio_port: u16,
     },
     Heartbeat {
         listener_id: String,
@@ -55,6 +60,13 @@ pub enum FfiHostTransportEvent {
     ResyncNotice {
         listener_id: String,
         reason: String,
+    },
+    /// A listener's clock-sync probe. `listener_id` is `None` if the
+    /// underlying peer's identity isn't yet known at the transport layer.
+    SyncRequestReceived {
+        listener_id: Option<String>,
+        correlation_id: u64,
+        t1_listener_send_elapsed_ms: u64,
     },
     /// A listener's control connection closed or failed.
     PeerDisconnected {

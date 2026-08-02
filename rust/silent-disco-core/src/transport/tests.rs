@@ -455,6 +455,8 @@ fn join_request(
             display_name: display_name.to_owned(),
         },
         invite_code: None,
+        sync_port: 0,
+        audio_port: 0,
     })
 }
 

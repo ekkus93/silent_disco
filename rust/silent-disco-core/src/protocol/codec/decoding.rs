@@ -138,6 +138,8 @@ fn decode_control(kind: MessageKind, payload: &[u8]) -> Result<ControlMessage, P
                 display_name: input.read_string("display_name", MAX_DISPLAY_NAME_BYTES, false)?,
             },
             invite_code: input.read_optional_string("invite_code", MAX_INVITE_CODE_BYTES, true)?,
+            sync_port: input.read_u16()?,
+            audio_port: input.read_u16()?,
         }),
         MessageKind::JoinApproval => ControlMessage::JoinApproval(JoinApproval {
             session_id: input.read_session_id()?,

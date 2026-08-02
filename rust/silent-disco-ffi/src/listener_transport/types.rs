@@ -43,9 +43,11 @@ pub struct FfiListenerTransportCounters {
 
 /// One typed event surfaced from the shared Rust listener transport.
 ///
-/// Block 24 is control-plane only: `StreamStarted`/`Paused`/`Stopped` are
-/// surfaced for diagnostic visibility only and must not be used to claim
-/// audio interoperability.
+/// `StreamStarted`/`Paused`/`Stopped` now carry the real wire fields (stream
+/// identity, format, presentation time) so a caller can actually start/stop
+/// playback from them; `SyncResponseReceived`/`AudioReceived` surface the
+/// synchronization and audio datagrams the transport already validates and
+/// receives internally.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiListenerTransportEvent {
     Hello {
@@ -67,9 +69,42 @@ pub enum FfiListenerTransportEvent {
     ConnectionClosed {
         message: Option<String>,
     },
-    StreamStarted,
-    Paused,
-    Stopped,
+    StreamStarted {
+        stream_id: String,
+        host_start_time_ms: u64,
+        sample_rate: u32,
+        channels: u16,
+        samples_per_packet: u32,
+    },
+    Paused {
+        stream_id: String,
+        host_pause_time_ms: u64,
+    },
+    Stopped {
+        stream_id: String,
+        host_stop_time_ms: u64,
+    },
+    /// A clock-sync response echoing one of this listener's own probes.
+    ///
+    /// `t4` (local receive time) is not carried on the wire -- the caller
+    /// supplies it as the moment this event is observed.
+    SyncResponseReceived {
+        correlation_id: u64,
+        t1_listener_send_elapsed_ms: u64,
+        t2_host_receive_elapsed_ms: u64,
+        t3_host_send_elapsed_ms: u64,
+    },
+    /// One inbound audio datagram, in wire order, not yet scheduled for playback.
+    AudioReceived {
+        stream_id: String,
+        sequence: u64,
+        sample_rate: u32,
+        channels: u16,
+        samples_per_packet: u32,
+        first_sample_index: u64,
+        host_presentation_time_ms: u64,
+        payload: Vec<u8>,
+    },
     /// A malformed or unauthorized frame was rejected by the transport.
     Rejected {
         message: String,

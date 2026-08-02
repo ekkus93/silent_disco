@@ -120,6 +120,8 @@ fn authorize_listener(
                 display_name: "Fault Listener".to_owned(),
             },
             invite_code: None,
+            sync_port: 0,
+            audio_port: 0,
         }))
         .expect("join request should not be faulted");
     assert!(matches!(

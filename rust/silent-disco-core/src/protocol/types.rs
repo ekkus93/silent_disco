@@ -155,6 +155,13 @@ pub struct JoinRequest {
     pub session_id: SessionId,
     pub device: DeviceIdentity,
     pub invite_code: Option<String>,
+    /// The listener's own bound local UDP ports for the synchronization and
+    /// audio channels, so the host can authorize datagram routing for this
+    /// peer once (if) it approves the join. The host cannot discover these
+    /// any other way: the listener's audio channel is receive-only and never
+    /// sends a datagram the host could observe a source address from.
+    pub sync_port: u16,
+    pub audio_port: u16,
 }
 
 #[derive(Clone, PartialEq, Eq)]

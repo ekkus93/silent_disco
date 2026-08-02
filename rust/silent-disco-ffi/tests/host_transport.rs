@@ -98,10 +98,20 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
             device_id,
             display_name,
             invite_code,
+            sync_port,
+            audio_port,
         } => {
             assert_eq!(device_id, "listener-device");
             assert_eq!(display_name, "Test Listener");
             assert_eq!(invite_code, None);
+            assert_ne!(
+                sync_port, 0,
+                "listener should report a real bound sync port"
+            );
+            assert_ne!(
+                audio_port, 0,
+                "listener should report a real bound audio port"
+            );
             device_id
         }
         other => panic!("unexpected event: {other:?}"),
@@ -194,6 +204,145 @@ fn host_transport_delivers_join_rejection() {
         rejected,
         FfiListenerTransportEvent::JoinRejected {
             reason: "session is full".to_owned(),
+        }
+    );
+
+    listener.shutdown().expect("shutdown listener transport");
+    host.shutdown().expect("shutdown host transport");
+}
+
+/// Drives a join through approval and datagram authorization, returning the
+/// approved listener's device ID.
+fn join_approve_and_authorize(
+    host: &FfiHostTransportHandle,
+    listener: &FfiListenerTransportHandle,
+    display_name: &str,
+) -> String {
+    listener
+        .send_join_request(display_name.to_owned(), None)
+        .expect("send join request");
+
+    let (device_id, sync_port, audio_port) = match poll_host_until(host, |event| {
+        matches!(event, FfiHostTransportEvent::JoinRequestReceived { .. })
+    }) {
+        FfiHostTransportEvent::JoinRequestReceived {
+            device_id,
+            sync_port,
+            audio_port,
+            ..
+        } => (device_id, sync_port, audio_port),
+        other => panic!("unexpected event: {other:?}"),
+    };
+
+    host.send_join_approval(device_id.clone(), false)
+        .expect("send join approval");
+    poll_listener_until(listener, |event| {
+        matches!(event, FfiListenerTransportEvent::JoinApproved { .. })
+    });
+
+    host.authorize_listener(device_id.clone(), sync_port, audio_port)
+        .expect("authorize listener for datagram routing");
+    device_id
+}
+
+#[test]
+fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
+    let host = FfiHostTransportHandle::bind(
+        HOST_ADDRESS.to_owned(),
+        CONTROL_PORT + 20,
+        SYNC_PORT + 20,
+        AUDIO_PORT + 20,
+        SESSION_ID.to_owned(),
+    )
+    .expect("bind host transport");
+
+    let payload = format!(
+        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{},"syncPort":{},"audioPort":{},"sessionId":"{SESSION_ID}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
+        CONTROL_PORT + 20,
+        SYNC_PORT + 20,
+        AUDIO_PORT + 20,
+        current_protocol_version(),
+    );
+    let listener = FfiListenerTransportHandle::connect(
+        payload,
+        now_wall_clock_ms(),
+        "sync-audio-listener".to_owned(),
+        HOST_ADDRESS.to_owned(),
+    )
+    .expect("connect listener transport");
+
+    join_approve_and_authorize(&host, &listener, "Sync Audio Listener");
+
+    listener
+        .send_sync_request(42, 1_000)
+        .expect("send sync request");
+
+    let (correlation_id, t1) = match poll_host_until(&host, |event| {
+        matches!(event, FfiHostTransportEvent::SyncRequestReceived { .. })
+    }) {
+        FfiHostTransportEvent::SyncRequestReceived {
+            correlation_id,
+            t1_listener_send_elapsed_ms,
+            ..
+        } => (correlation_id, t1_listener_send_elapsed_ms),
+        other => panic!("unexpected event: {other:?}"),
+    };
+    assert_eq!(correlation_id, 42);
+    assert_eq!(t1, 1_000);
+
+    host.send_sync_response(correlation_id, t1, 1_005, 1_007)
+        .expect("send sync response");
+
+    let sync_response = poll_listener_until(&listener, |event| {
+        matches!(
+            event,
+            FfiListenerTransportEvent::SyncResponseReceived { .. }
+        )
+    });
+    assert_eq!(
+        sync_response,
+        FfiListenerTransportEvent::SyncResponseReceived {
+            correlation_id: 42,
+            t1_listener_send_elapsed_ms: 1_000,
+            t2_host_receive_elapsed_ms: 1_005,
+            t3_host_send_elapsed_ms: 1_007,
+        }
+    );
+
+    // PCM16 stereo payload size must equal samples_per_packet * channels * 2 bytes.
+    let payload_bytes: Vec<u8> = (0..3_840_u32)
+        .map(|index| u8::try_from(index % 256).unwrap_or(0))
+        .collect();
+    let delivery = host
+        .broadcast_audio(
+            "stream-1".to_owned(),
+            7,
+            48_000,
+            2,
+            960,
+            6_720,
+            5_000,
+            payload_bytes.clone(),
+        )
+        .expect("broadcast audio");
+    assert_eq!(delivery.intended_peers, 1);
+    assert_eq!(delivery.successful_peers, 1);
+    assert_eq!(delivery.failed_peers, 0);
+
+    let audio_event = poll_listener_until(&listener, |event| {
+        matches!(event, FfiListenerTransportEvent::AudioReceived { .. })
+    });
+    assert_eq!(
+        audio_event,
+        FfiListenerTransportEvent::AudioReceived {
+            stream_id: "stream-1".to_owned(),
+            sequence: 7,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: 960,
+            first_sample_index: 6_720,
+            host_presentation_time_ms: 5_000,
+            payload: payload_bytes,
         }
     );
 

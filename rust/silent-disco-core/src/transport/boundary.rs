@@ -18,6 +18,18 @@ pub trait HostTransportNode: Send {
         device_id: &DeviceId,
         routes: ListenerDatagramRoutes,
     ) -> Result<(), TransportError>;
+    /// Authorizes a peer for datagram routing using only its reported
+    /// sync/audio ports, resolving the IP from the already-authenticated
+    /// control peer address instead of requiring the caller to supply and
+    /// re-validate it. Intended for callers (like the `UniFFI` boundary) that
+    /// only learn a listener's ports (e.g. from `JoinRequest`), never a
+    /// `SocketAddr` they could construct and validate themselves.
+    fn authorize_peer_ports(
+        &self,
+        device_id: &DeviceId,
+        sync_port: u16,
+        audio_port: u16,
+    ) -> Result<(), TransportError>;
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError>;
     /// Sends one control message to an identified TCP peer before datagram authorization.
     ///

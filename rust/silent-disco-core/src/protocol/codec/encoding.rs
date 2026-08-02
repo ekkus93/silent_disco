@@ -129,6 +129,8 @@ fn encode_control(message: &ControlMessage) -> Result<Vec<u8>, ProtocolError> {
                 MAX_INVITE_CODE_BYTES,
                 true,
             )?;
+            output.put_u16(value.sync_port);
+            output.put_u16(value.audio_port);
         }
         ControlMessage::JoinApproval(value) => {
             output.put_session_id(&value.session_id)?;

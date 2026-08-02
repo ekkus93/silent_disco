@@ -63,6 +63,8 @@ fn control_sync_and_audio_round_trip_canonically() {
                 display_name: "Listener".into(),
             },
             invite_code: Some("123456".into()),
+            sync_port: 41_101,
+            audio_port: 41_102,
         })),
         ProtocolFrame::SyncRequest(SyncRequest {
             session_id: session_id(),

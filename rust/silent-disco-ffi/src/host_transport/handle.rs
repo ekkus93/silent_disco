@@ -2,9 +2,12 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use silent_disco_core::domain::{DeviceId, MonotonicMillis, SessionId, StreamId};
+use silent_disco_core::domain::{
+    DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
 use silent_disco_core::protocol::{
-    ControlMessage, Disconnect, JoinApproval, JoinRejection, Pause, Stop, StreamStart,
+    AudioCodec, AudioDatagram, ControlMessage, Disconnect, JoinApproval, JoinRejection, Pause,
+    ProtocolFrame, Stop, StreamStart, SyncResponse,
 };
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,
@@ -220,6 +223,88 @@ impl FfiHostTransportHandle {
         })
     }
 
+    /// Authorizes one listener for synchronization/audio datagram routing.
+    ///
+    /// Call this once a join is approved, using the `sync_port`/`audio_port`
+    /// carried on that listener's `JoinRequestReceived` event -- until this
+    /// is called for a listener, the host will not accept sync requests from
+    /// it or route audio/sync datagrams to it, regardless of approval state.
+    pub fn authorize_listener(
+        &self,
+        listener_id: String,
+        sync_port: u16,
+        audio_port: u16,
+    ) -> Result<(), FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let listener_id = device_id(listener_id)?;
+            inner
+                .transport
+                .authorize_peer_ports(&listener_id, sync_port, audio_port)?;
+            Ok(())
+        })
+    }
+
+    /// Broadcasts a clock-sync response echoing one listener's probe.
+    ///
+    /// The host transport currently only broadcasts sync responses to every
+    /// authorized peer (there is no targeted per-listener datagram send) --
+    /// every listener other than the one whose `correlation_id` this echoes
+    /// discards it as a correlation mismatch, so this is correct, if
+    /// wasteful with many listeners.
+    pub fn send_sync_response(
+        &self,
+        correlation_id: u64,
+        t1_listener_send_elapsed_ms: u64,
+        t2_host_receive_elapsed_ms: u64,
+        t3_host_send_elapsed_ms: u64,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let frame = ProtocolFrame::SyncResponse(SyncResponse {
+                session_id: inner.session_id.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(t1_listener_send_elapsed_ms),
+                t2_host_receive_elapsed_ms: MonotonicMillis::new(t2_host_receive_elapsed_ms),
+                t3_host_send_elapsed_ms: MonotonicMillis::new(t3_host_send_elapsed_ms),
+            });
+            let delivery = inner.transport.broadcast_sync(&frame)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
+    /// Broadcasts one audio datagram to every connected listener.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the wire datagram's own field count"
+    )]
+    pub fn broadcast_audio(
+        &self,
+        stream_id: String,
+        sequence: u64,
+        sample_rate: u32,
+        channels: u16,
+        samples_per_packet: u32,
+        first_sample_index: u64,
+        host_presentation_time_ms: u64,
+        payload: Vec<u8>,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let frame = ProtocolFrame::Audio(AudioDatagram {
+                session_id: inner.session_id.clone(),
+                stream_id: parse_stream_id(stream_id)?,
+                sequence: PacketSequence::new(sequence),
+                codec: AudioCodec::PcmS16Le,
+                sample_rate,
+                channels,
+                samples_per_packet,
+                first_sample_index: SampleIndex::new(first_sample_index),
+                host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+                payload,
+            });
+            let delivery = inner.transport.broadcast_audio(&frame)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
     /// Waits up to `timeout_ms` for the next transport event.
     ///
     /// Returns `None` when the bounded wait elapses without an event.
@@ -336,6 +421,16 @@ fn map_event(event: TransportEvent) -> Option<FfiHostTransportEvent> {
             frame,
             ..
         } => map_control_frame(frame),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Synchronization,
+            frame: ProtocolFrame::SyncRequest(request),
+            peer,
+            ..
+        } => Some(FfiHostTransportEvent::SyncRequestReceived {
+            listener_id: peer.device_id.map(DeviceId::into_string),
+            correlation_id: request.correlation_id,
+            t1_listener_send_elapsed_ms: request.t1_listener_send_elapsed_ms.get(),
+        }),
         TransportEvent::PeerDisconnected { peer, error, .. } => {
             Some(FfiHostTransportEvent::PeerDisconnected {
                 listener_id: peer.device_id.map(DeviceId::into_string),
@@ -361,6 +456,8 @@ fn map_control_frame(
             device_id: value.device.device_id.into_string(),
             display_name: value.device.display_name,
             invite_code: value.invite_code,
+            sync_port: value.sync_port,
+            audio_port: value.audio_port,
         }),
         ControlMessage::Heartbeat(value) => Some(FfiHostTransportEvent::Heartbeat {
             listener_id: value.listener_id.into_string(),

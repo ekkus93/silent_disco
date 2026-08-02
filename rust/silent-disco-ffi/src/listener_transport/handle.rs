@@ -2,8 +2,10 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use silent_disco_core::domain::DeviceId;
-use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, Disconnect, JoinRequest};
+use silent_disco_core::domain::{DeviceId, MonotonicMillis};
+use silent_disco_core::protocol::{
+    ControlMessage, DeviceIdentity, Disconnect, JoinRequest, SyncRequest,
+};
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
     DEFAULT_TRANSPORT_QUEUE_CAPACITY, ListenerTransportConfig, ListenerTransportNode,
@@ -123,12 +125,17 @@ impl FfiListenerTransportHandle {
     }
 
     /// Sends the shared Rust `JoinRequest` for this session.
+    ///
+    /// Includes this listener's own bound synchronization/audio UDP ports so
+    /// the host can authorize datagram routing for this peer if it approves
+    /// the join -- Kotlin never needs to know these ports exist.
     pub fn send_join_request(
         &self,
         display_name: String,
         invite_code: Option<String>,
     ) -> Result<(), FfiListenerTransportError> {
         self.with_transport(|inner| {
+            let routes = inner.transport.local_routes();
             let message = ControlMessage::JoinRequest(JoinRequest {
                 session_id: inner.session_id.clone(),
                 device: DeviceIdentity {
@@ -136,6 +143,8 @@ impl FfiListenerTransportHandle {
                     display_name,
                 },
                 invite_code,
+                sync_port: routes.synchronization.port(),
+                audio_port: routes.audio.port(),
             });
             inner.transport.send_control(&message)?;
             Ok(())
@@ -151,6 +160,27 @@ impl FfiListenerTransportHandle {
                 reason,
             });
             inner.transport.send_control(&message)?;
+            Ok(())
+        })
+    }
+
+    /// Sends a clock-sync probe carrying this listener's own send timestamp.
+    ///
+    /// `correlation_id` is caller-chosen and echoed back verbatim on the
+    /// matching `SyncResponseReceived` event so the caller can match a
+    /// response to the probe that produced it.
+    pub fn send_sync_request(
+        &self,
+        correlation_id: u64,
+        local_send_elapsed_ms: u64,
+    ) -> Result<(), FfiListenerTransportError> {
+        self.with_transport(|inner| {
+            let request = SyncRequest {
+                session_id: inner.session_id.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(local_send_elapsed_ms),
+            };
+            inner.transport.send_sync_request(&request)?;
             Ok(())
         })
     }
@@ -251,12 +281,37 @@ impl Drop for FfiListenerTransportHandle {
 }
 
 fn map_event(event: TransportEvent) -> Option<FfiListenerTransportEvent> {
+    use silent_disco_core::protocol::ProtocolFrame;
     match event {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame,
             ..
         } => map_control_frame(frame),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Synchronization,
+            frame: ProtocolFrame::SyncResponse(response),
+            ..
+        } => Some(FfiListenerTransportEvent::SyncResponseReceived {
+            correlation_id: response.correlation_id,
+            t1_listener_send_elapsed_ms: response.t1_listener_send_elapsed_ms.get(),
+            t2_host_receive_elapsed_ms: response.t2_host_receive_elapsed_ms.get(),
+            t3_host_send_elapsed_ms: response.t3_host_send_elapsed_ms.get(),
+        }),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            frame: ProtocolFrame::Audio(datagram),
+            ..
+        } => Some(FfiListenerTransportEvent::AudioReceived {
+            stream_id: datagram.stream_id.into_string(),
+            sequence: datagram.sequence.get(),
+            sample_rate: datagram.sample_rate,
+            channels: datagram.channels,
+            samples_per_packet: datagram.samples_per_packet,
+            first_sample_index: datagram.first_sample_index.get(),
+            host_presentation_time_ms: datagram.host_presentation_time_ms.get(),
+            payload: datagram.payload,
+        }),
         TransportEvent::PeerDisconnected { error, .. } => {
             Some(FfiListenerTransportEvent::ConnectionClosed {
                 message: error.map(|error| error.to_string()),
@@ -293,9 +348,21 @@ fn map_control_frame(
         ControlMessage::Disconnect(value) => Some(FfiListenerTransportEvent::HostDisconnected {
             reason: value.reason,
         }),
-        ControlMessage::StreamStart(_) => Some(FfiListenerTransportEvent::StreamStarted),
-        ControlMessage::Pause(_) => Some(FfiListenerTransportEvent::Paused),
-        ControlMessage::Stop(_) => Some(FfiListenerTransportEvent::Stopped),
+        ControlMessage::StreamStart(value) => Some(FfiListenerTransportEvent::StreamStarted {
+            stream_id: value.stream_id.into_string(),
+            host_start_time_ms: value.host_start_time_ms.get(),
+            sample_rate: value.sample_rate,
+            channels: value.channels,
+            samples_per_packet: value.samples_per_packet,
+        }),
+        ControlMessage::Pause(value) => Some(FfiListenerTransportEvent::Paused {
+            stream_id: value.stream_id.into_string(),
+            host_pause_time_ms: value.host_pause_time_ms.get(),
+        }),
+        ControlMessage::Stop(value) => Some(FfiListenerTransportEvent::Stopped {
+            stream_id: value.stream_id.into_string(),
+            host_stop_time_ms: value.host_stop_time_ms.get(),
+        }),
         ControlMessage::JoinRequest(_)
         | ControlMessage::Heartbeat(_)
         | ControlMessage::ResyncNotice(_) => None,

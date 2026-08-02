@@ -373,6 +373,34 @@ impl HostTransportNode for VirtualHostTransport {
         )
     }
 
+    fn authorize_peer_ports(
+        &self,
+        device_id: &DeviceId,
+        sync_port: u16,
+        audio_port: u16,
+    ) -> Result<(), TransportError> {
+        let control_address = {
+            let mut state = self.network.inner.lock().map_err(network_poisoned)?;
+            let host = state
+                .hosts
+                .get_mut(&self.endpoint)
+                .ok_or_else(shutting_down)?;
+            let listener = host.listeners.get(device_id).ok_or_else(|| {
+                TransportError::new(
+                    TransportErrorKind::PeerNotFound,
+                    TransportChannel::Control,
+                    "virtual pending peer is not connected",
+                )
+            })?;
+            listener.control_address
+        };
+        let routes = ListenerDatagramRoutes {
+            synchronization: SocketAddr::new(control_address.ip(), sync_port),
+            audio: SocketAddr::new(control_address.ip(), audio_port),
+        };
+        self.authorize_peer(device_id, routes)
+    }
+
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError> {
         let mut state = self.network.inner.lock().map_err(network_poisoned)?;
         let host = state
