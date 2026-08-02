@@ -16,6 +16,7 @@ mod android_p2_abi;
 mod audio_abi;
 mod audio_output;
 mod host_control;
+mod host_transport;
 mod listener_transport;
 mod sync;
 
@@ -32,6 +33,10 @@ pub use host_control::{
     FfiPlatformEffect, FfiPlaybackState, FfiSessionAdvertisement, FfiStorageEffect,
     FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState, FfiTrustState,
     FfiTuningPatch, FfiTuningSettings,
+};
+pub use host_transport::{
+    FfiHostTransportCounters, FfiHostTransportDelivery, FfiHostTransportError,
+    FfiHostTransportEvent, FfiHostTransportHandle,
 };
 pub use listener_transport::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
