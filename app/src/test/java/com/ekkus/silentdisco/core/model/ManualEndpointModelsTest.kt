@@ -39,5 +39,8 @@ class ManualEndpointModelsTest {
         ).isTrue()
         assertThat(ManualConnectUiState.Approved(false).isInProgress()).isFalse()
         assertThat(ManualConnectUiState.Rejected("no").isInProgress()).isFalse()
+        assertThat(
+            ManualConnectUiState.Streaming(true, PlaybackState.PLAYING).isInProgress(),
+        ).isFalse()
     }
 }

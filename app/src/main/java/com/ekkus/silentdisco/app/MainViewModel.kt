@@ -95,7 +95,7 @@ class MainViewModel @JvmOverloads constructor(
     internal val bleService = BleDiscoveryService(application)
     internal val wifiDirectService = WifiDirectTransportService(application, logger)
     internal val hostTimingService = HostTimingService()
-    internal val manualListenerController = ManualListenerTransportController()
+    internal val manualListenerController = ManualListenerTransportController(playbackEngine)
     internal val hostTransportController = HostTransportController()
     internal val listenerTransportController = ListenerTransportController()
 

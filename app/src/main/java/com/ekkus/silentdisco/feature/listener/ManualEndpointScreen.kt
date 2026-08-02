@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
+import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.canConnect
 import com.ekkus.silentdisco.core.model.isInProgress
 import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
@@ -133,7 +134,24 @@ fun ManualEndpointScreen(
                             modifier = Modifier.semantics { heading() },
                         )
                         Text(
-                            "The host approved this device. Audio streaming is not part of this build yet.",
+                            "The host approved this device. Waiting for the host to start playback.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                is ManualConnectUiState.Streaming -> Card(
+                    modifier = Modifier.fillMaxWidth().testTag("manual-endpoint-streaming"),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Connected",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.semantics { heading() },
+                        )
+                        Text(
+                            playbackStateLabel(connectState.playbackState),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -176,7 +194,7 @@ fun ManualEndpointScreen(
                     Text("Connect")
                 }
             }
-            if (connectState !is ManualConnectUiState.Approved) {
+            if (connectState !is ManualConnectUiState.Approved && connectState !is ManualConnectUiState.Streaming) {
                 TextButton(
                     onClick = onCancel,
                     modifier = Modifier.fillMaxWidth().testTag("manual-endpoint-cancel"),
@@ -186,6 +204,15 @@ fun ManualEndpointScreen(
             }
         }
     }
+}
+
+internal fun playbackStateLabel(playbackState: PlaybackState): String = when (playbackState) {
+    PlaybackState.BUFFERING -> "Buffering…"
+    PlaybackState.PLAYING -> "Playing"
+    PlaybackState.PAUSED -> "Paused by the host"
+    PlaybackState.UNDERRUN -> "Playing (recovering from an underrun)"
+    PlaybackState.STOPPED -> "Stopped"
+    PlaybackState.READY, PlaybackState.ERROR -> "Streaming"
 }
 
 @Composable
