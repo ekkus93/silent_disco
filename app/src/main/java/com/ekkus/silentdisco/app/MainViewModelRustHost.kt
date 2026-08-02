@@ -41,6 +41,7 @@ import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
@@ -102,7 +103,18 @@ private fun MainViewModel.handleHostTransportEvent(
  * Direct group actually forms and its own address is known -- binding
  * `FfiHostTransportHandle` requires a real local address, which isn't
  * available synchronously when the group is only requested.
+ *
+ * Confirmed on a physical device: Wi-Fi Direct's connection-changed broadcast
+ * can fire fractionally before the OS finishes assigning the group-owner
+ * address to its p2p interface, so the first bind attempt right after
+ * ADVERTISING can race a transient "Cannot assign requested address"
+ * failure. A few short retries absorb that without masking a genuinely
+ * permanent bind failure (e.g. port in use), which still surfaces honestly
+ * once retries are exhausted.
  */
+private const val HOST_BIND_RETRY_ATTEMPTS = 5
+private const val HOST_BIND_RETRY_DELAY_MS = 200L
+
 internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: TransportSnapshot) {
     val operationId = pendingStartAdvertisingOperationId ?: return
     if (snapshot.state != TransportConnectionState.ADVERTISING) return
@@ -111,25 +123,37 @@ internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: Transpo
     val sessionId = currentSessionId?.value ?: return
     pendingStartAdvertisingOperationId = null
     val ports = TransportPorts()
-    runCatching {
-        hostTransportController.bind(
-            scope = viewModelScope,
-            localAddress = address,
-            controlPort = ports.control,
-            syncPort = ports.sync,
-            audioPort = ports.audio,
-            sessionId = sessionId,
+    var lastError: Throwable? = null
+    for (attempt in 1..HOST_BIND_RETRY_ATTEMPTS) {
+        val result = runCatching {
+            hostTransportController.bind(
+                scope = viewModelScope,
+                localAddress = address,
+                controlPort = ports.control,
+                syncPort = ports.sync,
+                audioPort = ports.audio,
+                sessionId = sessionId,
+            )
+        }
+        result.onSuccess {
+            controller.transportStateChanged(FfiTransportState.ADVERTISING)
+            controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
+            return
+        }
+        lastError = result.exceptionOrNull()
+        logger.w(
+            "rust.host",
+            "Host transport bind attempt $attempt/$HOST_BIND_RETRY_ATTEMPTS at $address failed: ${lastError?.message}",
         )
-    }.onSuccess {
-        controller.transportStateChanged(FfiTransportState.ADVERTISING)
-        controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
-    }.onFailure { error ->
-        controller.platformOperationFailed(
-            operationId,
-            error.message ?: "Failed to bind host transport",
-            true,
-        )
+        if (attempt < HOST_BIND_RETRY_ATTEMPTS) {
+            delay(HOST_BIND_RETRY_DELAY_MS)
+        }
     }
+    controller.platformOperationFailed(
+        operationId,
+        lastError?.message ?: "Failed to bind host transport",
+        true,
+    )
 }
 
 internal fun MainViewModel.createRustHostSession() {
