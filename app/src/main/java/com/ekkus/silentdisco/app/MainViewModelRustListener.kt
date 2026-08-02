@@ -7,15 +7,35 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
 import com.ekkus.silentdisco.core.transport.TransportPorts
+import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
+import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
+import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+private const val LOCAL_LISTENER_BIND_ADDRESS = "0.0.0.0"
+private const val LISTENER_DISPLAY_NAME = "This Android Listener"
+
+@Serializable
+private data class ManualHostEndpointPayload(
+    val hostAddress: String,
+    val controlPort: Int,
+    val syncPort: Int,
+    val audioPort: Int,
+    val sessionId: String,
+    val protocolVersion: Int,
+    val inviteCodeRequired: Boolean,
+    val expiresAtMs: String? = null,
+)
 
 private val REQUESTED_OR_LATER = setOf(
     ListenerLifecycleState.JOIN_REQUESTED,
@@ -231,11 +251,14 @@ private fun MainViewModel.releaseRustListenerNetwork(
 
 /**
  * Called from the existing Wi-Fi Direct snapshot collector once the
- * transport reaches CONNECTED -- completes a pending EstablishNetwork
- * operation with the endpoint Wi-Fi Direct actually resolved.
+ * transport reaches CONNECTED -- opens the real Rust listener transport
+ * against the endpoint Wi-Fi Direct actually resolved, sends the join
+ * request over it, and only then completes the pending EstablishNetwork
+ * operation. Mirrors `completeRustHostAdvertising`'s async-completion shape
+ * on the host side.
  */
 internal fun MainViewModel.completeRustListenerNetworkEstablishment(
-    snapshot: com.ekkus.silentdisco.core.transport.TransportSnapshot,
+    snapshot: TransportSnapshot,
 ) {
     val operationId = pendingEstablishNetworkOperationId ?: return
     if (snapshot.state != TransportConnectionState.CONNECTED) return
@@ -250,17 +273,80 @@ internal fun MainViewModel.completeRustListenerNetworkEstablishment(
         )
         return
     }
+    val session = _uiState.value.selectedSession
+    if (session == null) {
+        pendingEstablishNetworkOperationId = null
+        controller.platformOperationFailed(operationId, "Selected session disappeared before establishment", false)
+        return
+    }
     pendingEstablishNetworkOperationId = null
     val ports = TransportPorts()
-    controller.platformOperationSucceeded(
-        operationId,
-        FfiPlatformCompletion.NetworkEndpointReady(
-            address = address,
-            controlPort = ports.control.toUShort(),
-            syncPort = ports.sync.toUShort(),
-            audioPort = ports.audio.toUShort(),
+    val rawEndpoint = Json.encodeToString(
+        ManualHostEndpointPayload.serializer(),
+        ManualHostEndpointPayload(
+            hostAddress = address,
+            controlPort = ports.control,
+            syncPort = ports.sync,
+            audioPort = ports.audio,
+            sessionId = session.id,
+            protocolVersion = LISTENER_DISCOVERY_PROTOCOL_VERSION,
+            inviteCodeRequired = session.inviteCodeRequired,
         ),
     )
+    val inviteCode = _uiState.value.connectionProgress.inviteCode.ifBlank { null }
+    viewModelScope.launch {
+        try {
+            listenerTransportController.connect(viewModelScope, rawEndpoint, localListenerDeviceId, LOCAL_LISTENER_BIND_ADDRESS)
+            listenerTransportController.sendJoinRequest(LISTENER_DISPLAY_NAME, inviteCode)
+        } catch (error: FfiListenerTransportException) {
+            controller.platformOperationFailed(operationId, error.message ?: "listener transport connection failed", true)
+            return@launch
+        }
+        ensureListenerTransportEventLoop()
+        controller.platformOperationSucceeded(
+            operationId,
+            FfiPlatformCompletion.NetworkEndpointReady(
+                address = address,
+                controlPort = ports.control.toUShort(),
+                syncPort = ports.sync.toUShort(),
+                audioPort = ports.audio.toUShort(),
+            ),
+        )
+    }
+}
+
+/**
+ * Starts (once) the poll loop that forwards [ListenerTransportController]
+ * events into the existing [ListenerCoreController] contract established in
+ * Block 13.3 -- the controller itself has zero actor knowledge.
+ */
+private fun MainViewModel.ensureListenerTransportEventLoop() {
+    if (listenerTransportEventLoopStarted) return
+    listenerTransportEventLoopStarted = true
+    viewModelScope.launch {
+        listenerTransportController.events.collect { event ->
+            val controller = listenerCoreController ?: return@collect
+            handleListenerTransportEvent(controller, event)
+        }
+    }
+}
+
+private fun handleListenerTransportEvent(
+    controller: ListenerCoreController,
+    event: FfiListenerTransportEvent,
+) {
+    when (event) {
+        is FfiListenerTransportEvent.Hello -> controller.submitAwaitingApproval()
+        is FfiListenerTransportEvent.JoinApproved -> controller.submitJoinApproved(event.trustedForFuture)
+        is FfiListenerTransportEvent.JoinRejected -> controller.submitJoinRejected(event.reason)
+        is FfiListenerTransportEvent.HostDisconnected -> controller.transportFailed(event.reason, true)
+        is FfiListenerTransportEvent.ConnectionClosed -> controller.transportFailed(event.message ?: "Connection closed", true)
+        is FfiListenerTransportEvent.Rejected -> controller.transportFailed(event.message, false)
+        FfiListenerTransportEvent.StreamStarted,
+        FfiListenerTransportEvent.Paused,
+        FfiListenerTransportEvent.Stopped,
+        -> Unit
+    }
 }
 
 internal fun FfiListenerLifecycle.toAppListenerLifecycle(): ListenerLifecycleState = when (this) {

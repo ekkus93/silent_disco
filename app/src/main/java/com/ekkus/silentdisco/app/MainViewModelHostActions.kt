@@ -10,14 +10,22 @@ import com.ekkus.silentdisco.core.audio.packetizationStats
 import com.ekkus.silentdisco.core.audio.validatePacketBudget
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.ControlMessage
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
+import com.ekkus.silentdisco.core.transport.SendAllResult
+import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** A missing delivery (transport not yet bound) reports as zero peers reached. */
+internal fun FfiHostTransportDelivery?.toSendAllResult(): SendAllResult = SendAllResult(
+    peerCount = this?.intendedPeers?.toInt() ?: 0,
+    successCount = this?.successfulPeers?.toInt() ?: 0,
+    failureCount = this?.failedPeers?.toInt() ?: 0,
+)
 
 internal fun MainViewModel.startHostPlaybackImpl() {
     if (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
@@ -109,7 +117,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
                 lastMessage = "Host stream started via $backend",
                 lastError = null,
             )
-            broadcastHostStreamStart(sessionId, streamId, decoded.format)
+            broadcastHostStreamStart(streamId, decoded.format)
             refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
             startHostStreamingLoop(streamId)
         }
@@ -131,7 +139,7 @@ private fun MainViewModel.resumeHostPlaybackImpl() {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
             logger.i("stream.resume", "Resuming host stream")
             metrics.increment("stream_resume")
-            broadcastHostStreamStart(sessionId, streamId, format)
+            broadcastHostStreamStart(streamId, format)
             _uiState.value = _uiState.value.copy(lastMessage = "Host stream resumed", lastError = null)
             refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
         }
@@ -139,25 +147,20 @@ private fun MainViewModel.resumeHostPlaybackImpl() {
 }
 
 private fun MainViewModel.broadcastHostStreamStart(
-    sessionId: SessionId,
     streamId: StreamId,
     format: AudioFormatSpec,
 ) {
-    viewModelScope.launch {
+    viewModelScope.launch(Dispatchers.IO) {
         runCatching {
-            wifiDirectService.broadcastControl(
-                ControlMessage.StreamStart(
-                    version = 1,
-                    sessionId = sessionId,
-                    streamId = streamId,
-                    hostStartTimeMs = SystemClock.elapsedRealtime() + 100,
-                    sampleRate = format.sampleRate,
-                    channels = format.channelCount,
-                    samplesPerPacket = latestPackets.first().samplesPerPacket,
-                ),
+            hostTransportController.broadcastStreamStart(
+                streamId = streamId.value,
+                hostStartTimeMs = SystemClock.elapsedRealtime() + 100,
+                sampleRate = format.sampleRate,
+                channels = format.channelCount,
+                samplesPerPacket = latestPackets.first().samplesPerPacket,
             )
-        }.onSuccess { result ->
-            reportHostBroadcastDelivery("broadcast stream start", result, requireAnyPeer = false)
+        }.onSuccess { delivery ->
+            reportHostBroadcastDelivery("broadcast stream start", delivery.toSendAllResult(), requireAnyPeer = false)
         }.onFailure { error ->
             handleHostControlFailure("broadcast stream start", error)
         }
@@ -174,34 +177,28 @@ internal fun MainViewModel.pauseHostPlaybackImpl() {
                 listenerState = _uiState.value.listenerState,
                 message = "Host paused the stream",
             )
-            currentSessionId?.let { sessionId ->
-                currentStreamId?.let { streamId ->
-                    viewModelScope.launch {
-                        runCatching {
-                            wifiDirectService.broadcastControl(
-                                ControlMessage.Pause(
-                                    version = 1,
-                                    sessionId = sessionId,
-                                    streamId = streamId,
-                                    hostPauseTimeMs = SystemClock.elapsedRealtime(),
-                                ),
-                            )
-                        }.onSuccess { result ->
-                            val warning = hostControlDeliveryMessage("Paused", "broadcast pause", result)
-                            if (warning != null) {
-                                _uiState.value = _uiState.value.copy(lastError = warning)
-                                diagnosticsStore.updateHost {
-                                    it.copy(lastError = warning, metricsSummary = summarizeMetrics())
-                                }
-                            } else {
-                                diagnosticsStore.updateHost {
-                                    it.copy(lastError = null, metricsSummary = summarizeMetrics())
-                                }
+            currentStreamId?.let { streamId ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        hostTransportController.broadcastPause(
+                            streamId = streamId.value,
+                            hostPauseTimeMs = SystemClock.elapsedRealtime(),
+                        )
+                    }.onSuccess { delivery ->
+                        val warning = hostControlDeliveryMessage("Paused", "broadcast pause", delivery.toSendAllResult())
+                        if (warning != null) {
+                            _uiState.value = _uiState.value.copy(lastError = warning)
+                            diagnosticsStore.updateHost {
+                                it.copy(lastError = warning, metricsSummary = summarizeMetrics())
                             }
-                            refreshHostDiagnostics()
-                        }.onFailure { error ->
-                            handleHostControlFailure("broadcast pause", error)
+                        } else {
+                            diagnosticsStore.updateHost {
+                                it.copy(lastError = null, metricsSummary = summarizeMetrics())
+                            }
                         }
+                        refreshHostDiagnostics()
+                    }.onFailure { error ->
+                        handleHostControlFailure("broadcast pause", error)
                     }
                 }
             }
@@ -224,34 +221,28 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
                 listenerState = _uiState.value.listenerState,
                 message = "Host stopped the stream",
             )
-            currentSessionId?.let { sessionId ->
-                currentStreamId?.let { streamId ->
-                    viewModelScope.launch {
-                        runCatching {
-                            wifiDirectService.broadcastControl(
-                                ControlMessage.Stop(
-                                    version = 1,
-                                    sessionId = sessionId,
-                                    streamId = streamId,
-                                    hostStopTimeMs = SystemClock.elapsedRealtime(),
-                                ),
-                            )
-                        }.onSuccess { result ->
-                            val warning = hostControlDeliveryMessage("Stopped", "broadcast stop", result)
-                            if (warning != null) {
-                                _uiState.value = _uiState.value.copy(lastError = warning)
-                                diagnosticsStore.updateHost {
-                                    it.copy(lastError = warning, metricsSummary = summarizeMetrics())
-                                }
-                            } else {
-                                diagnosticsStore.updateHost {
-                                    it.copy(lastError = null, metricsSummary = summarizeMetrics())
-                                }
+            currentStreamId?.let { streamId ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        hostTransportController.broadcastStop(
+                            streamId = streamId.value,
+                            hostStopTimeMs = SystemClock.elapsedRealtime(),
+                        )
+                    }.onSuccess { delivery ->
+                        val warning = hostControlDeliveryMessage("Stopped", "broadcast stop", delivery.toSendAllResult())
+                        if (warning != null) {
+                            _uiState.value = _uiState.value.copy(lastError = warning)
+                            diagnosticsStore.updateHost {
+                                it.copy(lastError = warning, metricsSummary = summarizeMetrics())
                             }
-                            refreshHostDiagnostics()
-                        }.onFailure { error ->
-                            handleHostControlFailure("broadcast stop", error)
+                        } else {
+                            diagnosticsStore.updateHost {
+                                it.copy(lastError = null, metricsSummary = summarizeMetrics())
+                            }
                         }
+                        refreshHostDiagnostics()
+                    }.onFailure { error ->
+                        handleHostControlFailure("broadcast stop", error)
                     }
                 }
             }

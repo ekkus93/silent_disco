@@ -25,6 +25,8 @@ import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiDeliveryReport
 import com.ekkus.silentdisco.core.uniffi.FfiHostDraft
 import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
+import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
+import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
@@ -36,6 +38,8 @@ import com.ekkus.silentdisco.core.uniffi.FfiTransportState
 import com.ekkus.silentdisco.core.uniffi.FfiTrustState
 import com.ekkus.silentdisco.core.uniffi.FfiTuningSettings
 import com.ekkus.silentdisco.core.transport.BleAdvertisement
+import com.ekkus.silentdisco.core.transport.TransportPorts
+import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.flow.filterNotNull
@@ -53,7 +57,80 @@ internal fun MainViewModel.ensureRustHostCore(): HostCoreController {
             executeRustHostNotification(controller, notification)
         }
     }
+    ensureHostTransportEventLoop(controller)
     return controller
+}
+
+private fun MainViewModel.ensureHostTransportEventLoop(controller: HostCoreController) {
+    if (hostTransportEventLoopStarted) return
+    hostTransportEventLoopStarted = true
+    viewModelScope.launch {
+        hostTransportController.events.collect { event -> handleHostTransportEvent(controller, event) }
+    }
+}
+
+private fun MainViewModel.handleHostTransportEvent(
+    controller: HostCoreController,
+    event: FfiHostTransportEvent,
+) {
+    when (event) {
+        is FfiHostTransportEvent.JoinRequestReceived -> runCatching {
+            controller.submitJoinRequest(
+                FfiJoinRequestInput(
+                    requestId = event.deviceId,
+                    deviceId = event.deviceId,
+                    displayName = event.displayName,
+                    trustState = FfiTrustState.UNKNOWN,
+                    inviteCode = event.inviteCode,
+                    receivedAtMs = SystemClock.elapsedRealtime().toULong(),
+                ),
+            )
+        }.onFailure { error -> reportRustHostCommandFailure("submit join request", error) }
+        is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->
+            runCatching { controller.submitListenerDisconnected(listenerId) }
+                .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }
+        }
+        is FfiHostTransportEvent.PeerAccepted,
+        is FfiHostTransportEvent.Heartbeat,
+        is FfiHostTransportEvent.ResyncNotice,
+        is FfiHostTransportEvent.Rejected,
+        -> Unit // diagnostic-only for this pass; sync/resync are out of scope until Block 23
+    }
+}
+
+/**
+ * Completes a pending `StartAdvertising` platform operation once the Wi-Fi
+ * Direct group actually forms and its own address is known -- binding
+ * `FfiHostTransportHandle` requires a real local address, which isn't
+ * available synchronously when the group is only requested.
+ */
+internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: TransportSnapshot) {
+    val operationId = pendingStartAdvertisingOperationId ?: return
+    if (snapshot.state != TransportConnectionState.ADVERTISING) return
+    val address = snapshot.hostAddressHint ?: return
+    val controller = hostCoreController ?: return
+    val sessionId = currentSessionId?.value ?: return
+    pendingStartAdvertisingOperationId = null
+    val ports = TransportPorts()
+    runCatching {
+        hostTransportController.bind(
+            scope = viewModelScope,
+            localAddress = address,
+            controlPort = ports.control,
+            syncPort = ports.sync,
+            audioPort = ports.audio,
+            sessionId = sessionId,
+        )
+    }.onSuccess {
+        controller.transportStateChanged(FfiTransportState.ADVERTISING)
+        controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
+    }.onFailure { error ->
+        controller.platformOperationFailed(
+            operationId,
+            error.message ?: "Failed to bind host transport",
+            true,
+        )
+    }
 }
 
 internal fun MainViewModel.createRustHostSession() {
@@ -313,6 +390,7 @@ private fun MainViewModel.startAdvertisingForRust(
         )
         return
     }
+    pendingStartAdvertisingOperationId = effect.operationId
     _uiState.value = _uiState.value.copy(
         discoveredSessions = listOf(session),
         lastMessage = "Hosting ${session.name}",
@@ -326,11 +404,8 @@ private fun MainViewModel.startAdvertisingForRust(
             lastError = null,
         )
     }
-    controller.transportStateChanged(FfiTransportState.ADVERTISING)
-    controller.platformOperationSucceeded(
-        effect.operationId,
-        FfiPlatformCompletion.AdvertisingStarted,
-    )
+    // AdvertisingStarted is reported once the Wi-Fi Direct group actually
+    // forms and its own address is known -- see completeRustHostAdvertising.
 }
 
 private fun MainViewModel.stopAdvertisingForRust(
@@ -343,6 +418,8 @@ private fun MainViewModel.stopAdvertisingForRust(
     playbackEngine.stop()
     bleService.stop()
     wifiDirectService.stop()
+    pendingStartAdvertisingOperationId = null
+    hostTransportController.close()
     controller.transportStateChanged(FfiTransportState.IDLE)
     controller.platformOperationSucceeded(
         effect.operationId,
@@ -361,34 +438,13 @@ private suspend fun MainViewModel.executeRustTransportEffect(
     controller: HostCoreController,
     effect: FfiTransportEffect,
 ) {
-    val result = when (effect) {
-        is FfiTransportEffect.DeliverJoinApproval -> wifiDirectService.sendControlToListener(
-            effect.listenerId,
-            ControlMessage.JoinApproval(
-                version = 1,
-                sessionId = SessionId(effect.sessionId),
-                listenerId = effect.listenerId,
-                trustedForFuture = effect.trustedForFuture,
-            ),
-        )
-        is FfiTransportEffect.DeliverJoinRejection -> wifiDirectService.sendControlToListener(
-            effect.listenerId,
-            ControlMessage.JoinRejection(
-                version = 1,
-                sessionId = SessionId(effect.sessionId),
-                listenerId = effect.listenerId,
-                reason = effect.reasonCode,
-            ),
-        )
-        is FfiTransportEffect.DisconnectListener -> wifiDirectService.sendControlToListener(
-            effect.listenerId,
-            ControlMessage.Disconnect(
-                version = 1,
-                sessionId = SessionId(effect.sessionId),
-                listenerId = effect.listenerId,
-                reason = effect.reasonCode,
-            ),
-        )
+    val delivery = when (effect) {
+        is FfiTransportEffect.DeliverJoinApproval ->
+            hostTransportController.sendJoinApproval(effect.listenerId, effect.trustedForFuture)
+        is FfiTransportEffect.DeliverJoinRejection ->
+            hostTransportController.sendJoinRejection(effect.listenerId, effect.reasonCode)
+        is FfiTransportEffect.DisconnectListener ->
+            hostTransportController.disconnectPeer(effect.listenerId, effect.reasonCode)
     }
     controller.transportDeliveryCompleted(
         operationId = when (effect) {
@@ -396,13 +452,9 @@ private suspend fun MainViewModel.executeRustTransportEffect(
             is FfiTransportEffect.DeliverJoinRejection -> effect.operationId
             is FfiTransportEffect.DisconnectListener -> effect.operationId
         },
-        report = FfiDeliveryReport(
-            intendedPeers = result.intendedPeerCount.toUInt(),
-            successfulPeers = result.successCount.toUInt(),
-            failedPeers = result.failureCount.toUInt(),
-        ),
+        report = delivery.toFfiDeliveryReport(),
     )
-    if (effect is FfiTransportEffect.DeliverJoinApproval && result.deliveredToTarget) {
+    if (effect is FfiTransportEffect.DeliverJoinApproval && (delivery?.successfulPeers ?: 0u) > 0u) {
         val displayName = _uiState.value.pendingJoinRequests
             .firstOrNull { it.listenerId == effect.listenerId }
             ?.listenerName
@@ -424,6 +476,13 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         )
     }
 }
+
+/** A missing delivery (transport not yet bound) reports as zero peers reached. */
+private fun FfiHostTransportDelivery?.toFfiDeliveryReport(): FfiDeliveryReport = FfiDeliveryReport(
+    intendedPeers = this?.intendedPeers ?: 0u,
+    successfulPeers = this?.successfulPeers ?: 0u,
+    failedPeers = this?.failedPeers ?: 0u,
+)
 
 private suspend fun MainViewModel.executeRustStorageEffect(
     controller: HostCoreController,

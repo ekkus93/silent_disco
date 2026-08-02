@@ -109,7 +109,6 @@ class WifiDirectTransportService(
             return TransportOperationResult.failed(message)
         }
         return runCatching {
-            startHostSockets()
             recreateGroup()
             updateSnapshot(
                 state = TransportConnectionState.ADVERTISING,
@@ -387,7 +386,6 @@ override suspend fun sendControlToListener(
             val hostAddress = info.groupOwnerAddress?.hostAddress ?: WIFI_DIRECT_GROUP_OWNER
             when {
                 info.groupFormed && info.isGroupOwner -> {
-                startHostSockets()
                 updateSnapshot(
                     state = TransportConnectionState.ADVERTISING,
                     peers = currentPeers.values.map { WifiDirectPeer(it.deviceName, it.deviceAddress) },
@@ -397,20 +395,13 @@ override suspend fun sendControlToListener(
                 logger.i("transport.host", "Group owner ready at $hostAddress")
                 }
                 info.groupFormed -> {
-                    val session = pendingConnectSession ?: activeSession ?: return@requestConnectionInfo
-                    runCatching {
-                        startClientSockets(hostAddress, session)
-                    }.onSuccess {
-                        updateSnapshot(
-                            state = TransportConnectionState.CONNECTED,
-                            peers = currentPeers.values.map { WifiDirectPeer(it.deviceName, it.deviceAddress) },
-                            lastError = null,
-                            hostAddressHint = hostAddress,
-                        )
-                        logger.i("transport.connect", "Connected to group owner at $hostAddress")
-                    }.onFailure { error ->
-                        fail(error.message ?: "Failed to open TCP transport to host", retryable = true)
-                    }
+                    updateSnapshot(
+                        state = TransportConnectionState.CONNECTED,
+                        peers = currentPeers.values.map { WifiDirectPeer(it.deviceName, it.deviceAddress) },
+                        lastError = null,
+                        hostAddressHint = hostAddress,
+                    )
+                    logger.i("transport.connect", "Connected to group owner at $hostAddress")
                 }
                 _snapshot.value.state == TransportConnectionState.CONNECTING ||
                     _snapshot.value.state == TransportConnectionState.CONNECTED -> {

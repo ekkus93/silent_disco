@@ -109,9 +109,7 @@ import kotlinx.coroutines.runBlocking
                 reportRustHostTransportState(snapshot.state)
                 handleTransportSnapshot(snapshot)
                 completeRustListenerNetworkEstablishment(snapshot)
-                if (pendingJoinRequestMessage != null && snapshot.state == TransportConnectionState.CONNECTED) {
-                    sendPendingJoinRequest()
-                }
+                completeRustHostAdvertising(snapshot)
             }
         }
     }

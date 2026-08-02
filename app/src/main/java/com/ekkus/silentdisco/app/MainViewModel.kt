@@ -41,7 +41,9 @@ import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.rust.HostCoreController
+import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
+import com.ekkus.silentdisco.core.rust.ListenerTransportController
 import com.ekkus.silentdisco.core.rust.ManualListenerTransportController
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
@@ -94,6 +96,8 @@ class MainViewModel @JvmOverloads constructor(
     internal val wifiDirectService = WifiDirectTransportService(application, logger)
     internal val hostTimingService = HostTimingService()
     internal val manualListenerController = ManualListenerTransportController()
+    internal val hostTransportController = HostTransportController()
+    internal val listenerTransportController = ListenerTransportController()
 
     internal val _uiState = MutableStateFlow(
         AppUiState(
@@ -123,6 +127,9 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
+    internal var pendingStartAdvertisingOperationId: String? = null
+    internal var hostTransportEventLoopStarted: Boolean = false
+    internal var listenerTransportEventLoopStarted: Boolean = false
     internal val localListenerDeviceId = "listener-device"
 
     init {
@@ -389,6 +396,8 @@ class MainViewModel @JvmOverloads constructor(
         manualListenerController.close()
         hostCoreController?.close()
         listenerCoreController?.close()
+        hostTransportController.close()
+        listenerTransportController.close()
         runBlocking(Dispatchers.IO) { domainStore.close() }
         super.onCleared()
     }
