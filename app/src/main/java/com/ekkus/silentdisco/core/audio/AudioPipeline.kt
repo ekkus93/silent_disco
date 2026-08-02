@@ -3,8 +3,6 @@ package com.ekkus.silentdisco.core.audio
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.zip.CRC32
 
 private const val EstimatedPacketHeaderBytes = 48
@@ -94,6 +92,16 @@ data class PacketBudgetValidation(
         "avg=${averagePacketBytes}B, max=${maxPacketBytes}B, overhead=${"%.1f".format(overheadRatio * 100)}%"
 }
 
+/**
+ * Buffers packets between the network-reception coroutine ([insert]) and the
+ * playback coroutine ([popReady]/[peekFirst]/[isReady]) -- two independent
+ * `Dispatchers.IO` coroutines that run concurrently on different threads, not
+ * a single confined thread. `TreeMap` (the backing type of [sortedMapOf]) is
+ * not thread-safe, so unsynchronized cross-thread access here previously
+ * crashed the whole process with a `ConcurrentModificationException` inside
+ * [popReady] whenever [insert] mutated the map mid-iteration on another
+ * thread. All access is synchronized on this instance.
+ */
 class AudioPacketBuffer(
     private val startupTargetMs: Long = 400,
 ) {
@@ -101,43 +109,57 @@ class AudioPacketBuffer(
     private var lastEmittedSequence: Long? = null
 
     fun insert(packet: BufferedAudioPacket) {
-        packets[packet.packet.sequenceNumber] = packet
+        synchronized(this) {
+            packets[packet.packet.sequenceNumber] = packet
+        }
     }
 
-    fun isReady(): Boolean {
-        if (packets.isEmpty()) return false
+    fun isReady(): Boolean = synchronized(this) {
+        if (packets.isEmpty()) return@synchronized false
         val first = packets.values.first()
         val last = packets.values.last()
-        return last.scheduledLocalTimeMs - first.scheduledLocalTimeMs >= startupTargetMs
+        last.scheduledLocalTimeMs - first.scheduledLocalTimeMs >= startupTargetMs
     }
 
-    fun popReady(nowLocalTimeMs: Long): BufferedAudioPacket? {
-        val firstEntry = packets.entries.firstOrNull() ?: return null
-        if (firstEntry.value.scheduledLocalTimeMs > nowLocalTimeMs) return null
+    fun popReady(nowLocalTimeMs: Long): BufferedAudioPacket? = synchronized(this) {
+        val firstEntry = packets.entries.firstOrNull() ?: return@synchronized null
+        if (firstEntry.value.scheduledLocalTimeMs > nowLocalTimeMs) return@synchronized null
         lastEmittedSequence = firstEntry.key
-        return packets.remove(firstEntry.key)
+        packets.remove(firstEntry.key)
     }
 
-    fun peekFirst(): BufferedAudioPacket? = packets.values.firstOrNull()
+    fun peekFirst(): BufferedAudioPacket? = synchronized(this) { packets.values.firstOrNull() }
 
-    fun missingSequenceCount(): Int {
-        val last = lastEmittedSequence ?: return 0
-        val next = packets.keys.firstOrNull() ?: return 0
-        return (next - last - 1).coerceAtLeast(0).toInt()
+    /**
+     * Drains every buffered packet in sequence order, ignoring each one's
+     * scheduled deadline. Used when a stream stops: anything still buffered
+     * here already arrived over the network in time -- it is real content,
+     * not backlog -- so it should be played out, not silently discarded.
+     */
+    fun drainAll(): List<BufferedAudioPacket> = synchronized(this) {
+        val drained = packets.values.toList()
+        packets.clear()
+        drained
     }
 
-    fun depthMs(): Long {
-        if (packets.isEmpty()) return 0
-        return packets.values.last().scheduledLocalTimeMs - packets.values.first().scheduledLocalTimeMs
+    fun missingSequenceCount(): Int = synchronized(this) {
+        val last = lastEmittedSequence ?: return@synchronized 0
+        val next = packets.keys.firstOrNull() ?: return@synchronized 0
+        (next - last - 1).coerceAtLeast(0).toInt()
+    }
+
+    fun depthMs(): Long = synchronized(this) {
+        if (packets.isEmpty()) return@synchronized 0
+        packets.values.last().scheduledLocalTimeMs - packets.values.first().scheduledLocalTimeMs
     }
 
     fun validatePacketIdentity(packet: AudioPacket, sessionId: SessionId, streamId: StreamId): Boolean {
         return packet.sessionId == sessionId && packet.streamId == streamId
     }
 
-    fun missingSequenceRanges(): List<LongRange> {
+    fun missingSequenceRanges(): List<LongRange> = synchronized(this) {
         val sortedKeys = packets.keys.toList()
-        if (sortedKeys.size < 2) return emptyList()
+        if (sortedKeys.size < 2) return@synchronized emptyList()
         val gaps = mutableListOf<LongRange>()
         for (index in 1 until sortedKeys.size) {
             val previous = sortedKeys[index - 1]
@@ -146,15 +168,7 @@ class AudioPacketBuffer(
                 gaps += (previous + 1)..(current - 1)
             }
         }
-        return gaps
-    }
-}
-
-object SilenceFiller {
-    fun pcm16Le(frameCount: Int, format: AudioFormatSpec = AudioFormatSpec()): ByteArray {
-        return ByteBuffer.allocate(frameCount * format.bytesPerFrame)
-            .order(ByteOrder.LITTLE_ENDIAN)
-            .array()
+        gaps
     }
 }
 

@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.sync
 
 import android.os.SystemClock
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
@@ -55,9 +56,21 @@ class ListenerSyncController(
                 t4 = localReceiveTimeMs,
             ),
         )
-        samples += localReceiveTimeMs to state.offsetMs
-        if (samples.size > config.sampleHistorySize) {
-            samples.removeAt(0)
+        // Before any sample is ever accepted, `state.offsetMs` is just the
+        // estimator's all-zero default -- not a real measurement. Recording
+        // that placeholder here would let the very first real, huge offset
+        // (host and listener epochs are unrelated, so realistic offsets are
+        // routinely hundreds of millions of ms) enter this regression right
+        // next to a run of zeros, producing a spurious near-vertical slope
+        // that -- multiplied by 1,000,000 to express as ppm -- explodes into
+        // a physically impossible skew (observed: -5e10 ppm; real clocks
+        // drift by at most a few hundred ppm), which then corrupts the
+        // whole stream's frozen `HostTimeMapper`. Only track real samples.
+        if (state.confidence != SyncQualityBadge.UNKNOWN) {
+            samples += localReceiveTimeMs to state.offsetMs
+            if (samples.size > config.sampleHistorySize) {
+                samples.removeAt(0)
+            }
         }
         lastSyncAtMs = localReceiveTimeMs
         return state.copy(skewPpm = estimateSkewPpm())

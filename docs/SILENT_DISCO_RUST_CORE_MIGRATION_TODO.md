@@ -819,6 +819,134 @@ follow-up, not done this session.
       the one thing this session cannot verify itself -- see desktop TODO
       Block 28.
 
+- [x] **Fixed 2026-08-02, same day**: real-device audio was audible but
+      reported as choppy/staticy with lost notes across several runs.
+      Objective diagnostics (a new `DebugPcmRecorder`,
+      `core/audio/DebugPcmRecorder.kt`, capturing every PCM16LE payload
+      handed to `PlaybackEngine.write()` to a real on-device WAV file,
+      pulled via `adb pull` and analyzed offline) plus `adb logcat`
+      surfaced a genuine `FATAL EXCEPTION` -- `ConcurrentModificationException`
+      inside `AudioPacketBuffer.popReady()` (`AudioPipeline.kt`) -- that was
+      crashing the whole app process, not just a coroutine. Root cause:
+      `AudioPacketBuffer`'s backing `sortedMapOf`/`TreeMap` is written by
+      `ListenerPlaybackScheduler.submit()` (the event-loop coroutine) and
+      read by `popReady()`/`peekFirst()` (the separate playback coroutine)
+      -- both `scope.launch(Dispatchers.IO)`, genuinely concurrent on
+      different threads, with no synchronization. Fixed by wrapping every
+      `AudioPacketBuffer` method body in `synchronized(this)`; this buffer
+      sits between two Kotlin coroutines, not inside the real-time native
+      Oboe callback, so this doesn't touch the real-time-callback
+      constraints. Verified fixed on the real device: a melody-scale test
+      that previously crashed after ~1.16s of audio (confirmed via WAV byte
+      count) played the full nominal 40s with zero crashes, WAV byte count
+      confirming 39.66s actually captured. Separately, also fixed this
+      session: `OboePlaybackEngine.write()` was silently discarding the
+      unwritten remainder of any partially-accepted `pushFrames()` call.
+      **Not yet root-caused**: offline analysis of the post-fix WAV shows
+      zero raw sample-level discontinuities (rules out data corruption) but
+      three real dropout gaps (220ms/640ms/140ms) clustered in the back
+      third of the 40s clip, consistent with `oboeUnderruns=371` and a
+      `packetLossCount` that grows through the stream -- buffer
+      starvation/backlog that worsens over time within one stream remains
+      open. See `memory.md`'s 2026-08-02T13:50:14Z entry for full detail.
+      Note: this whole Kotlin buffer is slated for replacement by the Rust
+      `audio::JitterBuffer` per this file's 2026-08-01 implementation note
+      above -- the concurrency bug and this fix are specific to the
+      still-live Kotlin code path, not the Rust one.
+
+- [x] **Fixed 2026-08-02, same day**: two more real-device audio bugs found
+      and fixed via the same objective-recording-comparison workflow.
+      (1) `handleStreamStopped()` discarded any audio still buffered (real,
+      already-delivered content just not yet at its scheduled deadline --
+      up to ~1s of it, per the send-ahead horizon fix above) instead of
+      playing it out, silently clipping a stream's actual last moments
+      (confirmed: a test melody's final note was missing entirely). Fixed
+      by draining and writing out remaining buffered frames before tearing
+      down (`AudioPacketBuffer.drainAll()`/`ListenerPlaybackScheduler.drainRemaining()`).
+      (2) `ListenerSyncController.onResponse()` (`core/sync/ClockSync.kt`
+      companion `SyncMaintenance.kt`) recorded a zero-offset placeholder
+      into its skew-estimation history on every call, even when the
+      underlying RTT sample was rejected as an outlier -- under real
+      network/CPU contention (several rejected samples before the first
+      accepted one), this let a run of zeros sit beside the first real,
+      huge cross-epoch offset in the same linear regression, producing a
+      physically impossible skew (observed: -5e10 ppm) that, applied in
+      `HostTimeMapper.hostToLocal()`, pushed every deadline billions of ms
+      off and silenced playback entirely (`written=0` for a whole stream).
+      Fixed by only recording history once a sample is genuinely accepted
+      (`confidence != UNKNOWN`); regression test added. See `memory.md`'s
+      2026-08-02T19:22:01Z entry for full detail, including the
+      still-open startup-transient gap and residual (now merely noisy,
+      not catastrophic) skew-estimate imprecision with few samples.
+
+- [x] **Fixed 2026-08-02, same day**: the desktop host (`desktop/src-tauri/src/platform/playback_streamer.rs`)
+      previously paced strictly one packet per `packet_duration_ms` real time,
+      giving listeners zero replenishable send-ahead lead -- any downstream
+      stall could only drain the listener's buffer, never refill it. Replaced
+      with a bounded 1-second send-ahead horizon (burst out already-packetized
+      audio up front, throttle only once ahead of the horizon). This also
+      exposed a real, separate, pre-existing latent bug in
+      `ManualListenerTransportController.handleSyncResponse()`
+      (`app/src/main/java/.../core/rust/ManualListenerTransportController.kt`):
+      it flipped `hasSyncSample = true` on a sync-response *event* arriving,
+      not on `ClockSyncEstimator` actually having accepted a usable sample
+      (it silently rejects RTT-outlier samples, RTT > 200ms, falling back to
+      an all-zero default) -- a rejected first sample let `beginPlayback` fire
+      with the garbage zero-offset default frozen for the whole stream,
+      exactly the failure mode the deferred-start scheme (see the prior
+      checklist item above) was built to prevent. Fixed by gating on
+      `SyncState.confidence != SyncQualityBadge.UNKNOWN` instead. Verified on
+      the real device: post-fix, a 40s melody test went from `written=0`
+      (total failure) to `written=1991` of `received=1994` (99.85%), and
+      objective WAV analysis showed the pre-existing "dropouts worsen later
+      in the stream" pattern (3 large gaps in the back third) replaced by a
+      much smaller, startup-only gap pattern (all ~1s of gaps in the first
+      1.2 seconds, zero afterward) -- confirming the send-ahead horizon fixes
+      the growing-backlog theory. See `memory.md`'s 2026-08-02T15:24:37Z entry
+      for full detail, including a still-open smaller startup-transient gap
+      and the (separately, still not fixed) misleading `packetLossCount`
+      accumulation logic.
+
+- [x] **Fixed 2026-08-02, same day**: root-caused the remaining
+      "popping and static" during otherwise-healthy playback -- ~1%
+      sporadic Wi-Fi UDP loss (normal, confirmed 1:1 against
+      `received_gap` logs and WAV gap timestamps) concealed with
+      *hard-edged silence*, producing two instantaneous waveform
+      discontinuities (audible clicks) per lost packet. Fixed in
+      `PlaybackScheduling.kt` with 5ms linear ramps at every concealment
+      boundary (fade previous tail into the gap, fade real audio back
+      in), plus three adjacent real bugs found the same way:
+      `packetLossCount` compared submitted sequences against the playback
+      head (permanently ~1s behind arrivals under the send-ahead horizon),
+      compounding into six-figure counts and a per-packet warning-log
+      storm -- now counts arrival continuity with reorder backfill;
+      `drainRemaining()` butted non-adjacent waveforms together across
+      tail sequence holes (a confirmed full-scale click at 39.34s in one
+      run) -- drain now fades every hole edge and the final tail;
+      `concealedUnderflowFrame()` could synthesize silence for a packet
+      already buffered and about to be due, duplicating its slot -- now
+      guarded on the buffer head. Six new scheduler unit tests; Android
+      gate green; verified across two live-listened device runs: final
+      run's WAV has **zero sample-level discontinuities** (max jump 822 =
+      ordinary waveform slope) and only ~15ms soft dips at genuine loss
+      points. See `memory.md`'s 2026-08-02T21:16:53Z entry.
+
+- [ ] Give the Rust render ring a bounded *intentional* write-lead
+      (~`RENDER_RING_TARGET_FILL_FRAMES`, 400ms) instead of the current
+      accidental depth. The confirmed remaining audible artifact
+      (~12 native Oboe underruns of ~2ms per 40s run, plus the startup
+      transient and the bimodal write-stall behavior) all trace to
+      steady-state ring depth being an accident of the startup backlog
+      size: frames are written exactly at their presentation deadline, so
+      the ring sits near-empty (writer jitter -> native hard-cut
+      underruns Kotlin ramps cannot reach) or pinned full (big backlog ->
+      every write stalls ~20ms). Requires reading the native/C++/Rust
+      target-fill start semantics first and aligning stream start so the
+      first frame still *plays* at its deadline -- naive early-writing
+      would shift playback earlier and break the presentation-time
+      contract and cross-listener sync. Re-validate real two-device sync
+      after the change (core success metric).
+
 ### 13.4 Add parity/integration tests
 
 - [ ] Reproduce FIX3/FIX4/FIX5 listener hardening expectations in Rust tests.

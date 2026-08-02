@@ -257,7 +257,7 @@ For unrelated legacy work, use the relevant active TODO rather than automaticall
 
 ## Automated hooks
 
-`.claude/settings.json` runs hooks on every Write/Edit: `scripts/check-source-file-line-counts.sh` checks tracked source line counts, and edits under `desktop/` are auto-formatted with Biome. Both run without asking.
+`.claude/settings.json` runs one hook on every Write/Edit: edits under `desktop/src/` are auto-formatted with Biome. It runs without asking. (`scripts/check-source-file-line-counts.sh` is a CI gate only, not an edit hook.)
 
 ## Memory file
 

@@ -1,5 +1,7 @@
 package com.ekkus.silentdisco.core.audio
 
+import android.os.SystemClock
+import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.uniffi.FfiAudioOutputHandle
 
 private const val RENDER_RING_CAPACITY_FRAMES: UInt = 48_000u
@@ -23,6 +25,9 @@ class OboePlaybackEngine : PlaybackEngine {
     private var volume: Float = 1.0f
     private var writeCount: Long = 0
     private var channelCount: Int = AudioFormatSpec().channelCount
+    private val logger = AppLogger("OboePlaybackEngine")
+    private var stallEventCount: Long = 0
+    private var stallTotalMs: Long = 0
 
     override fun start(format: AudioFormatSpec): String {
         channelCount = format.channelCount
@@ -58,11 +63,14 @@ class OboePlaybackEngine : PlaybackEngine {
         val totalFrames = samples.size / channelCount
         var framesWritten = 0
         var stallRetries = 0
+        var totalStallRetries = 0
+        val startedAtMs = SystemClock.elapsedRealtime()
         while (framesWritten < totalFrames) {
             val remaining = samples.copyOfRange(framesWritten * channelCount, samples.size)
             val written = active.pushFrames(remaining.toList())
             if (written == 0u) {
                 stallRetries += 1
+                totalStallRetries += 1
                 if (stallRetries > MAX_STALL_RETRIES) {
                     error("Render ring did not drain after $MAX_STALL_RETRIES retries")
                 }
@@ -71,6 +79,23 @@ class OboePlaybackEngine : PlaybackEngine {
             }
             stallRetries = 0
             framesWritten += written.toInt()
+        }
+        // Only a genuine retry (the ring was observed full at least once)
+        // counts as a stall. Timing the whole call instead -- as an earlier
+        // version of this instrumentation did -- mostly measured this
+        // call's own fixed per-call overhead (boxing `samples` into a
+        // `List<Float>` for the JNI/UniFFI crossing), which took ~5ms on
+        // roughly half of all calls even with zero retries: a real cost,
+        // but not backpressure, and not what this diagnostic is for.
+        if (totalStallRetries > 0) {
+            val elapsedMs = SystemClock.elapsedRealtime() - startedAtMs
+            stallEventCount += 1
+            stallTotalMs += elapsedMs
+            logger.w(
+                "oboe.write_stall",
+                "seq=${frame.packet.sequenceNumber} elapsedMs=$elapsedMs retries=$totalStallRetries " +
+                    "stallEvents=$stallEventCount stallTotalMs=$stallTotalMs",
+            )
         }
         writeCount += 1
         return framesWritten.toLong()
@@ -97,6 +122,9 @@ class OboePlaybackEngine : PlaybackEngine {
     fun statusSummary(): String = "writes=$writeCount, backend=${OboeBridge.backendSummary()}, " +
         "sampleRate=${OboeBridge.nativeOboeActualSampleRate()}, " +
         "channels=${OboeBridge.nativeOboeActualChannelCount()}"
+
+    /** Cumulative count and total wall-clock time of [write] calls that stalled waiting for the ring to drain. */
+    fun stallSummary(): String = "stallEvents=$stallEventCount stallTotalMs=$stallTotalMs"
 }
 
 internal fun pcm16LeToFloat(payload: ByteArray, volume: Float): FloatArray {

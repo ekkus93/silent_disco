@@ -34,7 +34,7 @@ fn desktop_host_streams_real_audio_and_answers_sync_requests() {
     };
 
     let temp = TempDir::new().expect("temp");
-    let (descriptor, registry) = stage_source(&temp);
+    let (descriptor, registry) = stage_long_source(&temp);
     let (actor, handle, receiver, advertisement, network, endpoint) =
         start_host_session(descriptor, interface_name, interface_index, address);
 
@@ -81,18 +81,145 @@ fn desktop_host_streams_real_audio_and_answers_sync_requests() {
     actor.shutdown().expect("actor shutdown");
 }
 
+/// Guards the send-ahead horizon fix in `playback_streamer.rs`: the pump
+/// used to pace strictly one packet per `packet_duration_ms` real
+/// milliseconds, so a whole short source's worth of packets took roughly
+/// `(packet_count - 1) * packet_duration_ms` of real time to arrive. Since
+/// `pcm_wav()` is only 100ms (5 packets at 20ms each), the old pacing
+/// guaranteed at least 80ms between the first and last packet. The fix lets
+/// the pump burst out everything already within the send-ahead horizon
+/// immediately, so all 5 packets of this short source should arrive far
+/// faster than that.
+#[test]
+fn desktop_host_bursts_a_short_source_instead_of_pacing_one_packet_per_tick() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!(
+            "no private LAN interface on this CI host; streaming playback coverage remains deterministic"
+        );
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+
+    wait_for_control(&mut *listener, |message| {
+        matches!(message, ControlMessage::StreamStart(_))
+    });
+
+    let first_audio = wait_for_audio(&mut *listener);
+    let burst_start = Instant::now();
+    let mut last_sequence = first_audio.sequence.get();
+    let mut packet_count = 1;
+    let mut last_packet_at = burst_start;
+    // This 100ms/5-packet source reaches natural end-of-file almost
+    // immediately once burst-sent, so the real `Stop` broadcast (from the
+    // pump's own natural-EOF exit path, not from an explicit stop_playback()
+    // call below) can arrive interleaved with these remaining audio frames --
+    // watch for it here instead of discarding it, or a later explicit wait
+    // for it would time out waiting for a second one that never comes. Audio
+    // and control are separate channels with no cross-channel ordering
+    // guarantee, so keep draining both until quiescent rather than stopping
+    // as soon as `Stop` is seen, which could cut off a still-in-flight
+    // audio frame.
+    let mut saw_stop = false;
+    loop {
+        match listener.recv_event(Duration::from_millis(60)) {
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Audio,
+                frame: ProtocolFrame::Audio(datagram),
+                ..
+            }) => {
+                assert!(
+                    datagram.sequence.get() > last_sequence,
+                    "audio sequence must strictly increase"
+                );
+                last_sequence = datagram.sequence.get();
+                packet_count += 1;
+                last_packet_at = Instant::now();
+            }
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::Stop(_)),
+                ..
+            }) => {
+                saw_stop = true;
+            }
+            Ok(_) => {}
+            Err(error)
+                if error.kind == silent_disco_core::transport::TransportErrorKind::Timeout =>
+            {
+                break;
+            }
+            Err(error) => panic!("listener transport failed: {error}"),
+        }
+    }
+    let burst_elapsed = last_packet_at - burst_start;
+    assert!(
+        packet_count >= 5,
+        "expected all 5 packets of the 100ms test source, got {packet_count}"
+    );
+    assert!(
+        burst_elapsed < Duration::from_millis(60),
+        "remaining packets after the first took {burst_elapsed:?}; the old \
+         one-packet-per-tick pacing would need at least ~80ms (4 gaps * 20ms) \
+         for this 100ms source -- the send-ahead horizon should burst them \
+         out far faster than that"
+    );
+
+    // The pump may have already exited and broadcast `Stop` on its own
+    // (natural EOF, caught above) before this call ever runs; `stop_playback`
+    // is still safe and necessary to clear the network layer's playback slot
+    // either way, but only wait for a fresh `Stop` if we haven't seen one yet.
+    network.stop_playback().expect("stop playback");
+    if !saw_stop {
+        wait_for_control(&mut *listener, |message| {
+            matches!(message, ControlMessage::Stop(_))
+        });
+    }
+
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
 fn stage_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
+    stage_wav_source(temp, "desktop-block-playback-source", pcm_wav())
+}
+
+/// Comfortably longer than [`SEND_AHEAD_HORIZON_MS`]-worth of playback (via
+/// `playback_streamer::SEND_AHEAD_HORIZON_MS`, not directly importable from
+/// this test module) so a mid-stream check (a sync request/response
+/// round trip, an explicit `stop_playback()`) genuinely happens before
+/// natural end-of-file, unlike the short `stage_source` fixture, which now
+/// bursts out entirely and reaches natural EOF almost immediately.
+fn stage_long_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
+    stage_wav_source(temp, "desktop-block-playback-long-source", long_pcm_wav())
+}
+
+fn stage_wav_source(
+    temp: &TempDir,
+    source_id: &str,
+    wav_bytes: Vec<u8>,
+) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
     let source_path = temp.path().join("source.wav");
-    fs::write(&source_path, pcm_wav()).expect("write source");
+    fs::write(&source_path, wav_bytes).expect("write source");
     let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
     let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
-    let descriptor = AudioSourceDescriptor::new(
-        "desktop-block-playback-source",
-        "source.wav",
-        Some(byte_length),
-        None,
-    )
-    .expect("descriptor");
+    let descriptor = AudioSourceDescriptor::new(source_id, "source.wav", Some(byte_length), None)
+        .expect("descriptor");
     let registry = SelectedSourceRegistry::new();
     registry
         .replace(InspectedAudioSource::from_staged(
@@ -367,6 +494,11 @@ fn manual_real_android_listener_plays_a_song_change() {
 /// ear far more easily than one sustained tone -- a dropped, repeated, or
 /// glitched note is unmistakable, where a gap in a continuous tone can
 /// blend into the tone's own texture.
+/// Linear fade-in/fade-out applied at each note boundary in
+/// [`melody_pcm_wav`], long enough to remove the phase-reset amplitude
+/// discontinuity without being long enough to noticeably shorten the note.
+const NOTE_FADE_SECONDS: f64 = 0.005;
+
 const C_MAJOR_SCALE_HZ: [f64; 8] = [
     261.63, // C4
     293.66, // D4
@@ -435,12 +567,30 @@ fn melody_pcm_wav(notes_hz: &[f64], note_seconds: f64, total_seconds: u32) -> Ve
     bytes.extend_from_slice(&16_u16.to_le_bytes());
     bytes.extend_from_slice(b"data");
     bytes.extend_from_slice(&data_bytes.to_le_bytes());
+    // Each note restarts its sine phase at 0, and the previous note almost
+    // never ends on a zero-crossing -- without a fade, that's a real,
+    // audible click at every note boundary baked into this fixture's own
+    // audio, indistinguishable from a genuine playback-pipeline defect.
+    // A short linear fade-in/fade-out at each note's edges removes that
+    // amplitude discontinuity so any clicks heard on a real device are
+    // attributable to the playback pipeline, not this synthetic source.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let fade_frames = (f64::from(sample_rate) * NOTE_FADE_SECONDS) as u32;
     for index in 0..frame_count {
         let note_index =
             usize::try_from(index / frames_per_note).expect("note index") % notes_hz.len();
         let frequency_hz = notes_hz[note_index];
-        let time_within_note = f64::from(index % frames_per_note) / f64::from(sample_rate);
-        let sample = (time_within_note * frequency_hz * std::f64::consts::TAU).sin() * 12_000.0;
+        let index_within_note = index % frames_per_note;
+        let time_within_note = f64::from(index_within_note) / f64::from(sample_rate);
+        let envelope = if index_within_note < fade_frames {
+            f64::from(index_within_note) / f64::from(fade_frames)
+        } else if index_within_note >= frames_per_note - fade_frames {
+            f64::from(frames_per_note - index_within_note) / f64::from(fade_frames)
+        } else {
+            1.0
+        };
+        let sample =
+            (time_within_note * frequency_hz * std::f64::consts::TAU).sin() * 12_000.0 * envelope;
         #[allow(clippy::cast_possible_truncation)]
         let sample = sample as i16;
         bytes.extend_from_slice(&sample.to_le_bytes());
@@ -449,9 +599,19 @@ fn melody_pcm_wav(notes_hz: &[f64], note_seconds: f64, total_seconds: u32) -> Ve
 }
 
 fn pcm_wav() -> Vec<u8> {
+    square_wave_pcm_wav(4_410)
+}
+
+/// 3 real seconds -- comfortably longer than the playback pump's send-ahead
+/// horizon, so playback is still genuinely running (not yet at natural
+/// end-of-file) by the time a mid-stream check runs.
+fn long_pcm_wav() -> Vec<u8> {
+    square_wave_pcm_wav(44_100 * 3)
+}
+
+fn square_wave_pcm_wav(frame_count: u32) -> Vec<u8> {
     let sample_rate = 44_100_u32;
     let channels = 1_u16;
-    let frame_count = 4_410_u32;
     let data_bytes = frame_count * 2;
     let mut bytes = Vec::with_capacity(usize::try_from(data_bytes + 44).expect("capacity"));
     bytes.extend_from_slice(b"RIFF");

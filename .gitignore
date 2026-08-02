@@ -45,3 +45,6 @@ google-services.json
 
 run_copilot.sh
 run_claude.sh*
+
+# TypeScript incremental build state
+*.tsbuildinfo
