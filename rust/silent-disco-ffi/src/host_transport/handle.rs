@@ -23,13 +23,12 @@ use super::types::{
 
 /// Opaque, bounded handle around the shared Rust `SocketHostTransport`.
 ///
-/// Control-plane only, mirroring `FfiListenerTransportHandle`'s scope and
-/// doc-comment intent: it does not route through the authoritative
-/// `CoreActorRuntime` -- Kotlin observes the typed events this handle
-/// exposes and bridges them into the existing `FfiCoreHandle` actor bridge
-/// itself (`submit_join_request`, `submit_listener_disconnected`, ...).
-/// Synchronization and audio datagrams are received by the underlying
-/// transport but not yet surfaced here.
+/// Mirrors `FfiListenerTransportHandle`'s scope and doc-comment intent: it
+/// does not route through the authoritative `CoreActorRuntime` -- Kotlin
+/// observes the typed events this handle exposes and bridges them into the
+/// existing `FfiCoreHandle` actor bridge itself (`submit_join_request`,
+/// `submit_listener_disconnected`, ...). Synchronization and audio are now
+/// surfaced (`SyncRequestReceived`, `send_sync_response`, `broadcast_audio`).
 #[derive(uniffi::Object)]
 pub struct FfiHostTransportHandle {
     inner: Mutex<Option<Inner>>,
