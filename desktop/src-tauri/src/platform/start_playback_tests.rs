@@ -245,6 +245,133 @@ fn join_and_approve_listener(
     listener
 }
 
+/// Not part of the automated suite: binds a real desktop host on this
+/// machine's real LAN address, prints a real connection payload, and waits
+/// for an actual external listener (e.g. a phone on the same Wi-Fi network,
+/// pasting the printed payload into the app's "Connect manually" screen) to
+/// join before streaming ~10s of real audio to it. Run explicitly with:
+/// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener -- --ignored --nocapture`
+#[test]
+#[ignore = "requires a real external listener device on the same LAN, driven manually"]
+fn manual_real_android_listener_receives_streamed_audio() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        panic!("no private LAN interface available for the manual device test");
+    };
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    eprintln!(
+        "=== paste this connection payload into the Android app's Connect manually screen ==="
+    );
+    eprintln!(
+        "{{\"hostAddress\":\"{address}\",\"controlPort\":{},\"syncPort\":{},\"audioPort\":{},\"sessionId\":\"{}\",\"protocolVersion\":{},\"inviteCodeRequired\":false,\"expiresAtMs\":null}}",
+        endpoint.control_port,
+        endpoint.sync_port,
+        endpoint.audio_port,
+        advertisement.session_id.as_str(),
+        advertisement.protocol_version,
+    );
+    eprintln!("waiting up to 180s for a real join request...");
+
+    let deadline = Instant::now() + Duration::from_mins(8);
+    let joined = loop {
+        let snapshot = handle.current_snapshot().expect("current snapshot");
+        if !snapshot.pending_join_requests.is_empty() {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for a real join request"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    let request = &joined.pending_join_requests[0];
+    eprintln!(
+        "real join request received from device_id={} display_name={}",
+        request.device_id.as_str(),
+        request.display_name
+    );
+    let request_id = request.request_id.clone();
+    submit(
+        &handle,
+        joined.revision.get(),
+        CoreCommand::ApproveJoin {
+            request_id,
+            remember_for_future: false,
+        },
+    );
+    let approval_effect = next_transport_effect(&receiver);
+    network
+        .dispatch_transport_effect(approval_effect)
+        .expect("dispatch join approval");
+    eprintln!("approved and authorized. starting playback...");
+
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    eprintln!("playback started -- letting it run for 10s...");
+    std::thread::sleep(Duration::from_secs(10));
+
+    eprintln!("stopping playback...");
+    network.stop_playback().expect("stop playback");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+    eprintln!("done.");
+}
+
+fn stage_long_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
+    let source_path = temp.path().join("source.wav");
+    fs::write(&source_path, long_pcm_wav()).expect("write source");
+    let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
+    let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
+    let descriptor = AudioSourceDescriptor::new(
+        "desktop-block-playback-manual-source",
+        "source.wav",
+        Some(byte_length),
+        None,
+    )
+    .expect("descriptor");
+    let registry = SelectedSourceRegistry::new();
+    registry
+        .replace(InspectedAudioSource::from_staged(
+            descriptor.clone(),
+            canonical_path,
+            AudioContainer::Wav,
+        ))
+        .expect("register staged source");
+    (descriptor, registry)
+}
+
+fn long_pcm_wav() -> Vec<u8> {
+    let sample_rate = 44_100_u32;
+    let channels = 1_u16;
+    let seconds = 15_u32;
+    let frame_count = sample_rate * seconds;
+    let data_bytes = frame_count * 2;
+    let mut bytes = Vec::with_capacity(usize::try_from(data_bytes + 44).expect("capacity"));
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(data_bytes + 36).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&channels.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&16_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_bytes.to_le_bytes());
+    let frequency_hz = 440.0_f64;
+    for index in 0..frame_count {
+        let time = f64::from(index) / f64::from(sample_rate);
+        let sample = (time * frequency_hz * std::f64::consts::TAU).sin() * 12_000.0;
+        #[allow(clippy::cast_possible_truncation)]
+        let sample = sample as i16;
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    bytes
+}
+
 fn pcm_wav() -> Vec<u8> {
     let sample_rate = 44_100_u32;
     let channels = 1_u16;
