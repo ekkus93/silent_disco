@@ -176,6 +176,104 @@ fn uniffi_handle_drives_listener_join_through_approval() {
 }
 
 #[test]
+fn uniffi_handle_joins_a_session_with_no_known_endpoint() {
+    let observer = Arc::new(RecordingObserver::default());
+    let handle = FfiCoreHandle::open("ffi-listener-wifi-direct".to_owned(), observer.clone())
+        .expect("open UniFFI core handle");
+    let initial = observer.wait_for_snapshot_revision(0);
+    handle
+        .select_role(initial.revision, FfiAppRole::Listener)
+        .expect("queue listener role selection");
+    let selected = observer.wait_for_snapshot_revision(1);
+
+    handle
+        .start_discovery(selected.revision)
+        .expect("queue discovery start");
+    let discovering = observer.wait_for_snapshot_revision(2);
+    let discovery_operation_id = observer.wait_for_effect(|effect| match effect {
+        FfiPlatformEffect::StartDiscovery { operation_id, .. } => Some(operation_id.clone()),
+        _ => None,
+    });
+    handle
+        .platform_operation_succeeded(
+            discovery_operation_id,
+            FfiPlatformCompletion::DiscoveryStarted,
+        )
+        .expect("submit discovery completion");
+    let scanning = observer.wait_for_snapshot_revision(discovering.revision + 1);
+
+    // A Wi-Fi-Direct-discovered session has no known endpoint until the
+    // platform establishment adapter actually connects.
+    handle
+        .submit_session_discovered(FfiSessionAdvertisement {
+            session_id: "wifi-direct-session".to_owned(),
+            host_device_id: "wifi-direct-host".to_owned(),
+            session_name: "Wi-Fi Direct session".to_owned(),
+            approval_mode: FfiApprovalMode::Manual,
+            protocol_version: 2,
+            address: None,
+            control_port: None,
+            sync_port: None,
+            audio_port: None,
+        })
+        .expect("submit discovered session");
+    let discovered = observer.wait_for_snapshot_revision(scanning.revision + 1);
+
+    handle
+        .select_session(discovered.revision, "wifi-direct-session".to_owned())
+        .expect("queue session selection");
+    let session_selected = observer.wait_for_snapshot_revision(discovered.revision + 1);
+
+    handle
+        .submit_join(session_selected.revision, None)
+        .expect("queue join submission");
+    let joining = observer.wait_for_snapshot_revision(session_selected.revision + 1);
+    assert_eq!(
+        joining.listener_lifecycle,
+        FfiListenerLifecycle::JoinRequested
+    );
+
+    let network_operation_id = observer.wait_for_effect(|effect| match effect {
+        FfiPlatformEffect::EstablishNetwork {
+            operation_id,
+            address,
+            control_port,
+            sync_port,
+            audio_port,
+            ..
+        } => {
+            assert_eq!(*address, None);
+            assert_eq!(*control_port, None);
+            assert_eq!(*sync_port, None);
+            assert_eq!(*audio_port, None);
+            Some(operation_id.clone())
+        }
+        _ => None,
+    });
+
+    // The platform discovers the endpoint only now, as part of establishing
+    // the connection, and reports it back on completion.
+    handle
+        .platform_operation_succeeded(
+            network_operation_id,
+            FfiPlatformCompletion::NetworkEndpointReady {
+                address: "192.168.49.1".to_owned(),
+                control_port: 41_000,
+                sync_port: 41_001,
+                audio_port: 41_002,
+            },
+        )
+        .expect("submit network completion");
+    let connecting = observer.wait_for_snapshot_revision(joining.revision + 1);
+    assert_eq!(
+        connecting.listener_lifecycle,
+        FfiListenerLifecycle::Connecting
+    );
+
+    handle.shutdown().expect("explicit UniFFI shutdown");
+}
+
+#[test]
 fn uniffi_handle_surfaces_listener_join_rejection() {
     let observer = Arc::new(RecordingObserver::default());
     let handle = FfiCoreHandle::open("ffi-listener-rejected".to_owned(), observer.clone())

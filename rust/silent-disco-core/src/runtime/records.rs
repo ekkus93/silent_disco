@@ -151,10 +151,15 @@ impl DiscoveryRequest {
 }
 
 /// Request to establish transport for a selected session.
+///
+/// `endpoint` is `None` when the platform must discover it as part of
+/// establishment (e.g. Wi-Fi Direct, where the IP is only known after
+/// `WifiP2pManager` connects) rather than it being known up front (e.g. a
+/// manually entered host endpoint).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkEstablishmentRequest {
     pub session_id: SessionId,
-    pub endpoint: NetworkEndpoint,
+    pub endpoint: Option<NetworkEndpoint>,
 }
 
 /// Shared audio-output format request. It contains no native device handle.

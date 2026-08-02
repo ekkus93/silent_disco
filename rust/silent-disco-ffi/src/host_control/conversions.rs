@@ -426,10 +426,12 @@ impl From<PlatformEffect> for FfiPlatformEffect {
             PlatformEffectRequest::EstablishNetwork(request) => Self::EstablishNetwork {
                 operation_id,
                 session_id: request.session_id.into_string(),
-                address: request.endpoint.address.to_string(),
-                control_port: request.endpoint.control_port,
-                sync_port: request.endpoint.sync_port,
-                audio_port: request.endpoint.audio_port,
+                address: request
+                    .endpoint
+                    .map(|endpoint| endpoint.address.to_string()),
+                control_port: request.endpoint.map(|endpoint| endpoint.control_port),
+                sync_port: request.endpoint.map(|endpoint| endpoint.sync_port),
+                audio_port: request.endpoint.map(|endpoint| endpoint.audio_port),
             },
             PlatformEffectRequest::ReleaseNetwork => Self::ReleaseNetwork { operation_id },
             PlatformEffectRequest::PrepareAudioSource(source) => Self::PrepareAudioSource {

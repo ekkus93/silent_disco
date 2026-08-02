@@ -298,12 +298,7 @@ impl ActorState {
                     Some(operation_id.clone()),
                 )
             })?;
-        let endpoint = advertisement.endpoint.ok_or_else(|| {
-            invalid_state(
-                "selected session has no network endpoint",
-                Some(operation_id),
-            )
-        })?;
+        let endpoint = advertisement.endpoint;
         let session_id = advertisement.session_id.clone();
         let effect = self.start_platform_operation(
             PlatformEffectRequest::EstablishNetwork(NetworkEstablishmentRequest {

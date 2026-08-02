@@ -201,7 +201,9 @@ fn join_to_connecting(
     let (joining, session_id) = select_and_join(handle, receiver);
     let network_effect = next_effect(receiver);
     let endpoint = match network_effect.request {
-        PlatformEffectRequest::EstablishNetwork(request) => request.endpoint,
+        PlatformEffectRequest::EstablishNetwork(request) => request
+            .endpoint
+            .expect("session was discovered with a known endpoint"),
         request => panic!("unexpected join effect: {request:?}"),
     };
     handle
@@ -214,6 +216,72 @@ fn join_to_connecting(
     assert_eq!(connecting.listener_lifecycle, ListenerLifecycle::Connecting);
     assert_eq!(connecting.transport_state, TransportState::Connected);
     (connecting, endpoint, session_id)
+}
+
+#[test]
+fn submit_join_succeeds_with_unknown_endpoint_and_platform_reports_it_back() {
+    let (runtime, handle, receiver) = start_actor();
+    let scanning = reach_scanning(&handle, &receiver);
+
+    // A Wi-Fi-Direct-discovered session has no known IP until the platform
+    // establishment adapter actually connects -- the advertisement is
+    // legitimately endpoint-less at discovery time.
+    let session_id = SessionId::new("wifi-direct-session").expect("valid session ID");
+    let advertisement = SessionAdvertisement::new(
+        session_id.clone(),
+        DeviceId::new("wifi-direct-host").expect("valid host ID"),
+        "Wi-Fi Direct session",
+        ApprovalMode::Manual,
+        current_protocol_version(),
+        None,
+    )
+    .expect("valid advertisement");
+    handle
+        .submit_platform_event(PlatformEvent::SessionDiscovered(advertisement))
+        .expect("submit discovered session");
+    let discovered = next_snapshot(&receiver, scanning.revision.get() + 1);
+
+    let selected_session = command_snapshot(
+        &handle,
+        &receiver,
+        discovered.revision,
+        CoreCommand::SelectSession {
+            session_id: session_id.clone(),
+        },
+    );
+
+    let joining = command_snapshot(
+        &handle,
+        &receiver,
+        selected_session.revision,
+        CoreCommand::SubmitJoin { invite_code: None },
+    );
+    assert_eq!(joining.listener_lifecycle, ListenerLifecycle::JoinRequested);
+
+    let network_effect = next_effect(&receiver);
+    match network_effect.request {
+        PlatformEffectRequest::EstablishNetwork(request) => {
+            assert_eq!(request.session_id, session_id);
+            assert_eq!(request.endpoint, None);
+        }
+        request => panic!("unexpected join effect: {request:?}"),
+    }
+
+    // The platform (Wi-Fi Direct) discovers the endpoint only now, as part of
+    // establishing the connection, and reports it back on completion.
+    let discovered_endpoint =
+        NetworkEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41_000, 41_001, 41_002)
+            .expect("valid endpoint");
+    handle
+        .submit_platform_event(PlatformEvent::OperationSucceeded {
+            operation_id: network_effect.operation_id,
+            completion: PlatformOperationCompletion::NetworkEndpointReady(discovered_endpoint),
+        })
+        .expect("submit network completion");
+    let connecting = next_snapshot(&receiver, joining.revision.get() + 1);
+    assert_eq!(connecting.listener_lifecycle, ListenerLifecycle::Connecting);
+    assert_eq!(connecting.transport_state, TransportState::Connected);
+    runtime.shutdown().expect("shutdown listener actor");
 }
 
 /// Drives a fresh listener actor from role selection through `SubmitJoin`

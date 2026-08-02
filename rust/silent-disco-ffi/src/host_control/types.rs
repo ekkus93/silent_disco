@@ -249,10 +249,10 @@ pub enum FfiPlatformEffect {
     EstablishNetwork {
         operation_id: String,
         session_id: String,
-        address: String,
-        control_port: u16,
-        sync_port: u16,
-        audio_port: u16,
+        address: Option<String>,
+        control_port: Option<u16>,
+        sync_port: Option<u16>,
+        audio_port: Option<u16>,
     },
     ReleaseNetwork {
         operation_id: String,
