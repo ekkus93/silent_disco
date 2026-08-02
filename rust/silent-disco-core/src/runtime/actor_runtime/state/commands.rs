@@ -251,6 +251,13 @@ impl ActorState {
                 Some(operation_id),
             ));
         }
+        // Re-selecting the session already in flight is a no-op even mid-join
+        // (e.g. the user re-taps the same session card while connecting);
+        // only switching to a *different* session requires Scanning or
+        // SessionSelected.
+        if self.snapshot.selected_session.as_ref() == Some(&session_id) {
+            return Ok(ApplyOutcome::default());
+        }
         if !matches!(
             self.snapshot.listener_lifecycle,
             ListenerLifecycle::Scanning | ListenerLifecycle::SessionSelected
@@ -370,9 +377,46 @@ impl ActorState {
         {
             return self.retry_host_session(operation_id);
         }
+        if self.snapshot.selected_role == Some(AppRole::Listener)
+            && matches!(
+                action,
+                RecoverableAction::Reconnect | RecoverableAction::Rescan
+            )
+        {
+            return self.retry_listener_connection(operation_id);
+        }
 
         self.clear_failure();
         Ok(ApplyOutcome::changed())
+    }
+
+    /// Re-attempts a listener connection by restarting discovery, mirroring
+    /// the Kotlin `retryJoin()` behavior: retrying does not blindly reconnect
+    /// to the same endpoint, it re-scans so a listener can pick a healthy
+    /// session (which may be the same host or a different one).
+    fn retry_listener_connection(
+        &mut self,
+        operation_id: OperationId,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_role(AppRole::Listener, &operation_id)?;
+        if !self.pending_platform.is_empty()
+            || !self.pending_transport.is_empty()
+            || !self.pending_storage.is_empty()
+        {
+            return Err(invalid_state(
+                "listener retry cannot start while another operation is pending",
+                Some(operation_id),
+            ));
+        }
+        self.snapshot.selected_session = None;
+        let effect = self.start_platform_operation(
+            PlatformEffectRequest::StartDiscovery(DiscoveryRequest::from_tuning(
+                &self.snapshot.tuning,
+            )),
+            PendingPlatformOperation::StartDiscovery,
+        )?;
+        self.clear_failure();
+        Ok(ApplyOutcome::effect(effect))
     }
 
     fn retry_host_session(&mut self, operation_id: OperationId) -> Result<ApplyOutcome, CoreError> {

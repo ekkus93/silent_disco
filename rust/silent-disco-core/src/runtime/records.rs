@@ -351,6 +351,26 @@ pub enum TransportEvent {
         session_id: SessionId,
     },
     Failed(CoreError),
+    /// The host requires manual approval and is waiting on a decision.
+    ///
+    /// Listener-role only; arrives after the network endpoint is
+    /// established but before the host has decided on the join request.
+    AwaitingApproval,
+    /// The host approved this listener's join request.
+    ///
+    /// Listener-role only. `trusted_for_future` mirrors
+    /// [`ApprovalDelivery::trusted_for_future`] on the host side, but
+    /// persisting it locally is not yet implemented.
+    JoinApproved {
+        trusted_for_future: bool,
+    },
+    /// The host rejected this listener's join request.
+    ///
+    /// Listener-role only. `reason` is the host's rejection reason,
+    /// preserved verbatim for diagnostics.
+    JoinRejected {
+        reason: String,
+    },
 }
 
 /// Non-real-time fact emitted by decoder, scheduler, or output telemetry.
@@ -568,7 +588,10 @@ impl CoreActorInput {
                 | TransportEvent::ListenerConnected(_)
                 | TransportEvent::ListenerDisconnected { .. }
                 | TransportEvent::SessionEnded { .. }
-                | TransportEvent::Failed(_),
+                | TransportEvent::Failed(_)
+                | TransportEvent::AwaitingApproval
+                | TransportEvent::JoinApproved { .. }
+                | TransportEvent::JoinRejected { .. },
             )
             | Self::Audio(_) => None,
         }

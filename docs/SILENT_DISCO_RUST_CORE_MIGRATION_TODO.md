@@ -730,31 +730,40 @@ Implement legal transitions for:
 
 Cover:
 
-- [ ] idle;
-- [ ] scanning;
-- [ ] session selected;
-- [ ] join requested;
-- [ ] awaiting approval;
-- [ ] approved;
-- [ ] connecting;
+- [x] idle;
+- [x] scanning;
+- [x] session selected;
+- [x] join requested;
+- [x] awaiting approval;
+- [x] approved;
+- [x] connecting;
 - [ ] initial synchronization;
 - [ ] buffering;
 - [ ] playing;
 - [ ] reconnecting;
 - [ ] desynchronized;
-- [ ] disconnected;
-- [ ] error.
+- [x] disconnected;
+- [x] error.
+
+The last five states above (initial synchronization onward, excluding
+disconnected/error) are deferred until Block 23 resolves decoder/scheduler
+ownership -- they depend on real playback progress the actor does not yet
+observe, matching the existing `RequestResync`/`StartPlayback` "playback
+requires the shared packetizer and scheduler blocks" rejection.
 
 ### 13.2 Port progress and recovery rules
 
-- [ ] selection guard during active join;
+- [x] selection guard during active join;
 - [ ] initial versus periodic sync state preservation;
-- [ ] transport failure to listener error;
+- [x] transport failure to listener error;
 - [ ] stale buffered/playing flags cleared;
-- [ ] disconnect cleanup;
-- [ ] retry eligibility;
-- [ ] session disappearance;
-- [ ] host rejection visibility.
+- [x] disconnect cleanup;
+- [x] retry eligibility;
+- [x] session disappearance;
+- [x] host rejection visibility.
+
+The two unchecked rules above depend on the same deferred Buffering/Playing/
+SyncingClock states as 13.1.
 
 ### 13.3 Route Android listener UI through Rust
 

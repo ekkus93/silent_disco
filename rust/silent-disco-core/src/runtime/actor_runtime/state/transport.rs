@@ -1,8 +1,28 @@
 use super::{
     ActorState, AppRole, ApplyOutcome, CoreError, CoreNotification, DeviceId, HostLifecycle,
     ListenerLifecycle, MAX_CONNECTED_LISTENERS, MAX_PENDING_JOIN_REQUESTS, PlaybackState,
-    RecoverableAction, TransportEvent, TransportState, invalid_state, resource_limit,
+    RecoverableAction, TransportEvent, TransportState, invalid_state, join_rejected,
+    resource_limit,
 };
+
+/// Listener lifecycle states in which the listener is actively engaged with
+/// a host (mid-join or connected), as opposed to merely idle or already
+/// terminal. Mirrors the Kotlin `classifyTransportSnapshotRole` distinction
+/// between a genuine listener failure and a stray transport fact that
+/// arrived while the listener wasn't doing anything.
+const LISTENER_ACTIVE_LIFECYCLES: &[ListenerLifecycle] = &[
+    ListenerLifecycle::Scanning,
+    ListenerLifecycle::SessionSelected,
+    ListenerLifecycle::JoinRequested,
+    ListenerLifecycle::AwaitingApproval,
+    ListenerLifecycle::Approved,
+    ListenerLifecycle::Connecting,
+    ListenerLifecycle::SyncingClock,
+    ListenerLifecycle::Buffering,
+    ListenerLifecycle::Playing,
+    ListenerLifecycle::Reconnecting,
+    ListenerLifecycle::Desynced,
+];
 
 impl ActorState {
     pub(super) fn apply_transport(
@@ -35,7 +55,71 @@ impl ActorState {
                 Ok(ApplyOutcome::changed())
             }
             TransportEvent::Failed(error) => self.record_transport_failure(error),
+            TransportEvent::AwaitingApproval => self.record_awaiting_approval(),
+            TransportEvent::JoinApproved { trusted_for_future } => {
+                self.record_join_approved(trusted_for_future)
+            }
+            TransportEvent::JoinRejected { reason } => self.record_join_rejected(reason),
         }
+    }
+
+    pub(super) fn record_awaiting_approval(&mut self) -> Result<ApplyOutcome, CoreError> {
+        self.require_role_event(AppRole::Listener)?;
+        if self.snapshot.listener_lifecycle != ListenerLifecycle::Connecting {
+            return Err(invalid_state(
+                "awaiting approval arrived outside an active connection attempt",
+                None,
+            ));
+        }
+        self.snapshot.listener_lifecycle = ListenerLifecycle::AwaitingApproval;
+        Ok(ApplyOutcome::changed())
+    }
+
+    pub(super) fn record_join_approved(
+        &mut self,
+        // Persisting trust locally for future auto-reconnect is deferred;
+        // see the TransportEvent::JoinApproved doc comment.
+        _trusted_for_future: bool,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_role_event(AppRole::Listener)?;
+        if !matches!(
+            self.snapshot.listener_lifecycle,
+            ListenerLifecycle::Connecting | ListenerLifecycle::AwaitingApproval
+        ) {
+            return Err(invalid_state(
+                "join approval arrived outside an active join attempt",
+                None,
+            ));
+        }
+        self.snapshot.listener_lifecycle = ListenerLifecycle::Approved;
+        self.clear_failure();
+        Ok(ApplyOutcome::changed())
+    }
+
+    pub(super) fn record_join_rejected(
+        &mut self,
+        reason: String,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_role_event(AppRole::Listener)?;
+        if !matches!(
+            self.snapshot.listener_lifecycle,
+            ListenerLifecycle::Connecting | ListenerLifecycle::AwaitingApproval
+        ) {
+            return Err(invalid_state(
+                "join rejection arrived outside an active join attempt",
+                None,
+            ));
+        }
+        let error = join_rejected(reason);
+        self.snapshot.last_error = Some(error.clone());
+        self.snapshot.listener_lifecycle = ListenerLifecycle::Error;
+        self.snapshot.selected_session = None;
+        self.snapshot.recoverable_action = Some(RecoverableAction::Rescan);
+        Ok(ApplyOutcome {
+            notifications: vec![CoreNotification::Error(error)],
+            changed: true,
+            stop_requested: false,
+        })
     }
 
     pub(super) fn record_join_request(
@@ -138,18 +222,26 @@ impl ActorState {
     ) -> Result<ApplyOutcome, CoreError> {
         self.snapshot.last_error = Some(error.clone());
         self.snapshot.transport_state = TransportState::Failed;
+        // Forcing transport_state to Failed unconditionally means
+        // discovery_active must be cleared too, or CoreSnapshot::validate()
+        // rejects the whole candidate on its discovery-state-mismatch
+        // invariant (discovery_active must agree with
+        // transport_state == Discovering).
+        self.snapshot.discovery_active = false;
         match self.snapshot.selected_role {
             Some(AppRole::Host) => {
                 self.snapshot.host_lifecycle = HostLifecycle::Error;
                 self.snapshot.recoverable_action =
                     error.retryable.then_some(RecoverableAction::Retry);
             }
-            Some(AppRole::Listener) => {
+            Some(AppRole::Listener)
+                if LISTENER_ACTIVE_LIFECYCLES.contains(&self.snapshot.listener_lifecycle) =>
+            {
                 self.snapshot.listener_lifecycle = ListenerLifecycle::Error;
                 self.snapshot.recoverable_action =
                     error.retryable.then_some(RecoverableAction::Reconnect);
             }
-            None => {}
+            Some(AppRole::Listener) | None => {}
         }
         Ok(ApplyOutcome {
             notifications: vec![CoreNotification::Error(error)],

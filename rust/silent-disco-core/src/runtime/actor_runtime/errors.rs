@@ -58,6 +58,16 @@ pub(super) fn resource_limit(
     )
 }
 
+pub(super) fn join_rejected(reason: impl Into<String>) -> CoreError {
+    core_error(
+        CoreErrorCode::TransportConnectionFailed,
+        format!("host rejected join request: {}", reason.into()),
+        ErrorSeverity::Error,
+        true,
+        None,
+    )
+}
+
 pub(super) fn transport_delivery_failed(
     message: impl Into<String>,
     operation_id: OperationId,
