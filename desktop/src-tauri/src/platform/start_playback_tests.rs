@@ -263,7 +263,7 @@ fn manual_real_android_listener_plays_a_song_change() {
     };
     let temp = TempDir::new().expect("temp");
     let registry = SelectedSourceRegistry::new();
-    let descriptor_a = stage_tone_source(&temp, &registry, "song-a", 300.0, 40);
+    let descriptor_a = stage_melody_source(&temp, &registry, "song-a", &C_MAJOR_SCALE_HZ, 1.0, 40);
     let (actor, handle, receiver, advertisement, network, endpoint) =
         start_host_session(descriptor_a, interface_name, interface_index, address);
 
@@ -313,7 +313,9 @@ fn manual_real_android_listener_plays_a_song_change() {
         .expect("dispatch join approval");
     eprintln!("approved and authorized.");
 
-    eprintln!("=== song 1/2: \"song-a\", a 300Hz tone -- starting playback ===");
+    eprintln!(
+        "=== song 1/2: \"song-a\", an ascending C major scale (do re mi fa so la ti do) -- starting playback ==="
+    );
     start_playback::start(&handle, &network, &registry).expect("start playback");
     eprintln!("song-a playing for 40s...");
     std::thread::sleep(Duration::from_secs(40));
@@ -324,7 +326,8 @@ fn manual_real_android_listener_plays_a_song_change() {
         snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
     });
 
-    let descriptor_b = stage_tone_source(&temp, &registry, "song-b", 900.0, 40);
+    let descending_scale: Vec<f64> = C_MAJOR_SCALE_HZ.iter().rev().copied().collect();
+    let descriptor_b = stage_melody_source(&temp, &registry, "song-b", &descending_scale, 1.0, 40);
     let current = handle.current_snapshot().expect("current snapshot");
     submit(
         &handle,
@@ -345,7 +348,9 @@ fn manual_real_android_listener_plays_a_song_change() {
             .is_some_and(|source| source.source_id == descriptor_b.source_id)
     });
 
-    eprintln!("=== song 2/2: \"song-b\", a 900Hz tone -- starting playback ===");
+    eprintln!(
+        "=== song 2/2: \"song-b\", a descending C major scale (do ti la so fa mi re do) -- starting playback ==="
+    );
     start_playback::start(&handle, &network, &registry).expect("start playback");
     eprintln!("song-b playing for 40s...");
     std::thread::sleep(Duration::from_secs(40));
@@ -357,15 +362,36 @@ fn manual_real_android_listener_plays_a_song_change() {
     eprintln!("done.");
 }
 
-fn stage_tone_source(
+/// The eight notes of an ascending C major scale ("do re mi fa so la ti
+/// do"), a sequence a listener can recognize and judge for smoothness by
+/// ear far more easily than one sustained tone -- a dropped, repeated, or
+/// glitched note is unmistakable, where a gap in a continuous tone can
+/// blend into the tone's own texture.
+const C_MAJOR_SCALE_HZ: [f64; 8] = [
+    261.63, // C4
+    293.66, // D4
+    329.63, // E4
+    349.23, // F4
+    392.00, // G4
+    440.00, // A4
+    493.88, // B4
+    523.25, // C5
+];
+
+fn stage_melody_source(
     temp: &TempDir,
     registry: &SelectedSourceRegistry,
     source_id: &str,
-    frequency_hz: f64,
-    seconds: u32,
+    notes_hz: &[f64],
+    note_seconds: f64,
+    total_seconds: u32,
 ) -> AudioSourceDescriptor {
     let source_path = temp.path().join(format!("{source_id}.wav"));
-    fs::write(&source_path, tone_pcm_wav(frequency_hz, seconds)).expect("write source");
+    fs::write(
+        &source_path,
+        melody_pcm_wav(notes_hz, note_seconds, total_seconds),
+    )
+    .expect("write source");
     let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
     let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
     let descriptor = AudioSourceDescriptor::new(
@@ -385,10 +411,16 @@ fn stage_tone_source(
     descriptor
 }
 
-fn tone_pcm_wav(frequency_hz: f64, seconds: u32) -> Vec<u8> {
+/// Cycles through `notes_hz`, holding each for `note_seconds`, until
+/// `total_seconds` of audio have been generated. Each note restarts its sine
+/// wave at phase zero rather than gliding from the previous note, so a
+/// listener hears a clean, deliberate transition, not a bend.
+fn melody_pcm_wav(notes_hz: &[f64], note_seconds: f64, total_seconds: u32) -> Vec<u8> {
     let sample_rate = 44_100_u32;
     let channels = 1_u16;
-    let frame_count = sample_rate * seconds;
+    let frame_count = sample_rate * total_seconds;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let frames_per_note = (f64::from(sample_rate) * note_seconds) as u32;
     let data_bytes = frame_count * 2;
     let mut bytes = Vec::with_capacity(usize::try_from(data_bytes + 44).expect("capacity"));
     bytes.extend_from_slice(b"RIFF");
@@ -404,8 +436,11 @@ fn tone_pcm_wav(frequency_hz: f64, seconds: u32) -> Vec<u8> {
     bytes.extend_from_slice(b"data");
     bytes.extend_from_slice(&data_bytes.to_le_bytes());
     for index in 0..frame_count {
-        let time = f64::from(index) / f64::from(sample_rate);
-        let sample = (time * frequency_hz * std::f64::consts::TAU).sin() * 12_000.0;
+        let note_index =
+            usize::try_from(index / frames_per_note).expect("note index") % notes_hz.len();
+        let frequency_hz = notes_hz[note_index];
+        let time_within_note = f64::from(index % frames_per_note) / f64::from(sample_rate);
+        let sample = (time_within_note * frequency_hz * std::f64::consts::TAU).sin() * 12_000.0;
         #[allow(clippy::cast_possible_truncation)]
         let sample = sample as i16;
         bytes.extend_from_slice(&sample.to_le_bytes());
