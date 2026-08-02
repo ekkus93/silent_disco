@@ -1538,6 +1538,20 @@ is possible as a sanity check, but that is not a substitute for a human
 actually listening to confirm sync -- do not check any box in this block
 from that alone.
 
+**Update**: the scripted sanity check was attempted (see `manual_real_android_listener_receives_streamed_audio`
+in `start_playback_tests.rs`, `#[ignore]`d) and memory.md's 2026-08-02T09:41:24Z
+entry for full detail. It confirmed the desktop backend genuinely binds and
+listens on a real LAN address and that the manual-connect JSON payload
+format is exactly right (the Android UI parsed it and displayed the correct
+host/session/protocol version), but the app's own connect attempt was
+refused (`os error 111`/`ECONNREFUSED`) on every attempt, even though a raw
+`adb shell nc -z` TCP probe from the same phone to the same address/port
+succeeded moments apart. Root cause unresolved -- a per-app Android network
+routing quirk is the leading unconfirmed hypothesis. Not chased further past
+~40 minutes since the user framed this as a lower-stakes pre-check, not the
+main deliverable. This is a real, reproducible blocker for whoever attempts
+Block 28 next.
+
 ### 28.1 One listener
 
 - [ ] select supported WAV fixture;
