@@ -131,6 +131,14 @@ class MainViewModel @JvmOverloads constructor(
     internal var listenerTransportEventLoopStarted: Boolean = false
     internal val localListenerDeviceId = "listener-device"
 
+    /**
+     * A listener's sync/audio UDP ports, from its `JoinRequestReceived`
+     * event, kept only until the join is approved or otherwise resolved --
+     * `authorize_listener` needs them, but nothing else does, so they never
+     * belong in Rust-owned join-request state.
+     */
+    internal val pendingListenerDatagramPorts = mutableMapOf<String, Pair<UShort, UShort>>()
+
     init {
         initializeDomainPersistence()
         observeDiscovery()

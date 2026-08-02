@@ -86,6 +86,40 @@ class HostTransportController : AutoCloseable {
     suspend fun broadcastStop(streamId: String, hostStopTimeMs: Long): FfiHostTransportDelivery? =
         withHandle { it.broadcastStop(streamId, hostStopTimeMs.toULong()) }
 
+    suspend fun authorizeListener(listenerId: String, syncPort: UShort, audioPort: UShort) =
+        withHandle { it.authorizeListener(listenerId, syncPort, audioPort) }
+
+    suspend fun sendSyncResponse(
+        correlationId: ULong,
+        t1ListenerSendElapsedMs: ULong,
+        t2HostReceiveElapsedMs: ULong,
+        t3HostSendElapsedMs: ULong,
+    ): FfiHostTransportDelivery? = withHandle {
+        it.sendSyncResponse(correlationId, t1ListenerSendElapsedMs, t2HostReceiveElapsedMs, t3HostSendElapsedMs)
+    }
+
+    suspend fun broadcastAudio(
+        streamId: String,
+        sequence: Long,
+        sampleRate: Int,
+        channels: Int,
+        samplesPerPacket: Int,
+        firstSampleIndex: Long,
+        hostPresentationTimeMs: Long,
+        payload: ByteArray,
+    ): FfiHostTransportDelivery? = withHandle {
+        it.broadcastAudio(
+            streamId,
+            sequence.toULong(),
+            sampleRate.toUInt(),
+            channels.toUShort(),
+            samplesPerPacket.toUInt(),
+            firstSampleIndex.toULong(),
+            hostPresentationTimeMs.toULong(),
+            payload,
+        )
+    }
+
     override fun close() {
         eventLoop?.cancel()
         eventLoop = null

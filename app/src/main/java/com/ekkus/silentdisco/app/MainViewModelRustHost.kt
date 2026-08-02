@@ -41,6 +41,7 @@ import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
@@ -74,27 +75,46 @@ private fun MainViewModel.handleHostTransportEvent(
     event: FfiHostTransportEvent,
 ) {
     when (event) {
-        is FfiHostTransportEvent.JoinRequestReceived -> runCatching {
-            controller.submitJoinRequest(
-                FfiJoinRequestInput(
-                    requestId = event.deviceId,
-                    deviceId = event.deviceId,
-                    displayName = event.displayName,
-                    trustState = FfiTrustState.UNKNOWN,
-                    inviteCode = event.inviteCode,
-                    receivedAtMs = SystemClock.elapsedRealtime().toULong(),
-                ),
-            )
-        }.onFailure { error -> reportRustHostCommandFailure("submit join request", error) }
+        is FfiHostTransportEvent.JoinRequestReceived -> {
+            pendingListenerDatagramPorts[event.deviceId] = event.syncPort to event.audioPort
+            runCatching {
+                controller.submitJoinRequest(
+                    FfiJoinRequestInput(
+                        requestId = event.deviceId,
+                        deviceId = event.deviceId,
+                        displayName = event.displayName,
+                        trustState = FfiTrustState.UNKNOWN,
+                        inviteCode = event.inviteCode,
+                        receivedAtMs = SystemClock.elapsedRealtime().toULong(),
+                    ),
+                )
+            }.onFailure { error -> reportRustHostCommandFailure("submit join request", error) }
+        }
         is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->
             runCatching { controller.submitListenerDisconnected(listenerId) }
                 .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }
         }
+        is FfiHostTransportEvent.SyncRequestReceived -> respondToSyncRequest(event)
         is FfiHostTransportEvent.PeerAccepted,
         is FfiHostTransportEvent.Heartbeat,
         is FfiHostTransportEvent.ResyncNotice,
         is FfiHostTransportEvent.Rejected,
-        -> Unit // diagnostic-only for this pass; sync/resync are out of scope until Block 23
+        -> Unit // diagnostic-only for this pass; resync notices are out of scope until Block 23
+    }
+}
+
+private fun MainViewModel.respondToSyncRequest(event: FfiHostTransportEvent.SyncRequestReceived) {
+    val t2HostReceiveElapsedMs = SystemClock.elapsedRealtime().toULong()
+    viewModelScope.launch(Dispatchers.IO) {
+        val t3HostSendElapsedMs = SystemClock.elapsedRealtime().toULong()
+        runCatching {
+            hostTransportController.sendSyncResponse(
+                correlationId = event.correlationId,
+                t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs,
+                t2HostReceiveElapsedMs = t2HostReceiveElapsedMs,
+                t3HostSendElapsedMs = t3HostSendElapsedMs,
+            )
+        }.onFailure { error -> reportRustHostCommandFailure("send sync response", error) }
     }
 }
 
@@ -426,6 +446,7 @@ private fun MainViewModel.stopAdvertisingForRust(
     bleService.stop()
     wifiDirectService.stop()
     pendingStartAdvertisingOperationId = null
+    pendingListenerDatagramPorts.clear()
     hostTransportController.close()
     controller.transportStateChanged(FfiTransportState.IDLE)
     controller.platformOperationSucceeded(
@@ -448,10 +469,14 @@ private suspend fun MainViewModel.executeRustTransportEffect(
     val delivery = when (effect) {
         is FfiTransportEffect.DeliverJoinApproval ->
             hostTransportController.sendJoinApproval(effect.listenerId, effect.trustedForFuture)
-        is FfiTransportEffect.DeliverJoinRejection ->
+        is FfiTransportEffect.DeliverJoinRejection -> {
+            pendingListenerDatagramPorts.remove(effect.listenerId)
             hostTransportController.sendJoinRejection(effect.listenerId, effect.reasonCode)
-        is FfiTransportEffect.DisconnectListener ->
+        }
+        is FfiTransportEffect.DisconnectListener -> {
+            pendingListenerDatagramPorts.remove(effect.listenerId)
             hostTransportController.disconnectPeer(effect.listenerId, effect.reasonCode)
+        }
     }
     controller.transportDeliveryCompleted(
         operationId = when (effect) {
@@ -462,6 +487,10 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         report = delivery.toFfiDeliveryReport(),
     )
     if (effect is FfiTransportEffect.DeliverJoinApproval && (delivery?.successfulPeers ?: 0u) > 0u) {
+        pendingListenerDatagramPorts.remove(effect.listenerId)?.let { (syncPort, audioPort) ->
+            runCatching { hostTransportController.authorizeListener(effect.listenerId, syncPort, audioPort) }
+                .onFailure { error -> reportRustHostCommandFailure("authorize listener datagram routes", error) }
+        }
         val displayName = _uiState.value.pendingJoinRequests
             .firstOrNull { it.listenerId == effect.listenerId }
             ?.listenerName

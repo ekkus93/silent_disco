@@ -1,11 +1,20 @@
 package com.ekkus.silentdisco.app
 
 import androidx.lifecycle.viewModelScope
+import com.ekkus.silentdisco.core.audio.AudioFormatSpec
+import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
+import com.ekkus.silentdisco.core.protocol.AudioPacket
+import com.ekkus.silentdisco.core.protocol.SessionId
+import com.ekkus.silentdisco.core.protocol.StreamId
+import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
+import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
@@ -17,6 +26,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -331,7 +341,7 @@ private fun MainViewModel.ensureListenerTransportEventLoop() {
     }
 }
 
-private fun handleListenerTransportEvent(
+private fun MainViewModel.handleListenerTransportEvent(
     controller: ListenerCoreController,
     event: FfiListenerTransportEvent,
 ) {
@@ -342,10 +352,199 @@ private fun handleListenerTransportEvent(
         is FfiListenerTransportEvent.HostDisconnected -> controller.transportFailed(event.reason, true)
         is FfiListenerTransportEvent.ConnectionClosed -> controller.transportFailed(event.message ?: "Connection closed", true)
         is FfiListenerTransportEvent.Rejected -> controller.transportFailed(event.message, false)
-        FfiListenerTransportEvent.StreamStarted,
-        FfiListenerTransportEvent.Paused,
-        FfiListenerTransportEvent.Stopped,
-        -> Unit
+        is FfiListenerTransportEvent.StreamStarted -> handleTransportStreamStarted(event)
+        is FfiListenerTransportEvent.Paused -> propagateListenerPlaybackState(
+            playbackState = PlaybackState.PAUSED,
+            listenerState = _uiState.value.listenerState,
+            message = "Host paused the stream",
+        )
+        is FfiListenerTransportEvent.Stopped -> handleTransportStreamStopped()
+        is FfiListenerTransportEvent.SyncResponseReceived -> handleTransportSyncResponse(event)
+        is FfiListenerTransportEvent.AudioReceived -> handleTransportAudioReceived(event)
+    }
+}
+
+private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTransportEvent.StreamStarted) {
+    val session = _uiState.value.selectedSession ?: return
+    val streamId = StreamId(event.streamId)
+    currentStreamId = streamId
+    _uiState.value = _uiState.value.copy(
+        listenerState = ListenerLifecycleState.BUFFERING,
+        listenerPlaybackState = PlaybackState.BUFFERING,
+        connectionProgress = _uiState.value.connectionProgress.copy(
+            currentState = ListenerLifecycleState.BUFFERING,
+            approved = true,
+            connected = true,
+            synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
+            buffered = false,
+            playing = false,
+        ),
+        lastMessage = "Host stream starting",
+        lastError = null,
+    )
+    startListenerPlaybackFromTransport(
+        sessionId = SessionId(session.id),
+        streamId = streamId,
+        format = AudioFormatSpec(
+            sampleRate = event.sampleRate.toInt(),
+            channelCount = event.channels.toInt(),
+        ),
+    )
+}
+
+private fun MainViewModel.handleTransportStreamStopped() {
+    playbackJob?.cancel()
+    listenerScheduler = null
+    pendingTransportPackets.clear()
+    propagateListenerPlaybackState(
+        playbackState = PlaybackState.STOPPED,
+        listenerState = ListenerLifecycleState.CONNECTING,
+        message = "Host stopped the stream",
+    )
+    diagnosticsStore.updateListener {
+        it.copy(endOfStreamReached = true, playbackState = PlaybackState.STOPPED)
+    }
+    refreshListenerDiagnostics()
+}
+
+private fun MainViewModel.handleTransportSyncResponse(event: FfiListenerTransportEvent.SyncResponseReceived) {
+    val session = _uiState.value.selectedSession ?: return
+    applySyncResponse(
+        SyncResponsePacket(
+            version = LISTENER_DISCOVERY_PROTOCOL_VERSION,
+            sessionId = SessionId(session.id),
+            correlationId = event.correlationId.toLong(),
+            t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs.toLong(),
+            t2HostReceiveElapsedMs = event.t2HostReceiveElapsedMs.toLong(),
+            t3HostSendElapsedMs = event.t3HostSendElapsedMs.toLong(),
+        ),
+    )
+}
+
+private fun MainViewModel.handleTransportAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
+    val session = _uiState.value.selectedSession ?: return
+    val packet = AudioPacket(
+        version = LISTENER_DISCOVERY_PROTOCOL_VERSION,
+        sessionId = SessionId(session.id),
+        streamId = StreamId(event.streamId),
+        sequenceNumber = event.sequence.toLong(),
+        codec = "pcm16le",
+        sampleRate = event.sampleRate.toInt(),
+        channelCount = event.channels.toInt(),
+        samplesPerPacket = event.samplesPerPacket.toInt(),
+        firstSampleIndex = event.firstSampleIndex.toLong(),
+        hostPresentationTimeMs = event.hostPresentationTimeMs.toLong(),
+        payload = event.payload,
+    )
+    val scheduler = listenerScheduler
+    if (scheduler == null) {
+        pendingTransportPackets += packet
+        while (pendingTransportPackets.size > 256) {
+            pendingTransportPackets.removeFirst()
+        }
+        return
+    }
+    recordIncomingPacket(scheduler, packet)
+}
+
+/**
+ * Starts local playback of the Rust-transport-delivered stream just
+ * announced by [FfiListenerTransportEvent.StreamStarted]. Revives the
+ * pre-Block-20 `startTransportListenerPlayback`, now driven by the Rust
+ * listener transport's own events instead of the deleted Kotlin socket path.
+ */
+private fun MainViewModel.startListenerPlaybackFromTransport(
+    sessionId: SessionId,
+    streamId: StreamId,
+    format: AudioFormatSpec,
+) {
+    val mapper = HostTimeMapper(
+        offsetMs = _uiState.value.listenerSyncState.offsetMs,
+        skewPpm = _uiState.value.listenerSyncState.skewPpm,
+    )
+    val scheduler = ListenerPlaybackScheduler(
+        mapper = mapper,
+        thresholds = currentPlaybackThresholds(),
+        expectedSessionId = sessionId,
+        expectedStreamId = streamId,
+    )
+    listenerScheduler = scheduler
+    pendingTransportPackets
+        .filter { it.sessionId == sessionId && it.streamId == streamId }
+        .forEach { packet -> recordIncomingPacket(scheduler, packet) }
+    pendingTransportPackets.clear()
+    runCatching { playbackEngine.start(format) }.onFailure { error ->
+        handleListenerPlaybackEngineFailure(error)
+        return
+    }
+    playbackJob?.cancel()
+    playbackJob = viewModelScope.launch {
+        var started = false
+        var lastUnderrunCount = 0
+        while (_uiState.value.listenerState != ListenerLifecycleState.DISCONNECTED) {
+            if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
+                wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
+            ) {
+                handleListenerDisconnect("Transport disconnected during playback")
+                return@launch
+            }
+            val activeScheduler = listenerScheduler ?: return@launch
+            if (!started) {
+                if (!activeScheduler.canStart()) {
+                    delay(10)
+                    continue
+                }
+                started = true
+                _uiState.value = _uiState.value.copy(
+                    listenerState = ListenerLifecycleState.PLAYING,
+                    listenerPlaybackState = PlaybackState.PLAYING,
+                    connectionProgress = _uiState.value.connectionProgress.copy(
+                        currentState = ListenerLifecycleState.PLAYING,
+                        connected = true,
+                        approved = true,
+                        synced = true,
+                        buffered = true,
+                        playing = true,
+                    ),
+                )
+            }
+            val frame = activeScheduler.poll()
+            if (frame == null) {
+                delay(10)
+                continue
+            }
+            runCatching { playbackEngine.write(frame) }.onFailure { error ->
+                handleListenerPlaybackEngineFailure(error)
+                return@launch
+            }
+            val telemetry = activeScheduler.snapshot()
+            if (frame.concealed) {
+                logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
+            }
+            if (telemetry.underrunCount > lastUnderrunCount) {
+                logger.w("playback.underrun", "Underrun count=${telemetry.underrunCount}")
+                lastUnderrunCount = telemetry.underrunCount
+            }
+            diagnosticsStore.updateListener {
+                it.copy(
+                    playbackState = if (telemetry.underrunCount > 0) PlaybackState.UNDERRUN else PlaybackState.PLAYING,
+                    playbackPositionMs = playbackEngine.playbackPositionMs(frame),
+                    bufferDepthMs = telemetry.bufferDepthMs,
+                    packetLossCount = telemetry.packetLossCount,
+                    lateDropCount = telemetry.lateDropCount,
+                    underrunCount = telemetry.underrunCount,
+                    invalidPacketCount = telemetry.invalidPacketCount,
+                    concealedPacketCount = telemetry.concealedPacketCount,
+                    lastPacketSequence = telemetry.lastPlayedSequence,
+                    metricsSummary = summarizeMetrics(),
+                )
+            }
+            if (telemetry.shouldResync) {
+                _uiState.value = _uiState.value.copy(listenerState = ListenerLifecycleState.DESYNCED)
+            }
+            refreshListenerDiagnostics()
+            delay(20)
+        }
     }
 }
 

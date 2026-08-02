@@ -52,7 +52,6 @@ import com.ekkus.silentdisco.core.transport.BleAdvertisement
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
 import com.ekkus.silentdisco.core.transport.BleOperation
 import com.ekkus.silentdisco.core.transport.BroadcastDeliverySeverity
-import com.ekkus.silentdisco.core.transport.SendAllResult
 import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
@@ -146,11 +145,16 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
                 return@launch
             }
             runCatching {
-                // Audio delivery is not yet exposed over the Rust host
-                // transport (control-plane only for this migration block) --
-                // reports honestly as zero recipients rather than attempting
-                // a send with nothing listening on the other end.
-                SendAllResult(peerCount = 0, successCount = 0, failureCount = 0)
+                hostTransportController.broadcastAudio(
+                    streamId = packet.streamId.value,
+                    sequence = packet.sequenceNumber,
+                    sampleRate = packet.sampleRate,
+                    channels = packet.channelCount,
+                    samplesPerPacket = packet.samplesPerPacket,
+                    firstSampleIndex = packet.firstSampleIndex,
+                    hostPresentationTimeMs = packet.hostPresentationTimeMs,
+                    payload = packet.payload,
+                ).toSendAllResult()
             }.onSuccess { result ->
                 when {
                     result.peerCount == 0 -> {

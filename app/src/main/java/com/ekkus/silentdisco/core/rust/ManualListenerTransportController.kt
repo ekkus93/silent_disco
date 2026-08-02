@@ -124,9 +124,11 @@ class ManualListenerTransportController : AutoCloseable {
             is FfiListenerTransportEvent.HostDisconnected -> ManualConnectUiState.Disconnected(event.reason)
             is FfiListenerTransportEvent.ConnectionClosed -> ManualConnectUiState.Disconnected(event.message)
             is FfiListenerTransportEvent.Rejected -> ManualConnectUiState.Failed(event.message)
-            FfiListenerTransportEvent.StreamStarted,
-            FfiListenerTransportEvent.Paused,
-            FfiListenerTransportEvent.Stopped,
+            is FfiListenerTransportEvent.StreamStarted,
+            is FfiListenerTransportEvent.Paused,
+            is FfiListenerTransportEvent.Stopped,
+            is FfiListenerTransportEvent.SyncResponseReceived,
+            is FfiListenerTransportEvent.AudioReceived,
             -> _connectState.value
         }
     }

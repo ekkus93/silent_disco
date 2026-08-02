@@ -53,6 +53,9 @@ class ListenerTransportController : AutoCloseable {
 
     suspend fun sendDisconnect(reason: String) = withHandle { it.sendDisconnect(reason) }
 
+    suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong) =
+        withHandle { it.sendSyncRequest(correlationId, localSendElapsedMs) }
+
     override fun close() {
         eventLoop?.cancel()
         eventLoop = null
