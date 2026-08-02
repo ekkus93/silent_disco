@@ -1242,6 +1242,22 @@ discovery (BLE + Wi-Fi Direct) starts and stops cleanly with no nearby
 session to join in this environment. No second device was available to
 verify a real host<->listener join/approval/control handshake end-to-end.
 
+**Update, same session:** the sync/audio deferral above was immediately
+closed out after the user identified that synchronized playback is this
+app's core, non-negotiable purpose, not a deferrable gap -- see
+`memory.md`'s "Restored real clock sync and audio delivery" entry.
+`FfiListenerTransportEvent`/`FfiHostTransportEvent` now surface
+`SyncResponseReceived`/`SyncRequestReceived`/`AudioReceived`, and
+`StreamStarted`/`Paused`/`Stopped` carry real fields instead of being bare
+markers; `JoinRequest` was extended with `sync_port`/`audio_port` so the
+host can authorize a listener's datagram routes after approval. A new Rust
+FFI integration test proves the full join -> approve -> authorize -> sync
+request/response -> audio broadcast path byte-for-byte over real loopback
+sockets. Kotlin's host/listener code now calls these instead of the
+zero-recipient/immediate-failure stand-ins this block originally shipped
+with. Still not verified: a real two-phone session with actual audible
+sync (needs a second physical device, per 20.4 below).
+
 ### 20.1 Split discovery/establishment from socket transport
 
 Refactor existing Android services so they report facts:
