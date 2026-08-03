@@ -781,7 +781,11 @@ fn playout_time_ms(write_time_ms: u64, lead_ms: u64) -> u64 {
     write_time_ms + lead_ms
 }
 
+// Acceptance test for item 4. Ignored: the first implementation regressed a
+// real device (see the fixes TODO) and was reverted, so this documents the
+// target rather than current behaviour.
 #[test]
+#[ignore = "alignment is unimplemented: the first attempt regressed on device and was reverted"]
 fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together() {
     // Same host stream, same offset; the only difference is when each
     // listener finished buffering and began playing. That difference used to

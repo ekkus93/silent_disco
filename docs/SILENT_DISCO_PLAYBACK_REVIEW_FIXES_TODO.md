@@ -145,7 +145,7 @@ or the `AwaitingRebuffer` path, and a ring underrun advances wall time
 without advancing `read_index` — so an underrun shifts a listener permanently
 later with nothing that detects or corrects it.
 
-- [x] 4.1 Make alignment hold under the real config, not only when
+- [ ] 4.1 Make alignment hold under the real config, not only when
       `startup_buffer_target_ms` is 0. Every existing prefill test sets it to
       0, which is why this was never caught — fix the tests too.
 - [x] 4.2 Re-arm alignment after any rebuffer or offset adoption.
@@ -153,11 +153,36 @@ later with nothing that detects or corrects it.
       intended vs actual playout position and correct gently, bounded well
       under the hard-resync threshold. This overlaps item 5.4 in the
       migration TODO (slew-limited correction) — do them together.
-- [x] 4.4 Add a test with **two schedulers on one simulated timeline** that
+- [ ] 4.4 Add a test with **two schedulers on one simulated timeline** that
       lock sync at different moments and assert their playout positions
       converge. Nothing currently tests the property the product exists for.
 - [ ] 4.5 Device-validate with two phones playing the same stream. This is
       the acceptance criterion for the whole project and has never been run.
+
+**4 STATUS: ATTEMPTED, REGRESSED ON DEVICE, REVERTED (2026-08-03).**
+
+The diagnosis below still stands and the acceptance test
+(`two_listeners_...`, now `#[ignore]`d) still encodes the target. The
+*implementation* was wrong and is reverted; `discard_already_late_head` is
+retained, unused, with this explanation attached.
+
+**What went wrong:** `poll` receives a time the pump has already advanced by
+its 400ms write lead, so discarding "everything whose deadline has passed"
+actually discarded a lead's worth of *future* audio too — and after every
+rebuffer it emptied the buffer, concealed to the bound, forced another
+rebuffer, and fell further behind the live stream each cycle. Device result:
+playback ran ~11s of a 40s stream and never recovered
+(`accepted=592 received=1809 reorderWindow=1124 ringSilenceFilled≈26.9s`),
+versus a clean 33.28s with only a 12s hiccup before the change.
+
+**What the redesign must do differently:** perform the discard against the
+*true* current time, not the release horizon. The pump knows both; the
+scheduler currently knows only the horizon. Options: pass both times into
+`poll`, give the scheduler the configured lead so it can subtract, or move
+the discard into the pump. Also ensure a rebuffer cannot empty the buffer it
+just spent a second accumulating.
+
+**Original diagnosis, still believed correct:**
 
 **4 resolution — the real root cause was not the prefill.** A stream is heard
 at `write time + ring depth`, and writing ahead into a FIFO preserves relative

@@ -234,11 +234,25 @@ import kotlinx.coroutines.runBlocking
         refreshListenerDiagnostics()
     }
 
+/** Probe interval while the listener clock is still unlocked. */
+private const val SYNC_ACQUIRE_CADENCE_MS = 250L
+
     internal fun MainViewModel.startPeriodicListenerResync() {
         resyncJob?.cancel()
         resyncJob = viewModelScope.launch {
             while (shouldKeepResyncing()) {
-                delay(_uiState.value.tuningSettings.syncCadenceMs)
+                // Until the clock locks, playback produces nothing at all and
+                // the estimator discards any sample whose round trip is too
+                // long, so the steady cadence would turn a few unlucky probes
+                // into seconds of silence. Probe hard until it locks.
+                val locked = listenerPlayback?.diagnostics()?.syncLocked == true
+                delay(
+                    if (locked) {
+                        _uiState.value.tuningSettings.syncCadenceMs
+                    } else {
+                        SYNC_ACQUIRE_CADENCE_MS
+                    },
+                )
                 if (_uiState.value.canManualResync()) {
                     requestListenerSyncProbe(source = "Periodic listener resync")
                 }

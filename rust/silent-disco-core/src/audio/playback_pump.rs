@@ -1,10 +1,12 @@
 use core::fmt;
 use std::error::Error;
 
+use super::JitterBufferRejection;
 use super::{
     DEFAULT_TARGET_FILL_FRAMES, DebugPcmRecorder, OffsetUpdateOutcome, PlaybackPhase,
     PlaybackScheduler, RENDER_CHANNELS, RenderRingProducer, ScheduledFrame, SchedulerPoll,
 };
+use crate::protocol::AudioDatagram;
 
 /// Full-scale magnitude of a 16-bit PCM sample, used to normalize into the
 /// render ring's float32 representation.
@@ -156,6 +158,8 @@ pub struct PlaybackPump {
     offset_ms: f64,
     /// Largest ring depth observed, in frames.
     peak_queued_frames: usize,
+    /// Packets discarded because they arrived before sync locked.
+    dropped_before_sync: u64,
     /// Optional capture of exactly what was released toward the ring.
     recorder: Option<DebugPcmRecorder>,
     /// First recorder failure, kept so a broken capture is visible rather than
@@ -190,6 +194,8 @@ pub struct PlaybackDiagnostics {
     /// moved beyond its reorder window (a recovered outage, or a mid-stream
     /// join).
     pub resynchronisations: u64,
+    /// Packets discarded because they arrived before a clock offset existed.
+    pub dropped_before_sync: u64,
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the consecutive-concealment bound forced a rebuffer.
@@ -281,6 +287,7 @@ impl PlaybackPump {
             sync_locked: false,
             offset_ms: 0.0,
             peak_queued_frames: 0,
+            dropped_before_sync: 0,
             recorder: None,
             recorder_error: None,
         })
@@ -335,6 +342,36 @@ impl PlaybackPump {
         &mut self.scheduler
     }
 
+    /// Submits one arriving packet, or drops it if playback cannot yet use it.
+    ///
+    /// Before a clock offset has been accepted there is no timeline to place
+    /// a packet on. Buffering them anyway is worse than dropping them: they
+    /// accumulate against sequence zero, overflow the jitter buffer's reorder
+    /// window within about a second, and are then rejected for the rest of
+    /// the acquisition — losing far more audio than the wait itself, and
+    /// leaving the buffer holding content that is stale by the time it could
+    /// be played. Dropping them lets the buffer adopt the live position once
+    /// sync lands.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`JitterBufferRejection`] under the same conditions as
+    /// [`JitterBuffer::accept`](super::JitterBuffer::accept). A packet dropped
+    /// for arriving before sync is not an error.
+    pub fn submit_packet(&mut self, datagram: AudioDatagram) -> Result<(), JitterBufferRejection> {
+        if !self.sync_locked {
+            self.dropped_before_sync = self.dropped_before_sync.saturating_add(1);
+            return Ok(());
+        }
+        self.scheduler.submit_packet(datagram)
+    }
+
+    /// Packets discarded because they arrived before playback had a timeline.
+    #[must_use]
+    pub const fn dropped_before_sync(&self) -> u64 {
+        self.dropped_before_sync
+    }
+
     /// Frames converted but not yet accepted by the ring.
     #[must_use]
     pub fn pending_frames(&self) -> usize {
@@ -384,6 +421,7 @@ impl PlaybackPump {
             duplicate_rejections: jitter.duplicate_rejections,
             reorder_window_rejections: jitter.reorder_window_rejections,
             resynchronisations: jitter.resynchronisations,
+            dropped_before_sync: self.dropped_before_sync,
             concealed_packets: concealment.total_concealed_packets,
             hard_resync_signals: concealment.hard_resync_signals,
             buffered_span_ms: self.scheduler.buffered_span_ms(),
@@ -1365,6 +1403,35 @@ mod tests {
             "a held cushion must prevent underruns"
         );
         assert_eq!(diagnostics.ring_silence_filled_frames, 0);
+    }
+
+    #[test]
+    fn packets_arriving_before_sync_locks_are_dropped_rather_than_stranding_the_buffer() {
+        let (mut pump, _consumer) = pump_with_unlocked_sync();
+
+        // A whole second of audio arrives while the clock is still unlocked.
+        // Buffering it would pile it against sequence zero until the reorder
+        // window overflows, losing far more than the wait itself costs.
+        for sequence in 0..50 {
+            pump.submit_packet(datagram(sequence, 16_384))
+                .expect("a pre-sync packet is dropped, not an error");
+        }
+        assert_eq!(pump.dropped_before_sync(), 50);
+        assert_eq!(pump.diagnostics().packets_accepted, 0);
+        assert_eq!(pump.diagnostics().reorder_window_rejections, 0);
+
+        // Once the clock locks, the buffer adopts the live position: the
+        // first arrivals corroborate the jump, then audio flows again.
+        pump.apply_sync_offset(0.0);
+        for sequence in 200..215 {
+            let _ = pump.submit_packet(datagram(sequence, 16_384));
+        }
+        let diagnostics = pump.diagnostics();
+        assert!(
+            diagnostics.packets_accepted > 0,
+            "the live stream was never picked up after sync locked"
+        );
+        assert_eq!(diagnostics.resynchronisations, 1);
     }
 
     #[test]

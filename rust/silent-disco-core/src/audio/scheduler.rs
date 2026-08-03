@@ -401,7 +401,6 @@ impl PlaybackScheduler {
                     return SchedulerPoll::Buffering { buffered_ms };
                 }
                 self.state = SchedulerState::Playing;
-                self.discard_already_late_head(local_now_ms);
             }
             SchedulerState::Playing => {}
         }
@@ -548,6 +547,15 @@ impl PlaybackScheduler {
     /// Drops buffered packets whose presentation deadline has already passed,
     /// so playback begins on a frame that is genuinely due.
     ///
+    /// **Currently unused — see item 4 in
+    /// `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md`.** Enabling this
+    /// regressed a real device badly (playback stopped after ~11s of a 40s
+    /// stream and never recovered) because `poll` receives a time already
+    /// advanced by the pump's write lead, so this treated a lead's worth of
+    /// *future* audio as late, and after each rebuffer it emptied the buffer
+    /// and thrashed. The reasoning below is sound; the mechanism needs the
+    /// true current time, not the release horizon.
+    ///
     /// This is what makes two listeners agree. A stream is heard at
     /// `write time + ring depth`, and writing ahead into a FIFO preserves
     /// relative timing exactly — so the entire stream is offset by however
@@ -559,6 +567,10 @@ impl PlaybackScheduler {
     /// The cost is the already-elapsed head of the stream, bounded by the
     /// startup buffer. Being late together is the product; hearing the first
     /// second is not.
+    #[allow(
+        dead_code,
+        reason = "retained for the redesign recorded in the fixes TODO"
+    )]
     fn discard_already_late_head(&mut self, local_now_ms: u64) {
         while let Some(sequence) = self.jitter_buffer.peek_next_sequence() {
             let deadline_ms = host_to_local_ms(

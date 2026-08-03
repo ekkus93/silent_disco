@@ -62,8 +62,16 @@ private const val RING_TARGET_FILL_FRAMES: UInt = 19_200u
 private const val RING_WRITE_LEAD_MS: ULong = 400uL
 private const val MAX_RING_PREFILL_MS: ULong = 800uL
 
-/** Interval between clock-sync probes once a stream is running. */
+/**
+ * Interval between clock-sync probes once the clock is locked.
+ *
+ * Before it locks, probes go out at [SYNC_PROBE_ACQUIRE_CADENCE_MS] instead:
+ * playback produces nothing at all until a sample is accepted, and the
+ * estimator rejects any sample whose round trip exceeds its bound, so a
+ * steady 2s cadence turns three unlucky probes into six seconds of silence.
+ */
 private const val SYNC_PROBE_CADENCE_MS = 2_000L
+private const val SYNC_PROBE_ACQUIRE_CADENCE_MS = 250L
 
 /** `nativeOboeOpen` success status. */
 private const val OBOE_ADAPTER_STATUS_OK = 0
@@ -291,7 +299,8 @@ class ManualListenerTransportController(
                     runCatching { handle.sendSyncRequest(correlationId.toULong(), sendTimeMs) }
                 }
                 correlationId += 1
-                delay(SYNC_PROBE_CADENCE_MS)
+                val locked = playbackRuntime?.diagnostics()?.syncLocked == true
+                delay(if (locked) SYNC_PROBE_CADENCE_MS else SYNC_PROBE_ACQUIRE_CADENCE_MS)
             }
         }
     }

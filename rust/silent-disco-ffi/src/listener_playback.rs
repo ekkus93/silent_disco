@@ -244,12 +244,10 @@ impl ListenerPlaybackRuntime {
         self.ensure_running()?;
         // A rejected packet is ordinary, expected traffic (a duplicate, a late
         // arrival, an out-of-window reorder) that the jitter buffer counts;
-        // it is not a runtime failure.
-        let _ = self
-            .shared
-            .lock_pump()
-            .scheduler_mut()
-            .submit_packet(datagram);
+        // it is not a runtime failure. Routed through the pump rather than
+        // straight to the scheduler so packets arriving before sync locks are
+        // dropped instead of overflowing the reorder window.
+        let _ = self.shared.lock_pump().submit_packet(datagram);
         Ok(())
     }
 
@@ -694,6 +692,17 @@ mod tests {
         assert!(runtime.final_diagnostics().is_none());
         assert!(!runtime.diagnostics().sync_locked);
 
+        // Packets are only accepted once a clock offset exists; before that
+        // they are dropped rather than stranding the buffer.
+        for sequence in 0..5 {
+            runtime.submit_packet(datagram(sequence)).expect("no error");
+        }
+        assert_eq!(runtime.diagnostics().dropped_before_sync, 5);
+
+        runtime.begin_sync_probe(1, 0).expect("probe registered");
+        runtime
+            .observe_sync_response(1, 0, 500_000, 500_001, 20)
+            .expect("correlated response");
         for sequence in 0..5 {
             runtime.submit_packet(datagram(sequence)).expect("accepted");
         }
@@ -935,6 +944,8 @@ pub struct FfiPlaybackDiagnostics {
     /// Times the buffer adopted a far-ahead position after the stream moved
     /// beyond its reorder window.
     pub resynchronisations: u64,
+    /// Packets discarded because they arrived before a clock offset existed.
+    pub dropped_before_sync: u64,
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the concealment bound forced a rebuffer.
@@ -1032,6 +1043,7 @@ impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
             duplicate_rejections: diagnostics.duplicate_rejections,
             reorder_window_rejections: diagnostics.reorder_window_rejections,
             resynchronisations: diagnostics.resynchronisations,
+            dropped_before_sync: diagnostics.dropped_before_sync,
             concealed_packets: diagnostics.concealed_packets,
             hard_resync_signals: diagnostics.hard_resync_signals,
             buffered_span_ms: diagnostics.buffered_span_ms,
