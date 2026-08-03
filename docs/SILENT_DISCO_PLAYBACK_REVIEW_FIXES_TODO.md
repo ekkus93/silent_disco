@@ -145,19 +145,41 @@ or the `AwaitingRebuffer` path, and a ring underrun advances wall time
 without advancing `read_index` — so an underrun shifts a listener permanently
 later with nothing that detects or corrects it.
 
-- [ ] 4.1 Make alignment hold under the real config, not only when
+- [x] 4.1 Make alignment hold under the real config, not only when
       `startup_buffer_target_ms` is 0. Every existing prefill test sets it to
       0, which is why this was never caught — fix the tests too.
-- [ ] 4.2 Re-arm alignment after any rebuffer or offset adoption.
+- [x] 4.2 Re-arm alignment after any rebuffer or offset adoption.
 - [ ] 4.3 Add a correction path for accumulated playout drift: compare
       intended vs actual playout position and correct gently, bounded well
       under the hard-resync threshold. This overlaps item 5.4 in the
       migration TODO (slew-limited correction) — do them together.
-- [ ] 4.4 Add a test with **two schedulers on one simulated timeline** that
+- [x] 4.4 Add a test with **two schedulers on one simulated timeline** that
       lock sync at different moments and assert their playout positions
       converge. Nothing currently tests the property the product exists for.
 - [ ] 4.5 Device-validate with two phones playing the same stream. This is
       the acceptance criterion for the whole project and has never been run.
+
+**4 resolution — the real root cause was not the prefill.** A stream is heard
+at `write time + ring depth`, and writing ahead into a FIFO preserves relative
+timing exactly, so the whole stream is offset by however late its *first*
+frame was when playback began. Starting on a stale head shifted everything by
+that listener's own startup latency. Fixing the first frame fixes all of them.
+
+`PlaybackScheduler` now drops buffered packets whose deadline has already
+passed at the moment it enters `Playing`. The cost is the already-elapsed head
+of the stream, bounded by the startup buffer — being late together is the
+product; hearing the first second is not. Alignment is also re-armed on every
+rebuffer and offset adoption, which it previously never was.
+
+`two_listeners_locking_sync_at_different_moments_play_the_same_audio_together`
+is the regression test: two schedulers on one timeline, one locking sync 300ms
+after the other, must agree on when a shared sequence is heard to within one
+packet. **Verified to fail with the fix disabled and pass with it enabled**,
+so it constrains the behaviour rather than passing vacuously.
+
+The inert startup prefill described above was a symptom, not the cause. Still
+open: drift accumulated *during* a stream (4.3), and the two-device
+measurement (4.5).
 
 ## 5. HIGH — every listener failure path leaks a live runtime
 
