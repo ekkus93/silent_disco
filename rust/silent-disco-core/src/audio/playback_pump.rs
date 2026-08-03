@@ -1298,6 +1298,58 @@ mod tests {
     }
 
     #[test]
+    fn steady_state_ring_depth_converges_to_the_configured_cushion() {
+        let (mut pump, consumer) = paced_pump();
+
+        // Simulate a real stream: the host keeps delivering, the pump ticks
+        // every 10ms, and the consumer drains at the sample rate.
+        let mut clock_ms = HOST_START_MS - 400;
+        let mut next_sequence = 0_u64;
+        let mut output = vec![0.0_f32; 480 * 2];
+        let mut depths = Vec::new();
+
+        for step in 0..400 {
+            // Packets arrive a little ahead of their deadlines, as a
+            // send-ahead host delivers them.
+            while next_sequence * u64::from(PACKET_DURATION_MS) + HOST_START_MS < clock_ms + 600 {
+                let _ = pump
+                    .scheduler_mut()
+                    .submit_packet(datagram(next_sequence, 16_384));
+                next_sequence += 1;
+            }
+            pump.tick(clock_ms);
+            // Every 10ms the output consumes 480 frames at 48kHz.
+            let _ = consumer.read_frames(&mut output);
+            clock_ms += 10;
+            if step > 200 {
+                depths.push(pump.queued_frames());
+            }
+        }
+
+        // Once running, the ring holds roughly the configured 400ms cushion:
+        // deep enough to absorb writer jitter, and far short of the ring's
+        // 48000-frame capacity.
+        let minimum = depths.iter().copied().min().expect("samples");
+        let maximum = depths.iter().copied().max().expect("samples");
+        assert!(
+            minimum > 12_000,
+            "cushion collapsed toward empty: minimum depth {minimum}"
+        );
+        assert!(
+            maximum <= 20_160,
+            "cushion grew past the cap: maximum depth {maximum}"
+        );
+
+        // With the cushion holding, the consumer never had to invent silence.
+        let diagnostics = pump.diagnostics();
+        assert_eq!(
+            diagnostics.ring_underruns, 0,
+            "a held cushion must prevent underruns"
+        );
+        assert_eq!(diagnostics.ring_silence_filled_frames, 0);
+    }
+
+    #[test]
     fn rejects_an_invalid_volume() {
         let (pump, _consumer) = pump_with(4_800);
         drop(pump);

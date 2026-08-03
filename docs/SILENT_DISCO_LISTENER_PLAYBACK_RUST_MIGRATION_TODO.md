@@ -305,12 +305,22 @@ precedent), with any pure logic in `silent-disco-core`.
   diagnostics moved behind their own locks), since UniFFI objects expose
   shared references. Verified by generating the Kotlin bindings and checking
   the emitted class and record shapes, not just by compiling the Rust.
-- [ ] 2.7 Rust tests: pump pacing with a fake clock and a real ring
+- [x] 2.7 Rust tests: pump pacing with a fake clock and a real ring
       (deadline alignment of first frame incl. prefill clamping both
       directions, steady-state depth converging to the lead, depth cap
       under a flooded backlog, drain-on-stop content), diagnostics
       correctness, lifecycle/double-stop/drop behavior.
-- [ ] 2.8 `bash scripts/check-rust.sh` green.
+
+  **Done:** 22 pump tests and 12 runtime tests. The load-bearing one is
+  `steady_state_ring_depth_converges_to_the_configured_cushion`: it runs 400
+  simulated ticks with a host delivering ahead, the pump ticking every 10ms,
+  and a consumer draining at 48kHz, then asserts the depth stays between
+  ~12000 frames and the cap **and that the ring never underran once**. That
+  is the direct statement of what the pacing exists to achieve, and it is
+  the property the previous implementation failed.
+- [x] 2.8 `bash scripts/check-rust.sh` green. (fmt, clippy `-D warnings`,
+      full workspace suite — 243 core tests — and the UniFFI Kotlin bindings
+      verified to generate.)
 
 ## Phase 3 — Rewire the Android manual-connect path
 
