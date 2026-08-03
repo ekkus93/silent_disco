@@ -20,7 +20,20 @@ const FIXED_AUDIO_DATAGRAM_FIELD_BYTES: usize = 8 + 1 + 4 + 2 + 4 + 8 + 8 + 2 + 
 const IDENTIFIER_LENGTH_PREFIX_BYTES: usize = 2;
 
 /// Default packet duration used when a caller does not select one explicitly.
-pub const DEFAULT_PACKET_DURATION_MS: u32 = 20;
+///
+/// Five milliseconds, not the 20ms this project originally targeted, because
+/// 20ms of 48kHz stereo PCM16 is a 3,840-byte payload — a 3,930-byte datagram
+/// that IP fragments into three pieces at a 1,500-byte MTU. IP has no partial
+/// recovery, so losing any one fragment destroys the whole packet: a single
+/// lost link-layer frame cost 20ms of audio rather than the ~6.7ms it
+/// actually carried. Measured on a real device, that amplified an underlying
+/// ~0.15% fragment loss into 0.46% packet loss.
+///
+/// At 5ms the datagram is 1,050 bytes and travels unfragmented, so one lost
+/// frame costs 5ms and nothing more. Per-packet overhead rises from 2.3% to
+/// 8.6% of the wire bytes, which at roughly 1.7Mbps is not a constraint on
+/// any network that can carry the audio at all.
+pub const DEFAULT_PACKET_DURATION_MS: u32 = 5;
 /// Smallest accepted explicit packet duration.
 pub const MIN_PACKET_DURATION_MS: u32 = 1;
 /// Largest accepted explicit packet duration.

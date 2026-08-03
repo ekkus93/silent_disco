@@ -4,8 +4,7 @@ use std::error::Error;
 use super::ramp::{apply_blend_in, apply_fade_out_tail, last_frame};
 use super::{
     ConcealmentOutcome, ConcealmentPolicy, ConcealmentStatistics, DEFAULT_CONCEALMENT_RAMP_MS,
-    DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
-    DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig, JitterBufferRejection,
+    DEFAULT_MAX_BUFFERED_DURATION_MS, JitterBuffer, JitterBufferConfig, JitterBufferRejection,
     JitterBufferStatistics, MAX_PACKET_DURATION_MS, MIN_PACKET_DURATION_MS,
 };
 use crate::domain::{SessionId, StreamId};
@@ -25,8 +24,36 @@ pub const DEFAULT_HIGH_WATER_MS: u64 = 700;
 /// soft correction.
 pub const DEFAULT_HARD_RESYNC_THRESHOLD_MS: f64 = 120.0;
 /// Default gap width, in packets, beyond which a hole is skipped outright
-/// rather than covered packet by packet.
+/// rather than covered packet by packet, at the default packet duration.
+///
+/// Prefer [`DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS`]: the meaningful quantity
+/// is how much *audio* a hole covers, not how many packets it spans.
 pub const DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS: u32 = 10;
+
+/// Default consecutive-concealment bridge, in milliseconds, before playback
+/// gives up and rebuffers.
+pub const DEFAULT_CONCEALMENT_BRIDGE_MS: u32 = 500;
+/// Default gap width, in milliseconds, beyond which a hole is abandoned
+/// outright rather than covered packet by packet.
+pub const DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS: u32 = 200;
+/// Default reorder tolerance, in milliseconds of stream time.
+pub const DEFAULT_REORDER_WINDOW_MS: u32 = 1_280;
+
+/// Converts a duration in milliseconds into whole packets at
+/// `packet_duration_ms`, never returning zero.
+///
+/// The tuning bounds below are all really statements about *time* — how long
+/// a bridge may last, how much audio a hole may cover, how far out of order a
+/// packet may arrive. Storing them as packet counts silently rescales every
+/// one of them whenever the packet duration changes, which is exactly the
+/// class of regression that hides until a device run.
+const fn packets_spanning(duration_ms: u32, packet_duration_ms: u32) -> u32 {
+    if packet_duration_ms == 0 {
+        return 1;
+    }
+    let packets = duration_ms / packet_duration_ms;
+    if packets == 0 { 1 } else { packets }
+}
 
 /// Fixed identity, geometry, and tuning bounds for one playback scheduler,
 /// covering exactly one host stream.
@@ -95,10 +122,16 @@ impl SchedulerConfig {
             low_water_ms: DEFAULT_LOW_WATER_MS,
             high_water_ms: DEFAULT_HIGH_WATER_MS,
             hard_resync_threshold_ms: DEFAULT_HARD_RESYNC_THRESHOLD_MS,
-            max_consecutive_concealed_packets: DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
+            max_consecutive_concealed_packets: packets_spanning(
+                DEFAULT_CONCEALMENT_BRIDGE_MS,
+                packet_duration_ms,
+            ),
             concealment_ramp_ms: DEFAULT_CONCEALMENT_RAMP_MS,
-            concealment_skip_threshold_packets: DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS,
-            max_reorder_window: DEFAULT_MAX_REORDER_WINDOW,
+            concealment_skip_threshold_packets: packets_spanning(
+                DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS,
+                packet_duration_ms,
+            ),
+            max_reorder_window: packets_spanning(DEFAULT_REORDER_WINDOW_MS, packet_duration_ms),
             max_buffered_duration_ms: DEFAULT_MAX_BUFFERED_DURATION_MS,
         }
     }
@@ -125,6 +158,9 @@ pub enum SchedulerConfigErrorKind {
     /// `max_reorder_window`, so no observable gap could ever reach it and the
     /// skip policy would never engage.
     InvalidConcealmentSkipThreshold,
+    /// `concealment_ramp_ms` resolves to a ramp at least as long as one
+    /// packet, leaving no steady-state body between the two shaped edges.
+    InvalidConcealmentRamp,
 }
 
 /// Typed scheduler configuration failure.
@@ -338,6 +374,23 @@ impl PlaybackScheduler {
             .saturating_mul(config.concealment_ramp_ms)
             / config.packet_duration_ms)
             .max(1);
+        // A ramp as long as the packet leaves no steady-state body between the
+        // two edges: every synthesized frame would be pure ramp, so concealed
+        // content would never reach its intended amplitude and a run's final
+        // fade would consume the whole frame. This is reachable by shortening
+        // the packet duration without shortening the ramp, so it is rejected
+        // rather than clamped -- a silently halved ramp is exactly the kind of
+        // change that only shows up as a device-run regression.
+        if ramp_frames >= config.samples_per_packet {
+            return Err(SchedulerConfigError {
+                kind: SchedulerConfigErrorKind::InvalidConcealmentRamp,
+                message: format!(
+                    "concealment ramp of {}ms is {ramp_frames} frames, which must be shorter \
+                     than the {}-frame packet it shapes",
+                    config.concealment_ramp_ms, config.samples_per_packet
+                ),
+            });
+        }
         let concealment =
             ConcealmentPolicy::new(config.max_consecutive_concealed_packets, ramp_frames).map_err(
                 |error| SchedulerConfigError {

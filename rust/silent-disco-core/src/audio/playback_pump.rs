@@ -608,6 +608,7 @@ mod tests {
     // approximate arithmetic.
     #![allow(clippy::float_cmp)]
 
+    use super::super::DEFAULT_CONCEALMENT_RAMP_MS;
     use super::{
         PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome,
     };
@@ -1387,7 +1388,12 @@ mod tests {
         );
 
         // No step anywhere: adjacent samples within a channel never jump by
-        // more than one blend increment.
+        // more than one blend increment. A hard splice would jump by the full
+        // sample amplitude at once; a ramped one climbs it over the ramp, so
+        // the bound is derived from the ramp rather than fixed -- shortening
+        // the ramp legitimately steepens every seam.
+        let ramp_frames = SAMPLES_PER_PACKET * DEFAULT_CONCEALMENT_RAMP_MS / PACKET_DURATION_MS;
+        let largest_ramped_step = i32::try_from(16_384 / ramp_frames).expect("fits") + 4;
         let mut largest_step = 0;
         for channel in 0..2 {
             let channel_samples: Vec<i16> =
@@ -1397,8 +1403,9 @@ mod tests {
             }
         }
         assert!(
-            largest_step < 128,
-            "waveform stepped by {largest_step} within the burst or at its seams"
+            largest_step <= largest_ramped_step,
+            "waveform stepped by {largest_step} within the burst or at its seams, \
+             above the {largest_ramped_step} a single ramp increment allows"
         );
 
         std::fs::remove_file(&path).ok();

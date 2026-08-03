@@ -20,9 +20,10 @@ class PcmPacketizerTest {
 
         val packets = packetizer.packetize(chunk, hostPresentationStartMs = 1_000)
 
-        assertThat(packets).hasSize(2)
+        // 1,920 stereo frames at the 5ms default (240 frames per packet).
+        assertThat(packets).hasSize(8)
         assertThat(packets.first().hostPresentationTimeMs).isEqualTo(1_000)
-        assertThat(packets.last().hostPresentationTimeMs).isEqualTo(1_020)
+        assertThat(packets.last().hostPresentationTimeMs).isEqualTo(1_035)
         val budget = packets.validatePacketBudget()
         assertThat(budget.valid).isTrue()
         assertThat(budget.maxPacketBytes).isGreaterThan(0)

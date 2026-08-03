@@ -19,7 +19,15 @@ pub const DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS: u32 = 25;
 pub const MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT: u32 = 200;
 /// Default amplitude-ramp length, in milliseconds, applied at both edges of
 /// every concealed frame.
-pub const DEFAULT_CONCEALMENT_RAMP_MS: u32 = 5;
+///
+/// One millisecond is the declick length: long enough that a splice between
+/// two independently produced buffers carries no audible step, short enough
+/// not to smear real content. It is deliberately an absolute duration rather
+/// than a fraction of a packet, because it exists to defeat the ear's
+/// sensitivity to discontinuity and that does not depend on how the stream is
+/// packetized. It must also stay strictly shorter than one packet — a 5ms
+/// ramp does not, once packets are 5ms long.
+pub const DEFAULT_CONCEALMENT_RAMP_MS: u32 = 1;
 /// Hard ceiling on the configured concealment ramp, in frames.
 pub const MAX_CONCEALMENT_RAMP_FRAMES: u32 = 4_800;
 /// Largest right-shift applied to the repeated source packet. Beyond this the

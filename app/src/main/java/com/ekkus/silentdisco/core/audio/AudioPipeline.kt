@@ -25,7 +25,14 @@ class PcmPacketizer(
     private val sessionId: SessionId,
     private val streamId: StreamId,
     private val format: AudioFormatSpec = AudioFormatSpec(),
-    private val packetDurationMs: Int = 20,
+    // Matches the shared core's DEFAULT_PACKET_DURATION_MS. At 20ms a
+    // 48kHz stereo PCM16 datagram is ~3.9KB, which IP fragments into three
+    // pieces at a 1500-byte MTU; since IP has no partial recovery, one lost
+    // fragment then destroys 20ms of audio instead of the ~6.7ms it carried.
+    // Unlike the Rust default this has not been validated on a device — the
+    // Android-as-host path needs a second phone to test — but leaving the two
+    // packetizers disagreeing about the same decision would be worse.
+    private val packetDurationMs: Int = 5,
 ) {
     private val samplesPerChannelPerPacket = format.sampleRate * packetDurationMs / 1_000
     private val bytesPerPacket = samplesPerChannelPerPacket * format.bytesPerFrame

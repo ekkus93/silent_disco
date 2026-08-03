@@ -447,8 +447,8 @@ fn worker_drains_every_packet_and_completes() {
     }
     let summary = handle.join().expect("worker completes successfully");
     assert_eq!(summary.state, PacketizerWorkerState::Completed);
-    assert_eq!(packets, 50); // 48_000 frames / 960 frames-per-20ms-packet
-    assert_eq!(summary.emitted_packets, 50);
+    assert_eq!(packets, 200); // 48_000 frames / 240 frames-per-5ms-packet
+    assert_eq!(summary.emitted_packets, 200);
 }
 
 #[test]
@@ -511,4 +511,54 @@ fn cancelling_the_worker_stops_it_without_a_panic() {
         .cancel_and_join()
         .expect_err("cancellation is a typed terminal error, not a panic");
     assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+}
+
+/// The wire size of a default-duration audio datagram must stay inside one
+/// unfragmented IPv4/UDP payload on an ordinary 1500-byte-MTU path.
+///
+/// This is a delivery property, not a bandwidth one. IP fragmentation has no
+/// partial recovery: a datagram split across three fragments is destroyed by
+/// the loss of any one of them, so a single lost link-layer frame costs the
+/// whole packet's audio rather than its own share. Measured on a real device
+/// at the previous 20ms/3,930-byte geometry, that turned ~0.15% fragment loss
+/// into 0.46% packet loss. The bound is what keeps the default honest.
+#[test]
+fn a_default_duration_audio_datagram_fits_one_unfragmented_udp_payload() {
+    // 1500-byte MTU less a 20-byte IPv4 header and an 8-byte UDP header.
+    const MAX_UNFRAGMENTED_UDP_PAYLOAD_BYTES: usize = 1_472;
+
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 2,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    // Identifiers at least as long as the ones production actually generates
+    // (`desktop-stream-<host-start-millis>`), since they are on the wire.
+    let mut packetizer = Packetizer::new(
+        SessionId::new("session-fragmentation").expect("session id"),
+        StreamId::new("desktop-stream-1234567890123").expect("stream id"),
+        format,
+        super::packetizer::DEFAULT_PACKET_DURATION_MS,
+        MonotonicMillis::new(0),
+    )
+    .expect("valid packetizer");
+
+    let samples_per_packet =
+        48_000 * super::packetizer::DEFAULT_PACKET_DURATION_MS as usize / 1_000;
+    let frames: Vec<i16> = (0..samples_per_packet * 2)
+        .map(|index| i16::try_from(index % 1_000).unwrap_or(0))
+        .collect();
+    let outcome = packetizer
+        .push_chunk(chunk(format, 0, frames, true))
+        .expect("packetized");
+    let datagram = outcome.frames.first().expect("at least one packet");
+
+    let encoded = crate::protocol::encode_frame(datagram).expect("audio frame encodes");
+    assert!(
+        encoded.len() <= MAX_UNFRAGMENTED_UDP_PAYLOAD_BYTES,
+        "a {}ms audio datagram is {} bytes on the wire, which IP fragments at a 1500-byte MTU; \
+         one lost fragment would destroy the whole packet",
+        super::packetizer::DEFAULT_PACKET_DURATION_MS,
+        encoded.len()
+    );
 }

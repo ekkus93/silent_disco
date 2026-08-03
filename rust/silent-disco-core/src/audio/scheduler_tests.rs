@@ -1,6 +1,7 @@
 use super::{
-    BufferHealth, DEFAULT_HARD_RESYNC_THRESHOLD_MS, JitterBufferRejectionKind, OffsetUpdateOutcome,
-    PlaybackScheduler, ScheduledFrame, SchedulerConfig, SchedulerConfigErrorKind, SchedulerPoll,
+    BufferHealth, DEFAULT_CONCEALMENT_RAMP_MS, DEFAULT_HARD_RESYNC_THRESHOLD_MS,
+    JitterBufferRejectionKind, OffsetUpdateOutcome, PlaybackScheduler, ScheduledFrame,
+    SchedulerConfig, SchedulerConfigErrorKind, SchedulerPoll,
 };
 use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
 use crate::protocol::{AudioCodec, AudioDatagram};
@@ -384,7 +385,10 @@ fn frame_at(poll: SchedulerPoll) -> ScheduledFrame {
 }
 
 /// Ramp length for the default config: 5ms of a 20ms/960-sample packet.
-const RAMP_FRAMES: usize = 240;
+/// Frames the scheduler ramps over, derived exactly as it derives them so
+/// this stays correct if either the ramp or the packet duration moves.
+const RAMP_FRAMES: usize =
+    (SAMPLES_PER_PACKET * DEFAULT_CONCEALMENT_RAMP_MS / PACKET_DURATION_MS) as usize;
 
 #[test]
 fn the_first_frame_of_a_stream_fades_in_from_silence() {
