@@ -181,6 +181,36 @@ The inert startup prefill described above was a symptom, not the cause. Still
 open: drift accumulated *during* a stream (4.3), and the two-device
 measurement (4.5).
 
+## 4b. HIGH — nothing accounts for the sync gate being closed (found on device 2026-08-03)
+
+Device run after items 1–5: no popping, zero discontinuities, but a 6.3s
+silent start and an audible hiccup at 12s. Diagnostics:
+`accepted=1632 received=1973 reorderWindow=335 skipped=367
+ringUnderruns=3140 ringSilenceFilled=301440` (6.28s).
+
+Two independent causes, both latent before today and both exposed only
+because sync happened to be slow on this run:
+
+**(a) Sync acquisition is slow by construction.** Three probes were rejected
+for RTT above the 200ms acceptance bound (the accepted one was 179ms) and the
+probe cadence is a flat 2s, so three rejections cost six seconds. The pump
+correctly plays nothing until an offset is accepted, so this is dead air.
+
+**(b) Packets arriving while sync is unlocked are permanently lost.** They
+accumulate against `next_expected = 0`, the reorder window admits only 64, and
+everything past ~1.28s is rejected as unreorderable — 335 packets here. The
+12s hiccup is the buffer draining and then resynchronising onto the live
+position via the item-2 path.
+
+- [ ] 4b.1 Probe fast until locked (~250ms), then fall back to the steady
+      cadence. Applies to both listener paths.
+- [ ] 4b.2 Do not submit packets to the scheduler while sync is unlocked.
+      They cannot be scheduled without an offset and are stale by the time
+      one exists; the item-2 resync adopts the live position instead. Count
+      what is dropped so it stays visible.
+- [ ] 4b.3 Re-run the device test and confirm the silent start and the
+      mid-stream hiccup both disappear.
+
 ## 5. HIGH — every listener failure path leaks a live runtime
 
 `stopListenerPlaybackForFailure` (`MainViewModelTransport.kt`) cancels
