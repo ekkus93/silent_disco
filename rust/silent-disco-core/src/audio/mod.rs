@@ -1,4 +1,5 @@
 mod concealment;
+mod debug_recorder;
 mod decoder;
 mod jitter_buffer;
 mod packetizer;
@@ -16,6 +17,7 @@ pub use concealment::{
     ConcealmentStatistics, DEFAULT_CONCEALMENT_RAMP_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
     MAX_CONCEALMENT_RAMP_FRAMES, MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT,
 };
+pub use debug_recorder::DebugPcmRecorder;
 pub use decoder::StreamingDecodeHandle;
 pub use jitter_buffer::{
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig,

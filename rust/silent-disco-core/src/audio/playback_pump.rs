@@ -2,8 +2,8 @@ use core::fmt;
 use std::error::Error;
 
 use super::{
-    DEFAULT_TARGET_FILL_FRAMES, OffsetUpdateOutcome, PlaybackPhase, PlaybackScheduler,
-    RENDER_CHANNELS, RenderRingProducer, ScheduledFrame, SchedulerPoll,
+    DEFAULT_TARGET_FILL_FRAMES, DebugPcmRecorder, OffsetUpdateOutcome, PlaybackPhase,
+    PlaybackScheduler, RENDER_CHANNELS, RenderRingProducer, ScheduledFrame, SchedulerPoll,
 };
 
 /// Full-scale magnitude of a 16-bit PCM sample, used to normalize into the
@@ -156,6 +156,11 @@ pub struct PlaybackPump {
     offset_ms: f64,
     /// Largest ring depth observed, in frames.
     peak_queued_frames: usize,
+    /// Optional capture of exactly what was released toward the ring.
+    recorder: Option<DebugPcmRecorder>,
+    /// First recorder failure, kept so a broken capture is visible rather than
+    /// silently producing a truncated file.
+    recorder_error: Option<String>,
 }
 
 /// Everything needed to tell, after the fact, where audio went missing or
@@ -270,6 +275,8 @@ impl PlaybackPump {
             sync_locked: false,
             offset_ms: 0.0,
             peak_queued_frames: 0,
+            recorder: None,
+            recorder_error: None,
         })
     }
 
@@ -327,6 +334,27 @@ impl PlaybackPump {
     #[must_use]
     pub fn queued_frames(&self) -> usize {
         self.producer.capacity_frames() - self.producer.free_frames()
+    }
+
+    /// Captures every frame released toward the ring into `recorder`.
+    ///
+    /// Records real, concealed, and drained frames — exactly what this pump
+    /// believed it was playing — but not the stream-start alignment silence,
+    /// which is ring positioning rather than stream content.
+    pub fn set_recorder(&mut self, recorder: DebugPcmRecorder) {
+        self.recorder = Some(recorder);
+    }
+
+    /// Sample rate of the stream this pump serves.
+    #[must_use]
+    pub const fn sample_rate(&self) -> u32 {
+        self.scheduler.sample_rate()
+    }
+
+    /// First failure from the debug recorder, if capture stopped early.
+    #[must_use]
+    pub fn recorder_error(&self) -> Option<&str> {
+        self.recorder_error.as_deref()
     }
 
     /// Everything needed to tell where audio went missing or wrong.
@@ -436,6 +464,7 @@ impl PlaybackPump {
             written += self.enqueue_frame(frame);
         }
         self.scheduler.stop();
+        self.finish_recording();
         written
     }
 
@@ -476,12 +505,36 @@ impl PlaybackPump {
     /// replacing keeps playback order intact when an earlier frame was only
     /// partly accepted.
     fn enqueue_frame(&mut self, frame: &ScheduledFrame) -> usize {
+        self.record_frame(frame);
         self.pending.reserve(frame.samples.len());
         for &sample in &frame.samples {
             self.pending
                 .push(f32::from(sample) / PCM16_FULL_SCALE * self.config.volume);
         }
         self.flush_pending()
+    }
+
+    /// Appends one released frame to the debug capture, disabling capture on
+    /// the first failure and retaining it for reporting.
+    fn record_frame(&mut self, frame: &ScheduledFrame) {
+        let Some(recorder) = self.recorder.as_mut() else {
+            return;
+        };
+        if let Err(error) = recorder.append(&frame.samples) {
+            self.recorder_error = Some(format!("debug capture failed: {error}"));
+            self.recorder = None;
+        }
+    }
+
+    /// Finalizes the debug capture, if one is active.
+    fn finish_recording(&mut self) {
+        let sample_rate = self.scheduler.sample_rate();
+        if let Some(recorder) = self.recorder.as_mut()
+            && let Err(error) = recorder.finish(sample_rate)
+        {
+            self.recorder_error = Some(format!("debug capture failed to finalize: {error}"));
+        }
+        self.recorder = None;
     }
 
     /// Pushes as much of `pending` as the ring accepts, retaining the rest.
@@ -508,8 +561,8 @@ mod tests {
         PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome,
     };
     use crate::audio::{
-        PlaybackPhase, PlaybackScheduler, RenderRing, RenderRingConfig, RenderRingConsumer,
-        SchedulerConfig,
+        DebugPcmRecorder, PlaybackPhase, PlaybackScheduler, RenderRing, RenderRingConfig,
+        RenderRingConsumer, SchedulerConfig,
     };
     use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
     use crate::protocol::{AudioCodec, AudioDatagram};
@@ -1185,6 +1238,63 @@ mod tests {
 
         pump.finish();
         assert_eq!(pump.diagnostics().phase, PlaybackPhase::Stopped);
+    }
+
+    #[test]
+    fn the_debug_capture_records_exactly_what_was_released_toward_the_ring() {
+        let directory =
+            std::env::temp_dir().join(format!("silent-disco-pump-capture-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp directory");
+        let path = directory.join("capture.wav");
+
+        let (mut pump, _consumer) = pump_with(48_000);
+        pump.set_recorder(DebugPcmRecorder::create(&path, 48_000, 2).expect("recorder created"));
+        // Sequence 1 is lost, so the capture must contain the concealed frame
+        // too: it records what playback believed it was playing.
+        for sequence in [0, 2, 3] {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+        pump.tick(HOST_START_MS);
+        pump.tick(HOST_START_MS + u64::from(PACKET_DURATION_MS));
+        pump.finish();
+
+        assert!(pump.recorder_error().is_none());
+        let bytes = std::fs::read(&path).expect("capture readable");
+        // Four 960-frame stereo PCM16 frames: 0, concealed 1, then 2 and 3
+        // drained at stop.
+        let expected_data_bytes = 4 * 960 * 2 * 2;
+        assert_eq!(bytes.len(), 44 + expected_data_bytes);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(&bytes[36..40], b"data");
+        // The header is patched with the real length when the stream ends.
+        assert_eq!(
+            u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]),
+            u32::try_from(expected_data_bytes).expect("fits"),
+        );
+        // Sample rate and channel count round-trip.
+        assert_eq!(
+            u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]),
+            48_000
+        );
+        assert_eq!(u16::from_le_bytes([bytes[22], bytes[23]]), 2);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_pump_without_a_recorder_configured_captures_nothing() {
+        let (mut pump, _consumer) = pump_with(48_000);
+        pump.scheduler_mut()
+            .submit_packet(datagram(0, 16_384))
+            .expect("accepted");
+
+        pump.tick(HOST_START_MS);
+        pump.finish();
+
+        assert!(pump.recorder_error().is_none());
     }
 
     #[test]

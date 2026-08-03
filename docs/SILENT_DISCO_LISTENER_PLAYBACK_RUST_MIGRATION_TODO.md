@@ -268,11 +268,22 @@ precedent), with any pure logic in `silent-disco-core`.
   to route it, and the one moment worth reporting — the teardown — is exactly
   when the live accessor stops working. The platform layer formats and logs
   it, which is also where the existing summary log lives.
-- [ ] 2.5 Debug PCM tap (R11): optional config path; when set, runtime
+- [x] 2.5 Debug PCM tap (R11): optional config path; when set, runtime
       writes exactly the i16 frames it releases toward the ring (real,
       concealed, and drained — not the alignment prefill) to a WAV,
       finalized on stop. Same 44-byte-header format the Kotlin
       `DebugPcmRecorder` produced so the existing analysis tooling works.
+
+  **Done:** `audio::DebugPcmRecorder` writes the canonical 44-byte header and
+  patches its length fields on finish, so the existing offline analysis
+  scripts work unchanged. Enabled per stream via
+  `ListenerPlaybackRuntime::start_debug_capture(path)`; off otherwise. The
+  capture records real, concealed, and stop-drained frames but not the
+  alignment prefill, which is ring positioning rather than stream content.
+  A capture failure disables further capture and is reported through
+  `debug_capture_error()` rather than silently truncating the file — a
+  recording that quietly stops is worse than none, since the analysis would
+  read the truncation as a dropout.
 - [ ] 2.6 UniFFI control surface (`FfiListenerPlaybackHandle` or similar):
       `open(config) -> handle`, `submit_packet(...)` (per-packet forwarding
       from Kotlin's existing transport event loop is acceptable control-

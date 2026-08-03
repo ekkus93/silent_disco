@@ -15,8 +15,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use silent_disco_core::audio::{
-    PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, RenderRingConfig,
-    SchedulerConfig,
+    DebugPcmRecorder, PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackScheduler,
+    RenderRingConfig, SchedulerConfig,
 };
 use silent_disco_core::sync::{
     ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
@@ -39,6 +39,8 @@ pub enum ListenerPlaybackError {
     PumpThread(String),
     /// A sync probe or response was rejected by the estimator.
     Sync(String),
+    /// The optional debug PCM capture could not be started.
+    DebugCapture(String),
 }
 
 impl fmt::Display for ListenerPlaybackError {
@@ -47,7 +49,8 @@ impl fmt::Display for ListenerPlaybackError {
             Self::InvalidConfiguration(message)
             | Self::Stopped(message)
             | Self::PumpThread(message)
-            | Self::Sync(message) => formatter.write_str(message),
+            | Self::Sync(message)
+            | Self::DebugCapture(message) => formatter.write_str(message),
         }
     }
 }
@@ -236,6 +239,38 @@ impl ListenerPlaybackRuntime {
             .scheduler_mut()
             .submit_packet(datagram);
         Ok(())
+    }
+
+    /// Captures every frame this stream releases toward the ring to a WAV at
+    /// `path`, for offline comparison against the diagnostics counters.
+    ///
+    /// Diagnostic instrumentation, off unless enabled. Enable it before
+    /// playback starts; frames already released are not retroactively
+    /// captured.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::DebugCapture`] when the file cannot be
+    /// created, and [`ListenerPlaybackError::Stopped`] once the runtime has
+    /// been stopped.
+    pub fn start_debug_capture(&self, path: &str) -> Result<(), ListenerPlaybackError> {
+        self.ensure_running()?;
+        let mut pump = self.shared.lock_pump();
+        let sample_rate = pump.sample_rate();
+        let recorder = DebugPcmRecorder::create(path, sample_rate, 2)
+            .map_err(|error| ListenerPlaybackError::DebugCapture(error.to_string()))?;
+        pump.set_recorder(recorder);
+        Ok(())
+    }
+
+    /// First debug-capture failure, if capture stopped early. A capture that
+    /// silently truncated would make the recording it produced misleading.
+    #[must_use]
+    pub fn debug_capture_error(&self) -> Option<String> {
+        self.shared
+            .lock_pump()
+            .recorder_error()
+            .map(ToOwned::to_owned)
     }
 
     /// Everything needed to tell where audio went missing or wrong, without
@@ -654,6 +689,70 @@ mod tests {
             .expect("stopping captures a final summary");
         assert_eq!(summary.packets_accepted, 5);
         assert_eq!(summary.phase, PlaybackPhase::Stopped);
+    }
+
+    #[test]
+    fn debug_capture_writes_a_playable_wav_for_the_streams_audio() {
+        let _guard = registry_test_guard();
+        let directory = std::env::temp_dir().join(format!(
+            "silent-disco-runtime-capture-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("temp directory");
+        let path = directory.join("runtime-capture.wav");
+
+        let mut runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+        runtime
+            .start_debug_capture(path.to_str().expect("utf-8 path"))
+            .expect("capture starts");
+
+        // Lock sync and feed audio so the pump actually releases frames.
+        runtime.begin_sync_probe(1, 0).expect("probe registered");
+        runtime
+            .observe_sync_response(1, 0, 500_000, 500_001, 20)
+            .expect("correlated response");
+        for sequence in 0..5 {
+            runtime.submit_packet(datagram(sequence)).expect("accepted");
+        }
+        runtime.stop().expect("stop succeeds");
+
+        assert!(runtime.debug_capture_error().is_none());
+        let bytes = std::fs::read(&path).expect("capture readable");
+        assert_eq!(&bytes[0..4], b"RIFF");
+        // The tail drained at stop is captured, so the file holds real audio
+        // rather than just a header.
+        assert!(
+            bytes.len() > 44,
+            "expected captured samples, got {} bytes",
+            bytes.len()
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn debug_capture_fails_explicitly_when_the_path_cannot_be_written() {
+        let _guard = registry_test_guard();
+        let mut runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+
+        let error = runtime
+            .start_debug_capture("/nonexistent-directory/capture.wav")
+            .expect_err("an unwritable path must fail rather than silently not record");
+        assert!(matches!(error, ListenerPlaybackError::DebugCapture(_)));
+
+        runtime.stop().expect("stop succeeds");
     }
 
     #[test]
