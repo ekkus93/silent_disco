@@ -324,7 +324,7 @@ precedent), with any pure logic in `silent-disco-core`.
 
 ## Phase 3 — Rewire the Android manual-connect path
 
-- [ ] 3.1 `ManualListenerTransportController`: replace
+- [x] 3.1 `ManualListenerTransportController`: replace
       `ListenerPlaybackScheduler` + playback pump job + `OboePlaybackEngine
       .write/prefillSilence/queuedDepthFrames` usage with the runtime
       handle: forward `AudioReceived` events (`mapAudioReceivedToPacket`
@@ -337,14 +337,44 @@ precedent), with any pure logic in `silent-disco-core`.
       prefill/lead/depth constants, `DebugPcmRecorder` wiring (2.5
       replaces it; keep the Kotlin class only if the BLE path still needs
       it until 4.x).
-- [ ] 3.2 Surface runtime diagnostics in the existing summary log line and
+- [x] 3.2 Surface runtime diagnostics in the existing summary log line and
       (minimally) in `ManualConnectUiState` where the UI already shows
       playback state — failures must stay visible per CLAUDE.md.
-- [ ] 3.3 Update/replace controller unit tests (`computeRingPrefillMs`
+- [x] 3.3 Update/replace controller unit tests (`computeRingPrefillMs`
       tests move to Rust with 2.7; event-mapping and gating tests stay).
-- [ ] 3.4 Android gate green (`./gradlew test lintDebug`), plus
+- [x] 3.4 Android gate green (`./gradlew test lintDebug`), plus
       `assembleDebug` for all ABIs.
-- [ ] 3.5 Device validation protocol (below) — must pass before 4.x.
+- [x] 3.5 Device validation protocol (below) — must pass before 4.x.
+
+  **PASSED on 2026-08-02 (SM-A546E, run 9).** First run of the fully
+  Rust-owned pipeline, live-listened ("that sounded much better"):
+
+  - WAV: **39.96s, zero sample-level discontinuities, zero silence gaps**
+    (max sample jump 822 = ordinary waveform slope). Every prior run had
+    5-12 gaps; the best previous was 158ms across 9 gaps.
+  - Accounting exact: `received=1990 accepted=1990 emitted=1990`,
+    `late=0 duplicate=0 reorderWindow=0 hardResyncs=0`. Eight packets were
+    lost and all eight concealed by repetition — which is precisely why no
+    gap appears in the recording.
+  - `ringUnderruns=68` (6528 frames, ~136ms), down from 1257 in the last
+    Kotlin run. Sync locked 144ms after stream start, which matches the
+    silence-filled total almost exactly, so these are very likely the
+    startup window before the pump could write. **Inference from the
+    correlation, not proof** — a timestamped underrun counter would settle
+    it, and is the obvious next diagnostic if the startup transient
+    matters.
+  - `ringPeakFrames=48000` is the stop-time drain, which deliberately
+    queues the whole buffered tail at once and bypasses the depth cap
+    (verified by reading `finish()`); it is also why the full final note
+    survives. Not the cap failing mid-stream.
+  - `prefillFrames=0`: correct here. The startup buffer had already filled
+    by the time sync locked, so the first frame was due immediately and
+    needed no alignment silence.
+
+  **Caveat worth carrying forward:** the WAV records what the pump released
+  toward the ring, so it cannot show ring underruns, which happen
+  downstream. "Zero gaps in the WAV" means the pump produced continuous
+  audio, not that nothing was audible.
 
 ## Phase 4 — Retire the legacy Kotlin pipeline everywhere
 
