@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use silent_disco_core::audio::PlaybackPhase;
 use silent_disco_core::audio::{
     DebugPcmRecorder, PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackScheduler,
-    RenderRingConfig, SchedulerConfig,
+    PumpTick, RenderRingConfig, SchedulerConfig,
 };
 use silent_disco_core::domain::{
     MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId, SyncConfidence,
@@ -32,6 +32,11 @@ use crate::audio_abi::{AudioAbiError, register_render_ring, release_render_ring}
 
 /// How often the pump thread wakes to check whether audio is due.
 const PUMP_TICK_INTERVAL: Duration = Duration::from_millis(10);
+/// Safety bound on frames drained in one pump wake-up. The write lead and
+/// ring depth cap are what actually stop the drain; this only prevents an
+/// unbounded loop if both were ever misconfigured. Generous enough to cover a
+/// full write lead of the shortest supported packets plus catch-up.
+const MAX_FRAMES_PER_TICK: usize = 512;
 
 /// Explicit, distinguishable failure exposed to the platform binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -441,14 +446,51 @@ impl Drop for ListenerPlaybackRuntime {
 }
 
 /// Pump thread body: advance playback until the runtime is stopped.
+///
+/// Each wake-up drains every frame that is currently due rather than exactly
+/// one. A single frame per tick caps throughput at one packet per
+/// [`PUMP_TICK_INTERVAL`] — 100 packets/second — which silently becomes a
+/// hard ceiling below real time as soon as a packet carries less than 10ms of
+/// audio. At the 5ms packet duration that ceiling is half real time: measured
+/// on a device, the pump emitted 60-95 packets/second against the 200 the
+/// stream required, the render ring sat at zero for 37 of 37 playing seconds,
+/// and the jitter buffer backed up until arrivals fell outside the reorder
+/// window entirely.
+///
+/// The pump stops on its own once it reaches its write lead or ring depth
+/// cap, so this loop is bounded by that in practice; [`MAX_FRAMES_PER_TICK`]
+/// only bounds the pathological case, and reaching it simply defers the
+/// remainder to the next wake-up.
 fn run_pump(shared: &Arc<Shared>, clock: &Arc<PumpClock>) {
     while shared.running.load(Ordering::SeqCst) {
         {
             let mut pump = shared.lock_pump();
-            pump.tick(clock.now_ms());
+            drain_due_frames(&mut pump, clock.now_ms());
         }
         thread::sleep(PUMP_TICK_INTERVAL);
     }
+}
+
+/// Advances `pump` until nothing further is due, returning how many frames
+/// moved toward the ring.
+///
+/// One [`PlaybackPump::tick`] releases at most one frame, so draining exactly
+/// one per wake-up caps throughput at one packet per [`PUMP_TICK_INTERVAL`].
+/// That ceiling is invisible while packets are long and becomes a hard limit
+/// below real time the moment they carry less audio than the tick interval.
+fn drain_due_frames(pump: &mut PlaybackPump, now_ms: u64) -> usize {
+    let mut released = 0;
+    for _ in 0..MAX_FRAMES_PER_TICK {
+        match pump.tick(now_ms) {
+            // Productive: a frame moved toward the ring, so another may
+            // already be due within this same wake-up.
+            PumpTick::Queued { .. } | PumpTick::FlushedPending { .. } => released += 1,
+            // Everything else means nothing more can happen until time passes,
+            // the ring drains, or the stream's state changes.
+            _ => break,
+        }
+    }
+    released
 }
 
 #[cfg(test)]
@@ -458,8 +500,14 @@ mod tests {
     // assertion here, not a tolerance.
     #![allow(clippy::float_cmp)]
 
-    use super::{ListenerPlaybackError, ListenerPlaybackRuntime};
-    use crate::audio_abi::{registry_test_guard, silent_disco_audio_read_interleaved_f32};
+    use super::{
+        ListenerPlaybackError, ListenerPlaybackRuntime, PlaybackPump, PlaybackScheduler,
+        drain_due_frames,
+    };
+    use crate::audio_abi::{
+        register_render_ring, registry_test_guard, release_render_ring,
+        silent_disco_audio_read_interleaved_f32,
+    };
     use silent_disco_core::audio::SchedulerConfig;
     use silent_disco_core::audio::{PlaybackPhase, PlaybackPumpConfig, RenderRingConfig};
     use silent_disco_core::domain::{
@@ -507,6 +555,72 @@ mod tests {
                 .flat_map(|_| 16_384_i16.to_le_bytes())
                 .collect(),
         }
+    }
+
+    /// Real-time throughput must not depend on how the stream is packetized.
+    ///
+    /// One `PlaybackPump::tick` releases at most one frame, so a pump thread
+    /// that ticked once per 10ms wake-up could never exceed 100 packets per
+    /// second. At 20ms packets that is 2x real time and invisible; at the 5ms
+    /// production packet duration it is *half* real time, and a device run
+    /// showed exactly that — 60-95 packets/second emitted against the 200 the
+    /// stream needed, the ring at zero for every playing second, and the
+    /// jitter buffer backing up until arrivals fell outside the reorder
+    /// window. One wake-up therefore has to drain everything already due.
+    #[test]
+    fn one_pump_wake_up_drains_every_frame_already_due() {
+        const SHORT_PACKET_MS: u32 = 5;
+        const SHORT_SAMPLES: u32 = 240;
+        const DUE_PACKETS: u64 = 40;
+
+        let _guard = registry_test_guard();
+        let mut config = SchedulerConfig::new(
+            SessionId::new("session-drain").expect("session id"),
+            StreamId::new("stream-drain").expect("stream id"),
+            SHORT_PACKET_MS,
+            0,
+            SHORT_SAMPLES,
+            2,
+        );
+        config.startup_buffer_target_ms = 0;
+        let scheduler = PlaybackScheduler::new(config, 0.0).expect("valid scheduler");
+        let (producer, token) = register_render_ring(ring_config()).expect("ring registered");
+        let mut pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
+            .expect("valid pump");
+        // Nothing may play against a placeholder offset, so lock sync first.
+        pump.apply_sync_offset(0.0);
+
+        for sequence in 0..DUE_PACKETS {
+            pump.scheduler_mut()
+                .submit_packet(AudioDatagram {
+                    session_id: SessionId::new("session-drain").expect("session id"),
+                    stream_id: StreamId::new("stream-drain").expect("stream id"),
+                    sequence: PacketSequence::new(sequence),
+                    codec: AudioCodec::PcmS16Le,
+                    sample_rate: 48_000,
+                    channels: 2,
+                    samples_per_packet: SHORT_SAMPLES,
+                    first_sample_index: SampleIndex::new(sequence * u64::from(SHORT_SAMPLES)),
+                    host_presentation_time_ms: MonotonicMillis::new(
+                        sequence * u64::from(SHORT_PACKET_MS),
+                    ),
+                    payload: (0..SHORT_SAMPLES * 2)
+                        .flat_map(|_| 16_384_i16.to_le_bytes())
+                        .collect(),
+                })
+                .expect("accepted");
+        }
+
+        // Every packet above is due at this instant.
+        let released = drain_due_frames(&mut pump, DUE_PACKETS * u64::from(SHORT_PACKET_MS));
+
+        assert!(
+            released >= usize::try_from(DUE_PACKETS).expect("fits"),
+            "one wake-up released only {released} of {DUE_PACKETS} due frames, which caps \
+             throughput below real time at short packet durations"
+        );
+        assert_eq!(pump.diagnostics().packets_emitted, DUE_PACKETS);
+        release_render_ring(token).expect("ring released");
     }
 
     fn token_as_engine(token: u64) -> *mut core::ffi::c_void {
