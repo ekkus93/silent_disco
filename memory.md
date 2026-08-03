@@ -959,3 +959,49 @@ Execution constraints for this session:
   0.025%-0.75% on the same build and network. Several conclusions this
   session were nearly drawn from single runs. Require a several-fold
   difference, or repeat the run, before believing a change helped.
+
+## 2026-08-03T18:40:46Z - Claude Sonnet 5 - Session pause: handoff summary
+
+**User said**: "We need to stop for a while. We'll pick things up later." No further work requested this session. Everything below is committed and pushed to `master` (working tree clean at `2c7a76e`).
+
+### Where we are, top-down
+
+1. **Audio quality work is done and accepted** (see the 2026-08-03T16:26:57Z entry above for full detail). User: "That was pretty good" / "I'm ok with it at the moment... I want to move on." Do not reopen unless asked.
+2. **Focus moved to desktop app work** (see [[project-silent-disco-current-focus]] in cross-session memory). Today's session did four desktop items, in order:
+   - Fixed `stop_playback()` silently reporting success when the pump failed (`e210d84`).
+   - Fixed a pre-existing flaky test by making it select LAN interfaces the way production does, not a hand-rolled filter that accepted Docker bridges (`8f1d8c0`) — was failing ~3 runs in 4, now passes reliably.
+   - Implemented Block 26.3: broadcast delivery/queue-pressure diagnostics (`501dd8c`).
+   - Implemented Block 27.1/27.2: playback position, natural-end-of-stream distinction, source name/duration, and queue-pressure UI (`2c7a76e`, this session's last commit).
+
+### Exact TODO state right now
+
+`docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`:
+- **Block 26.3** — fully checked. Per-peer delivery is per-*attempt* granularity (intended/successful/failed totals), not per-listener identity; documented as an intentional scope limit in the TODO's own note, not a gap to close later unless the shared transport layer changes.
+- **Block 27.1** — fully checked (source name/duration, position, end-of-stream, no HTML audio element).
+- **Block 27.2** — fully checked (queue pressure was the last open item; UI now renders it).
+- **Block 27.3** — **two items still open, left deliberately, not forgotten**:
+  - `[ ] zero-recipient start policy` — should starting playback with zero listeners connected be blocked outright, or just warned about? Today it's allowed and simply broadcasts to nobody. This is a product decision, ask the user before implementing either way.
+  - `[ ] stale command rejection` — what counts as "stale" for a one-shot Play/Pause/Stop command (duplicate click, outdated revision)? Also a product decision.
+- **Block 28** — still has a known unresolved defect: the manual device test (`manual_real_android_listener_plays_a_song_change`) fails at the song-change step. `stop_playback` now returns its *real* result (fixed this session), and it returns **success** — meaning the pump completed every shutdown step including submitting the `Stopped`/`EndOfStream` transition — yet the actor was still not observed reaching `Stopped` within the test's 10s timeout. `wait_snapshot`'s timeout message now reports the observed `playback_state`/`host_lifecycle`/`revision` (added this session, not yet exercised against the real failure). **Leading unverified hypothesis**: the actor's input queue may be backed up behind transport events at 200 packets/sec (5ms packet duration), so the `Stopped` input lands behind a long backlog and exceeds the test's timeout. **Not reproduced locally** — three automated tests covering this exact sequence (including source-ends-naturally-first, matching the 40s device source) all pass. Next step if picking this back up: run the manual device test again and read the *new* diagnostic message on timeout; it will show whether the actor moved at all or is stuck exactly at the pre-stop revision.
+
+### Architectural pattern established this session, worth reusing
+
+Two shared-core `AudioEvent` variants (`PositionAdvanced`, `EndOfStream`) existed in the domain model for exactly the purpose Block 27.1 needed, but nothing on any platform had ever wired them up — a recurring shape in this codebase (domain events/fields designed ahead of their consumer). Before building new machinery for a UI need, check `rust/silent-disco-core/src/runtime/records.rs`'s `AudioEvent`/`CoreSnapshot` for a dormant field/event that already models it.
+
+Also established: when adding a field to the shared `CoreSnapshot`, mirror it into `FfiCoreSnapshot` (`rust/silent-disco-ffi/src/host_control/types.rs` + `conversions.rs`) even if no current Android/iOS UI reads it yet — leaving it out is a silent divergence between the two FFI consumers of the same domain type. Cost is ~2 lines; the Android Kotlin bindings regenerate automatically at Gradle build time (`uniffi-bindgen`), no manual Kotlin edits needed.
+
+### Verification discipline used throughout (keep doing this)
+
+Every new test added this session was confirmed non-vacuous by temporarily reverting the production change it covers and observing the test actually fail, then restoring. Do this for any new test before considering a fix complete — several fixes this session (concealment gain, ring drain-out, stale-buffer resync, LAN interface selection) were themselves found or refined specifically *because* an existing or new test was pushed to actually fail first.
+
+### Loose ends NOT yet started (in rough priority order if resuming desktop/Android work)
+
+- Block 28's song-change failure (see above) — has a next concrete step queued.
+- Block 27.3's two policy questions (see above) — need the user's decision, not more code.
+- `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md` item 14 (sync-acquisition gate — cost up to 10s of a 40s song in one run) and item 8.4 (document that the debug WAV capture records pre-ring, not post-ring) — both audio-side, deferred per the "move to app work" decision but not abandoned.
+- Migration TODO 5.5 (host self-monitor off Kotlin `PlaybackEngine`) and 1.4 (BLE-path device validation, needs a second Android device) — untouched this session.
+- The project's actual success criterion — two-plus listeners hearing the same audio in sync — has still never been tested. Needs a second Android device. Keep flagging this; it is easy to forget given how much single-listener work has accumulated.
+
+### To resume
+
+Read this entry, then `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` Block 27.3/28 and `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md` items 14/8.4 for full context before touching either. All three gates (`bash scripts/check-rust.sh`, `./gradlew test lintDebug`, `cd desktop && npm run check`) were green at hand-off.
