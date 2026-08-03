@@ -1297,6 +1297,27 @@ Do not copy this blindly; adapt it to the final handle API and Oboe lifecycle.
 
 **Implementation note (2026-08-01) — scope decision:** `FfiPlatformEffect::StartAudioOutput`/`StopAudioOutput` and their `FfiPlatformCompletion` counterparts already exist on the Rust actor side but are hard-rejected by Kotlin today ("Platform effect is outside Android host Block 12") — nothing in this app currently drives audio playback through that effect system. Rather than build that wiring from scratch (a materially larger, separate undertaking) or ship an Oboe adapter that plays silence because nothing feeds the ring, this block took a deliberately scoped middle path, confirmed with the user: `OboePlaybackEngine` (`app/src/main/java/.../core/audio/OboePlaybackEngine.kt`) implements the existing `PlaybackEngine` interface exactly like `AudioTrackPlaybackEngine` did, so failures surface as ordinary Kotlin exceptions through the same `handleHostPlaybackEngineFailure`/`runCatching` call sites that already existed — not through `PlatformEvent::AudioOutputFailed`. Kotlin's existing decode/schedule pipeline (`AudioFileDecoder` → `PcmPacketizer` → `ListenerPlaybackScheduler`) is unchanged and still decides *what* plays and *when*; `OboePlaybackEngine.write()` converts each already-scheduled frame's PCM16LE payload to interleaved float32 and pushes it into the Rust render ring via the new `FfiAudioOutputHandle` (`rust/silent-disco-ffi/src/audio_output.rs`) — so Kotlin does not write to any audio hardware API (AudioTrack is gone from the path), but it does still touch and convert sample data, which is a real, disclosed deviation from "Kotlin never writes PCM frames" taken literally. `OboeOutputAdapter::takeDisconnected()` exists and is wired through to Kotlin (`OboeBridge.nativeOboeTakeDisconnected()`), but nothing polls it into a surfaced UI event yet. Rust's own `PlaybackScheduler`/`JitterBuffer` (Blocks 14-15) remain unused by this production path; deciding whether they take over decode/schedule timing is explicitly Block 23's job ("Select and implement the long-term audio decoder boundary"), not this block's.
 
+**Update (2026-08-03) — this deviation is now closed for the listener.**
+The disclosed deviation above ("Kotlin does not write to any audio hardware
+API, but it does still touch and convert sample data") no longer applies to
+either listener path. `audio::PlaybackPump` owns PCM conversion and ring
+pacing, and `ListenerPlaybackRuntime` (`silent-disco-ffi`) owns the scheduler,
+the render ring, the clock-sync estimator, and the pump thread; Kotlin
+forwards packets and raw four-timestamp sync exchanges and nothing else.
+Rust's `PlaybackScheduler`/`JitterBuffer` are no longer unused — they are the
+production listener path on Android. `ConcealmentPolicy` was reworked from
+silence synthesis to decaying repetition of the last real packet, and the
+scheduler gained wide-hole skipping and drain-with-fades, all ported from
+device-verified Kotlin behaviour. See
+`docs/SILENT_DISCO_LISTENER_PLAYBACK_RUST_MIGRATION_TODO.md` for the full
+record, including the device validation.
+
+**Still deviating:** the *host* self-monitor path
+(`MainViewModelHostPlayback`) continues to render locally decoded audio
+through Kotlin's `PlaybackEngine`/`PlaybackFrame` and `OboePlaybackEngine`.
+Block 23's decoder-boundary decision remains the place that resolves this;
+migrating host monitoring onto the same runtime is the concrete follow-up.
+
 ### 18.3 Enforce shutdown order
 
 - [ ] Rust marks stopping and emits stop effect.

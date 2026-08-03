@@ -423,21 +423,46 @@ path is migrated. Kotlin must not remain a competing owner.
 
 ## Phase 5 — Documentation and follow-ups
 
-- [ ] 5.1 Update `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md` (Block 18
+- [x] 5.1 Update `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md` (Block 18
       deviation note now closed; Block 23 decision partially realized) and
       `memory.md` per its format.
-- [ ] 5.2 Record the desktop-listener implication: `Future C` (desktop as
+- [x] 5.2 Record the desktop-listener implication: `Future C` (desktop as
       listener) should consume this same runtime; note it in
       `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` at the Future C item.
-- [ ] 5.3 Explicit follow-up (do NOT do inline): route audio/sync events
+- [x] 5.3 Explicit follow-up (do NOT do inline): route audio/sync events
       to the runtime *inside* the Rust listener transport so they never
       cross to Kotlin at all (removes the per-packet UniFFI forwarding
       from 2.6). Keep as a separate block with its own device validation.
-- [ ] 5.4 Explicit follow-up: slew-limited mid-stream offset updates
+
+  **Recorded, not implemented** (as this item instructs). Today both listener
+  paths forward every audio packet across UniFFI at ~50 calls/s and every sync
+  response individually. That works and is device-validated, but it is
+  avoidable work per packet and leaves the platform holding a data-plane
+  responsibility it does not need. Wiring the transport's audio/sync events
+  directly into the runtime inside Rust would remove it entirely. Needs its
+  own device validation because it changes the path every packet takes.
+- [x] 5.4 Explicit follow-up: slew-limited mid-stream offset updates
       (scheduler `apply_offset_update` exists; the manual path currently
       freezes the mapping per stream — long streams will eventually need
       gentle correction bounded well under the 120 ms hard-resync
       threshold).
+
+  **Recorded, not implemented.** The runtime now *does* apply mid-stream
+  offset updates — every accepted sync sample calls `apply_sync_offset`, which
+  soft-corrects below the 120ms hard-resync threshold and rebuffers above it.
+  What is still missing is *slewing*: a correction is applied as a step, so a
+  large-but-sub-threshold offset change shifts every subsequent deadline at
+  once rather than easing in. Over a 40s test this never surfaced; over a long
+  session it would. The fix belongs in `PlaybackScheduler`, bounded well under
+  the hard-resync threshold, and needs a real listening test to tune.
+
+- [ ] 5.5 **New follow-up, discovered in Phase 4:** migrate the *host*
+      self-monitor path (`MainViewModelHostPlayback`) off Kotlin's
+      `PlaybackEngine`/`PlaybackFrame` and onto the same runtime. This plan
+      assumed the listener was the only consumer; it is not. Until then
+      `PlaybackEngine`, `PlaybackFrame`, and `OboePlaybackEngine.write`
+      survive for the host's own monitoring, which is a smaller but real
+      remaining split of ownership.
 
 ## Device validation protocol (Phase 3.5 gate)
 

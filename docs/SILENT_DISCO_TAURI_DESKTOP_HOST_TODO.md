@@ -2513,6 +2513,21 @@ sweep that this correctly returns a real error rather than silently claiming
 success. Desktop can *host* (broadcast) real audio today; it cannot yet
 *receive and play* audio as a listener, and that is what this block covers.
 
+**Consume the shared listener playback runtime (2026-08-03).** Do not build a
+desktop-specific scheduler, concealment policy, or ring pump. Android's
+listener now runs entirely on `silent-disco-core`'s `audio::PlaybackPump` plus
+`silent-disco-ffi`'s `ListenerPlaybackRuntime`, which own ordering,
+concealment, presentation-time pacing, clock-sync estimation, PCM conversion,
+diagnostics, and an optional debug WAV capture. A desktop listener should open
+the same runtime, hand its engine token to a desktop audio adapter (the only
+genuinely platform-specific piece), and forward packets and raw sync
+exchanges. Everything else is already built and device-validated; see
+`docs/SILENT_DISCO_LISTENER_PLAYBACK_RUST_MIGRATION_TODO.md`.
+
+This is the whole reason that migration was done: the audio-quality work had
+been fixed once in Kotlin and would otherwise have had to be reimplemented
+here.
+
 ---
 
 # Final completion checklist
