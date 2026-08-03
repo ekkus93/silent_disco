@@ -15,7 +15,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use silent_disco_core::audio::{
-    PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, RenderRingConfig, SchedulerConfig,
+    PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, RenderRingConfig,
+    SchedulerConfig,
 };
 use silent_disco_core::sync::{
     ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
@@ -132,6 +133,9 @@ pub struct ListenerPlaybackRuntime {
     clock: Arc<PumpClock>,
     token: u64,
     pump_thread: Option<JoinHandle<()>>,
+    /// Diagnostics captured at stop, so a stream's final accounting survives
+    /// the teardown that produced it.
+    last_diagnostics: Option<PlaybackDiagnostics>,
 }
 
 impl ListenerPlaybackRuntime {
@@ -194,7 +198,15 @@ impl ListenerPlaybackRuntime {
             clock,
             token,
             pump_thread: Some(pump_thread),
+            last_diagnostics: None,
         })
+    }
+
+    /// Diagnostics as they stood when [`Self::stop`] drained the stream, or
+    /// `None` while it is still running.
+    #[must_use]
+    pub const fn final_diagnostics(&self) -> Option<PlaybackDiagnostics> {
+        self.last_diagnostics
     }
 
     /// The opaque token to hand to native audio setup exactly once, at stream
@@ -224,6 +236,13 @@ impl ListenerPlaybackRuntime {
             .scheduler_mut()
             .submit_packet(datagram);
         Ok(())
+    }
+
+    /// Everything needed to tell where audio went missing or wrong, without
+    /// relying on a description of what it sounded like.
+    #[must_use]
+    pub fn diagnostics(&self) -> PlaybackDiagnostics {
+        self.shared.lock_pump().diagnostics()
     }
 
     /// Monotonic milliseconds on the timeline this runtime schedules against.
@@ -333,7 +352,12 @@ impl ListenerPlaybackRuntime {
         }
         // Drain before joining so the tail is queued while the ring is still
         // live and the consumer is still reading.
-        self.shared.lock_pump().finish();
+        let summary = {
+            let mut pump = self.shared.lock_pump();
+            pump.finish();
+            pump.diagnostics()
+        };
+        self.last_diagnostics = Some(summary);
 
         let join_result = self
             .pump_thread
@@ -385,7 +409,7 @@ mod tests {
     use super::{ListenerPlaybackError, ListenerPlaybackRuntime};
     use crate::audio_abi::{registry_test_guard, silent_disco_audio_read_interleaved_f32};
     use silent_disco_core::audio::SchedulerConfig;
-    use silent_disco_core::audio::{PlaybackPumpConfig, RenderRingConfig};
+    use silent_disco_core::audio::{PlaybackPhase, PlaybackPumpConfig, RenderRingConfig};
     use silent_disco_core::domain::{
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
     };
@@ -599,6 +623,37 @@ mod tests {
             runtime.observe_sync_response(1, 0, 1, 2, 3),
             Err(ListenerPlaybackError::Stopped(_))
         ));
+    }
+
+    #[test]
+    fn final_diagnostics_survive_the_teardown_that_produced_them() {
+        let _guard = registry_test_guard();
+        let mut runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+
+        // Nothing is captured while the stream is still live.
+        assert!(runtime.final_diagnostics().is_none());
+        assert!(!runtime.diagnostics().sync_locked);
+
+        for sequence in 0..5 {
+            runtime.submit_packet(datagram(sequence)).expect("accepted");
+        }
+        assert_eq!(runtime.diagnostics().packets_accepted, 5);
+
+        runtime.stop().expect("stop succeeds");
+
+        // A stream's final accounting must outlive the teardown, or the one
+        // moment worth reporting is the one moment it cannot be read.
+        let summary = runtime
+            .final_diagnostics()
+            .expect("stopping captures a final summary");
+        assert_eq!(summary.packets_accepted, 5);
+        assert_eq!(summary.phase, PlaybackPhase::Stopped);
     }
 
     #[test]

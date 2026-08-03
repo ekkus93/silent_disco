@@ -249,12 +249,25 @@ precedent), with any pure logic in `silent-disco-core`.
   meaningless); later ones correct softly or force a rebuffer. A scheduler
   that pauses on the concealment bound is re-armed automatically — the
   pause exists to force a fresh startup buffer, not to end playback.
-- [ ] 2.4 Diagnostics (R10): one snapshot struct — received, lost
+- [x] 2.4 Diagnostics (R10): one snapshot struct — received, lost
       (arrival-continuity), late-dropped, concealed, skipped-hole count,
       current/peak ring depth frames, underrun + silence-filled counters
       (from ring telemetry), state (Buffering/Playing/AwaitingRebuffer/
       Stopped). Queryable via the control surface; runtime logs one
       summary line on stop.
+
+  **Done:** `PlaybackDiagnostics` gathers all three layers — jitter-buffer
+  accounting (accepted/emitted/skipped plus late, duplicate, and
+  reorder-window rejections), concealment counters, buffered span, ring
+  depth (current and peak), pending and prefill frames, and the ring's own
+  underrun/silence-filled/full counters. `PlaybackPhase` exposes the
+  scheduler state. Available live via `ListenerPlaybackRuntime::diagnostics()`.
+
+  **Instead of a log line on stop,** `stop()` captures the final snapshot into
+  `final_diagnostics()`. A log line would be written by the crate least able
+  to route it, and the one moment worth reporting — the teardown — is exactly
+  when the live accessor stops working. The platform layer formats and logs
+  it, which is also where the existing summary log lives.
 - [ ] 2.5 Debug PCM tap (R11): optional config path; when set, runtime
       writes exactly the i16 frames it releases toward the ring (real,
       concealed, and drained — not the alignment prefill) to a WAV,

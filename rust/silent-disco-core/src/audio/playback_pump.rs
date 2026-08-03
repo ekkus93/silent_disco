@@ -2,8 +2,8 @@ use core::fmt;
 use std::error::Error;
 
 use super::{
-    DEFAULT_TARGET_FILL_FRAMES, OffsetUpdateOutcome, PlaybackScheduler, RENDER_CHANNELS,
-    RenderRingProducer, ScheduledFrame, SchedulerPoll,
+    DEFAULT_TARGET_FILL_FRAMES, OffsetUpdateOutcome, PlaybackPhase, PlaybackScheduler,
+    RENDER_CHANNELS, RenderRingProducer, ScheduledFrame, SchedulerPoll,
 };
 
 /// Full-scale magnitude of a 16-bit PCM sample, used to normalize into the
@@ -154,6 +154,52 @@ pub struct PlaybackPump {
     sync_locked: bool,
     /// The offset currently mapping host presentation times onto local time.
     offset_ms: f64,
+    /// Largest ring depth observed, in frames.
+    peak_queued_frames: usize,
+}
+
+/// Everything needed to tell, after the fact, where audio went missing or
+/// wrong — without relying on a description of what it sounded like.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaybackDiagnostics {
+    /// What the scheduler is currently doing.
+    pub phase: PlaybackPhase,
+    /// True once a real clock-offset estimate has been applied.
+    pub sync_locked: bool,
+    /// Packets accepted into the jitter buffer.
+    pub packets_accepted: u64,
+    /// Packets emitted in order, including those drained at stop.
+    pub packets_emitted: u64,
+    /// Sequences abandoned without being played: lost packets covered by
+    /// concealment, plus whole gaps skipped as too wide to cover.
+    pub sequences_skipped: u64,
+    /// Packets rejected as arriving after their slot had already played.
+    pub late_rejections: u64,
+    /// Packets rejected as duplicates of an already-buffered sequence.
+    pub duplicate_rejections: u64,
+    /// Packets rejected as too far ahead to reorder.
+    pub reorder_window_rejections: u64,
+    /// Frames synthesized to cover missing packets.
+    pub concealed_packets: u64,
+    /// Times the consecutive-concealment bound forced a rebuffer.
+    pub hard_resync_signals: u64,
+    /// Buffered presentation-time span currently held, in milliseconds.
+    pub buffered_span_ms: u64,
+    /// Frames currently queued in the render ring.
+    pub ring_queued_frames: usize,
+    /// Largest ring depth observed, in frames.
+    pub ring_peak_queued_frames: usize,
+    /// Frames converted but not yet accepted by the ring.
+    pub pending_frames: usize,
+    /// Silence frames queued at stream start to align the first frame.
+    pub prefill_frames: usize,
+    /// Real-time reads that had to substitute silence because the ring ran
+    /// dry — the measure of whether the cushion is holding.
+    pub ring_underruns: u64,
+    /// Frames of silence substituted by those reads.
+    pub ring_silence_filled_frames: u64,
+    /// Producer writes that could not fit every frame requested.
+    pub ring_full_events: u64,
 }
 
 /// Result of applying a fresh clock-offset estimate to a running pump.
@@ -223,6 +269,7 @@ impl PlaybackPump {
             prefill_frames: 0,
             sync_locked: false,
             offset_ms: 0.0,
+            peak_queued_frames: 0,
         })
     }
 
@@ -282,6 +329,34 @@ impl PlaybackPump {
         self.producer.capacity_frames() - self.producer.free_frames()
     }
 
+    /// Everything needed to tell where audio went missing or wrong.
+    #[must_use]
+    pub fn diagnostics(&self) -> PlaybackDiagnostics {
+        let jitter = self.scheduler.jitter_statistics();
+        let concealment = self.scheduler.concealment_statistics();
+        let ring = self.producer.telemetry();
+        PlaybackDiagnostics {
+            phase: self.scheduler.phase(),
+            sync_locked: self.sync_locked,
+            packets_accepted: jitter.accepted,
+            packets_emitted: jitter.emitted,
+            sequences_skipped: jitter.skipped,
+            late_rejections: jitter.late_rejections,
+            duplicate_rejections: jitter.duplicate_rejections,
+            reorder_window_rejections: jitter.reorder_window_rejections,
+            concealed_packets: concealment.total_concealed_packets,
+            hard_resync_signals: concealment.hard_resync_signals,
+            buffered_span_ms: self.scheduler.buffered_span_ms(),
+            ring_queued_frames: self.queued_frames(),
+            ring_peak_queued_frames: self.peak_queued_frames,
+            pending_frames: self.pending_frames(),
+            prefill_frames: self.prefill_frames,
+            ring_underruns: ring.underrun_callbacks,
+            ring_silence_filled_frames: ring.silence_filled_frames,
+            ring_full_events: ring.ring_full_events,
+        }
+    }
+
     /// Advances playback by one tick at the given local monotonic time.
     pub fn tick(&mut self, local_now_ms: u64) -> PumpTick {
         // Nothing may play against a placeholder offset. A stream started on
@@ -308,6 +383,7 @@ impl PlaybackPump {
         // waits: without the cap, a large startup backlog would run the ring
         // to capacity and stay there for the rest of the stream.
         let queued_frames = self.queued_frames();
+        self.peak_queued_frames = self.peak_queued_frames.max(queued_frames);
         if queued_frames >= self.config.target_depth_frames {
             return PumpTick::AtTargetDepth { queued_frames };
         }
@@ -417,6 +493,7 @@ impl PlaybackPump {
         if written > 0 {
             self.pending.drain(..written * RENDER_CHANNELS);
         }
+        self.peak_queued_frames = self.peak_queued_frames.max(self.queued_frames());
         written
     }
 }
@@ -431,7 +508,8 @@ mod tests {
         PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome,
     };
     use crate::audio::{
-        PlaybackScheduler, RenderRing, RenderRingConfig, RenderRingConsumer, SchedulerConfig,
+        PlaybackPhase, PlaybackScheduler, RenderRing, RenderRingConfig, RenderRingConsumer,
+        SchedulerConfig,
     };
     use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
     use crate::protocol::{AudioCodec, AudioDatagram};
@@ -1002,6 +1080,111 @@ mod tests {
             ),
             "playback must recover, got {resumed:?}"
         );
+    }
+
+    #[test]
+    fn diagnostics_account_for_delivered_concealed_and_skipped_audio() {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        scheduler_config.concealment_skip_threshold_packets = 3;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, consumer) = ring.split();
+        let mut pump =
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+        pump.apply_sync_offset(0.0);
+
+        // Sequence 0 arrives, 1 is lost (concealed), 2 arrives, then a wide
+        // gap to 20 is skipped outright.
+        for sequence in [0, 2, 20, 21] {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+        // A duplicate and a stale arrival, both ordinary traffic to account for.
+        assert!(pump.scheduler_mut().submit_packet(datagram(20, 1)).is_err());
+        // Stop at the last real packet: ticking past it would start the
+        // outage bridge, whose concealments are a separate behaviour.
+        for slot in 0..=21 {
+            pump.tick(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS));
+        }
+        assert!(pump.scheduler_mut().submit_packet(datagram(1, 1)).is_err());
+
+        let diagnostics = pump.diagnostics();
+
+        assert_eq!(diagnostics.packets_accepted, 4);
+        assert_eq!(diagnostics.duplicate_rejections, 1);
+        assert_eq!(diagnostics.late_rejections, 1);
+        // One concealed slot (sequence 1) and one skipped gap (3..=19).
+        assert_eq!(diagnostics.concealed_packets, 1);
+        assert!(
+            diagnostics.sequences_skipped >= 17,
+            "expected the wide gap to be accounted for, got {}",
+            diagnostics.sequences_skipped
+        );
+        assert!(diagnostics.sync_locked);
+        assert_eq!(diagnostics.phase, PlaybackPhase::Playing);
+
+        // Ring-side counters come from the ring's own telemetry.
+        assert!(diagnostics.ring_queued_frames > 0);
+        assert_eq!(
+            diagnostics.ring_peak_queued_frames,
+            diagnostics.ring_queued_frames
+        );
+        let mut output = vec![0.0_f32; 60_000 * 2];
+        let _ = consumer.read_frames(&mut output);
+        let after_underrun = pump.diagnostics();
+        assert!(after_underrun.ring_underruns > 0);
+        assert!(after_underrun.ring_silence_filled_frames > 0);
+    }
+
+    #[test]
+    fn diagnostics_report_the_phase_through_a_streams_life() {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 400;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, _consumer) = ring.split();
+        let mut pump =
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+
+        assert!(!pump.diagnostics().sync_locked);
+        pump.apply_sync_offset(0.0);
+        assert_eq!(pump.diagnostics().phase, PlaybackPhase::Buffering);
+
+        for sequence in 0..30 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+        pump.tick(HOST_START_MS);
+        assert_eq!(pump.diagnostics().phase, PlaybackPhase::Playing);
+        assert!(pump.diagnostics().buffered_span_ms > 0);
+
+        pump.finish();
+        assert_eq!(pump.diagnostics().phase, PlaybackPhase::Stopped);
     }
 
     #[test]

@@ -33,8 +33,9 @@ pub use packetizer_worker::{
     StreamingPacketizeConfig, StreamingPacketizeHandle,
 };
 pub use playback_pump::{
-    PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind,
-    PumpTick,
+    DEFAULT_MAX_PREFILL_MS, DEFAULT_WRITE_LEAD_MS, PlaybackDiagnostics, PlaybackPump,
+    PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind, PumpTick,
+    SyncApplyOutcome,
 };
 pub use render_ring::{
     DEFAULT_RING_CAPACITY_FRAMES, DEFAULT_TARGET_FILL_FRAMES, MAX_RING_CAPACITY_FRAMES,
@@ -45,8 +46,8 @@ pub use render_ring::{
 pub use scheduler::{
     BufferHealth, DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS, DEFAULT_HARD_RESYNC_THRESHOLD_MS,
     DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS, DEFAULT_STARTUP_BUFFER_TARGET_MS,
-    OffsetUpdateOutcome, PlaybackScheduler, ScheduledFrame, SchedulerConfig, SchedulerConfigError,
-    SchedulerConfigErrorKind, SchedulerPoll,
+    OffsetUpdateOutcome, PlaybackPhase, PlaybackScheduler, ScheduledFrame, SchedulerConfig,
+    SchedulerConfigError, SchedulerConfigErrorKind, SchedulerPoll,
 };
 pub use types::{
     AudioFormat, AudioSampleFormat, CANONICAL_CHANNELS, CANONICAL_SAMPLE_RATE_HZ,

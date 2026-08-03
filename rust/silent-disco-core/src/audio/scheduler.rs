@@ -3,10 +3,10 @@ use std::error::Error;
 
 use super::ramp::{apply_fade_in, apply_fade_out_tail};
 use super::{
-    ConcealmentOutcome, ConcealmentPolicy, DEFAULT_CONCEALMENT_RAMP_MS,
+    ConcealmentOutcome, ConcealmentPolicy, ConcealmentStatistics, DEFAULT_CONCEALMENT_RAMP_MS,
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
     DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig, JitterBufferRejection,
-    MAX_PACKET_DURATION_MS, MIN_PACKET_DURATION_MS,
+    JitterBufferStatistics, MAX_PACKET_DURATION_MS, MIN_PACKET_DURATION_MS,
 };
 use crate::domain::{SessionId, StreamId};
 use crate::protocol::AudioDatagram;
@@ -143,6 +143,19 @@ impl fmt::Display for SchedulerConfigError {
 }
 
 impl Error for SchedulerConfigError {}
+
+/// What a scheduler is currently doing, for diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackPhase {
+    /// Accumulating the startup presentation buffer.
+    Buffering,
+    /// Delivering frames against the presentation timeline.
+    Playing,
+    /// Paused until an explicit rebuffer.
+    AwaitingRebuffer,
+    /// Stopped; no further frames will be produced.
+    Stopped,
+}
 
 /// Observed buffered-span health relative to the configured low/high water
 /// thresholds.
@@ -579,6 +592,35 @@ impl PlaybackScheduler {
     #[must_use]
     pub const fn channels(&self) -> u16 {
         self.config.channels
+    }
+
+    /// What this scheduler is currently doing.
+    #[must_use]
+    pub const fn phase(&self) -> PlaybackPhase {
+        match self.state {
+            SchedulerState::Buffering => PlaybackPhase::Buffering,
+            SchedulerState::Playing => PlaybackPhase::Playing,
+            SchedulerState::AwaitingRebuffer => PlaybackPhase::AwaitingRebuffer,
+            SchedulerState::Stopped => PlaybackPhase::Stopped,
+        }
+    }
+
+    /// Cumulative packet-ordering counters from the internal jitter buffer.
+    #[must_use]
+    pub const fn jitter_statistics(&self) -> JitterBufferStatistics {
+        self.jitter_buffer.statistics()
+    }
+
+    /// Cumulative concealment counters from the internal policy.
+    #[must_use]
+    pub const fn concealment_statistics(&self) -> ConcealmentStatistics {
+        self.concealment.statistics()
+    }
+
+    /// Buffered presentation-time span currently held, in milliseconds.
+    #[must_use]
+    pub fn buffered_span_ms(&self) -> u64 {
+        self.jitter_buffer.buffered_span_ms()
     }
 
     /// Sample rate implied by this stream's validated packet geometry.
