@@ -792,3 +792,21 @@ Execution constraints for this session:
 - Still unverified: the write-lead double-counting hypothesis recorded in
   commit `37b78c6` and item 4. Runs 12-15 give healthy baselines
   (`resyncs` 1-2) but do not test the reverted change itself.
+
+## 2026-08-03T09:02:00Z - Claude Opus 5 (1M context) - Run 16 confirms the seam fixes; sync gate is a coin flip
+
+- **Run 16, cleanest run recorded**: 38.54 s captured, zero discontinuities,
+  max sample jump 822, one 40 ms startup gap and no other silence, with 9
+  concealments absorbed inaudibly. `concealed=9 late=0 hardResyncs=0
+  resyncs=1`. User confirmed run 15 sounded clean; run 16 is objectively
+  better still. Items 7 and 13 are validated by ear and by measurement.
+- **Item 14 sharpened by comparison.** Run 16 locked sync on its *first*
+  probe at **RTT 194 ms** — 6 ms under the 200 ms `max_accepted_rtt_ms` gate
+  — costing 0.72 s (`droppedBeforeSync=36`, 20 probes total). Run 15, same
+  build and same network minutes earlier, sat above the gate for 34
+  consecutive probes and lost 10.16 s (`droppedBeforeSync=508`, 50 probes).
+  This network's RTT sits *right at* the threshold, so startup latency is
+  effectively a coin flip between 0.7 s and 10 s. That makes 14.1 (bound the
+  acquisition window, adopt the best sample seen) the highest-value item
+  outstanding — it is not a rare-congestion edge case, it is this network's
+  normal behaviour.
