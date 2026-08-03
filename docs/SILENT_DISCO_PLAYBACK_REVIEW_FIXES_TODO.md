@@ -428,6 +428,39 @@ thread on the pump thread join. The manual controller does this correctly on
       `SyncQualityBadge`, `SyncState`; fields `writtenCount`,
       `lastWrittenFrameConcealed`).
 
+## 13. MEDIUM-HIGH — an abandoned gap spliced a step into the waveform
+
+Found on the device in run 14, not by either review. When a gap is wider than
+`concealment_skip_threshold_packets` the scheduler abandons it — but nothing
+is emitted for the abandoned span, so the post-gap frame is queued directly
+behind the pre-gap one and the two play back to back with **no silence
+between them**. The resume path nevertheless faded the new frame in from
+zero, which splices a step equal to the outgoing frame's final amplitude.
+
+Run 14's capture had exactly one waveform discontinuity in 35.56 s — a
+delta of 11,296 at 28.080 s — against a run whose network was bad enough to
+abandon 89 sequences. Run 13, with no wide-gap skips at all, peaked at 822.
+
+Item 7 made this reachable in one more way: concealed frames now end
+mid-decay rather than at zero, so a concealment immediately followed by a
+skip stepped down from the concealed tail. The underlying defect predates it
+(a skip directly after a *real* frame stepped down from full amplitude), but
+7 widened the exposure and this was found in the run that validated it.
+
+- [x] 13.1 Track the last emitted frame's tail for every frame, real or
+      concealed, rather than only across concealment.
+- [x] 13.2 Crossfade the post-skip frame from that tail. Keep fading from
+      zero only where silence genuinely intervenes — stream start, a rebuffer
+      that drains the ring, and drained-tail hole edges, which really are
+      faded to zero — now tracked explicitly as `resume_from_silence` rather
+      than inferred from an empty tail.
+- [x] 13.3 Cover both orderings: a skip after a real frame, and a skip after
+      concealment (`a_skip_after_concealment_continues_from_the_concealed_tail`).
+- [ ] 13.4 Confirm on a device that a run with wide-gap skips shows no
+      waveform discontinuity. Needs a run whose network is bad enough to
+      abandon gaps; run 14's conditions produced 89 abandoned sequences but
+      cannot be summoned on demand.
+
 ## What the reviews found clean
 
 Recorded so a later pass does not redo this analysis:

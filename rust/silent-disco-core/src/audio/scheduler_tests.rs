@@ -477,9 +477,48 @@ fn a_gap_wider_than_the_skip_threshold_is_abandoned_rather_than_concealed() {
         after_gap.host_presentation_time_ms,
         HOST_START_MS + 10 * u64::from(PACKET_DURATION_MS)
     );
-    // Resuming from an abandoned gap is a seam like any other.
-    assert_eq!(after_gap.samples[0], 0);
+    // Nothing is emitted for the abandoned span, so the post-gap frame plays
+    // directly after the pre-gap one. The seam is a crossfade from the
+    // outgoing waveform: fading in from a zero that never renders would be
+    // the step it was meant to prevent.
+    let outgoing_tail = first.samples[first.samples.len() - 2];
+    assert_eq!(outgoing_tail, 8_000);
+    assert_eq!(after_gap.samples[0], outgoing_tail);
     assert_eq!(after_gap.samples[RAMP_FRAMES * 2], 8_000);
+}
+
+/// A skip that follows a concealment run must still splice continuously: the
+/// concealed frame ends mid-decay, and the post-gap frame has to continue from
+/// that value rather than from zero.
+#[test]
+fn a_skip_after_concealment_continues_from_the_concealed_tail() {
+    let mut cfg = config();
+    cfg.concealment_skip_threshold_packets = 3;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    scheduler
+        .submit_packet(datagram(0, 8_000))
+        .expect("accepted");
+
+    let _first = frame_at(scheduler.poll(HOST_START_MS));
+    // Sequence 1's slot comes due with nothing buffered behind it, so it is
+    // concealed rather than skipped.
+    let concealed = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
+    // The stream then resumes far ahead: a hole wide enough to abandon, with
+    // the concealed frame as the last thing actually emitted.
+    for sequence in 12..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+    let after_gap = frame_at(scheduler.poll(HOST_START_MS + 12 * u64::from(PACKET_DURATION_MS)));
+
+    assert!(concealed.concealed);
+    assert!(!after_gap.concealed);
+    assert_eq!(after_gap.sequence, 12);
+    let concealed_tail = concealed.samples[concealed.samples.len() - 2];
+    assert_ne!(concealed_tail, 0);
+    assert_eq!(after_gap.samples[0], concealed_tail);
 }
 
 #[test]
