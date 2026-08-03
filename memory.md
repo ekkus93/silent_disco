@@ -894,3 +894,30 @@ Execution constraints for this session:
   jump 822, **one 10ms startup gap and no mid-stream silence at all**.
   `concealed=9 late=0 reorderWindow=3 hardResyncs=0 resyncs=1`, underruns in
   1 of 37 playing seconds, `droppedBeforeSync=330` (1.65s).
+
+## 2026-08-03T16:21:24Z - Claude Opus 5 (1M context) - Concealment gain schedule, and run 22
+
+- **Fixed the last reported artefact**: the attenuation schedule halved on the
+  *first* concealed packet, so an isolated single loss — by far the commonest
+  case — was replaced by a 6dB amplitude step. One packet of repeated waveform
+  (5ms now) is far too short to sound like a loop, so the attenuation bought
+  nothing there and was itself the artefact. Halving now starts on the
+  *second* consecutive loss: a run decays 0, -6, -12, -18dB instead of -6,
+  -12, -18, -24. Long outages still reach inaudibility within a handful of
+  packets; only the isolated-loss case moves.
+- **How it was isolated**: run 21 produced two reported pops in a capture with
+  zero waveform discontinuities, zero mid-stream silence, and zero mid-stream
+  ring underruns. The only correlating events were six concealment clusters of
+  1-2 packets. That ruled out every mechanism the instrumentation *can* see
+  and left the concealment gain itself.
+- **Run 22**: 38.43s, zero discontinuities, one 10ms startup gap, no
+  mid-stream silence. `concealed=2 late=0 reorderWindow=3 hardResyncs=0
+  resyncs=1 droppedBeforeSync=221`. User: "pretty good".
+- **Caveat on run 22, recorded so nobody over-reads it**: it saw only **2**
+  lost packets against run 21's 9 and run 19's 59. The network was simply
+  better, so this run does **not** isolate the gain change — it is consistent
+  with it, not evidence for it. The change stands on the argument (a 6dB step
+  for 5ms is an artefact, not concealment), not on this measurement.
+- **Run-to-run loss variance across this session is large** — 0.025%, 0.12%,
+  0.31%, 0.46%, 0.75% on the same build and network. Any single run is weak
+  evidence; only differences of several times over are meaningful.
