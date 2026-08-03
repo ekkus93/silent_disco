@@ -1573,11 +1573,29 @@ worked end to end: join, approval, and real audio broadcast all succeeded.
       still-unfixed `stop_playback` bug below cutting the song-change step
       short. Retry with a human actually listening is the next real step for
       this block.
-- [ ] **Still unfixed**: a silent-failure bug where `network.stop_playback()` can
-      report success even when the actor never actually reaches
-      `PlaybackState::Stopped` (`DesktopPlaybackStreamer::join()`'s
-      `drop(pump.join())` swallows a panicking/failing pump-thread exit) --
-      see memory.md 2026-08-02 entries for the reproduction.
+- [x] **Fixed 2026-08-03**: a silent-failure bug where `network.stop_playback()`
+      reported success even when the actor never reached
+      `PlaybackState::Stopped`. The pump's exit is what broadcasts `Stop` and
+      makes that transition, and all of it was discarded --
+      `drop(pump.join())` swallowed a panicking pump thread, and
+      `drop(handle.submit_audio_event(..))` swallowed the transition itself.
+      `run_pump` now returns its outcome, `join()` propagates it (including a
+      panicking thread), and all three call sites report it: `stop_playback`
+      returns it, `stop_host_inner` still shuts the runtime down but does not
+      call that a clean shutdown, and `start_playback` surfaces a previous
+      stream's failure instead of burying it under the next one.
+
+      Un-swallowing immediately exposed a second, opposite bug in the first
+      attempt: `cancel_and_join()` returns `Cancelled` on the *normal* stop
+      path, because cancelling is exactly what stopping asks for. Treating
+      that as a failure broke the existing integration test. Only the other
+      kinds -- decode failure, packetize failure, panicking worker -- are real.
+
+      Tests: `stop_playback_reports_a_pump_that_could_not_complete_its_shutdown`
+      (confirmed non-vacuous by restoring `let _ = playback.join()`), plus
+      `desktop_host_streams_real_audio_and_answers_sync_requests` now asserts
+      the actor actually reaches `Stopped` after a successful stop -- the exact
+      property the manual device test checks.
 
 ### 28.1 One listener
 

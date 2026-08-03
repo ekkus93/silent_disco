@@ -351,11 +351,23 @@ impl DesktopHostNetworkControl {
                 "desktop host network endpoint is not active",
             ));
         };
-        if let Some(playback) = active.playback.take() {
-            playback.request_stop();
-            playback.join();
-        }
-        active.runtime.shutdown()
+        // The transport runtime is shut down even when the pump failed to stop
+        // cleanly -- leaving it running would leak a bound socket -- but a
+        // failing pump must not be reported as a clean host shutdown.
+        let playback_result = match active.playback.take() {
+            Some(playback) => {
+                playback.request_stop();
+                playback.join()
+            }
+            None => Ok(()),
+        };
+        active.runtime.shutdown()?;
+        playback_result.map_err(|error| {
+            DesktopNetworkError::invalid_state(format!(
+                "host shut down, but its playback pump did not stop cleanly: {}",
+                error.message
+            ))
+        })
     }
 
     /// Resolves the current staged/decoded/packetized source into an active
@@ -393,8 +405,10 @@ impl DesktopHostNetworkControl {
                     .dto());
                 }
                 _ => {
+                    // A previous stream that ended by failing must surface here
+                    // rather than being buried by starting the next one.
                     if let Some(finished) = active.playback.take() {
-                        finished.join();
+                        finished.join()?;
                     }
                 }
             }
@@ -512,8 +526,7 @@ impl DesktopHostNetworkControl {
                 .ok_or_else(|| DesktopNetworkError::invalid_state("no playback is active").dto())?
         };
         playback.request_stop();
-        playback.join();
-        Ok(())
+        playback.join()
     }
 
     /// Returns the transport worker's current monotonic time, the same

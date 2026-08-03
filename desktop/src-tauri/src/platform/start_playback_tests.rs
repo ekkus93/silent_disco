@@ -75,6 +75,11 @@ fn desktop_host_streams_real_audio_and_answers_sync_requests() {
     wait_for_control(&mut *listener, |message| {
         matches!(message, ControlMessage::Stop(_))
     });
+    // Stopping is only genuinely done once the actor has left `Playing`.
+    // `stop_playback` used to return `Ok` without this ever happening.
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
+    });
 
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
@@ -193,6 +198,61 @@ fn desktop_host_bursts_a_short_source_instead_of_pacing_one_packet_per_tick() {
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");
+}
+
+/// `stop_playback` must report a pump that could not finish stopping, rather
+/// than returning `Ok` regardless.
+///
+/// The pump's exit is what broadcasts `Stop` and transitions the actor to
+/// `Stopped`, and all three of its shutdown steps -- plus a panicking pump
+/// thread -- were discarded (`drop(pump.join())`, `drop(handle.submit_audio_event(..))`).
+/// A caller could therefore be told the stream stopped while the session was
+/// still `Playing`, with nothing anywhere reporting otherwise.
+#[test]
+fn stop_playback_reports_a_pump_that_could_not_complete_its_shutdown() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    wait_for_control(&mut *listener, |message| {
+        matches!(message, ControlMessage::StreamStart(_))
+    });
+
+    // Take the actor away, so the pump's closing `Stopped` transition cannot
+    // be delivered. Stopping must surface that instead of claiming success.
+    actor.shutdown().expect("actor shutdown");
+
+    let error = network
+        .stop_playback()
+        .expect_err("stopping must report that the pump could not finish");
+    // Which layer reports it (the actor, here) matters less than that the
+    // failure is structured and reaches the caller at all.
+    assert!(!error.code.is_empty(), "the failure must carry a stable code");
+    assert!(
+        !error.message.is_empty(),
+        "the reported failure must say what went wrong"
+    );
+
+    listener.shutdown().expect("listener shutdown");
+    // The actor was deliberately taken away, so the host shutdown reports that
+    // too rather than claiming success -- the same property, one layer up.
+    network
+        .shutdown()
+        .expect_err("shutdown must report the missing actor");
 }
 
 fn stage_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRegistry) {

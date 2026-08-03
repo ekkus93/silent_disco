@@ -5,7 +5,7 @@
 
 use super::network::DesktopHostNetworkControl;
 use crate::dto::DesktopErrorDto;
-use silent_disco_core::audio::StreamingPacketizeHandle;
+use silent_disco_core::audio::{PacketizerWorkerErrorKind, StreamingPacketizeHandle};
 use silent_disco_core::domain::{PlaybackState, SessionId, StreamId};
 use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, Stop};
 use silent_disco_core::runtime::{AudioEvent, CoreActorHandle};
@@ -48,7 +48,7 @@ pub(super) struct DesktopPlaybackStreamer {
     pub(super) handle: CoreActorHandle,
     pub(super) paused: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    pump: Option<JoinHandle<()>>,
+    pump: Option<JoinHandle<Result<(), DesktopErrorDto>>>,
 }
 
 impl DesktopPlaybackStreamer {
@@ -101,11 +101,30 @@ impl DesktopPlaybackStreamer {
         self.stop.store(true, Ordering::Release);
     }
 
-    /// Blocks until the pump thread has exited. Call after [`Self::request_stop`].
-    pub(super) fn join(mut self) {
-        if let Some(pump) = self.pump.take() {
-            drop(pump.join());
-        }
+    /// Blocks until the pump thread has exited, reporting whatever it observed
+    /// on the way out. Call after [`Self::request_stop`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when the pump thread panicked, or when any
+    /// of its shutdown steps failed -- cancelling the packetizer, broadcasting
+    /// the `Stop` control message, or transitioning the actor to
+    /// [`PlaybackState::Stopped`]. Discarding this is what let `stop_playback`
+    /// report success while the session never actually left `Playing`.
+    pub(super) fn join(mut self) -> Result<(), DesktopErrorDto> {
+        let Some(pump) = self.pump.take() else {
+            return Ok(());
+        };
+        pump.join().map_err(|_| {
+            DesktopErrorDto::new(
+                "desktop.playback.pump_panicked",
+                "audio",
+                "error",
+                false,
+                "the playback pump thread ended by panicking, so the stream was never stopped \
+                 cleanly",
+            )
+        })?
     }
 
     /// True once the pump thread has exited on its own (end-of-file or a
@@ -120,6 +139,10 @@ impl Drop for DesktopPlaybackStreamer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(pump) = self.pump.take() {
+            // Nothing can be returned from `drop`, so this is the one path that
+            // cannot report a failing pump. `join` is the supported route and
+            // every caller that can propagate uses it; reaching here means the
+            // streamer was dropped without being stopped.
             drop(pump.join());
         }
     }
@@ -134,13 +157,13 @@ fn spawn_pump(
     stream_id: StreamId,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
-) -> Result<JoinHandle<()>, DesktopErrorDto> {
+) -> Result<JoinHandle<Result<(), DesktopErrorDto>>, DesktopErrorDto> {
     thread::Builder::new()
         .name("silent-disco-desktop-playback-pump".to_owned())
         .spawn(move || {
             run_pump(
                 packetizer, &network, &handle, session_id, stream_id, &stop, &paused,
-            );
+            )
         })
         .map_err(|error| {
             DesktopErrorDto::new(
@@ -161,7 +184,7 @@ fn run_pump(
     stream_id: StreamId,
     stop: &AtomicBool,
     paused: &AtomicBool,
-) {
+) -> Result<(), DesktopErrorDto> {
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -181,16 +204,36 @@ fn run_pump(
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
-    drop(packetizer.cancel_and_join());
-    let host_stop_time_ms = network.transport_now().unwrap_or_default();
-    drop(
+    // Every shutdown step is attempted even when an earlier one fails -- a
+    // packetizer that will not cancel must not prevent the listeners being
+    // told the stream ended, nor the actor leaving `Playing` -- and the first
+    // failure is what gets reported.
+    let packetizer_result = match packetizer.cancel_and_join() {
+        Ok(_) => Ok(()),
+        // Cancellation is precisely what stopping asks the worker to do, so it
+        // is this path's normal outcome rather than a failure. Every other kind
+        // -- a decode failure, a packetize failure, a panicking worker -- is
+        // real and must not be reported as a clean stop.
+        Err(error) if error.kind == PacketizerWorkerErrorKind::Cancelled => Ok(()),
+        Err(error) => Err(DesktopErrorDto::new(
+            "desktop.playback.packetizer_shutdown_failed",
+            "audio",
+            "error",
+            false,
+            &error.message,
+        )),
+    };
+    let broadcast_result = network.transport_now().and_then(|host_stop_time_ms| {
         network.broadcast_playback_frame(ProtocolFrame::Control(ControlMessage::Stop(Stop {
             session_id,
             stream_id,
             host_stop_time_ms,
-        }))),
-    );
-    drop(handle.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)));
+        })))
+    });
+    let stopped_result = handle
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+        .map_err(DesktopErrorDto::from);
+    packetizer_result.and(broadcast_result).and(stopped_result)
 }
 
 /// Blocks, in short stop-responsive increments, until `frame`'s presentation
