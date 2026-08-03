@@ -772,3 +772,70 @@ fn a_listener_joining_a_stream_already_in_progress_can_bootstrap() {
         "a listener joining mid-stream never reached real audio"
     );
 }
+
+/// Local time at which a scheduler's frame is actually heard, given that a
+/// stream is heard at `write time + ring depth` and the ring drains at a
+/// fixed rate. With no ring in this test the depth is the write-lead the
+/// pump maintains, which is constant across listeners.
+fn playout_time_ms(write_time_ms: u64, lead_ms: u64) -> u64 {
+    write_time_ms + lead_ms
+}
+
+#[test]
+fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together() {
+    // Same host stream, same offset; the only difference is when each
+    // listener finished buffering and began playing. That difference used to
+    // shift each listener's whole stream by its own startup latency.
+    const LEAD_MS: u64 = 400;
+    let mut early = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    let mut late = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    // Stay inside the default reorder window.
+    for sequence in 0..60 {
+        early
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+        late.submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    // One listener starts promptly; the other is 300ms slower to lock sync.
+    let early_start = HOST_START_MS + 100;
+    let late_start = HOST_START_MS + 400;
+    let early_frame = frame_at(early.poll(early_start));
+    let late_frame = frame_at(late.poll(late_start));
+
+    // Each plays a frame that is genuinely due, so their playout times for
+    // the same sequence agree rather than differing by their startup skew.
+    assert_eq!(
+        early_frame.sequence, 5,
+        "the early listener must start on the frame due at its start time"
+    );
+    assert_eq!(
+        late_frame.sequence, 20,
+        "the late listener must skip the head it missed, not replay it"
+    );
+
+    // Advance the early listener to the same sequence the late one started
+    // on, and compare when each would be heard.
+    let mut early_playout = None;
+    for step in 1..40 {
+        let frame = frame_at(early.poll(early_start + step * u64::from(PACKET_DURATION_MS)));
+        if frame.sequence == late_frame.sequence {
+            early_playout = Some(playout_time_ms(
+                early_start + step * u64::from(PACKET_DURATION_MS),
+                LEAD_MS,
+            ));
+            break;
+        }
+    }
+    let early_playout =
+        early_playout.expect("the early listener never reached the shared sequence");
+    let late_playout = playout_time_ms(late_start, LEAD_MS);
+
+    let skew_ms = early_playout.abs_diff(late_playout);
+    assert!(
+        skew_ms <= u64::from(PACKET_DURATION_MS),
+        "listeners drifted {skew_ms}ms apart on the same sequence; \
+         they must agree within one packet"
+    );
+}

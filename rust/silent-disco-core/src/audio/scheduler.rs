@@ -401,6 +401,7 @@ impl PlaybackScheduler {
                     return SchedulerPoll::Buffering { buffered_ms };
                 }
                 self.state = SchedulerState::Playing;
+                self.discard_already_late_head(local_now_ms);
             }
             SchedulerState::Playing => {}
         }
@@ -542,6 +543,37 @@ impl PlaybackScheduler {
         }
         self.fade_in_next_real_frame = true;
         frames
+    }
+
+    /// Drops buffered packets whose presentation deadline has already passed,
+    /// so playback begins on a frame that is genuinely due.
+    ///
+    /// This is what makes two listeners agree. A stream is heard at
+    /// `write time + ring depth`, and writing ahead into a FIFO preserves
+    /// relative timing exactly — so the entire stream is offset by however
+    /// late its *first* frame was when playback began. Starting on a stale
+    /// head therefore shifts everything that follows by the listener's own
+    /// startup latency, and two devices that lock sync at different moments
+    /// stay that far apart for the whole session.
+    ///
+    /// The cost is the already-elapsed head of the stream, bounded by the
+    /// startup buffer. Being late together is the product; hearing the first
+    /// second is not.
+    fn discard_already_late_head(&mut self, local_now_ms: u64) {
+        while let Some(sequence) = self.jitter_buffer.peek_next_sequence() {
+            let deadline_ms = host_to_local_ms(
+                self.expected_host_presentation_time_ms(sequence),
+                self.offset_ms,
+            );
+            if deadline_ms >= local_now_ms {
+                break;
+            }
+            if self.jitter_buffer.pop_in_order().is_none() {
+                // The head is missing rather than stale; concealment owns it.
+                break;
+            }
+            self.fade_in_next_real_frame = true;
+        }
     }
 
     /// Applies an updated host/local clock-offset estimate, deciding between

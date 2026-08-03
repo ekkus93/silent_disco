@@ -300,12 +300,17 @@ impl PlaybackPump {
         if !self.sync_locked {
             self.sync_locked = true;
             self.scheduler.rebuffer(offset_ms);
+            self.awaiting_prefill = true;
             return SyncApplyOutcome::Locked;
         }
         match self.scheduler.apply_offset_update(offset_ms) {
             OffsetUpdateOutcome::SoftCorrected => SyncApplyOutcome::SoftCorrected,
             OffsetUpdateOutcome::HardResyncRequired => {
                 self.scheduler.rebuffer(offset_ms);
+                // Playback restarts from an empty ring, so its position must
+                // be re-aligned to the timeline rather than inheriting
+                // whatever depth happened to remain.
+                self.awaiting_prefill = true;
                 SyncApplyOutcome::Rebuffered
             }
         }
@@ -434,6 +439,7 @@ impl PlaybackPump {
                 // startup buffer, not to end playback. Without this the
                 // stream would stay silent forever after one long outage.
                 self.scheduler.rebuffer(self.offset_ms);
+                self.awaiting_prefill = true;
                 PumpTick::AwaitingRebuffer
             }
             SchedulerPoll::Stopped => PumpTick::Stopped,
@@ -889,10 +895,15 @@ mod tests {
                 .expect("accepted");
         }
 
-        // Well past sequence 0's deadline: nothing to align, play at once.
+        // Well past sequence 0's deadline. The scheduler drops the elapsed
+        // head and starts on a frame that is genuinely due, so there is
+        // nothing to align and no prefill is queued.
         let tick = pump.tick(HOST_START_MS + 5_000);
 
-        assert!(matches!(tick, PumpTick::Queued { sequence: 0, .. }));
+        assert!(
+            matches!(tick, PumpTick::Queued { .. }),
+            "expected a queued frame, got {tick:?}"
+        );
         assert_eq!(pump.prefill_frames(), 0);
     }
 

@@ -390,6 +390,12 @@ impl JitterBuffer {
         max - min
     }
 
+    /// Sequence of the earliest buffered packet, if any.
+    #[must_use]
+    pub fn peek_next_sequence(&self) -> Option<u64> {
+        self.packets.keys().next().copied()
+    }
+
     /// The sequence this buffer will emit next via [`Self::pop_in_order`].
     #[must_use]
     pub const fn next_expected_sequence(&self) -> u64 {
