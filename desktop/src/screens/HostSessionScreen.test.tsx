@@ -71,6 +71,7 @@ function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSn
     playbackControlsEnabled: false,
     transportWorkerRunning: true,
     transportError: null,
+    broadcast: null,
     lastError: null,
     ...overrides,
   };

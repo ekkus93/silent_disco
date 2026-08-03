@@ -11,8 +11,10 @@ use silent_disco_core::runtime::{
     DeliveryReport, SessionAdvertisement, TransportEffect, TransportEffectRequest,
     TransportEvent as CoreTransportEvent,
 };
-use silent_disco_core::transport::{HostTransportNode, TransportClock, TransportErrorKind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use silent_disco_core::transport::{
+    HostTransportNode, TransportClock, TransportDelivery, TransportErrorKind,
+};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -31,6 +33,45 @@ const MAX_BROADCAST_FRAMES_PER_TICK: usize = 16;
 pub(crate) struct HostTransportStatus {
     pub(crate) running: bool,
     pub(crate) last_error: Option<String>,
+    pub(crate) broadcast: BroadcastDiagnostics,
+}
+
+/// Delivery and queue-pressure accounting for the real-time broadcast path.
+///
+/// `broadcast_audio`/`broadcast_sync` already return a [`TransportDelivery`]
+/// describing how many recipients a frame was intended for and how many it
+/// actually reached; the worker used to discard that entirely and keep only an
+/// aggregate last-error string. Nothing therefore reported partial delivery,
+/// and a broadcast to *zero* recipients was indistinguishable from a
+/// successful one -- which CLAUDE.md names explicitly as not-success.
+///
+/// These are counts across a delivery attempt, not per-peer identities: the
+/// transport reports intended/successful/failed totals, and attributing a
+/// failure to a specific listener would need a change in the shared transport
+/// layer rather than here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct BroadcastDiagnostics {
+    /// Frames the worker attempted to broadcast.
+    pub(crate) frames_attempted: u64,
+    /// Frames the transport rejected outright.
+    pub(crate) frames_failed: u64,
+    /// Frames that reached every intended recipient.
+    pub(crate) frames_fully_delivered: u64,
+    /// Frames that reached some but not all intended recipients.
+    pub(crate) frames_partially_delivered: u64,
+    /// Frames broadcast while no listener was connected. Not a failure of the
+    /// transport, but not delivery either, and it must stay visible.
+    pub(crate) frames_without_recipients: u64,
+    /// Recipient-sends attempted, summed across frames.
+    pub(crate) recipients_intended: u64,
+    /// Recipient-sends that succeeded.
+    pub(crate) recipients_delivered: u64,
+    /// Frames currently waiting in the broadcast queue.
+    pub(crate) queue_depth: u64,
+    /// Deepest the broadcast queue has been.
+    pub(crate) queue_peak_depth: u64,
+    /// Frames dropped because the broadcast queue was full.
+    pub(crate) queue_overflows: u64,
 }
 
 pub(crate) struct ActiveHostSessionSnapshot {
@@ -39,12 +80,86 @@ pub(crate) struct ActiveHostSessionSnapshot {
     pub(crate) worker_running: bool,
     pub(crate) last_error: Option<String>,
     pub(crate) observed_at_ms: u64,
+    pub(crate) broadcast: BroadcastDiagnostics,
 }
 
 #[derive(Debug)]
 struct SharedStatus {
     running: AtomicBool,
     last_error: Mutex<Option<String>>,
+    broadcast: BroadcastCounters,
+}
+
+/// Atomic backing for [`BroadcastDiagnostics`]. Updated on the real-time
+/// broadcast path, so every field is a plain relaxed counter rather than
+/// anything that could block the worker or the playback pump.
+#[derive(Debug, Default)]
+struct BroadcastCounters {
+    frames_attempted: AtomicU64,
+    frames_failed: AtomicU64,
+    frames_fully_delivered: AtomicU64,
+    frames_partially_delivered: AtomicU64,
+    frames_without_recipients: AtomicU64,
+    recipients_intended: AtomicU64,
+    recipients_delivered: AtomicU64,
+    queue_depth: AtomicU64,
+    queue_peak_depth: AtomicU64,
+    queue_overflows: AtomicU64,
+}
+
+impl BroadcastCounters {
+    fn snapshot(&self) -> BroadcastDiagnostics {
+        BroadcastDiagnostics {
+            frames_attempted: self.frames_attempted.load(Ordering::Relaxed),
+            frames_failed: self.frames_failed.load(Ordering::Relaxed),
+            frames_fully_delivered: self.frames_fully_delivered.load(Ordering::Relaxed),
+            frames_partially_delivered: self.frames_partially_delivered.load(Ordering::Relaxed),
+            frames_without_recipients: self.frames_without_recipients.load(Ordering::Relaxed),
+            recipients_intended: self.recipients_intended.load(Ordering::Relaxed),
+            recipients_delivered: self.recipients_delivered.load(Ordering::Relaxed),
+            queue_depth: self.queue_depth.load(Ordering::Relaxed),
+            queue_peak_depth: self.queue_peak_depth.load(Ordering::Relaxed),
+            queue_overflows: self.queue_overflows.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Records one frame entering the queue, keeping the peak depth current.
+    fn record_enqueued(&self) {
+        let depth = self.queue_depth.fetch_add(1, Ordering::Relaxed) + 1;
+        self.queue_peak_depth.fetch_max(depth, Ordering::Relaxed);
+    }
+
+    fn record_dequeued(&self) {
+        // Saturating rather than wrapping: a depth that has already reached
+        // zero must not roll over into a nonsense diagnostic.
+        let _ = self
+            .queue_depth
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |depth| {
+                Some(depth.saturating_sub(1))
+            });
+    }
+
+    fn record_delivery(&self, delivery: &TransportDelivery) {
+        let intended = u64::from(delivery.report.intended_peers);
+        let successful = u64::from(delivery.report.successful_peers);
+        self.frames_attempted.fetch_add(1, Ordering::Relaxed);
+        self.recipients_intended.fetch_add(intended, Ordering::Relaxed);
+        self.recipients_delivered
+            .fetch_add(successful, Ordering::Relaxed);
+        if intended == 0 {
+            self.frames_without_recipients.fetch_add(1, Ordering::Relaxed);
+        } else if successful == intended {
+            self.frames_fully_delivered.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.frames_partially_delivered
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_failure(&self) {
+        self.frames_attempted.fetch_add(1, Ordering::Relaxed);
+        self.frames_failed.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 pub(crate) struct DesktopHostTransportRuntime {
@@ -69,6 +184,7 @@ impl DesktopHostTransportRuntime {
         let status = Arc::new(SharedStatus {
             running: AtomicBool::new(true),
             last_error: Mutex::new(None),
+            broadcast: BroadcastCounters::default(),
         });
         let (effect_sender, effect_receiver) = sync_channel(TRANSPORT_EFFECT_QUEUE_CAPACITY);
         let (broadcast_sender, broadcast_receiver) = sync_channel(BROADCAST_FRAME_QUEUE_CAPACITY);
@@ -116,10 +232,16 @@ impl DesktopHostTransportRuntime {
             ));
         }
         match self.broadcast_sender.try_send(frame) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(DesktopNetworkError::resource_limit(
-                "desktop host transport broadcast queue is full",
-            )),
+            Ok(()) => {
+                self.status.broadcast.record_enqueued();
+                Ok(())
+            }
+            Err(TrySendError::Full(_)) => {
+                self.status.broadcast.queue_overflows.fetch_add(1, Ordering::Relaxed);
+                Err(DesktopNetworkError::resource_limit(
+                    "desktop host transport broadcast queue is full",
+                ))
+            }
             Err(TrySendError::Disconnected(_)) => Err(DesktopNetworkError::unavailable(
                 "desktop host transport worker is unavailable",
             )),
@@ -171,6 +293,7 @@ impl DesktopHostTransportRuntime {
         Ok(HostTransportStatus {
             running: self.status.running.load(Ordering::Acquire),
             last_error,
+            broadcast: self.status.broadcast.snapshot(),
         })
     }
 
@@ -265,14 +388,19 @@ fn process_broadcast_frames(
                 ));
             }
         };
+        status.broadcast.record_dequeued();
         let delivery = match &frame {
             ProtocolFrame::Control(message) => node.broadcast_control(message),
             ProtocolFrame::Audio(_) => node.broadcast_audio(&frame),
             ProtocolFrame::SyncResponse(_) => node.broadcast_sync(&frame),
             ProtocolFrame::SyncRequest(_) => continue, // the host never sends this frame kind
         };
-        if let Err(error) = delivery {
-            set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+        match delivery {
+            Ok(delivery) => status.broadcast.record_delivery(&delivery),
+            Err(error) => {
+                status.broadcast.record_failure();
+                set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+            }
         }
     }
     Ok(())

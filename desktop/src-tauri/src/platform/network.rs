@@ -596,6 +596,7 @@ impl DesktopHostNetworkControl {
             worker_running: status.running,
             last_error: status.last_error,
             observed_at_ms: active.runtime.observed_at().get(),
+            broadcast: status.broadcast,
         }))
     }
 

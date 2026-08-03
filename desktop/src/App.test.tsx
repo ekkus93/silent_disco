@@ -142,6 +142,7 @@ const hostSessionSnapshot: HostSessionSnapshotDto = {
   playbackControlsEnabled: false,
   transportWorkerRunning: true,
   transportError: null,
+  broadcast: null,
   lastError: null,
 };
 

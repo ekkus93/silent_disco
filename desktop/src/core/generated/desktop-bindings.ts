@@ -44,7 +44,9 @@ export type ConnectedListenerDto = { deviceId: string, displayName: string, trus
 
 export type DeliveryReportDto = { intendedPeers: number, successfulPeers: number, failedPeers: number, severity: string, };
 
-export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, lastError: DesktopErrorDto | null, };
+export type BroadcastDeliveryDto = { framesAttempted: string, framesFailed: string, framesFullyDelivered: string, framesPartiallyDelivered: string, framesWithoutRecipients: string, recipientsIntended: string, recipientsDelivered: string, queueDepth: string, queuePeakDepth: string, queueOverflows: string, };
+
+export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, };
 
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, };
 

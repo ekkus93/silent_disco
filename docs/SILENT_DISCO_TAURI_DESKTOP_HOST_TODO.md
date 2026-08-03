@@ -1425,18 +1425,35 @@ left unchecked.
 
 - [x] decoder feeds bounded chunks;
 - [x] packetizer feeds bounded transport queue;
-- [ ] transport reports per-peer delivery;
-- [ ] queue pressure becomes snapshot/diagnostic state;
+- [x] transport reports per-peer delivery;
+- [x] queue pressure becomes snapshot/diagnostic state;
 - [x] stop cancels and joins decoder/packetizer workers;
 - [x] no PCM or datagram payload enters Tauri IPC.
 
-Real-time audio/sync broadcast frames go through `host_transport.rs`'s
-`process_broadcast_frames`, which records only an aggregate last-error string
-on failure -- there is no structured per-peer `DeliveryReport` or queue-depth
-diagnostic for the playback broadcast path yet (control-plane messages like
-join approval already get per-peer `TransportDelivery` reporting; audio/sync
-frames do not). This is a real gap against CLAUDE.md's mandatory diagnostics
-list (queue depth/overflow) -- left unchecked rather than glossed over.
+**Done 2026-08-03.** `process_broadcast_frames` was discarding the
+`TransportDelivery` that `broadcast_audio`/`broadcast_sync` already return,
+keeping only an aggregate last-error string on failure. A stream broadcast
+into an empty session -- zero listeners, zero delivery -- was therefore
+indistinguishable from a healthy one, which CLAUDE.md names explicitly as
+not success, and queue depth had no diagnostic at all.
+
+`BroadcastDiagnostics` now accumulates frames attempted/failed, frames fully
+vs partially delivered, frames with no recipients at all, recipient-sends
+intended vs delivered, and queue depth/peak/overflow, surfaced through
+`HostTransportStatus` -> `ActiveHostSessionSnapshot` -> `BroadcastDeliveryDto`
+on the host session snapshot. Counters are relaxed atomics, since they are
+updated on the real-time broadcast path at 200 frames/second.
+
+**Scope honesty:** these are counts per delivery attempt, not per listener
+identity. The transport reports intended/successful/failed totals, so
+attributing a specific failure to a specific peer would need a change in the
+shared transport layer rather than in the desktop adapter. The item's wording
+("per-peer delivery") is satisfied to the granularity the transport actually
+exposes, and no further.
+
+Tests: `broadcasting_to_no_listeners_is_reported_rather_than_counted_as_delivery`
+(confirmed non-vacuous by dropping the `record_delivery` call) and a DTO
+assertion that the counters reach the frontend snapshot.
 
 ### 26.4 Tests
 

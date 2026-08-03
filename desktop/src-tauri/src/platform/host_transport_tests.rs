@@ -124,6 +124,91 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
     actor.shutdown().expect("actor shutdown");
 }
 
+/// A broadcast that reached nobody must be visible as exactly that.
+///
+/// `broadcast_audio` already returns a `TransportDelivery` saying how many
+/// recipients a frame was intended for and how many it reached; the worker
+/// discarded it and kept only an aggregate last-error string. So a stream
+/// broadcast into an empty session -- zero listeners, zero delivery -- looked
+/// identical to a healthy one, which CLAUDE.md names explicitly as not
+/// success. Queue depth had no diagnostic at all.
+#[test]
+fn broadcasting_to_no_listeners_is_reported_rather_than_counted_as_delivery() {
+    let (sender, receiver) = channel();
+    let actor = CoreActorRuntime::start(
+        CoreActorConfig::new(DeviceId::new("desktop-broadcast-diag").expect("host ID")),
+        move |notification| {
+            sender.send(notification).expect("observer receiver");
+            Ok(())
+        },
+    )
+    .expect("start actor");
+    let handle = actor.handle();
+    // Kept alive but undrained: dropping it makes the actor's notification
+    // thread panic on send, which is not what this test is about.
+    let _notifications = receiver;
+
+    let advertisement = silent_disco_core::runtime::SessionAdvertisement::new(
+        silent_disco_core::domain::SessionId::new("session-broadcast-diag").expect("session ID"),
+        DeviceId::new("desktop-broadcast-diag").expect("device ID"),
+        "Broadcast diagnostics",
+        ApprovalMode::Manual,
+        2,
+        None,
+    )
+    .expect("advertisement");
+    let factory = production_transport_factory();
+    let node = factory
+        .bind_host(
+            HostTransportConfig::loopback(advertisement.session_id.clone()),
+            Arc::new(SystemTransportClock::default()),
+        )
+        .expect("bind desktop host");
+    let runtime = DesktopHostTransportRuntime::start(
+        node,
+        advertisement.clone(),
+        Arc::new(handle.clone()),
+        Arc::new(SystemTransportClock::default()),
+    )
+    .expect("start desktop transport worker");
+
+    // No listener has joined, so this frame has nowhere to go.
+    runtime
+        .broadcast_frame(ProtocolFrame::Control(ControlMessage::Stop(
+            silent_disco_core::protocol::Stop {
+                session_id: advertisement.session_id.clone(),
+                stream_id: silent_disco_core::domain::StreamId::new("stream-broadcast-diag")
+                    .expect("stream ID"),
+                host_stop_time_ms: silent_disco_core::domain::MonotonicMillis::new(0),
+            },
+        )))
+        .expect("frame accepted into the broadcast queue");
+
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let broadcast = loop {
+        let status = runtime.status().expect("transport status");
+        if status.broadcast.frames_attempted > 0 {
+            break status.broadcast;
+        }
+        assert!(Instant::now() < deadline, "the frame was never broadcast");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    assert_eq!(broadcast.frames_attempted, 1);
+    assert_eq!(
+        broadcast.frames_without_recipients, 1,
+        "a broadcast with no recipients must not be counted as delivered"
+    );
+    assert_eq!(broadcast.frames_fully_delivered, 0);
+    assert_eq!(broadcast.recipients_delivered, 0);
+    // The queue accounting must balance: what went in has come back out.
+    assert_eq!(broadcast.queue_depth, 0);
+    assert_eq!(broadcast.queue_peak_depth, 1);
+    assert_eq!(broadcast.queue_overflows, 0);
+
+    actor.shutdown().expect("actor shutdown");
+}
+
 fn submit(
     handle: &silent_disco_core::runtime::CoreActorHandle,
     revision: u64,

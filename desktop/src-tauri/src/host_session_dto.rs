@@ -81,7 +81,31 @@ pub struct HostSessionSnapshotDto {
     pub playback_controls_enabled: bool,
     pub transport_worker_running: bool,
     pub transport_error: Option<String>,
+    pub broadcast: Option<BroadcastDeliveryDto>,
     pub last_error: Option<DesktopErrorDto>,
+}
+
+/// Delivery and queue-pressure accounting for the real-time broadcast path,
+/// so partial delivery, zero-recipient broadcasts, and queue overflow are
+/// visible instead of being folded into a single last-error string.
+///
+/// Counts are per delivery attempt rather than per listener identity: the
+/// transport reports intended/successful/failed totals, and attributing a
+/// failure to a specific peer would need a shared-transport change.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct BroadcastDeliveryDto {
+    pub frames_attempted: String,
+    pub frames_failed: String,
+    pub frames_fully_delivered: String,
+    pub frames_partially_delivered: String,
+    pub frames_without_recipients: String,
+    pub recipients_intended: String,
+    pub recipients_delivered: String,
+    pub queue_depth: String,
+    pub queue_peak_depth: String,
+    pub queue_overflows: String,
 }
 
 impl HostSessionSnapshotDto {
@@ -101,6 +125,18 @@ impl HostSessionSnapshotDto {
             invite_code_required: value.advertisement.approval_mode
                 == silent_disco_core::domain::ApprovalMode::InviteCode,
             expires_at_ms: None,
+        });
+        let broadcast = active.map(|value| BroadcastDeliveryDto {
+            frames_attempted: value.broadcast.frames_attempted.to_string(),
+            frames_failed: value.broadcast.frames_failed.to_string(),
+            frames_fully_delivered: value.broadcast.frames_fully_delivered.to_string(),
+            frames_partially_delivered: value.broadcast.frames_partially_delivered.to_string(),
+            frames_without_recipients: value.broadcast.frames_without_recipients.to_string(),
+            recipients_intended: value.broadcast.recipients_intended.to_string(),
+            recipients_delivered: value.broadcast.recipients_delivered.to_string(),
+            queue_depth: value.broadcast.queue_depth.to_string(),
+            queue_peak_depth: value.broadcast.queue_peak_depth.to_string(),
+            queue_overflows: value.broadcast.queue_overflows.to_string(),
         });
         let last_delivery_state = snapshot
             .last_delivery
@@ -155,6 +191,7 @@ impl HostSessionSnapshotDto {
             playback_controls_enabled,
             transport_worker_running: active.is_some_and(|value| value.worker_running),
             transport_error: active.and_then(|value| value.last_error.clone()),
+            broadcast,
             last_error: snapshot.last_error.clone().map(DesktopErrorDto::from),
         }
     }
@@ -299,9 +336,30 @@ mod tests {
             worker_running: true,
             last_error: None,
             observed_at_ms: 250,
+            broadcast: crate::platform::host_transport::BroadcastDiagnostics {
+                frames_attempted: 400,
+                frames_failed: 1,
+                frames_fully_delivered: 380,
+                frames_partially_delivered: 12,
+                frames_without_recipients: 7,
+                recipients_intended: 800,
+                recipients_delivered: 772,
+                queue_depth: 3,
+                queue_peak_depth: 41,
+                queue_overflows: 2,
+            },
         };
 
         let dto = HostSessionSnapshotDto::from_parts(&snapshot, Some(&active));
+        // Broadcast delivery must reach the UI as distinguishable outcomes,
+        // not be folded into one last-error string.
+        let broadcast = dto.broadcast.as_ref().expect("broadcast diagnostics");
+        assert_eq!(broadcast.frames_attempted, "400");
+        assert_eq!(broadcast.frames_partially_delivered, "12");
+        assert_eq!(broadcast.frames_without_recipients, "7");
+        assert_eq!(broadcast.recipients_delivered, "772");
+        assert_eq!(broadcast.queue_peak_depth, "41");
+        assert_eq!(broadcast.queue_overflows, "2");
         assert_eq!(dto.pending_join_requests[0].age_ms, "150");
         assert_eq!(
             dto.connected_listeners[0].last_contact_age_ms.as_deref(),

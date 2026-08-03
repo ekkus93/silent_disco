@@ -3,7 +3,8 @@ use crate::dto::{
     StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
 };
 use crate::host_session_dto::{
-    ConnectedListenerDto, DeliveryReportDto, HostConnectionDto, HostSessionSnapshotDto,
+    BroadcastDeliveryDto, ConnectedListenerDto, DeliveryReportDto, HostConnectionDto,
+    HostSessionSnapshotDto,
     PendingJoinRequestDto,
 };
 use crate::platform::network_dto::{
@@ -58,6 +59,7 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<PendingJoinRequestDto>(&config),
         declaration::<ConnectedListenerDto>(&config),
         declaration::<DeliveryReportDto>(&config),
+        declaration::<BroadcastDeliveryDto>(&config),
         declaration::<HostSessionSnapshotDto>(&config),
         declaration::<NetworkBindingDto>(&config),
         declaration::<NetworkInterfaceSnapshotDto>(&config),
