@@ -401,7 +401,10 @@ mod tests {
         let error = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
-            PlaybackPumpConfig { volume: 2.0 },
+            PlaybackPumpConfig {
+                volume: 2.0,
+                ..PlaybackPumpConfig::default()
+            },
             0.0,
         )
         .expect_err("an out-of-range volume must be rejected");

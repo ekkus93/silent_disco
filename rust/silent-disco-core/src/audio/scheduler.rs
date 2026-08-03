@@ -580,6 +580,19 @@ impl PlaybackScheduler {
     pub const fn channels(&self) -> u16 {
         self.config.channels
     }
+
+    /// Sample rate implied by this stream's validated packet geometry.
+    #[must_use]
+    pub const fn sample_rate(&self) -> u32 {
+        self.config.samples_per_packet * 1_000 / self.config.packet_duration_ms
+    }
+
+    /// Maps a host presentation time onto this scheduler's local timeline
+    /// using its current clock-offset estimate.
+    #[must_use]
+    pub fn local_time_for_host_ms(&self, host_time_ms: u64) -> u64 {
+        host_to_local_ms(host_time_ms, self.offset_ms)
+    }
 }
 
 #[allow(

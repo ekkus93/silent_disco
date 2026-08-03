@@ -2,12 +2,19 @@ use core::fmt;
 use std::error::Error;
 
 use super::{
-    PlaybackScheduler, RENDER_CHANNELS, RenderRingProducer, ScheduledFrame, SchedulerPoll,
+    DEFAULT_TARGET_FILL_FRAMES, PlaybackScheduler, RENDER_CHANNELS, RenderRingProducer,
+    ScheduledFrame, SchedulerPoll,
 };
 
 /// Full-scale magnitude of a 16-bit PCM sample, used to normalize into the
 /// render ring's float32 representation.
 const PCM16_FULL_SCALE: f32 = 32_768.0;
+
+/// Default distance ahead of its presentation deadline at which a frame is
+/// handed to the render ring.
+pub const DEFAULT_WRITE_LEAD_MS: u64 = 400;
+/// Default ceiling on the stream-start silence prefill.
+pub const DEFAULT_MAX_PREFILL_MS: u64 = 800;
 
 /// Tuning for one [`PlaybackPump`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,11 +22,33 @@ pub struct PlaybackPumpConfig {
     /// Linear output gain applied while converting to the ring's float32
     /// format, in `0.0..=1.0`.
     pub volume: f32,
+    /// How far ahead of its presentation deadline each frame is written into
+    /// the ring. The ring is FIFO, so writing early does not move when a frame
+    /// is heard — it decides how much audio the real-time consumer has in hand
+    /// when the writer is briefly descheduled. Writing at the deadline instead
+    /// leaves the ring near-empty, and any writer-side jitter then starves the
+    /// output for a few milliseconds at a time: a hard cut below the level any
+    /// concealment ramp can reach.
+    pub write_lead_ms: u64,
+    /// Ceiling on the stream-start silence prefill that aligns the first
+    /// frame's ring position with its presentation deadline.
+    pub max_prefill_ms: u64,
+    /// Ring depth, in frames, at which the pump stops writing and lets the
+    /// consumer drain. Without it a large startup backlog pins the ring at
+    /// full capacity for the whole stream — maximum latency, and every write
+    /// blocked on the consumer — because a full ring would be the only thing
+    /// pacing the writer.
+    pub target_depth_frames: usize,
 }
 
 impl Default for PlaybackPumpConfig {
     fn default() -> Self {
-        Self { volume: 1.0 }
+        Self {
+            volume: 1.0,
+            write_lead_ms: DEFAULT_WRITE_LEAD_MS,
+            max_prefill_ms: DEFAULT_MAX_PREFILL_MS,
+            target_depth_frames: DEFAULT_TARGET_FILL_FRAMES,
+        }
     }
 }
 
@@ -31,6 +60,9 @@ pub enum PlaybackPumpConfigErrorKind {
     /// The scheduler's channel count does not match the render ring's fixed
     /// interleaved channel count.
     ChannelCountMismatch,
+    /// `target_depth_frames` is zero or exceeds the ring's capacity, so the
+    /// pump could never reach it and the depth cap would not pace anything.
+    InvalidTargetDepth,
 }
 
 /// Typed pump configuration failure.
@@ -79,6 +111,12 @@ pub enum PumpTick {
         /// Frames still waiting to be accepted by the ring.
         pending_frames: usize,
     },
+    /// The ring already holds the configured cushion; the pump is letting the
+    /// consumer drain rather than writing further ahead.
+    AtTargetDepth {
+        /// Frames currently queued in the ring.
+        queued_frames: usize,
+    },
     /// Nothing is due for this tick.
     Waiting,
     /// The scheduler is paused until an explicit rebuffer.
@@ -104,6 +142,10 @@ pub struct PlaybackPump {
     config: PlaybackPumpConfig,
     /// Interleaved float32 samples converted but not yet accepted by the ring.
     pending: Vec<f32>,
+    /// Cleared once the stream-start alignment prefill has been queued.
+    awaiting_prefill: bool,
+    /// Silence frames queued to align the first frame with its deadline.
+    prefill_frames: usize,
 }
 
 impl PlaybackPump {
@@ -139,12 +181,34 @@ impl PlaybackPump {
                 ),
             });
         }
+        if config.target_depth_frames == 0
+            || config.target_depth_frames > producer.capacity_frames()
+        {
+            return Err(PlaybackPumpConfigError {
+                kind: PlaybackPumpConfigErrorKind::InvalidTargetDepth,
+                message: format!(
+                    "target depth of {} frames must be nonzero and within the ring's {}-frame \
+                     capacity",
+                    config.target_depth_frames,
+                    producer.capacity_frames()
+                ),
+            });
+        }
         Ok(Self {
             scheduler,
             producer,
             config,
             pending: Vec::new(),
+            awaiting_prefill: true,
+            prefill_frames: 0,
         })
+    }
+
+    /// Silence frames queued at stream start to align the first frame with its
+    /// presentation deadline.
+    #[must_use]
+    pub const fn prefill_frames(&self) -> usize {
+        self.prefill_frames
     }
 
     /// The scheduler this pump drives, for submitting packets and applying
@@ -180,7 +244,18 @@ impl PlaybackPump {
             };
         }
 
-        match self.scheduler.poll(local_now_ms) {
+        // Hold the ring at its intended cushion. Beyond this the pump simply
+        // waits: without the cap, a large startup backlog would run the ring
+        // to capacity and stay there for the rest of the stream.
+        let queued_frames = self.queued_frames();
+        if queued_frames >= self.config.target_depth_frames {
+            return PumpTick::AtTargetDepth { queued_frames };
+        }
+
+        // Release frames early by the configured lead. The ring's FIFO
+        // position, not the moment of writing, decides when a frame is heard.
+        let poll_time_ms = local_now_ms.saturating_add(self.config.write_lead_ms);
+        match self.scheduler.poll(poll_time_ms) {
             SchedulerPoll::Buffering { buffered_ms } => PumpTick::Buffering { buffered_ms },
             SchedulerPoll::Waiting { .. } => PumpTick::Waiting,
             SchedulerPoll::AwaitingRebuffer => PumpTick::AwaitingRebuffer,
@@ -188,6 +263,7 @@ impl PlaybackPump {
             SchedulerPoll::Frame { frame, .. } => {
                 let sequence = frame.sequence;
                 let concealed = frame.concealed;
+                self.queue_alignment_prefill(&frame, local_now_ms);
                 let frames = self.enqueue_frame(&frame);
                 if self.pending.is_empty() {
                     PumpTick::Queued {
@@ -219,6 +295,38 @@ impl PlaybackPump {
         }
         self.scheduler.stop();
         written
+    }
+
+    /// Queues silence ahead of the stream's first frame so that frame is heard
+    /// at its presentation deadline rather than as soon as it is written.
+    ///
+    /// The real-time consumer starts draining the moment the output opens, so
+    /// a frame is heard once everything already queued ahead of it has played:
+    /// its play time is the write time plus the current ring depth. Writing
+    /// the first frame into an empty ring would therefore play it immediately,
+    /// discarding the lead the write-ahead is meant to establish. Queuing
+    /// exactly the remaining time until its deadline both places it correctly
+    /// and seeds the ring's steady-state cushion.
+    fn queue_alignment_prefill(&mut self, frame: &ScheduledFrame, local_now_ms: u64) {
+        if !self.awaiting_prefill {
+            return;
+        }
+        self.awaiting_prefill = false;
+        let deadline_ms = self
+            .scheduler
+            .local_time_for_host_ms(frame.host_presentation_time_ms);
+        // Already due or late: play it now rather than delaying it further.
+        let lead_ms = deadline_ms
+            .saturating_sub(local_now_ms)
+            .min(self.config.max_prefill_ms);
+        if lead_ms == 0 {
+            return;
+        }
+        let frames = usize::try_from(lead_ms * u64::from(self.scheduler.sample_rate()) / 1_000)
+            .unwrap_or(usize::MAX);
+        self.prefill_frames = frames;
+        self.pending
+            .extend(core::iter::repeat_n(0.0_f32, frames * RENDER_CHANNELS));
     }
 
     /// Converts one frame and appends it to the pending queue, then pushes as
@@ -300,9 +408,48 @@ mod tests {
         })
         .expect("valid ring");
         let (producer, consumer) = ring.split();
-        let pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
+        // Pacing off: these cases cover conversion and queueing semantics.
+        // Write-lead, depth cap, and prefill have their own tests below.
+        let pump = PlaybackPump::new(scheduler, producer, unpaced_config(capacity_frames))
             .expect("valid pump");
         (pump, consumer)
+    }
+
+    /// A pump with production pacing: a one-second ring, a 400ms write lead
+    /// and cushion, and an 800ms prefill ceiling.
+    fn paced_pump_with(config: PlaybackPumpConfig) -> (PlaybackPump, RenderRingConsumer) {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, consumer) = ring.split();
+        let pump = PlaybackPump::new(scheduler, producer, config).expect("valid pump");
+        (pump, consumer)
+    }
+
+    fn paced_pump() -> (PlaybackPump, RenderRingConsumer) {
+        paced_pump_with(PlaybackPumpConfig::default())
+    }
+
+    /// A config with pacing disabled and a depth cap the given ring can reach.
+    fn unpaced_config(capacity_frames: usize) -> PlaybackPumpConfig {
+        PlaybackPumpConfig {
+            volume: 1.0,
+            write_lead_ms: 0,
+            max_prefill_ms: 0,
+            target_depth_frames: capacity_frames,
+        }
     }
 
     #[test]
@@ -351,8 +498,15 @@ mod tests {
         })
         .expect("valid ring");
         let (producer, consumer) = ring.split();
-        let mut pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig { volume: 0.5 })
-            .expect("valid pump");
+        let mut pump = PlaybackPump::new(
+            scheduler,
+            producer,
+            PlaybackPumpConfig {
+                volume: 0.5,
+                ..unpaced_config(4_800)
+            },
+        )
+        .expect("valid pump");
         pump.scheduler_mut()
             .submit_packet(datagram(0, 16_384))
             .expect("accepted");
@@ -373,7 +527,6 @@ mod tests {
                 .submit_packet(datagram(sequence, 16_384))
                 .expect("accepted");
         }
-
         for slot in 0..5 {
             let tick = pump.tick(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS));
             assert!(
@@ -382,23 +535,30 @@ mod tests {
             );
         }
 
-        // The ring is now full: the sixth frame cannot be written at all, and
-        // must be held rather than partly discarded.
+        // Free less than one packet's worth, so the next frame can only be
+        // written in part.
+        let mut small = vec![0.0_f32; 300 * 2];
+        let _ = consumer.read_frames(&mut small);
         let blocked = pump.tick(HOST_START_MS + 5 * u64::from(PACKET_DURATION_MS));
-        assert!(matches!(blocked, PumpTick::RingFull { .. }));
-        assert_eq!(pump.pending_frames(), 960);
 
-        // Consuming half a packet's worth lets exactly that much through.
-        let mut output = vec![0.0_f32; 480 * 2];
-        let _ = consumer.read_frames(&mut output);
-        let partial = pump.tick(HOST_START_MS + 5 * u64::from(PACKET_DURATION_MS));
-        assert!(matches!(partial, PumpTick::RingFull { .. }));
-        assert_eq!(pump.pending_frames(), 480);
+        assert!(
+            matches!(
+                blocked,
+                PumpTick::RingFull {
+                    pending_frames: 660
+                }
+            ),
+            "expected a held remainder, got {blocked:?}"
+        );
+        assert_eq!(pump.pending_frames(), 660);
 
-        // Consuming the rest clears the backlog with no audio lost.
-        let _ = consumer.read_frames(&mut output);
-        let cleared = pump.tick(HOST_START_MS + 5 * u64::from(PACKET_DURATION_MS));
-        assert!(matches!(cleared, PumpTick::FlushedPending { frames: 480 }));
+        // Draining the ring lets the held remainder through intact: a partial
+        // write must never cost audio.
+        let mut all = vec![0.0_f32; 4_800 * 2];
+        let _ = consumer.read_frames(&mut all);
+        let flushed = pump.tick(HOST_START_MS + 5 * u64::from(PACKET_DURATION_MS));
+
+        assert!(matches!(flushed, PumpTick::FlushedPending { frames: 660 }));
         assert_eq!(pump.pending_frames(), 0);
     }
 
@@ -421,7 +581,7 @@ mod tests {
         .expect("valid ring");
         let (producer, _consumer) = ring.split();
         let mut pump =
-            PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default()).expect("pump");
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("pump");
 
         assert!(matches!(
             pump.tick(HOST_START_MS),
@@ -464,6 +624,167 @@ mod tests {
     }
 
     #[test]
+    fn the_startup_prefill_places_the_first_frame_at_its_presentation_deadline() {
+        let (mut pump, consumer) = paced_pump();
+        for sequence in 0..40 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+
+        // Sequence 0 is due at HOST_START_MS; tick a full lead ahead of that.
+        let tick = pump.tick(HOST_START_MS - 400);
+
+        assert!(matches!(tick, PumpTick::Queued { sequence: 0, .. }));
+        // 400ms of silence at 48kHz precedes it, so it is heard exactly when
+        // the ring has drained that much: at its deadline, not immediately.
+        assert_eq!(pump.prefill_frames(), 19_200);
+        let mut output = vec![0.0_f32; 19_200 * 2];
+        let outcome = consumer.read_frames(&mut output);
+        assert_eq!(outcome.frames_supplied, 19_200);
+        assert!(output.iter().all(|&sample| sample == 0.0));
+    }
+
+    #[test]
+    fn a_first_frame_that_is_already_due_is_not_delayed_by_a_prefill() {
+        let (mut pump, _consumer) = paced_pump();
+        for sequence in 0..40 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+
+        // Well past sequence 0's deadline: nothing to align, play at once.
+        let tick = pump.tick(HOST_START_MS + 5_000);
+
+        assert!(matches!(tick, PumpTick::Queued { sequence: 0, .. }));
+        assert_eq!(pump.prefill_frames(), 0);
+    }
+
+    #[test]
+    fn the_prefill_is_clamped_so_a_distant_first_deadline_cannot_flood_the_ring() {
+        // A lead wider than the ceiling is the only way the clamp can bind:
+        // ordinarily a frame is released at most `write_lead_ms` early, so the
+        // prefill never exceeds the lead.
+        let (mut pump, _consumer) = paced_pump_with(PlaybackPumpConfig {
+            write_lead_ms: 2_000,
+            max_prefill_ms: 800,
+            ..PlaybackPumpConfig::default()
+        });
+        for sequence in 0..40 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+
+        // With a lead longer than the prefill ceiling, a first frame a full
+        // second out would otherwise queue a second of silence.
+        let tick = pump.tick(0);
+
+        assert!(matches!(tick, PumpTick::Queued { .. }));
+        // 800ms at 48kHz, the configured ceiling, not the full 1000ms gap.
+        assert_eq!(pump.prefill_frames(), 38_400);
+    }
+
+    #[test]
+    fn the_write_lead_releases_frames_before_their_deadline() {
+        // Prefill off, so the lead is observable on its own: with it on, the
+        // alignment silence immediately establishes the cushion and the depth
+        // cap takes over (see the prefill tests above).
+        let (mut pump, _consumer) = paced_pump_with(PlaybackPumpConfig {
+            max_prefill_ms: 0,
+            ..PlaybackPumpConfig::default()
+        });
+        for sequence in 0..40 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+
+        // Sequence 0 is due at HOST_START_MS. One millisecond earlier than a
+        // full lead, it is not released yet.
+        assert!(matches!(pump.tick(HOST_START_MS - 401), PumpTick::Waiting));
+        // Exactly one lead ahead of the deadline, it is.
+        assert!(matches!(
+            pump.tick(HOST_START_MS - 400),
+            PumpTick::Queued { sequence: 0, .. }
+        ));
+        // The next frame follows the same rule against its own deadline.
+        assert!(matches!(
+            pump.tick(HOST_START_MS - 380),
+            PumpTick::Queued { sequence: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn the_depth_cap_stops_a_startup_backlog_from_pinning_the_ring_full() {
+        let (mut pump, consumer) = paced_pump();
+        // A second of audio arrives at once, as it does when a send-ahead
+        // host floods a listener that has just locked sync.
+        for sequence in 0..50 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+
+        // Drive far past every deadline: without the cap this would run the
+        // ring to capacity and hold it there.
+        let mut ticks = 0;
+        loop {
+            if let PumpTick::AtTargetDepth { queued_frames } = pump.tick(HOST_START_MS + 10_000) {
+                assert!(queued_frames >= 19_200);
+                break;
+            }
+            ticks += 1;
+            assert!(ticks < 200, "the pump never reached its target depth");
+        }
+
+        // The cushion is the configured depth, not the ring's 48000-frame
+        // capacity.
+        assert!(pump.queued_frames() < 48_000);
+        assert!(pump.queued_frames() >= 19_200);
+
+        // Once the consumer drains below the cushion, writing resumes.
+        let mut output = vec![0.0_f32; 5_000 * 2];
+        let _ = consumer.read_frames(&mut output);
+        assert!(matches!(
+            pump.tick(HOST_START_MS + 10_000),
+            PumpTick::Queued { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_a_target_depth_the_ring_could_never_reach() {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 4_800,
+            target_fill_frames: 1,
+        })
+        .expect("valid ring");
+        let (producer, _consumer) = ring.split();
+
+        let error = PlaybackPump::new(
+            scheduler,
+            producer,
+            PlaybackPumpConfig {
+                target_depth_frames: 9_600,
+                ..unpaced_config(4_800)
+            },
+        )
+        .expect_err("a depth beyond the ring's capacity must be rejected");
+        assert_eq!(error.kind, PlaybackPumpConfigErrorKind::InvalidTargetDepth);
+    }
+
+    #[test]
     fn rejects_an_invalid_volume() {
         let (pump, _consumer) = pump_with(4_800);
         drop(pump);
@@ -485,8 +806,15 @@ mod tests {
         .expect("valid ring");
         let (producer, _consumer) = ring.split();
 
-        let error = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig { volume: 1.5 })
-            .expect_err("an out-of-range volume must be rejected");
+        let error = PlaybackPump::new(
+            scheduler,
+            producer,
+            PlaybackPumpConfig {
+                volume: 1.5,
+                ..unpaced_config(4_800)
+            },
+        )
+        .expect_err("an out-of-range volume must be rejected");
         assert_eq!(error.kind, PlaybackPumpConfigErrorKind::InvalidVolume);
     }
 
@@ -509,7 +837,7 @@ mod tests {
         .expect("valid ring");
         let (producer, _consumer) = ring.split();
 
-        let error = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
+        let error = PlaybackPump::new(scheduler, producer, unpaced_config(4_800))
             .expect_err("a mono stream must be rejected by a stereo ring");
         assert_eq!(
             error.kind,

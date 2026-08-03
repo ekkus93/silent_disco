@@ -194,19 +194,33 @@ precedent), with any pure logic in `silent-disco-core`.
   invariant required an empty pending buffer, so draining a tail into an
   already-full ring tripped it. Reworked into an append-then-flush FIFO,
   which is also what preserves playback order after a partial write.
-- [ ] 2.2 Pump loop (R8), all constants from the table above as config:
-  - [ ] Poll cadence ~10 ms; monotonic clock injected (testable).
-  - [ ] Release frames `write_lead_ms` ahead of mapped deadline.
-  - [ ] Never push past `target_fill_frames` queued depth (query the
+- [x] 2.2 Pump loop (R8), all constants from the table above as config:
+  - [x] Poll cadence ~10 ms; monotonic clock injected (testable).
+  - [x] Release frames `write_lead_ms` ahead of mapped deadline.
+  - [x] Never push past `target_fill_frames` queued depth (query the
         producer; do not rely on full-ring backpressure).
-  - [ ] At start: silence prefill of `(first frame's mapped local deadline
+  - [x] At start: silence prefill of `(first frame's mapped local deadline
         - now)` clamped to `[0, max_prefill_ms]`, written before the first
         real frame, so the first frame plays at its deadline (the native
         callback consumes from stream open; play time = write time + queued
         depth).
-  - [ ] i16 → f32 conversion (and volume scaling) happens here, once —
+  - [x] i16 → f32 conversion (and volume scaling) happens here, once —
         Kotlin stops touching PCM entirely, closing Block 18's disclosed
         deviation.
+
+  **Done:** `PlaybackPumpConfig` carries `write_lead_ms` (400),
+  `max_prefill_ms` (800), and `target_depth_frames` (400ms), with
+  `target_depth_frames` validated against the ring's capacity (new
+  `InvalidTargetDepth`). The clock is injected as `tick(local_now_ms)`; the
+  FFI thread supplies it at a 10ms cadence, so every pacing test runs on a
+  fake clock against a real ring.
+
+  **Worth knowing:** the alignment prefill establishes the cushion on the
+  very first frame, so the depth cap — not the lead — governs from the
+  second frame onward. That also means the prefill can never exceed
+  `write_lead_ms` in a normal config (a frame is released at most one lead
+  early), making `max_prefill_ms` a pure safety bound; its test configures a
+  lead wider than the ceiling to exercise it.
 - [ ] 2.3 Sync integration (R9): runtime accepts offset updates
       (`apply_offset_update` / `rebuffer` semantics already in the
       scheduler). Playback must not start before the first accepted
