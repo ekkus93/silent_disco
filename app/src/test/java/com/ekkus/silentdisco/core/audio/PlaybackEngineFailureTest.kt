@@ -95,19 +95,4 @@ class PlaybackEngineInterfaceTest {
         engine.setVolume(0.8f)
         assertThat(engine.volumes).containsExactly(0.5f, 0.8f).inOrder()
     }
-
-    @Test
-    fun audioTrackPlaybackEngine_writeBeforeStart_throws() {
-        val engine = AudioTrackPlaybackEngine()
-        val frame = testFrame()
-        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
-            engine.write(frame)
-        }
-    }
-
-    @Test
-    fun audioTrackPlaybackEngine_stop_doesNotThrowWhenNotStarted() {
-        val engine = AudioTrackPlaybackEngine()
-        engine.stop()
-    }
 }

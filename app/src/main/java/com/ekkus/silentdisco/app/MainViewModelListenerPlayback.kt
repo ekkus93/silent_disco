@@ -11,13 +11,10 @@ import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
-import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
 import com.ekkus.silentdisco.core.audio.PlaybackFrame
-import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.audio.packetizationStats
 import com.ekkus.silentdisco.core.audio.validatePacketBudget
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
@@ -66,96 +63,36 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
+    /**
+     * Walks the demo session through its listener progress states.
+     *
+     * This is a debug-only affordance for exercising the UI without a host
+     * (gated on `BuildConfig.DEBUG` and the demo session id prefix). It
+     * deliberately produces no audio: synthesizing packets and running them
+     * through the real playback pipeline would make a fake session
+     * indistinguishable from a real one in every diagnostic that matters.
+     */
     internal fun MainViewModel.startListenerPlaybackSimulation(sessionId: String) {
-        val packets = if (latestPackets.isNotEmpty()) {
-            latestPackets.take(24)
-        } else {
-            generateSyntheticPackets(sessionId)
-        }
-        val expectedStreamId = packets.firstOrNull()?.streamId ?: currentStreamId ?: StreamId("synthetic-stream")
-        val mapper = HostTimeMapper(offsetMs = _uiState.value.listenerSyncState.offsetMs, skewPpm = _uiState.value.listenerSyncState.skewPpm)
-        listenerScheduler = ListenerPlaybackScheduler(
-            mapper = mapper,
-            thresholds = currentPlaybackThresholds(),
-            expectedSessionId = SessionId(sessionId),
-            expectedStreamId = expectedStreamId,
-        )
-        packets.forEach { packet -> listenerScheduler?.let { recordIncomingPacket(it, packet) } }
-        val playbackFormat = latestDecodedAudio?.format ?: AudioFormatSpec()
-        runCatching { playbackEngine.start(playbackFormat) }.onFailure { error ->
-            handleListenerPlaybackEngineFailure(error)
-            return
-        }
+        logger.i("listener.demo", "Simulating listener progress for demo session $sessionId")
         playbackJob?.cancel()
         playbackJob = viewModelScope.launch {
-            var lastUnderrunCount = 0
             delay(300)
-            var playingStateSet = false
-            while (listenerScheduler?.canStart() == true) {
-                if (!playingStateSet) {
-                    _uiState.value = _uiState.value.copy(
-                        listenerState = ListenerLifecycleState.PLAYING,
-                        listenerPlaybackState = PlaybackState.PLAYING,
-                        connectionProgress = _uiState.value.connectionProgress.copy(
-                            currentState = ListenerLifecycleState.PLAYING,
-                            connected = true,
-                            approved = true,
-                            synced = true,
-                            buffered = true,
-                            playing = true,
-                        ),
-                    )
-                    playingStateSet = true
-                }
-                if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
-                    wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
-                ) {
-                    handleListenerDisconnect("Transport disconnected during playback")
-                    return@launch
-                }
-                val frame = listenerScheduler?.poll() ?: break
-                runCatching { playbackEngine.write(frame) }.onFailure { error ->
-                    handleListenerPlaybackEngineFailure(error)
-                    return@launch
-                }
-                val telemetry = listenerScheduler?.snapshot() ?: break
-                if (frame.concealed) {
-                    logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
-                }
-                if (telemetry.underrunCount > lastUnderrunCount) {
-                    logger.w("playback.underrun", "Underrun count=${telemetry.underrunCount}")
-                    lastUnderrunCount = telemetry.underrunCount
-                }
-                diagnosticsStore.updateListener {
-                    it.copy(
-                        playbackState = if (telemetry.underrunCount > 0) PlaybackState.UNDERRUN else PlaybackState.PLAYING,
-                        playbackPositionMs = playbackEngine.playbackPositionMs(frame),
-                        bufferDepthMs = telemetry.bufferDepthMs,
-                        packetLossCount = telemetry.packetLossCount,
-                        lateDropCount = telemetry.lateDropCount,
-                        underrunCount = telemetry.underrunCount,
-                        invalidPacketCount = telemetry.invalidPacketCount,
-                        concealedPacketCount = telemetry.concealedPacketCount,
-                        lastPacketSequence = telemetry.lastPlayedSequence,
-                        metricsSummary = summarizeMetrics(),
-                    )
-                }
-                if (telemetry.shouldResync) {
-                    _uiState.value = _uiState.value.copy(listenerState = ListenerLifecycleState.DESYNCED)
-                }
-                delay(20)
-            }
-            diagnosticsStore.updateListener {
-                it.copy(
-                    playbackState = PlaybackState.STOPPED,
-                    endOfStreamReached = true,
-                    metricsSummary = summarizeMetrics(),
-                )
-            }
             _uiState.value = _uiState.value.copy(
-                listenerPlaybackState = PlaybackState.STOPPED,
-                lastMessage = "Reached end of file",
+                listenerState = ListenerLifecycleState.PLAYING,
+                listenerPlaybackState = PlaybackState.PLAYING,
+                connectionProgress = _uiState.value.connectionProgress.copy(
+                    currentState = ListenerLifecycleState.PLAYING,
+                    connected = true,
+                    approved = true,
+                    synced = true,
+                    buffered = true,
+                    playing = true,
+                ),
+                lastMessage = "Demo session playing (no audio is produced)",
             )
+            diagnosticsStore.updateListener {
+                it.copy(playbackState = PlaybackState.PLAYING, metricsSummary = summarizeMetrics())
+            }
             refreshListenerDiagnostics()
         }
         startPeriodicListenerResync()

@@ -2,13 +2,10 @@ package com.ekkus.silentdisco.core.rust
 
 import android.os.SystemClock
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
-import com.ekkus.silentdisco.core.audio.DebugPcmRecorder
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.OboePlaybackEngine
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PlaybackFrame
-import com.ekkus.silentdisco.core.audio.PlaybackTelemetry
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
@@ -107,7 +104,7 @@ interface NetworkSessionLock {
  */
 class ManualListenerTransportController(
     /**
-     * Directory for [DebugPcmRecorder] output (app-specific external storage,
+     * Directory for debug PCM capture output (app-specific external storage,
      * pullable via `adb pull` without root). Null disables recording. This is
      * diagnostic-only instrumentation for this viability PoC, not a
      * production feature.
@@ -134,7 +131,6 @@ class ManualListenerTransportController(
     private var receivedCount: Long = 0
     private var writtenCount: Long = 0
     private var lastWrittenFrameConcealed = false
-    private var lastTelemetry: PlaybackTelemetry = PlaybackTelemetry()
 
     suspend fun parse(rawInput: String): ManualEndpointParseResult = withContext(Dispatchers.Default) {
         try {

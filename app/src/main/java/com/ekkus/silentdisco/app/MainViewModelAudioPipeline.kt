@@ -11,8 +11,6 @@ import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
-import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
@@ -71,22 +69,3 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-    internal fun MainViewModel.recordIncomingPacket(scheduler: ListenerPlaybackScheduler, packet: AudioPacket) {
-        val telemetry = scheduler.submit(packet)
-        if (telemetry.lateDropCount > 0) {
-            logger.w("packet.receive.anomaly", "Late packet dropped seq=${packet.sequenceNumber}")
-        }
-        diagnosticsStore.updateListener {
-            it.copy(
-                sessionId = packet.sessionId.value,
-                packetLossCount = telemetry.packetLossCount,
-                lateDropCount = telemetry.lateDropCount,
-                invalidPacketCount = telemetry.invalidPacketCount,
-                concealedPacketCount = telemetry.concealedPacketCount,
-                bufferDepthMs = telemetry.bufferDepthMs,
-                lastPacketSequence = packet.sequenceNumber,
-                endOfStreamReached = false,
-            )
-        }
-        refreshListenerDiagnostics()
-    }

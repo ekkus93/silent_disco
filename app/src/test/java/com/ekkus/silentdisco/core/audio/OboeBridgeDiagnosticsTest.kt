@@ -54,32 +54,3 @@ class OboeBridgeDiagnosticsTest {
         }
     }
 }
-
-class PlaybackEngineDiagnosticsTest {
-
-    @Test
-    fun playbackEngine_canBeCreatedWithoutAudioTrack() {
-        val engine = AudioTrackPlaybackEngine()
-        // Engine should be instantiable without system resources
-        engine.stop() // Should not throw
-    }
-
-    @Test
-    fun setVolume_defaultsToFullVolume() {
-        val engine = AudioTrackPlaybackEngine()
-        // Default volume should be 1.0 (full)
-        engine.setVolume(0.5f)
-        engine.setVolume(1.0f)
-        // Should complete without error
-    }
-
-    @Test
-    fun statusSummary_returnsClearyMessage() {
-        val engine = AudioTrackPlaybackEngine()
-        val summary = engine.statusSummary()
-
-        // Should return a non-empty string
-        assertThat(summary).isNotNull()
-        assertThat(summary).isNotEmpty()
-    }
-}

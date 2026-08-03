@@ -2,9 +2,9 @@ package com.ekkus.silentdisco.app
 
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
@@ -14,13 +14,16 @@ import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
-import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
+import com.ekkus.silentdisco.core.uniffi.FfiAudioPacket
+import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackConfig
+import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
@@ -385,17 +388,14 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
     startListenerPlaybackFromTransport(
         sessionId = SessionId(session.id),
         streamId = streamId,
-        format = AudioFormatSpec(
-            sampleRate = event.sampleRate.toInt(),
-            channelCount = event.channels.toInt(),
-        ),
+        event = event,
     )
 }
 
 private fun MainViewModel.handleTransportStreamStopped() {
-    playbackJob?.cancel()
-    listenerScheduler = null
-    pendingTransportPackets.clear()
+    // The runtime drains its own buffered tail while stopping, so the
+    // stream's final moments play rather than being discarded.
+    stopListenerPlayback()
     propagateListenerPlaybackState(
         playbackState = PlaybackState.STOPPED,
         listenerState = ListenerLifecycleState.CONNECTING,
@@ -421,66 +421,116 @@ private fun MainViewModel.handleTransportSyncResponse(event: FfiListenerTranspor
     )
 }
 
+/**
+ * Render ring geometry and pacing for the discovered-session listener,
+ * matching the manual-connect path: one second of capacity with a 400ms
+ * cushion, handed to the Rust runtime that owns every decision made with it.
+ */
+private const val LISTENER_RING_CAPACITY_FRAMES: UInt = 48_000u
+private const val LISTENER_RING_TARGET_FILL_FRAMES: UInt = 19_200u
+private const val LISTENER_RING_WRITE_LEAD_MS: ULong = 400uL
+private const val LISTENER_MAX_RING_PREFILL_MS: ULong = 800uL
+
+/** How often the runtime's own accounting is mirrored into the UI. */
+private const val LISTENER_DIAGNOSTICS_POLL_MS = 100L
+
+/** `nativeOboeOpen` success status. */
+private const val LISTENER_OBOE_STATUS_OK = 0
+
 private fun MainViewModel.handleTransportAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
     val session = _uiState.value.selectedSession ?: return
-    val packet = AudioPacket(
-        version = LISTENER_DISCOVERY_PROTOCOL_VERSION,
-        sessionId = SessionId(session.id),
-        streamId = StreamId(event.streamId),
-        sequenceNumber = event.sequence.toLong(),
-        codec = "pcm16le",
-        sampleRate = event.sampleRate.toInt(),
-        channelCount = event.channels.toInt(),
-        samplesPerPacket = event.samplesPerPacket.toInt(),
-        firstSampleIndex = event.firstSampleIndex.toLong(),
-        hostPresentationTimeMs = event.hostPresentationTimeMs.toLong(),
-        payload = event.payload,
-    )
-    val scheduler = listenerScheduler
-    if (scheduler == null) {
-        pendingTransportPackets += packet
-        while (pendingTransportPackets.size > 256) {
-            pendingTransportPackets.removeFirst()
-        }
-        return
+    val runtime = listenerPlayback ?: return
+    // Ordering, concealment, and scheduling belong to the runtime; a packet it
+    // rejects is ordinary traffic its own counters already account for.
+    runCatching {
+        runtime.submitPacket(
+            FfiAudioPacket(
+                sequence = event.sequence,
+                sampleRate = event.sampleRate,
+                channels = event.channels,
+                samplesPerPacket = event.samplesPerPacket,
+                firstSampleIndex = event.firstSampleIndex,
+                hostPresentationTimeMs = event.hostPresentationTimeMs,
+                payload = event.payload,
+            ),
+            session.id,
+            event.streamId,
+        )
     }
-    recordIncomingPacket(scheduler, packet)
 }
 
 /**
- * Starts local playback of the Rust-transport-delivered stream just
- * announced by [FfiListenerTransportEvent.StreamStarted]. Revives the
- * pre-Block-20 `startTransportListenerPlayback`, now driven by the Rust
- * listener transport's own events instead of the deleted Kotlin socket path.
+ * Starts Rust-owned playback of the stream just announced by
+ * [FfiListenerTransportEvent.StreamStarted].
+ *
+ * Everything between an arriving packet and the render ring — ordering,
+ * concealment, presentation-time pacing, clock estimation, PCM conversion —
+ * belongs to the runtime. This function only opens it, points the native
+ * output at its ring, and reflects its state into the UI.
  */
-private fun MainViewModel.startListenerPlaybackFromTransport(
+internal fun MainViewModel.startListenerPlaybackFromTransport(
     sessionId: SessionId,
     streamId: StreamId,
-    format: AudioFormatSpec,
+    event: FfiListenerTransportEvent.StreamStarted,
 ) {
-    val mapper = HostTimeMapper(
-        offsetMs = _uiState.value.listenerSyncState.offsetMs,
-        skewPpm = _uiState.value.listenerSyncState.skewPpm,
-    )
-    val scheduler = ListenerPlaybackScheduler(
-        mapper = mapper,
-        thresholds = currentPlaybackThresholds(),
-        expectedSessionId = sessionId,
-        expectedStreamId = streamId,
-    )
-    listenerScheduler = scheduler
-    pendingTransportPackets
-        .filter { it.sessionId == sessionId && it.streamId == streamId }
-        .forEach { packet -> recordIncomingPacket(scheduler, packet) }
-    pendingTransportPackets.clear()
-    runCatching { playbackEngine.start(format) }.onFailure { error ->
+    stopListenerPlayback()
+    val sampleRate = event.sampleRate.toInt()
+    val samplesPerPacket = event.samplesPerPacket.toInt()
+    val packetDurationMs = if (sampleRate > 0) {
+        (samplesPerPacket.toLong() * 1_000L / sampleRate.toLong()).toInt()
+    } else {
+        0
+    }
+    val runtime = runCatching {
+        FfiListenerPlaybackHandle.open(
+            FfiListenerPlaybackConfig(
+                sessionId = sessionId.value,
+                streamId = streamId.value,
+                packetDurationMs = packetDurationMs.toUInt(),
+                hostStartTimeMs = event.hostStartTimeMs,
+                samplesPerPacket = event.samplesPerPacket,
+                channels = event.channels,
+                startupBufferTargetMs = currentPlaybackThresholds().startupBufferMs.toULong(),
+                ringCapacityFrames = LISTENER_RING_CAPACITY_FRAMES,
+                ringTargetFillFrames = LISTENER_RING_TARGET_FILL_FRAMES,
+                writeLeadMs = LISTENER_RING_WRITE_LEAD_MS,
+                maxPrefillMs = LISTENER_MAX_RING_PREFILL_MS,
+                volume = 1.0f,
+            ),
+        )
+    }.getOrElse { error ->
         handleListenerPlaybackEngineFailure(error)
         return
     }
+    listenerPlayback = runtime
+
+    val oboeStatus = OboeBridge.nativeOboeOpen(runtime.engineToken())
+    if (oboeStatus != LISTENER_OBOE_STATUS_OK) {
+        stopListenerPlayback()
+        handleListenerPlaybackEngineFailure(
+            IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"),
+        )
+        return
+    }
+    _uiState.value = _uiState.value.copy(
+        listenerState = ListenerLifecycleState.BUFFERING,
+        listenerPlaybackState = PlaybackState.BUFFERING,
+    )
+    startListenerPlaybackDiagnostics(runtime)
+}
+
+/**
+ * Mirrors the runtime's own accounting into the diagnostics store and UI.
+ *
+ * Polling a snapshot beats deriving state per frame: the counters come from
+ * the component that owns the behaviour they describe, so they cannot drift
+ * from what actually happened.
+ */
+private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerPlaybackHandle) {
     playbackJob?.cancel()
     playbackJob = viewModelScope.launch {
-        var started = false
-        var lastUnderrunCount = 0
+        var reportedPlaying = false
+        var lastUnderruns = 0UL
         while (_uiState.value.listenerState != ListenerLifecycleState.DISCONNECTED) {
             if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
                 wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
@@ -488,13 +538,10 @@ private fun MainViewModel.startListenerPlaybackFromTransport(
                 handleListenerDisconnect("Transport disconnected during playback")
                 return@launch
             }
-            val activeScheduler = listenerScheduler ?: return@launch
-            if (!started) {
-                if (!activeScheduler.canStart()) {
-                    delay(10)
-                    continue
-                }
-                started = true
+            if (listenerPlayback !== runtime) return@launch
+            val diagnostics = runtime.diagnostics()
+            if (!reportedPlaying && diagnostics.phase == FfiPlaybackPhase.PLAYING) {
+                reportedPlaying = true
                 _uiState.value = _uiState.value.copy(
                     listenerState = ListenerLifecycleState.PLAYING,
                     listenerPlaybackState = PlaybackState.PLAYING,
@@ -508,44 +555,42 @@ private fun MainViewModel.startListenerPlaybackFromTransport(
                     ),
                 )
             }
-            val frame = activeScheduler.poll()
-            if (frame == null) {
-                delay(10)
-                continue
-            }
-            runCatching { playbackEngine.write(frame) }.onFailure { error ->
-                handleListenerPlaybackEngineFailure(error)
-                return@launch
-            }
-            val telemetry = activeScheduler.snapshot()
-            if (frame.concealed) {
-                logger.w("packet.receive.anomaly", "Inserted concealment for seq=${frame.packet.sequenceNumber}")
-            }
-            if (telemetry.underrunCount > lastUnderrunCount) {
-                logger.w("playback.underrun", "Underrun count=${telemetry.underrunCount}")
-                lastUnderrunCount = telemetry.underrunCount
+            if (diagnostics.ringUnderruns > lastUnderruns) {
+                logger.w("playback.underrun", "Render ring underruns=${diagnostics.ringUnderruns}")
+                lastUnderruns = diagnostics.ringUnderruns
             }
             diagnosticsStore.updateListener {
                 it.copy(
-                    playbackState = if (telemetry.underrunCount > 0) PlaybackState.UNDERRUN else PlaybackState.PLAYING,
-                    playbackPositionMs = playbackEngine.playbackPositionMs(frame),
-                    bufferDepthMs = telemetry.bufferDepthMs,
-                    packetLossCount = telemetry.packetLossCount,
-                    lateDropCount = telemetry.lateDropCount,
-                    underrunCount = telemetry.underrunCount,
-                    invalidPacketCount = telemetry.invalidPacketCount,
-                    concealedPacketCount = telemetry.concealedPacketCount,
-                    lastPacketSequence = telemetry.lastPlayedSequence,
+                    playbackState = if (diagnostics.ringUnderruns > 0UL) {
+                        PlaybackState.UNDERRUN
+                    } else {
+                        PlaybackState.PLAYING
+                    },
+                    bufferDepthMs = diagnostics.bufferedSpanMs.toLong(),
+                    packetLossCount = diagnostics.sequencesSkipped.toInt(),
+                    lateDropCount = diagnostics.lateRejections.toInt(),
+                    underrunCount = diagnostics.ringUnderruns.toInt(),
+                    concealedPacketCount = diagnostics.concealedPackets.toInt(),
                     metricsSummary = summarizeMetrics(),
                 )
             }
-            if (telemetry.shouldResync) {
-                _uiState.value = _uiState.value.copy(listenerState = ListenerLifecycleState.DESYNCED)
-            }
             refreshListenerDiagnostics()
-            delay(20)
+            delay(LISTENER_DIAGNOSTICS_POLL_MS)
         }
     }
+}
+
+/** Stops Rust playback and the native output for the discovered-session path. */
+internal fun MainViewModel.stopListenerPlayback() {
+    playbackJob?.cancel()
+    playbackJob = null
+    val runtime = listenerPlayback ?: return
+    listenerPlayback = null
+    runCatching { runtime.stop() }.onFailure { error ->
+        logger.w("playback.stop_failed", error.message ?: "playback failed to stop cleanly")
+    }
+    OboeBridge.nativeOboeClose()
+    runtime.close()
 }
 
 internal fun FfiListenerLifecycle.toAppListenerLifecycle(): ListenerLifecycleState = when (this) {

@@ -381,20 +381,45 @@ precedent), with any pure logic in `silent-disco-core`.
 The legacy scheduler has three consumers; after Phase 3 only the manual
 path is migrated. Kotlin must not remain a competing owner.
 
-- [ ] 4.1 Migrate `MainViewModelListenerPlayback` /
+- [x] 4.1 Migrate `MainViewModelListenerPlayback` /
       `MainViewModelRustListener` (BLE / Wi-Fi Direct discovered-session
       listener path) onto the same runtime handle.
-- [ ] 4.2 Delete `ListenerPlaybackScheduler`, `AudioPacketBuffer`,
+- [x] 4.2 Delete `ListenerPlaybackScheduler`, `AudioPacketBuffer`,
       the PCM16 helper functions, and their tests (behavior now covered by
       Rust tests). Delete `AudioTrackPlaybackEngine` (already marked
       legacy/unused) and shrink the `PlaybackEngine` interface to what
       actually remains — possibly nothing beyond the Oboe open/close
       bridge; if the interface dies entirely, that is the correct outcome.
-  - [ ] `OboePlaybackEngine` reduces to Oboe stream lifecycle around the
+  - [x] `OboePlaybackEngine` reduces to Oboe stream lifecycle around the
         runtime's engine token (no `write`, no PCM conversion, no
         prefill); rename if clarity improves.
-- [ ] 4.3 Delete Kotlin `DebugPcmRecorder` once no path uses it.
-- [ ] 4.4 Sweep for dead constants/imports; Android gate green.
+- [x] 4.3 Delete Kotlin `DebugPcmRecorder` once no path uses it.
+- [x] 4.4 Sweep for dead constants/imports; Android gate green.
+
+  **Done. Two scope findings worth carrying forward:**
+
+  1. **The host self-monitor path still uses `PlaybackEngine`/`PlaybackFrame`
+     and `OboePlaybackEngine.write`.** This plan assumed those could shrink to
+     nothing once the listener migrated, but `MainViewModelHostPlayback`
+     renders locally decoded audio through the same interface. So
+     `PlaybackEngine`, `PlaybackFrame`, and the engine's write path survive,
+     while the listener-only pacing hooks (`prefillSilence`,
+     `queuedDepthFrames`) are gone. Migrating host monitoring onto the Rust
+     runtime is a genuine follow-up this plan did not account for — recorded
+     in 5.x.
+  2. **The debug-only demo session no longer fakes audio.** It previously
+     synthesized packets and ran them through the real scheduler, which would
+     have required an offset-injection API purely for demo purposes — and
+     would make a fake session indistinguishable from a real one in every
+     diagnostic that matters. It now walks the UI progress states and says so
+     in its own message. Gated on `BuildConfig.DEBUG` and the demo id prefix
+     as before.
+
+  Deleted: `ListenerPlaybackScheduler`, `AudioPacketBuffer`,
+  `BufferedAudioPacket`, the Kotlin PCM shaping helpers, `SilenceFiller`,
+  `AudioTrackPlaybackEngine`, Kotlin `DebugPcmRecorder`,
+  `recordIncomingPacket`, the pending-packet buffers, and the tests that
+  existed only to exercise them.
 
 ## Phase 5 — Documentation and follow-ups
 

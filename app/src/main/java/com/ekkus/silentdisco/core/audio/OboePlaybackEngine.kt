@@ -10,7 +10,6 @@ private const val PCM16_FULL_SCALE = 32_768.0f
 private const val OBOE_ADAPTER_STATUS_OK = 0
 private const val RING_FULL_RETRY_DELAY_MS = 2L
 private const val MAX_STALL_RETRIES = 500
-private const val PREFILL_CHUNK_FRAMES = 960
 
 /**
  * Production listener/host-monitor output: Oboe (native, via [OboeBridge])
@@ -63,30 +62,6 @@ class OboePlaybackEngine : PlaybackEngine {
         val framesWritten = pushFully(samples, stallLabel = "seq=${frame.packet.sequenceNumber}")
         writeCount += 1
         return framesWritten.toLong()
-    }
-
-    /**
-     * Queues silence directly into the render ring, in bounded chunks so no
-     * single UniFFI crossing boxes an unbounded `List<Float>`. Bypasses the
-     * PCM conversion and the debug recorder deliberately: prefill is ring
-     * alignment, not stream content.
-     */
-    override fun prefillSilence(frameCount: Int): Int {
-        if (frameCount <= 0) return 0
-        var remaining = frameCount
-        var prefilled = 0
-        val chunk = FloatArray(PREFILL_CHUNK_FRAMES * channelCount)
-        while (remaining > 0) {
-            val framesThisChunk = minOf(remaining, PREFILL_CHUNK_FRAMES)
-            val samples = if (framesThisChunk == PREFILL_CHUNK_FRAMES) {
-                chunk
-            } else {
-                FloatArray(framesThisChunk * channelCount)
-            }
-            prefilled += pushFully(samples, stallLabel = "prefill")
-            remaining -= framesThisChunk
-        }
-        return prefilled
     }
 
     /**
@@ -147,11 +122,6 @@ class OboePlaybackEngine : PlaybackEngine {
     }
 
     override fun playbackPositionMs(frame: PlaybackFrame): Long = frame.localDeadlineMs
-
-    override fun queuedDepthFrames(): Int {
-        val active = handle ?: return 0
-        return active.queuedFrames().toInt()
-    }
 
     override fun stop() {
         OboeBridge.nativeOboeClose()

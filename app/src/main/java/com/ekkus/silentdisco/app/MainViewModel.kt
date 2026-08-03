@@ -11,7 +11,6 @@ import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.OboePlaybackEngine
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
@@ -40,6 +39,7 @@ import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
+import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
@@ -116,7 +116,7 @@ class MainViewModel @JvmOverloads constructor(
     internal var currentSessionId: SessionId? = null
     internal var currentStreamId: StreamId? = null
     internal var listenerSyncController: ListenerSyncController? = null
-    internal var listenerScheduler: ListenerPlaybackScheduler? = null
+    internal var listenerPlayback: FfiListenerPlaybackHandle? = null
     internal var latestDecodedAudio: AudioDecodeResult? = null
     internal var latestPackets: List<AudioPacket> = emptyList()
     internal val pendingTransportPackets = ArrayDeque<AudioPacket>()
@@ -314,10 +314,8 @@ class MainViewModel @JvmOverloads constructor(
     fun leaveSession() {
         clearScanState()
         hostStreamJob?.cancel()
-        playbackJob?.cancel()
+        stopListenerPlayback()
         resyncJob?.cancel()
-        listenerScheduler = null
-        pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
         pendingEstablishNetworkOperationId = null
         logger.i("listener.disconnect", "Listener left session")

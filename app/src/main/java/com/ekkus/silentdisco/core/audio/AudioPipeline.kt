@@ -67,11 +67,6 @@ class PcmPacketizer(
     }
 }
 
-data class BufferedAudioPacket(
-    val packet: AudioPacket,
-    val scheduledLocalTimeMs: Long,
-)
-
 data class PacketizationStats(
     val packetCount: Int,
     val averagePayloadBytes: Double,
@@ -90,86 +85,6 @@ data class PacketBudgetValidation(
 ) {
     fun summary(): String =
         "avg=${averagePacketBytes}B, max=${maxPacketBytes}B, overhead=${"%.1f".format(overheadRatio * 100)}%"
-}
-
-/**
- * Buffers packets between the network-reception coroutine ([insert]) and the
- * playback coroutine ([popReady]/[peekFirst]/[isReady]) -- two independent
- * `Dispatchers.IO` coroutines that run concurrently on different threads, not
- * a single confined thread. `TreeMap` (the backing type of [sortedMapOf]) is
- * not thread-safe, so unsynchronized cross-thread access here previously
- * crashed the whole process with a `ConcurrentModificationException` inside
- * [popReady] whenever [insert] mutated the map mid-iteration on another
- * thread. All access is synchronized on this instance.
- */
-class AudioPacketBuffer(
-    private val startupTargetMs: Long = 400,
-) {
-    private val packets = sortedMapOf<Long, BufferedAudioPacket>()
-    private var lastEmittedSequence: Long? = null
-
-    fun insert(packet: BufferedAudioPacket) {
-        synchronized(this) {
-            packets[packet.packet.sequenceNumber] = packet
-        }
-    }
-
-    fun isReady(): Boolean = synchronized(this) {
-        if (packets.isEmpty()) return@synchronized false
-        val first = packets.values.first()
-        val last = packets.values.last()
-        last.scheduledLocalTimeMs - first.scheduledLocalTimeMs >= startupTargetMs
-    }
-
-    fun popReady(nowLocalTimeMs: Long): BufferedAudioPacket? = synchronized(this) {
-        val firstEntry = packets.entries.firstOrNull() ?: return@synchronized null
-        if (firstEntry.value.scheduledLocalTimeMs > nowLocalTimeMs) return@synchronized null
-        lastEmittedSequence = firstEntry.key
-        packets.remove(firstEntry.key)
-    }
-
-    fun peekFirst(): BufferedAudioPacket? = synchronized(this) { packets.values.firstOrNull() }
-
-    /**
-     * Drains every buffered packet in sequence order, ignoring each one's
-     * scheduled deadline. Used when a stream stops: anything still buffered
-     * here already arrived over the network in time -- it is real content,
-     * not backlog -- so it should be played out, not silently discarded.
-     */
-    fun drainAll(): List<BufferedAudioPacket> = synchronized(this) {
-        val drained = packets.values.toList()
-        packets.clear()
-        drained
-    }
-
-    fun missingSequenceCount(): Int = synchronized(this) {
-        val last = lastEmittedSequence ?: return@synchronized 0
-        val next = packets.keys.firstOrNull() ?: return@synchronized 0
-        (next - last - 1).coerceAtLeast(0).toInt()
-    }
-
-    fun depthMs(): Long = synchronized(this) {
-        if (packets.isEmpty()) return@synchronized 0
-        packets.values.last().scheduledLocalTimeMs - packets.values.first().scheduledLocalTimeMs
-    }
-
-    fun validatePacketIdentity(packet: AudioPacket, sessionId: SessionId, streamId: StreamId): Boolean {
-        return packet.sessionId == sessionId && packet.streamId == streamId
-    }
-
-    fun missingSequenceRanges(): List<LongRange> = synchronized(this) {
-        val sortedKeys = packets.keys.toList()
-        if (sortedKeys.size < 2) return@synchronized emptyList()
-        val gaps = mutableListOf<LongRange>()
-        for (index in 1 until sortedKeys.size) {
-            val previous = sortedKeys[index - 1]
-            val current = sortedKeys[index]
-            if (current > previous + 1) {
-                gaps += (previous + 1)..(current - 1)
-            }
-        }
-        gaps
-    }
 }
 
 fun List<AudioPacket>.packetizationStats(): PacketizationStats {

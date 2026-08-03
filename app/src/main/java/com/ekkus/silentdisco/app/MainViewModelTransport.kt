@@ -11,13 +11,10 @@ import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.ListenerPlaybackScheduler
-import com.ekkus.silentdisco.core.audio.AudioTrackPlaybackEngine
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PcmPacketizer
 import com.ekkus.silentdisco.core.audio.PlaybackFrame
-import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.audio.packetizationStats
 import com.ekkus.silentdisco.core.audio.validatePacketBudget
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
@@ -202,8 +199,6 @@ import kotlinx.coroutines.runBlocking
 
     internal fun MainViewModel.handleListenerDisconnect(message: String) {
         stopListenerPlaybackForFailure(message)
-        listenerScheduler = null
-        pendingTransportPackets.clear()
         pendingSyncCorrelationId = null
         // No dedicated Rust event exists yet for a graceful host-initiated
         // disconnect (only Failed); approximating with transportFailed means
