@@ -871,6 +871,33 @@ fn parse_preference(
     }
 }
 
+/// The interface production would actually bind to, for tests that need a
+/// real LAN address.
+///
+/// Tests used to hand-roll this filter -- "up, not loopback, not tun, not
+/// point-to-point, has a private IPv4" -- which accepts strictly more than
+/// production does: `classify` additionally excludes VPN and *container*
+/// interfaces. On a host with Docker bridges (172.x, private, up, physical
+/// by every one of those predicates) the two disagreed, and `netdev`'s
+/// ordering decided which interface a test picked. That is what made
+/// `port_in_use_and_partial_bind_cleanup_are_preserved_by_shared_transport`
+/// fail roughly three runs in four with "no active private-LAN IPv4 address
+/// is available": the test had handed production a bridge, and production
+/// correctly refused it.
+///
+/// Going through `normalize_interfaces` and `select_address` means the answer
+/// is production's own, so the two cannot drift apart again.
+#[cfg(test)]
+pub(super) fn first_bindable_private_lan_address() -> Option<(String, u32, std::net::Ipv4Addr)> {
+    let records = normalize_interfaces(netdev::get_interfaces()).ok()?;
+    let selected = select_address(&records, &BindPreference::Automatic).ok()?;
+    Some((
+        selected.interface_name,
+        selected.interface_index,
+        selected.address,
+    ))
+}
+
 fn is_active(interface: &InterfaceRecord) -> bool {
     interface.up && (interface.running || interface.oper_up)
 }

@@ -749,22 +749,17 @@ fn square_wave_pcm_wav(frame_count: u32) -> Vec<u8> {
 /// socket bind requires an address genuinely assigned to a local interface,
 /// so this cannot be faked the way `network_tests.rs`'s simulated-transport
 /// tests fake interface records.
+/// The interface production would bind, not a re-derived guess.
+///
+/// This used to hand-roll the filter, which accepted more than production's
+/// `classify` does -- notably container bridges, which are private, up, and
+/// physical by every predicate used here. Requiring `interface.default` made
+/// it pick the right one on this machine by luck rather than by rule; the
+/// same filter without that clause, in `network_tests.rs`, picked a Docker
+/// bridge often enough to fail three runs in four. Delegating means a device
+/// test can never advertise an address a phone cannot reach.
 fn real_private_lan_address() -> Option<(String, u32, Ipv4Addr)> {
-    let interfaces = netdev::get_interfaces();
-    let system_interface = interfaces.into_iter().find(|interface| {
-        interface.is_up()
-            && (interface.is_running() || interface.is_oper_up())
-            && !interface.is_loopback()
-            && !interface.is_tun()
-            && !interface.is_point_to_point()
-            && interface.default
-            && interface.ipv4_addrs().iter().any(Ipv4Addr::is_private)
-    })?;
-    let address = system_interface
-        .ipv4_addrs()
-        .into_iter()
-        .find(Ipv4Addr::is_private)?;
-    Some((system_interface.name, system_interface.index, address))
+    super::network::first_bindable_private_lan_address()
 }
 
 struct FixedInterfaceProvider {

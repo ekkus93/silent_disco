@@ -434,34 +434,22 @@ fn active_interface_change_is_reported_in_snapshot() {
 
 #[test]
 fn port_in_use_and_partial_bind_cleanup_are_preserved_by_shared_transport() {
-    let interfaces = netdev::get_interfaces();
-    let Some(system_interface) = interfaces.into_iter().find(|interface| {
-        interface.is_up()
-            && (interface.is_running() || interface.is_oper_up())
-            && !interface.is_loopback()
-            && !interface.is_tun()
-            && !interface.is_point_to_point()
-            && interface.ipv4_addrs().iter().any(Ipv4Addr::is_private)
-    }) else {
+    // Ask production which interface it would bind, rather than re-deriving
+    // it: a hand-rolled filter here accepted container bridges that
+    // `classify` rejects, and picking one made this test fail.
+    let Some((interface_name, interface_index, address)) =
+        super::network::first_bindable_private_lan_address()
+    else {
         eprintln!(
             "no private LAN interface on this CI host; policy coverage remains deterministic"
         );
         return;
     };
-    let address = system_interface
-        .ipv4_addrs()
-        .into_iter()
-        .find(Ipv4Addr::is_private)
-        .expect("private address");
     let control_port = reserve_tcp_port(address);
     let sync_guard = std::net::UdpSocket::bind((address, 0)).expect("reserve sync port");
     let sync_port = sync_guard.local_addr().expect("sync address").port();
     let audio_port = reserve_udp_port(address);
-    let record = interface(
-        &system_interface.name,
-        system_interface.index,
-        IpAddr::V4(address),
-    );
+    let record = interface(&interface_name, interface_index, IpAddr::V4(address));
     let control = DesktopHostNetworkControl::with_components(
         Arc::new(SequenceProvider::new([vec![record.clone()], vec![record]])),
         Arc::new(production_transport_factory()),
@@ -474,7 +462,13 @@ fn port_in_use_and_partial_bind_cleanup_are_preserved_by_shared_transport() {
     let error = control
         .start_host_inner(&advertisement())
         .expect_err("occupied synchronization port must fail");
-    assert_eq!(error.kind, NetworkErrorKind::Transport);
+    assert_eq!(
+        error.kind,
+        NetworkErrorKind::Transport,
+        "occupied sync port must fail at the transport bind; got {:?}: {}",
+        error.kind,
+        error.message
+    );
     std::net::TcpListener::bind((address, control_port))
         .expect("partial TCP bind must be released");
     std::net::UdpSocket::bind((address, audio_port))
