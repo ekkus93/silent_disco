@@ -688,3 +688,48 @@ fn an_arrival_outage_is_bridged_to_the_configured_bound_then_awaits_an_explicit_
     scheduler.rebuffer(0.0);
     assert!(!scheduler.is_awaiting_rebuffer());
 }
+
+// Reproduces the stream-wedge defect recorded as item 1 in
+// `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md`. It fails today, on
+// purpose: un-ignore it as the acceptance test when that item is fixed.
+#[test]
+#[ignore = "known defect: a listener that falls past the reorder window never resynchronises"]
+fn an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 200;
+    cfg.max_consecutive_concealed_packets = 3;
+    cfg.max_reorder_window = 8;
+    cfg.concealment_skip_threshold_packets = 4;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in 0..20 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+    for slot in 0..5 {
+        let _ = scheduler.poll(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS));
+    }
+    // The network drops entirely; concealment exhausts its bound and the
+    // caller rebuffers, exactly as the pump does automatically.
+    for slot in 20..40 {
+        if matches!(
+            scheduler.poll(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS)),
+            SchedulerPoll::AwaitingRebuffer
+        ) {
+            scheduler.rebuffer(0.0);
+        }
+    }
+
+    // The host has moved far ahead. If every packet is rejected as
+    // unreorderable, the stream is silent until the runtime is torn down.
+    let mut accepted = 0;
+    for sequence in 400..420 {
+        if scheduler.submit_packet(datagram(sequence, 8_000)).is_ok() {
+            accepted += 1;
+        }
+    }
+    assert!(
+        accepted > 0,
+        "a listener that fell behind can never resynchronise: all 20 packets rejected"
+    );
+}
