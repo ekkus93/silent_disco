@@ -921,3 +921,41 @@ Execution constraints for this session:
 - **Run-to-run loss variance across this session is large** — 0.025%, 0.12%,
   0.31%, 0.46%, 0.75% on the same build and network. Any single run is weak
   evidence; only differences of several times over are meaningful.
+
+## 2026-08-03T16:26:57Z - Claude Opus 5 (1M context) - Audio quality accepted; focus moves to Android and desktop app work
+
+- **User decision, end of the audio-tuning loop**: "That was pretty good...
+  I'm ok with it at the moment. We still have to test it with a lot more
+  clients and test it under load. I want to move on though and get more work
+  done on the Android app and the desktop app."
+- **Default for the next session: Android and desktop app feature work.** Do
+  not reopen listener audio tuning unprompted.
+- **Deferred, explicitly NOT finished** — do not let these be read as done:
+  - **Many-client testing.** Every device run this session used exactly one
+    listener. Multiple simultaneous listeners are untested.
+  - **Load testing.** Untested.
+  - **The project's actual success criterion — two or more listeners hearing
+    the same audio at the same time — has still never been measured.** This
+    needs a second Android device. Everything validated so far is
+    single-listener audio *quality*, which is a different property from
+    cross-listener *synchronization*.
+- **Where the audio work ended (2026-08-03)**: seven defects fixed and pushed,
+  all three gates green on each — burst concealment blips (item 7), the
+  abandoned-gap seam step (item 13), IP fragmentation of audio datagrams (5ms
+  packets), the pump's 100 packets/s throughput ceiling, the ~400ms of ring
+  discarded at stop (item 8), stale packets blocking resync and wedging the
+  stream (a hole in my own item-2 fix), and the 6dB step on an isolated lost
+  packet. Final run: 38.43s, zero waveform discontinuities, one 10ms startup
+  gap, no mid-stream silence.
+- **Highest-value open items**, tracked in
+  `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md`: **item 14** (sync
+  acquisition — cost 10s of a 40s song in run 15 and ~1.1s in the last runs,
+  and nothing reports it as a failure), then 8.4 (document that the debug
+  capture records pre-ring — the blind spot behind several "zero gaps" claims
+  that described the pump rather than the speaker), then 6, 9, 10, 11, 12.
+  Migration TODO still has 5.5 (host self-monitor) and 1.4 (BLE-path device
+  validation, needs a second phone).
+- **Method note worth carrying forward**: run-to-run packet loss varied
+  0.025%-0.75% on the same build and network. Several conclusions this
+  session were nearly drawn from single runs. Require a several-fold
+  difference, or repeat the run, before believing a change helped.
