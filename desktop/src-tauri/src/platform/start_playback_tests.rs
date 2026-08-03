@@ -255,6 +255,53 @@ fn stop_playback_reports_a_pump_that_could_not_complete_its_shutdown() {
         .expect_err("shutdown must report the missing actor");
 }
 
+/// End-of-stream, then an explicit stop: the actor must still end at
+/// `PlaybackState::Stopped`.
+///
+/// This is the manual device test's song-change step in miniature. There, a
+/// 40s source is stopped at 40s, so the pump has usually already exited on
+/// its own when `stop_playback` arrives -- and the actor was observed never
+/// reaching `Stopped` even though `stop_playback` returned success.
+#[test]
+fn stopping_after_the_source_has_already_ended_still_leaves_the_actor_stopped() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    wait_for_control(&mut *listener, |message| {
+        matches!(message, ControlMessage::StreamStart(_))
+    });
+
+    // Let the short source run out, so the pump exits on its own.
+    wait_for_control(&mut *listener, |message| {
+        matches!(message, ControlMessage::Stop(_))
+    });
+
+    // Now stop explicitly, exactly as a song change does.
+    network.stop_playback().expect("stop playback");
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
+    });
+
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
 fn stage_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
     stage_wav_source(temp, "desktop-block-playback-source", pcm_wav())
 }
@@ -814,7 +861,13 @@ fn wait_snapshot(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for actor state"
+            "timed out waiting for actor state; observed playback_state={:?} \
+             host_lifecycle={:?} revision={} pending_joins={} listeners={}",
+            snapshot.playback_state,
+            snapshot.host_lifecycle,
+            snapshot.revision.get(),
+            snapshot.pending_join_requests.len(),
+            snapshot.listeners.len(),
         );
         std::thread::sleep(Duration::from_millis(10));
     }
