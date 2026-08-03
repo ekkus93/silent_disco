@@ -853,3 +853,44 @@ Execution constraints for this session:
   three). Concealed audio fell 180ms → 120ms (33% less), and each hole is now
   5ms rather than 20ms, which is the larger perceptual win. Record the model
   as partially wrong rather than claiming the win.
+
+## 2026-08-03T10:31:00Z - Claude Opus 5 (1M context) - Ring drain-out at stop, and a wedge caused by a hole in my own item-2 fix
+
+- **Item 8 fixed**: `stop()` queued the drained tail while the ring was live,
+  then released the ring immediately, so the whole tail-preservation path was
+  defeated at the call site and the ring's ~400ms cushion went with it. Run 19
+  measured `ringQueued=19056` (397ms) discarded at stop — the abrupt ending.
+  `await_ring_drain` now waits for the consumer to play it out, bounded by a
+  2s deadline **and** a 150ms no-progress bound so a failed/closed output does
+  not cost the full deadline. Both Kotlin paths already stop the runtime
+  before `nativeOboeClose()`. Final diagnostics snapshot moved after the drain
+  (fixes 8.2 and 8.3 too). Test asserts the ring empties; non-vacuous —
+  without the drain it reports abandoning exactly 19,200 frames.
+- **Run 20 then failed catastrophically: user heard "a single beep".**
+  `accepted=15 received=7930 reorderWindow=7728`, `phase=BUFFERING` the whole
+  run, `bufferedMs=70` frozen.
+- **Root cause was a hole in the item-2 fix I wrote earlier.** The corroborated
+  far-future resync required `packets.is_empty()`. Sync locked late enough
+  that only 15 packets landed inside the reorder window before the live stream
+  ran past it; 15 packets is 75ms, far below the 1,000ms startup target, so
+  the scheduler stayed in Buffering and never popped them — and holding them
+  blocked the resync that would have recovered. Permanent wedge.
+- **The precondition was wrong on its own terms**: a corroborated run of
+  arrivals more than a reorder window *ahead* means everything buffered is
+  more than a window *behind* the live stream and can never play at its own
+  presentation time. Stale packets are now counted as skipped and discarded
+  when the resync fires. Corroboration (3 consecutive, adopt the lowest) still
+  provides the anti-hostile-packet protection the precondition was mistakenly
+  credited with; `rejects_a_hostile_flood_of_far_future_sequences` unchanged.
+- **The beep was the drain fix working.** Those 15 packets played out at stop
+  instead of being silently discarded. Without it the failure would have been
+  completely silent and much harder to find.
+- **Lesson worth keeping**: the 5ms packet change did not cause this, it
+  *revealed* it — a 256-packet reorder window is 1.28s at 5ms where a
+  64-packet window was 1.28s at 20ms, but the *startup* race got tighter
+  because sync-lock latency is unchanged while packets arrive 4x faster.
+  Latent defects in recovery paths surface when geometry changes.
+- **Run 21 (all fixes)**: cleanest recorded. 38.03s, zero discontinuities, max
+  jump 822, **one 10ms startup gap and no mid-stream silence at all**.
+  `concealed=9 late=0 reorderWindow=3 hardResyncs=0 resyncs=1`, underruns in
+  1 of 37 playing seconds, `droppedBeforeSync=330` (1.65s).
