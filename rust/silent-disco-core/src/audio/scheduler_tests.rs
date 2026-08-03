@@ -595,7 +595,8 @@ fn a_gap_within_the_skip_threshold_is_still_concealed_packet_by_packet() {
     assert!(concealed.concealed);
     assert_eq!(concealed.sequence, 1);
     // Repetition, not silence.
-    assert_eq!(concealed.samples[480 * 2], 4_000);
+    // First consecutive loss repeats at full amplitude; halving starts on the second.
+    assert_eq!(concealed.samples[480 * 2], 8_000);
 }
 
 #[test]
@@ -767,9 +768,9 @@ fn an_arrival_outage_is_bridged_to_the_configured_bound_then_awaits_an_explicit_
     let at_bound = scheduler.poll(HOST_START_MS + 4 * u64::from(PACKET_DURATION_MS));
 
     assert!(bridged.iter().all(|frame| frame.concealed));
-    assert_eq!(bridged[0].samples[480 * 2], 4_000);
-    assert_eq!(bridged[1].samples[480 * 2], 2_000);
-    assert_eq!(bridged[2].samples[480 * 2], 1_000);
+    assert_eq!(bridged[0].samples[480 * 2], 8_000);
+    assert_eq!(bridged[1].samples[480 * 2], 4_000);
+    assert_eq!(bridged[2].samples[480 * 2], 2_000);
     assert!(matches!(at_bound, SchedulerPoll::AwaitingRebuffer));
     assert!(scheduler.is_awaiting_rebuffer());
 

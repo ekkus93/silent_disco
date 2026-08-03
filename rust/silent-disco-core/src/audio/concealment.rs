@@ -171,8 +171,19 @@ impl ConcealmentPolicy {
     ) -> (Vec<i16>, ConcealmentOutcome) {
         let channel_count = usize::from(channels);
         let frame_count = usize::try_from(samples_per_packet).unwrap_or(usize::MAX);
-        let attenuation_shift =
-            (self.statistics.consecutive_concealed_packets + 1).min(MAX_ATTENUATION_SHIFT);
+        // The first concealed packet repeats at *full* amplitude; only a
+        // second consecutive loss starts halving. Attenuating immediately put
+        // an audible step into the commonest case by far -- an isolated single
+        // loss -- for no benefit: one packet's worth of repeated waveform is
+        // far too short to sound like a loop, and at the 5ms packet duration
+        // it is 5ms. A device listener reported pops that matched exactly the
+        // 1-2 packet concealment events, with no waveform discontinuity, no
+        // ring underrun, and no silence anywhere in the capture; a 6dB drop
+        // for 5ms is itself the artefact.
+        let attenuation_shift = self
+            .statistics
+            .consecutive_concealed_packets
+            .min(MAX_ATTENUATION_SHIFT);
         let mut samples = self.build_payload(frame_count, channel_count, attenuation_shift);
 
         self.statistics.total_concealed_packets += 1;

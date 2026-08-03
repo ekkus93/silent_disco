@@ -854,7 +854,7 @@ Execution constraints for this session:
   5ms rather than 20ms, which is the larger perceptual win. Record the model
   as partially wrong rather than claiming the win.
 
-## 2026-08-03T10:31:00Z - Claude Opus 5 (1M context) - Ring drain-out at stop, and a wedge caused by a hole in my own item-2 fix
+## 2026-08-03T16:11:55Z - Claude Opus 5 (1M context) - Ring drain-out at stop, and a wedge caused by a hole in my own item-2 fix
 
 - **Item 8 fixed**: `stop()` queued the drained tail while the ring was live,
   then released the ring immediately, so the whole tail-preservation path was
