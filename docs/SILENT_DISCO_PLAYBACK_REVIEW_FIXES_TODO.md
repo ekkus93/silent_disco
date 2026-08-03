@@ -461,6 +461,46 @@ skip stepped down from the concealed tail. The underlying defect predates it
       abandon gaps; run 14's conditions produced 89 abandoned sequences but
       cannot be summoned on demand.
 
+## 14. HIGH — a congested network delays sync lock, and the stream's opening is lost meanwhile
+
+The listener discards every audio packet that arrives before a clock offset
+exists (`dropped_before_sync`), because without an offset there is no
+timeline to schedule against. How much of the song that costs is entirely
+determined by how fast sync locks, and that is not bounded.
+
+Measured across four device runs of the same 40 s song:
+
+| run | `droppedBeforeSync` | lost opening | first accepted RTT |
+|-----|--------------------:|-------------:|-------------------:|
+| 12  | 66                  | 1.32 s       | —                  |
+| 13  | 103                 | 2.06 s       | —                  |
+| 14  | 96                  | 1.92 s       | —                  |
+| 15  | 508                 | **10.16 s**  | 149 ms             |
+
+In run 15 the estimator rejected **34 consecutive samples** before accepting
+one. `SyncEstimatorConfig::max_accepted_rtt_ms` defaults to 200 ms
+(`sync/estimator.rs:31`, gate at `:245`); the network was congested enough
+that every round trip exceeded it for ~8.5 s. Playback then began 10 s into
+a 40 s song. Nothing reports this as a failure — the UI shows "Playing" and
+the summary looks healthy.
+
+Holding the pre-sync packets instead of dropping them does not help: by the
+time sync locks they are 10 s past their presentation deadlines and would be
+discarded as late anyway. The lock time itself is the defect.
+
+- [ ] 14.1 Bound acquisition time. Sketch: if no sample passes the gate
+      within an acquisition window, adopt the lowest-RTT sample seen so far
+      rather than continuing to reject. A loose initial offset is corrected
+      by the soft-correction path within seconds; ten seconds of missing
+      audio is not recoverable.
+- [ ] 14.2 Consider an adaptive gate — a multiple of observed median RTT —
+      so a uniformly slow network is not treated as if every sample were an
+      outlier. Keep a hard ceiling.
+- [ ] 14.3 Surface acquisition as a distinct UI state with elapsed time and
+      rejected-sample count. A listener waiting 10 s should see why.
+- [ ] 14.4 Report `droppedBeforeSync` as a health signal, not just a counter:
+      500 dropped packets is a failed start, not a healthy stream.
+
 ## What the reviews found clean
 
 Recorded so a later pass does not redo this analysis:

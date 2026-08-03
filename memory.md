@@ -739,3 +739,56 @@ Execution constraints for this session:
 - **Verified fixed on the real device**: rebuilt, reinstalled, reran. This run's `skewPpm` stayed in a sane range throughout (13 to -1082, i.e. at most ~1000 ppm -- still larger than a real clock's typical drift, a residual estimation-noise issue worth revisiting, but many orders of magnitude away from breaking anything) and **`written=1829` of `received=1752`** -- real audio played, versus `written=0` on both prior attempts this entry. Pulled WAV: 36.58s (shorter than the previous 38.56s good run simply because sync took ~6-7s longer to establish this time under the same contended conditions, not a new truncation bug), tail correctly reaches and holds "do8" (523.25Hz, the melody's actual final note) again, confirming the earlier clipped-tail fix still holds; total silence only 0.64s across 20 small gaps.
 - **Net effect of this whole entry**: two real, independent, now-fixed bugs (test-fixture note clicks; skew-regression poisoning), one environmental confound correctly identified rather than misattributed to code (system CPU contention), and the previously-fixed clipped-tail behavior reconfirmed intact. Still open, unchanged: the startup-transient small gaps in the first ~1.3s (not yet root-caused), and the still-somewhat-noisy (though no longer catastrophic) skew estimate with only a few samples.
 - WAV from this entry: `/home/phil/.claude/jobs/800be99b/tmp/manual-listener-desktop-stream-39227.wav` -- job-scratch path, not durable across sessions.
+
+## 2026-08-03T08:46:06Z - Claude Opus 5 (1M context) - Fixed burst concealment and gap-skip seams; found sync-acquisition defect
+
+- **Fixed the residual "hiccups" the user reported.** Root-caused with a new
+  per-second diagnostics sampler (`manual.audio.sample` in
+  `ManualListenerTransportController`), which settled a question end-of-stream
+  totals could not: ring underruns are **entirely a startup phenomenon**
+  (run 13: 504+506+138 during BUFFERING, then `+0` for all 35 s of PLAYING,
+  ring depth steady at ~19,200 frames = the 400 ms target). That refuted a
+  pacing defect and left concealment bursts as the only candidate.
+- **Item 7 (commit `8fa3d94`)**: every concealed frame faded its tail to zero
+  and the next blended back in from that zero, so a burst emitted one 20 ms
+  envelope per lost packet — modulation at the 50 Hz packet rate. Confirmed
+  1:1 on device: run 13's `+4` concealment second matched the WAV's only
+  mid-stream silence gaps, at 19.100 s and 19.119 s. Concealment now carries
+  its un-faded tail forward; only a run's last *audible* frame lands on
+  silence (the bound frame is discarded by the scheduler in favour of a
+  rebuffer, so the fade must go on the frame before it too).
+- **Item 13 (commit `23e7d37`), found by run 14, not by either review**: a
+  gap wider than the skip threshold is abandoned, but nothing is emitted for
+  the abandoned span — the post-gap frame plays directly after the pre-gap
+  one with no silence between. Fading it in from zero spliced a step equal to
+  the outgoing amplitude. Run 14: exactly one discontinuity in 35.56 s, delta
+  11,296 at 28.080 s, on a network bad enough to abandon 89 sequences. Item 7
+  widened the exposure (concealed frames now end mid-decay) but did not
+  create it. Scheduler now tracks every emitted frame's tail and crossfades;
+  `resume_from_silence` marks the cases where silence genuinely intervenes.
+- **`apply_fade_in` was removed entirely**, not left alongside — it is
+  `apply_blend_in` with an empty `from`. One path, no drift between them.
+- **Run 15 confirmed both fixes**: 29.78 s captured, zero discontinuities,
+  max sample jump back to 822 (run 14: 11,296), no mid-stream silence despite
+  7 concealments.
+- **New defect found in run 15, item 14 (HIGH)**: the estimator rejected 34
+  consecutive sync samples before accepting one, because
+  `max_accepted_rtt_ms` defaults to 200 ms (`sync/estimator.rs:31`, gate at
+  `:245`) and a congested network exceeded it for ~8.5 s. All audio arriving
+  meanwhile is dropped, so playback began **10 s into a 40 s song**
+  (`droppedBeforeSync=508` vs 66/103/96 in runs 12-14). Nothing reports this:
+  UI says "Playing", summary looks healthy. Buffering the pre-sync packets
+  would not help — they would be late by then; the lock time is the defect.
+- **Measurement blind spot worth remembering**: `set_recorder` taps at the
+  pump→ring boundary (`playback_pump.rs:387`), so silence the real-time
+  callback substitutes on an empty ring never reaches the WAV. Every "zero
+  gaps" result describes the pump's output, not the speaker's. Cross-check
+  duration against the host's: run 12's 38.66 s captured + 1.346 s
+  `ringSilenceFilled` = 40.005 s, matching the 40 s song to 5 ms.
+- **Observed flake, not explained**:
+  `transport::tests::socket_runtime_completes_multi_listener_join_sync_and_audio_exchange`
+  failed once during a full-suite run, passed 12/12 in isolation both with
+  and without these changes. Looks load-correlated. Recorded, not diagnosed.
+- Still unverified: the write-lead double-counting hypothesis recorded in
+  commit `37b78c6` and item 4. Runs 12-15 give healthy baselines
+  (`resyncs` 1-2) but do not test the reverted change itself.
