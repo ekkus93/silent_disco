@@ -301,6 +301,54 @@ fn rejects_a_hostile_flood_of_far_future_sequences() {
     assert_eq!(error.kind, JitterBufferRejectionKind::ReorderWindowExceeded);
 }
 
+/// A handful of stale packets in the buffer must not be able to wedge the
+/// stream forever.
+///
+/// Measured on a device (run 20): sync locked late enough that only 15
+/// packets landed inside the reorder window before the live stream ran past
+/// it. Those 15 were far below the scheduler's startup target, so it stayed
+/// in `Buffering` and never popped them — and because the resync required an
+/// *empty* buffer, their presence blocked the resync that would have
+/// recovered. All 7,728 later arrivals were rejected and playback never
+/// began; the listener heard one 75ms fragment when the tail drained at stop.
+#[test]
+fn stale_buffered_packets_do_not_block_resynchronisation_onto_a_live_stream() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 1_000;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+
+    // A few packets land inside the window and stick: far short of the
+    // startup target, so nothing ever plays them.
+    for sequence in 0..15 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+    assert!(matches!(
+        scheduler.poll(HOST_START_MS),
+        SchedulerPoll::Buffering { .. }
+    ));
+
+    // The live stream is now far beyond the reorder window. Enough corroborating
+    // arrivals must move the scheduler onto it despite the stale packets.
+    let live_start = 5_000;
+    let mut accepted_live = 0;
+    for offset in 0..8 {
+        if scheduler
+            .submit_packet(datagram(live_start + offset, 8_000))
+            .is_ok()
+        {
+            accepted_live += 1;
+        }
+    }
+
+    assert!(
+        accepted_live > 0,
+        "the stream stayed wedged: every live packet was rejected while stale ones were held"
+    );
+    assert_eq!(scheduler.jitter_statistics().resynchronisations, 1);
+}
+
 #[test]
 fn rejects_an_invalid_packet_duration() {
     let mut cfg = config();

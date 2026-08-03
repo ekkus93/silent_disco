@@ -273,13 +273,24 @@ impl JitterBuffer {
             // strand playback forever. A genuinely advanced stream corroborates
             // itself within a few packets.
             let corroborated = self.far_future_run >= FAR_FUTURE_RESYNC_PACKETS;
-            if !(corroborated && self.packets.is_empty()) {
+            if !corroborated {
                 return Err(JitterBufferRejection::new(
                     JitterBufferRejectionKind::ReorderWindowExceeded,
                     "packet sequence is too far ahead of the next-expected sequence to reorder",
                 ));
             }
+            // Whatever is still buffered is stale by definition: a corroborated
+            // run of arrivals more than a reorder window *ahead* of the
+            // expected sequence means everything held is more than a window
+            // *behind* the live stream, so none of it can play at its own
+            // presentation time. Requiring an empty buffer here instead left a
+            // handful of unreachable packets able to wedge the stream forever:
+            // measured on a device, 15 stale packets held the scheduler in
+            // Buffering below its startup target while all 7,728 later arrivals
+            // were rejected, and playback never began.
             self.statistics.resynchronisations += 1;
+            self.statistics.skipped += u64::try_from(self.packets.len()).unwrap_or(u64::MAX);
+            self.packets.clear();
             self.next_expected_sequence = self.lowest_far_future.unwrap_or(sequence);
             self.far_future_run = 0;
             self.lowest_far_future = None;
