@@ -404,7 +404,7 @@ fn the_first_frame_of_a_stream_fades_in_from_silence() {
 }
 
 #[test]
-fn real_audio_resuming_after_concealment_fades_back_in() {
+fn real_audio_resuming_after_concealment_blends_from_the_concealed_tail() {
     let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
     // Sequence 1 never arrives, so its slot is concealed and sequence 2
     // resumes real audio afterwards.
@@ -423,9 +423,12 @@ fn real_audio_resuming_after_concealment_fades_back_in() {
     assert!(concealed.concealed);
     assert!(!resumed.concealed);
     assert_eq!(resumed.sequence, 2);
-    // The concealed frame faded to zero, so the resume seam ramps rather
-    // than stepping straight back to full amplitude.
-    assert_eq!(resumed.samples[0], 0);
+    // The concealed frame ended mid-decay, so the resume seam continues from
+    // that value and ramps back to full amplitude rather than stepping from a
+    // silence the concealment never reached.
+    let concealed_tail = concealed.samples[concealed.samples.len() - 2];
+    assert_ne!(concealed_tail, 0);
+    assert_eq!(resumed.samples[0], concealed_tail);
     assert_eq!(resumed.samples[RAMP_FRAMES * 2], 8_000);
 }
 

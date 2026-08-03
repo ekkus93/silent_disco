@@ -89,8 +89,10 @@ pub struct ConcealmentStatistics {
 /// looping one packet indefinitely.
 ///
 /// Every synthesized frame begins at the exact sample values the previously
-/// emitted frame ended on and fades its own tail to zero, so both seams are
-/// continuous regardless of what precedes or follows.
+/// emitted frame ended on, so a run of them is one continuous decaying
+/// waveform rather than a sequence of separately-ramped blips. Only the final
+/// frame of a bounded run fades to silence; when real audio resumes instead,
+/// the caller blends it in from [`ConcealmentPolicy::previous_tail`].
 #[derive(Debug)]
 pub struct ConcealmentPolicy {
     max_consecutive_concealed_packets: u32,
@@ -150,9 +152,10 @@ impl ConcealmentPolicy {
     ///
     /// The frame repeats the most recently delivered real packet attenuated by
     /// one further halving per consecutive concealment, blended in from the
-    /// previously emitted frame's final sample values and faded out to zero.
-    /// Before any real packet has been delivered there is nothing to repeat and
-    /// the frame is silence.
+    /// previously emitted frame's final sample values. Its tail is faded to
+    /// zero only when this frame reaches the consecutive bound and so ends the
+    /// run. Before any real packet has been delivered there is nothing to
+    /// repeat and the frame is silence.
     pub fn conceal(
         &mut self,
         samples_per_packet: u32,
@@ -162,19 +165,44 @@ impl ConcealmentPolicy {
         let frame_count = usize::try_from(samples_per_packet).unwrap_or(usize::MAX);
         let attenuation_shift =
             (self.statistics.consecutive_concealed_packets + 1).min(MAX_ATTENUATION_SHIFT);
-        let samples = self.build_payload(frame_count, channel_count, attenuation_shift);
+        let mut samples = self.build_payload(frame_count, channel_count, attenuation_shift);
 
-        self.previous_tail =
-            last_frame(&samples, channel_count).map_or_else(Vec::new, <[i16]>::to_vec);
         self.statistics.total_concealed_packets += 1;
         self.statistics.consecutive_concealed_packets += 1;
+        let consecutive = self.statistics.consecutive_concealed_packets;
+        let bound_reached = consecutive >= self.max_consecutive_concealed_packets;
 
-        if self.statistics.consecutive_concealed_packets >= self.max_consecutive_concealed_packets {
+        // Only a run's final frame lands on silence. Fading every frame's tail
+        // to zero -- and blending the next one back in from that zero -- turned
+        // a burst of lost packets into one amplitude dip per packet, audible as
+        // modulation at the packet rate rather than as a single decaying gap.
+        // Carrying the un-faded tail forward lets the halving attenuation reach
+        // silence on its own while the waveform stays continuous throughout.
+        //
+        // "Final" covers the bound frame *and* the one before it, because a
+        // caller that rebuffers on [`ConcealmentOutcome::HardResyncRequired`]
+        // discards the bound frame rather than playing it: without the earlier
+        // fade, the last frame anyone actually hears would end mid-waveform.
+        if consecutive + 1 >= self.max_consecutive_concealed_packets {
+            apply_fade_out_tail(&mut samples, channel_count, self.ramp_frames);
+        }
+        self.previous_tail =
+            last_frame(&samples, channel_count).map_or_else(Vec::new, <[i16]>::to_vec);
+
+        if bound_reached {
             self.statistics.hard_resync_signals += 1;
             (samples, ConcealmentOutcome::HardResyncRequired)
         } else {
             (samples, ConcealmentOutcome::Concealed)
         }
+    }
+
+    /// Per-channel sample values the most recently synthesized frame ended on,
+    /// so a caller splicing real audio after concealment can continue from them
+    /// instead of stepping. Empty before any concealment.
+    #[must_use]
+    pub fn previous_tail(&self) -> &[i16] {
+        &self.previous_tail
     }
 
     fn build_payload(
@@ -207,7 +235,6 @@ impl ConcealmentPolicy {
                 samples[index] = value;
             }
         }
-        apply_fade_out_tail(&mut samples, channel_count, ramp);
         samples
     }
 

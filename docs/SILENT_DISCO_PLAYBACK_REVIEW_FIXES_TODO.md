@@ -299,18 +299,40 @@ the validated run were isolated); bursts are not.
 Note the existing test `a_concealment_run_starts_from_the_previous_concealed_tail_not_the_real_packet`
 asserts the *wrong* behaviour and must change with the fix.
 
-- [ ] 7.1 Keep concealment continuous across a run. Sketch: only fade a
+- [x] 7.1 Keep concealment continuous across a run. Sketch: only fade a
       concealed frame's tail when it is the last of its run, or carry the
       pre-fade tail forward so successive frames continue the waveform and
       the decaying amplitude reaches silence on its own.
-- [ ] 7.2 The resuming real frame currently fades in from zero
+      *Done: `conceal` no longer fades every frame; the un-faded tail carries
+      forward and only a run's last audible frame lands on silence. "Last"
+      covers the bound frame and the one before it, because the scheduler
+      discards the bound frame in favour of a rebuffer rather than playing it.*
+- [x] 7.2 The resuming real frame currently fades in from zero
       (`apply_fade_in`), which is a step if the preceding concealed frame did
       not end at zero. Blend it from the previous emitted tail instead, the
       way concealment already does.
-- [ ] 7.3 Replace the test that locks in the current behaviour; assert
+      *Done: `apply_blend_in` replaced `apply_fade_in` outright — an empty
+      `from` degrades to the old fade, so one path serves both cases. The
+      scheduler tracks `resume_blend_tail`, cleared wherever playback really
+      does resume from silence (stream start, abandoned gap, rebuffer).*
+- [x] 7.3 Replace the test that locks in the current behaviour; assert
       continuity across a 4-packet run instead.
-- [ ] 7.4 Verify by burst-loss simulation in the WAV analysis, not by ear
+      *Done: three tests asserted the old fade-to-zero and were rewritten.
+      Added `a_burst_of_losses_decays_continuously_without_returning_to_silence`
+      and `the_last_audible_frame_of_a_bounded_run_lands_on_silence`.*
+- [x] 7.4 Verify by burst-loss simulation in the WAV analysis, not by ear
       alone.
+      *Done: `a_burst_of_lost_packets_renders_as_one_continuous_decay` drives a
+      4-packet burst through the real pump into a captured WAV and measures the
+      envelope off the file. Confirmed non-vacuous by restoring the old fade
+      condition and watching it fail.*
+
+**How this was found.** Per-second device diagnostics (run 13) showed ring
+underruns confined entirely to startup — zero for all 35 s of playback, ring
+depth steady at the 400 ms target — which ruled out a pacing defect. The
+remaining audible artefacts lined up 1:1 with concealment bursts: a `+4`
+concealment second matched the WAV's only mid-stream silence gaps, at 19.100 s
+and 19.119 s.
 
 ## 8. MEDIUM — the drained tail is queued but never played
 

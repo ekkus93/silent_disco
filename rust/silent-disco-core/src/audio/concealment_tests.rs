@@ -39,8 +39,10 @@ fn repeats_the_last_real_packet_at_half_amplitude_with_continuous_seams() {
     assert_eq!(sample_at(&samples, 480, 0), 4_000);
     // Entry ramp blends between the two without a step.
     assert_eq!(sample_at(&samples, 120, 0), 6_000);
-    // Exit continuity: the tail reaches zero for whatever follows.
-    assert_eq!(sample_at(&samples, 959, 0), 0);
+    // Exit: the frame ends on its own decayed amplitude. Whatever follows --
+    // a further concealment or resuming real audio -- continues from there,
+    // so forcing the tail to zero here would create the step it prevents.
+    assert_eq!(sample_at(&samples, 959, 0), 4_000);
 }
 
 #[test]
@@ -67,17 +69,75 @@ fn consecutive_concealments_halve_again_each_time_and_decay_toward_silence() {
 }
 
 #[test]
-fn a_concealment_run_starts_from_the_previous_concealed_tail_not_the_real_packet() {
+fn a_concealment_run_continues_from_the_previous_concealed_tail() {
     let mut policy = ConcealmentPolicy::new(200, 240).expect("valid policy");
     policy.record_delivery(&constant_packet(8_000), 2);
-    policy.conceal(960, 2);
+    let (first, _) = policy.conceal(960, 2);
 
     let (second, _) = policy.conceal(960, 2);
 
-    // The prior concealed frame faded to zero, so this one must begin at zero
-    // rather than stepping back up to the real packet's amplitude.
-    assert_eq!(sample_at(&second, 0, 0), 0);
+    // The prior frame ended mid-decay, so this one continues from that value
+    // rather than restarting from a zero the decay never reached.
+    assert_eq!(sample_at(&first, 959, 0), 4_000);
+    assert_eq!(sample_at(&second, 0, 0), 4_000);
     assert_eq!(sample_at(&second, 480, 0), 2_000);
+}
+
+/// A burst of consecutive losses must read as one decaying gap, not as one
+/// blip per lost packet. The previous implementation faded every concealed
+/// frame's tail to zero and blended the next one back in from that zero, so a
+/// four-packet burst emitted four separate 20ms envelopes -- amplitude
+/// modulation at the 50Hz packet rate, which a real device reproduced as an
+/// audible hiccup on every burst.
+#[test]
+fn a_burst_of_losses_decays_continuously_without_returning_to_silence() {
+    let mut policy = ConcealmentPolicy::new(200, 240).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+
+    let burst: Vec<Vec<i16>> = (0..4).map(|_| policy.conceal(960, 2).0).collect();
+
+    let mut previous_tail = 8_000;
+    for (index, frame) in burst.iter().enumerate() {
+        // No seam anywhere in the run: each frame opens exactly where the last
+        // one closed.
+        assert_eq!(
+            sample_at(frame, 0, 0),
+            previous_tail,
+            "frame {index} steps at its opening seam"
+        );
+        // No frame collapses to silence mid-burst, which is what produced the
+        // per-packet envelope.
+        assert_ne!(
+            sample_at(frame, 959, 0),
+            0,
+            "frame {index} returned to silence mid-burst"
+        );
+        previous_tail = sample_at(frame, 959, 0);
+    }
+
+    // The envelope still decays monotonically toward silence across the burst.
+    let bodies: Vec<i16> = burst.iter().map(|frame| sample_at(frame, 480, 0)).collect();
+    assert_eq!(bodies, vec![4_000, 2_000, 1_000, 500]);
+}
+
+/// The frame that reaches the consecutive bound is discarded by the scheduler
+/// in favour of a rebuffer, so the last frame a listener actually hears is the
+/// one before it -- and that frame, not the discarded one, has to land on
+/// silence.
+#[test]
+fn the_last_audible_frame_of_a_bounded_run_lands_on_silence() {
+    let mut policy = ConcealmentPolicy::new(3, 240).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+
+    let (first, first_outcome) = policy.conceal(960, 2);
+    let (last_emitted, second_outcome) = policy.conceal(960, 2);
+    let (_, bound_outcome) = policy.conceal(960, 2);
+
+    assert_eq!(first_outcome, ConcealmentOutcome::Concealed);
+    assert_eq!(second_outcome, ConcealmentOutcome::Concealed);
+    assert_eq!(bound_outcome, ConcealmentOutcome::HardResyncRequired);
+    assert_ne!(sample_at(&first, 959, 0), 0);
+    assert_eq!(sample_at(&last_emitted, 959, 0), 0);
 }
 
 #[test]
@@ -149,6 +209,20 @@ fn a_ramp_longer_than_the_packet_still_produces_a_full_length_frame() {
 
     let (samples, _) = policy.conceal(960, 2);
 
+    // The ramp is clamped to the frame's own length rather than truncating it.
+    assert_eq!(samples.len(), 960 * 2);
+    // Entry still starts exactly where the delivered packet ended.
+    assert_eq!(sample_at(&samples, 0, 0), 8_000);
+}
+
+#[test]
+fn a_bounded_run_shorter_than_its_ramp_still_lands_on_silence() {
+    let mut policy = ConcealmentPolicy::new(1, 4_000).expect("valid policy");
+    policy.record_delivery(&constant_packet(8_000), 2);
+
+    let (samples, outcome) = policy.conceal(960, 2);
+
+    assert_eq!(outcome, ConcealmentOutcome::HardResyncRequired);
     assert_eq!(samples.len(), 960 * 2);
     assert_eq!(sample_at(&samples, 959, 0), 0);
 }

@@ -70,6 +70,7 @@ private const val MAX_RING_PREFILL_MS: ULong = 800uL
  * estimator rejects any sample whose round trip exceeds its bound, so a
  * steady 2s cadence turns three unlucky probes into six seconds of silence.
  */
+private const val DIAGNOSTICS_SAMPLE_CADENCE_MS = 1_000L
 private const val SYNC_PROBE_CADENCE_MS = 2_000L
 private const val SYNC_PROBE_ACQUIRE_CADENCE_MS = 250L
 
@@ -124,6 +125,7 @@ class ManualListenerTransportController(
     private val handleRef = AtomicReference<FfiListenerTransportHandle?>(null)
     private var eventLoop: Job? = null
     private var syncProbeJob: Job? = null
+    private var diagnosticsSampleJob: Job? = null
     private var playbackRuntime: FfiListenerPlaybackHandle? = null
     private var currentStreamId: StreamId? = null
 
@@ -277,6 +279,44 @@ class ManualListenerTransportController(
     }
 
     /**
+     * Samples playback diagnostics once a second for the life of one stream.
+     *
+     * The end-of-stream summary reports only totals, which cannot distinguish
+     * a defect concentrated in the first second of playback from the same
+     * count spread evenly across the whole stream -- and the two have
+     * completely different causes. The debug WAV cannot settle it either: it
+     * captures frames on their way *into* the render ring, so silence the
+     * real-time callback substitutes on an empty ring is inaudible to it.
+     * Per-second deltas are the only view that locates a hiccup in time.
+     */
+    private fun startDiagnosticsSampler(scope: CoroutineScope, runtime: FfiListenerPlaybackHandle) {
+        diagnosticsSampleJob?.cancel()
+        diagnosticsSampleJob = scope.launch(Dispatchers.IO) {
+            var previousUnderruns = 0uL
+            var previousSilenceFrames = 0uL
+            var previousConcealed = 0uL
+            var previousEmitted = 0uL
+            while (isActive) {
+                delay(DIAGNOSTICS_SAMPLE_CADENCE_MS)
+                val diagnostics = playbackRuntime?.takeIf { it === runtime }?.diagnostics() ?: break
+                logger.i(
+                    "manual.audio.sample",
+                    "emitted=+${diagnostics.packetsEmitted - previousEmitted} " +
+                        "concealed=+${diagnostics.concealedPackets - previousConcealed} " +
+                        "underruns=+${diagnostics.ringUnderruns - previousUnderruns} " +
+                        "silenceFrames=+${diagnostics.ringSilenceFilledFrames - previousSilenceFrames} " +
+                        "ringQueued=${diagnostics.ringQueuedFrames} " +
+                        "bufferedMs=${diagnostics.bufferedSpanMs} phase=${diagnostics.phase}",
+                )
+                previousUnderruns = diagnostics.ringUnderruns
+                previousSilenceFrames = diagnostics.ringSilenceFilledFrames
+                previousConcealed = diagnostics.concealedPackets
+                previousEmitted = diagnostics.packetsEmitted
+            }
+        }
+    }
+
+    /**
      * Drives clock-sync probes for the life of one stream.
      *
      * The first probe goes out immediately rather than after a cadence delay:
@@ -391,6 +431,7 @@ class ManualListenerTransportController(
             return
         }
         startDebugCapture(runtime, event.streamId)
+        startDiagnosticsSampler(scope, runtime)
         logger.i(
             "manual.audio.stream_started",
             "streamId=${event.streamId} hostStartMs=${event.hostStartTimeMs} " +
@@ -428,6 +469,8 @@ class ManualListenerTransportController(
     private fun stopPlayback() {
         syncProbeJob?.cancel()
         syncProbeJob = null
+        diagnosticsSampleJob?.cancel()
+        diagnosticsSampleJob = null
         val runtime = playbackRuntime ?: return
         playbackRuntime = null
         currentStreamId = null
@@ -456,6 +499,8 @@ class ManualListenerTransportController(
                 "duplicate=${diagnostics.duplicateRejections} " +
                 "reorderWindow=${diagnostics.reorderWindowRejections} " +
                 "hardResyncs=${diagnostics.hardResyncSignals} " +
+                "resyncs=${diagnostics.resynchronisations} " +
+                "droppedBeforeSync=${diagnostics.droppedBeforeSync} " +
                 "ringPeakFrames=${diagnostics.ringPeakQueuedFrames} " +
                 "prefillFrames=${diagnostics.prefillFrames} " +
                 "ringUnderruns=${diagnostics.ringUnderruns} " +

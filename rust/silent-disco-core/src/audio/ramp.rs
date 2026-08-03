@@ -66,11 +66,21 @@ pub(super) fn last_frame(samples: &[i16], channels: usize) -> Option<&[i16]> {
     Some(&samples[(frames - 1) * channels..frames * channels])
 }
 
-/// Linearly fades the first `ramp_frames` frames of `samples` up from zero,
-/// leaving later frames untouched. Used when real audio resumes after a gap
-/// (or starts mid-waveform), so the resume seam is a short ramp rather than a
-/// step.
-pub(super) fn apply_fade_in(samples: &mut [i16], channels: usize, ramp_frames: usize) {
+/// Linearly blends the first `ramp_frames` frames of `samples` in from the
+/// per-channel sample values in `from`, leaving later frames untouched.
+///
+/// This is the seam treatment for real audio resuming after an interruption.
+/// Fading in from zero is correct only if the preceding frame ended at zero;
+/// when it ended part-way through a decaying concealment, a fade-in is itself
+/// the step it was meant to prevent. An empty or wrong-width `from` means
+/// there is nothing to continue -- a stream's first frame, or the frame after
+/// an abandoned gap -- and degrades to exactly that fade from silence.
+pub(super) fn apply_blend_in(
+    samples: &mut [i16],
+    channels: usize,
+    ramp_frames: usize,
+    from: &[i16],
+) {
     if channels == 0 {
         return;
     }
@@ -79,10 +89,18 @@ pub(super) fn apply_fade_in(samples: &mut [i16], channels: usize, ramp_frames: u
         return;
     }
     let ramp = ramp_frames.clamp(1, total_frames);
+    let continues_from = if from.len() == channels {
+        Some(from)
+    } else {
+        None
+    };
     for frame in 0..ramp {
         for channel in 0..channels {
             let index = frame * channels + channel;
-            samples[index] = scale_sample(samples[index], frame, ramp);
+            samples[index] = match continues_from {
+                Some(tail) => blend_sample(samples[index], tail[channel], frame, ramp),
+                None => scale_sample(samples[index], frame, ramp),
+            };
         }
     }
 }

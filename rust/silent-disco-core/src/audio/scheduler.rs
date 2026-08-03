@@ -1,7 +1,7 @@
 use core::fmt;
 use std::error::Error;
 
-use super::ramp::{apply_fade_in, apply_fade_out_tail};
+use super::ramp::{apply_blend_in, apply_fade_out_tail};
 use super::{
     ConcealmentOutcome, ConcealmentPolicy, ConcealmentStatistics, DEFAULT_CONCEALMENT_RAMP_MS,
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
@@ -253,6 +253,11 @@ pub struct PlaybackScheduler {
     /// Set whenever the next real frame would resume from silence or from
     /// concealed content rather than continuing the previous real frame.
     fade_in_next_real_frame: bool,
+    /// Per-channel values the last emitted concealed frame ended on, so the
+    /// real frame that follows continues the waveform instead of fading in
+    /// from a zero the concealment never reached. Empty when the next frame
+    /// genuinely resumes from silence (stream start, abandoned gap, rebuffer).
+    resume_blend_tail: Vec<i16>,
 }
 
 impl PlaybackScheduler {
@@ -350,6 +355,7 @@ impl PlaybackScheduler {
             // begins mid-waveform (playback opens at whatever sample the
             // presentation timeline lands on), so it is faded in too.
             fade_in_next_real_frame: true,
+            resume_blend_tail: Vec::new(),
         })
     }
 
@@ -427,6 +433,9 @@ impl PlaybackScheduler {
             self.jitter_buffer.skip_to_earliest_buffered();
             self.concealment.reset_consecutive_count();
             self.fade_in_next_real_frame = true;
+            // The abandoned span plays as silence, so there is no waveform to
+            // continue on the far side of it.
+            self.resume_blend_tail.clear();
 
             next_sequence = self.jitter_buffer.next_expected_sequence();
             host_deadline_ms = self.expected_host_presentation_time_ms(next_sequence);
@@ -445,12 +454,14 @@ impl PlaybackScheduler {
             self.concealment
                 .record_delivery(&samples, self.config.channels);
             if self.fade_in_next_real_frame {
-                apply_fade_in(
+                apply_blend_in(
                     &mut samples,
                     usize::from(self.config.channels),
                     self.ramp_frames,
+                    &self.resume_blend_tail,
                 );
                 self.fade_in_next_real_frame = false;
+                self.resume_blend_tail.clear();
             }
             let frame = ScheduledFrame {
                 sequence: datagram.sequence.get(),
@@ -469,9 +480,12 @@ impl PlaybackScheduler {
             .concealment
             .conceal(self.config.samples_per_packet, self.config.channels);
         self.jitter_buffer.skip_expected_sequence();
-        // Concealed content fades to zero, so whatever real audio resumes
-        // after it must fade back in rather than stepping up from silence.
+        // Concealed content ends mid-decay rather than at zero, so whatever
+        // real audio resumes after it is blended in from that value.
         self.fade_in_next_real_frame = true;
+        self.resume_blend_tail.clear();
+        self.resume_blend_tail
+            .extend_from_slice(self.concealment.previous_tail());
 
         match outcome {
             ConcealmentOutcome::Concealed => {
@@ -489,6 +503,9 @@ impl PlaybackScheduler {
             }
             ConcealmentOutcome::HardResyncRequired => {
                 self.state = SchedulerState::AwaitingRebuffer;
+                // This frame is not emitted and the rebuffer that follows plays
+                // silence, so nothing downstream continues from it.
+                self.resume_blend_tail.clear();
                 SchedulerPoll::AwaitingRebuffer
             }
         }
@@ -509,9 +526,10 @@ impl PlaybackScheduler {
         let channels = usize::from(self.config.channels);
         let ramp = self.ramp_frames;
         let mut expected_next = self.jitter_buffer.next_expected_sequence();
-        // A concealed frame faded to zero, so the first drained frame resumes
-        // from silence even when it continues the sequence without a hole.
+        // The first drained frame continues from whatever the last emitted
+        // frame ended on: mid-decay concealed content, or silence.
         let mut fade_in_next = self.fade_in_next_real_frame;
+        let mut blend_from = std::mem::take(&mut self.resume_blend_tail);
         let mut frames: Vec<ScheduledFrame> = Vec::new();
 
         for datagram in self.jitter_buffer.drain_all() {
@@ -521,11 +539,14 @@ impl PlaybackScheduler {
                     apply_fade_out_tail(&mut previous.samples, channels, ramp);
                 }
                 fade_in_next = true;
+                // A faded hole edge really does reach zero.
+                blend_from.clear();
             }
             let mut samples = decode_payload_samples(&datagram.payload);
             if fade_in_next {
-                apply_fade_in(&mut samples, channels, ramp);
+                apply_blend_in(&mut samples, channels, ramp, &blend_from);
                 fade_in_next = false;
+                blend_from.clear();
             }
             frames.push(ScheduledFrame {
                 sequence,
@@ -612,6 +633,7 @@ impl PlaybackScheduler {
         self.state = SchedulerState::Buffering;
         // Playback resumes after a real interruption; fade back in.
         self.fade_in_next_real_frame = true;
+        self.resume_blend_tail.clear();
     }
 
     /// Explicitly stops this scheduler. Idempotent; a new stream requires a
