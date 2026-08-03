@@ -32,6 +32,7 @@ import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
+import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
@@ -78,6 +79,15 @@ import kotlinx.coroutines.runBlocking
             return
         }
 
+        // Once playback exists, the runtime owns the estimate, so the probe
+        // must be registered with it and stamped from its clock -- a
+        // timestamp from any other epoch would make the estimate and the
+        // playback timeline disagree.
+        val runtime = listenerPlayback
+        if (runtime != null) {
+            sendRuntimeSyncProbe(runtime, source)
+            return
+        }
         val controller = listenerSyncController ?: createSyncController(SessionId(session.id)).also {
             listenerSyncController = it
         }
@@ -131,6 +141,29 @@ import kotlinx.coroutines.runBlocking
         _uiState.value = _uiState.value.copy(lastError = message)
         diagnosticsStore.updateListener { it.copy(lastError = message) }
         refreshListenerDiagnostics()
+    }
+
+    /**
+     * Registers one probe with the playback runtime and sends it with the
+     * same timestamp the runtime recorded.
+     */
+    private fun MainViewModel.sendRuntimeSyncProbe(runtime: FfiListenerPlaybackHandle, source: String) {
+        val correlationId = nextSyncCorrelationId++
+        val sendTimeMs = runtime.nowMs()
+        runCatching { runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs) }
+            .onFailure { error ->
+                handleSyncFailure(error.message ?: "Failed to register sync probe")
+                return
+            }
+        viewModelScope.launch {
+            runCatching {
+                listenerTransportController.sendSyncRequest(correlationId.toULong(), sendTimeMs)
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(lastMessage = "$source sync probe sent", lastError = null)
+            }.onFailure { error ->
+                handleSyncFailure(error.message ?: "Failed to send sync probe")
+            }
+        }
     }
 
     internal fun MainViewModel.applySyncResponse(response: SyncResponsePacket) {

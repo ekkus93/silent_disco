@@ -41,7 +41,8 @@ pub use host_transport::{
 };
 pub use listener_playback::{
     FfiAudioPacket, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiListenerPlaybackHandle,
-    FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncSampleOutcome, ListenerPlaybackError,
+    FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome,
+    ListenerPlaybackError,
     ListenerPlaybackRuntime,
 };
 pub use listener_transport::{

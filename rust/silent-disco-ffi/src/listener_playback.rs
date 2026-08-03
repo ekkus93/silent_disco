@@ -20,7 +20,7 @@ use silent_disco_core::audio::{
     RenderRingConfig, SchedulerConfig,
 };
 use silent_disco_core::domain::{
-    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId, SyncConfidence,
 };
 use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
 use silent_disco_core::sync::{
@@ -99,6 +99,10 @@ pub struct SyncSampleOutcome {
     pub skew_ppm: f64,
     /// Round-trip time of the current estimate, in milliseconds.
     pub round_trip_time_ms: f64,
+    /// Offset dispersion across the samples behind the current estimate.
+    pub jitter_ms: f64,
+    /// The estimator's own confidence in the current estimate.
+    pub confidence: SyncConfidence,
     /// Accepted samples behind the current estimate.
     pub accepted_sample_count: usize,
     /// True once playback has a real offset and may start.
@@ -365,6 +369,8 @@ impl ListenerPlaybackRuntime {
             offset_ms: snapshot.offset_ms,
             skew_ppm: snapshot.skew_ppm,
             round_trip_time_ms: snapshot.round_trip_time_ms,
+            jitter_ms: snapshot.jitter_ms,
+            confidence: snapshot.confidence,
             accepted_sample_count: snapshot.accepted_sample_count,
             sync_locked,
         })
@@ -948,6 +954,33 @@ pub struct FfiPlaybackDiagnostics {
     pub ring_full_events: u64,
 }
 
+/// The estimator's confidence in its current estimate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiSyncConfidence {
+    /// No sample has been accepted yet.
+    Unknown,
+    /// Accepted, but the round trip or dispersion is poor.
+    Poor,
+    /// Usable.
+    Fair,
+    /// Good.
+    Good,
+    /// Excellent.
+    Excellent,
+}
+
+impl From<SyncConfidence> for FfiSyncConfidence {
+    fn from(confidence: SyncConfidence) -> Self {
+        match confidence {
+            SyncConfidence::Unknown => Self::Unknown,
+            SyncConfidence::Poor => Self::Poor,
+            SyncConfidence::Fair => Self::Fair,
+            SyncConfidence::Good => Self::Good,
+            SyncConfidence::Excellent => Self::Excellent,
+        }
+    }
+}
+
 /// Result of feeding one correlated sync response, flattened for the binding.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct FfiSyncSampleOutcome {
@@ -959,6 +992,10 @@ pub struct FfiSyncSampleOutcome {
     pub skew_ppm: f64,
     /// Round-trip time behind the current estimate.
     pub round_trip_time_ms: f64,
+    /// Offset dispersion across the samples behind the current estimate.
+    pub jitter_ms: f64,
+    /// The estimator's own confidence in the current estimate.
+    pub confidence: FfiSyncConfidence,
     /// Accepted samples behind the current estimate.
     pub accepted_sample_count: u64,
     /// True once playback has a real offset and may start.
@@ -1012,6 +1049,8 @@ impl From<SyncSampleOutcome> for FfiSyncSampleOutcome {
             offset_ms: outcome.offset_ms,
             skew_ppm: outcome.skew_ppm,
             round_trip_time_ms: outcome.round_trip_time_ms,
+            jitter_ms: outcome.jitter_ms,
+            confidence: outcome.confidence.into(),
             accepted_sample_count: to_u64(outcome.accepted_sample_count),
             sync_locked: outcome.sync_locked,
         }

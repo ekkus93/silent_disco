@@ -126,6 +126,8 @@ class MainViewModel @JvmOverloads constructor(
     internal var resyncJob: Job? = null
     internal var scanJob: Job? = null
     internal var pendingSyncCorrelationId: Long? = null
+    /** Monotonic probe ids for the runtime-owned estimator. */
+    internal var nextSyncCorrelationId: Long = 1
     internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
@@ -397,6 +399,9 @@ class MainViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         hostPlaybackCommandJob?.cancel()
+        // The runtime holds a pump thread, a ring registration and the native
+        // output; none of them are reclaimed by the ViewModel going away.
+        stopListenerPlayback()
         bleService.stop()
         wifiDirectService.stop()
         manualListenerController.close()

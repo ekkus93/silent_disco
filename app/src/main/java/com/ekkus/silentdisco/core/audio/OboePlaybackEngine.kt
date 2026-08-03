@@ -124,9 +124,16 @@ class OboePlaybackEngine : PlaybackEngine {
     override fun playbackPositionMs(frame: PlaybackFrame): Long = frame.localDeadlineMs
 
     override fun stop() {
-        OboeBridge.nativeOboeClose()
-        handle?.release()
+        // Only close the native stream this engine actually opened. The
+        // adapter is process-global and the listener runtime may own it, so
+        // an unconditional close here would silence a stream this engine
+        // never started.
+        val opened = handle
         handle = null
+        if (opened != null) {
+            OboeBridge.nativeOboeClose()
+            opened.release()
+        }
     }
 
     override fun setVolume(value: Float) {

@@ -41,19 +41,27 @@ returns `AwaitingSync` and releases zero frames until `sync_locked`, so on
 this path Oboe opens, packets accumulate, and not one frame is ever written
 to the ring. Verified by grep, not yet on a device.
 
-- [ ] 1.1 Route this path's sync through the runtime: on
+- [x] 1.1 Route this path's sync through the runtime: on
       `SyncResponseReceived`, call `runtime.observeSyncResponse(...)` with t4
       from `runtime.nowMs()`.
-- [ ] 1.2 Send its probes from the runtime's clock. The outbound probe is
+- [x] 1.2 Send its probes from the runtime's clock. The outbound probe is
       currently stamped by `ListenerSyncController.newProbe()` using
       `SystemClock.elapsedRealtime()` — a different epoch from
       `runtime.nowMs()`. Register each probe with `beginSyncProbe` and send
       the same timestamp, as the manual path does.
-- [ ] 1.3 Decide what remains of `ListenerSyncController` on this path. It
+- [x] 1.3 Decide what remains of `ListenerSyncController` on this path. It
       still feeds pre-stream connection-progress UI (the "synced" tick)
       before any runtime exists. Either keep it strictly for that and
       document it, or drive progress from `syncLocked` instead. **Do not
       leave two estimators both feeding playback.**
+**1.3 resolution:** `ListenerSyncController` is kept **only** for the
+pre-stream window, where no runtime exists yet but connection progress must
+still show sync under way. The moment a runtime exists it is the sole
+authority — both the probe and the response go through it, and nothing
+derives playback timing from the Kotlin controller. `SyncSampleOutcome` now
+carries the estimator's own `jitter_ms` and `confidence` so the UI reports
+what the estimator actually computed instead of fabricating it.
+
 - [ ] 1.4 Device-validate this path end to end. It has never been run. Note
       it cannot reach the desktop host (manual connect is the only route), so
       this needs a second Android device acting as host.
@@ -99,10 +107,10 @@ failure the UI reports **PLAYING with a healthy buffer while the device is
 silent**. Direct violation of CLAUDE.md's "do not hide transport, sync,
 playback, queue, or database failures behind generic success states".
 
-- [ ] 3.1 Derive the reported playback state from `phase` and `syncLocked`,
+- [x] 3.1 Derive the reported playback state from `phase` and `syncLocked`,
       not from a constant. `AwaitingSync` and `Buffering` must be visible as
       themselves.
-- [ ] 3.2 Surface a visible error when a stream has been open and unable to
+- [x] 3.2 Surface a visible error when a stream has been open and unable to
       play for longer than a bounded time (no accepted sync sample, or
       `Buffering` that never resolves).
 - [ ] 3.3 Audit the manual path's UI mapping for the same class of problem.
@@ -156,16 +164,16 @@ from under any other live runtime — the manual path goes silent while still
 reporting `Playing`. The same unconditional close exists in
 `stopHostPlaybackImpl` and `stopAdvertisingForRust`.
 
-- [ ] 5.1 Route every listener failure/disconnect path through
+- [x] 5.1 Route every listener failure/disconnect path through
       `stopListenerPlayback()`.
-- [ ] 5.2 Stop the discovered-session runtime in `onCleared()` — rotating the
+- [x] 5.2 Stop the discovered-session runtime in `onCleared()` — rotating the
       device or backgrounding the Activity currently leaks the pump thread
       and the Oboe stream past the ViewModel.
-- [ ] 5.3 Make `ManualListenerTransportController.connect()` stop existing
+- [x] 5.3 Make `ManualListenerTransportController.connect()` stop existing
       playback before reconnecting. Its early-return failure paths currently
       leave the previous stream audibly playing behind a "connection failed"
       message.
-- [ ] 5.4 Fix ownership of `nativeOboeClose()`. Only the component that
+- [x] 5.4 Fix ownership of `nativeOboeClose()`. Only the component that
       opened the stream should close it; a global unconditional close from
       three unrelated call sites cannot be correct once two paths exist.
 - [ ] 5.5 Add a test or instrumentation asserting no runtime outlives its

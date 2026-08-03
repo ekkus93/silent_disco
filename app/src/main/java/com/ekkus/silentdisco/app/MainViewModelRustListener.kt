@@ -6,6 +6,7 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
@@ -23,7 +24,10 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiAudioPacket
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackConfig
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiPlaybackDiagnostics
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
+import com.ekkus.silentdisco.core.uniffi.FfiSyncSampleOutcome
+import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
@@ -407,18 +411,102 @@ private fun MainViewModel.handleTransportStreamStopped() {
     refreshListenerDiagnostics()
 }
 
+/**
+ * Feeds one four-timestamp exchange to whichever component owns the estimate.
+ *
+ * Once a playback runtime exists it is the only authority: it holds the
+ * estimator, and playback stays gated until it accepts a sample. The Kotlin
+ * controller below is used only before a stream starts, where there is no
+ * runtime yet but the connection-progress UI still needs to show that sync is
+ * under way. Nothing derives playback timing from it.
+ */
 private fun MainViewModel.handleTransportSyncResponse(event: FfiListenerTransportEvent.SyncResponseReceived) {
     val session = _uiState.value.selectedSession ?: return
-    applySyncResponse(
-        SyncResponsePacket(
-            version = LISTENER_DISCOVERY_PROTOCOL_VERSION,
-            sessionId = SessionId(session.id),
-            correlationId = event.correlationId.toLong(),
-            t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs.toLong(),
-            t2HostReceiveElapsedMs = event.t2HostReceiveElapsedMs.toLong(),
-            t3HostSendElapsedMs = event.t3HostSendElapsedMs.toLong(),
-        ),
+    val runtime = listenerPlayback
+    if (runtime == null) {
+        applySyncResponse(
+            SyncResponsePacket(
+                version = LISTENER_DISCOVERY_PROTOCOL_VERSION,
+                sessionId = SessionId(session.id),
+                correlationId = event.correlationId.toLong(),
+                t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs.toLong(),
+                t2HostReceiveElapsedMs = event.t2HostReceiveElapsedMs.toLong(),
+                t3HostSendElapsedMs = event.t3HostSendElapsedMs.toLong(),
+            ),
+        )
+        return
+    }
+    val outcome = runCatching {
+        runtime.observeSyncResponse(
+            event.correlationId,
+            event.t1ListenerSendElapsedMs,
+            event.t2HostReceiveElapsedMs,
+            event.t3HostSendElapsedMs,
+            runtime.nowMs(),
+        )
+    }.getOrElse { error ->
+        logger.w("sync.rejected", error.message ?: "sync response rejected")
+        return
+    }
+    applyRuntimeSyncOutcome(outcome)
+}
+
+/** Mirrors the runtime's own estimate into the UI and diagnostics. */
+private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome) {
+    logger.i(
+        "sync.sample",
+        "accepted=${outcome.accepted} offset=${"%.2f".format(outcome.offsetMs)} " +
+            "rtt=${"%.2f".format(outcome.roundTripTimeMs)} skewPpm=${"%.2f".format(outcome.skewPpm)} " +
+            "confidence=${outcome.confidence} locked=${outcome.syncLocked}",
     )
+    if (!outcome.accepted) return
+    val syncState = SyncState(
+        offsetMs = outcome.offsetMs,
+        rttMs = outcome.roundTripTimeMs,
+        jitterMs = outcome.jitterMs,
+        skewPpm = outcome.skewPpm,
+        confidence = outcome.confidence.toAppSyncQuality(),
+        resyncCount = _uiState.value.listenerSyncState.resyncCount + 1,
+    )
+    _uiState.value = _uiState.value.copy(
+        listenerSyncState = syncState,
+        connectionProgress = _uiState.value.connectionProgress.copy(synced = outcome.syncLocked),
+    )
+    diagnosticsStore.updateListener {
+        it.copy(
+            hostOffsetMs = syncState.offsetMs,
+            rttMs = syncState.rttMs,
+            jitterMs = syncState.jitterMs,
+            resyncCount = syncState.resyncCount,
+            metricsSummary = summarizeMetrics(),
+        )
+    }
+    metrics.increment("sync_sample")
+    metrics.recordTiming("sync_rtt_ms", syncState.rttMs)
+    refreshListenerDiagnostics()
+}
+
+/**
+ * Maps the runtime's own state to a reported playback state.
+ *
+ * Derived rather than assumed: buffering and awaiting-sync are real states a
+ * listener can be stuck in, and collapsing them into PLAYING is what let a
+ * permanently silent stream report itself healthy.
+ */
+internal fun FfiPlaybackDiagnostics.toPlaybackState(): PlaybackState = when {
+    !syncLocked -> PlaybackState.BUFFERING
+    phase == FfiPlaybackPhase.STOPPED -> PlaybackState.STOPPED
+    phase == FfiPlaybackPhase.BUFFERING || phase == FfiPlaybackPhase.AWAITING_REBUFFER ->
+        PlaybackState.BUFFERING
+    else -> PlaybackState.PLAYING
+}
+
+internal fun FfiSyncConfidence.toAppSyncQuality(): SyncQualityBadge = when (this) {
+    FfiSyncConfidence.UNKNOWN -> SyncQualityBadge.UNKNOWN
+    FfiSyncConfidence.POOR -> SyncQualityBadge.POOR
+    FfiSyncConfidence.FAIR -> SyncQualityBadge.FAIR
+    FfiSyncConfidence.GOOD -> SyncQualityBadge.GOOD
+    FfiSyncConfidence.EXCELLENT -> SyncQualityBadge.EXCELLENT
 }
 
 /**
@@ -430,6 +518,9 @@ private const val LISTENER_RING_CAPACITY_FRAMES: UInt = 48_000u
 private const val LISTENER_RING_TARGET_FILL_FRAMES: UInt = 19_200u
 private const val LISTENER_RING_WRITE_LEAD_MS: ULong = 400uL
 private const val LISTENER_MAX_RING_PREFILL_MS: ULong = 800uL
+
+/** How long a stream may sit without a clock lock before it is reported. */
+private const val LISTENER_SYNC_LOCK_TIMEOUT_MS = 5_000L
 
 /** How often the runtime's own accounting is mirrored into the UI. */
 private const val LISTENER_DIAGNOSTICS_POLL_MS = 100L
@@ -530,7 +621,9 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
     playbackJob?.cancel()
     playbackJob = viewModelScope.launch {
         var reportedPlaying = false
+        var reportedSyncStall = false
         var lastUnderruns = 0UL
+        val openedAtMs = android.os.SystemClock.elapsedRealtime()
         while (_uiState.value.listenerState != ListenerLifecycleState.DISCONNECTED) {
             if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
                 wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
@@ -540,6 +633,23 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
             }
             if (listenerPlayback !== runtime) return@launch
             val diagnostics = runtime.diagnostics()
+            // A stream that cannot play must never read as playing. Without a
+            // real clock offset the pump releases nothing at all, and
+            // reporting PLAYING there turns a hard failure into an invisible
+            // one -- which is how this path shipped silent.
+            if (!diagnostics.syncLocked &&
+                android.os.SystemClock.elapsedRealtime() - openedAtMs > LISTENER_SYNC_LOCK_TIMEOUT_MS &&
+                !reportedSyncStall
+            ) {
+                reportedSyncStall = true
+                val message = "No clock sync established; playback cannot start"
+                logger.w("sync.stalled", message)
+                _uiState.value = _uiState.value.copy(
+                    listenerState = ListenerLifecycleState.DESYNCED,
+                    lastError = message,
+                )
+                diagnosticsStore.updateListener { it.copy(lastError = message) }
+            }
             if (!reportedPlaying && diagnostics.phase == FfiPlaybackPhase.PLAYING) {
                 reportedPlaying = true
                 _uiState.value = _uiState.value.copy(
@@ -561,11 +671,7 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
             }
             diagnosticsStore.updateListener {
                 it.copy(
-                    playbackState = if (diagnostics.ringUnderruns > 0UL) {
-                        PlaybackState.UNDERRUN
-                    } else {
-                        PlaybackState.PLAYING
-                    },
+                    playbackState = diagnostics.toPlaybackState(),
                     bufferDepthMs = diagnostics.bufferedSpanMs.toLong(),
                     packetLossCount = diagnostics.sequencesSkipped.toInt(),
                     lateDropCount = diagnostics.lateRejections.toInt(),

@@ -148,6 +148,10 @@ class ManualListenerTransportController(
         inviteCode: String?,
     ) {
         withContext(Dispatchers.IO) {
+            // Stop any stream still running before tearing down its
+            // transport: a failed reconnect otherwise leaves the previous
+            // stream audibly playing behind a "connection failed" message.
+            stopPlayback()
             closeExistingHandle()
             // Before the socket connect, not after approval: power-save
             // latency also poisons the first clock-sync exchanges, and those
