@@ -3,6 +3,7 @@ mod decoder;
 mod jitter_buffer;
 mod packetizer;
 mod packetizer_worker;
+mod playback_pump;
 mod ramp;
 mod render_ring;
 mod resampler;
@@ -30,6 +31,10 @@ pub use packetizer_worker::{
     DEFAULT_PACKETIZER_QUEUE_CAPACITY, MAX_PACKETIZER_QUEUE_CAPACITY, PacketizerSummary,
     PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
     StreamingPacketizeConfig, StreamingPacketizeHandle,
+};
+pub use playback_pump::{
+    PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind,
+    PumpTick,
 };
 pub use render_ring::{
     DEFAULT_RING_CAPACITY_FRAMES, DEFAULT_TARGET_FILL_FRAMES, MAX_RING_CAPACITY_FRAMES,

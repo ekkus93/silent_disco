@@ -574,6 +574,12 @@ impl PlaybackScheduler {
     pub const fn is_awaiting_rebuffer(&self) -> bool {
         matches!(self.state, SchedulerState::AwaitingRebuffer)
     }
+
+    /// Interleaved channel count of the stream this scheduler serves.
+    #[must_use]
+    pub const fn channels(&self) -> u16 {
+        self.config.channels
+    }
 }
 
 #[allow(

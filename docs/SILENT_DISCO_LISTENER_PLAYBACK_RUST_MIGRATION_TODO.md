@@ -170,13 +170,30 @@ ring. Suggested home: `rust/silent-disco-ffi/src/listener_playback.rs`
 (worker thread is FFI-crate territory, matching the database worker
 precedent), with any pure logic in `silent-disco-core`.
 
-- [ ] 2.1 `ListenerPlaybackRuntime`: owns one `PlaybackScheduler`, one
+- [x] 2.1 `ListenerPlaybackRuntime`: owns one `PlaybackScheduler`, one
       `RenderRingProducer` (+ registered engine token), and one dedicated
       pump thread. Explicit lifecycle: `start(config)`, `stop()` (drain +
       fades per R7, then release), `Drop` fail-visible like the database
       worker. No UniFFI/JNI/logging/allocation in the *real-time C ABI
       read path* — the pump thread is NOT the real-time thread and may
       allocate/log sparingly.
+
+  **Done, split across the two crates:** the pure, thread-free
+  `audio::PlaybackPump` lives in `silent-disco-core` (owns the scheduler and
+  ring producer, converts PCM16 → interleaved f32 with gain, `tick(now_ms)`,
+  `finish()` which drains per R7 then stops). Frames the ring cannot accept
+  are held in a pending FIFO and retried, never partly discarded — the same
+  class of silent loss that was a real Kotlin bug. `silent-disco-ffi`'s
+  `ListenerPlaybackRuntime` adds the registered token, the pump thread, and
+  the lifecycle: a failed `start` leaves nothing registered, `stop` drains
+  before joining and reports a panicking pump thread rather than swallowing
+  it, and `Drop` still releases. Pacing (write-lead, depth cap, prefill) is
+  2.2; this tick simply writes what is due.
+
+  **Bug found while testing:** `finish()` called a queue helper whose own
+  invariant required an empty pending buffer, so draining a tail into an
+  already-full ring tripped it. Reworked into an append-then-flush FIFO,
+  which is also what preserves playback order after a partial write.
 - [ ] 2.2 Pump loop (R8), all constants from the table above as config:
   - [ ] Poll cadence ~10 ms; monotonic clock injected (testable).
   - [ ] Release frames `write_lead_ms` ahead of mapped deadline.
