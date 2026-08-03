@@ -160,7 +160,8 @@ in `app/src/test/java/com/ekkus/silentdisco/core/audio/ListenerPlaybackScheduler
   silence. Decaying repetition is already inaudible within the first handful
   of packets, so the rest of the bridge is silence held open in case audio
   resumes. Revisit against device evidence in Phase 3.5.
-- [ ] 1.6 `bash scripts/check-rust.sh` green.
+- [x] 1.6 `bash scripts/check-rust.sh` green. (fmt, clippy `-D warnings`,
+      and the full workspace suite — 221 core tests — all pass.)
 
 ## Phase 2 — Build the Rust listener playback runtime (scheduler → ring pump)
 
