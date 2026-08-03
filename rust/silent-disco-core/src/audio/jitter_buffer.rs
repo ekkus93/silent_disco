@@ -14,6 +14,10 @@ pub const MAX_REORDER_WINDOW_LIMIT: u32 = 4_096;
 pub const DEFAULT_MAX_BUFFERED_DURATION_MS: u64 = 2_000;
 /// Hard ceiling on [`JitterBufferConfig::max_buffered_duration_ms`].
 pub const MAX_BUFFERED_DURATION_LIMIT_MS: u64 = 60_000;
+/// Consecutive far-future arrivals required before the buffer accepts that
+/// the stream has moved beyond its reorder window and adopts the new
+/// position. One stray sequence must never be able to strand playback.
+const FAR_FUTURE_RESYNC_PACKETS: u32 = 3;
 
 /// Fixed identity and bounds for one jitter buffer instance, covering exactly
 /// one host stream.
@@ -141,6 +145,9 @@ pub struct JitterBufferStatistics {
     /// emitting, via [`JitterBuffer::skip_expected_sequence`] or
     /// [`JitterBuffer::skip_to_earliest_buffered`].
     pub skipped: u64,
+    /// Times the buffer adopted a far-ahead sequence because the stream had
+    /// moved beyond the reorder window entirely.
+    pub resynchronisations: u64,
 }
 
 /// Bounded, ordered holding area for validated protocol audio packets
@@ -156,6 +163,12 @@ pub struct JitterBuffer {
     packets: BTreeMap<u64, AudioDatagram>,
     next_expected_sequence: u64,
     statistics: JitterBufferStatistics,
+    /// Consecutive far-future arrivals with nothing accepted in between.
+    far_future_run: u32,
+    /// Lowest sequence seen during the current far-future run; adopting the
+    /// lowest keeps an outlier from dragging the stream further than the
+    /// real stream position.
+    lowest_far_future: Option<u64>,
 }
 
 impl JitterBuffer {
@@ -193,6 +206,8 @@ impl JitterBuffer {
             packets: BTreeMap::new(),
             next_expected_sequence: 0,
             statistics: JitterBufferStatistics::default(),
+            far_future_run: 0,
+            lowest_far_future: None,
         })
     }
 
@@ -240,11 +255,34 @@ impl JitterBuffer {
             ));
         }
         if sequence - self.next_expected_sequence > u64::from(self.config.max_reorder_window) {
+            // A packet this far ahead is not a reordering problem: the stream
+            // has moved on without us, because the listener was starved past
+            // the window or joined a stream already in progress. Rejecting it
+            // is unrecoverable — nothing else advances the expected sequence,
+            // so every later packet is rejected too and the stream is silent
+            // until teardown. Adopt the new position instead, and let the
+            // caller re-accumulate its startup buffer from there.
             self.statistics.reorder_window_rejections += 1;
-            return Err(JitterBufferRejection::new(
-                JitterBufferRejectionKind::ReorderWindowExceeded,
-                "packet sequence is too far ahead of the next-expected sequence to reorder",
-            ));
+            self.far_future_run = self.far_future_run.saturating_add(1);
+            self.lowest_far_future = Some(
+                self.lowest_far_future
+                    .map_or(sequence, |lowest| lowest.min(sequence)),
+            );
+            // One stray sequence proves nothing and must not be able to move
+            // the stream — a single corrupt or hostile packet would otherwise
+            // strand playback forever. A genuinely advanced stream corroborates
+            // itself within a few packets.
+            let corroborated = self.far_future_run >= FAR_FUTURE_RESYNC_PACKETS;
+            if !(corroborated && self.packets.is_empty()) {
+                return Err(JitterBufferRejection::new(
+                    JitterBufferRejectionKind::ReorderWindowExceeded,
+                    "packet sequence is too far ahead of the next-expected sequence to reorder",
+                ));
+            }
+            self.statistics.resynchronisations += 1;
+            self.next_expected_sequence = self.lowest_far_future.unwrap_or(sequence);
+            self.far_future_run = 0;
+            self.lowest_far_future = None;
         }
         if let Some(earliest) = self.packets.values().next() {
             let earliest_time_ms = earliest.host_presentation_time_ms.get();
@@ -259,6 +297,8 @@ impl JitterBuffer {
             }
         }
 
+        self.far_future_run = 0;
+        self.lowest_far_future = None;
         self.packets.insert(sequence, datagram);
         self.statistics.accepted += 1;
         Ok(())

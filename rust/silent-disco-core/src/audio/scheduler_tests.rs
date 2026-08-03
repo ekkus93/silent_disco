@@ -689,19 +689,16 @@ fn an_arrival_outage_is_bridged_to_the_configured_bound_then_awaits_an_explicit_
     assert!(!scheduler.is_awaiting_rebuffer());
 }
 
-// Reproduces the stream-wedge defect recorded as item 1 in
-// `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md`. It fails today, on
-// purpose: un-ignore it as the acceptance test when that item is fixed.
 #[test]
-#[ignore = "known defect: a listener that falls past the reorder window never resynchronises"]
 fn an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream() {
     let mut cfg = config();
-    cfg.startup_buffer_target_ms = 200;
+    cfg.startup_buffer_target_ms = 100;
     cfg.max_consecutive_concealed_packets = 3;
     cfg.max_reorder_window = 8;
     cfg.concealment_skip_threshold_packets = 4;
     let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
-    for sequence in 0..20 {
+    // Only as many as the reorder window admits at once.
+    for sequence in 0..9 {
         scheduler
             .submit_packet(datagram(sequence, 8_000))
             .expect("accepted");
@@ -731,5 +728,47 @@ fn an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream
     assert!(
         accepted > 0,
         "a listener that fell behind can never resynchronise: all 20 packets rejected"
+    );
+}
+
+#[test]
+fn a_listener_joining_a_stream_already_in_progress_can_bootstrap() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 100;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+
+    // The host has been streaming for ten seconds. The listener starts at
+    // sequence zero, so the first arrivals are beyond its reorder window and
+    // are rejected until they corroborate each other; after that it must
+    // adopt the live position rather than demanding the packets it missed.
+    let mut accepted = 0;
+    for sequence in 500..520 {
+        if scheduler.submit_packet(datagram(sequence, 8_000)).is_ok() {
+            accepted += 1;
+        }
+    }
+    assert!(
+        accepted > 0,
+        "a listener joining mid-stream could never accept a packet"
+    );
+
+    // The corroborating packets are themselves rejected, so their slots
+    // conceal; real audio resumes immediately after them.
+    let mut real_frame = None;
+    for _ in 0..10 {
+        let frame = frame_at(scheduler.poll(HOST_START_MS + 520 * u64::from(PACKET_DURATION_MS)));
+        assert!(
+            frame.sequence >= 500,
+            "playback must resume at the live position, got {}",
+            frame.sequence
+        );
+        if !frame.concealed {
+            real_frame = Some(frame);
+            break;
+        }
+    }
+    assert!(
+        real_frame.is_some(),
+        "a listener joining mid-stream never reached real audio"
     );
 }

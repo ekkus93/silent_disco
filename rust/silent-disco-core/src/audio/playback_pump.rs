@@ -182,8 +182,14 @@ pub struct PlaybackDiagnostics {
     pub late_rejections: u64,
     /// Packets rejected as duplicates of an already-buffered sequence.
     pub duplicate_rejections: u64,
-    /// Packets rejected as too far ahead to reorder.
+    /// Packets rejected as too far ahead to reorder. Climbing while the
+    /// phase stays `Buffering` is the signature of a listener stranded
+    /// behind the live stream.
     pub reorder_window_rejections: u64,
+    /// Times the buffer adopted a far-ahead position because the stream had
+    /// moved beyond its reorder window (a recovered outage, or a mid-stream
+    /// join).
+    pub resynchronisations: u64,
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the consecutive-concealment bound forced a rebuffer.
@@ -372,6 +378,7 @@ impl PlaybackPump {
             late_rejections: jitter.late_rejections,
             duplicate_rejections: jitter.duplicate_rejections,
             reorder_window_rejections: jitter.reorder_window_rejections,
+            resynchronisations: jitter.resynchronisations,
             concealed_packets: concealment.total_concealed_packets,
             hard_resync_signals: concealment.hard_resync_signals,
             buffered_span_ms: self.scheduler.buffered_span_ms(),

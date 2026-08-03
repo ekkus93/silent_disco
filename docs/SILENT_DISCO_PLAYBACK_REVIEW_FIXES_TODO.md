@@ -81,21 +81,32 @@ Recoverable outage ceiling today is roughly
 listener joining an in-progress stream can never bootstrap** — the host is at
 sequence 500, `next_expected` is 0, everything is rejected.
 
-- [ ] 2.1 Give `JitterBuffer` a way to resynchronise onto a far-ahead
+- [x] 2.1 Give `JitterBuffer` a way to resynchronise onto a far-ahead
       sequence rather than rejecting forever. Options to weigh: treat a
       run of `ReorderWindowExceeded` as a resync trigger; or expose an
       explicit `resynchronise_to(sequence)` the scheduler calls when it has
       been starved past a bound. Prefer an explicit, testable transition
       over a heuristic buried in `accept`.
-- [ ] 2.2 Make the mid-stream join case work: a fresh scheduler whose
+- [x] 2.2 Make the mid-stream join case work: a fresh scheduler whose
       `next_expected` is 0 must adopt the first arriving sequence rather
       than demanding sequence 0.
-- [ ] 2.3 Un-ignore and pass
+- [x] 2.3 Un-ignore and pass
       `an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream`.
-- [ ] 2.4 Add a test for mid-stream join (first packet at sequence 500).
-- [ ] 2.5 Surface the condition in diagnostics while it is happening —
+- [x] 2.4 Add a test for mid-stream join (first packet at sequence 500).
+- [x] 2.5 Surface the condition in diagnostics while it is happening —
       `reorder_window_rejections` climbing while `phase == Buffering` is the
       signature, and nothing reports it today.
+
+**2 resolution and a trap avoided:** the first attempt adopted any
+far-future sequence whenever the buffer was empty. That fixed the wedge but
+broke `rejects_a_hostile_flood_of_far_future_sequences` — a single corrupt or
+hostile packet could have moved the stream permanently, which is strictly
+worse than the wedge. The shipped fix requires **corroboration**: three
+consecutive far-future arrivals with nothing accepted in between, adopting
+the *lowest* sequence of the run so an outlier cannot drag playback past the
+real position. Any accepted packet resets the run. A stray packet is still
+rejected; a genuinely advanced stream corroborates itself within ~60ms.
+`resynchronisations` is exposed in diagnostics.
 
 ## 3. CRITICAL — a guaranteed-silent stream reports itself as healthy
 

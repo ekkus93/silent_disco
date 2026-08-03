@@ -932,6 +932,9 @@ pub struct FfiPlaybackDiagnostics {
     pub duplicate_rejections: u64,
     /// Packets too far ahead to reorder.
     pub reorder_window_rejections: u64,
+    /// Times the buffer adopted a far-ahead position after the stream moved
+    /// beyond its reorder window.
+    pub resynchronisations: u64,
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the concealment bound forced a rebuffer.
@@ -1028,6 +1031,7 @@ impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
             late_rejections: diagnostics.late_rejections,
             duplicate_rejections: diagnostics.duplicate_rejections,
             reorder_window_rejections: diagnostics.reorder_window_rejections,
+            resynchronisations: diagnostics.resynchronisations,
             concealed_packets: diagnostics.concealed_packets,
             hard_resync_signals: diagnostics.hard_resync_signals,
             buffered_span_ms: diagnostics.buffered_span_ms,
