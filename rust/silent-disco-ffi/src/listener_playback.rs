@@ -17,6 +17,10 @@ use std::time::{Duration, Instant};
 use silent_disco_core::audio::{
     PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, RenderRingConfig, SchedulerConfig,
 };
+use silent_disco_core::sync::{
+    ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
+    SyncEstimatorConfig,
+};
 
 use crate::audio_abi::{AudioAbiError, register_render_ring, release_render_ring};
 
@@ -32,6 +36,8 @@ pub enum ListenerPlaybackError {
     Stopped(String),
     /// The pump thread could not be started, or ended abnormally.
     PumpThread(String),
+    /// A sync probe or response was rejected by the estimator.
+    Sync(String),
 }
 
 impl fmt::Display for ListenerPlaybackError {
@@ -39,7 +45,8 @@ impl fmt::Display for ListenerPlaybackError {
         match self {
             Self::InvalidConfiguration(message)
             | Self::Stopped(message)
-            | Self::PumpThread(message) => formatter.write_str(message),
+            | Self::PumpThread(message)
+            | Self::Sync(message) => formatter.write_str(message),
         }
     }
 }
@@ -71,16 +78,45 @@ impl PumpClock {
     }
 }
 
+/// Outcome of feeding one correlated sync response to the runtime.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SyncSampleOutcome {
+    /// True when the sample's round-trip time was inside the acceptance
+    /// window and it updated the estimate.
+    pub accepted: bool,
+    /// Current offset estimate, in milliseconds.
+    pub offset_ms: f64,
+    /// Current skew estimate, in parts per million.
+    pub skew_ppm: f64,
+    /// Round-trip time of the current estimate, in milliseconds.
+    pub round_trip_time_ms: f64,
+    /// Accepted samples behind the current estimate.
+    pub accepted_sample_count: usize,
+    /// True once playback has a real offset and may start.
+    pub sync_locked: bool,
+}
+
 /// State shared between the owning handle and its pump thread.
 #[derive(Debug)]
 struct Shared {
     pump: Mutex<PlaybackPump>,
+    /// Owned here rather than by the platform: a listener that estimates its
+    /// own offset or skew is duplicating domain logic, and doing it in the
+    /// platform layer is what produced a physically impossible skew (and
+    /// total silence) in the previous implementation.
+    estimator: Mutex<ClockSyncEstimator>,
     running: AtomicBool,
 }
 
 impl Shared {
     fn lock_pump(&self) -> MutexGuard<'_, PlaybackPump> {
         self.pump.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_estimator(&self) -> MutexGuard<'_, ClockSyncEstimator> {
+        self.estimator
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -93,6 +129,7 @@ impl Shared {
 #[derive(Debug)]
 pub struct ListenerPlaybackRuntime {
     shared: Arc<Shared>,
+    clock: Arc<PumpClock>,
     token: u64,
     pump_thread: Option<JoinHandle<()>>,
 }
@@ -126,14 +163,26 @@ impl ListenerPlaybackRuntime {
             }
         };
 
+        let estimator = match ClockSyncEstimator::new(SyncEstimatorConfig::default()) {
+            Ok(estimator) => estimator,
+            Err(error) => {
+                let _ = release_render_ring(token);
+                return Err(ListenerPlaybackError::InvalidConfiguration(format!(
+                    "{error:?}"
+                )));
+            }
+        };
         let shared = Arc::new(Shared {
             pump: Mutex::new(pump),
+            estimator: Mutex::new(estimator),
             running: AtomicBool::new(true),
         });
+        let clock = Arc::new(PumpClock::new());
         let thread_shared = Arc::clone(&shared);
+        let thread_clock = Arc::clone(&clock);
         let pump_thread = thread::Builder::new()
             .name("silent-disco-playback".to_owned())
-            .spawn(move || run_pump(&thread_shared))
+            .spawn(move || run_pump(&thread_shared, &thread_clock))
             .map_err(|error| {
                 shared.running.store(false, Ordering::SeqCst);
                 let _ = release_render_ring(token);
@@ -142,6 +191,7 @@ impl ListenerPlaybackRuntime {
 
         Ok(Self {
             shared,
+            clock,
             token,
             pump_thread: Some(pump_thread),
         })
@@ -164,11 +214,7 @@ impl ListenerPlaybackRuntime {
         &self,
         datagram: silent_disco_core::protocol::AudioDatagram,
     ) -> Result<(), ListenerPlaybackError> {
-        if !self.shared.running.load(Ordering::SeqCst) {
-            return Err(ListenerPlaybackError::Stopped(
-                "listener playback runtime is stopped".to_owned(),
-            ));
-        }
+        self.ensure_running()?;
         // A rejected packet is ordinary, expected traffic (a duplicate, a late
         // arrival, an out-of-window reorder) that the jitter buffer counts;
         // it is not a runtime failure.
@@ -178,6 +224,98 @@ impl ListenerPlaybackRuntime {
             .scheduler_mut()
             .submit_packet(datagram);
         Ok(())
+    }
+
+    /// Monotonic milliseconds on the timeline this runtime schedules against.
+    ///
+    /// Every local timestamp handed to [`Self::begin_sync_probe`] and
+    /// [`Self::observe_sync_response`] must come from here, so the sync
+    /// estimate and the playback clock share one timeline.
+    #[must_use]
+    pub fn now_ms(&self) -> u64 {
+        self.clock.now_ms()
+    }
+
+    /// Registers one outbound sync probe before it is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::Sync`] for a duplicate correlation ID
+    /// or when too many probes are already outstanding, and
+    /// [`ListenerPlaybackError::Stopped`] once the runtime has been stopped.
+    pub fn begin_sync_probe(
+        &self,
+        correlation_id: u64,
+        local_send_time_ms: u64,
+    ) -> Result<(), ListenerPlaybackError> {
+        self.ensure_running()?;
+        self.shared
+            .lock_estimator()
+            .begin_probe(
+                SyncCorrelationId::new(correlation_id),
+                LocalMonotonicMillis::new(local_send_time_ms),
+            )
+            .map_err(|error| ListenerPlaybackError::Sync(format!("{error:?}")))
+    }
+
+    /// Feeds one correlated four-timestamp sync response to the estimator and,
+    /// when the sample is accepted, applies the resulting offset to playback.
+    ///
+    /// A rejected sample (its round-trip time outside the acceptance window)
+    /// changes nothing: it must never reach the playback timeline, and it must
+    /// never contribute to the skew estimate either.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::Sync`] when the response does not
+    /// correlate to a registered probe or its timestamps are impossible, and
+    /// [`ListenerPlaybackError::Stopped`] once the runtime has been stopped.
+    pub fn observe_sync_response(
+        &self,
+        correlation_id: u64,
+        echoed_local_send_time_ms: u64,
+        host_receive_time_ms: u64,
+        host_send_time_ms: u64,
+        local_receive_time_ms: u64,
+    ) -> Result<SyncSampleOutcome, ListenerPlaybackError> {
+        self.ensure_running()?;
+        let observation = self
+            .shared
+            .lock_estimator()
+            .observe_response(
+                SyncCorrelationId::new(correlation_id),
+                LocalMonotonicMillis::new(echoed_local_send_time_ms),
+                HostMonotonicMillis::new(host_receive_time_ms),
+                HostMonotonicMillis::new(host_send_time_ms),
+                LocalMonotonicMillis::new(local_receive_time_ms),
+            )
+            .map_err(|error| ListenerPlaybackError::Sync(format!("{error:?}")))?;
+
+        let snapshot = observation.snapshot;
+        let mut sync_locked = self.shared.lock_pump().is_sync_locked();
+        if observation.accepted {
+            let mut pump = self.shared.lock_pump();
+            pump.apply_sync_offset(snapshot.offset_ms);
+            sync_locked = pump.is_sync_locked();
+        }
+        Ok(SyncSampleOutcome {
+            accepted: observation.accepted,
+            offset_ms: snapshot.offset_ms,
+            skew_ppm: snapshot.skew_ppm,
+            round_trip_time_ms: snapshot.round_trip_time_ms,
+            accepted_sample_count: snapshot.accepted_sample_count,
+            sync_locked,
+        })
+    }
+
+    fn ensure_running(&self) -> Result<(), ListenerPlaybackError> {
+        if self.shared.running.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(ListenerPlaybackError::Stopped(
+                "listener playback runtime is stopped".to_owned(),
+            ))
+        }
     }
 
     /// Stops playback: drains whatever is still buffered into the ring so the
@@ -227,8 +365,7 @@ impl Drop for ListenerPlaybackRuntime {
 }
 
 /// Pump thread body: advance playback until the runtime is stopped.
-fn run_pump(shared: &Arc<Shared>) {
-    let clock = PumpClock::new();
+fn run_pump(shared: &Arc<Shared>, clock: &Arc<PumpClock>) {
     while shared.running.load(Ordering::SeqCst) {
         {
             let mut pump = shared.lock_pump();
@@ -240,6 +377,11 @@ fn run_pump(shared: &Arc<Shared>) {
 
 #[cfg(test)]
 mod tests {
+    // A skew of exactly zero is the documented result of a single accepted
+    // sample (a regression needs several), so exact equality is the correct
+    // assertion here, not a tolerance.
+    #![allow(clippy::float_cmp)]
+
     use super::{ListenerPlaybackError, ListenerPlaybackRuntime};
     use crate::audio_abi::{registry_test_guard, silent_disco_audio_read_interleaved_f32};
     use silent_disco_core::audio::SchedulerConfig;
@@ -373,6 +515,90 @@ mod tests {
             .submit_packet(datagram(1))
             .expect_err("a stopped runtime must reject further packets");
         assert!(matches!(error, ListenerPlaybackError::Stopped(_)));
+    }
+
+    #[test]
+    fn an_accepted_sync_sample_unlocks_playback_and_a_rejected_one_does_not() {
+        let _guard = registry_test_guard();
+        let mut runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+
+        // A sample whose round trip is far outside the acceptance window must
+        // not reach the playback timeline -- nor the skew estimate, which is
+        // exactly how a placeholder offset once poisoned it.
+        runtime.begin_sync_probe(1, 0).expect("probe registered");
+        let rejected = runtime
+            .observe_sync_response(1, 0, 500_000, 500_001, 4_000)
+            .expect("a correlated response is not an error");
+        assert!(!rejected.accepted);
+        assert!(!rejected.sync_locked);
+
+        // A low-latency sample is accepted and unlocks playback.
+        runtime
+            .begin_sync_probe(2, 10_000)
+            .expect("probe registered");
+        let accepted = runtime
+            .observe_sync_response(2, 10_000, 500_000, 500_002, 10_020)
+            .expect("a correlated response is not an error");
+        assert!(accepted.accepted);
+        assert!(accepted.sync_locked);
+        assert_eq!(accepted.accepted_sample_count, 1);
+        // A single sample cannot support a skew regression yet.
+        assert_eq!(accepted.skew_ppm, 0.0);
+
+        runtime.stop().expect("stop succeeds");
+    }
+
+    #[test]
+    fn an_uncorrelated_or_duplicate_sync_exchange_fails_explicitly() {
+        let _guard = registry_test_guard();
+        let mut runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+
+        let unknown = runtime
+            .observe_sync_response(99, 0, 1, 2, 3)
+            .expect_err("a response with no registered probe must fail");
+        assert!(matches!(unknown, ListenerPlaybackError::Sync(_)));
+
+        runtime.begin_sync_probe(1, 0).expect("probe registered");
+        let duplicate = runtime
+            .begin_sync_probe(1, 0)
+            .expect_err("a duplicate correlation id must fail");
+        assert!(matches!(duplicate, ListenerPlaybackError::Sync(_)));
+
+        runtime.stop().expect("stop succeeds");
+    }
+
+    #[test]
+    fn sync_calls_after_stop_fail_explicitly() {
+        let _guard = registry_test_guard();
+        let mut runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+        runtime.stop().expect("stop succeeds");
+
+        assert!(matches!(
+            runtime.begin_sync_probe(1, 0),
+            Err(ListenerPlaybackError::Stopped(_))
+        ));
+        assert!(matches!(
+            runtime.observe_sync_response(1, 0, 1, 2, 3),
+            Err(ListenerPlaybackError::Stopped(_))
+        ));
     }
 
     #[test]

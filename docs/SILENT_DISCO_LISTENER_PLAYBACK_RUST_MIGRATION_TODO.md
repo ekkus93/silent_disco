@@ -221,13 +221,34 @@ precedent), with any pure logic in `silent-disco-core`.
   `write_lead_ms` in a normal config (a frame is released at most one lead
   early), making `max_prefill_ms` a pure safety bound; its test configures a
   lead wider than the ceiling to exercise it.
-- [ ] 2.3 Sync integration (R9): runtime accepts offset updates
+- [x] 2.3 Sync integration (R9): runtime accepts offset updates
       (`apply_offset_update` / `rebuffer` semantics already in the
       scheduler). Playback must not start before the first accepted
       update. Decide and document: Kotlin keeps forwarding sync-response
       timestamps to the Rust estimator (Block 6 exports exist) and pushes
       the resulting offset in, OR the runtime owns the estimator directly.
       Either way Kotlin performs no estimation math.
+
+  **Decision: the runtime owns the estimator.** It holds its own
+  `ClockSyncEstimator`; the platform only forwards raw four-timestamp
+  exchanges via `begin_sync_probe` / `observe_sync_response`. This deletes
+  the whole class of bug that produced a physically impossible skew
+  (-5.26e10 ppm) and total silence — that came from platform-side
+  regression math over placeholder offsets. Rejected samples now cannot
+  reach either the timeline or the skew estimate, because the platform
+  never sees an offset to push.
+
+  **Timeline note:** local timestamps must come from `now_ms()`, which
+  exposes the same monotonic clock the pump schedules against. Passing an
+  unrelated platform clock would silently misalign sync and playback.
+
+  Playback is gated on `sync_locked`: the pump returns `AwaitingSync` and
+  queues nothing until a sample is genuinely accepted. The first accepted
+  offset is adopted outright rather than compared against the placeholder
+  (host and listener epochs are unrelated, so that comparison is
+  meaningless); later ones correct softly or force a rebuffer. A scheduler
+  that pauses on the concealment bound is re-armed automatically — the
+  pause exists to force a fresh startup buffer, not to end playback.
 - [ ] 2.4 Diagnostics (R10): one snapshot struct — received, lost
       (arrival-continuity), late-dropped, concealed, skipped-hole count,
       current/peak ring depth frames, underrun + silence-filled counters

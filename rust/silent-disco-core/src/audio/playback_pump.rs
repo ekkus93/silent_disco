@@ -2,8 +2,8 @@ use core::fmt;
 use std::error::Error;
 
 use super::{
-    DEFAULT_TARGET_FILL_FRAMES, PlaybackScheduler, RENDER_CHANNELS, RenderRingProducer,
-    ScheduledFrame, SchedulerPoll,
+    DEFAULT_TARGET_FILL_FRAMES, OffsetUpdateOutcome, PlaybackScheduler, RENDER_CHANNELS,
+    RenderRingProducer, ScheduledFrame, SchedulerPoll,
 };
 
 /// Full-scale magnitude of a 16-bit PCM sample, used to normalize into the
@@ -119,7 +119,11 @@ pub enum PumpTick {
     },
     /// Nothing is due for this tick.
     Waiting,
-    /// The scheduler is paused until an explicit rebuffer.
+    /// No real clock-offset estimate has been applied yet, so no presentation
+    /// time can be mapped and nothing may play.
+    AwaitingSync,
+    /// The scheduler paused and was re-armed to re-accumulate its startup
+    /// buffer before playback resumes.
     AwaitingRebuffer,
     /// The scheduler has stopped and will produce no further frames.
     Stopped,
@@ -146,6 +150,22 @@ pub struct PlaybackPump {
     awaiting_prefill: bool,
     /// Silence frames queued to align the first frame with its deadline.
     prefill_frames: usize,
+    /// Set once a real clock-offset estimate has been applied.
+    sync_locked: bool,
+    /// The offset currently mapping host presentation times onto local time.
+    offset_ms: f64,
+}
+
+/// Result of applying a fresh clock-offset estimate to a running pump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncApplyOutcome {
+    /// The first real estimate; playback is now free to start.
+    Locked,
+    /// The estimate moved within tolerance and was applied in place.
+    SoftCorrected,
+    /// The estimate moved too far to splice; playback re-accumulates its
+    /// startup buffer before resuming.
+    Rebuffered,
 }
 
 impl PlaybackPump {
@@ -201,7 +221,40 @@ impl PlaybackPump {
             pending: Vec::new(),
             awaiting_prefill: true,
             prefill_frames: 0,
+            sync_locked: false,
+            offset_ms: 0.0,
         })
+    }
+
+    /// Applies a clock-offset estimate produced from a genuinely accepted sync
+    /// sample, unlocking playback on the first one.
+    ///
+    /// The first estimate is adopted outright rather than treated as a
+    /// correction: host and listener clocks have unrelated epochs, so a real
+    /// first offset is enormous next to the placeholder it replaces and any
+    /// threshold comparison against that placeholder is meaningless. Later
+    /// estimates are corrections, and one too large to splice re-accumulates
+    /// the startup buffer instead of jumping the timeline mid-stream.
+    pub fn apply_sync_offset(&mut self, offset_ms: f64) -> SyncApplyOutcome {
+        self.offset_ms = offset_ms;
+        if !self.sync_locked {
+            self.sync_locked = true;
+            self.scheduler.rebuffer(offset_ms);
+            return SyncApplyOutcome::Locked;
+        }
+        match self.scheduler.apply_offset_update(offset_ms) {
+            OffsetUpdateOutcome::SoftCorrected => SyncApplyOutcome::SoftCorrected,
+            OffsetUpdateOutcome::HardResyncRequired => {
+                self.scheduler.rebuffer(offset_ms);
+                SyncApplyOutcome::Rebuffered
+            }
+        }
+    }
+
+    /// True once a real clock-offset estimate has been applied.
+    #[must_use]
+    pub const fn is_sync_locked(&self) -> bool {
+        self.sync_locked
     }
 
     /// Silence frames queued at stream start to align the first frame with its
@@ -231,6 +284,13 @@ impl PlaybackPump {
 
     /// Advances playback by one tick at the given local monotonic time.
     pub fn tick(&mut self, local_now_ms: u64) -> PumpTick {
+        // Nothing may play against a placeholder offset. A stream started on
+        // one would map every presentation time through a meaningless
+        // timeline and either dump the whole stream at once or drop all of it
+        // as late — with no signal that anything is wrong.
+        if !self.sync_locked {
+            return PumpTick::AwaitingSync;
+        }
         if !self.pending.is_empty() {
             // Never poll for new audio while an earlier frame is still
             // partly unwritten: that would reorder the stream.
@@ -258,7 +318,13 @@ impl PlaybackPump {
         match self.scheduler.poll(poll_time_ms) {
             SchedulerPoll::Buffering { buffered_ms } => PumpTick::Buffering { buffered_ms },
             SchedulerPoll::Waiting { .. } => PumpTick::Waiting,
-            SchedulerPoll::AwaitingRebuffer => PumpTick::AwaitingRebuffer,
+            SchedulerPoll::AwaitingRebuffer => {
+                // Re-arm immediately: the pause exists to force a fresh
+                // startup buffer, not to end playback. Without this the
+                // stream would stay silent forever after one long outage.
+                self.scheduler.rebuffer(self.offset_ms);
+                PumpTick::AwaitingRebuffer
+            }
             SchedulerPoll::Stopped => PumpTick::Stopped,
             SchedulerPoll::Frame { frame, .. } => {
                 let sequence = frame.sequence;
@@ -361,7 +427,9 @@ mod tests {
     // approximate arithmetic.
     #![allow(clippy::float_cmp)]
 
-    use super::{PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind, PumpTick};
+    use super::{
+        PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome,
+    };
     use crate::audio::{
         PlaybackScheduler, RenderRing, RenderRingConfig, RenderRingConsumer, SchedulerConfig,
     };
@@ -410,8 +478,9 @@ mod tests {
         let (producer, consumer) = ring.split();
         // Pacing off: these cases cover conversion and queueing semantics.
         // Write-lead, depth cap, and prefill have their own tests below.
-        let pump = PlaybackPump::new(scheduler, producer, unpaced_config(capacity_frames))
+        let mut pump = PlaybackPump::new(scheduler, producer, unpaced_config(capacity_frames))
             .expect("valid pump");
+        pump.apply_sync_offset(0.0);
         (pump, consumer)
     }
 
@@ -434,12 +503,38 @@ mod tests {
         })
         .expect("valid ring");
         let (producer, consumer) = ring.split();
-        let pump = PlaybackPump::new(scheduler, producer, config).expect("valid pump");
+        let mut pump = PlaybackPump::new(scheduler, producer, config).expect("valid pump");
+        // These cases exercise pacing, not the sync gate; lock it at zero
+        // offset so the scheduler's timeline matches the test clock.
+        pump.apply_sync_offset(0.0);
         (pump, consumer)
     }
 
     fn paced_pump() -> (PlaybackPump, RenderRingConsumer) {
         paced_pump_with(PlaybackPumpConfig::default())
+    }
+
+    /// A paced pump whose sync gate has NOT been unlocked.
+    fn pump_with_unlocked_sync() -> (PlaybackPump, RenderRingConsumer) {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, consumer) = ring.split();
+        let pump =
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+        (pump, consumer)
     }
 
     /// A config with pacing disabled and a depth cap the given ring can reach.
@@ -507,6 +602,7 @@ mod tests {
             },
         )
         .expect("valid pump");
+        pump.apply_sync_offset(0.0);
         pump.scheduler_mut()
             .submit_packet(datagram(0, 16_384))
             .expect("accepted");
@@ -582,6 +678,7 @@ mod tests {
         let (producer, _consumer) = ring.split();
         let mut pump =
             PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("pump");
+        pump.apply_sync_offset(0.0);
 
         assert!(matches!(
             pump.tick(HOST_START_MS),
@@ -782,6 +879,129 @@ mod tests {
         )
         .expect_err("a depth beyond the ring's capacity must be rejected");
         assert_eq!(error.kind, PlaybackPumpConfigErrorKind::InvalidTargetDepth);
+    }
+
+    #[test]
+    fn nothing_plays_until_a_real_clock_offset_has_been_applied() {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, _consumer) = ring.split();
+        let mut pump =
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+        for sequence in 0..30 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+
+        // Audio is buffered and its deadlines have passed, but no sync sample
+        // has been accepted: playing now would map every presentation time
+        // through a placeholder offset.
+        assert!(matches!(pump.tick(HOST_START_MS), PumpTick::AwaitingSync));
+        assert!(!pump.is_sync_locked());
+        assert_eq!(pump.queued_frames(), 0);
+
+        assert_eq!(pump.apply_sync_offset(0.0), SyncApplyOutcome::Locked);
+        assert!(pump.is_sync_locked());
+        assert!(matches!(pump.tick(HOST_START_MS), PumpTick::Queued { .. }));
+    }
+
+    #[test]
+    fn the_first_offset_is_adopted_outright_rather_than_treated_as_a_correction() {
+        let (mut pump, _consumer) = pump_with_unlocked_sync();
+
+        // Host and listener clocks have unrelated epochs, so a real first
+        // offset dwarfs any correction threshold. Adopting it must not be
+        // mistaken for a jump that needs a rebuffer.
+        assert_eq!(
+            pump.apply_sync_offset(-746_105_745.0),
+            SyncApplyOutcome::Locked
+        );
+        assert!(!pump.scheduler_mut().is_awaiting_rebuffer());
+    }
+
+    #[test]
+    fn later_offsets_correct_softly_or_force_a_rebuffer_when_they_jump() {
+        let (mut pump, _consumer) = pump_with_unlocked_sync();
+        pump.apply_sync_offset(1_000.0);
+
+        assert_eq!(
+            pump.apply_sync_offset(1_010.0),
+            SyncApplyOutcome::SoftCorrected
+        );
+        // Beyond the hard-resync threshold: re-accumulate rather than splice.
+        assert_eq!(
+            pump.apply_sync_offset(1_500.0),
+            SyncApplyOutcome::Rebuffered
+        );
+    }
+
+    #[test]
+    fn a_paused_scheduler_is_re_armed_so_playback_recovers_after_an_outage() {
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        scheduler_config.max_consecutive_concealed_packets = 2;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, _consumer) = ring.split();
+        let mut pump =
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+        pump.apply_sync_offset(0.0);
+        pump.scheduler_mut()
+            .submit_packet(datagram(0, 16_384))
+            .expect("accepted");
+
+        assert!(matches!(pump.tick(HOST_START_MS), PumpTick::Queued { .. }));
+        // Nothing more arrives; the concealment bound is reached.
+        assert!(matches!(
+            pump.tick(HOST_START_MS + u64::from(PACKET_DURATION_MS)),
+            PumpTick::Queued {
+                concealed: true,
+                ..
+            }
+        ));
+        let paused = pump.tick(HOST_START_MS + 2 * u64::from(PACKET_DURATION_MS));
+        assert!(matches!(paused, PumpTick::AwaitingRebuffer));
+
+        // The pause forces a fresh startup buffer, but must not end playback:
+        // when audio resumes, so does the pump.
+        for sequence in 10..40 {
+            pump.scheduler_mut()
+                .submit_packet(datagram(sequence, 16_384))
+                .expect("accepted");
+        }
+        let resumed = pump.tick(HOST_START_MS + 20 * u64::from(PACKET_DURATION_MS));
+        assert!(
+            matches!(
+                resumed,
+                PumpTick::Queued { .. } | PumpTick::Buffering { .. }
+            ),
+            "playback must recover, got {resumed:?}"
+        );
     }
 
     #[test]
