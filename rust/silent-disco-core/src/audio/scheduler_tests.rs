@@ -622,3 +622,69 @@ fn draining_an_empty_buffer_yields_nothing() {
     let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
     assert!(scheduler.drain_remaining().is_empty());
 }
+
+#[test]
+fn a_packet_arriving_after_its_slot_played_is_rejected_and_never_plays_out_of_order() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in [0, 2] {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    // Sequence 1's slot is concealed and passes.
+    let concealed = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
+    // Sequence 1 finally shows up, far too late to play in order.
+    let rejection = scheduler
+        .submit_packet(datagram(1, 8_000))
+        .expect_err("an already-emitted sequence must be rejected");
+    let next = frame_at(scheduler.poll(HOST_START_MS + 2 * u64::from(PACKET_DURATION_MS)));
+
+    assert_eq!(first.sequence, 0);
+    assert!(concealed.concealed);
+    assert_eq!(rejection.kind, JitterBufferRejectionKind::AlreadyEmitted);
+    // Playback continues forward; the late arrival never appears.
+    assert_eq!(next.sequence, 2);
+    assert!(!next.concealed);
+}
+
+#[test]
+fn an_arrival_outage_is_bridged_to_the_configured_bound_then_awaits_an_explicit_rebuffer() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 0;
+    cfg.max_consecutive_concealed_packets = 4;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    scheduler
+        .submit_packet(datagram(0, 8_000))
+        .expect("accepted");
+
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    assert_eq!(first.sequence, 0);
+
+    // Nothing further ever arrives. The bridge covers the outage for exactly
+    // the configured bound, decaying as it goes, then stops rather than
+    // synthesizing forever.
+    let bridged: Vec<_> = (1..=3)
+        .map(|slot| frame_at(scheduler.poll(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS))))
+        .collect();
+    let at_bound = scheduler.poll(HOST_START_MS + 4 * u64::from(PACKET_DURATION_MS));
+
+    assert!(bridged.iter().all(|frame| frame.concealed));
+    assert_eq!(bridged[0].samples[480 * 2], 4_000);
+    assert_eq!(bridged[1].samples[480 * 2], 2_000);
+    assert_eq!(bridged[2].samples[480 * 2], 1_000);
+    assert!(matches!(at_bound, SchedulerPoll::AwaitingRebuffer));
+    assert!(scheduler.is_awaiting_rebuffer());
+
+    // Recovery is explicit: the scheduler stays paused until told to
+    // rebuffer, rather than silently resuming mid-outage.
+    assert!(matches!(
+        scheduler.poll(HOST_START_MS + 5 * u64::from(PACKET_DURATION_MS)),
+        SchedulerPoll::AwaitingRebuffer
+    ));
+    scheduler.rebuffer(0.0);
+    assert!(!scheduler.is_awaiting_rebuffer());
+}

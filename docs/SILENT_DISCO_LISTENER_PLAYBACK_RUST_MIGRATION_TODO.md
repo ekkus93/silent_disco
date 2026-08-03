@@ -136,13 +136,30 @@ in `app/src/test/java/com/ekkus/silentdisco/core/audio/ListenerPlaybackScheduler
   in when the scheduler's pending fade-in flag is set — a preceding concealed
   frame faded to zero, so the resume seam needs the ramp even without a
   sequence hole.
-- [ ] 1.5 Unit tests, mirroring the Kotlin suite: repetition content and
+- [x] 1.5 Unit tests, mirroring the Kotlin suite: repetition content and
       exact decay values (8000 → 4000 → 2000 → 1000 for constant input),
       entry-continuity first sample, tail-zero last sample, fade-in on
       resume/first frame, bounded outage bridge (exactly the policy bound,
       then `HardResyncRequired`/stop — decide and document which), wide-hole
       skip delivering the post-hole frame directly, drain hole-edge fades,
       stale-arrival rejection staying intact.
+
+  **Done:** 108 core audio tests, including a new `ramp_tests.rs` covering the
+  shaping helpers directly (saturation, degenerate shapes, over-long ramps).
+
+  **Outage-bridge decision:** keep Rust's `AwaitingRebuffer` semantics rather
+  than Kotlin's "stop synthesizing and go quiet". Reaching the bound pauses
+  the scheduler until the caller explicitly calls `rebuffer()`, which re-arms
+  the startup buffer — the correct response after a long outage, since the
+  buffer is empty and the timeline has moved on, and it cannot silently
+  resume mid-outage. **`DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS` raised
+  from 5 to 25** (500ms at 20ms packets) to match the device-validated
+  Kotlin bridge length: reaching the bound costs a full startup-buffer
+  re-accumulation, so a bound short enough to trip on an ordinary brief
+  outage would replace a ~100ms interruption with a much longer rebuffering
+  silence. Decaying repetition is already inaudible within the first handful
+  of packets, so the rest of the bridge is silence held open in case audio
+  resumes. Revisit against device evidence in Phase 3.5.
 - [ ] 1.6 `bash scripts/check-rust.sh` green.
 
 ## Phase 2 — Build the Rust listener playback runtime (scheduler → ring pump)

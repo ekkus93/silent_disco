@@ -5,7 +5,16 @@ use super::ramp::{apply_fade_out_tail, blend_sample, last_frame};
 
 /// Default bound on consecutive concealed packets before playback signals
 /// that a hard resync/rebuffer is required.
-pub const DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS: u32 = 5;
+///
+/// Twenty-five packets is 500ms at the standard 20ms packet duration, the
+/// bridge length validated on a physical device. The bound is deliberately
+/// not tight: reaching it forces the scheduler to re-accumulate its whole
+/// startup buffer, so a bound short enough to trip on an ordinary brief
+/// outage would replace a 100ms interruption with a far longer rebuffering
+/// silence. Decaying repetition has already faded to inaudibility within the
+/// first handful of packets, so the later part of the bridge is effectively
+/// silence held open in case real audio resumes.
+pub const DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS: u32 = 25;
 /// Hard ceiling on [`ConcealmentPolicy`]'s configured consecutive-concealment bound.
 pub const MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT: u32 = 200;
 /// Default amplitude-ramp length, in milliseconds, applied at both edges of
