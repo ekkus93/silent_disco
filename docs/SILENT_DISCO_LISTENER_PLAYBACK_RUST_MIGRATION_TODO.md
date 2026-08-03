@@ -124,11 +124,18 @@ in `app/src/test/java/com/ekkus/silentdisco/core/audio/ListenerPlaybackScheduler
   policy (new `InvalidConcealmentSkipThreshold` error kind). After skipping,
   `poll` recomputes the post-gap deadline and returns `Waiting` if that frame
   is not due yet, so the resumed audio keeps its own presentation time.
-- [ ] 1.4 Drain-with-fades (R7): add a scheduler `drain_remaining()` that
+- [x] 1.4 Drain-with-fades (R7): add a scheduler `drain_remaining()` that
       returns all buffered frames in sequence order ignoring deadlines,
       with fade-out applied to the frame before each sequence hole,
       fade-in after each hole (including a hole against the last
       live-delivered sequence), and a final-tail fade on the last frame.
+
+  **Done:** added `JitterBuffer::drain_all()` (sequence-ordered, advances
+  past the last drained packet, counts them as emitted) and
+  `PlaybackScheduler::drain_remaining()`. The first drained frame also fades
+  in when the scheduler's pending fade-in flag is set — a preceding concealed
+  frame faded to zero, so the resume seam needs the ramp even without a
+  sequence hole.
 - [ ] 1.5 Unit tests, mirroring the Kotlin suite: repetition content and
       exact decay values (8000 → 4000 → 2000 → 1000 for constant input),
       entry-continuity first sample, tail-zero last sample, fade-in on

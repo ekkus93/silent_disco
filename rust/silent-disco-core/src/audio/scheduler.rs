@@ -1,7 +1,7 @@
 use core::fmt;
 use std::error::Error;
 
-use super::ramp::apply_fade_in;
+use super::ramp::{apply_fade_in, apply_fade_out_tail};
 use super::{
     ConcealmentOutcome, ConcealmentPolicy, DEFAULT_CONCEALMENT_RAMP_MS,
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
@@ -479,6 +479,56 @@ impl PlaybackScheduler {
                 SchedulerPoll::AwaitingRebuffer
             }
         }
+    }
+
+    /// Removes and returns every buffered packet as a render-ready frame, in
+    /// sequence order and ignoring presentation deadlines.
+    ///
+    /// Call this when a stream is stopping: everything still buffered already
+    /// arrived in time, so it is real tail content (a song's final note, for
+    /// example) rather than backlog, and discarding it would truncate the
+    /// stream. Because these frames play back to back rather than at their own
+    /// deadlines, a sequence hole inside the drained range would splice two
+    /// unrelated waveforms directly together — a click with no silence around
+    /// it. Every hole edge is faded, as is the final frame's tail, so playback
+    /// ends at zero instead of cutting mid-waveform when the output stops.
+    pub fn drain_remaining(&mut self) -> Vec<ScheduledFrame> {
+        let channels = usize::from(self.config.channels);
+        let ramp = self.ramp_frames;
+        let mut expected_next = self.jitter_buffer.next_expected_sequence();
+        // A concealed frame faded to zero, so the first drained frame resumes
+        // from silence even when it continues the sequence without a hole.
+        let mut fade_in_next = self.fade_in_next_real_frame;
+        let mut frames: Vec<ScheduledFrame> = Vec::new();
+
+        for datagram in self.jitter_buffer.drain_all() {
+            let sequence = datagram.sequence.get();
+            if sequence > expected_next {
+                if let Some(previous) = frames.last_mut() {
+                    apply_fade_out_tail(&mut previous.samples, channels, ramp);
+                }
+                fade_in_next = true;
+            }
+            let mut samples = decode_payload_samples(&datagram.payload);
+            if fade_in_next {
+                apply_fade_in(&mut samples, channels, ramp);
+                fade_in_next = false;
+            }
+            frames.push(ScheduledFrame {
+                sequence,
+                first_sample_index: datagram.first_sample_index.get(),
+                host_presentation_time_ms: datagram.host_presentation_time_ms.get(),
+                samples,
+                concealed: false,
+            });
+            expected_next = sequence + 1;
+        }
+
+        if let Some(last) = frames.last_mut() {
+            apply_fade_out_tail(&mut last.samples, channels, ramp);
+        }
+        self.fade_in_next_real_frame = true;
+        frames
     }
 
     /// Applies an updated host/local clock-offset estimate, deciding between

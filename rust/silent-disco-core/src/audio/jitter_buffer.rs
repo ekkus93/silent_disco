@@ -301,6 +301,24 @@ impl JitterBuffer {
         skipped
     }
 
+    /// Removes and returns every buffered packet in sequence order, ignoring
+    /// presentation deadlines, and advances past the last of them.
+    ///
+    /// For a stream that is stopping: everything still buffered already
+    /// arrived over the network in time, so it is real content rather than
+    /// backlog and discarding it would silently truncate the stream's tail.
+    /// Gaps within the drained range are the caller's to handle — the
+    /// sequence numbers are preserved so they remain visible.
+    pub fn drain_all(&mut self) -> Vec<AudioDatagram> {
+        let drained: Vec<AudioDatagram> =
+            core::mem::take(&mut self.packets).into_values().collect();
+        if let Some(last) = drained.last() {
+            self.next_expected_sequence = last.sequence.get() + 1;
+        }
+        self.statistics.emitted += u64::try_from(drained.len()).unwrap_or(u64::MAX);
+        drained
+    }
+
     /// Number of sequences between the next-expected sequence and the
     /// earliest currently buffered packet, i.e. packets that have not
     /// arrived yet but are already known to be missing from the gap.

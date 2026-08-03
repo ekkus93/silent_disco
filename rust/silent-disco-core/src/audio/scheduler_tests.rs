@@ -542,3 +542,83 @@ fn rejects_a_skip_threshold_that_no_observable_gap_could_reach() {
         SchedulerConfigErrorKind::InvalidConcealmentSkipThreshold
     );
 }
+
+#[test]
+fn drain_returns_buffered_tail_content_in_sequence_order_with_a_faded_final_frame() {
+    let mut scheduler = buffered_scheduler(30, 8_000);
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    assert_eq!(first.sequence, 0);
+
+    let drained = scheduler.drain_remaining();
+
+    // Everything still buffered arrived in time: it is real tail content, not
+    // backlog, and must not be discarded when the stream stops.
+    assert_eq!(drained.len(), 29);
+    assert_eq!(drained.first().expect("frames").sequence, 1);
+    assert_eq!(drained.last().expect("frames").sequence, 29);
+    assert!(drained.iter().all(|frame| !frame.concealed));
+    // Contiguous interior seams stay untouched.
+    let interior = &drained[5];
+    assert_eq!(interior.samples[0], 8_000);
+    assert_eq!(interior.samples[959 * 2], 8_000);
+    // The stream must end at zero rather than cutting mid-waveform.
+    assert_eq!(drained.last().expect("frames").samples[959 * 2], 0);
+}
+
+#[test]
+fn drain_fades_both_edges_of_a_hole_inside_the_drained_range() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in [0, 1, 3, 4] {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+    let _first = frame_at(scheduler.poll(HOST_START_MS));
+
+    let drained = scheduler.drain_remaining();
+
+    assert_eq!(
+        drained
+            .iter()
+            .map(|frame| frame.sequence)
+            .collect::<Vec<_>>(),
+        vec![1, 3, 4]
+    );
+    // Sequence 1 precedes the hole: its tail fades out.
+    assert_eq!(drained[0].samples[959 * 2], 0);
+    // Sequence 3 follows the hole: its head fades in.
+    assert_eq!(drained[1].samples[0], 0);
+    assert_eq!(drained[1].samples[RAMP_FRAMES * 2], 8_000);
+    // Sequence 4 continues 3 with no hole, so its head is untouched.
+    assert_eq!(drained[2].samples[0], 8_000);
+}
+
+#[test]
+fn drain_fades_in_when_its_first_frame_does_not_continue_the_delivered_stream() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in [0, 5, 6] {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    assert_eq!(first.sequence, 0);
+
+    let drained = scheduler.drain_remaining();
+
+    // The drain starts at 5 while 0 was the last delivered sequence: a hole
+    // against the live stream, so the resumed content fades in.
+    assert_eq!(drained[0].sequence, 5);
+    assert_eq!(drained[0].samples[0], 0);
+    assert_eq!(drained[0].samples[RAMP_FRAMES * 2], 8_000);
+}
+
+#[test]
+fn draining_an_empty_buffer_yields_nothing() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    assert!(scheduler.drain_remaining().is_empty());
+}
