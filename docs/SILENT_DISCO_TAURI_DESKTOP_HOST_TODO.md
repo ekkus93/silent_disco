@@ -1484,19 +1484,57 @@ left unchecked for a follow-up session.
 
 - [x] start/pause/resume/stop derive from core capabilities;
 - [x] pending operation state;
-- [ ] source name and validated duration;
-- [ ] position based on authoritative timeline;
-- [ ] end-of-stream state;
+- [x] source name and validated duration;
+- [x] position based on authoritative timeline;
+- [x] end-of-stream state;
 - [x] no HTML audio element.
 
 `HostSessionScreen`'s Play/Resume/Pause/Stop buttons derive their individual
 enabled state from `playbackControlsEnabled` (now real, from host lifecycle +
 transport-worker + selected-source state) and `playbackState`, and disable
-during an in-flight command. Not yet done: no display of the selected
-source's name/duration, no playback-position indicator (the actor already
-tracks `playbackPositionMs`; it is not surfaced in `HostSessionSnapshotDto`
-yet), and no distinct "ended naturally" indicator beyond the generic
-`playbackState` status card.
+during an in-flight command.
+
+**Done 2026-08-03.** Two dormant shared-core `AudioEvent` variants,
+`PositionAdvanced` and `EndOfStream`, existed for exactly this purpose but
+nothing on the desktop path ever submitted them. The pump now does:
+
+- Position is computed per audio frame from the frame's own presentation
+  time against the stream's start (the authoritative timeline, not
+  wall-clock elapsed, which would drift under pause or send-ahead bursting),
+  throttled to one report per 250ms of stream-timeline advance so a 5ms
+  packet duration does not submit 200 actor inputs/second for a value a UI
+  only needs a few times a second.
+- `packetizer.cancel_and_join()` returns `Ok` **only** when the source
+  finished on its own -- every other exit, including deliberate
+  cancellation, is an `Err`. That let the pump distinguish "the source
+  finished" (`EndOfStream`) from "we were told to stop"
+  (`PlaybackStateChanged(Stopped)`) without inventing new machinery.
+- A genuinely new stream distinguishes itself from a paused stream resuming
+  at the one point both submit the same `PlaybackStateChanged(Playing)`
+  event: the *previous* state. Resuming from `Paused` must not reset
+  position; starting fresh from anything else must. This is now the single
+  place that reset happens, in the shared actor (`state/audio.rs`), not
+  duplicated per platform.
+
+New shared-core field: `CoreSnapshot.stream_ended_naturally: bool`, mirrored
+into the UniFFI `FfiCoreSnapshot` record for Android/iOS consistency even
+though nothing on those platforms reads it yet -- a domain field invisible to
+one of the two FFI consumers is exactly the kind of silent divergence this
+project's architecture rules warn against.
+
+Surfaced through `HostSessionSnapshotDto`: `playbackPositionMs`,
+`streamEndedNaturally`, and `audioSource` (name + validated duration, reusing
+the existing `AudioSourceSummaryDto`). `HostSessionScreen` renders source
+name, `position / duration` (m:ss), and a "Finished" badge distinct from the
+generic `Stopped` status card.
+
+Tests: an actor-level test (`host_block12_actor_lifecycle.rs`) proves the
+reset-on-fresh-start-not-resume rule and the natural-vs-explicit distinction
+directly against the shared state machine; a desktop integration test
+(`playback_reports_advancing_position_and_natural_completion`) proves the
+pump actually wires real, advancing values end to end over a real 3-second
+source. Both were confirmed non-vacuous by reverting the change under test
+and observing the failure.
 
 ### 27.2 Delivery health
 
@@ -1506,7 +1544,12 @@ Show bounded aggregate data:
 - [x] successful peers;
 - [x] failed peers;
 - [x] partial delivery severity;
-- [ ] queue pressure;
+- [x] queue pressure;
+
+**Done 2026-08-03.** The queue-depth/peak/overflow counters Block 26.3 added
+to `BroadcastDiagnostics` are now rendered: a status line below delivery
+health showing queued/peak frame counts, escalating to `role="alert"` amber
+styling when `queueOverflows > 0`.
 - [x] per-listener last failure;
 - [x] zero-recipient warning.
 
@@ -1523,7 +1566,15 @@ diagnostic exists yet for the playback broadcast path).
 - [x] failure not overwritten by later informational state;
 - [ ] stale command rejection;
 - [x] stop pending;
-- [ ] source completion.
+- [x] source completion.
+
+**Source completion done 2026-08-03** as part of the position/end-of-stream
+work above (`playback_reports_advancing_position_and_natural_completion`).
+**Zero-recipient start policy and stale command rejection remain open** --
+both are product/policy decisions (should starting with no listeners be
+blocked outright, or only warned about? what counts as "stale" for a
+one-shot Play/Pause/Stop command?), not UI plumbing, and were left rather
+than decided unilaterally.
 
 Partial-delivery display and failure-persistence-across-refresh were already
 tested pre-block (join/approval flows); this block added

@@ -217,6 +217,7 @@ pub struct FfiCoreSnapshot {
     pub listeners: Vec<FfiListenerSummary>,
     pub playback_state: FfiPlaybackState,
     pub playback_position_ms: u64,
+    pub stream_ended_naturally: bool,
     pub last_delivery: Option<FfiDeliveryReport>,
     pub recoverable_action: Option<String>,
     pub last_error: Option<FfiCoreError>,

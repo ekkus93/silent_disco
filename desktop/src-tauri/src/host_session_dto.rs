@@ -1,5 +1,6 @@
 use crate::dto::DesktopErrorDto;
 use crate::platform::host_transport::ActiveHostSessionSnapshot;
+use crate::runtime_dto::AudioSourceSummaryDto;
 use silent_disco_core::domain::HostLifecycle;
 use silent_disco_core::runtime::{
     CoreSnapshot, DeliveryReport, JoinRequestSummary, ListenerSummary, RecoverableAction,
@@ -72,6 +73,12 @@ pub struct HostSessionSnapshotDto {
     pub host_lifecycle: String,
     pub transport_state: String,
     pub playback_state: String,
+    pub playback_position_ms: String,
+    /// True once the current/most recent stream reached its own natural end,
+    /// distinct from an explicit stop -- both otherwise present as the same
+    /// generic `playback_state` of `stopped`.
+    pub stream_ended_naturally: bool,
+    pub audio_source: Option<AudioSourceSummaryDto>,
     pub session_name: String,
     pub connection: Option<HostConnectionDto>,
     pub pending_join_requests: Vec<PendingJoinRequestDto>,
@@ -156,12 +163,25 @@ impl HostSessionSnapshotDto {
         let playback_controls_enabled = can_remove
             && active.is_some_and(|value| value.worker_running)
             && snapshot.host_draft.audio_source.is_some();
+        let audio_source = snapshot
+            .host_draft
+            .audio_source
+            .as_ref()
+            .map(|source| AudioSourceSummaryDto {
+                source_id: source.source_id.clone(),
+                display_name: source.display_name.clone(),
+                byte_length: source.byte_length.map(|length| length.to_string()),
+                duration_ms: source.duration_ms.map(|duration| duration.to_string()),
+            });
 
         Self {
             revision: snapshot.revision.get().to_string(),
             host_lifecycle: snapshot.host_lifecycle.wire_name().to_owned(),
             transport_state: snapshot.transport_state.wire_name().to_owned(),
             playback_state: snapshot.playback_state.wire_name().to_owned(),
+            playback_position_ms: snapshot.playback_position_ms.to_string(),
+            stream_ended_naturally: snapshot.stream_ended_naturally,
+            audio_source,
             session_name: snapshot.host_draft.session_name.clone(),
             connection,
             pending_join_requests: snapshot
@@ -284,8 +304,8 @@ mod tests {
         SyncConfidence, TransportState, TrustState,
     };
     use silent_disco_core::runtime::{
-        CoreSnapshot, DeliveryReport, JoinRequestSummary, ListenerSummary, NetworkEndpoint,
-        SessionAdvertisement, SynchronizationSummary,
+        AudioSourceDescriptor, CoreSnapshot, DeliveryReport, JoinRequestSummary, ListenerSummary,
+        NetworkEndpoint, SessionAdvertisement, SynchronizationSummary,
     };
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -294,8 +314,14 @@ mod tests {
         let mut snapshot = CoreSnapshot {
             host_lifecycle: HostLifecycle::Ready,
             last_delivery: Some(DeliveryReport::new(2, 1, 1).expect("delivery")),
+            playback_position_ms: 12_345,
+            stream_ended_naturally: true,
             ..CoreSnapshot::default()
         };
+        snapshot.host_draft.audio_source = Some(
+            AudioSourceDescriptor::new("source-1", "Track One.wav", Some(4_096), Some(60_000))
+                .expect("source"),
+        );
         snapshot.pending_join_requests.push(
             JoinRequestSummary::new(
                 RequestId::new("request-1").expect("request"),
@@ -360,6 +386,13 @@ mod tests {
         assert_eq!(broadcast.recipients_delivered, "772");
         assert_eq!(broadcast.queue_peak_depth, "41");
         assert_eq!(broadcast.queue_overflows, "2");
+        // Position, natural completion, and the selected source must reach
+        // the frontend snapshot rather than only existing on the actor.
+        assert_eq!(dto.playback_position_ms, "12345");
+        assert!(dto.stream_ended_naturally);
+        let audio_source = dto.audio_source.as_ref().expect("audio source summary");
+        assert_eq!(audio_source.display_name, "Track One.wav");
+        assert_eq!(audio_source.duration_ms.as_deref(), Some("60000"));
         assert_eq!(dto.pending_join_requests[0].age_ms, "150");
         assert_eq!(
             dto.connected_listeners[0].last_contact_age_ms.as_deref(),

@@ -390,6 +390,7 @@ impl From<CoreSnapshot> for FfiCoreSnapshot {
             listeners: value.listeners.into_iter().map(Into::into).collect(),
             playback_state: value.playback_state.into(),
             playback_position_ms: value.playback_position_ms,
+            stream_ended_naturally: value.stream_ended_naturally,
             last_delivery: value.last_delivery.map(Into::into),
             recoverable_action: value.recoverable_action.map(recoverable_action_name),
             last_error: value.last_error.map(Into::into),

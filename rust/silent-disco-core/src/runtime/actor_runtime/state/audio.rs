@@ -6,6 +6,17 @@ impl ActorState {
     pub(super) fn apply_audio(&mut self, event: AudioEvent) -> Result<ApplyOutcome, CoreError> {
         match event {
             AudioEvent::PlaybackStateChanged(state) => {
+                // A genuinely new stream starts playing from a state other
+                // than Paused -- resuming a pause must continue from where
+                // it left off, not reset. This is the one place a fresh
+                // start is distinguishable from a resume, since both submit
+                // the same `Playing` state.
+                if state == PlaybackState::Playing
+                    && self.snapshot.playback_state != PlaybackState::Paused
+                {
+                    self.snapshot.playback_position_ms = 0;
+                    self.snapshot.stream_ended_naturally = false;
+                }
                 self.snapshot.playback_state = state;
                 Ok(ApplyOutcome::changed())
             }
@@ -39,6 +50,7 @@ impl ActorState {
             }
             AudioEvent::EndOfStream { .. } => {
                 self.snapshot.playback_state = PlaybackState::Stopped;
+                self.snapshot.stream_ended_naturally = true;
                 Ok(ApplyOutcome::changed())
             }
             AudioEvent::Underrun { missing_frames } => {

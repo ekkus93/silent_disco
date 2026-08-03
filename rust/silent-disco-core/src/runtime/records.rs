@@ -493,6 +493,12 @@ pub struct CoreSnapshot {
     pub listeners: Vec<ListenerSummary>,
     pub playback_state: PlaybackState,
     pub playback_position_ms: u64,
+    /// True from the moment the current/most recent stream reached
+    /// [`AudioEvent::EndOfStream`] until the next stream genuinely starts.
+    /// Explicit stops never set this: it exists so a listener-facing UI can
+    /// show "the source finished" rather than folding that into the same
+    /// generic `Stopped` status a manual stop produces.
+    pub stream_ended_naturally: bool,
     pub synchronization: Option<SynchronizationSummary>,
     pub tuning: TuningSettings,
     pub last_delivery: Option<DeliveryReport>,
@@ -518,6 +524,7 @@ impl Default for CoreSnapshot {
             listeners: Vec::new(),
             playback_state: PlaybackState::Stopped,
             playback_position_ms: 0,
+            stream_ended_naturally: false,
             synchronization: None,
             tuning: TuningSettings::default(),
             last_delivery: None,

@@ -35,6 +35,12 @@ const SEND_AHEAD_HORIZON_MS: u64 = 1_000;
 /// Poll granularity while the pump is holding a frame back to stay within
 /// [`SEND_AHEAD_HORIZON_MS`].
 const SEND_AHEAD_POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Minimum advance, in stream-timeline milliseconds, between two
+/// `PositionAdvanced` reports. At the 5ms packet duration, reporting every
+/// frame would submit 200 actor inputs per second for a diagnostic value a
+/// UI only needs a few times a second; this throttles the report, not the
+/// underlying position, which still advances every frame.
+const POSITION_REPORT_INTERVAL_MS: u64 = 250;
 
 /// Owner of one active playback stream's real-time pump thread.
 ///
@@ -71,6 +77,12 @@ impl DesktopPlaybackStreamer {
             .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
             .map_err(DesktopErrorDto::from)?;
         network.broadcast_playback_frame(packetizer.stream_start_message().clone())?;
+        let host_start_time_ms = match packetizer.stream_start_message() {
+            ProtocolFrame::Control(ControlMessage::StreamStart(start)) => {
+                start.host_start_time_ms.get()
+            }
+            _ => unreachable!("a packetizer's stream_start_message is always a StreamStart"),
+        };
 
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
@@ -80,6 +92,7 @@ impl DesktopPlaybackStreamer {
             handle.clone(),
             session_id.clone(),
             stream_id.clone(),
+            host_start_time_ms,
             Arc::clone(&stop),
             Arc::clone(&paused),
         )?;
@@ -155,6 +168,7 @@ fn spawn_pump(
     handle: CoreActorHandle,
     session_id: SessionId,
     stream_id: StreamId,
+    host_start_time_ms: u64,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
 ) -> Result<JoinHandle<Result<(), DesktopErrorDto>>, DesktopErrorDto> {
@@ -162,7 +176,14 @@ fn spawn_pump(
         .name("silent-disco-desktop-playback-pump".to_owned())
         .spawn(move || {
             run_pump(
-                packetizer, &network, &handle, session_id, stream_id, &stop, &paused,
+                packetizer,
+                &network,
+                &handle,
+                session_id,
+                stream_id,
+                host_start_time_ms,
+                &stop,
+                &paused,
             )
         })
         .map_err(|error| {
@@ -176,15 +197,18 @@ fn spawn_pump(
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_pump(
     packetizer: StreamingPacketizeHandle,
     network: &Arc<DesktopHostNetworkControl>,
     handle: &CoreActorHandle,
     session_id: SessionId,
     stream_id: StreamId,
+    host_start_time_ms: u64,
     stop: &AtomicBool,
     paused: &AtomicBool,
 ) -> Result<(), DesktopErrorDto> {
+    let mut last_reported_position_ms: Option<u64> = None;
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -198,6 +222,13 @@ fn run_pump(
                 if !wait_until_within_send_ahead_horizon(&frame, network, stop) {
                     break;
                 }
+                report_position_if_due(
+                    &frame,
+                    host_start_time_ms,
+                    &mut last_reported_position_ms,
+                    handle,
+                    &stream_id,
+                );
                 drop(network.broadcast_playback_frame(frame));
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -208,7 +239,14 @@ fn run_pump(
     // packetizer that will not cancel must not prevent the listeners being
     // told the stream ended, nor the actor leaving `Playing` -- and the first
     // failure is what gets reported.
-    let packetizer_result = match packetizer.cancel_and_join() {
+    let packetizer_summary = packetizer.cancel_and_join();
+    // The packetizer only ever reaches `Ok` by emitting its final packet and
+    // exiting on its own -- every other exit, cancellation included, is an
+    // `Err`. So `Ok` here means the source genuinely finished, distinct from
+    // being told to stop, and that distinction is worth keeping visible to a
+    // playback UI rather than folding both into the same generic `Stopped`.
+    let ended_naturally = packetizer_summary.is_ok();
+    let packetizer_result = match packetizer_summary {
         Ok(_) => Ok(()),
         // Cancellation is precisely what stopping asks the worker to do, so it
         // is this path's normal outcome rather than a failure. Every other kind
@@ -223,6 +261,7 @@ fn run_pump(
             &error.message,
         )),
     };
+    let ending_stream_id = stream_id.clone();
     let broadcast_result = network.transport_now().and_then(|host_stop_time_ms| {
         network.broadcast_playback_frame(ProtocolFrame::Control(ControlMessage::Stop(Stop {
             session_id,
@@ -230,10 +269,56 @@ fn run_pump(
             host_stop_time_ms,
         })))
     });
-    let stopped_result = handle
-        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
-        .map_err(DesktopErrorDto::from);
+    let stopped_result = if ended_naturally {
+        handle.submit_audio_event(AudioEvent::EndOfStream {
+            stream_id: ending_stream_id,
+        })
+    } else {
+        handle.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+    }
+    .map_err(DesktopErrorDto::from);
     packetizer_result.and(broadcast_result).and(stopped_result)
+}
+
+/// Submits a throttled `PositionAdvanced` event for one emitted audio frame.
+///
+/// Position is computed from the frame's own presentation time against the
+/// stream's start -- the authoritative timeline this stream is scheduled
+/// against -- rather than from wall-clock elapsed time, which would drift
+/// under pause or send-ahead bursting. A failed submission is advisory-grade,
+/// the same severity as the audio broadcast just below this call in the
+/// caller, and is handled the same way: retried on the next due frame rather
+/// than treated as a reason to stop the stream.
+fn report_position_if_due(
+    frame: &ProtocolFrame,
+    host_start_time_ms: u64,
+    last_reported_position_ms: &mut Option<u64>,
+    handle: &CoreActorHandle,
+    stream_id: &StreamId,
+) {
+    let ProtocolFrame::Audio(datagram) = frame else {
+        return;
+    };
+    let position_ms = datagram
+        .host_presentation_time_ms
+        .get()
+        .saturating_sub(host_start_time_ms);
+    let due = match *last_reported_position_ms {
+        Some(previous) => position_ms >= previous.saturating_add(POSITION_REPORT_INTERVAL_MS),
+        None => true,
+    };
+    if !due {
+        return;
+    }
+    if handle
+        .submit_audio_event(AudioEvent::PositionAdvanced {
+            stream_id: stream_id.clone(),
+            position_ms,
+        })
+        .is_ok()
+    {
+        *last_reported_position_ms = Some(position_ms);
+    }
 }
 
 /// Blocks, in short stop-responsive increments, until `frame`'s presentation

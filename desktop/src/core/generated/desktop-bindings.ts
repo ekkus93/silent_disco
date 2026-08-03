@@ -46,7 +46,13 @@ export type DeliveryReportDto = { intendedPeers: number, successfulPeers: number
 
 export type BroadcastDeliveryDto = { framesAttempted: string, framesFailed: string, framesFullyDelivered: string, framesPartiallyDelivered: string, framesWithoutRecipients: string, recipientsIntended: string, recipientsDelivered: string, queueDepth: string, queuePeakDepth: string, queueOverflows: string, };
 
-export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, };
+export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, playbackPositionMs: string, 
+/**
+ * True once the current/most recent stream reached its own natural end,
+ * distinct from an explicit stop -- both otherwise present as the same
+ * generic `playback_state` of `stopped`.
+ */
+streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, };
 
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, };
 

@@ -87,6 +87,16 @@ function formatAge(ageMs: string): string {
   return `${Math.max(0, Math.round(value / 1_000))} s`;
 }
 
+function formatTimestamp(ms: string | null): string {
+  if (ms === null) {
+    return "--:--";
+  }
+  const totalSeconds = Math.floor(Math.max(0, Number(ms)) / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 export function HostSessionScreen() {
   const [snapshot, setSnapshot] = useState<HostSessionSnapshotDto | null>(null);
   const [refreshFailure, setRefreshFailure] = useState<DesktopErrorDto | null>(null);
@@ -617,6 +627,20 @@ export function HostSessionScreen() {
         <p className="mt-2 text-sm text-slate-400">
           Requires a selected audio source and an active host session.
         </p>
+        {snapshot.audioSource ? (
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            <span className="font-semibold text-slate-100">{snapshot.audioSource.displayName}</span>
+            <span className="font-mono text-slate-400">
+              {formatTimestamp(snapshot.playbackPositionMs)} /{" "}
+              {formatTimestamp(snapshot.audioSource.durationMs)}
+            </span>
+            {snapshot.streamEndedNaturally ? (
+              <span className="rounded-full border border-cyan-500/60 bg-cyan-950/30 px-2 py-0.5 text-xs font-semibold text-cyan-200">
+                Finished
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-4 flex gap-2">
           <button
             type="button"
@@ -673,6 +697,20 @@ export function HostSessionScreen() {
           {snapshot.lastDelivery.successfulPeers === 0 && snapshot.lastDelivery.intendedPeers > 0
             ? `Last delivery reached nobody: 0 of ${snapshot.lastDelivery.intendedPeers} listeners (${snapshot.lastDelivery.severity}).`
             : `Last delivery: ${snapshot.lastDelivery.successfulPeers} of ${snapshot.lastDelivery.intendedPeers} succeeded; ${snapshot.lastDelivery.failedPeers} failed (${snapshot.lastDelivery.severity}).`}
+        </p>
+      ) : null}
+      {snapshot.broadcast ? (
+        <p
+          role={Number(snapshot.broadcast.queueOverflows) > 0 ? "alert" : undefined}
+          className={`mt-3 text-sm ${
+            Number(snapshot.broadcast.queueOverflows) > 0 ? "text-amber-200" : "text-slate-400"
+          }`}
+        >
+          Broadcast queue: {snapshot.broadcast.queueDepth} queued (peak{" "}
+          {snapshot.broadcast.queuePeakDepth})
+          {Number(snapshot.broadcast.queueOverflows) > 0
+            ? `; ${snapshot.broadcast.queueOverflows} frame(s) dropped for a full queue.`
+            : "."}
         </p>
       ) : null}
       {snapshot.transportError ? (

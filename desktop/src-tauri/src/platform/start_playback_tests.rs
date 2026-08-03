@@ -1,7 +1,7 @@
 use super::file_picker::{AudioContainer, InspectedAudioSource, SelectedSourceRegistry};
 use super::network::{AddressRecord, DesktopHostNetworkControl, InterfaceRecord, TestHostPorts};
 use super::start_playback;
-use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, MonotonicMillis};
+use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, MonotonicMillis, PlaybackState};
 use silent_disco_core::protocol::{
     ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame, SyncRequest, SyncResponse,
 };
@@ -296,6 +296,70 @@ fn stopping_after_the_source_has_already_ended_still_leaves_the_actor_stopped() 
     wait_snapshot(&handle, |snapshot| {
         snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
     });
+
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Position must reflect real playback progress, and a source finishing on
+/// its own must be distinguishable from an explicit stop.
+///
+/// `stage_long_source` is 3 real seconds -- comfortably enough stream-time
+/// for the pump's throttled position reports to advance well past their
+/// first value, and short enough that waiting for natural completion is a
+/// reasonable test cost.
+#[test]
+fn playback_reports_advancing_position_and_natural_completion() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    wait_for_control(&mut *listener, |message| {
+        matches!(message, ControlMessage::StreamStart(_))
+    });
+    let _first_audio = wait_for_audio(&mut *listener);
+
+    // Real time has already passed by this point (receiving that first audio
+    // frame took a real round trip), so position may already be well past
+    // zero -- that race is exactly why the reset-to-zero invariant itself is
+    // covered at the actor level in
+    // host_block12_actor_lifecycle::playback_position_and_natural_completion_are_tracked_authoritatively
+    // rather than asserted here. This test's job is proving the pump
+    // actually wires real advancing values end to end.
+    assert!(!handle.current_snapshot().expect("current snapshot").stream_ended_naturally);
+
+    // Position must genuinely advance while the source keeps playing --
+    // not merely be nonzero once, but keep climbing.
+    let first_advance = wait_snapshot(&handle, |snapshot| snapshot.playback_position_ms > 0);
+    let further_advance = wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_position_ms > first_advance.playback_position_ms
+    });
+    assert!(further_advance.playback_position_ms > first_advance.playback_position_ms);
+    assert!(!further_advance.stream_ended_naturally);
+
+    // The source then finishes on its own, which must be visible as
+    // something other than the generic state an explicit stop produces.
+    let ended = wait_snapshot(&handle, |snapshot| snapshot.stream_ended_naturally);
+    assert_eq!(ended.playback_state, PlaybackState::Stopped);
+    assert!(
+        ended.playback_position_ms > 0,
+        "the position at natural completion must still reflect real playback progress"
+    );
 
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
