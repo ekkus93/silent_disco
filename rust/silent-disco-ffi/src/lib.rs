@@ -39,7 +39,11 @@ pub use host_transport::{
     FfiHostTransportCounters, FfiHostTransportDelivery, FfiHostTransportError,
     FfiHostTransportEvent, FfiHostTransportHandle,
 };
-pub use listener_playback::{ListenerPlaybackError, ListenerPlaybackRuntime};
+pub use listener_playback::{
+    FfiAudioPacket, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiListenerPlaybackHandle,
+    FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncSampleOutcome, ListenerPlaybackError,
+    ListenerPlaybackRuntime,
+};
 pub use listener_transport::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
     FfiListenerTransportEvent, FfiListenerTransportHandle, FfiManualHostEndpoint,

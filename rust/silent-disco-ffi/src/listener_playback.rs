@@ -14,10 +14,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use silent_disco_core::audio::PlaybackPhase;
 use silent_disco_core::audio::{
     DebugPcmRecorder, PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackScheduler,
     RenderRingConfig, SchedulerConfig,
 };
+use silent_disco_core::domain::{
+    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
+use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
 use silent_disco_core::sync::{
     ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
     SyncEstimatorConfig,
@@ -135,10 +140,10 @@ pub struct ListenerPlaybackRuntime {
     shared: Arc<Shared>,
     clock: Arc<PumpClock>,
     token: u64,
-    pump_thread: Option<JoinHandle<()>>,
+    pump_thread: Mutex<Option<JoinHandle<()>>>,
     /// Diagnostics captured at stop, so a stream's final accounting survives
     /// the teardown that produced it.
-    last_diagnostics: Option<PlaybackDiagnostics>,
+    last_diagnostics: Mutex<Option<PlaybackDiagnostics>>,
 }
 
 impl ListenerPlaybackRuntime {
@@ -200,16 +205,19 @@ impl ListenerPlaybackRuntime {
             shared,
             clock,
             token,
-            pump_thread: Some(pump_thread),
-            last_diagnostics: None,
+            pump_thread: Mutex::new(Some(pump_thread)),
+            last_diagnostics: Mutex::new(None),
         })
     }
 
     /// Diagnostics as they stood when [`Self::stop`] drained the stream, or
     /// `None` while it is still running.
     #[must_use]
-    pub const fn final_diagnostics(&self) -> Option<PlaybackDiagnostics> {
-        self.last_diagnostics
+    pub fn final_diagnostics(&self) -> Option<PlaybackDiagnostics> {
+        *self
+            .last_diagnostics
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The opaque token to hand to native audio setup exactly once, at stream
@@ -381,7 +389,7 @@ impl ListenerPlaybackRuntime {
     /// Returns [`ListenerPlaybackError::PumpThread`] when the pump thread
     /// ended by panicking. The ring is released either way; the failure is
     /// reported rather than swallowed.
-    pub fn stop(&mut self) -> Result<(), ListenerPlaybackError> {
+    pub fn stop(&self) -> Result<(), ListenerPlaybackError> {
         if !self.shared.running.swap(false, Ordering::SeqCst) {
             return Ok(());
         }
@@ -392,10 +400,15 @@ impl ListenerPlaybackRuntime {
             pump.finish();
             pump.diagnostics()
         };
-        self.last_diagnostics = Some(summary);
+        *self
+            .last_diagnostics
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(summary);
 
         let join_result = self
             .pump_thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
             .take()
             .map(JoinHandle::join)
             .transpose()
@@ -499,7 +512,7 @@ mod tests {
     #[test]
     fn start_registers_a_readable_engine_token_and_stop_releases_it() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -541,7 +554,7 @@ mod tests {
     #[test]
     fn stop_is_idempotent() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -558,7 +571,7 @@ mod tests {
     #[test]
     fn submitting_after_stop_is_an_explicit_failure_not_a_silent_no_op() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -579,7 +592,7 @@ mod tests {
     #[test]
     fn an_accepted_sync_sample_unlocks_playback_and_a_rejected_one_does_not() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -616,7 +629,7 @@ mod tests {
     #[test]
     fn an_uncorrelated_or_duplicate_sync_exchange_fails_explicitly() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -641,7 +654,7 @@ mod tests {
     #[test]
     fn sync_calls_after_stop_fail_explicitly() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -663,7 +676,7 @@ mod tests {
     #[test]
     fn final_diagnostics_survive_the_teardown_that_produced_them() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -701,7 +714,7 @@ mod tests {
         std::fs::create_dir_all(&directory).expect("temp directory");
         let path = directory.join("runtime-capture.wav");
 
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -739,7 +752,7 @@ mod tests {
     #[test]
     fn debug_capture_fails_explicitly_when_the_path_cannot_be_written() {
         let _guard = registry_test_guard();
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -795,7 +808,7 @@ mod tests {
         ));
         // A partially-completed start must not leave a registered engine
         // behind; the next start gets a fresh token that reads normally.
-        let mut runtime = ListenerPlaybackRuntime::start(
+        let runtime = ListenerPlaybackRuntime::start(
             scheduler_config(),
             ring_config(),
             PlaybackPumpConfig::default(),
@@ -829,5 +842,411 @@ mod tests {
             &raw mut frames_from_ring,
         );
         assert_eq!(status, 2 /* STOPPING */);
+    }
+}
+
+/// Everything needed to start one listener playback stream, flattened for the
+/// foreign binding.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiListenerPlaybackConfig {
+    /// Session this stream belongs to.
+    pub session_id: String,
+    /// Stream identity; a new stream generation requires a new runtime.
+    pub stream_id: String,
+    /// Wire packet duration, matching the host packetizer.
+    pub packet_duration_ms: u32,
+    /// Host monotonic time at which sequence zero's slot began.
+    pub host_start_time_ms: u64,
+    /// Samples per channel per packet.
+    pub samples_per_packet: u32,
+    /// Interleaved channel count.
+    pub channels: u16,
+    /// Presentation buffer accumulated before playback starts.
+    pub startup_buffer_target_ms: u64,
+    /// Render ring capacity, in frames.
+    pub ring_capacity_frames: u32,
+    /// Ring depth the pump holds as its jitter cushion, in frames.
+    pub ring_target_fill_frames: u32,
+    /// How far ahead of its deadline each frame is written.
+    pub write_lead_ms: u64,
+    /// Ceiling on the stream-start alignment prefill.
+    pub max_prefill_ms: u64,
+    /// Linear output gain, in `0.0..=1.0`.
+    pub volume: f32,
+}
+
+/// One arriving audio packet, flattened for the foreign binding.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiAudioPacket {
+    /// Wire sequence number.
+    pub sequence: u64,
+    /// Sample rate the packet was encoded at.
+    pub sample_rate: u32,
+    /// Interleaved channel count.
+    pub channels: u16,
+    /// Samples per channel in this packet.
+    pub samples_per_packet: u32,
+    /// First interleaved sample index this packet covers.
+    pub first_sample_index: u64,
+    /// Host monotonic presentation time for this packet.
+    pub host_presentation_time_ms: u64,
+    /// Interleaved PCM16LE payload.
+    pub payload: Vec<u8>,
+}
+
+/// What the scheduler is currently doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiPlaybackPhase {
+    /// Accumulating the startup presentation buffer.
+    Buffering,
+    /// Delivering frames against the presentation timeline.
+    Playing,
+    /// Paused, re-accumulating before playback resumes.
+    AwaitingRebuffer,
+    /// Stopped; no further frames will be produced.
+    Stopped,
+}
+
+/// Playback accounting, flattened for the foreign binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct FfiPlaybackDiagnostics {
+    /// Scheduler phase.
+    pub phase: FfiPlaybackPhase,
+    /// True once a real clock-offset estimate has been applied.
+    pub sync_locked: bool,
+    /// Packets accepted into the jitter buffer.
+    pub packets_accepted: u64,
+    /// Packets emitted in order, including the tail drained at stop.
+    pub packets_emitted: u64,
+    /// Sequences abandoned without playing: concealed losses plus skipped gaps.
+    pub sequences_skipped: u64,
+    /// Packets that arrived after their slot had already played.
+    pub late_rejections: u64,
+    /// Duplicate packets rejected.
+    pub duplicate_rejections: u64,
+    /// Packets too far ahead to reorder.
+    pub reorder_window_rejections: u64,
+    /// Frames synthesized to cover missing packets.
+    pub concealed_packets: u64,
+    /// Times the concealment bound forced a rebuffer.
+    pub hard_resync_signals: u64,
+    /// Buffered presentation-time span currently held.
+    pub buffered_span_ms: u64,
+    /// Frames currently queued in the render ring.
+    pub ring_queued_frames: u64,
+    /// Largest ring depth observed.
+    pub ring_peak_queued_frames: u64,
+    /// Frames converted but not yet accepted by the ring.
+    pub pending_frames: u64,
+    /// Alignment silence queued at stream start.
+    pub prefill_frames: u64,
+    /// Real-time reads that had to substitute silence.
+    pub ring_underruns: u64,
+    /// Frames of silence those reads substituted.
+    pub ring_silence_filled_frames: u64,
+    /// Producer writes that could not fit every frame.
+    pub ring_full_events: u64,
+}
+
+/// Result of feeding one correlated sync response, flattened for the binding.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct FfiSyncSampleOutcome {
+    /// True when the sample updated the estimate.
+    pub accepted: bool,
+    /// Current offset estimate, in milliseconds.
+    pub offset_ms: f64,
+    /// Current skew estimate, in parts per million.
+    pub skew_ppm: f64,
+    /// Round-trip time behind the current estimate.
+    pub round_trip_time_ms: f64,
+    /// Accepted samples behind the current estimate.
+    pub accepted_sample_count: u64,
+    /// True once playback has a real offset and may start.
+    pub sync_locked: bool,
+}
+
+impl From<PlaybackPhase> for FfiPlaybackPhase {
+    fn from(phase: PlaybackPhase) -> Self {
+        match phase {
+            PlaybackPhase::Buffering => Self::Buffering,
+            PlaybackPhase::Playing => Self::Playing,
+            PlaybackPhase::AwaitingRebuffer => Self::AwaitingRebuffer,
+            PlaybackPhase::Stopped => Self::Stopped,
+        }
+    }
+}
+
+fn to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
+    fn from(diagnostics: PlaybackDiagnostics) -> Self {
+        Self {
+            phase: diagnostics.phase.into(),
+            sync_locked: diagnostics.sync_locked,
+            packets_accepted: diagnostics.packets_accepted,
+            packets_emitted: diagnostics.packets_emitted,
+            sequences_skipped: diagnostics.sequences_skipped,
+            late_rejections: diagnostics.late_rejections,
+            duplicate_rejections: diagnostics.duplicate_rejections,
+            reorder_window_rejections: diagnostics.reorder_window_rejections,
+            concealed_packets: diagnostics.concealed_packets,
+            hard_resync_signals: diagnostics.hard_resync_signals,
+            buffered_span_ms: diagnostics.buffered_span_ms,
+            ring_queued_frames: to_u64(diagnostics.ring_queued_frames),
+            ring_peak_queued_frames: to_u64(diagnostics.ring_peak_queued_frames),
+            pending_frames: to_u64(diagnostics.pending_frames),
+            prefill_frames: to_u64(diagnostics.prefill_frames),
+            ring_underruns: diagnostics.ring_underruns,
+            ring_silence_filled_frames: diagnostics.ring_silence_filled_frames,
+            ring_full_events: diagnostics.ring_full_events,
+        }
+    }
+}
+
+impl From<SyncSampleOutcome> for FfiSyncSampleOutcome {
+    fn from(outcome: SyncSampleOutcome) -> Self {
+        Self {
+            accepted: outcome.accepted,
+            offset_ms: outcome.offset_ms,
+            skew_ppm: outcome.skew_ppm,
+            round_trip_time_ms: outcome.round_trip_time_ms,
+            accepted_sample_count: to_u64(outcome.accepted_sample_count),
+            sync_locked: outcome.sync_locked,
+        }
+    }
+}
+
+/// Errors surfaced to the foreign binding.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+#[uniffi(flat_error)]
+pub enum FfiListenerPlaybackError {
+    /// The requested configuration was rejected.
+    InvalidConfiguration(String),
+    /// The handle was already stopped.
+    Stopped(String),
+    /// The pump thread failed to start or ended abnormally.
+    PumpThread(String),
+    /// A sync probe or response was rejected.
+    Sync(String),
+    /// The debug capture could not be started.
+    DebugCapture(String),
+}
+
+impl fmt::Display for FfiListenerPlaybackError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfiguration(message)
+            | Self::Stopped(message)
+            | Self::PumpThread(message)
+            | Self::Sync(message)
+            | Self::DebugCapture(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for FfiListenerPlaybackError {}
+
+impl From<ListenerPlaybackError> for FfiListenerPlaybackError {
+    fn from(error: ListenerPlaybackError) -> Self {
+        match error {
+            ListenerPlaybackError::InvalidConfiguration(message) => {
+                Self::InvalidConfiguration(message)
+            }
+            ListenerPlaybackError::Stopped(message) => Self::Stopped(message),
+            ListenerPlaybackError::PumpThread(message) => Self::PumpThread(message),
+            ListenerPlaybackError::Sync(message) => Self::Sync(message),
+            ListenerPlaybackError::DebugCapture(message) => Self::DebugCapture(message),
+        }
+    }
+}
+
+/// Foreign-facing handle to one listener playback stream.
+///
+/// The platform submits arriving packets and raw sync exchanges and hands
+/// [`FfiListenerPlaybackHandle::engine_token`] to native audio setup once.
+/// Ordering, concealment, presentation-time pacing, clock estimation, and PCM
+/// conversion all happen behind this boundary.
+#[derive(Debug, uniffi::Object)]
+pub struct FfiListenerPlaybackHandle {
+    runtime: ListenerPlaybackRuntime,
+}
+
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "uniffi::export requires owned parameters at the foreign boundary"
+)]
+#[uniffi::export]
+impl FfiListenerPlaybackHandle {
+    /// Starts a playback stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::InvalidConfiguration`] when any
+    /// bound is rejected, or [`FfiListenerPlaybackError::PumpThread`] when the
+    /// pump thread cannot be spawned.
+    #[uniffi::constructor]
+    pub fn open(config: FfiListenerPlaybackConfig) -> Result<Arc<Self>, FfiListenerPlaybackError> {
+        let session_id = SessionId::new(&config.session_id).map_err(|error| {
+            FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}"))
+        })?;
+        let stream_id = StreamId::new(&config.stream_id).map_err(|error| {
+            FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}"))
+        })?;
+        let mut scheduler_config = SchedulerConfig::new(
+            session_id,
+            stream_id,
+            config.packet_duration_ms,
+            config.host_start_time_ms,
+            config.samples_per_packet,
+            config.channels,
+        );
+        scheduler_config.startup_buffer_target_ms = config.startup_buffer_target_ms;
+
+        let runtime = ListenerPlaybackRuntime::start(
+            scheduler_config,
+            RenderRingConfig {
+                capacity_frames: usize::try_from(config.ring_capacity_frames).unwrap_or(usize::MAX),
+                target_fill_frames: usize::try_from(config.ring_target_fill_frames)
+                    .unwrap_or(usize::MAX),
+            },
+            PlaybackPumpConfig {
+                volume: config.volume,
+                write_lead_ms: config.write_lead_ms,
+                max_prefill_ms: config.max_prefill_ms,
+                target_depth_frames: usize::try_from(config.ring_target_fill_frames)
+                    .unwrap_or(usize::MAX),
+            },
+            0.0,
+        )?;
+        Ok(Arc::new(Self { runtime }))
+    }
+
+    /// The opaque token to hand to native audio setup exactly once.
+    #[must_use]
+    pub fn engine_token(&self) -> i64 {
+        i64::try_from(self.runtime.engine_token()).unwrap_or(i64::MAX)
+    }
+
+    /// Monotonic milliseconds on the timeline playback schedules against.
+    /// Every local sync timestamp must come from here.
+    #[must_use]
+    pub fn now_ms(&self) -> u64 {
+        self.runtime.now_ms()
+    }
+
+    /// Submits one arriving audio packet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::Stopped`] once stopped.
+    pub fn submit_packet(
+        &self,
+        packet: FfiAudioPacket,
+        session_id: String,
+        stream_id: String,
+    ) -> Result<(), FfiListenerPlaybackError> {
+        let datagram = AudioDatagram {
+            session_id: SessionId::new(&session_id).map_err(|error| {
+                FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}"))
+            })?,
+            stream_id: StreamId::new(&stream_id).map_err(|error| {
+                FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}"))
+            })?,
+            sequence: PacketSequence::new(packet.sequence),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate: packet.sample_rate,
+            channels: packet.channels,
+            samples_per_packet: packet.samples_per_packet,
+            first_sample_index: SampleIndex::new(packet.first_sample_index),
+            host_presentation_time_ms: MonotonicMillis::new(packet.host_presentation_time_ms),
+            payload: packet.payload,
+        };
+        self.runtime.submit_packet(datagram)?;
+        Ok(())
+    }
+
+    /// Registers one outbound sync probe before it is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::Sync`] for a duplicate or
+    /// over-capacity probe, or `Stopped` once stopped.
+    pub fn begin_sync_probe(
+        &self,
+        correlation_id: u64,
+        local_send_time_ms: u64,
+    ) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime
+            .begin_sync_probe(correlation_id, local_send_time_ms)?;
+        Ok(())
+    }
+
+    /// Feeds one correlated four-timestamp sync response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::Sync`] when the response does not
+    /// correlate or its timestamps are impossible, or `Stopped` once stopped.
+    pub fn observe_sync_response(
+        &self,
+        correlation_id: u64,
+        echoed_local_send_time_ms: u64,
+        host_receive_time_ms: u64,
+        host_send_time_ms: u64,
+        local_receive_time_ms: u64,
+    ) -> Result<FfiSyncSampleOutcome, FfiListenerPlaybackError> {
+        Ok(self
+            .runtime
+            .observe_sync_response(
+                correlation_id,
+                echoed_local_send_time_ms,
+                host_receive_time_ms,
+                host_send_time_ms,
+                local_receive_time_ms,
+            )?
+            .into())
+    }
+
+    /// Current playback accounting.
+    #[must_use]
+    pub fn diagnostics(&self) -> FfiPlaybackDiagnostics {
+        self.runtime.diagnostics().into()
+    }
+
+    /// Accounting as it stood when the stream was stopped, if it has been.
+    #[must_use]
+    pub fn final_diagnostics(&self) -> Option<FfiPlaybackDiagnostics> {
+        self.runtime.final_diagnostics().map(Into::into)
+    }
+
+    /// Captures released PCM to a WAV at `path` for offline analysis.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::DebugCapture`] when the file cannot
+    /// be created, or `Stopped` once stopped.
+    pub fn start_debug_capture(&self, path: String) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime.start_debug_capture(&path)?;
+        Ok(())
+    }
+
+    /// First debug-capture failure, if capture stopped early.
+    #[must_use]
+    pub fn debug_capture_error(&self) -> Option<String> {
+        self.runtime.debug_capture_error()
+    }
+
+    /// Drains the buffered tail, stops the pump, and releases the ring.
+    /// Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::PumpThread`] when the pump thread
+    /// ended by panicking.
+    pub fn stop(&self) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime.stop()?;
+        Ok(())
     }
 }

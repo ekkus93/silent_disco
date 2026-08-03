@@ -284,13 +284,27 @@ precedent), with any pure logic in `silent-disco-core`.
   `debug_capture_error()` rather than silently truncating the file — a
   recording that quietly stops is worse than none, since the analysis would
   read the truncation as a dropout.
-- [ ] 2.6 UniFFI control surface (`FfiListenerPlaybackHandle` or similar):
+- [x] 2.6 UniFFI control surface (`FfiListenerPlaybackHandle` or similar):
       `open(config) -> handle`, `submit_packet(...)` (per-packet forwarding
       from Kotlin's existing transport event loop is acceptable control-
       plane load: ~50 calls/s), `apply_sync_offset(...)` (or sync-sample
       forwarding per 2.3), `engine_token()` for the Oboe adapter,
       `diagnostics_snapshot()`, `stop()`. Errors explicit and typed; no
       silent fallbacks.
+
+  **Done:** `FfiListenerPlaybackHandle` plus records
+  `FfiListenerPlaybackConfig`, `FfiAudioPacket`, `FfiPlaybackDiagnostics`,
+  `FfiSyncSampleOutcome`, and enum `FfiPlaybackPhase`. Per 2.3 the surface
+  takes raw sync exchanges (`begin_sync_probe` / `observe_sync_response`),
+  not offsets. `now_ms()` is exposed because every local sync timestamp must
+  come from the same clock playback schedules against. Errors are a typed
+  flat enum covering configuration, stopped, pump-thread, sync, and
+  debug-capture failures.
+
+  `ListenerPlaybackRuntime::stop` now takes `&self` (thread handle and final
+  diagnostics moved behind their own locks), since UniFFI objects expose
+  shared references. Verified by generating the Kotlin bindings and checking
+  the emitted class and record shapes, not just by compiling the Rust.
 - [ ] 2.7 Rust tests: pump pacing with a fake clock and a real ring
       (deadline alignment of first frame incl. prefill clamping both
       directions, steady-state depth converging to the lead, depth cap
