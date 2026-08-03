@@ -810,3 +810,46 @@ Execution constraints for this session:
   acquisition window, adopt the best sample seen) the highest-value item
   outstanding — it is not a rare-congestion edge case, it is this network's
   normal behaviour.
+
+## 2026-08-03T09:52:00Z - Claude Opus 5 (1M context) - 5ms packets: un-fragmented the audio datagram, and found a pump throughput ceiling
+
+- **Root cause the user's question surfaced**: user pointed out bandwidth
+  could not be the constraint (PCM 16/48k stereo is 1.536 Mbps). Correct —
+  and measuring the wire format showed the real problem. A 20ms packet is a
+  3,840B payload in a **3,930B datagram**, which **IP-fragments into 3 pieces
+  at a 1500-byte MTU**. IP has no partial recovery, so one lost fragment
+  destroyed 20ms of audio. Verified against the checked-in wire vector
+  (`testdata/protocol/v2/audio_vectors.txt`): 94 bytes for a 16-byte payload,
+  78 bytes overhead, 90 with production-length identifiers.
+- **`DEFAULT_PACKET_DURATION_MS` 20 → 5** (commit `1e4cd2a`-ish, see log).
+  Datagram is now 1,050B, single fragment. Guard test
+  `a_default_duration_audio_datagram_fits_one_unfragmented_udp_payload`
+  encodes a real datagram and asserts ≤1,472B; non-vacuous (reports 3,950B at
+  20ms).
+- **Changing packet duration silently rescaled every packet-count bound.**
+  Now derived from the durations they always meant: 500ms bridge, 200ms skip
+  threshold, 1,280ms reorder window — which evaluate to exactly the old
+  25/10/64 at 20ms, so the derivation is a no-op at the old geometry. The
+  concealment ramp also had to move (5ms of ramp cannot fit in a 5ms packet);
+  it is now 1ms, an absolute declick length, and a ramp ≥ its packet is
+  rejected rather than silently degrading.
+- **Run 17 regressed hard and exposed a pre-existing ceiling**: the pump
+  thread ticked every 10ms and `PlaybackPump::tick` releases at most **one**
+  frame, capping throughput at 100 packets/s. At 20ms that is 2× real time
+  and invisible; at 5ms it is **half** real time. Measured: 60-95 packets/s
+  emitted against 200 needed, ring at zero for 37/37 playing seconds, 23.9s
+  of substituted silence in a 40s song, 4,557 reorder-window rejections.
+  Fixed by draining every due frame per wake-up (`drain_due_frames`), with a
+  test that queues 40 due 5ms packets and asserts one wake-up releases all;
+  non-vacuous (reports 1 of 40 with the old loop).
+- **Run 18 (5ms + throughput fix)**: 38.45s captured, zero discontinuities,
+  max jump 830, one 10.1ms startup gap and a single 5.1ms mid-stream gap.
+  `concealed=24 late=0 reorderWindow=3 hardResyncs=0 resyncs=1`, underruns in
+  1 of 37 playing seconds.
+- **Honest scorecard on the prediction**: I predicted packet loss would fall
+  from 0.46% to ~0.15% (independent-fragment-loss model). Measured **0.31%**
+  — real, but half the predicted gain, which means fragment losses within one
+  datagram were substantially *correlated* (a contention burst takes all
+  three). Concealed audio fell 180ms → 120ms (33% less), and each hole is now
+  5ms rather than 20ms, which is the larger perceptual win. Record the model
+  as partially wrong rather than claiming the win.
