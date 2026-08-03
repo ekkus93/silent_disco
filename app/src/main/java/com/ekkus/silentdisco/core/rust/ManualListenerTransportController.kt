@@ -22,6 +22,9 @@ import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.sync.HostTimeMapper
 import com.ekkus.silentdisco.core.sync.ListenerSyncController
 import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
+import com.ekkus.silentdisco.core.uniffi.FfiAudioPacket
+import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackConfig
+import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
@@ -50,54 +53,28 @@ sealed interface ManualEndpointParseResult {
 private const val LOCAL_BIND_ADDRESS = "0.0.0.0"
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 private const val AUDIO_CODEC_NAME = "pcm16le"
-private const val MAX_PENDING_PACKETS = 256
-private const val PLAYBACK_RETRY_DELAY_MS = 10L
 
 /**
- * How far ahead of each frame's presentation deadline it is written into the
- * render ring. The ring's steady-state depth converges to this lead, giving
- * the native Oboe callback a real cushion instead of the near-zero depth
- * that write-at-deadline pacing left it (any writer-side jitter -- coroutine
- * scheduling, the ~5ms JNI boxing per write, GC -- then starved the DAC for
- * ~2ms at a time: hard native cuts no Kotlin-side concealment ramp can
- * reach). Matches the ring's 400ms target fill; capacity is 1s.
+ * Render ring geometry and pacing handed to the Rust playback runtime, which
+ * owns every decision made with them. One second of capacity with a 400ms
+ * cushion: deep enough that the real-time callback survives writer jitter,
+ * shallow enough that playback latency stays bounded.
  */
-private const val RING_WRITE_LEAD_MS = 400L
+private const val RING_CAPACITY_FRAMES: UInt = 48_000u
+private const val RING_TARGET_FILL_FRAMES: UInt = 19_200u
+private const val RING_WRITE_LEAD_MS: ULong = 400uL
+private const val MAX_RING_PREFILL_MS: ULong = 800uL
 
-/**
- * Upper bound on the stream-start silence prefill that aligns the first
- * frame's ring position with its presentation deadline. Below ring capacity
- * (1s) so the prefill plus the initial lookahead pop burst can never
- * overflow the ring: max depth is max(prefill, lead) <= 800ms < 1s.
- */
-private const val MAX_RING_PREFILL_MS = 800L
+/** Interval between clock-sync probes once a stream is running. */
+private const val SYNC_PROBE_CADENCE_MS = 2_000L
 
-/**
- * Ring depth (48kHz frames, 400ms) at which the playback loop stops writing
- * and waits for the native consumer to drain. Without this cap, a large
- * startup backlog flushed through the lookahead pins the ring at full
- * capacity for the whole stream -- maximal latency and a write stall on
- * every single packet -- because full-ring backpressure is the only thing
- * left to pace the writer. Matches the ring's configured target fill.
- */
-private const val RING_TARGET_DEPTH_FRAMES = 19_200
+/** `nativeOboeOpen` success status. */
+private const val OBOE_ADAPTER_STATUS_OK = 0
 
-/**
- * Milliseconds of silence to queue before the first real frame so it plays
- * exactly at its deadline: the native callback consumes from the moment the
- * stream opens, so a frame's play time is its write time plus current ring
- * depth. Zero when the first frame is already due or late (the startup
- * backlog case), preserving the existing play-immediately behavior.
- */
-internal fun computeRingPrefillMs(
-    firstDeadlineMs: Long?,
-    nowMs: Long,
-    maxPrefillMs: Long = MAX_RING_PREFILL_MS,
-): Long = ((firstDeadlineMs ?: nowMs) - nowMs).coerceIn(0, maxPrefillMs)
 /**
  * How much scheduled-timeline span must be buffered before playback starts
- * (see [PlaybackThresholds.startupBufferMs]). Larger than the class default
- * (400ms) as an experiment against the observed startup-transient underruns
+ * (forwarded to the Rust scheduler). Larger than its 400ms default as an
+ * experiment against the observed startup-transient underruns
  * (small dropouts clustered in the first ~1.2s of a stream): with the host's
  * send-ahead horizon now genuinely delivering content this far in advance,
  * a bigger cushion here gives the render ring and coroutine dispatcher more
@@ -105,9 +82,6 @@ internal fun computeRingPrefillMs(
  * rather than starting the instant the minimum threshold is technically met.
  */
 private const val STARTUP_BUFFER_MS = 1_000L
-
-/** A stream announced before any real clock-sync sample landed; see [ManualListenerTransportController.beginPlayback]. */
-private data class PendingStream(val streamId: StreamId, val sampleRate: Int, val channelCount: Int)
 
 /**
  * Platform hook keeping the device's network radio responsive for the
@@ -126,13 +100,12 @@ interface NetworkSessionLock {
 /**
  * Android-facing wrapper around the shared Rust listener transport for one
  * manual-endpoint connection attempt at a time. Owns the transport, the real
- * playback of whatever it streams (via the shared [playbackEngine]), and
+ * playback of whatever it streams (via the Rust playback runtime), and
  * clock-sync probing for that same connection -- it makes no join/approval
  * domain decisions of its own, only consumes what the transport already
  * decided and projects it into [ManualConnectUiState].
  */
 class ManualListenerTransportController(
-    private val playbackEngine: PlaybackEngine,
     /**
      * Directory for [DebugPcmRecorder] output (app-specific external storage,
      * pullable via `adb pull` without root). Null disables recording. This is
@@ -146,8 +119,8 @@ class ManualListenerTransportController(
     private val handleRef = AtomicReference<FfiListenerTransportHandle?>(null)
     private var eventLoop: Job? = null
     private var syncProbeJob: Job? = null
-    private var playbackJob: Job? = null
-    private var debugRecorder: DebugPcmRecorder? = null
+    private var playbackRuntime: FfiListenerPlaybackHandle? = null
+    private var currentStreamId: StreamId? = null
 
     private val _connectState = MutableStateFlow<ManualConnectUiState>(ManualConnectUiState.Idle)
     val connectState: StateFlow<ManualConnectUiState> = _connectState.asStateFlow()
@@ -155,12 +128,6 @@ class ManualListenerTransportController(
     private var trustedForFuture: Boolean = false
     private var sessionId: SessionId? = null
     private var protocolVersion: Int = 0
-    private var syncController: ListenerSyncController? = null
-    private var currentSyncState: SyncState = SyncState()
-    private var hasSyncSample: Boolean = false
-    private var pendingStream: PendingStream? = null
-    private var listenerScheduler: ListenerPlaybackScheduler? = null
-    private val pendingPackets = ArrayDeque<AudioPacket>()
 
     private val logger = AppLogger("ManualListenerAudio")
     private var lastReceivedSequence: Long? = null
@@ -231,7 +198,7 @@ class ManualListenerTransportController(
     fun reset() {
         eventLoop?.cancel()
         eventLoop = null
-        stopPlaybackAndSync()
+        stopPlayback()
         closeExistingHandle()
         _connectState.value = ManualConnectUiState.Idle
     }
@@ -239,7 +206,7 @@ class ManualListenerTransportController(
     override fun close() {
         eventLoop?.cancel()
         eventLoop = null
-        stopPlaybackAndSync()
+        stopPlayback()
         closeExistingHandle()
     }
 
@@ -250,7 +217,7 @@ class ManualListenerTransportController(
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
-                    stopPlaybackAndSync()
+                    stopPlayback()
                     _connectState.value = mapPostConnectionFailure(error)
                     break
                 }
@@ -277,366 +244,260 @@ class ManualListenerTransportController(
                 startSyncProbeLoop(scope, handle)
             }
             is FfiListenerTransportEvent.JoinRejected -> {
-                stopPlaybackAndSync()
+                stopPlayback()
                 _connectState.value = ManualConnectUiState.Rejected(event.reason)
             }
             is FfiListenerTransportEvent.HostDisconnected -> {
-                stopPlaybackAndSync()
+                stopPlayback()
                 _connectState.value = ManualConnectUiState.Disconnected(event.reason)
             }
             is FfiListenerTransportEvent.ConnectionClosed -> {
-                stopPlaybackAndSync()
+                stopPlayback()
                 _connectState.value = ManualConnectUiState.Disconnected(event.message)
             }
             is FfiListenerTransportEvent.Rejected -> {
-                stopPlaybackAndSync()
+                stopPlayback()
                 _connectState.value = ManualConnectUiState.Failed(event.message)
             }
-            is FfiListenerTransportEvent.StreamStarted -> handleStreamStarted(scope, event)
+            is FfiListenerTransportEvent.StreamStarted -> handleStreamStarted(scope, handle, event)
             is FfiListenerTransportEvent.Paused ->
                 _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PAUSED)
             is FfiListenerTransportEvent.Stopped -> handleStreamStopped()
-            is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(scope, event)
+            is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(event)
             is FfiListenerTransportEvent.AudioReceived -> handleAudioReceived(event)
         }
     }
 
+    /**
+     * Drives clock-sync probes for the life of one stream.
+     *
+     * The first probe goes out immediately rather than after a cadence delay:
+     * playback cannot start until a sample is genuinely accepted, so the
+     * round trip is on the critical path to hearing anything.
+     */
     private fun startSyncProbeLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
-        val session = sessionId ?: return
-        val config = SyncMaintenanceConfig()
-        syncController = ListenerSyncController(sessionId = session, config = config)
         syncProbeJob?.cancel()
         syncProbeJob = scope.launch(Dispatchers.IO) {
+            var correlationId = 1L
             while (isActive) {
-                val controller = syncController ?: break
-                val probe = controller.newProbe()
-                runCatching {
-                    handle.sendSyncRequest(probe.correlationId.toULong(), probe.t1ListenerSendElapsedMs.toULong())
+                val runtime = playbackRuntime ?: break
+                val sendTimeMs = runtime.nowMs()
+                // Register before sending: a response that beats its own
+                // registration has nothing to correlate against.
+                val registered = runCatching {
+                    runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs)
+                }.isSuccess
+                if (registered) {
+                    runCatching { handle.sendSyncRequest(correlationId.toULong(), sendTimeMs) }
                 }
-                delay(config.cadenceMs)
-            }
-        }
-    }
-
-    private fun handleSyncResponse(scope: CoroutineScope, event: FfiListenerTransportEvent.SyncResponseReceived) {
-        val session = sessionId ?: return
-        val controller = syncController ?: return
-        val t1 = event.t1ListenerSendElapsedMs.toLong()
-        val t2 = event.t2HostReceiveElapsedMs.toLong()
-        val t3 = event.t3HostSendElapsedMs.toLong()
-        val t4 = SystemClock.elapsedRealtime()
-        currentSyncState = controller.onResponse(
-            SyncResponsePacket(
-                version = protocolVersion,
-                sessionId = session,
-                correlationId = event.correlationId.toLong(),
-                t1ListenerSendElapsedMs = t1,
-                t2HostReceiveElapsedMs = t2,
-                t3HostSendElapsedMs = t3,
-            ),
-        )
-        logger.i(
-            "manual.audio.sync_sample",
-            "t1=$t1 t2=$t2 t3=$t3 t4approx=$t4 rttMs=${(t4 - t1) - (t3 - t2)} " +
-                "offsetMs=${currentSyncState.offsetMs} skewPpm=${currentSyncState.skewPpm} " +
-                "confidence=${currentSyncState.confidence} hasSyncSample=$hasSyncSample",
-        )
-        // A response event arriving is not the same as the estimator having
-        // accepted a usable sample from it: ClockSyncEstimator silently
-        // rejects RTT outliers and falls back to its all-zero default
-        // SyncState in that case. confidence stays UNKNOWN exactly when no
-        // sample has ever been accepted, so gate on that instead of merely
-        // "an event arrived" -- otherwise a rejected first sample (e.g. an
-        // elevated RTT from connection-start contention) freezes playback's
-        // mapper on the garbage zero-offset default this whole deferred-start
-        // scheme exists to avoid.
-        if (!hasSyncSample && currentSyncState.confidence != SyncQualityBadge.UNKNOWN) {
-            hasSyncSample = true
-            pendingStream?.let { pending ->
-                pendingStream = null
-                beginPlayback(scope, pending.streamId, pending.sampleRate, pending.channelCount)
+                correlationId += 1
+                delay(SYNC_PROBE_CADENCE_MS)
             }
         }
     }
 
     /**
-     * A stream can be announced before this connection has ever completed a
-     * real clock-sync round trip (e.g. a host that starts playback moments
-     * after approving a listener). The default sync estimate (0ms offset) is
-     * essentially guaranteed wrong -- the host's and this device's monotonic
-     * clocks have unrelated epochs (process start vs. device boot) -- so
-     * starting playback against it would schedule every packet nonsensically
-     * (either all immediately "late" or all far in the future) with no
-     * audible result. Defer until [handleSyncResponse] reports the first
-     * real sample instead of ever building a mapper from a guess.
+     * Forwards one four-timestamp exchange to the Rust estimator.
+     *
+     * `t4` is the moment this event is observed, taken from the runtime's own
+     * clock so the estimate and the playback timeline share one timeline.
+     * Nothing here interprets the sample: acceptance, offset, and skew are the
+     * estimator's to decide, and a listener that computed any of them would be
+     * duplicating domain logic it cannot keep consistent.
      */
-    private fun handleStreamStarted(scope: CoroutineScope, event: FfiListenerTransportEvent.StreamStarted) {
-        val streamId = StreamId(event.streamId)
-        val sampleRate = event.sampleRate.toInt()
-        val channelCount = event.channels.toInt()
-        if (!hasSyncSample) {
-            pendingStream = PendingStream(streamId, sampleRate, channelCount)
-            _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.BUFFERING)
+    private fun handleSyncResponse(event: FfiListenerTransportEvent.SyncResponseReceived) {
+        val runtime = playbackRuntime ?: return
+        val outcome = runCatching {
+            runtime.observeSyncResponse(
+                event.correlationId,
+                event.t1ListenerSendElapsedMs,
+                event.t2HostReceiveElapsedMs,
+                event.t3HostSendElapsedMs,
+                runtime.nowMs(),
+            )
+        }.getOrElse { error ->
+            logger.w("manual.audio.sync_rejected", error.message ?: "sync response rejected")
             return
         }
-        beginPlayback(scope, streamId, sampleRate, channelCount)
+        logger.i(
+            "manual.audio.sync_sample",
+            "accepted=${outcome.accepted} offsetMs=${outcome.offsetMs} " +
+                "skewPpm=${outcome.skewPpm} rttMs=${outcome.roundTripTimeMs} " +
+                "samples=${outcome.acceptedSampleCount} syncLocked=${outcome.syncLocked}",
+        )
+        if (outcome.syncLocked && _connectState.value is ManualConnectUiState.Streaming) {
+            _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PLAYING)
+        }
     }
 
     /**
-     * Starts real playback of a stream once a real sync estimate is known.
-     * The mapper is built once from whatever sync estimate exists right now
-     * and frozen for this stream's whole lifetime -- later sync samples
-     * refine `currentSyncState` for the *next* stream, matching this
-     * codebase's existing accepted behavior for the BLE/Wi-Fi-Direct
-     * discovered-session path.
+     * Starts Rust-owned playback for one stream.
+     *
+     * Unlike the previous implementation this does not defer on sync: the
+     * runtime refuses to play against a placeholder offset itself, so the
+     * stream can be opened as soon as it is announced and will begin the
+     * moment a sample is accepted.
      */
-    private fun beginPlayback(scope: CoroutineScope, streamId: StreamId, sampleRate: Int, channelCount: Int) {
+    private fun handleStreamStarted(scope: CoroutineScope, handle: FfiListenerTransportHandle, event: FfiListenerTransportEvent.StreamStarted) {
         val session = sessionId ?: return
+        stopPlayback()
         receivedCount = 0
-        writtenCount = 0
         lastReceivedSequence = null
-        lastTelemetry = PlaybackTelemetry()
-        lastWrittenFrameConcealed = false
-        val mapper = HostTimeMapper(offsetMs = currentSyncState.offsetMs, skewPpm = currentSyncState.skewPpm)
-        logger.i(
-            "manual.audio.stream_mapper",
-            "streamId=${streamId.value} offsetMs=${currentSyncState.offsetMs} " +
-                "skewPpm=${currentSyncState.skewPpm} pendingPacketsBuffered=${pendingPackets.size}",
-        )
-        val scheduler = ListenerPlaybackScheduler(
-            mapper = mapper,
-            thresholds = PlaybackThresholds(startupBufferMs = STARTUP_BUFFER_MS),
-            expectedSessionId = session,
-            expectedStreamId = streamId,
-        )
-        listenerScheduler = scheduler
-        pendingPackets
-            .filter { it.sessionId == session && it.streamId == streamId }
-            .forEach { scheduler.submit(it) }
-        pendingPackets.clear()
-        val format = AudioFormatSpec(sampleRate = sampleRate, channelCount = channelCount)
-        runCatching { playbackEngine.start(format) }.onFailure { error ->
+
+        val sampleRate = event.sampleRate.toInt()
+        val samplesPerPacket = event.samplesPerPacket.toInt()
+        val packetDurationMs = if (sampleRate > 0) {
+            (samplesPerPacket.toLong() * 1_000L / sampleRate.toLong()).toInt()
+        } else {
+            0
+        }
+        val runtime = runCatching {
+            FfiListenerPlaybackHandle.open(
+                FfiListenerPlaybackConfig(
+                    sessionId = session.value,
+                    streamId = event.streamId,
+                    packetDurationMs = packetDurationMs.toUInt(),
+                    hostStartTimeMs = event.hostStartTimeMs,
+                    samplesPerPacket = event.samplesPerPacket,
+                    channels = event.channels,
+                    startupBufferTargetMs = STARTUP_BUFFER_MS.toULong(),
+                    ringCapacityFrames = RING_CAPACITY_FRAMES,
+                    ringTargetFillFrames = RING_TARGET_FILL_FRAMES,
+                    writeLeadMs = RING_WRITE_LEAD_MS,
+                    maxPrefillMs = MAX_RING_PREFILL_MS,
+                    volume = 1.0f,
+                ),
+            )
+        }.getOrElse { error ->
             handlePlaybackEngineFailure(error)
             return
         }
-        startDebugRecording(streamId, sampleRate, channelCount)
-        _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.BUFFERING)
-        playbackJob?.cancel()
-        playbackJob = scope.launch(Dispatchers.IO) {
-            var started = false
-            while (isActive) {
-                val activeScheduler = listenerScheduler ?: return@launch
-                if (!started) {
-                    if (!activeScheduler.canStart()) {
-                        delay(PLAYBACK_RETRY_DELAY_MS)
-                        continue
-                    }
-                    started = true
-                    // Align the first frame's ring position with its deadline:
-                    // the native callback has been consuming (silence-filling)
-                    // since engine start, so whatever is written next plays
-                    // almost immediately. Queuing exactly (deadline - now) of
-                    // silence first makes the first frame play on time and
-                    // seeds the ring's intentional depth.
-                    val prefillNowMs = SystemClock.elapsedRealtime()
-                    val prefillMs = computeRingPrefillMs(activeScheduler.nextDeadlineMs(), prefillNowMs)
-                    if (prefillMs > 0) {
-                        val prefillFrames = (prefillMs * format.sampleRate / 1_000L).toInt()
-                        val prefilled = runCatching { playbackEngine.prefillSilence(prefillFrames) }
-                            .getOrElse { error ->
-                                handlePlaybackEngineFailure(error)
-                                return@launch
-                            }
-                        logger.i(
-                            "manual.audio.ring_prefill",
-                            "prefillMs=$prefillMs requestedFrames=$prefillFrames prefilledFrames=$prefilled",
-                        )
-                    }
-                    _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PLAYING)
-                }
-                // Never write past the ring's intended depth: with the cap,
-                // even a large startup backlog settles the ring at the target
-                // cushion instead of pinning it full (maximal latency, a
-                // write stall on every packet).
-                if (playbackEngine.queuedDepthFrames() >= RING_TARGET_DEPTH_FRAMES) {
-                    delay(PLAYBACK_RETRY_DELAY_MS)
-                    continue
-                }
-                // Frames are released RING_WRITE_LEAD_MS ahead of their
-                // presentation deadline: the ring's FIFO position -- not the
-                // write moment -- decides when a frame actually plays, so the
-                // early hand-off keeps steady-state ring depth at the lead
-                // (a jitter cushion for the native consumer) without moving
-                // any frame's audible timing. Draining everything inside the
-                // lead window immediately, and only waiting when nothing is,
-                // avoids compounding per-loop overhead into drift.
-                val frame = activeScheduler.poll(SystemClock.elapsedRealtime() + RING_WRITE_LEAD_MS)
-                if (frame == null) {
-                    delay(PLAYBACK_RETRY_DELAY_MS)
-                    continue
-                }
-                writeFrame(frame)?.let { error ->
-                    handlePlaybackEngineFailure(error)
-                    return@launch
-                }
-            }
+        playbackRuntime = runtime
+        currentStreamId = StreamId(event.streamId)
+
+        val oboeStatus = OboeBridge.nativeOboeOpen(runtime.engineToken())
+        if (oboeStatus != OBOE_ADAPTER_STATUS_OK) {
+            stopPlayback()
+            handlePlaybackEngineFailure(IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"))
+            return
         }
+        startDebugCapture(runtime, event.streamId)
+        logger.i(
+            "manual.audio.stream_started",
+            "streamId=${event.streamId} hostStartMs=${event.hostStartTimeMs} " +
+                "sampleRate=$sampleRate samplesPerPacket=$samplesPerPacket packetDurationMs=$packetDurationMs",
+        )
+        _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.BUFFERING)
+        startSyncProbeLoop(scope, handle)
     }
 
     /**
-     * Writes one already-scheduled frame to the engine and the debug
-     * recorder, incrementing [writtenCount] on success. Returns the write's
-     * exception on failure (null on success) instead of handling it, so the
-     * main playback loop can treat it as a fatal engine failure while a
-     * deliberate stop-time drain (see [handleStreamStopped]) can just stop
-     * draining rather than running the full failure path for an engine
-     * that's already being torn down.
+     * Enables the debug PCM capture when a recording directory is configured.
+     *
+     * Diagnostic instrumentation for this viability PoC: the capture is what
+     * makes audio defects objectively measurable rather than a matter of
+     * describing what playback sounded like.
      */
-    private fun writeFrame(frame: PlaybackFrame): Throwable? {
-        // One log line per concealment *run*, not per concealed frame: a
-        // multi-second arrival outage otherwise emits ~50 warning lines per
-        // second from the playback thread, and that logging load lands on the
-        // same process already struggling to keep audio flowing.
-        if (frame.concealed && !lastWrittenFrameConcealed) {
-            logger.w("manual.audio.concealed_frame", "concealment run started at seq=${frame.packet.sequenceNumber}")
-        }
-        lastWrittenFrameConcealed = frame.concealed
-        // Recorded exactly as handed to the engine -- same payload, same
-        // order -- so the saved file reflects precisely what this app
-        // believed it was playing, concealment included.
-        debugRecorder?.append(frame.packet.payload)
-        val result = runCatching { playbackEngine.write(frame) }
-        result.onSuccess { writtenCount += 1 }
-        return result.exceptionOrNull()
-    }
-
-    private fun startDebugRecording(streamId: StreamId, sampleRate: Int, channelCount: Int) {
+    private fun startDebugCapture(runtime: FfiListenerPlaybackHandle, streamId: String) {
         val directory = debugRecordingDirectory ?: return
-        debugRecorder?.finish()
-        val file = File(directory, "manual-listener-${streamId.value}.wav")
-        val recorder = DebugPcmRecorder(file)
-        recorder.start(sampleRate, channelCount)
-        debugRecorder = recorder
-        logger.i("manual.audio.recording_started", file.absolutePath)
-    }
-
-    private fun finishDebugRecording() {
-        val recorder = debugRecorder ?: return
-        debugRecorder = null
-        recorder.finish()
+        val file = File(directory, "manual-listener-$streamId.wav")
+        runCatching { runtime.startDebugCapture(file.absolutePath) }
+            .onSuccess { logger.i("manual.audio.recording_started", file.absolutePath) }
+            .onFailure { error ->
+                logger.w("manual.audio.recording_failed", error.message ?: "debug capture failed to start")
+            }
     }
 
     private fun handleStreamStopped() {
-        playbackJob?.cancel()
-        playbackJob = null
-        // Anything still buffered here already arrived over the network in
-        // time -- it's real tail content (e.g. a song's final note), not
-        // backlog. The send-ahead horizon means up to roughly a second of
-        // it can legitimately be sitting here at any moment, so play it out
-        // before tearing down instead of discarding it silently.
-        listenerScheduler?.drainRemaining()?.forEach { frame -> writeFrame(frame) }
-        logPlaybackSummary()
-        finishDebugRecording()
-        listenerScheduler = null
-        pendingPackets.clear()
-        runCatching { playbackEngine.stop() }
+        // The runtime drains its own buffered tail as part of stopping, so a
+        // stream's final moments are played rather than discarded.
+        stopPlayback()
         _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
     }
 
+    /** Stops Rust playback and the native output, logging the stream's final accounting. */
+    private fun stopPlayback() {
+        syncProbeJob?.cancel()
+        syncProbeJob = null
+        val runtime = playbackRuntime ?: return
+        playbackRuntime = null
+        currentStreamId = null
+        runCatching { runtime.stop() }.onFailure { error ->
+            logger.w("manual.audio.stop_failed", error.message ?: "playback failed to stop cleanly")
+        }
+        OboeBridge.nativeOboeClose()
+        logPlaybackSummary(runtime)
+        runtime.close()
+    }
+
     /**
-     * Logs everything needed to objectively tell where audio went missing or
-     * wrong, rather than relying on a description of what it sounded like:
-     * how many packets actually arrived vs. were written to the engine, the
-     * scheduler's own loss/drop/conceal counters, and the native Oboe ring's
-     * own underrun/silence-fill counters (0 unless the ring genuinely ran
-     * dry -- confirms or rules out real-time starvation independently of
-     * anything the Kotlin-side scheduler observed).
+     * Logs the stream's final accounting from the Rust runtime.
+     *
+     * Every counter here is produced by the component that owns the
+     * behaviour it describes, so the summary cannot disagree with what
+     * actually happened the way an independently maintained tally could.
      */
-    private fun logPlaybackSummary() {
-        val stallSummary = (playbackEngine as? OboePlaybackEngine)?.stallSummary()
+    private fun logPlaybackSummary(runtime: FfiListenerPlaybackHandle) {
+        val diagnostics = runtime.finalDiagnostics() ?: runtime.diagnostics()
         logger.i(
             "manual.audio.summary",
-            "received=$receivedCount written=$writtenCount " +
-                "packetLoss=${lastTelemetry.packetLossCount} lateDrop=${lastTelemetry.lateDropCount} " +
-                "invalid=${lastTelemetry.invalidPacketCount} concealed=${lastTelemetry.concealedPacketCount} " +
-                "oboeUnderruns=${OboeBridge.nativeOboeUnderrunCount()} " +
-                "oboeSilenceFilledFrames=${OboeBridge.nativeOboeSilenceFilledFrames()} " +
-                "oboeFramesRendered=${OboeBridge.nativeOboeFramesRendered()}" +
-                (stallSummary?.let { " $it" } ?: ""),
+            "received=$receivedCount accepted=${diagnostics.packetsAccepted} " +
+                "emitted=${diagnostics.packetsEmitted} skipped=${diagnostics.sequencesSkipped} " +
+                "concealed=${diagnostics.concealedPackets} late=${diagnostics.lateRejections} " +
+                "duplicate=${diagnostics.duplicateRejections} " +
+                "reorderWindow=${diagnostics.reorderWindowRejections} " +
+                "hardResyncs=${diagnostics.hardResyncSignals} " +
+                "ringPeakFrames=${diagnostics.ringPeakQueuedFrames} " +
+                "prefillFrames=${diagnostics.prefillFrames} " +
+                "ringUnderruns=${diagnostics.ringUnderruns} " +
+                "ringSilenceFilled=${diagnostics.ringSilenceFilledFrames} " +
+                "ringFullEvents=${diagnostics.ringFullEvents} phase=${diagnostics.phase}",
         )
+        runtime.debugCaptureError()?.let { error ->
+            logger.w("manual.audio.recording_error", error)
+        }
     }
 
     private fun handleAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
         val session = sessionId ?: return
-        val packet = mapAudioReceivedToPacket(event, session, protocolVersion)
+        val runtime = playbackRuntime ?: return
         receivedCount += 1
+        val sequence = event.sequence.toLong()
         val previousSequence = lastReceivedSequence
-        if (previousSequence != null && packet.sequenceNumber != previousSequence + 1) {
+        if (previousSequence != null && sequence != previousSequence + 1) {
             logger.w(
                 "manual.audio.received_gap",
-                "expected seq ${previousSequence + 1} but received ${packet.sequenceNumber} " +
+                "expected seq ${previousSequence + 1} but received $sequence " +
                     "(network loss or reorder before the scheduler ever sees it)",
             )
         }
-        lastReceivedSequence = packet.sequenceNumber
-        val scheduler = listenerScheduler
-        if (scheduler == null) {
-            pendingPackets += packet
-            while (pendingPackets.size > MAX_PENDING_PACKETS) {
-                pendingPackets.removeFirst()
-            }
-            return
+        lastReceivedSequence = sequence
+        // Ordering, concealment, and scheduling all belong to the runtime; a
+        // packet it rejects (duplicate, late, out of window) is ordinary
+        // traffic that its own counters already account for.
+        runCatching {
+            runtime.submitPacket(
+                FfiAudioPacket(
+                    sequence = event.sequence,
+                    sampleRate = event.sampleRate,
+                    channels = event.channels,
+                    samplesPerPacket = event.samplesPerPacket,
+                    firstSampleIndex = event.firstSampleIndex,
+                    hostPresentationTimeMs = event.hostPresentationTimeMs,
+                    payload = event.payload,
+                ),
+                session.value,
+                event.streamId,
+            )
         }
-        logTelemetryChange(scheduler.submit(packet), packet.sequenceNumber)
-    }
-
-    /**
-     * [ListenerPlaybackScheduler.submit] returns a running telemetry
-     * snapshot, not just this call's outcome -- logs only the counters that
-     * actually changed since the last observation, tagged with the sequence
-     * number that caused the change, so a real drop/late-drop/invalid/
-     * concealment event is traceable to a specific packet instead of just a
-     * final aggregate count.
-     */
-    private fun logTelemetryChange(telemetry: PlaybackTelemetry, sequenceNumber: Long) {
-        if (telemetry.packetLossCount != lastTelemetry.packetLossCount) {
-            logger.w("manual.audio.packet_loss", "seq=$sequenceNumber total=${telemetry.packetLossCount}")
-        }
-        if (telemetry.lateDropCount != lastTelemetry.lateDropCount) {
-            logger.w("manual.audio.late_drop", "seq=$sequenceNumber total=${telemetry.lateDropCount}")
-        }
-        if (telemetry.invalidPacketCount != lastTelemetry.invalidPacketCount) {
-            logger.w("manual.audio.invalid_packet", "seq=$sequenceNumber total=${telemetry.invalidPacketCount}")
-        }
-        if (telemetry.concealedPacketCount != lastTelemetry.concealedPacketCount) {
-            logger.w("manual.audio.concealed", "seq=$sequenceNumber total=${telemetry.concealedPacketCount}")
-        }
-        lastTelemetry = telemetry
     }
 
     private fun handlePlaybackEngineFailure(error: Throwable) {
-        stopPlaybackAndSync()
+        stopPlayback()
         _connectState.value = ManualConnectUiState.Failed(error.message ?: "playback engine failed")
     }
 
     /** Stops this connection's real-time consumption -- playback, buffering, and sync probing. */
-    private fun stopPlaybackAndSync() {
-        playbackJob?.cancel()
-        playbackJob = null
-        syncProbeJob?.cancel()
-        syncProbeJob = null
-        if (listenerScheduler != null) {
-            logPlaybackSummary()
-            finishDebugRecording()
-            runCatching { playbackEngine.stop() }
-        }
-        listenerScheduler = null
-        syncController = null
-        hasSyncSample = false
-        pendingStream = null
-        pendingPackets.clear()
-    }
-
     private fun closeExistingHandle() {
         handleRef.getAndSet(null)?.let { handle ->
             runCatching { handle.shutdown() }
@@ -651,25 +512,6 @@ class ManualListenerTransportController(
 
     private fun nowMs(): ULong = System.currentTimeMillis().toULong()
 }
-
-/** Maps one raw inbound audio event into the shared [AudioPacket] model the scheduler consumes. */
-internal fun mapAudioReceivedToPacket(
-    event: FfiListenerTransportEvent.AudioReceived,
-    sessionId: SessionId,
-    protocolVersion: Int,
-): AudioPacket = AudioPacket(
-    version = protocolVersion,
-    sessionId = sessionId,
-    streamId = StreamId(event.streamId),
-    sequenceNumber = event.sequence.toLong(),
-    codec = AUDIO_CODEC_NAME,
-    sampleRate = event.sampleRate.toInt(),
-    channelCount = event.channels.toInt(),
-    samplesPerPacket = event.samplesPerPacket.toInt(),
-    firstSampleIndex = event.firstSampleIndex.toLong(),
-    hostPresentationTimeMs = event.hostPresentationTimeMs.toLong(),
-    payload = event.payload,
-)
 
 /**
  * Maps any exception surfaced while polling an already-connected transport.

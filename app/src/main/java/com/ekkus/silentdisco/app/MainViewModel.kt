@@ -96,7 +96,6 @@ class MainViewModel @JvmOverloads constructor(
     internal val wifiDirectService = WifiDirectTransportService(application, logger)
     internal val hostTimingService = HostTimingService()
     internal val manualListenerController = ManualListenerTransportController(
-        playbackEngine,
         application.getExternalFilesDir(null),
         networkSessionLock = WifiLowLatencyNetworkLock(application),
     )
