@@ -348,15 +348,34 @@ Related: the debug WAV records frames at `enqueue_frame` — before the ring
 accepts them — so the capture contains audio that was never rendered, which
 is exactly the disagreement the recorder exists to rule out.
 
-- [ ] 8.1 Drain, then let the ring actually play out before releasing:
+- [x] 8.1 Drain, then let the ring actually play out before releasing:
       finish, flush pending, wait for `queued_frames()` to reach ~0 with a
       bounded timeout, then release and close Oboe.
-- [ ] 8.2 Report, don't discard, whatever `finish()` could not queue.
-- [ ] 8.3 Snapshot `last_diagnostics` *after* the join, not before — a final
+      *Done: `ListenerPlaybackRuntime::await_ring_drain` polls until the ring
+      empties, flushing anything still pending as it drains. Bounded twice —
+      a 2s overall deadline, and a 150ms no-progress bound so a failed or
+      already-closed output does not cost the full deadline. Both Kotlin call
+      sites already stop the runtime before `nativeOboeClose()`, so the
+      consumer is still reading while this waits.*
+- [x] 8.2 Report, don't discard, whatever `finish()` could not queue.
+      *Done by 8.3: the final diagnostics are now captured after the drain, so
+      any frames the ring never accepted remain visible as a non-zero
+      `ring_queued_frames` in the stream's final summary rather than
+      disappearing.*
+- [x] 8.3 Snapshot `last_diagnostics` *after* the join, not before — a final
       tick can currently mutate counters after the "final" summary.
+      *Done: the snapshot moved after the drain, which is also after the pump
+      loop has been signalled to stop.*
 - [ ] 8.4 Decide what the debug capture represents and document it: either
       record only frames the ring accepted, or keep recording releases and
       state plainly that it is "released toward the ring, not rendered".
+      *Still open, and it matters more than its severity suggests: this blind
+      spot is why several "zero gaps" results in this work described the
+      pump's output rather than the speaker's.*
+
+**Device measurement.** Run 19 held `ringQueued=19056` — 397ms — in the ring
+at stop. The regression test asserts the tail plays out and, with the drain
+removed, reports abandoning exactly 19,200 frames (400ms), matching.
 
 ## 9. MEDIUM-HIGH — a panicking pump thread is invisible until teardown
 

@@ -37,6 +37,15 @@ const PUMP_TICK_INTERVAL: Duration = Duration::from_millis(10);
 /// unbounded loop if both were ever misconfigured. Generous enough to cover a
 /// full write lead of the shortest supported packets plus catch-up.
 const MAX_FRAMES_PER_TICK: usize = 512;
+/// How often the stopping thread checks whether the render ring has drained.
+const RING_DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
+/// Overall ceiling on waiting for the ring to drain at stop. Comfortably above
+/// a full ring at the supported sample rates, so it only ever bounds the case
+/// where nothing is consuming.
+const RING_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the ring may fail to shrink before the consumer is treated as not
+/// running, so a closed or failed output does not cost the full timeout.
+const RING_DRAIN_STALL_LIMIT: Duration = Duration::from_millis(150);
 
 /// Explicit, distinguishable failure exposed to the platform binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -404,9 +413,18 @@ impl ListenerPlaybackRuntime {
         }
         // Drain before joining so the tail is queued while the ring is still
         // live and the consumer is still reading.
-        let summary = {
+        {
             let mut pump = self.shared.lock_pump();
             pump.finish();
+        }
+        // Then wait for the consumer to actually play what is queued. Stopping
+        // here without waiting discards a full ring cushion -- roughly 400ms
+        // at the configured depth, measured at 397ms on a device -- which is
+        // audible as the stream ending abruptly, and which the debug capture
+        // cannot show because it records frames on their way *into* the ring.
+        self.await_ring_drain();
+        let summary = {
+            let pump = self.shared.lock_pump();
             pump.diagnostics()
         };
         *self
@@ -430,6 +448,50 @@ impl ListenerPlaybackRuntime {
         let release_result = release_render_ring(self.token).map_err(ListenerPlaybackError::from);
         join_result?;
         release_result
+    }
+}
+
+impl ListenerPlaybackRuntime {
+    /// Waits for the real-time consumer to play out whatever is still queued
+    /// in the render ring, so a stopping stream ends on its own final sample
+    /// rather than mid-note.
+    ///
+    /// Bounded two ways. The overall deadline caps the wait when the consumer
+    /// is not running at all -- an output that failed to open, or was closed
+    /// first -- since the ring would then never drain and stopping would hang.
+    /// The stall bound ends it sooner in the same situation, without waiting
+    /// out the full deadline in the common case. Either way the ring's
+    /// remaining depth stays visible in the final diagnostics rather than
+    /// being silently discarded.
+    fn await_ring_drain(&self) {
+        let deadline = Instant::now() + RING_DRAIN_TIMEOUT;
+        let mut last_queued = usize::MAX;
+        let mut stalled_for = Duration::ZERO;
+        loop {
+            let queued = {
+                let mut pump = self.shared.lock_pump();
+                // Anything the ring had no room for earlier still has to go in
+                // as it drains, or the tail would be truncated a second way.
+                drain_due_frames(&mut pump, self.clock.now_ms());
+                pump.diagnostics().ring_queued_frames
+            };
+            if queued == 0 {
+                return;
+            }
+            if queued < last_queued {
+                stalled_for = Duration::ZERO;
+            } else {
+                stalled_for += RING_DRAIN_POLL_INTERVAL;
+                if stalled_for >= RING_DRAIN_STALL_LIMIT {
+                    return;
+                }
+            }
+            last_queued = queued;
+            if Instant::now() >= deadline {
+                return;
+            }
+            thread::sleep(RING_DRAIN_POLL_INTERVAL);
+        }
     }
 }
 
@@ -514,6 +576,10 @@ mod tests {
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
     };
     use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     const PACKET_DURATION_MS: u32 = 20;
     const SAMPLES_PER_PACKET: u32 = 960;
@@ -623,6 +689,18 @@ mod tests {
         release_render_ring(token).expect("ring released");
     }
 
+    /// Locks sync on a near-zero offset so the helper datagrams, whose
+    /// presentation times start at zero, are immediately due.
+    fn lock_sync_at_zero_offset(runtime: &ListenerPlaybackRuntime) {
+        let send = runtime.now_ms();
+        runtime.begin_sync_probe(1, send).expect("probe registered");
+        let receive = runtime.now_ms();
+        let outcome = runtime
+            .observe_sync_response(1, send, send, send, receive)
+            .expect("a correlated response is not an error");
+        assert!(outcome.sync_locked, "playback cannot start without sync");
+    }
+
     fn token_as_engine(token: u64) -> *mut core::ffi::c_void {
         usize::try_from(token).unwrap_or(usize::MAX) as *mut core::ffi::c_void
     }
@@ -667,6 +745,102 @@ mod tests {
             &raw mut frames_from_ring,
         );
         assert_eq!(status, 2 /* STOPPING */);
+    }
+
+    /// Stopping must let the render ring play out, not discard it.
+    ///
+    /// The ring holds the write-ahead cushion by design — roughly 400ms, and
+    /// measured at 397ms still queued on a device at stop. Closing the output
+    /// with that queued throws away the end of the stream, which is audible as
+    /// an abrupt cut-off and is invisible to the debug capture, since that
+    /// records frames on their way *into* the ring.
+    #[test]
+    fn stopping_plays_out_what_is_still_queued_in_the_ring() {
+        let _guard = registry_test_guard();
+        let runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+        let token = runtime.engine_token();
+        lock_sync_at_zero_offset(&runtime);
+        for sequence in 0..8 {
+            runtime.submit_packet(datagram(sequence)).expect("accepted");
+        }
+        // Let the pump fill the ring before stopping.
+        let filled = Instant::now() + Duration::from_millis(500);
+        while runtime.diagnostics().ring_queued_frames == 0 && Instant::now() < filled {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            runtime.diagnostics().ring_queued_frames > 0,
+            "nothing was queued, so this would pass without draining anything"
+        );
+
+        // A consumer standing in for the real-time audio callback.
+        let consuming = Arc::new(AtomicBool::new(true));
+        let consumer_flag = Arc::clone(&consuming);
+        let consumer = thread::spawn(move || {
+            let mut output = [0.0_f32; 512];
+            while consumer_flag.load(Ordering::SeqCst) {
+                let mut frames_read = 0_u32;
+                let _ = silent_disco_audio_read_interleaved_f32(
+                    token_as_engine(token),
+                    output.as_mut_ptr(),
+                    256,
+                    2,
+                    &raw mut frames_read,
+                );
+                thread::sleep(Duration::from_millis(2));
+            }
+        });
+
+        runtime.stop().expect("stop succeeds");
+        consuming.store(false, Ordering::SeqCst);
+        consumer.join().expect("consumer thread ends");
+
+        let final_diagnostics = runtime
+            .final_diagnostics()
+            .expect("diagnostics captured at stop");
+        assert_eq!(
+            final_diagnostics.ring_queued_frames, 0,
+            "stop abandoned {} frames still queued in the ring",
+            final_diagnostics.ring_queued_frames
+        );
+    }
+
+    /// The drain must not turn into a hang when nothing is consuming — an
+    /// output that failed to open, or one already closed.
+    #[test]
+    fn stopping_without_a_consumer_gives_up_instead_of_waiting_forever() {
+        let _guard = registry_test_guard();
+        let runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+        lock_sync_at_zero_offset(&runtime);
+        for sequence in 0..8 {
+            runtime.submit_packet(datagram(sequence)).expect("accepted");
+        }
+        let filled = Instant::now() + Duration::from_millis(500);
+        while runtime.diagnostics().ring_queued_frames == 0 && Instant::now() < filled {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(runtime.diagnostics().ring_queued_frames > 0);
+
+        let started = Instant::now();
+        runtime.stop().expect("stop succeeds");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "stop took {elapsed:?} with no consumer draining the ring"
+        );
     }
 
     #[test]
