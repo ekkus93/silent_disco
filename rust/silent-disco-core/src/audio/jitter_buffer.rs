@@ -137,6 +137,10 @@ pub struct JitterBufferStatistics {
     pub buffered_duration_rejections: u64,
     /// Packets emitted in order via [`JitterBuffer::pop_in_order`].
     pub emitted: u64,
+    /// Sequences the caller gave up waiting for and advanced past without
+    /// emitting, via [`JitterBuffer::skip_expected_sequence`] or
+    /// [`JitterBuffer::skip_to_earliest_buffered`].
+    pub skipped: u64,
 }
 
 /// Bounded, ordered holding area for validated protocol audio packets
@@ -276,6 +280,25 @@ impl JitterBuffer {
     /// sequence is rejected as already-emitted.
     pub fn skip_expected_sequence(&mut self) {
         self.next_expected_sequence += 1;
+        self.statistics.skipped += 1;
+    }
+
+    /// Forcibly advances to the earliest currently buffered sequence,
+    /// abandoning every missing sequence before it, and returns how many were
+    /// abandoned. Used when a gap is too wide to be worth covering packet by
+    /// packet: synthesizing a frame per missing slot would queue the whole
+    /// outage ahead of the audio that actually arrived, dragging playback
+    /// behind its deadlines for the rest of the stream.
+    ///
+    /// Returns zero and changes nothing when the buffer is empty or the
+    /// next-expected sequence is already buffered.
+    pub fn skip_to_earliest_buffered(&mut self) -> u64 {
+        let skipped = self.missing_sequence_count();
+        if skipped > 0 {
+            self.next_expected_sequence += skipped;
+            self.statistics.skipped += skipped;
+        }
+        skipped
     }
 
     /// Number of sequences between the next-expected sequence and the

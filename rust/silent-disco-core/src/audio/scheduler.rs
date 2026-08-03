@@ -24,6 +24,9 @@ pub const DEFAULT_HIGH_WATER_MS: u64 = 700;
 /// beyond which an updated sync estimate forces a hard resync rather than a
 /// soft correction.
 pub const DEFAULT_HARD_RESYNC_THRESHOLD_MS: f64 = 120.0;
+/// Default gap width, in packets, beyond which a hole is skipped outright
+/// rather than covered packet by packet.
+pub const DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS: u32 = 10;
 
 /// Fixed identity, geometry, and tuning bounds for one playback scheduler,
 /// covering exactly one host stream.
@@ -60,6 +63,10 @@ pub struct SchedulerConfig {
     /// Amplitude-ramp length, in milliseconds, applied at both edges of every
     /// concealed frame so neither seam steps discontinuously.
     pub concealment_ramp_ms: u32,
+    /// Gap width, in packets, beyond which the missing range is skipped
+    /// outright instead of concealed packet by packet. Must be smaller than
+    /// `max_reorder_window`, since no wider gap can ever be observed.
+    pub concealment_skip_threshold_packets: u32,
     /// Reorder window tolerated by the internal [`JitterBuffer`].
     pub max_reorder_window: u32,
     /// Maximum buffered duration tolerated by the internal [`JitterBuffer`].
@@ -90,6 +97,7 @@ impl SchedulerConfig {
             hard_resync_threshold_ms: DEFAULT_HARD_RESYNC_THRESHOLD_MS,
             max_consecutive_concealed_packets: DEFAULT_MAX_CONSECUTIVE_CONCEALED_PACKETS,
             concealment_ramp_ms: DEFAULT_CONCEALMENT_RAMP_MS,
+            concealment_skip_threshold_packets: DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS,
             max_reorder_window: DEFAULT_MAX_REORDER_WINDOW,
             max_buffered_duration_ms: DEFAULT_MAX_BUFFERED_DURATION_MS,
         }
@@ -113,6 +121,10 @@ pub enum SchedulerConfigErrorKind {
     /// The configured consecutive-concealment bound was rejected by the
     /// internal [`ConcealmentPolicy`].
     InvalidConcealmentBound,
+    /// `concealment_skip_threshold_packets` is not smaller than
+    /// `max_reorder_window`, so no observable gap could ever reach it and the
+    /// skip policy would never engage.
+    InvalidConcealmentSkipThreshold,
 }
 
 /// Typed scheduler configuration failure.
@@ -275,6 +287,19 @@ impl PlaybackScheduler {
                 message: "hard resync threshold must be positive".to_owned(),
             });
         }
+        // The jitter buffer rejects anything beyond the reorder window, so a
+        // gap can never be wider than the window itself. A threshold at or
+        // above it would silently disable the skip policy rather than tune it.
+        if config.concealment_skip_threshold_packets >= config.max_reorder_window {
+            return Err(SchedulerConfigError {
+                kind: SchedulerConfigErrorKind::InvalidConcealmentSkipThreshold,
+                message: format!(
+                    "concealment skip threshold of {} packets must be smaller than the \
+                     {}-packet reorder window",
+                    config.concealment_skip_threshold_packets, config.max_reorder_window
+                ),
+            });
+        }
 
         let jitter_buffer = JitterBuffer::new(JitterBufferConfig {
             session_id: config.session_id.clone(),
@@ -367,14 +392,37 @@ impl PlaybackScheduler {
             SchedulerState::Playing => {}
         }
 
-        let next_sequence = self.jitter_buffer.next_expected_sequence();
-        let host_deadline_ms = self.expected_host_presentation_time_ms(next_sequence);
-        let local_deadline_ms = host_to_local_ms(host_deadline_ms, self.offset_ms);
+        let mut next_sequence = self.jitter_buffer.next_expected_sequence();
+        let mut host_deadline_ms = self.expected_host_presentation_time_ms(next_sequence);
+        let mut local_deadline_ms = host_to_local_ms(host_deadline_ms, self.offset_ms);
 
         if local_now_ms < local_deadline_ms {
             return SchedulerPoll::Waiting {
                 buffer_health: self.buffer_health(),
             };
+        }
+
+        // A gap too wide to cover packet by packet is abandoned outright.
+        // Concealing it would queue one synthesized frame per missing slot
+        // ahead of the audio that actually arrived, so the whole outage would
+        // replay as filler and every later frame would trail its deadline by
+        // the outage's length. Skipping lets the post-gap audio play at its
+        // own correct presentation time instead.
+        if self.jitter_buffer.missing_sequence_count()
+            > u64::from(self.config.concealment_skip_threshold_packets)
+        {
+            self.jitter_buffer.skip_to_earliest_buffered();
+            self.concealment.reset_consecutive_count();
+            self.fade_in_next_real_frame = true;
+
+            next_sequence = self.jitter_buffer.next_expected_sequence();
+            host_deadline_ms = self.expected_host_presentation_time_ms(next_sequence);
+            local_deadline_ms = host_to_local_ms(host_deadline_ms, self.offset_ms);
+            if local_now_ms < local_deadline_ms {
+                return SchedulerPoll::Waiting {
+                    buffer_health: self.buffer_health(),
+                };
+            }
         }
 
         if let Some(datagram) = self.jitter_buffer.pop_in_order() {

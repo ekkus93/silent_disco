@@ -38,9 +38,10 @@ pub use render_ring::{
     RenderRingSnapshot,
 };
 pub use scheduler::{
-    BufferHealth, DEFAULT_HARD_RESYNC_THRESHOLD_MS, DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS,
-    DEFAULT_STARTUP_BUFFER_TARGET_MS, OffsetUpdateOutcome, PlaybackScheduler, ScheduledFrame,
-    SchedulerConfig, SchedulerConfigError, SchedulerConfigErrorKind, SchedulerPoll,
+    BufferHealth, DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS, DEFAULT_HARD_RESYNC_THRESHOLD_MS,
+    DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS, DEFAULT_STARTUP_BUFFER_TARGET_MS,
+    OffsetUpdateOutcome, PlaybackScheduler, ScheduledFrame, SchedulerConfig, SchedulerConfigError,
+    SchedulerConfigErrorKind, SchedulerPoll,
 };
 pub use types::{
     AudioFormat, AudioSampleFormat, CANONICAL_CHANNELS, CANONICAL_SAMPLE_RATE_HZ,

@@ -107,13 +107,23 @@ in `app/src/test/java/com/ekkus/silentdisco/core/audio/ListenerPlaybackScheduler
   clears it once applied. `record_delivery` is called with the *unfaded*
   samples so a later concealment repeats the real waveform rather than a
   ramped copy. `ramp::apply_fade_in` added.
-- [ ] 1.3 Wide-hole skip policy (R6): when the next buffered sequence is
+- [x] 1.3 Wide-hole skip policy (R6): when the next buffered sequence is
       more than `concealment_skip_threshold_packets` (config, default 10)
       ahead of the expected sequence, skip the hole via
       `JitterBuffer::skip_expected_sequence` (repeatedly, or add a
       `skip_to(sequence)` helper), reset the concealment run, and mark the
       next real frame for fade-in. No concealment frames for the skipped
       range.
+
+  **Done:** added `JitterBuffer::skip_to_earliest_buffered()` (returns the
+  count abandoned) plus a `skipped` statistic covering both skip paths, which
+  R10's diagnostics will surface. `SchedulerConfig` gained
+  `concealment_skip_threshold_packets` (default 10), validated to be smaller
+  than `max_reorder_window` — the buffer rejects anything beyond that window,
+  so a larger threshold could never engage and would silently disable the
+  policy (new `InvalidConcealmentSkipThreshold` error kind). After skipping,
+  `poll` recomputes the post-gap deadline and returns `Waiting` if that frame
+  is not due yet, so the resumed audio keeps its own presentation time.
 - [ ] 1.4 Drain-with-fades (R7): add a scheduler `drain_remaining()` that
       returns all buffered frames in sequence order ignoring deadlines,
       with fade-out applied to the frame before each sequence hole,

@@ -442,3 +442,103 @@ fn a_rebuffered_stream_fades_its_next_real_frame_in() {
     assert_eq!(resumed.samples[0], 0);
     assert_eq!(resumed.samples[RAMP_FRAMES * 2], 8_000);
 }
+
+#[test]
+fn a_gap_wider_than_the_skip_threshold_is_abandoned_rather_than_concealed() {
+    let mut cfg = config();
+    cfg.concealment_skip_threshold_packets = 3;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    scheduler
+        .submit_packet(datagram(0, 8_000))
+        .expect("accepted");
+    // Sequences 1..=9 never arrive: a nine-packet hole, well past the
+    // three-packet threshold.
+    for sequence in 10..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    // Polled well past the whole hole, the scheduler must not emit a single
+    // concealed frame for it.
+    let after_gap = frame_at(scheduler.poll(HOST_START_MS + 10 * u64::from(PACKET_DURATION_MS)));
+
+    assert_eq!(first.sequence, 0);
+    assert!(!after_gap.concealed);
+    assert_eq!(after_gap.sequence, 10);
+    // The post-gap frame keeps its own presentation time, so playback does
+    // not trail the timeline by the length of the outage.
+    assert_eq!(
+        after_gap.host_presentation_time_ms,
+        HOST_START_MS + 10 * u64::from(PACKET_DURATION_MS)
+    );
+    // Resuming from an abandoned gap is a seam like any other.
+    assert_eq!(after_gap.samples[0], 0);
+    assert_eq!(after_gap.samples[RAMP_FRAMES * 2], 8_000);
+}
+
+#[test]
+fn a_gap_within_the_skip_threshold_is_still_concealed_packet_by_packet() {
+    let mut cfg = config();
+    cfg.concealment_skip_threshold_packets = 3;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    scheduler
+        .submit_packet(datagram(0, 8_000))
+        .expect("accepted");
+    // A two-packet hole (sequences 1 and 2), inside the threshold.
+    for sequence in 3..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    let _first = frame_at(scheduler.poll(HOST_START_MS));
+    let concealed = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
+
+    assert!(concealed.concealed);
+    assert_eq!(concealed.sequence, 1);
+    // Repetition, not silence.
+    assert_eq!(concealed.samples[480 * 2], 4_000);
+}
+
+#[test]
+fn a_skipped_gap_does_not_count_against_the_consecutive_concealment_bound() {
+    let mut cfg = config();
+    cfg.concealment_skip_threshold_packets = 3;
+    cfg.max_consecutive_concealed_packets = 2;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    scheduler
+        .submit_packet(datagram(0, 8_000))
+        .expect("accepted");
+    for sequence in 10..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    let _first = frame_at(scheduler.poll(HOST_START_MS));
+    let after_gap = frame_at(scheduler.poll(HOST_START_MS + 10 * u64::from(PACKET_DURATION_MS)));
+
+    // Skipping is a deliberate decision, not a failure to keep up: it must
+    // not push the scheduler toward AwaitingRebuffer.
+    assert!(!scheduler.is_awaiting_rebuffer());
+    assert_eq!(after_gap.sequence, 10);
+}
+
+#[test]
+fn rejects_a_skip_threshold_that_no_observable_gap_could_reach() {
+    let mut cfg = config();
+    cfg.max_reorder_window = 8;
+    cfg.concealment_skip_threshold_packets = 8;
+
+    let error = PlaybackScheduler::new(cfg, 0.0)
+        .expect_err("a threshold at the reorder window must be rejected");
+    assert_eq!(
+        error.kind,
+        SchedulerConfigErrorKind::InvalidConcealmentSkipThreshold
+    );
+}
