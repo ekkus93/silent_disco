@@ -7,12 +7,19 @@ impl ActorState {
         match event {
             AudioEvent::PlaybackStateChanged(state) => {
                 // A genuinely new stream starts playing from a state other
-                // than Paused -- resuming a pause must continue from where
-                // it left off, not reset. This is the one place a fresh
-                // start is distinguishable from a resume, since both submit
-                // the same `Playing` state.
+                // than Paused or Playing -- resuming a pause must continue
+                // from where it left off, not reset, and a duplicate/stale
+                // Playing submission while already Playing (e.g. a second
+                // Resume command arriving after the first already applied)
+                // is a no-op, not a fresh start either. This is the one
+                // place a fresh start is distinguishable from a resume or a
+                // repeated resume, since all three submit the same
+                // `Playing` state.
                 if state == PlaybackState::Playing
-                    && self.snapshot.playback_state != PlaybackState::Paused
+                    && !matches!(
+                        self.snapshot.playback_state,
+                        PlaybackState::Paused | PlaybackState::Playing
+                    )
                 {
                     self.snapshot.playback_position_ms = 0;
                     self.snapshot.stream_ended_naturally = false;

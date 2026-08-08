@@ -54,6 +54,21 @@ pub(crate) fn start(
     })?;
     let session_id = active.advertisement.session_id.clone();
 
+    // A duplicate/stale Start command must be rejected without touching
+    // the actor at all: submitting `Buffering` (below) unconditionally and
+    // only discovering the duplicate deep inside `network.start_playback`
+    // would still corrupt the authoritative snapshot to `Error`, even
+    // though the real, already-running stream is unaffected.
+    if network.playback_is_active()? {
+        return Err(DesktopErrorDto::new(
+            "desktop.playback.already_active",
+            "audio",
+            "error",
+            true,
+            "playback is already active for this host session",
+        ));
+    }
+
     handle
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
         .map_err(DesktopErrorDto::from)?;

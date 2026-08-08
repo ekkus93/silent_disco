@@ -214,6 +214,17 @@ fn playback_position_and_natural_completion_are_tracked_authoritatively() {
         "resuming from pause must not reset playback position"
     );
 
+    // A duplicate/stale Resume arriving while already Playing (not Paused)
+    // is a no-op, not a fresh start -- it must not reset position either.
+    handle
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("submit duplicate playing state");
+    let duplicate_resume = next_snapshot(&receiver, resumed.revision.get() + 1);
+    assert_eq!(
+        duplicate_resume.playback_position_ms, 5_000,
+        "a duplicate Playing submission while already playing must not reset position"
+    );
+
     // The source finishing on its own is distinguishable from a stop.
     handle
         .submit_audio_event(AudioEvent::EndOfStream {

@@ -1005,3 +1005,40 @@ Every new test added this session was confirmed non-vacuous by temporarily rever
 ### To resume
 
 Read this entry, then `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` Block 27.3/28 and `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md` items 14/8.4 for full context before touching either. All three gates (`bash scripts/check-rust.sh`, `./gradlew test lintDebug`, `cd desktop && npm run check`) were green at hand-off.
+
+## 2026-08-08T20:03:37Z - Claude Sonnet 5 - LG G6 temporarily unavailable for Android testing
+
+**User said**: their LG G6 physical Android device is connected to this computer but is in use for a different project right now. Use an emulator for any Android testing needed until further notice; the user will say when the LG G6 is free again.
+
+- Do not attempt physical-device Android runs (including the still-outstanding Block 28 song-change manual device test, or any two-listener sync validation) against the LG G6 until the user confirms it's available.
+- Emulator-based testing can proceed in the meantime, but note in results that they're emulator-only — the project's real success criterion (physical multi-listener sync) still needs the physical device(s).
+
+## 2026-08-08T20:39:03Z - Claude Sonnet 5 - Block 27 closed: two product decisions plus two real bugs found by the tests those decisions required
+
+**User said**: "Can we finish up Block 27?", then answered the two outstanding 27.3 policy questions one at a time (asked separately, not batched, since the first answer was "what do you mean, explain more" — worth remembering: don't batch policy questions the user hasn't seen a concrete scenario for yet), then "Yes. Please fix this." when a bug surfaced mid-implementation.
+
+### Decisions made (both by the user, not decided unilaterally)
+
+- **Zero-recipient start policy: leave as-is.** Starting playback with zero connected listeners stays allowed; the existing 27.2 zero-recipient banner is the only signal, not a block. Rationale user found compelling: blocking would prevent legitimately starting early (decoder/buffer warm-up) while a listener is still joining.
+- **Stale command rejection: today's invalid-state checks are the policy**, not new revision-tracking machinery (no per-command snapshot-revision plumbing through Tauri).
+
+### What implementing "add regression tests proving this" actually found
+
+Writing the tests for "today's checks are enough" was not a rubber stamp — two real bugs surfaced, both fixed the same session:
+
+1. **Duplicate Start corrupted the actor to `Error`.** `start_playback::start` submitted `PlaybackStateChanged(Buffering)` unconditionally *before* `DesktopHostNetworkControl::start_playback`'s already-active check ran. The duplicate was still correctly rejected at the network layer, but the actor had already been told `Buffering` then (on the `Err` path) `Error` — so a correctly-rejected duplicate click still visibly broke the authoritative snapshot for the real, still-running stream. Fixed by adding a non-mutating `DesktopHostNetworkControl::playback_is_active()` check that `start_playback::start` consults *before* touching the actor at all.
+2. **Duplicate Resume reset position to zero.** Shared-core `runtime/actor_runtime/state/audio.rs` treated any `PlaybackStateChanged(Playing)` arriving from a state other than exactly `Paused` as "a fresh stream, reset position" — including `Playing -> Playing` (a duplicate/stale Resume). Confirmed for real: position dropped from 500ms to 0ms mid-stream in a live test before the fix. Fixed by excluding `Playing` (alongside `Paused`) from the reset condition — a duplicate Resume is now a no-op, not treated as a new stream. This is shared Rust core, so it's authoritative for Android/iOS too, not desktop-only, even though it was found via desktop testing.
+
+**Method note worth repeating from earlier sessions**: the first version of the Resume regression test read `handle.current_snapshot()` immediately after calling `resume_playback()` and passed — but `submit_audio_event` only *queues* the event; the actor applies it on its own thread, so an immediate read is a race that would pass vacuously whether or not the bug was real. Rewrote it to poll every 5ms across a 500ms window and track the minimum position observed, which is what actually caught the bug. Any test asserting "state X does NOT happen after an async submit" needs to poll a window, not read once — a single post-call read of an async system proves nothing.
+
+**Also found, not fixed (flagged to user, out of scope this session)**: `desktop/src-tauri`'s Rust (`cargo fmt` / `cargo clippy`) is not part of any automated gate — `npm run check` only runs `bindings:check` (a `cargo run` of the codegen binary), not `cargo fmt --check` or `cargo clippy` against `desktop/src-tauri` itself. Ran both manually this session (clean, 0 warnings) but this crate's Rust quality has no CI enforcement today. `scripts/check-rust.sh` only covers the `rust/` workspace.
+
+**Tooling gotcha hit while fixing formatting**: running the bare `rustfmt <file>` binary directly (instead of `cargo fmt`) reformatted `start_playback_tests.rs`'s `use` import blocks completely differently (different edition inference than `cargo fmt`, which correctly reads the crate's `Cargo.toml` edition) — it wasn't just re-wrapping the long lines I'd actually introduced, it silently reordered imports project-wide in that file. Caught it by diffing before committing. Always use `cargo fmt`, never bare `rustfmt <path>`, even for a single file.
+
+### Result
+
+Block 27 (27.1/27.2/27.3) is now fully checked in `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`. All three quality gates green with the pinned `1.97.1` toolchain: `bash scripts/check-rust.sh`, `cd desktop && npm run check`, plus a manual `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all -- --check` against `desktop/src-tauri` specifically (not otherwise gated, see above). New/changed files: `rust/silent-disco-core/src/runtime/actor_runtime/state/audio.rs`, `rust/silent-disco-core/tests/host_block12_actor_lifecycle.rs`, `desktop/src-tauri/src/platform/network.rs`, `desktop/src-tauri/src/platform/start_playback.rs`, `desktop/src-tauri/src/platform/start_playback_tests.rs`, `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`. Not yet committed as of this entry.
+
+### To resume
+
+Block 28 (first physical desktop-to-Android audio test) is next, but is blocked on the LG G6 (see the entry above) unless the user says it's free, or an emulator-based substitute is explicitly requested and framed as non-equivalent evidence.

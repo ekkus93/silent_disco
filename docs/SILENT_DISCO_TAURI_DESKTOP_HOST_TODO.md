@@ -1561,32 +1561,72 @@ diagnostic exists yet for the playback broadcast path).
 
 ### 27.3 Tests
 
-- [ ] zero-recipient start policy;
+- [x] zero-recipient start policy;
 - [x] partial delivery display;
 - [x] failure not overwritten by later informational state;
-- [ ] stale command rejection;
+- [x] stale command rejection;
 - [x] stop pending;
 - [x] source completion.
 
 **Source completion done 2026-08-03** as part of the position/end-of-stream
 work above (`playback_reports_advancing_position_and_natural_completion`).
-**Zero-recipient start policy and stale command rejection remain open** --
-both are product/policy decisions (should starting with no listeners be
-blocked outright, or only warned about? what counts as "stale" for a
-one-shot Play/Pause/Stop command?), not UI plumbing, and were left rather
-than decided unilaterally.
+
+**Zero-recipient start policy resolved 2026-08-08 (user decision): allow it.**
+Starting playback with zero connected listeners stays allowed and simply
+broadcasts to nobody; the 27.2 zero-recipient banner remains the only
+signal, not a block. Locked in by
+`starting_playback_with_zero_listeners_is_allowed`
+(`desktop/src-tauri/src/platform/start_playback_tests.rs`) so this isn't
+accidentally "fixed" into a block later without a deliberate decision.
+
+**Stale command rejection resolved 2026-08-08 (user decision): today's
+invalid-state checks are the policy**, not new revision-tracking machinery.
+Writing the regression tests for that premise surfaced two real bugs, both
+fixed the same day, not just tested:
+
+- A duplicate/stale Start while a stream was already active was correctly
+  rejected by `DesktopHostNetworkControl::start_playback`, but the calling
+  `start_playback::start` submitted `PlaybackStateChanged(Buffering)` to the
+  actor *before* that rejection ran, so the rejected duplicate still
+  corrupted the authoritative snapshot to `PlaybackState::Error` even though
+  the real, already-running stream was untouched. Fixed by adding
+  `DesktopHostNetworkControl::playback_is_active()`, a non-mutating check
+  `start_playback::start` now consults before submitting any actor
+  transition. Covered by
+  `starting_playback_twice_is_rejected_as_a_duplicate_command`.
+- A duplicate/stale Resume arriving while already `Playing` (not `Paused`)
+  was accepted and silently reset `playback_position_ms` to zero: the
+  shared actor's reset-on-fresh-start rule
+  (`rust/silent-disco-core/src/runtime/actor_runtime/state/audio.rs`)
+  treated any `Playing` submission from a state other than exactly `Paused`
+  as a fresh start, including `Playing -> Playing`. Fixed at the shared-core
+  level by also excluding `Playing` from the reset condition. Covered at
+  both layers: `resuming_while_already_playing_does_not_corrupt_position`
+  (desktop) and the extended
+  `playback_position_and_natural_completion_are_tracked_authoritatively`
+  (shared core, `rust/silent-disco-core/tests/host_block12_actor_lifecycle.rs`).
+- Duplicate Stop and duplicate/premature Pause/Resume/Stop (before anything
+  is playing) were already correctly rejected with no code change needed;
+  locked in by `stopping_playback_twice_is_rejected_not_silently_successful`
+  and `pause_resume_stop_before_playback_started_are_all_rejected`.
 
 Partial-delivery display and failure-persistence-across-refresh were already
-tested pre-block (join/approval flows); this block added
+tested pre-block (join/approval flows); Block 27.1/27.2 added
 `HostSessionScreen playback controls` tests covering per-button
 enable/disable by `playbackState`, the Play-becomes-Resume-when-paused
-behavior, and a failed `stop` surfacing visibly. Not covered: a specific
-"zero recipients" *policy* test for starting playback with no listeners
-(today nothing prevents starting with zero listeners -- it is allowed and
-simply broadcasts to nobody), rejecting a stale/duplicate playback command,
-and a natural end-of-stream completion test.
+behavior, and a failed `stop` surfacing visibly.
 
 **Acceptance:** The desktop never presents packet submission as universal listener success.
+
+---
+
+## Block 27 — closed 2026-08-08
+
+All of 27.1, 27.2, and 27.3 are now checked. `bash scripts/check-rust.sh`,
+`cd desktop && npm run check`, and `cargo clippy --all-targets --all-features
+-- -D warnings` / `cargo fmt --all -- --check` against `desktop/src-tauri`
+(not part of any automated gate yet -- see the open TODO note below) were
+all run clean with the pinned `1.97.1` toolchain before closing.
 
 ---
 

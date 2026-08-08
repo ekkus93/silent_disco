@@ -241,7 +241,10 @@ fn stop_playback_reports_a_pump_that_could_not_complete_its_shutdown() {
         .expect_err("stopping must report that the pump could not finish");
     // Which layer reports it (the actor, here) matters less than that the
     // failure is structured and reaches the caller at all.
-    assert!(!error.code.is_empty(), "the failure must carry a stable code");
+    assert!(
+        !error.code.is_empty(),
+        "the failure must carry a stable code"
+    );
     assert!(
         !error.message.is_empty(),
         "the reported failure must say what went wrong"
@@ -341,7 +344,12 @@ fn playback_reports_advancing_position_and_natural_completion() {
     // host_block12_actor_lifecycle::playback_position_and_natural_completion_are_tracked_authoritatively
     // rather than asserted here. This test's job is proving the pump
     // actually wires real advancing values end to end.
-    assert!(!handle.current_snapshot().expect("current snapshot").stream_ended_naturally);
+    assert!(
+        !handle
+            .current_snapshot()
+            .expect("current snapshot")
+            .stream_ended_naturally
+    );
 
     // Position must genuinely advance while the source keeps playing --
     // not merely be nonzero once, but keep climbing.
@@ -362,6 +370,179 @@ fn playback_reports_advancing_position_and_natural_completion() {
     );
 
     listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Block 27.3 "stale command rejection": a duplicate/stale Play click while
+/// a stream is already active must be rejected explicitly, not accepted as
+/// a second concurrent stream. The desktop TODO's Block 27.3 note records
+/// the decision that today's invalid-state checks (this one included)
+/// already satisfy that requirement, so this locks the behavior in rather
+/// than adding new revision-tracking machinery.
+#[test]
+fn starting_playback_twice_is_rejected_as_a_duplicate_command() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    start_playback::start(&handle, &network, &registry).expect("first start succeeds");
+    let error = start_playback::start(&handle, &network, &registry)
+        .expect_err("a second start while one is active must be rejected");
+    assert!(
+        !error.code.is_empty(),
+        "the failure must carry a stable code"
+    );
+
+    network.stop_playback().expect("stop playback");
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == PlaybackState::Stopped
+    });
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// A duplicate/stale Stop click after playback has already stopped must be
+/// rejected explicitly rather than silently reported as another success --
+/// the exact "duplicate click" scenario the Block 27.3 TODO note names.
+#[test]
+fn stopping_playback_twice_is_rejected_not_silently_successful() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    network.stop_playback().expect("first stop succeeds");
+    let error = network
+        .stop_playback()
+        .expect_err("a second stop after playback already ended must be rejected");
+    assert!(
+        !error.code.is_empty(),
+        "the failure must carry a stable code"
+    );
+
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Pause/resume/stop before anything is playing must all be rejected
+/// explicitly -- none may silently succeed or silently no-op.
+#[test]
+fn pause_resume_stop_before_playback_started_are_all_rejected() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, _registry) = stage_source(&temp);
+    let (actor, _handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    network
+        .pause_playback()
+        .expect_err("pausing with nothing playing must be rejected");
+    network
+        .resume_playback()
+        .expect_err("resuming with nothing playing must be rejected");
+    network
+        .stop_playback()
+        .expect_err("stopping with nothing playing must be rejected");
+
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Locks in the Block 27.3 zero-recipient decision: starting playback with
+/// no connected listeners is allowed (the existing delivery-health banner
+/// from 27.2 is the only signal), not blocked outright. See the desktop
+/// TODO's Block 27.3 note for the product reasoning.
+#[test]
+fn starting_playback_with_zero_listeners_is_allowed() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_source(&temp);
+    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    start_playback::start(&handle, &network, &registry)
+        .expect("starting with zero connected listeners must succeed");
+
+    network.stop_playback().expect("stop playback");
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == PlaybackState::Stopped
+    });
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Exploratory: resume is implemented by resubmitting `Playing`, and the
+/// actor only treats that as "continue from a pause" when the prior state
+/// was exactly `Paused` (see `runtime/actor_runtime/state/audio.rs`) --
+/// otherwise it resets position to zero, on the theory that a `Playing`
+/// submission from any other state is a genuinely new stream. A stale
+/// Resume command arriving while already playing (not paused) would hit
+/// that "otherwise" branch. This test exists to find out whether that is
+/// real before Block 27.3 is called closed on the strength of "today's
+/// checks are enough".
+#[test]
+fn resuming_while_already_playing_does_not_corrupt_position() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    let advanced = wait_snapshot(&handle, |snapshot| snapshot.playback_position_ms > 0);
+
+    // Not paused -- this is exactly the "stale/duplicate Resume" case.
+    network
+        .resume_playback()
+        .expect("resume while already playing is accepted by today's checks");
+
+    // `submit_audio_event` only queues the event; the actor applies it on
+    // its own thread. A reset (if it happens) lands the moment the actor
+    // processes this specific event, not on the ~250ms position-report
+    // throttle, so poll tightly across a window rather than checking once
+    // immediately after the call -- a single immediate read would likely
+    // observe the pre-resume snapshot and pass vacuously either way.
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let mut minimum_observed = advanced.playback_position_ms;
+    while Instant::now() < deadline {
+        let snapshot = handle.current_snapshot().expect("current snapshot");
+        minimum_observed = minimum_observed.min(snapshot.playback_position_ms);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        minimum_observed >= advanced.playback_position_ms,
+        "a resume command while already playing must not roll position back to zero \
+         (was {}, dropped to {} at some point in the following 500ms)",
+        advanced.playback_position_ms,
+        minimum_observed
+    );
+
+    network.stop_playback().expect("stop playback");
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");
 }

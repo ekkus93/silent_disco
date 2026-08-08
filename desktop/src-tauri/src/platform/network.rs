@@ -579,6 +579,25 @@ impl DesktopHostNetworkControl {
             .map_err(DesktopNetworkError::dto)
     }
 
+    /// Reports whether a playback stream is already running for the active
+    /// host session, without mutating any actor or network state. Callers
+    /// starting a new stream must consult this *before* submitting any
+    /// actor transition (e.g. `Buffering`) -- otherwise a duplicate/stale
+    /// Start command still visibly corrupts the authoritative snapshot with
+    /// an `Error` state even though the real, already-running stream is
+    /// untouched and the duplicate is correctly rejected underneath.
+    pub(crate) fn playback_is_active(&self) -> Result<bool, DesktopErrorDto> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        Ok(state
+            .active
+            .as_ref()
+            .and_then(|active| active.playback.as_ref())
+            .is_some_and(|playback| !playback.is_finished()))
+    }
+
     pub(crate) fn active_host_session(
         &self,
     ) -> Result<Option<ActiveHostSessionSnapshot>, DesktopErrorDto> {
