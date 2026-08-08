@@ -20,6 +20,7 @@ import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.audio.packetizationStats
 import com.ekkus.silentdisco.core.audio.validatePacketBudget
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
+import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.logging.DiagnosticsMetrics
 import com.ekkus.silentdisco.core.model.AppRole
@@ -134,7 +135,7 @@ class MainViewModel @JvmOverloads constructor(
     internal var pendingStartAdvertisingOperationId: String? = null
     internal var hostTransportEventLoopStarted: Boolean = false
     internal var listenerTransportEventLoopStarted: Boolean = false
-    internal val localListenerDeviceId = "listener-device"
+    internal val localListenerDeviceId: String by lazy { DeviceIdentityStore.get(application) }
 
     /**
      * A listener's sync/audio UDP ports, from its `JoinRequestReceived`

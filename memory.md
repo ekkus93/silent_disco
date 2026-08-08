@@ -1042,3 +1042,61 @@ Block 27 (27.1/27.2/27.3) is now fully checked in `docs/SILENT_DISCO_TAURI_DESKT
 ### To resume
 
 Block 28 (first physical desktop-to-Android audio test) is next, but is blocked on the LG G6 (see the entry above) unless the user says it's free, or an emulator-based substitute is explicitly requested and framed as non-equivalent evidence.
+
+## 2026-08-08T21:31:59Z - Claude Sonnet 5 - Block 28 prep done (no device needed); live session still blocked
+
+**User said**: "Start Block 28." Since every 28.1/28.2 checklist item needs the LG G6 (physical device, human listening) and it's still tied up on another project, asked how to proceed; user chose "prep now, run later" — do everything that doesn't need the phone so the live session goes faster once it's free.
+
+### What prep found and closed, all without the device
+
+Reviewed `manual_real_android_listener_plays_a_song_change` (the only existing manual-device test) against the full 28.1 checklist and found it only covered WAV, never exercised pause/resume, and printed no diagnostics. Closed all three:
+
+- **FLAC/MP3 variants**: added `manual_real_android_listener_plays_flac` / `..._mp3`, each running the same one-listener flow against ffmpeg-encoded fixtures. The app only decodes audio (no encoder — `docs/DESKTOP_BLOCK18_DECODER_DECISION.md`), so a new `encode_with_ffmpeg` helper shells out to a real `ffmpeg` binary at test time instead of embedding committed binary fixtures; it panics with a clear message rather than silently skipping if `ffmpeg` isn't on `PATH`. **Verified this actually works, not just assumed it**: wrote a throwaway probe test (`rust/silent-disco-core/tests/_probe_ffmpeg_decode.rs`, deleted after use — verified the approach, not worth keeping) that round-tripped a 2s ffmpeg-encoded FLAC and MP3 through the real `StreamingDecodeHandle::open`/symphonia path and confirmed 96,000 decoded frames each. Good thing this was checked: it would have been easy to assume "ffmpeg produced a file" implies "our decoder accepts it" without confirming.
+- **Pause/resume exercise**: all three manual tests (WAV song-change + FLAC + MP3) now pause mid-song (hold 5s so a human notices the silence), then resume, matching 28.1's "exercise pause/resume/stop." Safe to add today specifically because this same week's Block 27.3 work fixed the duplicate-Start/duplicate-Resume bugs that would have made this risky.
+- **Live diagnostics**: all three now print per-listener sync confidence/offset/RTT/drift and host-side broadcast/queue-pressure counters (from Block 26.3) at every phase transition via a new `print_diagnostics` helper, so a human running the live session has something to read off for "record sync, RTT, packet-loss, and underrun diagnostics." The helper itself prints a reminder that packet loss/underrun are listener-side (Android) diagnostics with no channel back to the host today — those two still have to come from the Android app's own screen, not this log.
+
+**Not done, flagged rather than assumed-covered**: 28.2's two device-independent failure tests ("corrupt source fixture fails visibly", "host source read failure does not claim continued normal streaming") have no coverage at the `start_playback` orchestration level — only decoder-unit-level corrupt-input tests exist (`rust/silent-disco-core/src/audio/tests.rs`). Both are desktop-only, don't need the phone, and weren't part of what the user asked for this pass — worth doing before or during the live 28.2 session rather than then finding out live tests don't cover something they should have.
+
+**Repeated method note**: same "verify the underlying claim, don't just trust the mechanism" discipline as the Block 27 session — there, an assertion read too early gave a false pass; here, the risk was assuming ffmpeg output being *valid* implied the app's *specific pinned decoder config* (symphonia 0.6.0, WAV/FLAC/MP3 features only) would accept it. Both were checked for real before relying on them in prep work meant to save time later.
+
+**Gates**: `bash scripts/check-rust.sh` and `cd desktop && npm run check` both green with the pinned `1.97.1` toolchain after this work; `cargo clippy`/`cargo fmt --check` against `desktop/src-tauri` specifically also run clean (manually, still not part of any automated gate).
+
+### Result
+
+Only `desktop/src-tauri/src/platform/start_playback_tests.rs` and `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` changed. No 28.1/28.2/28.3 checkboxes checked — none of that work is device-dependent, so none of it was actually run. Not yet committed as of this entry.
+
+### To resume
+
+Block 28's live session is still blocked on the LG G6. Once it's free: run `manual_real_android_listener_plays_a_song_change`, `..._flac`, and `..._mp3` (each via `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml <name> -- --ignored --nocapture`), read diagnostics off both the terminal (host side) and the Android app's own screen (packet loss/underrun), and record real results against the 28.1/28.2/28.3 checkboxes. Consider closing the 28.2 device-independent gap (corrupt/failing source at the orchestration level) before or during that session.
+
+## 2026-08-08T23:36:36Z - Claude Sonnet 5 - Two-emulator multi-listener dry run found and fixed a real device-identity bug (Block 29 groundwork, LG G6 still busy)
+
+**User said**: "Start Block 28," then (once told every checklist item needs the LG G6) "Can we use two docker containers instead of a docker container and an Android phone to run some of the tests?" Docker itself turned out to add no value (KVM/emulators were already directly available on this machine; two AVDs is simpler than an Android-emulator-in-Docker image), which I explained rather than just building what was literally asked for. User agreed to two plain Android emulators instead. That work is what actually happened this entry.
+
+### What got built
+
+- Two AVDs (`silent_disco_host_api36`, `silent_disco_listener_api36`, Android 16/API 36 matching `compileSdk`), booted headless (`-no-window`), each with the real debug APK installed. No `DISPLAY` in this shell session, so everything had to be `adb`-driven, not interactive.
+- Confirmed a real emulator can reach the desktop host's actual LAN IP directly (not just the `10.0.2.2` QEMU alias) -- meaning the existing manual-test connection payload works against an emulator completely unmodified, exactly like a real phone on the same Wi-Fi.
+- Reused and generalized the UI-automation recipe an earlier session had already proven on the real LG G6 (documented in this file's 2026-08-02 entries): `adb shell uiautomator dump` + exact-text bounds lookup (not hardcoded coordinates, so it tolerates whichever permission dialogs already happen to be granted) to drive the app's role-selection → Connect-manually flow with zero human interaction. New `automate_manual_connect`/`AUTOMATE_CONNECT_SCRIPT` in `start_playback_tests.rs` (a bash script embedded as a Rust string, invoked via `Command`, same external-dependency pattern as `encode_with_ffmpeg`).
+- New `manual_two_emulator_listeners_play_together` test: two emulators, both driven through join → approve → play → pause → resume → stop against one real desktop host, fully automated.
+
+### Two real bugs found (both confirmed and fixed, not just noted)
+
+1. **Every Android install shared one identity.** `MainViewModel.kt: localListenerDeviceId = "listener-device"` and `MainViewModelRustHost.kt: ANDROID_HOST_DEVICE_ID = "android-host-device"` were hardcoded literals, not per-device. Reproduced directly: two emulators' join requests were each received and approved individually, but the host's snapshot only ever showed one connected listener, because listener admission keys on `device_id`. This would have hit two real phones identically -- it was never an emulator artifact. Fixed with `core/identity/DeviceIdentityStore.kt`: a UUID generated once and persisted in `SharedPreferences`, shared by both roles since a physical device has one identity regardless of which role it's currently playing. (Named `DeviceIdentityStore`, not `DeviceIdentity`, because `core/protocol/ProtocolModels.kt` already has an unrelated `DeviceIdentity` data class -- caught via a real compiler "ambiguous import" error, not foresight.) User explicitly opted to fix the host-side one too, not just the confirmed-broken listener one, since it's the same root cause and same fix.
+2. **Test harness declared "approved" too early.** `wait_for_real_join_and_approve` returned as soon as `dispatch_transport_effect` returned -- but that call only *enqueues* the send onto the transport worker; the real delivery confirmation that actually moves a device from `pending_join_requests` into `listeners` lands asynchronously afterward. Single-listener manual tests never noticed (enough wall-clock time always passed before anything checked `listeners.len()`); the two-listener test's immediate post-approval check caught it directly (first listener transiently absent from `listeners` right after being "approved"). Fixed by waiting for the specific device to actually appear in `snapshot.listeners`, not just for the dispatch call to return. This is a test-harness bug, not a production one -- the underlying async design (worker enqueues, reports back later) is correct.
+
+### Result: the actual milestone
+
+With both fixes in place, the two-listener test passed for real: both distinct UUIDs stayed connected through start, a mid-stream pause/resume, and stop, confirmed via diagnostics printed at every phase. This is the project's stated success criterion -- listeners (plural) hearing the same audio in sync -- demonstrated for the first time, even though it's emulator-based and does **not** satisfy Block 29's physical-device acceptance criteria. Recorded as an unchecked note in Block 29 of the desktop TODO, not as checked boxes.
+
+**Not yet explained, flagged rather than assumed benign**: neither emulator ever completed a sync exchange during the run, and the broadcast queue hit 977 overflows in ~100 seconds. Plausibly just the emulator's I/O being slower than real hardware (consistent with the `queue_overflows=930` single-listener finding earlier the same day), but unconfirmed -- a real device should be used to check whether sync actually completes under the same load before assuming this is emulator-only noise.
+
+**Method note, same theme as this whole session**: every one of today's real findings (the duplicate-Start/Resume bugs, this device-identity bug, the test-harness timing gap) came from actually running something end-to-end and reading what really happened, not from code review or assumption. The pattern that keeps paying off: write the test for what you *expect* to already be true, run it for real, and treat a failure as information rather than an inconvenience to route around.
+
+### Housekeeping
+
+Two emulators (`emulator-5554`=host AVD, `emulator-5556`=listener AVD) were left running headless at the end of this session for reuse. `adb devices` also still shows the real LG G6 (`LGH87250967ab9`) attached -- untouched all session, per the standing instruction not to use it until the user confirms it's free.
+
+### To resume
+
+Block 28 is still fully blocked on the LG G6 (see the entry above). Block 29's physical validation is now meaningfully de-risked -- the actual admission-layer bug that would have blocked it is already fixed -- but still needs two real phones and a human, not emulators, to actually check any of its boxes.

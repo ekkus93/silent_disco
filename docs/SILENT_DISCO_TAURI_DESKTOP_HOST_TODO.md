@@ -1705,6 +1705,45 @@ worked end to end: join, approval, and real audio broadcast all succeeded.
       the actor actually reaches `Stopped` after a successful stop -- the exact
       property the manual device test checks.
 
+**Prep done 2026-08-08, live run still blocked on device availability**
+(see `memory.md`'s LG G6 entry). Reviewing
+`manual_real_android_listener_plays_a_song_change` against the 28.1
+checklist below found it only covered WAV, never exercised pause/resume,
+and printed no diagnostics -- all three closed without needing the device:
+
+- `manual_real_android_listener_plays_flac` and
+  `manual_real_android_listener_plays_mp3` added: same one-listener flow
+  (join, approve, start, pause/resume, stop, diagnostics) against
+  ffmpeg-encoded FLAC/MP3 fixtures. The app only decodes audio (no
+  encoder), so `encode_with_ffmpeg` shells out to a real `ffmpeg` at test
+  time rather than embedding committed binary fixtures; it panics with a
+  clear message if `ffmpeg` isn't on `PATH` rather than silently skipping.
+  Verified the real shared decoder (not just ffmpeg) actually opens both
+  outputs before relying on this: a throwaway probe test round-tripped a
+  2s ffmpeg-encoded FLAC and MP3 through `StreamingDecodeHandle::open`,
+  confirmed 96,000 decoded frames each, then was deleted (not committed --
+  it verified the approach, not a fixture worth keeping in the tree).
+- All three manual tests now exercise pause (hold 5s so a human notices
+  the silence) then resume mid-song, exactly what 28.1's "exercise
+  pause/resume/stop" asks for, and safe now that Block 27.3 fixed the
+  duplicate-Start/duplicate-Resume bugs it found.
+- All three now call `print_diagnostics` at each phase transition,
+  printing per-listener sync confidence/offset/RTT/drift and host-side
+  broadcast/queue-pressure counters (Block 26.3) to stderr with
+  `--nocapture`. Note printed by the helper itself: packet loss and
+  underrun are listener-side (Android) diagnostics with no channel back to
+  the host today, so those two still have to be read off the Android app's
+  own screen by whoever runs the live session, not from this log.
+
+Not yet attempted, and out of scope for this prep pass: 28.2's two
+device-independent failure tests ("corrupt source fixture fails visibly",
+"host source read failure does not claim continued normal streaming")
+have no automated coverage at the `start_playback` orchestration level
+today (only decoder-unit-level corrupt-input coverage exists in
+`rust/silent-disco-core/src/audio/tests.rs`). Both are desktop-only and
+don't need the phone -- worth doing before or during the live 28.2 session
+rather than discovering the gap that day.
+
 ### 28.1 One listener
 
 - [ ] select supported WAV fixture;
@@ -1735,6 +1774,58 @@ worked end to end: join, approval, and real audio broadcast all succeeded.
 ---
 
 ## Block 29 — Multi-listener physical validation
+
+**Emulator-based dry run done 2026-08-08, no boxes checked below -- an
+emulator is not a physical device and does not satisfy this block's
+acceptance criteria.** Recorded here because it found and fixed a real bug
+that would have blocked physical validation too, not just this dry run.
+
+Two real Android emulators (headless, real network sockets, not loopback),
+driven end to end via `adb`/`uiautomator` UI automation with no human
+interaction (see `manual_two_emulator_listeners_play_together` and
+`automate_manual_connect` in
+`desktop/src-tauri/src/platform/start_playback_tests.rs`), joined the same
+desktop-hosted session, were both approved, and both stayed connected
+through start, a mid-stream pause/resume, and stop.
+
+**Confirmed and fixed a real production bug that would have blocked this
+with two real phones too, not just emulators**: `MainViewModel.kt`'s
+`localListenerDeviceId` and `MainViewModelRustHost.kt`'s
+`ANDROID_HOST_DEVICE_ID` were both hardcoded literal strings
+(`"listener-device"`, `"android-host-device"`), so every install of the
+Android app presented the identical identity to any host. The first attempt
+at this dry run reproduced the failure directly: both emulators' join
+requests were received and individually approved, but the host's snapshot
+only ever showed one connected listener, because listener admission keys on
+`device_id`. Fixed with a new `DeviceIdentityStore`
+(`app/src/main/java/com/ekkus/silentdisco/core/identity/DeviceIdentityStore.kt`):
+a random UUID generated once and persisted in app-private
+`SharedPreferences`, shared by both roles (a physical device has one
+identity regardless of which role it's currently playing). Confirmed with
+genuinely distinct UUIDs in the re-run.
+
+**Also found and fixed a second issue, this one in the manual test harness,
+not production code**: `wait_for_real_join_and_approve` declared a listener
+"approved" as soon as `dispatch_transport_effect` returned, but that call
+only *enqueues* the send onto the transport worker -- the real delivery
+confirmation (`TransportEvent::DeliveryCompleted`, which is what actually
+moves a device from `pending_join_requests` into `listeners`) lands
+asynchronously afterward. The single-listener manual tests never noticed
+because enough real time passed before anything checked `listeners.len()`;
+the two-listener test checked immediately after both approvals and caught
+it directly (first listener transiently absent from `listeners`, right
+after being approved). Fixed by waiting for the specific device to actually
+appear in `snapshot.listeners` before returning.
+
+**Not yet explained**: neither emulator ever completed a sync exchange
+during the run (`listener has not yet completed a sync exchange`
+throughout), and the broadcast queue accumulated 977 overflows by the end
+of a ~100-second run. Both are plausibly explained by the emulator's I/O
+being measurably slower than real hardware (see the `MANUAL_TEST_TIMEOUT`
+note added the same day, and the `queue_overflows=930` finding from the
+single-listener run that motivated it) rather than a protocol bug, but this
+was not investigated further and should not be assumed benign until a real
+device confirms sync actually completes under the same load.
 
 ### 29.1 Two Android listeners
 

@@ -2,6 +2,7 @@ package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
+import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.JoinApprovalState
@@ -48,7 +49,7 @@ import kotlinx.coroutines.launch
 
 internal fun MainViewModel.ensureRustHostCore(): HostCoreController {
     hostCoreController?.let { return it }
-    val controller = hostCoreFactory(ANDROID_HOST_DEVICE_ID)
+    val controller = hostCoreFactory(DeviceIdentityStore.get(getApplication()))
     hostCoreController = controller
     viewModelScope.launch {
         controller.snapshots.filterNotNull().collect(::applyRustHostSnapshot)
@@ -703,5 +704,3 @@ private fun HostLifecycleState.presentationMessage(previous: String?): String? =
     HostLifecycleState.ERROR,
     -> previous
 }
-
-private const val ANDROID_HOST_DEVICE_ID = "android-host-device"
