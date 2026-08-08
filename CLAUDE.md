@@ -47,6 +47,7 @@ Do not create additional assistant-generated design documents unless they are co
 - Android Wi-Fi Direct may remain as an Android establishment adapter during migration; it must not remain the owner of protocol/domain state.
 - Keep framing bounded, versioned, and explicitly validated.
 - Success means listeners hear the same thing **about 99% of the time** in real-world use.
+- Use a single shared Rust streaming decoder (`symphonia` 0.6.0: WAV/PCM, FLAC, MP3) for all platforms; no fallback to Android `MediaCodec`, HTML audio, Web Audio, or a TypeScript decoder (`docs/DESKTOP_BLOCK18_DECODER_DECISION.md`). Existing Android platform decoding is temporary until shared Block 23 migrates it.
 
 ## Rust workspace commands
 
@@ -76,6 +77,8 @@ Do not claim these commands passed unless they were actually executed with the p
 ## Desktop companion (Tauri)
 
 `desktop/` is a Tauri 2 desktop companion app: Rust backend in `desktop/src-tauri`, React 19 + Redux Toolkit + Tailwind frontend in `desktop/src`. It is governed by the same architectural boundaries (presentation / platform adapters / authoritative Rust domain state / etc.) as the Android app.
+
+`desktop/rust-toolchain.toml` pins `desktop/src-tauri`'s Rust build to `1.97.1`, matching `rust/rust-toolchain.toml`.
 
 Run the full desktop quality gate with:
 
@@ -258,6 +261,8 @@ For unrelated legacy work, use the relevant active TODO rather than automaticall
 ## Automated hooks
 
 `.claude/settings.json` runs one hook on every Write/Edit: edits under `desktop/src/` are auto-formatted with Biome. It runs without asking. (`scripts/check-source-file-line-counts.sh` is a CI gate only, not an edit hook.)
+
+`.claude/skills/` has two project skills wrapping the quality gates above: `/android-check` (`./gradlew test lintDebug`) and `/lint-n-test` (runs all three stacks' gates).
 
 ## Memory file
 
