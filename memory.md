@@ -1377,3 +1377,32 @@ Gates: `check-rust.sh`, `desktop npm run check`, `gradlew test lintDebug` all gr
 ### Residual, for next session
 
 ~122k silence frames (~2.5s) and 4 BUFFERING rows remain, now dominated by **startup** buffering rather than mid-stream churn (only 1 hard resync left). The previously-identified item still stands and is now the top of the list: **separate `rebuffer_target_ms` from `STARTUP_BUFFER_MS` (1000ms)**, and consider lowering the startup target now that supply is healthy. Also still worth doing: count offset-driven rebuffers so the two causes stay distinguishable.
+
+## 2026-08-09T23:45:00Z - Claude Opus 5 - rebuffer target separated in the scheduler; the Android tuning was measured WORSE and reverted
+
+Implemented the long-standing next item: `SchedulerConfig` now has `rebuffer_target_ms`, distinct from `startup_buffer_target_ms`, so a mid-stream recovery need not rebuild a stream's full initial cushion. `PlaybackScheduler` tracks `has_played` to tell the two situations apart.
+
+**A design flaw caught by an existing test, worth remembering.** The first cut defaulted `rebuffer_target_ms` to 400ms unconditionally, which broke `rebuffer_resumes_playback_and_preserves_already_buffered_packets` -- a test that sets `startup_buffer_target_ms = 0` and expects an immediate resume. It was right to fail: a caller that lowered only the startup target would silently have got a *longer* recovery than it asked for. Fixed by clamping the effective target to `min(rebuffer_target_ms, startup_buffer_target_ms)` -- a recovery can never need a deeper cushion than the stream's own first start. Covered by `the_rebuffer_target_never_exceeds_the_startup_target`.
+
+### The tuning change did NOT work and was reverted
+
+Setting Android's rebuffer target to 400ms (against its 1000ms startup target) was measured on the LG G6 and is **worse**, so it was not shipped:
+
+| | song-a | song-b |
+|---|---|---|
+| ringSilenceFilled | 101,472 | **321,024** |
+| concealed | 136 | **755** |
+| hardResyncs | 1 | **4** |
+| ringPeakFrames | 19,392 | 19,392 (was **46,992** the run before) |
+
+The user independently reported scratchiness toward the end, and the per-second rows show why: `ringQueued` collapses to 480-1056 frames (~10-22ms) while emitting at a full 202-205 packets/s. Resuming on a shallower span leaves the render ring permanently shallow, so any later hiccup is immediately audible -- ring peak fill capped at the 19,392 target instead of the 46,992 reached previously. One stream improved slightly while the other got much worse **in the same run**.
+
+`REBUFFER_TARGET_MS` is therefore left equal to `STARTUP_BUFFER_MS`, reproducing the previous behaviour exactly. The knob and its clamp remain, tested, so a future session can tune it -- but choosing a value needs **repeated** runs, because run-to-run variance here is large (song-b's `droppedBeforeSync` was 817 against song-a's 117 in the same session, i.e. its fresh per-stream estimator re-acquisition varies a lot on its own).
+
+**Method note:** this is the first change this session that a single device run showed to be a regression, and the right response was to revert the tuning rather than keep it because the mechanism was sound. Mechanism and tuning are separable; only the tuning was unsupported by evidence.
+
+### Still open
+
+- Tune `rebuffer_target_ms` properly, with repeated runs, or leave it at parity.
+- Count offset-driven rebuffers (`SyncApplyOutcome::Rebuffered`) in `PlaybackDiagnostics`, still the only way to distinguish the two rebuffer causes.
+- Residual silence is now dominated by **startup** buffering and by per-stream sync re-acquisition (`droppedBeforeSync` 117-817 per stream), not mid-stream churn.

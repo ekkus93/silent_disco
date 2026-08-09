@@ -13,6 +13,17 @@ use crate::protocol::AudioDatagram;
 /// Default presentation buffer, in milliseconds, accumulated before playback
 /// starts for a fresh or rebuffering stream.
 pub const DEFAULT_STARTUP_BUFFER_TARGET_MS: u64 = 400;
+/// Presentation span rebuilt before playback resumes after a *mid-stream*
+/// rebuffer, as distinct from a stream's initial startup buffer.
+///
+/// A stream's first start can afford a generous cushion -- nobody is
+/// listening yet. A mid-stream recovery cannot: every millisecond of it is
+/// a hole in audio the listener is already hearing, and the span rebuilds
+/// at 1x real time, so the target *is* the outage length. Reusing the
+/// startup target for both turned a ~500ms arrival stall into ~1.5-2s of
+/// silence on a real device (LG G6, 2026-08-09), because that platform
+/// sets a 1000ms startup buffer.
+pub const DEFAULT_REBUFFER_TARGET_MS: u64 = 400;
 /// Default buffered-span threshold, in milliseconds, below which
 /// [`BufferHealth::Low`] is reported.
 pub const DEFAULT_LOW_WATER_MS: u64 = 200;
@@ -74,9 +85,14 @@ pub struct SchedulerConfig {
     pub samples_per_packet: u32,
     /// Interleaved channel count, matching the host packetizer's format.
     pub channels: u16,
-    /// Presentation buffer accumulated before playback starts or resumes
-    /// after a rebuffer.
+    /// Presentation buffer accumulated before playback starts for the first
+    /// time. Applies only to a stream's initial start; a mid-stream recovery
+    /// uses [`Self::rebuffer_target_ms`].
     pub startup_buffer_target_ms: u64,
+    /// Presentation buffer rebuilt before playback resumes after a
+    /// mid-stream rebuffer. See [`DEFAULT_REBUFFER_TARGET_MS`] for why this
+    /// is deliberately separate from the startup target.
+    pub rebuffer_target_ms: u64,
     /// Buffered-span threshold below which [`BufferHealth::Low`] is reported.
     pub low_water_ms: u64,
     /// Buffered-span threshold above which [`BufferHealth::High`] is reported.
@@ -119,6 +135,7 @@ impl SchedulerConfig {
             samples_per_packet,
             channels,
             startup_buffer_target_ms: DEFAULT_STARTUP_BUFFER_TARGET_MS,
+            rebuffer_target_ms: DEFAULT_REBUFFER_TARGET_MS,
             low_water_ms: DEFAULT_LOW_WATER_MS,
             high_water_ms: DEFAULT_HIGH_WATER_MS,
             hard_resync_threshold_ms: DEFAULT_HARD_RESYNC_THRESHOLD_MS,
@@ -296,6 +313,9 @@ pub struct PlaybackScheduler {
     /// stream's first frame, or a rebuffer that drains the ring — in which
     /// case there is no waveform to continue and the seam is a fade from zero.
     resume_from_silence: bool,
+    /// True once this stream has reached `Playing` at least once, which is
+    /// what distinguishes a startup buffer from a mid-stream rebuffer.
+    has_played: bool,
 }
 
 impl PlaybackScheduler {
@@ -412,6 +432,7 @@ impl PlaybackScheduler {
             fade_in_next_real_frame: true,
             last_emitted_tail: Vec::new(),
             resume_from_silence: true,
+            has_played: false,
         })
     }
 
@@ -459,10 +480,26 @@ impl PlaybackScheduler {
             SchedulerState::AwaitingRebuffer => return SchedulerPoll::AwaitingRebuffer,
             SchedulerState::Buffering => {
                 let buffered_ms = self.jitter_buffer.buffered_span_ms();
-                if buffered_ms < self.config.startup_buffer_target_ms {
+                // A stream's first start and a mid-stream recovery are not
+                // the same situation, and must not share a target: the
+                // recovery's target is the length of an audible hole.
+                // Clamped to the startup target: a mid-stream recovery
+                // never needs a deeper cushion than the stream's own first
+                // start, and without the clamp a caller that lowered only
+                // the startup target would silently get a *longer* recovery
+                // than it asked for.
+                let target = if self.has_played {
+                    self.config
+                        .rebuffer_target_ms
+                        .min(self.config.startup_buffer_target_ms)
+                } else {
+                    self.config.startup_buffer_target_ms
+                };
+                if buffered_ms < target {
                     return SchedulerPoll::Buffering { buffered_ms };
                 }
                 self.state = SchedulerState::Playing;
+                self.has_played = true;
             }
             SchedulerState::Playing => {}
         }

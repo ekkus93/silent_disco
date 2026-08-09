@@ -514,6 +514,9 @@ internal fun FfiSyncConfidence.toAppSyncQuality(): SyncQualityBadge = when (this
  * matching the manual-connect path: one second of capacity with a 400ms
  * cushion, handed to the Rust runtime that owns every decision made with it.
  */
+/** Span rebuilt before a *mid-stream* rebuffer resumes; see the manual controller's own constant. */
+private const val LISTENER_REBUFFER_TARGET_MS: ULong = 400uL
+
 private const val LISTENER_RING_CAPACITY_FRAMES: UInt = 48_000u
 private const val LISTENER_RING_TARGET_FILL_FRAMES: UInt = 19_200u
 private const val LISTENER_RING_WRITE_LEAD_MS: ULong = 400uL
@@ -582,6 +585,9 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
                 samplesPerPacket = event.samplesPerPacket,
                 channels = event.channels,
                 startupBufferTargetMs = currentPlaybackThresholds().startupBufferMs.toULong(),
+                // Clamped by the scheduler to the startup target above, so a tuning
+                // profile with a shallower startup buffer keeps its fast recovery.
+                rebufferTargetMs = LISTENER_REBUFFER_TARGET_MS,
                 ringCapacityFrames = LISTENER_RING_CAPACITY_FRAMES,
                 ringTargetFillFrames = LISTENER_RING_TARGET_FILL_FRAMES,
                 writeLeadMs = LISTENER_RING_WRITE_LEAD_MS,

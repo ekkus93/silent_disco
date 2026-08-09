@@ -93,6 +93,25 @@ private const val OBOE_ADAPTER_STATUS_OK = 0
 private const val STARTUP_BUFFER_MS = 1_000L
 
 /**
+ * Span rebuilt before playback resumes after a *mid-stream* rebuffer.
+ *
+ * Deliberately left equal to [STARTUP_BUFFER_MS] for now, which reproduces
+ * the previous behaviour exactly. Lowering it to 400ms was tried on a real
+ * device and **measured worse**, so it was reverted rather than shipped:
+ * resuming on a shallower span left the render ring permanently shallow
+ * (`ringQueued` collapsing to 480-1056 frames, ~10-22ms, while emitting at
+ * full rate, and ring peak fill capped at 19392 against 46992 on the run
+ * before), so every subsequent hiccup became audible. One stream improved
+ * and the other got substantially worse in the same run.
+ *
+ * The separate knob is still worth having -- the scheduler now supports it
+ * and clamps it to the startup target -- but choosing a value needs
+ * repeated runs to separate the effect from the large run-to-run variance
+ * seen here, not a single measurement.
+ */
+private const val REBUFFER_TARGET_MS = STARTUP_BUFFER_MS
+
+/**
  * Platform hook keeping the device's network radio responsive for the
  * lifetime of one live connection. Without it, Android Wi-Fi power save may
  * buffer inbound packets at the access point for hundreds of milliseconds to
@@ -460,6 +479,7 @@ class ManualListenerTransportController(
                     samplesPerPacket = event.samplesPerPacket,
                     channels = event.channels,
                     startupBufferTargetMs = STARTUP_BUFFER_MS.toULong(),
+                    rebufferTargetMs = REBUFFER_TARGET_MS.toULong(),
                     ringCapacityFrames = RING_CAPACITY_FRAMES,
                     ringTargetFillFrames = RING_TARGET_FILL_FRAMES,
                     writeLeadMs = RING_WRITE_LEAD_MS,

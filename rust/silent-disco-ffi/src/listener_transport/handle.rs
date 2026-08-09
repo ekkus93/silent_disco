@@ -506,6 +506,7 @@ mod audio_forwarding_tests {
             samples_per_packet: SAMPLES_PER_PACKET,
             channels: 2,
             startup_buffer_target_ms: 400,
+            rebuffer_target_ms: 400,
             ring_capacity_frames: 48_000,
             ring_target_fill_frames: 19_200,
             write_lead_ms: 400,

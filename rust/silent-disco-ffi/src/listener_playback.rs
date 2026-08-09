@@ -1188,8 +1188,12 @@ pub struct FfiListenerPlaybackConfig {
     pub samples_per_packet: u32,
     /// Interleaved channel count.
     pub channels: u16,
-    /// Presentation buffer accumulated before playback starts.
+    /// Presentation buffer accumulated before playback first starts.
     pub startup_buffer_target_ms: u64,
+    /// Presentation buffer rebuilt before playback resumes after a
+    /// mid-stream rebuffer. Deliberately separate from the startup target:
+    /// this one is the length of an audible hole.
+    pub rebuffer_target_ms: u64,
     /// Render ring capacity, in frames.
     pub ring_capacity_frames: u32,
     /// Ring depth the pump holds as its jitter cushion, in frames.
@@ -1470,6 +1474,7 @@ impl FfiListenerPlaybackHandle {
             config.channels,
         );
         scheduler_config.startup_buffer_target_ms = config.startup_buffer_target_ms;
+        scheduler_config.rebuffer_target_ms = config.rebuffer_target_ms;
 
         let runtime = ListenerPlaybackRuntime::start(
             scheduler_config,
