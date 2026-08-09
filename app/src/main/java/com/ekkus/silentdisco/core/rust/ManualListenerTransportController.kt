@@ -496,6 +496,13 @@ class ManualListenerTransportController(
         val runtime = playbackRuntime ?: return
         playbackRuntime = null
         currentStreamId = null
+        // Order matters and is deliberate: `stop()` drains the render ring
+        // *through the still-running Oboe callback* so the stream ends on its
+        // own final sample rather than mid-note (see `await_ring_drain`, which
+        // documents that a consumer closed first means the ring never drains).
+        // The brief window between the token's release inside `stop()` and the
+        // close below is contained by the ABI itself -- a released token reads
+        // as silence, never as freed memory.
         runCatching { runtime.stop() }.onFailure { error ->
             logger.w("manual.audio.stop_failed", error.message ?: "playback failed to stop cleanly")
         }

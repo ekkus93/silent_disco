@@ -1,9 +1,9 @@
 use super::{
     ActorState, AppRole, ApplyOutcome, CoreCommand, CoreError, DiscoveryRequest, HostLifecycle,
     ListenerLifecycle, NetworkEstablishmentRequest, OperationId, PendingPlatformOperation,
-    PendingStorageOperation, PlatformEffectRequest, RecoverableAction, SessionAdvertisement,
-    SessionId, StorageEffectRequest, TransportState, current_protocol_version, invalid_argument,
-    invalid_state,
+    PendingStorageOperation, PlatformEffectRequest, PlaybackState, RecoverableAction,
+    SessionAdvertisement, SessionId, StorageEffectRequest, TransportState,
+    current_protocol_version, invalid_argument, invalid_state,
 };
 
 impl ActorState {
@@ -85,12 +85,14 @@ impl ActorState {
         patch: &crate::runtime::types::HostDraftPatch,
     ) -> Result<ApplyOutcome, CoreError> {
         self.require_role(AppRole::Host, &operation_id)?;
-        if !matches!(
+        let session_editable = matches!(
             self.snapshot.host_lifecycle,
             HostLifecycle::Idle | HostLifecycle::Error
-        ) {
+        );
+        if !session_editable && !self.track_switch_allowed(patch) {
             return Err(invalid_state(
-                "host draft cannot change while a session is active",
+                "host draft cannot change while a session is active, except swapping the audio \
+                 source once playback has stopped",
                 Some(operation_id),
             ));
         }
@@ -101,6 +103,35 @@ impl ActorState {
             .map_err(|error| invalid_argument(error.to_string(), Some(operation_id)))?;
         self.clear_failure();
         Ok(ApplyOutcome::changed())
+    }
+
+    /// True when `patch` is exactly a track switch: the session is live but
+    /// playback has genuinely stopped, and the patch touches nothing but
+    /// `audio_source`. Every other draft field -- session name, approval
+    /// mode, invite code, remember-approved-devices -- stays fixed for a
+    /// session's whole lifetime once listeners have joined against it, so
+    /// this stays deliberately narrower than "session is idle enough to
+    /// edit"; a patch that touches any of those fields while the session is
+    /// live is rejected by the caller regardless of playback state.
+    ///
+    /// `Ready` and `WaitingForListeners` are the same "hosting, not
+    /// streaming" state, differing only in whether anyone is currently
+    /// connected (`apply_audio_with_host_lifecycle` picks between them
+    /// purely on `listeners.is_empty()` after a stop) -- both must permit a
+    /// track switch equally.
+    fn track_switch_allowed(&self, patch: &crate::runtime::types::HostDraftPatch) -> bool {
+        let only_audio_source_patched = patch.session_name.is_none()
+            && patch.approval_mode.is_none()
+            && matches!(
+                patch.invite_code,
+                crate::runtime::InviteCodePatch::Unchanged
+            )
+            && patch.remember_approved_devices.is_none();
+        matches!(
+            self.snapshot.host_lifecycle,
+            HostLifecycle::Ready | HostLifecycle::WaitingForListeners
+        ) && self.snapshot.playback_state == PlaybackState::Stopped
+            && only_audio_source_patched
     }
 
     pub(super) fn update_tuning(
@@ -460,5 +491,99 @@ impl ActorState {
             PlatformEffectRequest::StartAdvertising(advertisement),
             PendingPlatformOperation::StartAdvertising { session_id },
         )
+    }
+}
+
+#[cfg(test)]
+mod track_switch_tests {
+    use super::{ActorState, AppRole, HostLifecycle, OperationId, PlaybackState};
+    use crate::domain::DeviceId;
+    use crate::error::CoreErrorCode;
+    use crate::runtime::AudioSourceDescriptor;
+    use crate::runtime::types::{AudioSourcePatch, HostDraftPatch, InviteCodePatch};
+
+    fn stopped_ready_host() -> ActorState {
+        let mut state =
+            ActorState::new(DeviceId::new("host-track-switch-test").expect("valid device ID"));
+        state.snapshot.selected_role = Some(AppRole::Host);
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Stopped;
+        state
+    }
+
+    fn audio_source_only_patch(source_id: &str) -> HostDraftPatch {
+        HostDraftPatch {
+            session_name: None,
+            approval_mode: None,
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(
+                AudioSourceDescriptor::new(source_id, "fixture.wav", Some(4_096), Some(2_000))
+                    .expect("valid staged source descriptor"),
+            ),
+            remember_approved_devices: None,
+        }
+    }
+
+    #[test]
+    fn a_pure_audio_source_swap_is_allowed_once_a_hosting_session_has_stopped() {
+        let mut state = stopped_ready_host();
+        state
+            .update_host_draft(
+                OperationId::new("op-1").expect("valid operation ID"),
+                &audio_source_only_patch("song-b"),
+            )
+            .expect("a pure track switch is allowed while ready and stopped");
+        assert_eq!(
+            state
+                .snapshot
+                .host_draft
+                .audio_source
+                .as_ref()
+                .map(|source| source.source_id.clone()),
+            Some("song-b".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_same_swap_is_allowed_with_no_listeners_connected_yet() {
+        let mut state = stopped_ready_host();
+        state.snapshot.host_lifecycle = HostLifecycle::WaitingForListeners;
+        state
+            .update_host_draft(
+                OperationId::new("op-1").expect("valid operation ID"),
+                &audio_source_only_patch("song-b"),
+            )
+            .expect("a pure track switch is allowed while waiting for listeners and stopped");
+    }
+
+    #[test]
+    fn a_track_switch_is_rejected_while_still_playing() {
+        let mut state = stopped_ready_host();
+        state.snapshot.playback_state = PlaybackState::Playing;
+        let error = state
+            .update_host_draft(
+                OperationId::new("op-1").expect("valid operation ID"),
+                &audio_source_only_patch("song-b"),
+            )
+            .expect_err("a track switch must be rejected while still playing");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+    }
+
+    #[test]
+    fn a_patch_touching_the_session_name_is_rejected_even_while_stopped() {
+        let mut state = stopped_ready_host();
+        let mut patch = audio_source_only_patch("song-b");
+        patch.session_name = Some("Renamed session".to_owned());
+        let error = state
+            .update_host_draft(
+                OperationId::new("op-1").expect("valid operation ID"),
+                &patch,
+            )
+            .expect_err(
+                "a patch touching session identity fields must stay rejected during a live \
+                 session, even alongside an otherwise-legal track switch",
+            );
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.host_draft.session_name, "");
     }
 }

@@ -1163,3 +1163,50 @@ Ran `manual_real_android_listener_plays_a_song_change` against the phone twice (
 ### To resume
 
 Re-run `manual_real_android_listener_plays_a_song_change` end-to-end (confirms the `wait_snapshot_for` fix and the song-swap path together), then `..._flac`/`..._mp3`, on the LG G6; have a human listen and confirm the popping/crackling is actually gone (this session's evidence is the `queue_overflows` counter, not a human ear, though the mechanism it measures is exactly what a human would hear as crackling). Update Block 28 TODO checkboxes only once that human confirmation lands. Nothing from this entire entry has been committed as of this timestamp -- do that first if picking this back up fresh.
+
+## 2026-08-09T22:02:58Z - Claude Opus 5 - Track-switch scratchiness localized to the Oboe re-open (Shared instead of Exclusive); partially fixed
+
+Continuation of the same Block 28 live session. The pause/resume fix from the earlier entry held up; this entry is about the *separate* defect that surfaced once a full two-song run could complete for the first time.
+
+### What the user heard, and what the host was doing
+
+With the earlier fixes in, a full run finally completed end to end. The user reported song-a clean but **song-b "very scratchy... throughout the whole song"**, later "better but still scratchy" after the first fix below. Host side was provably innocent both times: song-b sent 8003 frames in 40s (exactly 200/s, the packetizer's 5ms cadence), `fully_delivered`, `queue_overflows=0`.
+
+### The measurement that localized it (do this first next time)
+
+`adb logcat` is **completely unavailable on the LG G6** (`ro.logdumpd.enabled=0`, every buffer empty, `logcat -g` silent), so `AppLogger`'s excellent per-second `manual.audio.sample` / `manual.audio.summary` output goes nowhere on this device. Navigating to the in-app diagnostics screen mid-stream is also not an option: leaving the manual-connect screen **tears the session down** (confirmed -- "Stream open: false" immediately after).
+
+What worked instead: the debug PCM capture was **already wired up** (`MainViewModel.kt` passes `application.getExternalFilesDir(null)`), so every stream had been writing `manual-listener-<streamId>.wav` all along, pullable with `adb pull` and analyzable offline. Comparing song-a vs song-b from the exact run the user listened to:
+
+| | song-a (sounded clean) | song-b ("very scratchy") |
+|---|---|---|
+| zero frames | 0.19% | 0.17% |
+| longest zero run | 10.0 ms | 10.0 ms |
+| sample jumps >4000 | 1 | 1 |
+
+Near-identical. Since that capture records frames on their way **into** the render ring, this **ruled out** the network, jitter buffer, scheduler timing, clock offset, and concealment, and localized the fault to the **ring -> Oboe -> speaker output path** -- the one part that gets destroyed and rebuilt for a new stream. This objective bisect is worth repeating before theorizing next time; several plausible upstream hypotheses were killed in one step.
+
+### Root cause, confirmed on device
+
+`OboeOutputAdapter::open()` requested `SharingMode::Exclusive` + `LowLatency` + 48 kHz float stereo but **validated only the format** -- never the granted sample rate, channel count, or sharing mode. A newly added retained diagnostic (see below) read back, after the run:
+
+`opens=2 sampleRate=48000 channels=2 sharing=Shared perf=LowLatency`
+
+So the **second** open is granted **Shared**, not the requested Exclusive: closing an Exclusive/MMAP stream and immediately reopening it does not get the exclusive path back. song-b therefore runs on a different output path, with different burst size and callback cadence, than song-a -- while the ring is filled on tuning calibrated for the first path.
+
+### Fixed this entry
+
+- `OboeOutputAdapter::open()` now sets `setSampleRateConversionQuality(Medium)` and `setFormatConversionAllowed(true)`, so the callback's 48 kHz float contract holds whatever the device grants, and **validates** the granted rate/channel count, returning new `UnexpectedSampleRate`/`UnexpectedChannelCount` statuses instead of silently rendering ring content through a differently-clocked stream. User-confirmed effect: **"better this time"** -- real, partial improvement.
+- The adapter now retains the last open's granted configuration (`lastOpenSampleRate/ChannelCount/SharingMode/PerformanceMode`, `openCount`) **across close**, surfaced as "Last granted stream config" on the diagnostics screen via a new `nativeOboeLastOpenSummary` JNI call. The pre-existing live accessors all report 0 once closed, which on a logcat-less device left the output path undiagnosable after the fact -- this is what produced the `sharing=Shared` finding above.
+
+### Still open -- the remaining scratchiness
+
+Song-b is still scratchy. The unfixed part is the **Shared-mode re-open itself**. The right fix is almost certainly to **stop tearing the Oboe stream down between tracks at all**: the output device does not need to be destroyed just because the *content* changed. Concretely, add an `OboeOutputAdapter::rebind(newEngineToken)` that atomically swaps the token while the stream stays open, and have `handleStreamStarted` rebind (rather than `stopPlayback()` + `nativeOboeOpen`) when a new stream arrives on an already-open output. Ordering matters: let the old runtime drain **first** (the drain runs through the still-live callback), then rebind. Also worth retaining underrun/silence-filled counters across close the same way the config now is -- they still read 0 post-close, which is why the Shared-vs-underrun link is inferred rather than measured.
+
+### One thing deliberately NOT changed, worth remembering
+
+`stopPlayback()` calls `runtime.stop()` **before** `OboeBridge.nativeOboeClose()`, which looks like it violates CLAUDE.md's "the callback must never outlive the Rust audio-engine token it consumes". I changed it, then reverted: `await_ring_drain`'s own doc says the ring never drains if the consumer "was closed first", so closing Oboe first would truncate every stream's audio tail. The existing order is deliberate, and the brief post-release window is contained by the ABI (a released token reads as silence, never freed memory). A plausible-looking "fix" here is a regression.
+
+### Gates
+
+`bash scripts/check-rust.sh`, `cd desktop && npm run check`, and `./gradlew test lintDebug` all green, actually executed.

@@ -172,6 +172,7 @@ fun DiagnosticsScreen(
                 DiagnosticValue("Frames rendered", OboeBridge.nativeOboeFramesRendered().toString())
                 DiagnosticValue("Underrun count", OboeBridge.nativeOboeUnderrunCount().toString())
                 DiagnosticValue("Silence-filled frames", OboeBridge.nativeOboeSilenceFilledFrames().toString())
+                DiagnosticValue("Last granted stream config", OboeBridge.lastOpenSummary())
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {

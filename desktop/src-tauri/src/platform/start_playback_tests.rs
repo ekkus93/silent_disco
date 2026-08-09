@@ -171,6 +171,67 @@ fn resume_rebroadcasts_stream_start_with_the_anchor_shifted_by_the_pause_duratio
     actor.shutdown().expect("actor shutdown");
 }
 
+/// Guards `BROADCAST_FRAME_QUEUE_CAPACITY` in `host_transport.rs`: the pump
+/// deliberately bursts out an entire `SEND_AHEAD_HORIZON_MS` (1000ms, ~200
+/// packets at the 5ms default) of already-packetized audio with no pacing
+/// at all at stream start, so the bounded broadcast queue it feeds must be
+/// sized to absorb that whole burst, not just "a momentary stall" -- a
+/// queue too small for the burst it is guaranteed to receive drops frames
+/// on every single stream start. Confirmed on a real device (LG G6,
+/// 2026-08-09) as audible cracking/popping/static right at the beginning
+/// of every stream, reported by a human listener, with `queue_overflows`
+/// climbing from 0 to 59 in the first 15 seconds and then staying exactly
+/// flat for the rest of the run -- i.e. concentrated entirely in the
+/// opening burst, not spread across steady-state playback.
+#[test]
+fn the_opening_burst_does_not_overflow_the_broadcast_queue() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!(
+            "no private LAN interface on this CI host; opening-burst coverage remains \
+             deterministic"
+        );
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    // Draining real frames (rather than only sleeping) matters here: an
+    // idle listener that never reads its socket could itself become the
+    // bottleneck this test is trying to rule out on the *sender* side.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let _ = listener.recv_event(Duration::from_millis(50));
+    }
+
+    let active = network
+        .active_host_session()
+        .expect("network state")
+        .expect("active host session");
+    assert_eq!(
+        active.broadcast.queue_overflows, 0,
+        "the opening send-ahead-horizon burst overflowed the broadcast queue \
+         (attempted={}, queue_peak={})",
+        active.broadcast.frames_attempted, active.broadcast.queue_peak_depth,
+    );
+
+    network.stop_playback().expect("stop playback");
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
 /// Guards the send-ahead horizon fix in `playback_streamer.rs`: the pump
 /// used to pace strictly one packet per `packet_duration_ms` real
 /// milliseconds, so a whole short source's worth of packets took roughly

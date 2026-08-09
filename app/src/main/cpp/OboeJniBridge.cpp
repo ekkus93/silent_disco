@@ -2,6 +2,8 @@
 
 #include <jni.h>
 
+#include <cstdio>
+
 namespace {
 
 // One process-wide output stream, matching the PoC's single-host/single
@@ -72,4 +74,25 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeFramesRendered(
         JNIEnv * /* env */, jobject /* this */) {
     return static_cast<jlong>(adapter().framesRendered());
+}
+
+// Retained across close(), unlike the live accessors above -- see
+// OboeOutputAdapter::lastOpenSampleRate().
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeLastOpenSummary(
+        JNIEnv *env, jobject /* this */) {
+    char buffer[192];
+    snprintf(buffer, sizeof(buffer),
+             "opens=%d sampleRate=%d channels=%d sharing=%s perf=%s",
+             adapter().openCount(),
+             adapter().lastOpenSampleRate(),
+             adapter().lastOpenChannelCount(),
+             adapter().lastOpenSharingMode() == static_cast<int32_t>(oboe::SharingMode::Exclusive)
+                     ? "Exclusive"
+                     : (adapter().lastOpenSharingMode() < 0 ? "none" : "Shared"),
+             adapter().lastOpenPerformanceMode() ==
+                             static_cast<int32_t>(oboe::PerformanceMode::LowLatency)
+                     ? "LowLatency"
+                     : (adapter().lastOpenPerformanceMode() < 0 ? "none" : "other"));
+    return env->NewStringUTF(buffer);
 }

@@ -36,10 +36,25 @@ object OboeBridge {
     /** Cumulative frames actually rendered from real ring contents; 0 if not open. */
     external fun nativeOboeFramesRendered(): Long
 
+    /**
+     * Configuration the device actually granted on the most recent open,
+     * retained after close so a finished stream's output path is still
+     * diagnosable. The live accessors above report 0 once closed, which on a
+     * device without logcat leaves no way to tell whether a stream was
+     * granted what it asked for.
+     */
+    external fun nativeOboeLastOpenSummary(): String
+
     fun backendSummary(): String = if (isAvailable) {
         runCatching { nativeGetAudioBackend() }.getOrDefault("No native Oboe")
     } else {
         "Native library not loaded: ${loadResult.exceptionOrNull()?.message ?: "unknown error"}"
+    }
+
+    fun lastOpenSummary(): String = if (isAvailable) {
+        runCatching { nativeOboeLastOpenSummary() }.getOrDefault("unavailable")
+    } else {
+        "Unavailable — native library did not load"
     }
 
     fun statusSummary(): String = if (isAvailable) {

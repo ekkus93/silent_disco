@@ -89,6 +89,18 @@ OboeAdapterStatus OboeOutputAdapter::open(int64_t engineToken) {
             ->setFormat(oboe::AudioFormat::Float)
             ->setChannelCount(2)
             ->setSampleRate(48000)
+            // Every value above is a *request*. Without these two, a device
+            // that grants a different rate or format hands the callback a
+            // stream clocked differently from the render ring, and the ring's
+            // 48 kHz float content is then rendered through it verbatim --
+            // continuous corruption, not silence. Letting Oboe own the
+            // conversion keeps the callback's contract (48 kHz float) true
+            // whatever the device actually granted. This matters most on the
+            // *second* open of a process: closing an Exclusive/MMAP stream
+            // and immediately reopening it is exactly when a device is most
+            // likely to grant something other than what was asked for.
+            ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
+            ->setFormatConversionAllowed(true)
             ->setCallback(this);
 
     std::shared_ptr<oboe::AudioStream> stream;
@@ -97,12 +109,38 @@ OboeAdapterStatus OboeOutputAdapter::open(int64_t engineToken) {
         return OboeAdapterStatus::OpenFailed;
     }
 
+    // Recorded before any rejection below, so a refused configuration is
+    // still diagnosable afterwards rather than vanishing with the stream.
+    lastOpenSampleRate_ = stream->getSampleRate();
+    lastOpenChannelCount_ = stream->getChannelCount();
+    lastOpenSharingMode_ = static_cast<int32_t>(stream->getSharingMode());
+    lastOpenPerformanceMode_ = static_cast<int32_t>(stream->getPerformanceMode());
+    openCount_ += 1;
+    __android_log_print(ANDROID_LOG_INFO, kLogTag,
+                         "open #%d granted: sampleRate=%d channels=%d sharing=%d perf=%d",
+                         openCount_, lastOpenSampleRate_, lastOpenChannelCount_,
+                         lastOpenSharingMode_, lastOpenPerformanceMode_);
+
     if (stream->getFormat() != oboe::AudioFormat::Float) {
         // Writing float samples into a non-float stream would produce
         // garbage audio rather than silence; fail explicitly instead.
         stream->close();
         engineToken_ = 0;
         return OboeAdapterStatus::UnexpectedFormat;
+    }
+
+    // Backstop for the conversion requests above: nothing downstream can
+    // adapt to a rate the ring does not produce, so a surviving mismatch is
+    // reported instead of rendered.
+    if (stream->getSampleRate() != 48000) {
+        stream->close();
+        engineToken_ = 0;
+        return OboeAdapterStatus::UnexpectedSampleRate;
+    }
+    if (stream->getChannelCount() != 2) {
+        stream->close();
+        engineToken_ = 0;
+        return OboeAdapterStatus::UnexpectedChannelCount;
     }
 
     if (stream->requestStart() != oboe::Result::OK) {

@@ -17,6 +17,15 @@ enum class OboeAdapterStatus : int32_t {
     StartFailed = -2,
     UnexpectedFormat = -3,
     AbiSymbolsUnavailable = -4,
+    // The device granted a stream whose sample rate or channel count does not
+    // match the render ring's fixed geometry. The read ABI is handed the
+    // stream's own channel count, so channels can be adapted -- the sample
+    // rate cannot: nothing communicates it to Rust, so a mismatched rate
+    // renders 48 kHz ring content through a stream clocked at some other
+    // rate. That is continuous audible corruption, not a degraded-but-usable
+    // stream, so it is reported rather than played.
+    UnexpectedSampleRate = -5,
+    UnexpectedChannelCount = -6,
 };
 
 // Owns one Oboe output stream bound to one Rust render-ring engine token.
@@ -48,6 +57,26 @@ public:
     int32_t actualSampleRate() const;
     int32_t actualChannelCount() const;
 
+    // Configuration the device granted on the most recent open(), retained
+    // after close() so a run's output path stays diagnosable afterwards.
+    // The live accessors above read through `stream_` and therefore report
+    // zero once closed, which is useless on a device whose logcat is
+    // unavailable (confirmed on a real Android 8.0 phone) -- there, a
+    // stream's granted configuration could otherwise only be observed while
+    // it was still open, which is exactly when the UI cannot be navigated to
+    // without tearing the session down.
+    int32_t lastOpenSampleRate() const { return lastOpenSampleRate_; }
+    int32_t lastOpenChannelCount() const { return lastOpenChannelCount_; }
+    // oboe::SharingMode / oboe::PerformanceMode as their underlying ints,
+    // so a silent Exclusive->Shared or LowLatency->None downgrade on reopen
+    // is visible rather than inferred.
+    int32_t lastOpenSharingMode() const { return lastOpenSharingMode_; }
+    int32_t lastOpenPerformanceMode() const { return lastOpenPerformanceMode_; }
+    // Times open() has been called successfully this process; a defect that
+    // only appears on the second and later streams is otherwise easy to
+    // mistake for one that appears at random.
+    int32_t openCount() const { return openCount_; }
+
     // Non-real-time: returns and clears the fatal status last observed by
     // the real-time callback (SILENT_DISCO_AUDIO_PANIC_CONTAINED or
     // SILENT_DISCO_AUDIO_INVALID_STATE), or 0 if none. Poll this outside the
@@ -77,6 +106,11 @@ private:
     int64_t engineToken_ = 0;
     std::atomic<int32_t> fatalStatus_{0};
     std::atomic<bool> disconnected_{false};
+    int32_t lastOpenSampleRate_ = 0;
+    int32_t lastOpenChannelCount_ = 0;
+    int32_t lastOpenSharingMode_ = -1;
+    int32_t lastOpenPerformanceMode_ = -1;
+    int32_t openCount_ = 0;
 };
 
 }  // namespace silentdisco

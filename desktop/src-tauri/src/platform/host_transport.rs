@@ -37,9 +37,25 @@ const BACKLOG_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const TRANSPORT_EFFECT_QUEUE_CAPACITY: usize = 32;
 const MAX_EFFECTS_PER_TICK: usize = 8;
 /// Bounded output queue between a playback pump thread and this worker.
-/// Sized generously relative to the packetizer's own 32-frame default so a
-/// momentary transport stall doesn't immediately backpressure decoding.
-const BROADCAST_FRAME_QUEUE_CAPACITY: usize = 64;
+///
+/// Must comfortably exceed one full send-ahead horizon's worth of packets,
+/// not just the packetizer's own 32-frame default -- the pump
+/// (`playback_streamer.rs`'s `SEND_AHEAD_HORIZON_MS`, currently 1000ms) is
+/// deliberately allowed to burst out an entire horizon of already-
+/// packetized audio with no pacing at all at stream start, and at the
+/// packetizer's `DEFAULT_PACKET_DURATION_MS` (5ms) that is up to 200
+/// packets arriving here far faster than this worker can be expected to
+/// drain them one poll tick at a time. A queue sized only for a "momentary
+/// stall" (the previous 64-frame/320ms sizing) guarantees that every
+/// stream's opening burst overflows it -- confirmed on a real device
+/// (LG G6, 2026-08-09): `queue_overflows` climbed from 0 to 59 in the first
+/// 15 seconds of every run, entirely before any pause ever happened, and
+/// stayed exactly flat afterward once the burst was over. 256 gives ~28%
+/// headroom over the 200-packet worst case at today's defaults; this is a
+/// sizing choice tied to those defaults, not an enforced invariant -- it
+/// must be revisited if `SEND_AHEAD_HORIZON_MS` grows or the default packet
+/// duration shrinks.
+const BROADCAST_FRAME_QUEUE_CAPACITY: usize = 256;
 const MAX_BROADCAST_FRAMES_PER_TICK: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
