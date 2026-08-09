@@ -1251,7 +1251,7 @@ Attack the resyncs, not the output path. Two threads, in order:
 
 Also worth noting: `droppedBeforeSync=600` per stream, and the host-side "listener has not yet completed a sync exchange" line is a **red herring** -- `AudioEvent::SynchronizationUpdated` is defined but never submitted by the desktop, so that host-side field is simply never populated. Don't chase it.
 
-### Sharper reading of the same diagnostics run (same session, added after re-reading the per-second rows)
+### [SUPERSEDED -- see the correction below] Sharper reading of the same diagnostics run
 
 The entry above blamed the hard resyncs. They are real, but they are the *second* defect. The dominant one is visible in the ordinary `phase=PLAYING` rows:
 
@@ -1265,3 +1265,28 @@ The render ring is sitting at **exactly `RING_TARGET_FILL_FRAMES` (19200 = 400ms
 The accounting does not balance either: at ~200 packets/s x 240 frames = ~46,560 frames/s written, and only ~28,000 real frames/s consumed, the ring should grow toward its 48,000 capacity. It never does -- `ringPeakFrames=19680`, `ringFullEvents=0`. So frames are either being held back by the pump's write-lead gate (`RING_WRITE_LEAD_MS=400`, `maxPrefillMs=800`) or dropped somewhere between "emitted" and "queued".
 
 Working hypothesis to test first: the consumer/pump treats the target fill as a floor it must never draw below, so every callback silence-fills the shortfall instead of releasing frames the ring already holds. This is testable **entirely in-process, no device needed** -- a Rust test that fills the render ring to its target and asserts a full-buffer read returns real frames and zero silence-fill would confirm or kill it in minutes. Do that before any further device runs.
+
+### CORRECTION + real diagnosis (independent cross-check, then a Fable code review)
+
+**The "steady-state ring chop" reading immediately above is WRONG.** Two things killed it.
+
+*Independent cross-check (WAV captures vs counters).* For song-a: frames written to the ring, measured from the debug capture, = 1,546,080, which equals `(emitted 5593 + concealed 855) x 240` = 1,547,520. Oboe consumed 48000 f/s over the stream's ~38s lifetime ~= 1,824,000 frames, of which 280,608 were silence-filled, so real frames rendered ~= 1,543,392. **Written 1,546,080 vs rendered 1,543,392 -- a 0.2% match.** Every frame written to the ring was consumed. The ring withholds nothing; the write-lead gate drops nothing. The apparent "ring full while silence-filling" contradiction is a **diagnostics-aggregation artifact**: `phase` and `ringQueued` are end-of-second snapshots while the counters are whole-second deltas, so intra-second dips into Buffering are invisible in that row. Reconciling two independent data sources is the check that catches this class of error -- run it *before* committing to a narrative, not after.
+
+*Code review findings (all with citations, verified against the tree):*
+
+1. **The `hardResyncs` counter does not mean what the earlier entries assumed.** There are two paths into `AwaitingRebuffer`, and only the concealment one is counted. The offset-jump path (`apply_offset_update`, `scheduler.rs:692-701`) increments nothing, because `observe_sync_response` discards `apply_sync_offset`'s return value (`listener_playback.rs:398-401`). So the 6 counted resyncs are all **concealment-bound** (>= `max_consecutive_concealed_packets` = `packets_spanning(500ms, 5ms)` = 100 packets = 500ms of unbroken concealment), and there may be additional, entirely invisible offset-driven rebuffers on top.
+
+2. **`STARTUP_BUFFER_MS = 1000` is the amplifier.** `rebuffer()` preserves buffered packets but `poll` emits nothing until `buffered_span_ms >= startup_buffer_target_ms` -- and Android sets that to 1000ms (`ManualListenerTransportController.kt:93`), not the Rust 400ms default. Steady-state span is only ~520-695ms, so every mid-stream re-entry stalls emission for hundreds of ms while span rebuilds at 1x real time, draining the ring's 400ms cushion dry. A genuine ~500ms arrival stall is therefore amplified into ~1.5-2s of non-content. That constant was raised as an *experiment* against startup underruns (its own comment says so) and is now actively making every mid-stream recovery worse.
+
+3. **Rebuffering also writes real silence into the ring.** Each rebuffer sets `awaiting_prefill = true` (`playback_pump.rs:321,480`), so a resume whose head deadline is in the future writes up to 800ms of zero-frames (`playback_pump.rs:532-552`). Those count as "supplied" and are invisible to `silenceFrames` -- meaning the true content deficit is *larger* than the counters suggest, and part of the 1.55M "written" frames in the cross-check above are zeros.
+
+4. **The 82% acceptance rate is fully explained, not a separate defect**: 5593 accepted + 611 late + 600 droppedBeforeSync = 6804 of 6806 received. And `skipped=925` is mostly bookkeeping -- 855 of them are the one-per-concealment `skip_expected_sequence` (`scheduler.rs:543`, concealed=855).
+
+5. **The estimator can trip the 120ms `hard_resync_threshold_ms` on a single sample, but only early.** `snapshot()` (`estimator.rs:268-304`) keeps 12 samples, sorts by RTT and truncates to `(len/2).max(1)`, so at `accepted_sample_count <= 3` the estimate *is* one sample and a new lower-RTT sample replaces it wholesale; two samples passing the 200ms RTT gate can legitimately differ by up to 200ms. Post-lock probe cadence is 2000ms, so the estimator sits at n<=3 for the first ~6s -- exactly where early recurrences were seen. Aggravated by `t4` being taken after coroutine dispatch in `handleSyncResponse`.
+
+### Next actions (in order, highest confidence first)
+
+- **Separate the rebuffer target from the startup target.** Add `rebuffer_target_ms` to `SchedulerConfig` (smaller than startup, e.g. 400ms) so a mid-stream recovery does not have to rebuild a full second of span. Highest-confidence, smallest-blast-radius fix for the dominant amplifier.
+- **Make offset-driven rebuffers visible**: count `SyncApplyOutcome::Rebuffered` in `PlaybackDiagnostics`. Until this exists, no run can distinguish the two rebuffer causes -- this is why the earlier entries mis-attributed the counter.
+- **Damp the early estimator switch**: floor the `snapshot()` truncation at 2 samples, or only forward offset updates once `accepted_sample_count >= 4`.
+- **Cheap falsification available**: tee the existing `manual.audio.sync_sample` line (it already prints `offsetMs` and `samples`) into the diagnostics file, then check whether any consecutive accepted pair with `samples <= 3` differs by > 120ms. If none does, the estimator path contributed nothing this run and everything was concealment-bound -- which would point at receiver-side ~500ms arrival stalls (Wi-Fi power save is the documented suspect) rather than at the clock code.
