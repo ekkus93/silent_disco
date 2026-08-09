@@ -1309,3 +1309,34 @@ That reframes the problem. Combined with `late=625/566`, heavy concealment (`con
 2. **Separate `rebuffer_target_ms` from `STARTUP_BUFFER_MS` (still valid).** It is not the root cause, but it amplifies every ~500 ms stall into ~1.5-2 s of silence, so it converts a marginal network into an unlistenable one.
 3. **Count offset-driven rebuffers** so the two rebuffer causes stay distinguishable in future runs.
 4. **Do NOT** damp the estimator (old Fix A) -- measured and exonerated.
+
+### ROOT CAUSE FOUND: the Kotlin event loop is the bottleneck, not the network
+
+The ping measurement refuted the network hypothesis from the previous entry, in the opposite direction to what was expected:
+
+| | ICMP ping (phone -> host) | app's own sync RTT |
+|---|---|---|
+| idle, no session | avg 16.7ms, max 76.9 | -- |
+| **during active streaming** | **avg 7.73ms, max 32.0, 0% loss** | **143-177 ms** |
+
+Same host, same path, same moment: ICMP round-trips in 7.7ms while the app measures 143-177ms. A ~20x discrepancy. (Idle was *worse* than loaded -- the classic Wi-Fi power-save signature, since active traffic keeps the radio awake. Signal was excellent throughout, RSSI -37..-40 dBm, 2.4GHz/54Mbps.) **The network is exonerated.** The latency is added inside the app.
+
+**Where.** `SyncResponseReceived` carries only `t1/t2/t3`; its own doc says t4 "is not carried on the wire -- the caller supplies it as the moment this event is observed". Kotlin stamps `t4 = runtime.nowMs()` at `ManualListenerTransportController.kt:376`, i.e. *after* `pollEvent` returns and the coroutine dispatches -- so poll/dispatch delay is counted as network RTT.
+
+**Why that delay is ~140ms.** The event loop (`:228-241`) is a single sequential coroutine: `pollEvent()` one event at a time, then `applyEvent()`. And `AudioReceived` is surfaced **per audio datagram -- 200/second** -- with `handleAudioReceived` doing a full FFI round trip per packet: the payload is copied out of Rust into the event, a `FfiAudioPacket` is allocated, and the payload is copied straight back into Rust via `runtime.submitPacket(...)`. A sync response therefore waits behind whatever audio backlog is queued.
+
+**The complete chain, every link measured:**
+1. 200 audio events/s through one sequential coroutine, two payload copies each ->
+2. sync responses queue behind audio; `t4` stamped ~140ms late ->
+3. measured RTT 143-177ms vs 7.7ms actual ->
+4. 47 of 50 samples rejected by the 200ms gate; only 3 accepted in ~70s ->
+5. offset biased by roughly -D/2 (~70ms) and jittering with dispatch delay, since `offset = ((t2-t1)+(t3-t4))/2` ->
+6. packets judged late (`late=625`) -> concealment runs to its 100-packet/500ms bound ->
+7. concealment-bound hard resync -> rebuffer, amplified to ~1.5-2s by `STARTUP_BUFFER_MS=1000` ->
+8. ~5s of silence per ~31s stream = the popping and scratchiness.
+
+**The fix (architectural, and exactly what the migration already intends).** The Rust listener transport already receives and validates audio internally -- it should feed those datagrams **straight into the playback runtime** instead of surfacing each one to Kotlin and having Kotlin hand it back. Kotlin should see control-plane events only. That removes 200 events/s, 400 payload copies/s, and the head-of-line blocking in one change. CLAUDE.md already calls for exactly this ("move packetization, jitter buffering, and scheduling into Rust"); the per-packet Kotlin round trip is leftover platform-layer ownership of the audio path.
+
+Secondary, cheaper mitigations if the above is deferred: stamp `t4` in Rust at datagram-receipt time and carry it on the event (note the clock-origin hazard -- `t1` is `PumpClock`-based, so both ends must share one timeline); and separate `rebuffer_target_ms` from `STARTUP_BUFFER_MS` so a stall is not amplified 2-4x.
+
+**Do NOT** pursue: damping the estimator (measured, exonerated), Oboe Exclusive/Shared (measured, never granted Exclusive), the render ring withholding frames (write/render accounting matches to 0.2%), or the network (7.7ms, 0% loss).
