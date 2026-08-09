@@ -255,6 +255,33 @@ fn applies_a_large_offset_change_as_a_hard_resync() {
 }
 
 #[test]
+fn reanchoring_the_start_time_moves_the_expected_presentation_deadline_forward() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    // Mirrors a host that re-broadcast StreamStart with its outgoing
+    // presentation timeline shifted forward by 500ms to account for elapsed
+    // pause time -- the scheduler must be told the same new anchor so it
+    // keeps expecting sequence 0 at the moment the host now actually sends
+    // it.
+    scheduler.set_host_start_time_ms(HOST_START_MS + 500);
+    for sequence in 0..=20 {
+        scheduler
+            .submit_packet(datagram(sequence, 1))
+            .expect("accepted");
+    }
+
+    // The shift moved sequence 0's expected deadline from HOST_START_MS to
+    // HOST_START_MS + 500, so polling at the original anchor is still early.
+    assert!(matches!(
+        scheduler.poll(HOST_START_MS),
+        SchedulerPoll::Waiting { .. }
+    ));
+    match scheduler.poll(HOST_START_MS + 500) {
+        SchedulerPoll::Frame { frame, .. } => assert_eq!(frame.sequence, 0),
+        other => panic!("expected Frame, got {other:?}"),
+    }
+}
+
+#[test]
 fn stop_is_explicit_and_idempotent() {
     let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
     scheduler.stop();

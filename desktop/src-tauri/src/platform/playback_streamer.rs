@@ -6,11 +6,11 @@
 use super::network::DesktopHostNetworkControl;
 use crate::dto::DesktopErrorDto;
 use silent_disco_core::audio::{PacketizerWorkerErrorKind, StreamingPacketizeHandle};
-use silent_disco_core::domain::{PlaybackState, SessionId, StreamId};
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, Stop};
+use silent_disco_core::domain::{MonotonicMillis, PlaybackState, SessionId, StreamId};
+use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, Stop, StreamStart};
 use silent_disco_core::runtime::{AudioEvent, CoreActorHandle};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -53,6 +53,19 @@ pub(super) struct DesktopPlaybackStreamer {
     pub(super) stream_id: StreamId,
     pub(super) handle: CoreActorHandle,
     pub(super) paused: Arc<AtomicBool>,
+    /// The stream's original `StreamStart`, exactly as first broadcast.
+    /// `resume_playback` clones this and shifts `host_start_time_ms` by the
+    /// accumulated pause offset to build the re-anchoring re-broadcast,
+    /// rather than reconstructing the message from scratch.
+    pub(super) stream_start: StreamStart,
+    /// Transport-clock time the current pause began, or `0` while playing.
+    /// Read and cleared by `resume_playback`, which is the sole reader.
+    pub(super) paused_at_ms: Arc<AtomicU64>,
+    /// Total milliseconds this stream has spent paused so far. Added to
+    /// every subsequent audio frame's presentation time by the pump (see
+    /// `apply_pause_offset`) so pacing keeps comparing against real time
+    /// instead of a timeline that silently fell behind during the pause.
+    pub(super) accumulated_pause_offset_ms: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     pump: Option<JoinHandle<Result<(), DesktopErrorDto>>>,
 }
@@ -77,15 +90,16 @@ impl DesktopPlaybackStreamer {
             .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
             .map_err(DesktopErrorDto::from)?;
         network.broadcast_playback_frame(packetizer.stream_start_message().clone())?;
-        let host_start_time_ms = match packetizer.stream_start_message() {
-            ProtocolFrame::Control(ControlMessage::StreamStart(start)) => {
-                start.host_start_time_ms.get()
-            }
+        let stream_start = match packetizer.stream_start_message() {
+            ProtocolFrame::Control(ControlMessage::StreamStart(start)) => start.clone(),
             _ => unreachable!("a packetizer's stream_start_message is always a StreamStart"),
         };
+        let host_start_time_ms = stream_start.host_start_time_ms.get();
 
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
+        let paused_at_ms = Arc::new(AtomicU64::new(0));
+        let accumulated_pause_offset_ms = Arc::new(AtomicU64::new(0));
         let pump = spawn_pump(
             packetizer,
             network,
@@ -95,6 +109,7 @@ impl DesktopPlaybackStreamer {
             host_start_time_ms,
             Arc::clone(&stop),
             Arc::clone(&paused),
+            Arc::clone(&accumulated_pause_offset_ms),
         )?;
 
         Ok(Self {
@@ -102,6 +117,9 @@ impl DesktopPlaybackStreamer {
             stream_id,
             handle,
             paused,
+            stream_start,
+            paused_at_ms,
+            accumulated_pause_offset_ms,
             stop,
             pump: Some(pump),
         })
@@ -171,6 +189,7 @@ fn spawn_pump(
     host_start_time_ms: u64,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    accumulated_pause_offset_ms: Arc<AtomicU64>,
 ) -> Result<JoinHandle<Result<(), DesktopErrorDto>>, DesktopErrorDto> {
     thread::Builder::new()
         .name("silent-disco-desktop-playback-pump".to_owned())
@@ -184,6 +203,7 @@ fn spawn_pump(
                 host_start_time_ms,
                 &stop,
                 &paused,
+                &accumulated_pause_offset_ms,
             )
         })
         .map_err(|error| {
@@ -207,6 +227,7 @@ fn run_pump(
     host_start_time_ms: u64,
     stop: &AtomicBool,
     paused: &AtomicBool,
+    accumulated_pause_offset_ms: &AtomicU64,
 ) -> Result<(), DesktopErrorDto> {
     let mut last_reported_position_ms: Option<u64> = None;
     loop {
@@ -218,10 +239,12 @@ fn run_pump(
             continue;
         }
         match packetizer.recv_timeout(PUMP_RECV_TIMEOUT) {
-            Ok(frame) => {
-                if !wait_until_within_send_ahead_horizon(&frame, network, stop) {
-                    break;
-                }
+            Ok(mut frame) => {
+                // Position must reflect actual song content progress, which
+                // is exactly what the packetizer's own (unshifted) sequence
+                // math already gives -- compute it before the pause offset
+                // below inflates the frame's presentation time by however
+                // long the stream has spent paused so far.
                 report_position_if_due(
                     &frame,
                     host_start_time_ms,
@@ -229,6 +252,13 @@ fn run_pump(
                     handle,
                     &stream_id,
                 );
+                apply_pause_offset(
+                    &mut frame,
+                    accumulated_pause_offset_ms.load(Ordering::Acquire),
+                );
+                if !wait_until_within_send_ahead_horizon(&frame, network, stop) {
+                    break;
+                }
                 drop(network.broadcast_playback_frame(frame));
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -321,6 +351,31 @@ fn report_position_if_due(
     }
 }
 
+/// Adds the stream's accumulated pause offset to one outgoing audio frame's
+/// presentation time. The packetizer computes `host_presentation_time_ms`
+/// from a fixed anchor set once at stream start, so it has no way to know
+/// real time kept moving while the pump stopped draining it for a pause --
+/// every frame it produces from then on reads as further and further behind
+/// schedule. Left uncorrected, [`wait_until_within_send_ahead_horizon`]
+/// reads that lag as "already late", disabling the send-ahead throttle and
+/// bursting the whole backlog at once, which is what overwhelmed the
+/// broadcast queue on a real device after a pause/resume. Non-audio frames
+/// are untouched; a zero offset (the common case, stream never paused) is a
+/// no-op.
+fn apply_pause_offset(frame: &mut ProtocolFrame, offset_ms: u64) {
+    if offset_ms == 0 {
+        return;
+    }
+    if let ProtocolFrame::Audio(datagram) = frame {
+        datagram.host_presentation_time_ms = MonotonicMillis::new(
+            datagram
+                .host_presentation_time_ms
+                .get()
+                .saturating_add(offset_ms),
+        );
+    }
+}
+
 /// Blocks, in short stop-responsive increments, until `frame`'s presentation
 /// time is no more than [`SEND_AHEAD_HORIZON_MS`] ahead of the transport's
 /// current time. Non-audio frames (there are none on this path today, but
@@ -348,5 +403,96 @@ fn wait_until_within_send_ahead_horizon(
             return true;
         }
         thread::sleep(SEND_AHEAD_POLL_INTERVAL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_pause_offset;
+    use silent_disco_core::domain::{
+        MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+    };
+    use silent_disco_core::protocol::{
+        AudioCodec, AudioDatagram, ControlMessage, Disconnect, ProtocolFrame,
+    };
+
+    fn audio_frame(host_presentation_time_ms: u64) -> ProtocolFrame {
+        ProtocolFrame::Audio(AudioDatagram {
+            session_id: SessionId::new("session-pump-test").expect("session id"),
+            stream_id: StreamId::new("stream-pump-test").expect("stream id"),
+            sequence: PacketSequence::new(0),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: 240,
+            first_sample_index: SampleIndex::new(0),
+            host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+            payload: vec![0_u8; 240 * 2 * 2],
+        })
+    }
+
+    /// This is the fix's whole mechanism: a resumed stream's packetizer keeps
+    /// computing presentation times from its original, now-stale anchor, so
+    /// the pump must add back exactly the elapsed pause duration before the
+    /// send-ahead pacing check sees the frame -- get the arithmetic wrong and
+    /// either pacing stays broken (offset too small) or every frame reads as
+    /// further in the future than it really is (offset too large).
+    #[test]
+    fn adds_the_offset_to_an_audio_frames_presentation_time() {
+        let mut frame = audio_frame(1_000);
+        apply_pause_offset(&mut frame, 500);
+        match frame {
+            ProtocolFrame::Audio(datagram) => {
+                assert_eq!(datagram.host_presentation_time_ms.get(), 1_500);
+            }
+            ProtocolFrame::Control(_) => panic!("expected an audio frame, got a control frame"),
+            _ => panic!("expected an audio frame"),
+        }
+    }
+
+    /// The overwhelmingly common case -- a stream that has never paused --
+    /// must be a true no-op, not just a zero-valued shift, since this runs on
+    /// every single frame of every stream.
+    #[test]
+    fn a_zero_offset_leaves_the_presentation_time_unchanged() {
+        let mut frame = audio_frame(1_000);
+        apply_pause_offset(&mut frame, 0);
+        match frame {
+            ProtocolFrame::Audio(datagram) => {
+                assert_eq!(datagram.host_presentation_time_ms.get(), 1_000);
+            }
+            ProtocolFrame::Control(_) => panic!("expected an audio frame, got a control frame"),
+            _ => panic!("expected an audio frame"),
+        }
+    }
+
+    #[test]
+    fn a_non_audio_frame_is_left_untouched() {
+        let mut frame = ProtocolFrame::Control(ControlMessage::Disconnect(Disconnect {
+            session_id: SessionId::new("session-pump-test").expect("session id"),
+            listener_id: silent_disco_core::domain::DeviceId::new("device-pump-test")
+                .expect("device id"),
+            reason: "test".to_owned(),
+        }));
+        let before = frame.clone();
+        apply_pause_offset(&mut frame, 500);
+        assert!(frame == before, "a non-audio frame must never be mutated");
+    }
+
+    /// Saturates rather than wraps -- a wrapped timestamp would read as an
+    /// enormous negative lead in `wait_until_within_send_ahead_horizon`'s
+    /// `saturating_sub`, which is exactly the "reads as due immediately"
+    /// failure this fix exists to prevent, just triggered a different way.
+    #[test]
+    fn saturates_instead_of_overflowing() {
+        let mut frame = audio_frame(u64::MAX - 10);
+        apply_pause_offset(&mut frame, 500);
+        match frame {
+            ProtocolFrame::Audio(datagram) => {
+                assert_eq!(datagram.host_presentation_time_ms.get(), u64::MAX);
+            }
+            ProtocolFrame::Control(_) => panic!("expected an audio frame, got a control frame"),
+            _ => panic!("expected an audio frame"),
+        }
     }
 }

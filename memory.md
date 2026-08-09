@@ -1100,3 +1100,66 @@ Two emulators (`emulator-5554`=host AVD, `emulator-5556`=listener AVD) were left
 ### To resume
 
 Block 28 is still fully blocked on the LG G6 (see the entry above). Block 29's physical validation is now meaningfully de-risked -- the actual admission-layer bug that would have blocked it is already fixed -- but still needs two real phones and a human, not emulators, to actually check any of its boxes.
+
+## 2026-08-09T02:49:19Z - Claude Sonnet 5 - LG G6 now available; starting Block 28
+
+**User said**: "Ralph loop 'Block 28 — First physical desktop-to-Android audio test'", then confirmed ("Yes, it's free") when asked directly, since the phone showing up in `adb devices` alone wasn't enough to assume it was safe to use after the earlier "still busy" note. Superseding the 2026-08-08T20:03:37Z entry: the LG G6 is available for silent_disco use starting now.
+
+## 2026-08-09T20:43:12Z - Claude Sonnet 5 - Block 28 live session: minSdk 26, two real transport bugs fixed, pause/resume timeline root-caused and fixed, confirmed on the LG G6
+
+Continuation of the same Block 28 live session across a very long single conversation (compacted once mid-session). Full detail is in the transcript; this entry records what actually changed, what was proven on real hardware, and what is still open.
+
+### Device compatibility
+
+LG G6 is Android 8.0 / API 26; `minSdk` was 29. User explicitly asked to lower it rather than reject the device (overriding the prior Block 24 handoff doc's stated guidance to reject incompatible devices). Lowered `app/build.gradle.kts` `minSdk` to 26. Verified, not assumed: `lintDebug` clean (zero `NewApi` violations), full Kotlin unit suite green, real install + launch succeeded on the device (previously `INSTALL_FAILED_OLDER_SDK`).
+
+### Two real transport bugs found and fixed against real playback attempts
+
+Both root-caused from actual real-device listening reports ("choppy and staticy," "breaking up," "popping and crackling"), not guessed:
+
+1. **200–700ms blocking UDP sends** (`rust/silent-disco-core/src/transport/socket/host.rs`): `UdpSocket::send_to` had no write timeout, so a slow send could block the whole broadcast-worker loop for hundreds of ms. Fixed with a 5ms `SO_SNDTIMEO` (`DATAGRAM_SEND_TIMEOUT`, via `set_write_timeout` -- independent of the existing `set_read_timeout`/`SO_RCVTIMEO` on the same socket, confirmed via docs before relying on it). Confirmed via direct instrumentation: sends dropped from 200-700ms to ~5-7ms.
+2. **Premature peer disconnect as a side effect of fix 1**: a `WouldBlock` timeout from the new write-timeout was being counted the same as a genuine per-peer I/O failure, tripping `max_consecutive_failures` and dropping the listener mid-stream. Fixed by classifying `WouldBlock` separately (`is_datagram_send_timeout`, unit-tested) and skipping `record_peer_result` for that case while still counting it toward delivery-failure diagnostics. Confirmed via `listeners=0` before the fix vs. `listeners=1` held for the whole run after.
+
+Two hypotheses for a still-present *sustained late-run* degradation were tested on real hardware and **ruled out** (both real fixes, neither explained the residual symptom): a `BACKLOG_POLL_INTERVAL` poll-interval tightening in `host_transport.rs`, and a `WifiLowLatencyNetworkLock` API-level fix (`WIFI_MODE_FULL_LOW_LATENCY` requires API 29; falls back to `WIFI_MODE_FULL_HIGH_PERF` below that -- confirmed via `dumpsys wifi`'s lock-tracking buckets on this exact device). Both kept as legitimate improvements regardless.
+
+### Root cause of the remaining symptom: pause/resume breaks the presentation timeline
+
+User asked an Opus subagent to look at the still-unexplained "starts fine, degrades into popping/crackling later" pattern. Diagnosis, confirmed empirically (not just plausible): the desktop packetizer computes every audio frame's `host_presentation_time_ms` from a fixed anchor set once at stream start (`host_start_time_ms + sequence * packet_duration_ms`). Pausing stops the pump from draining the packetizer but real time keeps moving; on resume, newly-produced frames still use the stale anchor, so their presentation time reads as far in the past. `playback_streamer.rs`'s `wait_until_within_send_ahead_horizon` used `saturating_sub` for the lead-time check, which silently clamps "very late" to "due now" -- disabling all pacing and bursting the whole backlog into the bounded 64-frame broadcast queue at once. Predictively confirmed by shortening a test's pause from 5s to 1s: `queue_overflows` dropped from ~880 to ~201, matching Opus's prediction.
+
+### The fix (desktop + shared-core + Android, coordinated)
+
+- `rust/silent-disco-core/src/audio/scheduler.rs`: new `PlaybackScheduler::set_host_start_time_ms` (absolute set, not delta -- idempotent against a duplicate re-broadcast). The listener's scheduler independently computes the same `host_start_time_ms + sequence * duration` formula for gap detection, so a sender-only fix would have silently desynced listener-side concealment logic; this closes that gap.
+- `rust/silent-disco-ffi/src/listener_playback.rs`: `ListenerPlaybackRuntime::reanchor_presentation_time` / `FfiListenerPlaybackHandle::reanchor_presentation_time` passthroughs -- applies to the live scheduler in place, no ring reset, no pump restart.
+- `desktop/src-tauri/src/platform/playback_streamer.rs`: `DesktopPlaybackStreamer` now tracks `paused_at_ms`/`accumulated_pause_offset_ms` (`Arc<AtomicU64>`) and the original `StreamStart`. New `apply_pause_offset` shifts each outgoing audio frame's presentation time by the accumulated offset *after* position is reported from the unshifted value (position must reflect real song content progress, not wall-clock pause time).
+- `desktop/src-tauri/src/platform/network.rs`: `resume_playback` now re-broadcasts `StreamStart` with the same `stream_id` but `host_start_time_ms` shifted by the real elapsed pause duration -- fulfilling a doc comment that had described this since Block 27 but never actually implemented it. Explicitly gated on `paused.swap(false, ...)` actually having been `true`: a stale/duplicate resume-while-already-playing call (a pre-existing accepted case, covered by `resuming_while_already_playing_does_not_corrupt_position`) must stay a pure no-op, since `paused_at_ms` is still its "never paused" zero sentinel there and computing an offset from it would fabricate a bogus multi-decade "pause" out of nothing -- caught by that exact existing test failing during this work, not by inspection.
+- `app/.../ManualListenerTransportController.kt`: `handleStreamStarted` now branches on `event.streamId == currentStreamId`. Same stream (a resume's re-anchor) calls the new lightweight `reanchorPresentationTime` instead of the existing full `stopPlayback()` + reopen-Oboe path, which would otherwise trade the timeline bug for a guaranteed audible restart on every single resume.
+- `desktop/src-tauri/src/platform/host_transport.rs`: removed the temporary `[broadcast-timing]` `eprintln!` instrumentation added earlier this session to find bug 1 -- no longer needed now the real bottleneck (both bugs 1-2, then this timeline bug) is fixed.
+
+### Tests added (production-facing, per Ralph Loop discipline)
+
+- `scheduler_tests.rs::reanchoring_the_start_time_moves_the_expected_presentation_deadline_forward` -- pure scheduler-level proof of the anchor update.
+- `playback_streamer.rs::tests` (new inline module) -- `apply_pause_offset` unit tests: adds the offset, zero is a true no-op, non-audio frames untouched, saturates instead of overflowing.
+- `start_playback_tests.rs::resume_rebroadcasts_stream_start_with_the_anchor_shifted_by_the_pause_duration` -- real loopback integration test (not manual/ignored) asserting the re-anchored `StreamStart` keeps the same `stream_id` and shifts `host_start_time_ms` by at least the real pause duration. **Verified non-vacuous**: temporarily disabled the rebroadcast and confirmed the test fails (times out) before restoring the fix.
+- Found and fixed a real regression from this same work: the resume-while-already-playing gate above was missing on the first pass, and `resuming_while_already_playing_does_not_corrupt_position` (pre-existing test) caught it immediately -- "broadcast queue is full" from a bogus offset computed off the zero sentinel.
+
+### Confirmed on the real LG G6, not assumed
+
+Ran `manual_real_android_listener_plays_a_song_change` against the phone twice (first attempt burned its 8-minute join window while debugging an `adb shell input text` escaping issue below). Second run: `queue_overflows` was **59 at pause, 59 at resume, and still 59 after 20 more seconds of playback** -- flat through the entire post-resume window that used to climb into the hundreds (previous runs this same session: 30→150→912, 30→30→882). This is the direct, measured confirmation the fix works. The `song-a` pause/resume portion is what matters for this fix; the later `song-b` track-switch portion of that same run failed on an unrelated, pre-existing issue (below), so the full multi-song run was not re-verified end to end after that second fix.
+
+**New tooling finding, worth keeping**: `adb shell input text` on this specific API-26 device fails with "Invalid arguments for command: text" when the string contains an unescaped `{...,...}` (adb reconstructs a single command line for the device's remote shell, which brace-expands it, splitting one argument into several). The existing `escape_for_adb_input_text` helper in `start_playback_tests.rs` already escapes `{`, `}`, `"`, and `,` for exactly this reason -- the failure only happened because a manual by-hand adb invocation (bisecting the connect-field issue live against the device, not through that helper) initially forgot to escape the braces themselves.
+
+**Second, unrelated real-device finding, also fixed**: the song-swap step of `manual_real_android_listener_plays_a_song_change` used `wait_snapshot` (fast 10s `TEST_TIMEOUT`, tuned for the loopback suite) instead of `wait_snapshot_for(..., MANUAL_TEST_TIMEOUT)` like every other manual-test wait in the file already does. Timed out for real against the LG G6's slower actor. Fixed (one call site); **not yet re-verified against real hardware** since the pause/resume evidence above was already conclusive and the live session was already very long -- flagged rather than assumed to fully resolve the song-swap flakiness.
+
+### Gates
+
+`bash scripts/check-rust.sh`, `cd desktop && npm run check`, and `./gradlew test lintDebug` all green after every change in this entry, each actually executed with the pinned toolchain, not assumed.
+
+### Not done / explicitly flagged
+
+- FLAC/MP3 manual variants and the two-emulator manual test were not re-run this session against the fix -- only the WAV song-change path was re-verified on real hardware.
+- `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` Block 28 checkboxes: still not checked. The pause/resume fix and its real-hardware confirmation are new, real progress toward 28.1's "exercise pause/resume/stop" and "record diagnostics" items, but a full human-listening confirmation of the *song-swap* and FLAC/MP3 paths, and 28.2/28.3, remain open.
+- The `wait_snapshot`→`wait_snapshot_for` fix above is unverified on real hardware (fast-suite-green only).
+
+### To resume
+
+Re-run `manual_real_android_listener_plays_a_song_change` end-to-end (confirms the `wait_snapshot_for` fix and the song-swap path together), then `..._flac`/`..._mp3`, on the LG G6; have a human listen and confirm the popping/crackling is actually gone (this session's evidence is the `queue_overflows` counter, not a human ear, though the mechanism it measures is exactly what a human would hear as crackling). Update Block 28 TODO checkboxes only once that human confirmation lands. Nothing from this entire entry has been committed as of this timestamp -- do that first if picking this back up fresh.

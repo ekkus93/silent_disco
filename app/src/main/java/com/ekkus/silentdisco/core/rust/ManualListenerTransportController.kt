@@ -389,6 +389,28 @@ class ManualListenerTransportController(
      */
     private fun handleStreamStarted(scope: CoroutineScope, handle: FfiListenerTransportHandle, event: FfiListenerTransportEvent.StreamStarted) {
         val session = sessionId ?: return
+
+        val runningRuntime = playbackRuntime
+        if (runningRuntime != null && currentStreamId == StreamId(event.streamId)) {
+            // The host re-broadcasts StreamStart for the *same* stream on
+            // resume, carrying a presentation-time anchor shifted forward by
+            // however long the pause lasted (see the desktop host's
+            // pause/resume offset accounting) -- it is not announcing a new
+            // stream. Re-anchoring the already-running scheduler in place
+            // keeps the render ring, Oboe stream, and receive/sequence
+            // counters exactly as they were; tearing down and reopening the
+            // engine here would trade the timeline bug this fixes for a
+            // guaranteed audible restart on every single resume.
+            runCatching {
+                runningRuntime.reanchorPresentationTime(event.hostStartTimeMs)
+            }.onFailure { error -> handlePlaybackEngineFailure(error) }
+            logger.i(
+                "manual.audio.stream_reanchored",
+                "streamId=${event.streamId} hostStartMs=${event.hostStartTimeMs}",
+            )
+            return
+        }
+
         stopPlayback()
         receivedCount = 0
         lastReceivedSequence = null

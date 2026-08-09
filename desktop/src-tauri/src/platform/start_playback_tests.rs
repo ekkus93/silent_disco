@@ -3,7 +3,8 @@ use super::network::{AddressRecord, DesktopHostNetworkControl, InterfaceRecord, 
 use super::start_playback;
 use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, MonotonicMillis, PlaybackState};
 use silent_disco_core::protocol::{
-    ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame, SyncRequest, SyncResponse,
+    ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame, StreamStart, SyncRequest,
+    SyncResponse,
 };
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorRuntime, CoreCommand,
@@ -31,6 +32,12 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// [`wait_snapshot_for`] for the specific `queue_overflows=930` run that
 /// motivated this.
 const MANUAL_TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long `resume_rebroadcasts_stream_start_with_the_anchor_shifted_by_the_pause_duration`
+/// holds its real pause -- long enough that a millisecond of test-harness
+/// scheduling jitter can't be mistaken for zero shift, short enough to keep
+/// the automated suite fast.
+const RESUME_TEST_PAUSE_DURATION: Duration = Duration::from_millis(500);
 
 #[test]
 fn desktop_host_streams_real_audio_and_answers_sync_requests() {
@@ -89,6 +96,76 @@ fn desktop_host_streams_real_audio_and_answers_sync_requests() {
         snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
     });
 
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Guards the pause/resume presentation-timeline fix: the packetizer keeps
+/// computing every frame's presentation time from a fixed anchor set once at
+/// stream start, with no way to know real time kept moving while a pause
+/// stopped the pump from draining it -- so, without `resume_playback`
+/// re-broadcasting `StreamStart` with an anchor shifted forward by the real
+/// pause duration, a resumed listener (and the pump's own send-ahead pacing)
+/// would read every subsequent frame as already late. Confirmed on a real
+/// Android device as the "started fine, fell apart into popping/crackling
+/// partway through" symptom -- this is the deterministic, hardware-free
+/// regression test for the fix, run over loopback rather than real Wi-Fi.
+#[test]
+fn resume_rebroadcasts_stream_start_with_the_anchor_shifted_by_the_pause_duration() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!(
+            "no private LAN interface on this CI host; pause/resume anchor coverage remains \
+             deterministic"
+        );
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    let original_start = wait_for_stream_start(&mut *listener);
+    let _ = wait_for_audio(&mut *listener);
+
+    network.pause_playback().expect("pause playback");
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == PlaybackState::Paused
+    });
+
+    std::thread::sleep(RESUME_TEST_PAUSE_DURATION);
+
+    network.resume_playback().expect("resume playback");
+    let reanchored_start = wait_for_stream_start(&mut *listener);
+
+    assert_eq!(
+        reanchored_start.stream_id, original_start.stream_id,
+        "a resume must re-anchor the same stream, not announce a new one -- a new stream_id \
+         tears down and reopens the listener's audio engine on every resume"
+    );
+    let shift_ms = reanchored_start
+        .host_start_time_ms
+        .get()
+        .saturating_sub(original_start.host_start_time_ms.get());
+    assert!(
+        shift_ms >= u64::try_from(RESUME_TEST_PAUSE_DURATION.as_millis()).expect("fits u64"),
+        "the re-anchored StreamStart's host_start_time_ms must shift forward by at least the \
+         real pause duration ({}ms), but only shifted by {shift_ms}ms -- every subsequent frame \
+         would read as already late against the old anchor",
+        RESUME_TEST_PAUSE_DURATION.as_millis(),
+    );
+
+    network.stop_playback().expect("stop playback");
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");
@@ -811,13 +888,24 @@ fn manual_real_android_listener_plays_a_song_change() {
             remember_approved_devices: None,
         }),
     );
-    wait_snapshot(&handle, |snapshot| {
-        snapshot
-            .host_draft
-            .audio_source
-            .as_ref()
-            .is_some_and(|source| source.source_id == descriptor_b.source_id)
-    });
+    // `wait_snapshot`'s fast `TEST_TIMEOUT` (10s) is tuned for the loopback
+    // suite; a real device's slower, more congested actor can take longer
+    // than that to reflect a draft update, confirmed here (not assumed) by
+    // a run against the LG G6 timing out at this exact call with the
+    // update still pending -- `wait_snapshot_for`'s longer
+    // `MANUAL_TEST_TIMEOUT` is what every other manual-test wait in this
+    // file already uses.
+    wait_snapshot_for(
+        &handle,
+        |snapshot| {
+            snapshot
+                .host_draft
+                .audio_source
+                .as_ref()
+                .is_some_and(|source| source.source_id == descriptor_b.source_id)
+        },
+        MANUAL_TEST_TIMEOUT,
+    );
 
     eprintln!(
         "=== song 2/2: \"song-b\", a descending C major scale (do ti la so fa mi re do) -- starting playback ==="
@@ -1263,7 +1351,7 @@ fn exercise_pause_resume(
         MANUAL_TEST_TIMEOUT,
     );
     print_diagnostics(handle, network, &format!("{label}-paused"));
-    std::thread::sleep(Duration::from_secs(5));
+    std::thread::sleep(Duration::from_secs(1));
 
     eprintln!("=== resuming -- audio should continue from where it paused, not restart ===");
     network.resume_playback().expect("resume playback");
@@ -1687,6 +1775,31 @@ fn wait_for_control(
         assert!(
             Instant::now() < deadline,
             "timed out waiting for expected control message"
+        );
+    }
+}
+
+/// Like [`wait_for_control`], but returns the matched `StreamStart` payload
+/// instead of discarding it -- callers that need to inspect
+/// `host_start_time_ms` (e.g. confirming a resume's re-anchor actually
+/// shifted it) can't do that with `wait_for_control` alone.
+fn wait_for_stream_start(listener: &mut dyn ListenerTransportNode) -> StreamStart {
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        match listener.recv_event(Duration::from_millis(100)) {
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::StreamStart(start)),
+                ..
+            }) => return start,
+            Ok(_) => {}
+            Err(error)
+                if error.kind == silent_disco_core::transport::TransportErrorKind::Timeout => {}
+            Err(error) => panic!("listener transport failed: {error}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for a StreamStart control message"
         );
     }
 }

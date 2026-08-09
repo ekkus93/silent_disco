@@ -712,6 +712,20 @@ impl PlaybackScheduler {
         self.resume_from_silence = true;
     }
 
+    /// Re-anchors this scheduler's presentation-time base to
+    /// `host_start_time_ms`, matching a host that re-broadcast `StreamStart`
+    /// with an updated anchor after a pause (see the desktop host's
+    /// pause/resume offset accounting). Without this,
+    /// [`Self::expected_host_presentation_time_ms`] would keep comparing
+    /// newly arriving, already-shifted wire timestamps against an anchor
+    /// still fixed at stream start, misreading every post-resume packet as
+    /// far ahead of its expected slot. Takes the absolute new value rather
+    /// than a delta so repeated calls (e.g. a duplicate re-broadcast) are
+    /// idempotent instead of compounding.
+    pub fn set_host_start_time_ms(&mut self, host_start_time_ms: u64) {
+        self.config.host_start_time_ms = host_start_time_ms;
+    }
+
     /// Explicitly stops this scheduler. Idempotent; a new stream requires a
     /// new [`PlaybackScheduler`] instance.
     pub fn stop(&mut self) {

@@ -1744,6 +1744,35 @@ today (only decoder-unit-level corrupt-input coverage exists in
 don't need the phone -- worth doing before or during the live 28.2 session
 rather than discovering the gap that day.
 
+**Live session 2026-08-09, LG G6 available: real bugs found and fixed,
+still no boxes checked.** First real playback attempts surfaced audible
+defects (choppy/staticy, popping/crackling) that were root-caused --
+not guessed -- to two real transport bugs (a 200-700ms blocking UDP send,
+and a premature peer-disconnect side effect of fixing the first one; both
+fixed and confirmed on-device) and then, after two hypotheses were tested
+on real hardware and ruled out, to a pause/resume presentation-timeline
+bug: the packetizer's fixed stream-start anchor goes stale across a real
+pause, and `saturating_sub`-based pacing silently read every post-resume
+frame as already late, bursting the whole backlog into the bounded
+broadcast queue. Fixed with coordinated desktop (`playback_streamer.rs`/
+`network.rs`, pause-offset tracking + a real `StreamStart` re-anchor
+broadcast on resume) and shared-core/Android changes (`scheduler.rs`'s
+`set_host_start_time_ms`, a same-`stream_id` lightweight re-anchor path in
+`ManualListenerTransportController.kt` instead of a full engine
+restart). See `memory.md`'s 2026-08-09T20:43:12Z entry for full detail.
+
+Confirmed directly on the LG G6: `queue_overflows` stayed flat at 59
+through pause, resume, and 20 more seconds of playback (previous runs
+this same session climbed into the hundreds over that window). That is
+real evidence 28.1's "exercise pause/resume/stop" now works for the WAV
+song-change path specifically. **Still not checking any 28.1 box**: the
+same run's later song-swap step hit an unrelated, separately-fixed test
+timeout (`wait_snapshot` vs `wait_snapshot_for`) before a human could
+listen to the second song, and the FLAC/MP3 variants were not re-run this
+session. A full end-to-end run of all three manual tests with a human
+actually listening is still the next step before any 28.1 box is
+checked.
+
 ### 28.1 One listener
 
 - [ ] select supported WAV fixture;

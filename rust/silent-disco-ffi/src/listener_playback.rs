@@ -265,6 +265,30 @@ impl ListenerPlaybackRuntime {
         Ok(())
     }
 
+    /// Re-anchors this runtime's presentation-time base to
+    /// `host_start_time_ms`, matching a host that re-broadcast `StreamStart`
+    /// with an updated anchor after resuming from a pause (see
+    /// [`silent_disco_core::audio::PlaybackScheduler::set_host_start_time_ms`]).
+    /// Applies to the live scheduler in place -- no ring reset, no pump
+    /// restart, no audible discontinuity beyond whatever the pause itself
+    /// already caused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::Stopped`] once the runtime has been
+    /// stopped.
+    pub fn reanchor_presentation_time(
+        &self,
+        host_start_time_ms: u64,
+    ) -> Result<(), ListenerPlaybackError> {
+        self.ensure_running()?;
+        self.shared
+            .lock_pump()
+            .scheduler_mut()
+            .set_host_start_time_ms(host_start_time_ms);
+        Ok(())
+    }
+
     /// Captures every frame this stream releases toward the ring to a WAV at
     /// `path`, for offline comparison against the diagnostics counters.
     ///
@@ -1507,6 +1531,23 @@ impl FfiListenerPlaybackHandle {
             payload: packet.payload,
         };
         self.runtime.submit_packet(datagram)?;
+        Ok(())
+    }
+
+    /// Re-anchors the presentation-time base to `host_start_time_ms`,
+    /// matching a host that just resumed from a pause and re-broadcast
+    /// `StreamStart` with an updated anchor for the same stream. Applies in
+    /// place; does not reopen the audio engine or reset the render ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::Stopped`] once stopped.
+    pub fn reanchor_presentation_time(
+        &self,
+        host_start_time_ms: u64,
+    ) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime
+            .reanchor_presentation_time(host_start_time_ms)?;
         Ok(())
     }
 

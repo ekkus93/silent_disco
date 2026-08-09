@@ -11,7 +11,7 @@ use crate::dto::DesktopErrorDto;
 use netdev::Interface;
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState};
 use silent_disco_core::error::CoreError;
-use silent_disco_core::protocol::{ControlMessage, Pause, ProtocolFrame};
+use silent_disco_core::protocol::{ControlMessage, Pause, ProtocolFrame, StreamStart};
 use silent_disco_core::runtime::{
     AudioEvent, CoreActorHandle, NetworkEndpoint, SessionAdvertisement, TransportEffect,
 };
@@ -467,13 +467,22 @@ impl DesktopHostNetworkControl {
                 host_pause_time_ms,
             })))
             .map_err(DesktopNetworkError::dto)?;
+        playback
+            .paused_at_ms
+            .store(host_pause_time_ms.get(), Ordering::Release);
         playback.paused.store(true, Ordering::Release);
         Ok(())
     }
 
     /// Resumes the active, paused playback stream after a validated actor
-    /// transition, re-broadcasting the stream-start message so a listener
-    /// that missed frames while paused reconfirms format/presentation base.
+    /// transition, re-broadcasting `StreamStart` with a presentation anchor
+    /// shifted forward by this pause's duration, so a listener that missed
+    /// frames while paused re-anchors its own presentation-time expectations
+    /// to match the same shift the pump now applies to every subsequent
+    /// audio frame (see [`super::playback_streamer`]'s pause-offset
+    /// accounting). Reusing the same `stream_id` lets the listener apply
+    /// this in place rather than tearing down and reopening its audio
+    /// engine.
     ///
     /// # Errors
     ///
@@ -497,7 +506,43 @@ impl DesktopHostNetworkControl {
             .handle
             .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
             .map_err(DesktopErrorDto::from)?;
-        playback.paused.store(false, Ordering::Release);
+
+        // A resume issued while already playing is a stale/duplicate command
+        // today's actor checks still accept -- it must stay a pure no-op
+        // beyond the transition above. `paused_at_ms` is still its "never
+        // paused" sentinel of zero in that case, so computing an offset from
+        // it would fabricate a bogus multi-<x>-long "pause" out of nothing
+        // and corrupt the anchor instead of fixing it; broadcasting here
+        // would also contend with the pump's own real-time frames on the
+        // same bounded queue for no reason.
+        if !playback.paused.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+
+        let now = active.runtime.observed_at();
+        let paused_at_ms = playback.paused_at_ms.swap(0, Ordering::AcqRel);
+        let elapsed_ms = now.get().saturating_sub(paused_at_ms);
+        let total_offset_ms = playback
+            .accumulated_pause_offset_ms
+            .fetch_add(elapsed_ms, Ordering::AcqRel)
+            .saturating_add(elapsed_ms);
+        let reanchored_start = StreamStart {
+            host_start_time_ms: MonotonicMillis::new(
+                playback
+                    .stream_start
+                    .host_start_time_ms
+                    .get()
+                    .saturating_add(total_offset_ms),
+            ),
+            ..playback.stream_start.clone()
+        };
+        active
+            .runtime
+            .broadcast_frame(ProtocolFrame::Control(ControlMessage::StreamStart(
+                reanchored_start,
+            )))
+            .map_err(DesktopNetworkError::dto)?;
+
         Ok(())
     }
 

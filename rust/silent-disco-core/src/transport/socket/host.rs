@@ -15,6 +15,28 @@ use crate::domain::{DeviceId, SessionId};
 use crate::protocol::{ControlMessage, ProtocolFrame, encode_frame};
 use crate::runtime::NetworkEndpoint;
 
+/// Bounds how long a single UDP `send_to` may block on `sync_socket`/
+/// `audio_socket`. Neither socket is ever set non-blocking, because
+/// `set_nonblocking` shares the same underlying OS file description as the
+/// existing blocking-with-timeout `recv_from` reader loop (`io_timeout`,
+/// default 100ms) -- flipping it would make reads non-blocking too, not
+/// just sends. A write timeout is independent (`SO_SNDTIMEO`) and only
+/// bounds sends.
+///
+/// Sized to the packetizer's own default cadence (`DEFAULT_PACKET_DURATION_MS`,
+/// 5ms): confirmed against real hardware (a real, older Android phone over
+/// real Wi-Fi, 2026-08-09) that a blocking send with no write timeout can
+/// stall for 200-700ms when the OS send buffer backs up against a slow
+/// receiver, which starves this worker's own broadcast queue (bounded at
+/// 64 frames) far faster than it can be produced, and the resulting
+/// silently-dropped/delayed audio was independently confirmed audible
+/// ("choppy and staticy, breaking up a lot") on the same run. A send that
+/// cannot complete within one packet period is not going to help keep pace
+/// regardless of how much longer it is given, so failing fast here (already
+/// handled as a counted, visible per-peer delivery failure, not a panic or
+/// a silent drop) is strictly better than blocking the whole worker.
+const DATAGRAM_SEND_TIMEOUT: Duration = Duration::from_millis(5);
+
 use super::super::{
     HostTransportConfig, HostTransportNode, ListenerDatagramRoutes, TransportChannel,
     TransportClock, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
@@ -146,6 +168,16 @@ impl SocketHostTransport {
                     &error,
                 )
             })?;
+        sync_socket
+            .set_write_timeout(Some(DATAGRAM_SEND_TIMEOUT))
+            .map_err(|error| {
+                TransportError::io(
+                    TransportErrorKind::Io,
+                    TransportChannel::Synchronization,
+                    "failed to configure synchronization write timeout",
+                    &error,
+                )
+            })?;
         audio_socket
             .set_read_timeout(Some(config.io_timeout))
             .map_err(|error| {
@@ -153,6 +185,16 @@ impl SocketHostTransport {
                     TransportErrorKind::Io,
                     TransportChannel::Audio,
                     "failed to configure audio read timeout",
+                    &error,
+                )
+            })?;
+        audio_socket
+            .set_write_timeout(Some(DATAGRAM_SEND_TIMEOUT))
+            .map_err(|error| {
+                TransportError::io(
+                    TransportErrorKind::Io,
+                    TransportChannel::Audio,
+                    "failed to configure audio write timeout",
                     &error,
                 )
             })?;
@@ -433,6 +475,24 @@ impl SocketHostTransport {
                 Err(error) => {
                     failed = failed.saturating_add(1);
                     self.counters.delivery_failure();
+                    // A `WouldBlock`/timeout here means `DATAGRAM_SEND_TIMEOUT`
+                    // fired -- the send didn't complete in time, not that
+                    // this peer is gone. Audio/sync delivery is inherently
+                    // best-effort and lossy by design (a real device drops
+                    // ~1% of UDP packets in ordinary conditions), so a
+                    // routine timeout under momentary congestion must not
+                    // count toward `max_consecutive_failures` the same way
+                    // a genuine I/O error (unreachable host, connection
+                    // reset) does -- confirmed on real hardware
+                    // (2026-08-09): failing fast on every timeout tripped
+                    // the 3-consecutive-failure disconnect threshold within
+                    // ~15ms of a brief real congestion blip, disconnecting
+                    // a listener that was still there. It stays a counted,
+                    // visible delivery failure either way; only the
+                    // auto-disconnect vote is skipped.
+                    if is_datagram_send_timeout(&error) {
+                        continue;
+                    }
                     self.record_peer_result(
                         &route.peer,
                         &Err(TransportError::io(
@@ -746,5 +806,43 @@ impl HostTransportNode for SocketHostTransport {
 impl Drop for SocketHostTransport {
     fn drop(&mut self) {
         drop(self.shutdown());
+    }
+}
+
+/// Classifies whether a `send_to` error was `DATAGRAM_SEND_TIMEOUT` firing
+/// (routine under momentary congestion, must not count toward
+/// `max_consecutive_failures`) rather than a genuine send failure (must
+/// still count). Extracted as a pure function so this specific decision is
+/// unit-testable without a real, slow/congested socket -- loopback UDP
+/// essentially never blocks or times out, so the full path this guards
+/// against was only reproducible on real hardware (confirmed 2026-08-09:
+/// a real, older Android phone under real Wi-Fi load).
+fn is_datagram_send_timeout(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+}
+
+#[cfg(test)]
+mod send_timeout_classification_tests {
+    use super::is_datagram_send_timeout;
+    use std::io;
+
+    #[test]
+    fn would_block_is_classified_as_a_send_timeout() {
+        assert!(is_datagram_send_timeout(&io::Error::from(
+            io::ErrorKind::WouldBlock
+        )));
+    }
+
+    #[test]
+    fn other_error_kinds_are_not_classified_as_a_send_timeout() {
+        assert!(!is_datagram_send_timeout(&io::Error::from(
+            io::ErrorKind::ConnectionRefused
+        )));
+        assert!(!is_datagram_send_timeout(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
+        assert!(!is_datagram_send_timeout(&io::Error::other(
+            "unexpected send failure"
+        )));
     }
 }

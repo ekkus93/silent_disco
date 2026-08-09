@@ -21,6 +21,19 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Poll interval used instead of [`EVENT_POLL_INTERVAL`] whenever the
+/// broadcast queue still has frames in it after a drain pass. `recv_event`
+/// blocks for up to the poll interval when no control-plane traffic
+/// arrives, during which nothing drains the broadcast queue at all -- at
+/// the real packetizer's 5ms/200-per-second cadence (`DEFAULT_PACKET_DURATION_MS`,
+/// dropped from 20ms the day after this worker's polling was sized; see
+/// `git log` on this file vs. that constant), a real slow send (genuine
+/// Wi-Fi congestion, not the fast/deterministic loopback this worker's own
+/// tests run against) stalls draining for that same span, during which the
+/// queue can fill. A short poll here shrinks the worst-case recovery gap
+/// from 20ms to ~1ms once backlog is observed, without busy-polling during
+/// the (far more common) idle-hosting periods when nothing is playing.
+const BACKLOG_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const TRANSPORT_EFFECT_QUEUE_CAPACITY: usize = 32;
 const MAX_EFFECTS_PER_TICK: usize = 8;
 /// Bounded output queue between a playback pump thread and this worker.
@@ -143,11 +156,13 @@ impl BroadcastCounters {
         let intended = u64::from(delivery.report.intended_peers);
         let successful = u64::from(delivery.report.successful_peers);
         self.frames_attempted.fetch_add(1, Ordering::Relaxed);
-        self.recipients_intended.fetch_add(intended, Ordering::Relaxed);
+        self.recipients_intended
+            .fetch_add(intended, Ordering::Relaxed);
         self.recipients_delivered
             .fetch_add(successful, Ordering::Relaxed);
         if intended == 0 {
-            self.frames_without_recipients.fetch_add(1, Ordering::Relaxed);
+            self.frames_without_recipients
+                .fetch_add(1, Ordering::Relaxed);
         } else if successful == intended {
             self.frames_fully_delivered.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -237,7 +252,10 @@ impl DesktopHostTransportRuntime {
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
-                self.status.broadcast.queue_overflows.fetch_add(1, Ordering::Relaxed);
+                self.status
+                    .broadcast
+                    .queue_overflows
+                    .fetch_add(1, Ordering::Relaxed);
                 Err(DesktopNetworkError::resource_limit(
                     "desktop host transport broadcast queue is full",
                 ))
@@ -335,7 +353,12 @@ fn run_transport_worker(
             primary_error = Some(error);
             break;
         }
-        match node.recv_event(EVENT_POLL_INTERVAL) {
+        let poll_interval = if status.broadcast.queue_depth.load(Ordering::Relaxed) > 0 {
+            BACKLOG_POLL_INTERVAL
+        } else {
+            EVENT_POLL_INTERVAL
+        };
+        match node.recv_event(poll_interval) {
             Ok(event) => match processor.process(event, &*node, advertisement, &**sink) {
                 Ok(Some(message)) => set_last_error(status, message)?,
                 Ok(None) => {}
