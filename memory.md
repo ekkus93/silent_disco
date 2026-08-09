@@ -1290,3 +1290,22 @@ Working hypothesis to test first: the consumer/pump treats the target fill as a 
 - **Make offset-driven rebuffers visible**: count `SyncApplyOutcome::Rebuffered` in `PlaybackDiagnostics`. Until this exists, no run can distinguish the two rebuffer causes -- this is why the earlier entries mis-attributed the counter.
 - **Damp the early estimator switch**: floor the `snapshot()` truncation at 2 samples, or only forward offset updates once `accepted_sample_count >= 4`.
 - **Cheap falsification available**: tee the existing `manual.audio.sync_sample` line (it already prints `offsetMs` and `samples`) into the diagnostics file, then check whether any consecutive accepted pair with `samples <= 3` differs by > 120ms. If none does, the estimator path contributed nothing this run and everything was concealment-bound -- which would point at receiver-side ~500ms arrival stalls (Wi-Fi power save is the documented suspect) rather than at the clock code.
+
+### Falsification check RESULT: estimator path exonerated; sync is barely functioning
+
+Ran the check Fable proposed -- teed the existing `manual.audio.sync_sample` line into the durable diagnostics file and inspected the offset series on a real run.
+
+**Verdict: the estimator-trip hypothesis is DEAD for this run.** Within a stream the largest step between consecutive accepted samples was **+5.50 ms**, nowhere near the 120 ms `hard_resync_threshold_ms`. So every rebuffer was concealment-bound, exactly as the falsifier predicted, and **Fix A (damping the estimator snapshot) is not worth doing** -- it would have been effort spent on a non-cause.
+
+One caveat on method: my first automated pass flagged a `+37,378 ms` step as exceeding the threshold. It does not count -- it spans the song-a -> song-b boundary, where song-b gets a brand-new `ClockSyncEstimator` **and** a brand-new `PumpClock` whose origin restarts at zero while the host clock is 37 s further along. Comparing offsets across that boundary is meaningless; only in-stream consecutive pairs are valid. Worth remembering: the per-stream clock origin reset makes any cross-stream offset comparison look catastrophic.
+
+**What the check surfaced instead -- the real headline: 47 of 50 sync responses were REJECTED (94%).** Only 3 samples were accepted in the entire ~70 s session, and their RTTs were 143 / 177 / 174 ms -- right up against the 200 ms acceptance gate (`estimator.rs:32,245`). So the clock estimate is being built from almost no data, on a LAN showing RTTs an order of magnitude above what a local Wi-Fi hop should be. (Note: rejected samples report `rttMs=0.0` in this outcome struct, so the rejected population's RTTs cannot be read from this log -- only the rejection count is trustworthy.)
+
+That reframes the problem. Combined with `late=625/566`, heavy concealment (`concealed=1114/1815`, repeatedly hitting the 100-packet/500 ms bound), and the host being provably clean, the evidence points at **receiver-side packet arrival latency/stalls**, not at any clock or ring logic. This is the same suspect `WifiLowLatencyNetworkLock`'s own doc comment describes -- and on this API-26 device that lock can only fall back to `WIFI_MODE_FULL_HIGH_PERF`, which may simply not be sufficient.
+
+### Revised next actions
+
+1. **Attack arrival latency first.** 143-177 ms RTT on a LAN is the anomaly that explains everything downstream. Worth checking: whether the high-perf Wi-Fi lock is actually held during a session on this device, whether the phone is on 2.4 GHz/a congested channel or roaming, and whether RTT drops on a different network. A quick `adb shell ping` to the host during a session would separate "the network is slow" from "the app's sync path is slow".
+2. **Separate `rebuffer_target_ms` from `STARTUP_BUFFER_MS` (still valid).** It is not the root cause, but it amplifies every ~500 ms stall into ~1.5-2 s of silence, so it converts a marginal network into an unlistenable one.
+3. **Count offset-driven rebuffers** so the two rebuffer causes stay distinguishable in future runs.
+4. **Do NOT** damp the estimator (old Fix A) -- measured and exonerated.

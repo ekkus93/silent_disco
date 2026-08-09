@@ -379,6 +379,18 @@ class ManualListenerTransportController(
             logger.w("manual.audio.sync_rejected", error.message ?: "sync response rejected")
             return
         }
+        // Teed to the durable file as well as logcat: distinguishing an
+        // offset-driven rebuffer from a concealment-driven one needs the
+        // per-sample offset series, and the offset path increments no
+        // counter of its own (its result is discarded in
+        // `observe_sync_response`), so this series is the only way to tell
+        // the two causes apart on a device whose logcat is unavailable.
+        appendDiagnosticsLine(
+            "sync accepted=${outcome.accepted} offsetMs=${outcome.offsetMs} " +
+                "rttMs=${outcome.roundTripTimeMs} jitterMs=${outcome.jitterMs} " +
+                "samples=${outcome.acceptedSampleCount} locked=${outcome.syncLocked} " +
+                "confidence=${outcome.confidence}",
+        )
         logger.i(
             "manual.audio.sync_sample",
             "accepted=${outcome.accepted} offsetMs=${outcome.offsetMs} " +
