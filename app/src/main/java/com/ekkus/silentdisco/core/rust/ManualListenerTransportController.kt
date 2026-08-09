@@ -495,6 +495,15 @@ class ManualListenerTransportController(
             handlePlaybackEngineFailure(IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"))
             return
         }
+        // Hand the audio path to Rust: from here the transport submits each
+        // received datagram straight into this runtime, so audio no longer
+        // crosses the binding at all. Before this, every packet surfaced as
+        // its own event on the single event-loop coroutine below and was
+        // copied out of Rust and immediately back in -- 200 round trips a
+        // second, which delayed the control traffic queued behind it (sync
+        // responses were timestamped ~140ms late against a 7.7ms real round
+        // trip) and is what drove the rebuffering heard as dropouts.
+        handle.attachPlayback(runtime)
         startDebugCapture(runtime, event.streamId)
         startDiagnosticsSampler(scope, runtime)
         logger.i(
@@ -586,6 +595,9 @@ class ManualListenerTransportController(
         }
         playbackRuntime = null
         currentStreamId = null
+        // Detach before stopping: the transport must not submit into a
+        // runtime that is shutting down.
+        runCatching { handleRef.get()?.detachPlayback() }
         // Order matters and is deliberate: `stop()` drains the render ring
         // *through the still-running Oboe callback* so the stream ends on its
         // own final sample rather than mid-note (see `await_ring_drain`, which
@@ -611,7 +623,9 @@ class ManualListenerTransportController(
     private fun logPlaybackSummary(runtime: FfiListenerPlaybackHandle) {
         val diagnostics = runtime.finalDiagnostics() ?: runtime.diagnostics()
         appendDiagnosticsLine(
-            "summary streamId=$currentStreamId received=$receivedCount " +
+            "summary streamId=$currentStreamId " +
+                "forwarded=${runCatching { handleRef.get()?.forwardedAudioCount() }.getOrNull()} " +
+                "received=$receivedCount " +
                 "accepted=${diagnostics.packetsAccepted} emitted=${diagnostics.packetsEmitted} " +
                 "concealed=${diagnostics.concealedPackets} late=${diagnostics.lateRejections} " +
                 "skipped=${diagnostics.sequencesSkipped} " +

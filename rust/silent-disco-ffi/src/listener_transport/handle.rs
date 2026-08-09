@@ -1,10 +1,11 @@
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use silent_disco_core::domain::{DeviceId, MonotonicMillis};
 use silent_disco_core::protocol::{
-    ControlMessage, DeviceIdentity, Disconnect, JoinRequest, SyncRequest,
+    ControlMessage, DeviceIdentity, Disconnect, JoinRequest, ProtocolFrame, SyncRequest,
 };
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
@@ -12,6 +13,8 @@ use silent_disco_core::transport::{
     ManualHostEndpoint, SystemTransportClock, TransportChannel, TransportClock, TransportEvent,
     TransportFactory, production_transport_factory,
 };
+
+use crate::listener_playback::FfiListenerPlaybackHandle;
 
 use super::types::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
@@ -64,6 +67,14 @@ pub fn parse_manual_host_endpoint(
 #[derive(uniffi::Object)]
 pub struct FfiListenerTransportHandle {
     inner: Mutex<Option<Inner>>,
+    /// When set, received audio datagrams are submitted straight to this
+    /// runtime inside [`Self::poll_event`] instead of being surfaced to the
+    /// foreign caller. See [`Self::attach_playback`].
+    playback: Mutex<Option<Arc<FfiListenerPlaybackHandle>>>,
+    /// Audio datagrams forwarded directly to playback, preserving the
+    /// received-packet count the foreign caller used to derive by counting
+    /// the per-packet events it no longer sees.
+    forwarded_audio: AtomicU64,
 }
 
 impl std::fmt::Debug for FfiListenerTransportHandle {
@@ -116,6 +127,8 @@ impl FfiListenerTransportHandle {
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
         let transport = production_transport_factory().connect_listener(config, clock)?;
         Ok(Arc::new(Self {
+            playback: Mutex::new(None),
+            forwarded_audio: AtomicU64::new(0),
             inner: Mutex::new(Some(Inner {
                 transport,
                 session_id,
@@ -185,28 +198,83 @@ impl FfiListenerTransportHandle {
         })
     }
 
-    /// Waits up to `timeout_ms` for the next transport event.
+    /// Attaches a playback runtime so received audio bypasses the foreign
+    /// binding entirely.
     ///
-    /// Returns `None` when the bounded wait elapses without an event.
+    /// While attached, [`Self::poll_event`] submits each arriving audio
+    /// datagram straight into `playback` and keeps polling, so audio frames
+    /// never occupy the foreign caller's event stream. That stream otherwise
+    /// carries one event per audio packet -- 200/second at the current
+    /// packet duration -- and a foreign caller draining it one event at a
+    /// time, copying each payload out and immediately back in, becomes the
+    /// bottleneck. Measured on a real device: clock-sync responses queued
+    /// behind that audio backlog and were timestamped ~140ms late against a
+    /// true network round trip of 7.7ms, which had 94% of sync samples
+    /// rejected and biased the offset estimate -- the reason packets read as
+    /// late and forced the rebuffering heard as dropouts.
+    pub fn attach_playback(&self, playback: Arc<FfiListenerPlaybackHandle>) {
+        if let Ok(mut guard) = self.playback.lock() {
+            *guard = Some(playback);
+        }
+    }
+
+    /// Stops forwarding to a previously attached runtime. Idempotent, and
+    /// must be called before that runtime is stopped so no datagram is
+    /// submitted to a runtime that is shutting down.
+    pub fn detach_playback(&self) {
+        if let Ok(mut guard) = self.playback.lock() {
+            *guard = None;
+        }
+    }
+
+    /// Audio datagrams forwarded straight to playback since connect.
+    #[must_use]
+    pub fn forwarded_audio_count(&self) -> u64 {
+        self.forwarded_audio.load(Ordering::Relaxed)
+    }
+
+    /// Waits up to `timeout_ms` for the next transport event the foreign
+    /// caller needs to see.
+    ///
+    /// Returns `None` when the bounded wait elapses without such an event.
+    /// Audio datagrams are consumed internally while a playback runtime is
+    /// attached (see [`Self::attach_playback`]) and are never returned here,
+    /// so this can legitimately return `None` while a great deal of audio is
+    /// flowing.
     pub fn poll_event(
         &self,
         timeout_ms: u64,
     ) -> Result<Option<FfiListenerTransportEvent>, FfiListenerTransportError> {
-        let mut guard = self.lock()?;
-        let inner = guard
-            .as_mut()
-            .ok_or_else(|| FfiListenerTransportError::Closed("transport is closed".to_owned()))?;
-        match inner
-            .transport
-            .recv_event(Duration::from_millis(timeout_ms))
-        {
-            Ok(event) => Ok(map_event(event)),
-            Err(error)
-                if error.kind == silent_disco_core::transport::TransportErrorKind::Timeout =>
-            {
-                Ok(None)
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
             }
-            Err(error) => Err(error.into()),
+            let event = {
+                let mut guard = self.lock()?;
+                let inner = guard.as_mut().ok_or_else(|| {
+                    FfiListenerTransportError::Closed("transport is closed".to_owned())
+                })?;
+                match inner.transport.recv_event(remaining) {
+                    Ok(event) => event,
+                    Err(error)
+                        if error.kind
+                            == silent_disco_core::transport::TransportErrorKind::Timeout =>
+                    {
+                        return Ok(None);
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
+            // Forwarded audio is consumed here rather than returned, so the
+            // caller's loop keeps pace with control traffic no matter how
+            // much audio is arriving.
+            if let Some(event) = self.forward_audio(event)
+                && let Some(mapped) = map_event(event)
+            {
+                return Ok(Some(mapped));
+            }
         }
     }
 
@@ -277,6 +345,40 @@ impl Drop for FfiListenerTransportHandle {
         {
             drop(inner.transport.shutdown());
         }
+    }
+}
+
+impl FfiListenerTransportHandle {
+    /// Submits `event` straight to an attached playback runtime when it is
+    /// an audio datagram, returning `None` to mean "consumed". Any other
+    /// event, or audio with nothing attached, is handed back unchanged for
+    /// normal mapping.
+    fn forward_audio(&self, event: TransportEvent) -> Option<TransportEvent> {
+        let is_audio = matches!(
+            &event,
+            TransportEvent::FrameReceived {
+                channel: TransportChannel::Audio,
+                frame: ProtocolFrame::Audio(_),
+                ..
+            }
+        );
+        if !is_audio {
+            return Some(event);
+        }
+        let attached = self.playback.lock().ok().and_then(|guard| guard.clone());
+        let Some(playback) = attached else {
+            return Some(event);
+        };
+        let TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Audio(datagram),
+            ..
+        } = event
+        else {
+            unreachable!("checked to be an audio frame above")
+        };
+        playback.submit_core_datagram(datagram);
+        self.forwarded_audio.fetch_add(1, Ordering::Relaxed);
+        None
     }
 }
 
@@ -366,5 +468,155 @@ fn map_control_frame(
         ControlMessage::JoinRequest(_)
         | ControlMessage::Heartbeat(_)
         | ControlMessage::ResyncNotice(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod audio_forwarding_tests {
+    use super::{FfiListenerTransportHandle, ProtocolFrame};
+    use crate::audio_abi::registry_test_guard;
+    use crate::listener_playback::{FfiListenerPlaybackConfig, FfiListenerPlaybackHandle};
+    use silent_disco_core::domain::{
+        MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+    };
+    use silent_disco_core::protocol::{AudioCodec, AudioDatagram, ControlMessage, Disconnect};
+    use silent_disco_core::transport::{TransportChannel, TransportEvent, TransportPeer};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Mutex};
+
+    const SAMPLES_PER_PACKET: u32 = 240;
+
+    /// A handle with no transport: `forward_audio` only consults the
+    /// attached runtime, so this exercises the routing decision on its own,
+    /// without sockets or timing.
+    fn detached_handle() -> FfiListenerTransportHandle {
+        FfiListenerTransportHandle {
+            inner: Mutex::new(None),
+            playback: Mutex::new(None),
+            forwarded_audio: AtomicU64::new(0),
+        }
+    }
+
+    fn playback() -> Arc<FfiListenerPlaybackHandle> {
+        FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
+            session_id: "session-forwarding".to_owned(),
+            stream_id: "stream-forwarding".to_owned(),
+            packet_duration_ms: 5,
+            host_start_time_ms: 0,
+            samples_per_packet: SAMPLES_PER_PACKET,
+            channels: 2,
+            startup_buffer_target_ms: 400,
+            ring_capacity_frames: 48_000,
+            ring_target_fill_frames: 19_200,
+            write_lead_ms: 400,
+            max_prefill_ms: 800,
+            volume: 1.0,
+        })
+        .expect("playback runtime opens")
+    }
+
+    fn audio_event(sequence: u64) -> TransportEvent {
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            peer: TransportPeer {
+                device_id: None,
+                control_address: "127.0.0.1:1".parse().expect("addr"),
+            },
+            frame: ProtocolFrame::Audio(AudioDatagram {
+                session_id: SessionId::new("session-forwarding").expect("session"),
+                stream_id: StreamId::new("stream-forwarding").expect("stream"),
+                sequence: PacketSequence::new(sequence),
+                codec: AudioCodec::PcmS16Le,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: SAMPLES_PER_PACKET,
+                first_sample_index: SampleIndex::new(sequence * u64::from(SAMPLES_PER_PACKET)),
+                host_presentation_time_ms: MonotonicMillis::new(sequence * 5),
+                payload: vec![0_u8; SAMPLES_PER_PACKET as usize * 2 * 2],
+            }),
+            received_at: MonotonicMillis::new(sequence * 5),
+        }
+    }
+
+    fn control_event() -> TransportEvent {
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            peer: TransportPeer {
+                device_id: None,
+                control_address: "127.0.0.1:1".parse().expect("addr"),
+            },
+            frame: ProtocolFrame::Control(ControlMessage::Disconnect(Disconnect {
+                session_id: SessionId::new("session-forwarding").expect("session"),
+                listener_id: silent_disco_core::domain::DeviceId::new("d").expect("device"),
+                reason: "bye".to_owned(),
+            })),
+            received_at: MonotonicMillis::new(0),
+        }
+    }
+
+    /// The whole point of attaching: audio stops occupying the foreign
+    /// caller's event stream. If these frames were still returned, the
+    /// caller would keep paying one event plus two payload copies per
+    /// packet, which is what delayed control traffic behind audio.
+    #[test]
+    fn attached_audio_is_consumed_and_never_surfaced() {
+        let _guard = registry_test_guard();
+        let handle = detached_handle();
+        handle.attach_playback(playback());
+
+        for sequence in 0..5 {
+            assert!(
+                handle.forward_audio(audio_event(sequence)).is_none(),
+                "audio must be consumed while a runtime is attached"
+            );
+        }
+        assert_eq!(handle.forwarded_audio_count(), 5);
+    }
+
+    /// Control traffic must be unaffected -- it is precisely what was being
+    /// delayed, so it has to keep reaching the caller promptly.
+    #[test]
+    fn control_events_are_never_consumed() {
+        let _guard = registry_test_guard();
+        let handle = detached_handle();
+        handle.attach_playback(playback());
+
+        assert!(
+            handle.forward_audio(control_event()).is_some(),
+            "control frames must still reach the caller"
+        );
+        assert_eq!(handle.forwarded_audio_count(), 0);
+    }
+
+    /// With nothing attached the previous behaviour must be preserved, so a
+    /// caller that never attaches still receives audio events.
+    #[test]
+    fn unattached_audio_still_surfaces_to_the_caller() {
+        let _guard = registry_test_guard();
+        let handle = detached_handle();
+        assert!(
+            handle.forward_audio(audio_event(0)).is_some(),
+            "audio must surface when no runtime is attached"
+        );
+        assert_eq!(handle.forwarded_audio_count(), 0);
+    }
+
+    /// Detaching must stop forwarding immediately: submitting into a
+    /// runtime that is being stopped is exactly what the detach ordering in
+    /// the Kotlin controller exists to prevent.
+    #[test]
+    fn detaching_returns_audio_to_the_caller() {
+        let _guard = registry_test_guard();
+        let handle = detached_handle();
+        handle.attach_playback(playback());
+        assert!(handle.forward_audio(audio_event(0)).is_none());
+
+        handle.detach_playback();
+        assert!(
+            handle.forward_audio(audio_event(1)).is_some(),
+            "audio must surface again once detached"
+        );
+        handle.detach_playback();
+        assert_eq!(handle.forwarded_audio_count(), 1);
     }
 }

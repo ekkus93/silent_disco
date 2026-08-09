@@ -1340,3 +1340,40 @@ Same host, same path, same moment: ICMP round-trips in 7.7ms while the app measu
 Secondary, cheaper mitigations if the above is deferred: stamp `t4` in Rust at datagram-receipt time and carry it on the event (note the clock-origin hazard -- `t1` is `PumpClock`-based, so both ends must share one timeline); and separate `rebuffer_target_ms` from `STARTUP_BUFFER_MS` so a stall is not amplified 2-4x.
 
 **Do NOT** pursue: damping the estimator (measured, exonerated), Oboe Exclusive/Shared (measured, never granted Exclusive), the render ring withholding frames (write/render accounting matches to 0.2%), or the network (7.7ms, 0% loss).
+
+## 2026-08-09T23:20:00Z - Claude Opus 5 - FIXED: Rust submits audio directly; user confirms "much better"
+
+Implemented the architectural fix identified in the previous entry: the Rust listener transport now submits received audio datagrams **straight into the playback runtime**, so audio never crosses the foreign binding.
+
+### The change
+
+- `FfiListenerPlaybackHandle::submit_core_datagram` (crate-internal, in a **separate non-exported impl block** -- putting it in the `#[uniffi::export]` block fails to compile, since uniffi tries to export a param type with no foreign representation). Takes the core `AudioDatagram` the transport already parsed, so forwarding costs **no conversion and no payload copy**.
+- `FfiListenerTransportHandle::attach_playback` / `detach_playback` / `forwarded_audio_count`, plus a `forward_audio` helper. `poll_event` now loops against a deadline: audio frames are submitted to the attached runtime and consumed, and only events the caller actually needs are returned.
+- Kotlin attaches after opening the runtime and detaches before stopping it (ordering matters -- never submit into a runtime that is shutting down).
+
+### Measured on the LG G6 -- every metric moved, and the user confirmed "This is much better"
+
+| metric | before | after |
+|---|---|---|
+| sync samples accepted | 3/50 (6%) | **27/30 (90%)** |
+| accepted RTT | 143-177 ms | **25-40 ms** |
+| late packets | 611 | **38** |
+| concealed | 855 | **103** |
+| hard resyncs | 6-7 | **1** |
+| ringSilenceFilled | 280,608 | **122,064** |
+| BUFFERING rows | 15 | **4** |
+| ring peak fill | 19,680 | **46,992** |
+
+Measured RTT fell ~5x toward the 7.7ms ICMP floor, lifting acceptance from 6% to 90%; a well-fed estimator then cut late packets 94% and concealment ~88%. `ringPeakFrames` rising from 19,680 to 46,992 (near the 48,000 capacity) is the clearest single signal that the supply side is healthy -- the ring genuinely fills now instead of stalling at its target.
+
+This validates the whole diagnostic chain from the previous entry, end to end.
+
+### Tests
+
+`audio_forwarding_tests` in `listener_transport/handle.rs` -- four cases covering attached audio consumed and counted, control frames never consumed, unattached audio still surfacing (old behaviour preserved), and detach restoring passthrough. They construct a handle with `inner: None`, since `forward_audio` only consults the attached runtime -- so the routing decision is tested with no sockets and no timing.
+
+Gates: `check-rust.sh`, `desktop npm run check`, `gradlew test lintDebug` all green.
+
+### Residual, for next session
+
+~122k silence frames (~2.5s) and 4 BUFFERING rows remain, now dominated by **startup** buffering rather than mid-stream churn (only 1 hard resync left). The previously-identified item still stands and is now the top of the list: **separate `rebuffer_target_ms` from `STARTUP_BUFFER_MS` (1000ms)**, and consider lowering the startup target now that supply is healthy. Also still worth doing: count offset-driven rebuffers so the two causes stay distinguishable.

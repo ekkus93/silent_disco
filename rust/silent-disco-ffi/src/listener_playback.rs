@@ -1634,3 +1634,19 @@ impl FfiListenerPlaybackHandle {
         Ok(())
     }
 }
+
+/// Crate-internal surface, deliberately outside the `#[uniffi::export]`
+/// block: these take shared-core types that have no foreign representation
+/// and must not be exported.
+impl FfiListenerPlaybackHandle {
+    /// Submits an already-parsed core datagram straight into the runtime.
+    ///
+    /// The listener transport uses this to hand received audio to playback
+    /// without a round trip through the foreign binding. The exported
+    /// `submit_packet` exists for callers that only hold the wire fields;
+    /// this one takes the datagram the transport already parsed, so
+    /// forwarding costs no conversion and no payload copy.
+    pub(crate) fn submit_core_datagram(&self, datagram: AudioDatagram) -> bool {
+        self.runtime.submit_packet(datagram).is_ok()
+    }
+}
