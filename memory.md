@@ -1406,3 +1406,20 @@ The user independently reported scratchiness toward the end, and the per-second 
 - Tune `rebuffer_target_ms` properly, with repeated runs, or leave it at parity.
 - Count offset-driven rebuffers (`SyncApplyOutcome::Rebuffered`) in `PlaybackDiagnostics`, still the only way to distinguish the two rebuffer causes.
 - Residual silence is now dominated by **startup** buffering and by per-stream sync re-acquisition (`droppedBeforeSync` 117-817 per stream), not mid-stream churn.
+
+### Variance check: my reason for reverting the rebuffer tuning was WRONG (the outcome still stands)
+
+Re-ran the same manual test at the shipped parity config to measure run-to-run variance, after flagging it as large but reverting on a single run anyway.
+
+| config | song-a silence | song-b silence | total | BUFFERING rows | ringPeak |
+|---|---|---|---|---|---|
+| A: rebuffer 400ms | 101,472 | **321,024** | 422,496 | 10 | 19,392 / 19,392 |
+| B: parity 1000ms | **173,232** | 71,376 | 244,608 | 4 | 23,472 / 27,840 |
+
+**The song-a/song-b ordering flipped between runs.** Run A had song-b 3.2x worse than song-a; run B has song-b 2.4x *better*. So the claim in the previous entry -- that the 400ms target caused song-b to regress -- **is not supportable**. That was variance, and I generalised from n=1 immediately after warning that n=1 was insufficient.
+
+What does survive: parity totalled less silence (245k vs 422k) with fewer BUFFERING rows (4 vs 10), and run A's `ringPeak` sat at *exactly* the 19,392 target for both streams while parity exceeded it (23,472 / 27,840) -- the one systematic-looking signal, consistent with a shallower rebuffer target capping ring depth. But the within-run spread is 2.4-3.2x, so a 1.7x between-config difference is not distinguishable from noise at one run each.
+
+Also worth noting: `ringPeak` was 46,992 on the earlier direct-submit run, which is behaviourally identical to parity, versus 23,472/27,840 here. So even the *same* configuration varies roughly 2x on that metric. Any future tuning claim on this device needs several runs per config and should compare distributions, not single numbers.
+
+**Conclusion:** keeping parity is still the right call -- it is the configuration a listener confirmed as "much better", and nothing here beats it -- but the reason recorded previously was wrong, and the honest status of the 400ms tuning is *inconclusive*, not *worse*.
