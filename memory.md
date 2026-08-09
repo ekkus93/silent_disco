@@ -1250,3 +1250,18 @@ Attack the resyncs, not the output path. Two threads, in order:
 2. **Make a hard resync not catastrophic.** `PlaybackScheduler::apply_offset_update` -> `AwaitingRebuffer` drains the ring to zero, so every resync is a guaranteed audible hole. CLAUDE.md prefers simple corrections before time-stretch/resampling, but "re-sync during playback is expected" -- so a resync that empties the ring is the wrong default. Consider correcting the mapping in place without discarding buffered audio.
 
 Also worth noting: `droppedBeforeSync=600` per stream, and the host-side "listener has not yet completed a sync exchange" line is a **red herring** -- `AudioEvent::SynchronizationUpdated` is defined but never submitted by the desktop, so that host-side field is simply never populated. Don't chase it.
+
+### Sharper reading of the same diagnostics run (same session, added after re-reading the per-second rows)
+
+The entry above blamed the hard resyncs. They are real, but they are the *second* defect. The dominant one is visible in the ordinary `phase=PLAYING` rows:
+
+```
+emitted=+200 underruns=+100 silenceFrames=+19200 ringQueued=19200 phase=PLAYING
+emitted=+194 underruns=+104 silenceFrames=+19968 ringQueued=18816 phase=PLAYING
+```
+
+The render ring is sitting at **exactly `RING_TARGET_FILL_FRAMES` (19200 = 400ms)** while the callback silence-fills **~19200 frames in that same second** -- roughly 40% of every second replaced by silence, in ~100 chunks/second. A ~100 Hz chop is exactly what "scratchy throughout" sounds like, and it is present on both tracks, in steady state, with no resync involved.
+
+The accounting does not balance either: at ~200 packets/s x 240 frames = ~46,560 frames/s written, and only ~28,000 real frames/s consumed, the ring should grow toward its 48,000 capacity. It never does -- `ringPeakFrames=19680`, `ringFullEvents=0`. So frames are either being held back by the pump's write-lead gate (`RING_WRITE_LEAD_MS=400`, `maxPrefillMs=800`) or dropped somewhere between "emitted" and "queued".
+
+Working hypothesis to test first: the consumer/pump treats the target fill as a floor it must never draw below, so every callback silence-fills the shortfall instead of releasing frames the ring already holds. This is testable **entirely in-process, no device needed** -- a Rust test that fills the render ring to its target and asserts a full-buffer read returns real frames and zero silence-fill would confirm or kill it in minutes. Do that before any further device runs.
