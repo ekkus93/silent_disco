@@ -51,6 +51,9 @@ private const val LOCAL_BIND_ADDRESS = "0.0.0.0"
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 private const val AUDIO_CODEC_NAME = "pcm16le"
 
+/** Durable listener-side diagnostics, beside the debug PCM captures. */
+private const val DIAGNOSTICS_LOG_FILE_NAME = "manual-listener-diagnostics.log"
+
 /**
  * Render ring geometry and pacing handed to the Rust playback runtime, which
  * owns every decision made with them. One second of capacity with a 400ms
@@ -299,6 +302,14 @@ class ManualListenerTransportController(
             while (isActive) {
                 delay(DIAGNOSTICS_SAMPLE_CADENCE_MS)
                 val diagnostics = playbackRuntime?.takeIf { it === runtime }?.diagnostics() ?: break
+                appendDiagnosticsLine(
+                    "sample emitted=+${diagnostics.packetsEmitted - previousEmitted} " +
+                        "concealed=+${diagnostics.concealedPackets - previousConcealed} " +
+                        "underruns=+${diagnostics.ringUnderruns - previousUnderruns} " +
+                        "silenceFrames=+${diagnostics.ringSilenceFilledFrames - previousSilenceFrames} " +
+                        "ringQueued=${diagnostics.ringQueuedFrames} " +
+                        "bufferedMs=${diagnostics.bufferedSpanMs} phase=${diagnostics.phase}",
+                )
                 logger.i(
                     "manual.audio.sample",
                     "emitted=+${diagnostics.packetsEmitted - previousEmitted} " +
@@ -411,7 +422,12 @@ class ManualListenerTransportController(
             return
         }
 
-        stopPlayback()
+        // A genuinely new stream. End whatever was playing but keep the
+        // native output, so the rebind below reuses the stream this session
+        // was granted rather than reopening one. Usually a no-op here, since
+        // the host's `Stop` for the previous track has already ended it the
+        // same way -- this covers a new stream arriving without one.
+        endStream(keepOutputOpen = true)
         receivedCount = 0
         lastReceivedSequence = null
 
@@ -446,7 +462,22 @@ class ManualListenerTransportController(
         playbackRuntime = runtime
         currentStreamId = StreamId(event.streamId)
 
-        val oboeStatus = OboeBridge.nativeOboeOpen(runtime.engineToken())
+        // Reuse the stream this session was already granted whenever one is
+        // open, so a track change swaps only the content. Reopening is the
+        // fallback, not the default: a reopened stream is what the device
+        // downgraded from Exclusive to Shared. A rebind that reports
+        // anything other than success falls back to a fresh open rather
+        // than leaving the output bound to a stream that is gone.
+        val engineToken = runtime.engineToken()
+        var oboeStatus = if (OboeBridge.nativeOboeIsOpen()) {
+            OboeBridge.nativeOboeRebind(engineToken)
+        } else {
+            OboeBridge.nativeOboeOpen(engineToken)
+        }
+        if (oboeStatus != OBOE_ADAPTER_STATUS_OK) {
+            OboeBridge.nativeOboeClose()
+            oboeStatus = OboeBridge.nativeOboeOpen(engineToken)
+        }
         if (oboeStatus != OBOE_ADAPTER_STATUS_OK) {
             stopPlayback()
             handlePlaybackEngineFailure(IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"))
@@ -470,6 +501,25 @@ class ManualListenerTransportController(
      * makes audio defects objectively measurable rather than a matter of
      * describing what playback sounded like.
      */
+    /**
+     * Appends one diagnostic line to a durable file beside the debug PCM
+     * capture, when a recording directory is configured.
+     *
+     * `AppLogger` reaches only logcat, which is entirely unavailable on some
+     * real devices (confirmed on an Android 8.0 phone: every buffer empty,
+     * `ro.logdumpd.enabled=0`). Physical-device validation is exactly where
+     * these numbers matter most, and the in-app diagnostics screen cannot be
+     * reached mid-stream without tearing the session down -- so without a
+     * file sink a real run's listener-side counters are simply unobservable.
+     */
+    private fun appendDiagnosticsLine(line: String) {
+        val directory = debugRecordingDirectory ?: return
+        runCatching {
+            File(directory, DIAGNOSTICS_LOG_FILE_NAME)
+                .appendText("[t=${SystemClock.elapsedRealtime()}] $line\n")
+        }
+    }
+
     private fun startDebugCapture(runtime: FfiListenerPlaybackHandle, streamId: String) {
         val directory = debugRecordingDirectory ?: return
         val file = File(directory, "manual-listener-$streamId.wav")
@@ -482,31 +532,59 @@ class ManualListenerTransportController(
 
     private fun handleStreamStopped() {
         // The runtime drains its own buffered tail as part of stopping, so a
-        // stream's final moments are played rather than discarded.
-        stopPlayback()
+        // stream's final moments are played rather than discarded. The native
+        // output deliberately stays open: the session is still live and the
+        // host may start another track, which then rebinds this same stream
+        // instead of reopening one (see [endStream]).
+        endStream(keepOutputOpen = true)
         _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
     }
 
-    /** Stops Rust playback and the native output, logging the stream's final accounting. */
-    private fun stopPlayback() {
+    /**
+     * Fully tears down playback *and* the native output. For ending the
+     * current stream while the session continues, use
+     * `endStream(keepOutputOpen = true)` instead.
+     */
+    private fun stopPlayback() = endStream(keepOutputOpen = false)
+
+    /**
+     * Ends the current stream, logging its final accounting.
+     *
+     * `keepOutputOpen` decides whether the native Oboe stream survives. The
+     * output device belongs to the *connection*, not to one track: a device
+     * that grants an Exclusive/low-latency stream on the first open may grant
+     * only `Shared` when that stream is closed and immediately reopened
+     * (observed on a real Android 8.0 device), which makes a second track
+     * play through a measurably different output path than the first. So a
+     * track change keeps the stream and rebinds it, and only a genuine
+     * teardown -- disconnect, rejection, or closing the controller -- closes
+     * it.
+     */
+    private fun endStream(keepOutputOpen: Boolean) {
         syncProbeJob?.cancel()
         syncProbeJob = null
         diagnosticsSampleJob?.cancel()
         diagnosticsSampleJob = null
-        val runtime = playbackRuntime ?: return
+        val runtime = playbackRuntime ?: run {
+            // No stream to end, but a teardown still has to release the
+            // output; leaving a low-latency stream running against a
+            // released token would burn the radio and the CPU for silence.
+            if (!keepOutputOpen) OboeBridge.nativeOboeClose()
+            return
+        }
         playbackRuntime = null
         currentStreamId = null
         // Order matters and is deliberate: `stop()` drains the render ring
         // *through the still-running Oboe callback* so the stream ends on its
         // own final sample rather than mid-note (see `await_ring_drain`, which
         // documents that a consumer closed first means the ring never drains).
-        // The brief window between the token's release inside `stop()` and the
-        // close below is contained by the ABI itself -- a released token reads
-        // as silence, never as freed memory.
+        // The window between the token's release inside `stop()` and either
+        // the close below or the next track's rebind is contained by the ABI
+        // itself -- a released token reads as silence, never as freed memory.
         runCatching { runtime.stop() }.onFailure { error ->
             logger.w("manual.audio.stop_failed", error.message ?: "playback failed to stop cleanly")
         }
-        OboeBridge.nativeOboeClose()
+        if (!keepOutputOpen) OboeBridge.nativeOboeClose()
         logPlaybackSummary(runtime)
         runtime.close()
     }
@@ -520,6 +598,20 @@ class ManualListenerTransportController(
      */
     private fun logPlaybackSummary(runtime: FfiListenerPlaybackHandle) {
         val diagnostics = runtime.finalDiagnostics() ?: runtime.diagnostics()
+        appendDiagnosticsLine(
+            "summary streamId=$currentStreamId received=$receivedCount " +
+                "accepted=${diagnostics.packetsAccepted} emitted=${diagnostics.packetsEmitted} " +
+                "concealed=${diagnostics.concealedPackets} late=${diagnostics.lateRejections} " +
+                "skipped=${diagnostics.sequencesSkipped} " +
+                "droppedBeforeSync=${diagnostics.droppedBeforeSync} " +
+                "hardResyncs=${diagnostics.hardResyncSignals} " +
+                "ringUnderruns=${diagnostics.ringUnderruns} " +
+                "ringSilenceFilled=${diagnostics.ringSilenceFilledFrames} " +
+                "ringFullEvents=${diagnostics.ringFullEvents} " +
+                "ringPeakFrames=${diagnostics.ringPeakQueuedFrames} " +
+                "prefillFrames=${diagnostics.prefillFrames} phase=${diagnostics.phase} " +
+                "oboe=${OboeBridge.lastOpenSummary()}",
+        )
         logger.i(
             "manual.audio.summary",
             "received=$receivedCount accepted=${diagnostics.packetsAccepted} " +

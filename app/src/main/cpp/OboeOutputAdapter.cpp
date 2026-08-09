@@ -78,7 +78,7 @@ OboeAdapterStatus OboeOutputAdapter::open(int64_t engineToken) {
         return OboeAdapterStatus::AbiSymbolsUnavailable;
     }
 
-    engineToken_ = engineToken;
+    engineToken_.store(engineToken, std::memory_order_release);
     fatalStatus_.store(0, std::memory_order_relaxed);
     disconnected_.store(false, std::memory_order_relaxed);
 
@@ -105,7 +105,7 @@ OboeAdapterStatus OboeOutputAdapter::open(int64_t engineToken) {
 
     std::shared_ptr<oboe::AudioStream> stream;
     if (builder.openStream(stream) != oboe::Result::OK) {
-        engineToken_ = 0;
+        engineToken_.store(0, std::memory_order_release);
         return OboeAdapterStatus::OpenFailed;
     }
 
@@ -125,7 +125,7 @@ OboeAdapterStatus OboeOutputAdapter::open(int64_t engineToken) {
         // Writing float samples into a non-float stream would produce
         // garbage audio rather than silence; fail explicitly instead.
         stream->close();
-        engineToken_ = 0;
+        engineToken_.store(0, std::memory_order_release);
         return OboeAdapterStatus::UnexpectedFormat;
     }
 
@@ -134,18 +134,18 @@ OboeAdapterStatus OboeOutputAdapter::open(int64_t engineToken) {
     // reported instead of rendered.
     if (stream->getSampleRate() != 48000) {
         stream->close();
-        engineToken_ = 0;
+        engineToken_.store(0, std::memory_order_release);
         return OboeAdapterStatus::UnexpectedSampleRate;
     }
     if (stream->getChannelCount() != 2) {
         stream->close();
-        engineToken_ = 0;
+        engineToken_.store(0, std::memory_order_release);
         return OboeAdapterStatus::UnexpectedChannelCount;
     }
 
     if (stream->requestStart() != oboe::Result::OK) {
         stream->close();
-        engineToken_ = 0;
+        engineToken_.store(0, std::memory_order_release);
         return OboeAdapterStatus::StartFailed;
     }
 
@@ -160,7 +160,23 @@ void OboeOutputAdapter::close() {
     stream_->stop();
     stream_->close();
     stream_ = nullptr;
-    engineToken_ = 0;
+    engineToken_.store(0, std::memory_order_release);
+}
+
+OboeAdapterStatus OboeOutputAdapter::rebind(int64_t engineToken) {
+    if (stream_ == nullptr) {
+        return OboeAdapterStatus::NotOpen;
+    }
+    // A single relaxed-ordering store would be enough for the pointer value
+    // itself, but release/acquire pairs it with the callback's load so the
+    // ring this token refers to is fully published before the callback can
+    // observe the token at all.
+    engineToken_.store(engineToken, std::memory_order_release);
+    rebindCount_ += 1;
+    __android_log_print(ANDROID_LOG_INFO, kLogTag,
+                         "rebind #%d onto the existing stream (opens=%d)",
+                         rebindCount_, openCount_);
+    return OboeAdapterStatus::Ok;
 }
 
 bool OboeOutputAdapter::isOpen() const {
@@ -192,7 +208,7 @@ uint64_t OboeOutputAdapter::underrunCount() const {
         return 0;
     }
     auto *engine = reinterpret_cast<const SilentDiscoAudioEngine *>(
-            static_cast<uintptr_t>(engineToken_));
+            static_cast<uintptr_t>(engineToken_.load(std::memory_order_acquire)));
     return queryFn(engine);
 }
 
@@ -205,7 +221,7 @@ uint64_t OboeOutputAdapter::silenceFilledFrames() const {
         return 0;
     }
     auto *engine = reinterpret_cast<const SilentDiscoAudioEngine *>(
-            static_cast<uintptr_t>(engineToken_));
+            static_cast<uintptr_t>(engineToken_.load(std::memory_order_acquire)));
     return queryFn(engine);
 }
 
@@ -218,7 +234,7 @@ uint64_t OboeOutputAdapter::framesRendered() const {
         return 0;
     }
     auto *engine = reinterpret_cast<const SilentDiscoAudioEngine *>(
-            static_cast<uintptr_t>(engineToken_));
+            static_cast<uintptr_t>(engineToken_.load(std::memory_order_acquire)));
     return queryFn(engine);
 }
 
@@ -230,7 +246,7 @@ oboe::DataCallbackResult OboeOutputAdapter::onAudioReady(
     }
 
     auto *engine = reinterpret_cast<SilentDiscoAudioEngine *>(
-            static_cast<uintptr_t>(engineToken_));
+            static_cast<uintptr_t>(engineToken_.load(std::memory_order_acquire)));
     uint32_t framesFromRing = 0;
     SilentDiscoAudioStatus status = readFn(
             engine,

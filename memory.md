@@ -1210,3 +1210,43 @@ Song-b is still scratchy. The unfixed part is the **Shared-mode re-open itself**
 ### Gates
 
 `bash scripts/check-rust.sh`, `cd desktop && npm run check`, and `./gradlew test lintDebug` all green, actually executed.
+
+## 2026-08-09T22:30:00Z - Claude Opus 5 - Oboe rebind landed; Exclusive/Shared theory REFUTED; real cause measured: repeated hard resyncs
+
+### Oboe rebind (done, verified mechanically)
+
+`OboeOutputAdapter::rebind(engineToken)` now points the running stream at a new render-ring token without closing/reopening; `engineToken_` became `std::atomic<int64_t>` (static_assert'd lock-free) so the real-time callback can load it while a control-plane rebind stores. `ManualListenerTransportController` gained `endStream(keepOutputOpen)`: a track change keeps the native output and rebinds, while genuine teardown (disconnect/rejection/close) still closes it. Verified on device: `opens=1 rebinds=1` where it used to be `opens=2`.
+
+### The Exclusive->Shared theory was WRONG
+
+The previous entry hypothesized the *second* open was downgraded Exclusive->Shared. With rebinding in place the diagnostic reads `opens=1 rebinds=1 ... sharing=Shared` -- **the very first open is already Shared**. There was never a downgrade; the device simply never grants Exclusive here. The earlier entry's caveat ("not directly measured") was the right instinct and the measurement refuted the theory. The rebind is still worth keeping (it removes a real reopen-churn variable and is architecturally correct: the output device belongs to the connection, not to one track), but it is **not** the fix, and the user still hears popping/scratching.
+
+### The WAV-capture conclusion was ALSO wrong -- important methodology correction
+
+The previous entry concluded "song-a and song-b captures are near-identical, so upstream is fine, the fault is in the output path." That inference is invalid. The debug capture only contains frames **actually written** to the ring, so a dropout is *missing time*, not corrupted samples -- a zero-run/discontinuity scan cannot see it. The evidence was in the numbers I already had and I misread it: song-a's capture is **31.28s of audio for ~35s of playback**. That ~4s deficit *is* the dropouts. Compare captured duration against expected duration before concluding anything from a capture.
+
+### What is actually wrong (measured, not inferred)
+
+Added a durable listener-side diagnostics file (`manual-listener-diagnostics.log`, written beside the debug WAVs via the already-configured `debugRecordingDirectory`) because `AppLogger` only reaches logcat, which is entirely dead on this device, and the in-app diagnostics screen cannot be opened mid-stream without tearing the session down. One run then produced the real numbers:
+
+| | song-a | song-b |
+|---|---|---|
+| ringUnderruns | 1463 | 1079 |
+| ringSilenceFilled | 280608 frames (**5.8s**) | 206736 (**4.3s**) |
+| concealed | 855 | 1187 |
+| skipped | 925 | 1187 |
+| late | 611 | 382 |
+| droppedBeforeSync | 600 | 604 |
+| **hardResyncs** | **6** | **4** |
+
+~5 seconds of injected silence per ~31s stream (19% / 14%). **Both** songs are badly degraded -- this was never a song-b-specific defect, which is why every song-b-specific hypothesis kept failing.
+
+Per-second trace shows the mechanism outright: the stream repeatedly re-enters `phase=BUFFERING` **mid-playback** with `ringQueued=0` (e.g. `underruns=+90 silenceFrames=+17184 ringQueued=0 phase=BUFFERING`, then again 9s later). Each hard resync sets `AwaitingRebuffer`, the ring drains to zero, and the callback silence-fills until the startup buffer refills -- an audible dropout every time. Startup alone costs 3 full seconds of buffering (~138k of song-a's 280k silence frames).
+
+### Next step (not started)
+
+Attack the resyncs, not the output path. Two threads, in order:
+1. **Why is the offset estimate jumping past `hard_resync_threshold_ms` 4-6 times in 30s?** The host is provably clean (exact packet cadence, zero queue overflows, full delivery), so this is the listener's `ClockSyncEstimator` accepting unstable samples -- likely RTT-driven jitter on Wi-Fi. Look at the estimator's acceptance bound and whether a single bad sample can move the estimate that far.
+2. **Make a hard resync not catastrophic.** `PlaybackScheduler::apply_offset_update` -> `AwaitingRebuffer` drains the ring to zero, so every resync is a guaranteed audible hole. CLAUDE.md prefers simple corrections before time-stretch/resampling, but "re-sync during playback is expected" -- so a resync that empties the ring is the wrong default. Consider correcting the mapping in place without discarding buffered audio.
+
+Also worth noting: `droppedBeforeSync=600` per stream, and the host-side "listener has not yet completed a sync exchange" line is a **red herring** -- `AudioEvent::SynchronizationUpdated` is defined but never submitted by the desktop, so that host-side field is simply never populated. Don't chase it.

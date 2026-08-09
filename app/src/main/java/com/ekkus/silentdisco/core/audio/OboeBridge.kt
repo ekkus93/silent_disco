@@ -16,6 +16,14 @@ object OboeBridge {
 
     /** Opens the native Oboe output stream bound to `engineToken`; returns an `OboeAdapterStatus` code. */
     external fun nativeOboeOpen(engineToken: Long): Int
+    /**
+     * Points the already-open stream at a different render-ring engine token
+     * without reopening it; returns an `OboeAdapterStatus` code, `NotOpen`
+     * (-7) when there is no stream to rebind. Used for a track change, so a
+     * session keeps the one output stream it was originally granted.
+     */
+    external fun nativeOboeRebind(engineToken: Long): Int
+
     external fun nativeOboeClose()
     external fun nativeOboeIsOpen(): Boolean
     external fun nativeOboeActualSampleRate(): Int

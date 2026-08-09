@@ -22,6 +22,12 @@ Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeOpen(
     return static_cast<jint>(adapter().open(static_cast<int64_t>(engineToken)));
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeRebind(
+        JNIEnv * /* env */, jobject /* this */, jlong engineToken) {
+    return static_cast<jint>(adapter().rebind(static_cast<int64_t>(engineToken)));
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeClose(
         JNIEnv * /* env */, jobject /* this */) {
@@ -83,8 +89,9 @@ Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeLastOpenSummary(
         JNIEnv *env, jobject /* this */) {
     char buffer[192];
     snprintf(buffer, sizeof(buffer),
-             "opens=%d sampleRate=%d channels=%d sharing=%s perf=%s",
+             "opens=%d rebinds=%d sampleRate=%d channels=%d sharing=%s perf=%s",
              adapter().openCount(),
+             adapter().rebindCount(),
              adapter().lastOpenSampleRate(),
              adapter().lastOpenChannelCount(),
              adapter().lastOpenSharingMode() == static_cast<int32_t>(oboe::SharingMode::Exclusive)

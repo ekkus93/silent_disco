@@ -26,6 +26,9 @@ enum class OboeAdapterStatus : int32_t {
     // stream, so it is reported rather than played.
     UnexpectedSampleRate = -5,
     UnexpectedChannelCount = -6,
+    // rebind() was called with no stream open. The caller opens instead;
+    // this is a state report, not a failure of the rebind itself.
+    NotOpen = -7,
 };
 
 // Owns one Oboe output stream bound to one Rust render-ring engine token.
@@ -49,6 +52,25 @@ public:
     // `engineToken` (opaque; see include/silent_disco_audio.h) and starts
     // it. Returns AlreadyOpen without changing anything if already open.
     OboeAdapterStatus open(int64_t engineToken);
+
+    // Points the already-running stream at a different render-ring engine
+    // token, without stopping, closing, or reopening it.
+    //
+    // This is what a track change uses. Closing an Exclusive/MMAP stream and
+    // immediately reopening it does not reliably get the exclusive path back
+    // -- a real Android 8.0 device granted `Shared` on the second open
+    // (2026-08-09), so a second track rendered through a different output
+    // path, with different burst and callback timing, than the first.
+    // Keeping one stream for the session's lifetime removes that entire
+    // class of difference: the output device is owned by the connection, not
+    // by an individual stream, so only the *content* changes between tracks.
+    //
+    // Safe against the live callback: the token is swapped atomically, and
+    // both the outgoing and incoming tokens are always valid to read through
+    // (a released token reads as silence via the ABI, never freed memory),
+    // so a callback landing mid-swap sees one or the other and never a torn
+    // value. Call only after the outgoing stream has finished draining.
+    OboeAdapterStatus rebind(int64_t engineToken);
 
     // Stops and closes the stream. Safe to call even if not open.
     void close();
@@ -74,8 +96,12 @@ public:
     int32_t lastOpenPerformanceMode() const { return lastOpenPerformanceMode_; }
     // Times open() has been called successfully this process; a defect that
     // only appears on the second and later streams is otherwise easy to
-    // mistake for one that appears at random.
+    // mistake for one that appears at random. With rebinding working, a
+    // multi-track session should show openCount 1 and rebindCount climbing;
+    // an openCount that tracks the track count means something fell back to
+    // reopening and the Shared-downgrade risk is back.
     int32_t openCount() const { return openCount_; }
+    int32_t rebindCount() const { return rebindCount_; }
 
     // Non-real-time: returns and clears the fatal status last observed by
     // the real-time callback (SILENT_DISCO_AUDIO_PANIC_CONTAINED or
@@ -103,7 +129,13 @@ public:
 
 private:
     std::shared_ptr<oboe::AudioStream> stream_;
-    int64_t engineToken_ = 0;
+    // Atomic because the real-time callback loads it on every wake-up while
+    // a control-plane rebind() may be storing a new one; 64-bit atomics are
+    // lock-free on every ABI this app ships, so the callback stays real-time
+    // safe.
+    static_assert(std::atomic<int64_t>::is_always_lock_free,
+                  "engine token must be lock-free for the real-time callback");
+    std::atomic<int64_t> engineToken_{0};
     std::atomic<int32_t> fatalStatus_{0};
     std::atomic<bool> disconnected_{false};
     int32_t lastOpenSampleRate_ = 0;
@@ -111,6 +143,7 @@ private:
     int32_t lastOpenSharingMode_ = -1;
     int32_t lastOpenPerformanceMode_ = -1;
     int32_t openCount_ = 0;
+    int32_t rebindCount_ = 0;
 };
 
 }  // namespace silentdisco
