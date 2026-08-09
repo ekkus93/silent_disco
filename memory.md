@@ -1423,3 +1423,28 @@ What does survive: parity totalled less silence (245k vs 422k) with fewer BUFFER
 Also worth noting: `ringPeak` was 46,992 on the earlier direct-submit run, which is behaviourally identical to parity, versus 23,472/27,840 here. So even the *same* configuration varies roughly 2x on that metric. Any future tuning claim on this device needs several runs per config and should compare distributions, not single numbers.
 
 **Conclusion:** keeping parity is still the right call -- it is the configuration a listener confirmed as "much better", and nothing here beats it -- but the reason recorded previously was wrong, and the honest status of the 400ms tuning is *inconclusive*, not *worse*.
+
+### Measured the noise floor properly (n=8): single-run comparisons on this device are worthless
+
+Ran the manual test 3 more times unattended (a driver script starts the test, auto-connects the phone over adb, waits, repeats -- worth reusing: `/tmp/variance_runs.sh` pattern) and let the diagnostics file accumulate, giving **8 stream samples at one fixed configuration** (shipped parity).
+
+| metric | min | median | max | max/min |
+|---|---|---|---|---|
+| ringSilenceFilled | 71,376 | 172,920 | **1,281,840** | **18x** |
+| concealed | 2 | 215 | 660 | 330x |
+| late | 0 | 119 | 318 | -- |
+| ringUnderruns | 376 | 902 | 6,677 | 17.8x |
+| ringPeakFrames | 22,224 | 29,736 | 48,000 | 2.2x |
+| droppedBeforeSync | 76 | 414 | 4,629 | 61x |
+
+`ringSilenceFilled` **stdev is 117% of the mean** -- the noise exceeds the signal.
+
+**Consequence 1 -- the rebuffer tuning question is settled as unanswerable at n=1.** Both 400ms samples (101,472 / 321,024) sit comfortably inside the parity range. There is no evidence the configs differ. Parity's *median* (172,920) is lower than the 400ms mean, but parity's *mean* (316,944) is higher, because one outlier drags it -- so even the direction flips depending on the statistic. Keep parity (a listener confirmed it), but record the tuning as **indistinguishable**, not better or worse.
+
+**Consequence 2 -- retroactive caution about this session's earlier numbers.** Several comparisons here were single-run. Re-examined against the noise floor:
+- *Still sound*: the direct-submit fix. Sync acceptance 3/50 -> 27/30 and measured RTT 143-177ms -> 25-40ms are categorical, mechanism-level changes far outside this spread, and a listener independently confirmed the difference. `late` 611 -> 38 also exceeds the observed range (max 318).
+- *Not sound on its own*: `ringSilenceFilled` 280,608 -> 122,064, which I cited as evidence. Both values sit inside the parity distribution. That metric alone never distinguished anything and should not have been presented as though it did.
+
+**Consequence 3 -- a genuine reliability finding, not a measurement artifact.** One of 8 streams (12.5%) logged **1,281,840 silence frames -- ~27 seconds** of injected silence, with 6,677 underruns and 4,629 droppedBeforeSync. That is a catastrophic-outcome tail of roughly 1 stream in 8, against a project success criterion of "listeners hear the same thing about 99% of the time". The tail, not the median, is the thing to chase next: the median stream is now decent, but the worst case is not close to acceptable.
+
+**Standing rule for this device:** compare distributions over >=4 runs per configuration, never single numbers. Differences under ~2x are indistinguishable from noise.
