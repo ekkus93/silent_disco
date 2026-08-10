@@ -160,6 +160,14 @@ pub struct PlaybackPump {
     peak_queued_frames: usize,
     /// Packets discarded because they arrived before sync locked.
     dropped_before_sync: u64,
+    /// Times a clock-offset jump too large to splice forced a rebuffer --
+    /// the counterpart to `ConcealmentStatistics::hard_resync_signals`, which
+    /// only counts the *other* rebuffer cause (the consecutive-concealment
+    /// bound). Before A4.4 this was produced (`SyncApplyOutcome::Rebuffered`)
+    /// but never counted anywhere, so `hard_resync_signals` under-reported:
+    /// a stream could rebuffer repeatedly from offset jumps alone and still
+    /// read `hardResyncs=0`. See `PlaybackDiagnostics::hard_resync_signals`.
+    offset_driven_rebuffers: u64,
     /// Optional capture of exactly what was released toward the ring.
     recorder: Option<DebugPcmRecorder>,
     /// First recorder failure, kept so a broken capture is visible rather than
@@ -199,6 +207,14 @@ pub struct PlaybackDiagnostics {
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the consecutive-concealment bound forced a rebuffer.
+    pub concealment_driven_rebuffers: u64,
+    /// Times a clock-offset jump too large to splice forced a rebuffer.
+    pub offset_driven_rebuffers: u64,
+    /// Every hard resync regardless of cause -- `concealment_driven_rebuffers`
+    /// `+ offset_driven_rebuffers`. Kept as the total under its original name
+    /// so every existing reader (Kotlin diagnostics logging, prior device
+    /// measurements recorded in `memory.md`) keeps meaning "how many times
+    /// did playback hard-rebuffer", not just one of the two causes (A4.4).
     pub hard_resync_signals: u64,
     /// Buffered presentation-time span currently held, in milliseconds.
     pub buffered_span_ms: u64,
@@ -288,6 +304,7 @@ impl PlaybackPump {
             offset_ms: 0.0,
             peak_queued_frames: 0,
             dropped_before_sync: 0,
+            offset_driven_rebuffers: 0,
             recorder: None,
             recorder_error: None,
         })
@@ -318,6 +335,7 @@ impl PlaybackPump {
                 // be re-aligned to the timeline rather than inheriting
                 // whatever depth happened to remain.
                 self.awaiting_prefill = true;
+                self.offset_driven_rebuffers = self.offset_driven_rebuffers.saturating_add(1);
                 SyncApplyOutcome::Rebuffered
             }
         }
@@ -423,7 +441,11 @@ impl PlaybackPump {
             resynchronisations: jitter.resynchronisations,
             dropped_before_sync: self.dropped_before_sync,
             concealed_packets: concealment.total_concealed_packets,
-            hard_resync_signals: concealment.hard_resync_signals,
+            concealment_driven_rebuffers: concealment.hard_resync_signals,
+            offset_driven_rebuffers: self.offset_driven_rebuffers,
+            hard_resync_signals: concealment
+                .hard_resync_signals
+                .saturating_add(self.offset_driven_rebuffers),
             buffered_span_ms: self.scheduler.buffered_span_ms(),
             ring_queued_frames: self.queued_frames(),
             ring_peak_queued_frames: self.peak_queued_frames,
@@ -1130,10 +1152,103 @@ mod tests {
             pump.apply_sync_offset(1_010.0),
             SyncApplyOutcome::SoftCorrected
         );
+        assert_eq!(pump.diagnostics().offset_driven_rebuffers, 0);
         // Beyond the hard-resync threshold: re-accumulate rather than splice.
         assert_eq!(
             pump.apply_sync_offset(1_500.0),
             SyncApplyOutcome::Rebuffered
+        );
+        // A4.4: an offset-driven rebuffer must be counted, and counted in
+        // `hard_resync_signals` too -- before this fix, `SyncApplyOutcome::
+        // Rebuffered` was produced but discarded at its one production call
+        // site, so `hardResyncs` silently under-reported any stream whose
+        // rebuffers were offset-driven rather than concealment-driven.
+        let diagnostics = pump.diagnostics();
+        assert_eq!(diagnostics.offset_driven_rebuffers, 1);
+        assert_eq!(diagnostics.concealment_driven_rebuffers, 0);
+        assert_eq!(diagnostics.hard_resync_signals, 1);
+
+        // A second jump keeps counting, independently of the concealment path.
+        assert_eq!(
+            pump.apply_sync_offset(2_100.0),
+            SyncApplyOutcome::Rebuffered
+        );
+        let diagnostics = pump.diagnostics();
+        assert_eq!(diagnostics.offset_driven_rebuffers, 2);
+        assert_eq!(diagnostics.hard_resync_signals, 2);
+    }
+
+    #[test]
+    fn hard_resync_signals_sums_concealment_and_offset_driven_causes() {
+        // A4.4: the two rebuffer causes must both land in the same total,
+        // not just whichever one a given code path happened to count first.
+        let mut scheduler_config = SchedulerConfig::new(
+            SessionId::new("session-pump").expect("session id"),
+            StreamId::new("stream-pump").expect("stream id"),
+            PACKET_DURATION_MS,
+            HOST_START_MS,
+            SAMPLES_PER_PACKET,
+            2,
+        );
+        scheduler_config.startup_buffer_target_ms = 0;
+        scheduler_config.max_consecutive_concealed_packets = 2;
+        let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+        let ring = RenderRing::new(RenderRingConfig {
+            capacity_frames: 48_000,
+            target_fill_frames: 19_200,
+        })
+        .expect("valid ring");
+        let (producer, _consumer) = ring.split();
+        let mut pump =
+            PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+        pump.apply_sync_offset(0.0);
+
+        // Force a concealment-driven rebuffer exactly as
+        // `a_paused_scheduler_is_re_armed_so_playback_recovers_after_an_outage`
+        // does below: one packet arrives, then nothing more, so the
+        // consecutive-concealment bound (2) trips.
+        pump.scheduler_mut()
+            .submit_packet(datagram(0, 16_384))
+            .expect("accepted");
+        assert!(matches!(pump.tick(HOST_START_MS), PumpTick::Queued { .. }));
+        assert!(matches!(
+            pump.tick(HOST_START_MS + u64::from(PACKET_DURATION_MS)),
+            PumpTick::Queued {
+                concealed: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            pump.tick(HOST_START_MS + 2 * u64::from(PACKET_DURATION_MS)),
+            PumpTick::AwaitingRebuffer
+        ));
+        let after_concealment = pump.diagnostics();
+        assert_eq!(
+            after_concealment.concealment_driven_rebuffers, 1,
+            "expected the consecutive-concealment bound to have tripped exactly once"
+        );
+        assert_eq!(after_concealment.offset_driven_rebuffers, 0);
+        assert_eq!(
+            after_concealment.hard_resync_signals,
+            after_concealment.concealment_driven_rebuffers
+        );
+
+        // Now force an offset-driven rebuffer too. Both causes must be
+        // reflected in the same total.
+        assert_eq!(
+            pump.apply_sync_offset(5_000.0),
+            SyncApplyOutcome::Rebuffered
+        );
+        let after_both = pump.diagnostics();
+        assert_eq!(after_both.offset_driven_rebuffers, 1);
+        assert_eq!(
+            after_both.concealment_driven_rebuffers, after_concealment.concealment_driven_rebuffers,
+            "the offset-driven jump must not also count as a concealment event"
+        );
+        assert_eq!(
+            after_both.hard_resync_signals,
+            after_both.concealment_driven_rebuffers + 1,
+            "hard_resync_signals must be the sum of both causes, not just one"
         );
     }
 

@@ -1265,6 +1265,11 @@ pub struct FfiPlaybackDiagnostics {
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the concealment bound forced a rebuffer.
+    pub concealment_driven_rebuffers: u64,
+    /// Times a clock-offset jump too large to splice forced a rebuffer.
+    pub offset_driven_rebuffers: u64,
+    /// Every hard resync regardless of cause -- `concealment_driven_rebuffers`
+    /// `+ offset_driven_rebuffers` (A4.4).
     pub hard_resync_signals: u64,
     /// Buffered presentation-time span currently held.
     pub buffered_span_ms: u64,
@@ -1373,6 +1378,8 @@ impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
             resynchronisations: diagnostics.resynchronisations,
             dropped_before_sync: diagnostics.dropped_before_sync,
             concealed_packets: diagnostics.concealed_packets,
+            concealment_driven_rebuffers: diagnostics.concealment_driven_rebuffers,
+            offset_driven_rebuffers: diagnostics.offset_driven_rebuffers,
             hard_resync_signals: diagnostics.hard_resync_signals,
             buffered_span_ms: diagnostics.buffered_span_ms,
             ring_queued_frames: to_u64(diagnostics.ring_queued_frames),

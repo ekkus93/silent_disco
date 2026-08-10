@@ -722,7 +722,11 @@ class ManualListenerTransportController(
                 "concealed=${diagnostics.concealedPackets} late=${diagnostics.lateRejections} " +
                 "skipped=${diagnostics.sequencesSkipped} " +
                 "droppedBeforeSync=${diagnostics.droppedBeforeSync} " +
+                // A4.4: `hardResyncs` is the sum of both rebuffer causes --
+                // the concealment/offset breakdown is what tells them apart.
                 "hardResyncs=${diagnostics.hardResyncSignals} " +
+                "(concealment=${diagnostics.concealmentDrivenRebuffers} " +
+                "offset=${diagnostics.offsetDrivenRebuffers}) " +
                 "ringUnderruns=${diagnostics.ringUnderruns} " +
                 "ringSilenceFilled=${diagnostics.ringSilenceFilledFrames} " +
                 "ringFullEvents=${diagnostics.ringFullEvents} " +
@@ -738,6 +742,8 @@ class ManualListenerTransportController(
                 "duplicate=${diagnostics.duplicateRejections} " +
                 "reorderWindow=${diagnostics.reorderWindowRejections} " +
                 "hardResyncs=${diagnostics.hardResyncSignals} " +
+                "(concealment=${diagnostics.concealmentDrivenRebuffers} " +
+                "offset=${diagnostics.offsetDrivenRebuffers}) " +
                 "resyncs=${diagnostics.resynchronisations} " +
                 "droppedBeforeSync=${diagnostics.droppedBeforeSync} " +
                 "ringPeakFrames=${diagnostics.ringPeakQueuedFrames} " +

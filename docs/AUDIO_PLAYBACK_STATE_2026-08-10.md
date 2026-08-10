@@ -309,10 +309,34 @@ the "Find a session" BLE path that triggers it. See `AndroidManifest.xml`.
 device confirmation under real sustained loss still pending, folded into A6.
 
 **A4. Close the residual gaps**
-- A4.1 Re-measure §2 as a distribution (≥4 runs) for a clean baseline.
+- A4.1 ~~Re-measure §2 as a distribution (≥4 runs) for a clean baseline.~~
+  Done — see §2.
 - A4.2 Revisit `STARTUP_BUFFER_MS` (1000 ms) now that supply is healthy.
 - A4.3 Tune `rebuffer_target_ms` only with several runs per config.
-- A4.4 Count offset-driven rebuffers so `hardResyncs` stops under-reporting.
+- A4.4 ~~Count offset-driven rebuffers so `hardResyncs` stops
+  under-reporting.~~ **Done and confirmed on real hardware, 2026-08-10.**
+  `SyncApplyOutcome::Rebuffered` (produced whenever a clock-offset jump
+  exceeds `hard_resync_threshold_ms`, default 120ms) was computed but
+  discarded at its one production call site
+  (`listener_playback.rs::observe_sync_response`), so a stream whose
+  rebuffers were all offset-driven read `hardResyncs=0` even while
+  genuinely rebuffering. `PlaybackPump` now tracks it as
+  `offset_driven_rebuffers`, distinct from the pre-existing
+  `concealment_driven_rebuffers` (the consecutive-concealment-bound path);
+  `hard_resync_signals`/`hardResyncs` is now their sum, so the field keeps
+  meaning "every hard resync" rather than just one cause. Mirrored through
+  `FfiPlaybackDiagnostics` and the Kotlin diagnostics log line, which now
+  prints the breakdown alongside the total:
+  `hardResyncs=1 (concealment=1 offset=0)`. Two new deterministic Rust
+  tests (`playback_pump.rs`) plus real-device confirmation: a clean run on
+  the LG G6 showed exactly that line with a single concealment-driven
+  event correctly attributed, matching the known baseline range. (An
+  unrelated one-off: the first confirmation run that same session showed
+  zero accepted sync samples for its entire ~170s duration — investigated
+  and ruled out as this change's cause, since nothing in it touches the
+  sync-*acceptance* path, only the post-acceptance offset-handling
+  already downstream of it; a second run immediately after was clean.
+  Logged as an unexplained one-off, not chased further.)
 
 **A5. ~~Finish Block 28.1~~ — done 2026-08-10.** Re-ran the FLAC and MP3
 listener variants against the post-A1-A3 code; neither had been exercised

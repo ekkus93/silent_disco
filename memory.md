@@ -1953,6 +1953,61 @@ to mean anything — likely blocked for the same reason. Worth checking with
 the user again once a second device is available, or whether to attempt
 D3's instrumentation-only groundwork solo in the meantime.
 
+## 2026-08-10T07:29:18Z - Claude Sonnet 5 - A4.4 done and confirmed: hardResyncs now counts offset-driven rebuffers too
+
+User asked to finish every open Android task that doesn't need a second
+physical device (A4.2, A4.3, A4.4, and A6's still-open silent-partition
+case), then move to desktop work. Starting with A4.4 since it's a pure
+code change.
+
+- **Root cause**: `PlaybackScheduler::apply_offset_update` already
+  produces `OffsetUpdateOutcome::HardResyncRequired` →
+  `SyncApplyOutcome::Rebuffered` whenever a clock-offset jump exceeds
+  `hard_resync_threshold_ms` (default 120ms) — but the one production call
+  site, `observe_sync_response` in `rust/silent-disco-ffi/src/listener_playback.rs`,
+  discarded the return value entirely. A stream whose rebuffers were all
+  offset-driven (not concealment-driven) silently read `hardResyncs=0`.
+- **Fix**: `PlaybackPump` (`rust/silent-disco-core/src/audio/playback_pump.rs`)
+  gained a new `offset_driven_rebuffers: u64` field, incremented in
+  `apply_sync_offset`'s `HardResyncRequired` arm. `PlaybackDiagnostics`
+  gained `concealment_driven_rebuffers` (the pre-existing count, now named
+  explicitly) and `offset_driven_rebuffers`, with `hard_resync_signals`
+  redefined as their sum — kept under its original name/meaning ("every
+  hard resync") rather than renamed, so every existing reader (Kotlin
+  logs, prior device numbers recorded in this file) still means what it
+  always meant, now honestly. Mirrored through `FfiPlaybackDiagnostics`
+  (`rust/silent-disco-ffi/src/listener_playback.rs`) and both `hardResyncs=`
+  log lines in `ManualListenerTransportController.kt`, which now print the
+  breakdown: `hardResyncs=1 (concealment=1 offset=0)`.
+- **Tests**: extended the existing offset-jump test with diagnostics
+  assertions, and added a new dedicated test,
+  `hard_resync_signals_sums_concealment_and_offset_driven_causes`, that
+  triggers both causes in the same pump and asserts the sum is exactly
+  right and neither cause double-counts into the other.
+- **Confirmed on the real LG G6**, two runs. First run: a genuine anomaly
+  unrelated to this change — zero accepted sync samples for the entire
+  ~170s run (`samples=0` the whole time), investigated and ruled out as
+  caused by A4.4 (nothing in this change touches the sync-*acceptance*
+  path, `ClockSyncEstimator`; only the post-acceptance offset-handling
+  downstream of an already-accepted sample). Second run immediately after:
+  completely clean — `confidence=Good` → `Excellent`, 100%+ delivery, and
+  the final summary line correctly rendered
+  `hardResyncs=1 (concealment=1 offset=0)`, matching the known baseline
+  range. Logged the first run's anomaly as an unexplained one-off (real
+  Wi-Fi/environment flakiness the same run's own elevated
+  `partially_delivered` count corroborates), not chased further.
+- All three gates green: `bash scripts/check-rust.sh`, `desktop && npm run
+  check`, `./gradlew test lintDebug` (BUILD SUCCESSFUL).
+- Updated `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`'s A4.4 entry to done
+  with full detail, including the investigated-and-ruled-out anomaly.
+
+### Next
+A4.2 (revisit `STARTUP_BUFFER_MS`) and A4.3 (tune `rebuffer_target_ms`),
+both needing several real-device runs per candidate config, then A6's
+still-open silent-partition case (listener's own link stays up, host
+silently vanishes — the harder case A6's Wi-Fi-disable test didn't
+exercise). Then move to desktop-app work per the user's explicit request.
+
 ## 2026-08-10T06:57:56Z - Claude Sonnet 5 - D4 bookkeeping: closed out Block 28.1/28.2 in the desktop TODO, left 28.3 honestly partial
 
 User chose D4 (bookkeeping only, no device needed) over stopping, since
