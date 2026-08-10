@@ -243,3 +243,85 @@ for the payload, escape it (`{`, `}`, `"`, `,` must be backslash-escaped or
 3. Re-measure §2 as a distribution (≥4 runs) to establish a clean baseline.
 4. Then move to multi-listener (§6), which is the actual product criterion
    and is entirely unvalidated on real hardware.
+
+---
+
+## 10. Remaining work, split Android-first
+
+Android (listener) work is listed first because that is where every
+remaining audio defect lives — the desktop host was measured clean
+throughout (exact packet cadence, zero queue overflows, full delivery).
+
+### Android / listener
+
+**A1. Listener does not detect the host is gone** *(highest value, small)*
+- A1.1 Treat host shutdown / transport closure as end-of-stream: stop the
+  runtime and close the Oboe stream instead of silence-filling forever.
+- A1.2 Surface it in the UI as disconnected rather than still streaming.
+- A1.3 Regression test: `ConnectionClosed` / `HostDisconnected` must end
+  playback.
+- Also removes the metric contamination described in §5.1.
+
+**A2. Stamp `t4` at socket receipt, not after dispatch**
+- A2.1 Carry the receiver's existing `received_at` through
+  `SyncResponseReceived` (`map_event` currently discards it).
+- A2.2 Reconcile clock origins — `PumpClock` and the transport clock have
+  different bases; share one or translate by a one-time delta.
+- A2.3 Kotlin uses the carried value instead of `runtime.nowMs()`.
+- A2.4 Test that a queued response does not inflate measured RTT.
+
+**A3. Expire pending sync probes** *(latent but severe)*
+- A3.1 Age-evict in `sync/estimator.rs`; today the map only shrinks on a
+  matching response.
+- A3.2 Test that probing survives >64 lost responses instead of bricking
+  permanently.
+
+**A4. Close the residual gaps**
+- A4.1 Re-measure §2 as a distribution (≥4 runs) for a clean baseline.
+- A4.2 Revisit `STARTUP_BUFFER_MS` (1000 ms) now that supply is healthy.
+- A4.3 Tune `rebuffer_target_ms` only with several runs per config.
+- A4.4 Count offset-driven rebuffers so `hardResyncs` stops under-reporting.
+
+**A5. Finish Block 28.1** — re-run the FLAC and MP3 listener variants, which
+have not been exercised since any of these fixes.
+
+**A6. Block 28.2 device half** — disable Android Wi-Fi mid-playback, restore
+it, and verify the disconnect/recovery policy. A1 likely changes this
+behaviour, so do it after A1.
+
+**A7. Block 29 — multiple physical listeners** *(the actual product
+criterion, entirely unvalidated on hardware)*
+- A7.1 Two devices join and are approved.
+- A7.2 Both complete initial sync.
+- A7.3 Both play the same stream; pause/resume/stop affects both.
+- A7.4 One listener disconnecting is not reported as full delivery success.
+- A7.5 Measure inter-device skew, loss, underruns, confidence (29.2).
+- A7.6 Compare listeners against *each other* — "listeners hear the same
+  thing" is what none of the single-listener work tests.
+
+### Desktop / host
+
+**D1. Block 28.2 device-independent failure tests** *(no phone needed)*
+- D1.1 Corrupt source fixture fails visibly at the `start_playback`
+  orchestration level.
+- D1.2 A host source read failure does not claim continued normal streaming.
+- Only decoder-unit-level coverage exists today.
+
+**D2. Wire up `AudioEvent::SynchronizationUpdated`** — defined but never
+submitted, so the host's per-listener sync diagnostics are always empty and
+read as "listener has not completed a sync exchange". Actively misleading
+during debugging.
+
+**D3. Host-side multi-listener capacity (29.3)** — record CPU, memory, queue
+high-water marks and delivery failures with every available listener. The
+256-frame broadcast queue and the 5 ms per-peer write timeout have never
+been exercised with two real phones.
+
+**D4. Block 28.3 bookkeeping** — audit that each defect fixed this session
+has a regression test, tick the 28.1 boxes now substantively satisfied for
+WAV, and record device results.
+
+### Suggested order
+
+A1 → A2 → A3 → A4.1 (clean baseline) → A5 → D1 (fills in while no device is
+needed) → A6 → A7 (+ D2, D3 alongside multi-listener).
