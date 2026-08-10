@@ -1624,3 +1624,23 @@ This is a latent-hazard fix: triggering it for real needs 64 *consecutive* lost 
 
 ### Next
 A4.1 (re-measure quality as a distribution, >=4 runs, now that A1/A2/A3 have all landed).
+
+## 2026-08-10T03:56:34Z - Claude Sonnet 5 - A4.1: clean distribution confirms A1-A3 as categorical, not variance
+
+Ran 4 more unattended two-song device runs (8 stream samples) at the current code (A1 BLUETOOTH-permission fix + A2 t4-at-receipt + A3 probe eviction, all landed) and compared the full distribution against the pre-fix n=8 baseline from earlier this session.
+
+| metric | before (n=8) | after (n=8) |
+|---|---|---|
+| ringSilenceFilled min/median/max | 71,376 / 172,920 / 1,281,840 | 49,152 / 78,720 / **126,288** |
+| sync acceptance | 39/210 = 19% | 153/155 = **99%** |
+| accepted RTT median | 120.3ms | **11.2ms** |
+| accepted RTT max | 183.0ms | 89.0ms |
+| ringSilenceFilled stdev as % of mean | 117% | **41%** |
+| hardResyncs (max seen) | up to 6-7 | 1 |
+
+**This clears the noise floor this session established (differences under ~2x are indistinguishable; compare distributions, not single runs), decisively.** The entire after-distribution's *maximum* (126,288) sits below the before-distribution's *median* (172,920) -- non-overlapping ranges, not a shifted-but-still-overlapping noisy pair. Median silence improved 2.2x, worst case improved 10.2x, and critically the **spread itself also shrank** (stdev 117%->41% of mean) -- the system is not just better on average, it is more consistent and predictable run to run. RTT median at 11.2ms is now close to the 7.7ms ICMP physical floor measured earlier, confirming the self-inflicted delay this investigation chased since the "root-cause the audio defect to the Kotlin event loop" entry is now genuinely gone, not just reduced.
+
+`docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` section 2 needs its "current measured quality" table updated to these numbers as the new baseline (not done yet this entry -- next action).
+
+### Next
+A5 (re-run FLAC and MP3 listener variants, untested since any of this session's fixes).

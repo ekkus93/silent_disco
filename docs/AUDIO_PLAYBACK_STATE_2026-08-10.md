@@ -5,12 +5,16 @@ Written at the end of a long physical-device session on the LG G6 (Android
 sync, or the render ring — it records what is fixed, what is still wrong,
 how to measure any of it, and several dead ends that cost real time.
 
-**Short version:** audio is now *acceptable but not clean*. A human listener
-describes it as "not bad, a little popping and crackling". The catastrophic
-failures (streams stalling ~26 seconds before any sound, whole tracks
-scratchy end to end) are gone. What remains is intermittent: roughly 14% of
-playback seconds carried some defect in the worse of two back-to-back runs,
-two of them clearly audible.
+**Short version (updated 2026-08-10, post A1-A3):** the last human listening
+verdict ("not bad, a little popping and crackling") was measured against
+code since superseded by three more fixes (§3). A fresh 8-stream
+distribution taken after those landed shows a **categorical** improvement,
+not incremental: sync acceptance 19%→99%, RTT median 120ms→11ms (close to
+the 7.7ms physical floor), worst-case silence 1,281,840→126,288 frames, and
+the whole after-distribution now sits below the before-distribution's
+median (§2). This has **not yet been re-confirmed by ear** — the numbers
+predict it should sound meaningfully better, but that is a prediction, not
+a listening result, until someone actually listens again.
 
 ---
 
@@ -45,23 +49,32 @@ packets arriving before lock are deliberately discarded.
 
 ## 2. Current measured quality (LG G6, parity config)
 
-From two back-to-back listening runs on identical code — note how much they
-differ, which is the single most important thing to internalise:
+**Updated 2026-08-10 after A1-A3 (Bluetooth-permission crash fix, `t4`
+stamped at socket receipt, pending-probe eviction) all landed.** Distribution
+over 8 streams (4 unattended two-song runs), compared against the n=8
+baseline measured before those three fixes:
 
-| | run 1 | run 2 (heard by a human) |
+| metric | before (n=8) | after (n=8) |
 |---|---|---|
-| song-a concealed / late | 2 / 0 | 168 / 92 |
-| sync acceptance | 31/31 (100%) | 35/40 (87%) |
-| `PLAYING` seconds with any underrun/silence | ~0 | 10 of 71 |
-| hard resyncs | 0 | 0 |
+| `ringSilenceFilled` min / median / max | 71,376 / 172,920 / 1,281,840 | 49,152 / 78,720 / **126,288** |
+| sync acceptance | 39/210 (19%) | 153/155 (**99%**) |
+| accepted RTT median | 120.3 ms | **11.2 ms** |
+| accepted RTT max | 183.0 ms | 89.0 ms |
+| `ringSilenceFilled` stdev as % of mean | 117% | **41%** |
+| hard resyncs (max seen in one stream) | 6-7 | 1 |
 
-Human verdict on run 2: *"wasn't bad, a little popping and crackling"* —
-which tracks its numbers closely. **The counters are a usable proxy for
-perception**, so you can iterate without a listener present, but confirm by
-ear before declaring anything fixed.
+This clears the ≥2× noise-floor bar (§8) decisively: the entire *after*
+distribution's maximum sits below the *before* distribution's median —
+non-overlapping ranges — and the spread itself shrank too (117%→41%), so
+this is a more consistent system, not just a luckier one. RTT median at
+11.2 ms is now close to the 7.7 ms ICMP physical floor (§8), confirming the
+self-inflicted dispatch delay this investigation chased is genuinely gone.
 
-Distribution at this config (n=8 streams, before the last fix):
-`ringSilenceFilled` min 71,376 / median 172,920 / max 1,281,840.
+**Not yet re-confirmed by a human ear against these specific numbers** — the
+last listening verdict ("wasn't bad, a little popping and crackling") was
+against the pre-A2/A3 code. Given how closely that verdict tracked its own
+numbers, this distribution predicts something better, but get an actual
+listen before declaring the popping gone.
 
 ---
 
@@ -136,17 +149,18 @@ output device belongs to the connection, not to one track.
    all, so TCP would only notice via a keepalive/send-timeout that may be
    slow or unconfigured — a genuinely different failure mode, and exactly
    what item 6 below (device Wi-Fi disable/restore) still needs to measure.
-2. **`t4` is stamped after dispatch, not at socket receipt.** The listener's
-   sync receiver already captures an accurate `received_at`
-   (`socket/listener.rs`), but `map_event` discards it and Kotlin substitutes
-   `runtime.nowMs()`. Now a smaller effect, but the last known RTT
-   contaminant. Watch the clock origins: `PumpClock` and the transport clock
-   have different bases.
-3. **Pending sync probes never age out** (`sync/estimator.rs`). The map only
-   shrinks in `observe_response`, so 64 lost responses permanently brick
-   `beginSyncProbe`, after which the Kotlin loop silently stops sending for
-   the rest of the stream. Latent (peak observed ~12) but it converts a bad
-   stall into *permanent* silence.
+2. ~~`t4` is stamped after dispatch, not at socket receipt~~ **— fixed
+   2026-08-10.** `SyncResponseReceived` now carries the transport's own
+   receipt timestamp, translated onto the playback runtime's clock via a
+   one-time delta (the two clocks have different origins). RTT median fell
+   to 11.2ms in the post-fix distribution, close to the 7.7ms physical
+   floor.
+3. ~~Pending sync probes never age out~~ **— fixed 2026-08-10.**
+   `begin_probe` now evicts anything older than 5s before checking capacity,
+   so sustained response loss recovers on the next probe attempt instead of
+   permanently bricking probing. Verified with deterministic tests, not yet
+   device-confirmed under real sustained loss — deferred to item 6
+   (Wi-Fi disable/restore), which will exercise it for real.
 4. **Residual arrival gaps.** `ringQueued` was seen dropping to 384-720
    frames while emitting at full rate. Startup buffering (`STARTUP_BUFFER_MS`
    = 1000 ms) is now the dominant remaining silence, by design.
@@ -275,19 +289,10 @@ to 26 without adding it; every real-device run before now happened to avoid
 the "Find a session" BLE path that triggers it. See `AndroidManifest.xml`.
 - Also removes the metric contamination described in §5.1.
 
-**A2. Stamp `t4` at socket receipt, not after dispatch**
-- A2.1 Carry the receiver's existing `received_at` through
-  `SyncResponseReceived` (`map_event` currently discards it).
-- A2.2 Reconcile clock origins — `PumpClock` and the transport clock have
-  different bases; share one or translate by a one-time delta.
-- A2.3 Kotlin uses the carried value instead of `runtime.nowMs()`.
-- A2.4 Test that a queued response does not inflate measured RTT.
+**A2. ~~Stamp `t4` at socket receipt~~ — done 2026-08-10.** See §5 item 2.
 
-**A3. Expire pending sync probes** *(latent but severe)*
-- A3.1 Age-evict in `sync/estimator.rs`; today the map only shrinks on a
-  matching response.
-- A3.2 Test that probing survives >64 lost responses instead of bricking
-  permanently.
+**A3. ~~Expire pending sync probes~~ — done 2026-08-10.** See §5 item 3;
+device confirmation under real sustained loss still pending, folded into A6.
 
 **A4. Close the residual gaps**
 - A4.1 Re-measure §2 as a distribution (≥4 runs) for a clean baseline.
