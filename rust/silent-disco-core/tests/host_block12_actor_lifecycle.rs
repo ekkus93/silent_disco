@@ -1,6 +1,6 @@
 use silent_disco_core::domain::{
-    AppRole, ApprovalMode, DeviceId, HostLifecycle, PlaybackState, StreamId, TransportState,
-    TrustState,
+    AppRole, ApprovalMode, DeviceId, HostLifecycle, PlaybackState, StreamId, SyncConfidence,
+    TransportState, TrustState,
 };
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
@@ -8,7 +8,7 @@ use silent_disco_core::runtime::{
     CoreActorRuntime, CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot,
     HostDraftPatch, InviteCodePatch, ListenerSummary, PlatformEffect, PlatformEffectRequest,
     PlatformEvent, PlatformOperationCompletion, RecoverableAction, SnapshotRevision,
-    TransportEvent,
+    SynchronizationSummary, TransportEvent,
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
@@ -252,6 +252,101 @@ fn playback_position_and_natural_completion_are_tracked_authoritatively() {
         .expect("submit explicit stop");
     let stopped_explicitly = next_snapshot(&receiver, second_stream.revision.get() + 1);
     assert!(!stopped_explicitly.stream_ended_naturally);
+
+    runtime.shutdown().expect("shutdown actor");
+}
+
+/// D2 (`docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`): `AudioEvent::SynchronizationUpdated`
+/// was defined but never submitted anywhere -- this is the first test to
+/// exercise `ActorState::apply_audio`'s handling of it at all. Locks in
+/// both halves of that handler: the top-level `snapshot.synchronization`
+/// (a "most recent report from anyone" convenience field) and the matching
+/// listener's own `ListenerSummary.synchronization`, plus the documented
+/// no-op behavior for a report naming a `device_id` that is not (or is no
+/// longer) a connected listener.
+#[test]
+fn synchronization_updated_populates_top_level_and_per_listener_summary() {
+    let (runtime, handle, receiver) = start_actor();
+    let (creating, start_advertising) = create_host(&handle, &receiver, "Sync diagnostics host");
+    handle
+        .submit_transport_event(TransportEvent::StateChanged(TransportState::Advertising))
+        .expect("submit advertising state");
+    let advertising = next_snapshot(&receiver, creating.revision.get() + 1);
+    handle
+        .submit_platform_event(PlatformEvent::OperationSucceeded {
+            operation_id: start_advertising.operation_id,
+            completion: PlatformOperationCompletion::AdvertisingStarted,
+        })
+        .expect("submit advertising success");
+    let waiting = next_snapshot(&receiver, advertising.revision.get() + 1);
+    let listener = listener_summary();
+    handle
+        .submit_transport_event(TransportEvent::ListenerConnected(listener.clone()))
+        .expect("submit listener connection");
+    let ready = next_snapshot(&receiver, waiting.revision.get() + 1);
+    assert!(
+        ready
+            .listeners
+            .iter()
+            .find(|entry| entry.device_id == listener.device_id)
+            .expect("connected listener present")
+            .synchronization
+            .is_none(),
+        "a freshly connected listener must start with no synchronization summary"
+    );
+
+    let summary = SynchronizationSummary::new(SyncConfidence::Good, -12.5, 24.0, 3.75)
+        .expect("valid synchronization summary");
+    handle
+        .submit_audio_event(AudioEvent::SynchronizationUpdated {
+            device_id: listener.device_id.clone(),
+            summary,
+        })
+        .expect("submit synchronization update");
+    let updated = next_snapshot(&receiver, ready.revision.get() + 1);
+    assert_eq!(
+        updated.synchronization,
+        Some(summary),
+        "the top-level convenience field must reflect the most recent report"
+    );
+    let listener_entry = updated
+        .listeners
+        .iter()
+        .find(|entry| entry.device_id == listener.device_id)
+        .expect("connected listener still present");
+    assert_eq!(
+        listener_entry.synchronization,
+        Some(summary),
+        "the matching listener's own summary must be populated, not just the top-level field"
+    );
+
+    // A report naming a device_id that is not a current listener (stale,
+    // already disconnected, or simply wrong) must not error and must not
+    // silently attach itself to some other listener -- it's a documented
+    // no-op for the per-listener half, though the top-level "most recent"
+    // field still updates.
+    let unknown_device = DeviceId::new("not-a-connected-listener").expect("valid device id");
+    let stale_summary = SynchronizationSummary::new(SyncConfidence::Poor, 500.0, 900.0, -8.0)
+        .expect("valid synchronization summary");
+    handle
+        .submit_audio_event(AudioEvent::SynchronizationUpdated {
+            device_id: unknown_device,
+            summary: stale_summary,
+        })
+        .expect("submit synchronization update for an unknown device");
+    let after_unknown = next_snapshot(&receiver, updated.revision.get() + 1);
+    assert_eq!(after_unknown.synchronization, Some(stale_summary));
+    assert_eq!(
+        after_unknown
+            .listeners
+            .iter()
+            .find(|entry| entry.device_id == listener.device_id)
+            .expect("connected listener still present")
+            .synchronization,
+        Some(summary),
+        "a report for an unknown device_id must not overwrite (or clear) the real listener's \
+         own summary"
+    );
 
     runtime.shutdown().expect("shutdown actor");
 }

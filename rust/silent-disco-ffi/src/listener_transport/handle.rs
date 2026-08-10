@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use silent_disco_core::domain::{DeviceId, MonotonicMillis};
+use silent_disco_core::domain::{DeviceId, MonotonicMillis, SyncConfidence};
 use silent_disco_core::protocol::{
     ControlMessage, DeviceIdentity, Disconnect, JoinRequest, ProtocolFrame, SyncRequest,
+    SynchronizationReport,
 };
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
@@ -14,7 +15,7 @@ use silent_disco_core::transport::{
     TransportFactory, production_transport_factory,
 };
 
-use crate::listener_playback::FfiListenerPlaybackHandle;
+use crate::listener_playback::{FfiListenerPlaybackHandle, FfiSyncConfidence};
 
 use super::types::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
@@ -205,6 +206,38 @@ impl FfiListenerTransportHandle {
                 t1_listener_send_elapsed_ms: MonotonicMillis::new(local_send_elapsed_ms),
             };
             inner.transport.send_sync_request(&request)?;
+            Ok(())
+        })
+    }
+
+    /// Reports this listener's own locally-computed synchronization quality
+    /// (from its `ClockSyncEstimator`) back to the host, so the host's
+    /// per-listener sync diagnostics stop reading "has not yet completed a
+    /// sync exchange" forever (D2, `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`).
+    /// The host has no way to compute this itself -- see
+    /// `SynchronizationReport`'s doc comment -- so this is Kotlin
+    /// voluntarily relaying what it already knows, not answering a probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when the underlying send fails.
+    pub fn send_synchronization_report(
+        &self,
+        confidence: FfiSyncConfidence,
+        offset_ms: f64,
+        round_trip_ms: f64,
+        drift_ppm: f64,
+    ) -> Result<(), FfiListenerTransportError> {
+        self.with_transport(|inner| {
+            let message = ControlMessage::SynchronizationReport(SynchronizationReport {
+                session_id: inner.session_id.clone(),
+                listener_id: inner.device_id.clone(),
+                confidence: SyncConfidence::from(confidence),
+                offset_ms,
+                round_trip_ms,
+                drift_ppm,
+            });
+            inner.transport.send_control(&message)?;
             Ok(())
         })
     }
@@ -504,7 +537,8 @@ fn map_control_frame(
         }),
         ControlMessage::JoinRequest(_)
         | ControlMessage::Heartbeat(_)
-        | ControlMessage::ResyncNotice(_) => None,
+        | ControlMessage::ResyncNotice(_)
+        | ControlMessage::SynchronizationReport(_) => None,
     }
 }
 

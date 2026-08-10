@@ -578,10 +578,12 @@ fn validate_listener_outbound(
         ControlMessage::Heartbeat(value) if &value.listener_id == device_id => Ok(()),
         ControlMessage::Disconnect(value) if &value.listener_id == device_id => Ok(()),
         ControlMessage::ResyncNotice(value) if &value.listener_id == device_id => Ok(()),
+        ControlMessage::SynchronizationReport(value) if &value.listener_id == device_id => Ok(()),
         ControlMessage::JoinRequest(_)
         | ControlMessage::Heartbeat(_)
         | ControlMessage::Disconnect(_)
-        | ControlMessage::ResyncNotice(_) => Err(TransportError::new(
+        | ControlMessage::ResyncNotice(_)
+        | ControlMessage::SynchronizationReport(_) => Err(TransportError::new(
             TransportErrorKind::Unauthorized,
             TransportChannel::Control,
             "outbound listener control identity does not match this transport",
@@ -633,6 +635,11 @@ fn validate_listener_inbound(
             TransportErrorKind::Unauthorized,
             TransportChannel::Control,
             "host sent a listener-only join request",
+        )),
+        ControlMessage::SynchronizationReport(_) => Err(TransportError::new(
+            TransportErrorKind::Unauthorized,
+            TransportChannel::Control,
+            "host sent a listener-only synchronization report",
         )),
     }
 }

@@ -42,6 +42,13 @@ impl DesktopHostTransportEventSink for RecordingSink {
             .expect("static error")
         })
     }
+
+    fn submit_audio_event(
+        &self,
+        _event: silent_disco_core::runtime::AudioEvent,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
 }
 
 #[test]

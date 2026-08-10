@@ -741,6 +741,7 @@ fn validate_virtual_listener_identity(
         ControlMessage::Heartbeat(value) => &value.listener_id == device_id,
         ControlMessage::Disconnect(value) => &value.listener_id == device_id,
         ControlMessage::ResyncNotice(value) => &value.listener_id == device_id,
+        ControlMessage::SynchronizationReport(value) => &value.listener_id == device_id,
         ControlMessage::Hello(_)
         | ControlMessage::JoinApproval(_)
         | ControlMessage::JoinRejection(_)

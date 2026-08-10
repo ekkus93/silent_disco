@@ -305,7 +305,7 @@ class ManualListenerTransportController(
             is FfiListenerTransportEvent.Paused ->
                 _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PAUSED)
             is FfiListenerTransportEvent.Stopped -> handleStreamStopped()
-            is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(event)
+            is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(handle, event)
             is FfiListenerTransportEvent.AudioReceived -> handleAudioReceived(event)
         }
     }
@@ -417,8 +417,26 @@ class ManualListenerTransportController(
      * offset, and skew are the estimator's to decide, and a listener that
      * computed any of them would be duplicating domain logic it cannot keep
      * consistent.
+     *
+     * Also relays [outcome]'s confidence/offset/RTT/drift back to the host
+     * via [FfiListenerTransportHandle.sendSynchronizationReport] on this
+     * same per-exchange cadence -- no separate timer needed. This is the
+     * only way the host's per-listener sync diagnostics are ever populated
+     * (D2, `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`): the host never sees
+     * `t4`, so it cannot compute any of this itself, and would otherwise
+     * show "has not yet completed a sync exchange" forever even on a
+     * perfectly healthy listener. Sent regardless of `outcome.accepted`,
+     * since `outcome` always reflects the estimator's current running
+     * state (confidence `Unknown` before the first accepted sample), not
+     * just this one exchange -- exactly what the host's diagnostics should
+     * mirror. Best-effort: a failed send here must not affect local
+     * playback, which is why it is swallowed like the other transport
+     * sends on this same path (`sendSyncRequest` above).
      */
-    private fun handleSyncResponse(event: FfiListenerTransportEvent.SyncResponseReceived) {
+    private fun handleSyncResponse(
+        handle: FfiListenerTransportHandle,
+        event: FfiListenerTransportEvent.SyncResponseReceived,
+    ) {
         val runtime = playbackRuntime ?: return
         val outcome = runCatching {
             runtime.observeSyncResponse(
@@ -450,6 +468,19 @@ class ManualListenerTransportController(
                 "skewPpm=${outcome.skewPpm} rttMs=${outcome.roundTripTimeMs} " +
                 "samples=${outcome.acceptedSampleCount} syncLocked=${outcome.syncLocked}",
         )
+        runCatching {
+            handle.sendSynchronizationReport(
+                outcome.confidence,
+                outcome.offsetMs,
+                outcome.roundTripTimeMs,
+                outcome.skewPpm,
+            )
+        }.onFailure { error ->
+            logger.w(
+                "manual.audio.sync_report_send_failed",
+                error.message ?: "synchronization report send failed",
+            )
+        }
         if (outcome.syncLocked && _connectState.value is ManualConnectUiState.Streaming) {
             _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PLAYING)
         }

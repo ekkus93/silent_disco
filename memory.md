@@ -1850,3 +1850,105 @@ A7 (Block 29 — two physical listeners, needs a second phone), with D2/D3
 alongside, per the explicit Ralph Loop order. Genuinely blocked on
 hardware this session — only one Android device (LG G6) is connected via
 adb. Resume A7 once a second device is available.
+
+## 2026-08-10T06:53:46Z - Claude Sonnet 5 - D2 done and confirmed on real hardware: a genuine three-stack fix, not a wiring one-liner
+
+User was asked and explicitly opted into the full scope after a scope
+check revealed D2 was much bigger than its one-line TODO suggested (chose
+"Do the full three-stack fix" over skipping it). A7 remains paused,
+blocked on a second physical Android device not being connected.
+
+- **Why it wasn't a one-liner**: the host cannot compute
+  offset/RTT/confidence itself — a `SyncRequest`/`SyncResponse` round trip
+  only ever gives the host t1-t3; `t4` (the listener's local receipt time)
+  never reaches the host over any existing channel, and the host is a pure
+  passive sync responder by design (never sends `SyncRequest` itself). The
+  listener already computes this via its own `ClockSyncEstimator` but had
+  no channel to report it back.
+- **Protocol** (`rust/silent-disco-core/src/protocol/types.rs`): new
+  `ControlMessage::SynchronizationReport { session_id, listener_id,
+  confidence: SyncConfidence, offset_ms: f64, round_trip_ms: f64,
+  drift_ppm: f64 }`, `MessageKind::SynchronizationReport = 11`. Had to drop
+  `Eq` (kept `PartialEq`) from `ControlMessage`, `ProtocolFrame`,
+  `TransportEvent`, and `PacketizeOutcome`'s derives, since `f64` fields
+  can't implement `Eq` — confirmed nothing actually needed `Eq` specifically
+  (no HashMap/HashSet key usage) before removing it. New
+  `Encoder::put_f64`/`Reader::read_f64` codec helpers (exact IEEE-754 bit
+  pattern round-trip via `to_bits()`/`from_bits()`, deliberately not a lossy
+  fixed-point scaling scheme). Confidence encoded via the existing
+  `SyncConfidence::wire_name()`/`from_wire_name()` string convention
+  (reusing the same pattern the Android-host FFI bridge already used for
+  `FfiSynchronizationSummary`), not a new stable-code integer scheme.
+  Compiler-guided iteration found every exhaustive `ControlMessage` match
+  needing an arm: `host_workers.rs`/`listener.rs`'s frame validators,
+  `virtual_transport.rs`, both FFI `map_control_frame`s.
+- **Desktop host** (`host_transport_events.rs`): new arm on
+  `RuntimeTransportEvent::FrameReceived` for
+  `ControlMessage::SynchronizationReport` builds a `SynchronizationSummary`
+  and calls a new `submit_audio_event` method added to
+  `DesktopHostTransportEventSink` (implemented for `CoreActorHandle`,
+  `TestTransportEventSink`, and `RecordingSink` in
+  `host_transport_admission_tests.rs`). A malformed/non-finite report is a
+  visible warning string, not fatal to the whole event loop.
+- **Android/Kotlin**: new FFI method
+  `FfiListenerTransportHandle.send_synchronization_report` (Rust,
+  `listener_transport/handle.rs`) takes `FfiSyncConfidence` (already
+  UniFFI-exported) plus the three f64s; needed a new
+  `From<FfiSyncConfidence> for SyncConfidence` reverse conversion
+  (`listener_playback.rs` only had the forward direction).
+  `ManualListenerTransportController.handleSyncResponse` (Kotlin) calls it
+  right after processing each `SyncResponseReceived`, on the same
+  per-exchange cadence as the existing sync probes — piggybacked, no new
+  timer. `handleSyncResponse` gained a `handle` parameter for this.
+  Best-effort `runCatching` with `.onFailure` logging, matching the
+  existing `sendSyncRequest` call's severity (a failed diagnostic-only
+  relay must not affect local playback).
+- **Deliberately out of scope**: the Android-as-host FFI path
+  (`host_transport/handle.rs`'s `map_control_frame`) maps
+  `SynchronizationReport` to `None` with an explanatory comment — an
+  Android host's own per-listener sync diagnostics are real follow-up work,
+  not done here.
+- **Tests** (all new, since nothing exercised any of this before):
+  actor-level (`host_block12_actor_lifecycle.rs`,
+  `synchronization_updated_populates_top_level_and_per_listener_summary`
+  — first ever test of `ActorState::apply_audio`'s `SynchronizationUpdated`
+  arm, covers both the top-level convenience field and the documented
+  no-op for an unknown `device_id`); codec round-trip (added a
+  `SynchronizationReport` case with negative/fractional values to
+  `control_sync_and_audio_round_trip_canonically`); real-socket integration
+  (`start_playback_tests.rs`,
+  `a_listener_synchronization_report_populates_the_hosts_per_listener_diagnostics`
+  — real loopback listener sends the real wire message, polls the real
+  actor snapshot). The integration test's first run also caught a real
+  test race (checking `current_snapshot()` immediately after
+  `join_and_approve_listener` returns, before the actor's async
+  `snapshot.listeners` update lands) — same race class as the two found in
+  D1, now the third instance; worth treating "poll, don't check
+  immediately" as the default assumption for any new test that reads
+  snapshot state right after a call that only submits an event.
+- **Confirmed on the real LG G6**: before this fix, every manual test all
+  session showed "has not yet completed a sync exchange" for the entire
+  run. After: `sync confidence=Excellent offset_ms=71139.08 rtt_ms=10.50
+  drift_ppm=125.56` by the end of song-a, progressing correctly from
+  `Poor` at the first sample. The host's values matched the listener's own
+  internal diagnostics almost exactly (`rtt_ms=55.17` host vs.
+  `rttMs=55.166666666666664` listener) — confirms the relay is lossless.
+  Had to rebuild and reinstall the debug APK first (`./gradlew
+  installDebug`) — a prior session step had connected against stale
+  pre-fix code without noticing, worth remembering: a real-device
+  confirmation is only real if the APK was actually rebuilt first.
+- All three gates green: `bash scripts/check-rust.sh`, `desktop && npm run
+  check`, `./gradlew test lintDebug` (BUILD SUCCESSFUL, ~1m16s, includes
+  the real 4-ABI `cargo-ndk` cross-compile and fresh UniFFI Kotlin binding
+  generation/compilation).
+- Updated `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` §10 D2 entry to done
+  with full detail.
+
+### Next
+A7 (Block 29 — two physical listeners) remains the only item left in the
+Ralph Loop order, still blocked on a second physical Android device.
+D3 (host-side multi-listener capacity/high-water marks) is explicitly
+"alongside A7" per the loop order and also needs multiple real listeners
+to mean anything — likely blocked for the same reason. Worth checking with
+the user again once a second device is available, or whether to attempt
+D3's instrumentation-only groundwork solo in the meantime.

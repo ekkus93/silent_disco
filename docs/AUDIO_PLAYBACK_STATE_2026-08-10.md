@@ -450,10 +450,54 @@ Both added to `desktop/src-tauri/src/platform/start_playback_tests.rs`:
   rather than reporting a clean stop.
 - Both gates (`scripts/check-rust.sh`, `desktop && npm run check`) green.
 
-**D2. Wire up `AudioEvent::SynchronizationUpdated`** — defined but never
-submitted, so the host's per-listener sync diagnostics are always empty and
-read as "listener has not completed a sync exchange". Actively misleading
-during debugging.
+**D2. ~~Wire up `AudioEvent::SynchronizationUpdated`~~ — done and confirmed
+on real hardware, 2026-08-10.** Turned out to be bigger than "wiring": the
+host cannot compute offset/RTT/confidence itself (it never sees `t4`, only
+the listener does), so this needed a genuine three-stack fix, not a
+one-line call:
+- **Protocol**: new `ControlMessage::SynchronizationReport` (Rust wire
+  message, `protocol/types.rs`) carrying the listener's own
+  `confidence`/`offset_ms`/`round_trip_ms`/`drift_ppm` — the listener
+  voluntarily reporting what it already knows via its own
+  `ClockSyncEstimator`, not answering a host probe. `ControlMessage`/
+  `ProtocolFrame`/`TransportEvent`/`PacketizeOutcome` dropped their `Eq`
+  derive (kept `PartialEq`) since `f64` fields can't implement it. New
+  `Encoder::put_f64`/`Reader::read_f64` codec helpers (exact IEEE-754 bit
+  round-trip, no lossy fixed-point scaling).
+- **Host**: `host_transport_events.rs` translates an inbound
+  `SynchronizationReport` into `AudioEvent::SynchronizationUpdated` via a
+  new `submit_audio_event` method added to `DesktopHostTransportEventSink`.
+- **Android/Kotlin**: `ManualListenerTransportController.handleSyncResponse`
+  now also calls the new FFI method
+  `FfiListenerTransportHandle.sendSynchronizationReport` on the same
+  per-exchange cadence as its existing sync probes — no separate timer.
+  New `FfiSyncConfidence -> SyncConfidence` reverse conversion
+  (`listener_playback.rs`) alongside the existing forward one.
+- Deliberately out of scope: the Android-as-host FFI path
+  (`host_transport/handle.rs`'s `map_control_frame`) maps this message to
+  `None` with a comment explaining why — D2 only wired the desktop host.
+- Tests: an actor-level test
+  (`synchronization_updated_populates_top_level_and_per_listener_summary`,
+  `host_block12_actor_lifecycle.rs` — the first ever to exercise this
+  handler at all) covering both the top-level and per-listener summary
+  fields, plus the documented no-op for an unknown `device_id`; a codec
+  round-trip case (negative/fractional `f64` values on purpose); and a
+  real-socket integration test
+  (`a_listener_synchronization_report_populates_the_hosts_per_listener_diagnostics`,
+  `start_playback_tests.rs`) proving the whole wire path end to end.
+- **Confirmed on the real LG G6**: the host's diagnostics went from
+  "has not yet completed a sync exchange" for the entire run (every
+  previous manual test this session) to real, live data —
+  `sync confidence=Excellent offset_ms=71139.08 rtt_ms=10.50
+  drift_ppm=125.56` by the end of song-a, `confidence=Fair offset_ms=108234.08
+  rtt_ms=55.17` on song-b (the same cross-stream origin jump already
+  established as expected, not a bug). The host's reported values matched
+  the listener's own internal estimator output almost exactly
+  (`rttMs=55.166666666666664` on the listener vs. `rtt_ms=55.17` on the
+  host) — confirming the relay is lossless, not just present.
+- All three gates green: `bash scripts/check-rust.sh`, `desktop && npm run
+  check`, `./gradlew test lintDebug` (which also confirmed the UniFFI
+  Kotlin bindings for the new method generate and compile cleanly).
 
 **D3. Host-side multi-listener capacity (29.3)** — record CPU, memory, queue
 high-water marks and delivery failures with every available listener. The

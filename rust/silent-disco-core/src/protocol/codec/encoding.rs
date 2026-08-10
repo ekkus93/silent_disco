@@ -1,9 +1,9 @@
 use super::{
     AudioDatagram, ControlMessage, DeviceId, Encoder, FLAG_PAYLOAD_INTEGRITY, FRAME_HEADER_BYTES,
     FrameHeader, MAX_AUDIO_DATAGRAM_BYTES, MAX_DISPLAY_NAME_BYTES, MAX_INVITE_CODE_BYTES,
-    MAX_REASON_BYTES, MAX_SESSION_NAME_BYTES, PROTOCOL_MAGIC, ProtocolError, ProtocolFrame,
-    SessionId, StreamId, SyncRequest, SyncResponse, crc32, validate_audio_parameters,
-    validate_text,
+    MAX_REASON_BYTES, MAX_SESSION_NAME_BYTES, MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES, PROTOCOL_MAGIC,
+    ProtocolError, ProtocolFrame, SessionId, StreamId, SyncRequest, SyncResponse, crc32,
+    validate_audio_parameters, validate_text,
 };
 
 impl Encoder {
@@ -27,6 +27,13 @@ impl Encoder {
 
     fn put_u64(&mut self, value: u64) {
         self.bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    /// Encodes an exact `f64` via its IEEE-754 bit pattern -- no lossy
+    /// fixed-point scaling, matching the precision `SynchronizationSummary`
+    /// already carries internally.
+    fn put_f64(&mut self, value: f64) {
+        self.put_u64(value.to_bits());
     }
 
     fn put_bool(&mut self, value: bool) {
@@ -174,6 +181,19 @@ fn encode_control(message: &ControlMessage) -> Result<Vec<u8>, ProtocolError> {
             output.put_session_id(&value.session_id)?;
             output.put_device_id(&value.listener_id)?;
             output.put_string("reason", &value.reason, MAX_REASON_BYTES, false)?;
+        }
+        ControlMessage::SynchronizationReport(value) => {
+            output.put_session_id(&value.session_id)?;
+            output.put_device_id(&value.listener_id)?;
+            output.put_string(
+                "confidence",
+                value.confidence.wire_name(),
+                MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES,
+                false,
+            )?;
+            output.put_f64(value.offset_ms);
+            output.put_f64(value.round_trip_ms);
+            output.put_f64(value.drift_ppm);
         }
     }
     Ok(output.finish())

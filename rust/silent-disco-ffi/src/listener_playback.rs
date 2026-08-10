@@ -1311,6 +1311,18 @@ impl From<SyncConfidence> for FfiSyncConfidence {
     }
 }
 
+impl From<FfiSyncConfidence> for SyncConfidence {
+    fn from(confidence: FfiSyncConfidence) -> Self {
+        match confidence {
+            FfiSyncConfidence::Unknown => Self::Unknown,
+            FfiSyncConfidence::Poor => Self::Poor,
+            FfiSyncConfidence::Fair => Self::Fair,
+            FfiSyncConfidence::Good => Self::Good,
+            FfiSyncConfidence::Excellent => Self::Excellent,
+        }
+    }
+}
+
 /// Result of feeding one correlated sync response, flattened for the binding.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct FfiSyncSampleOutcome {

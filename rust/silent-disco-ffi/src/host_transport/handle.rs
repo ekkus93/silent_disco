@@ -467,12 +467,20 @@ fn map_control_frame(
             listener_id: value.listener_id.into_string(),
             reason: value.reason,
         }),
+        // `SynchronizationReport` is deliberately not surfaced here: this FFI
+        // handle is the Android-as-host path, and D2 (2026-08-10) only wired
+        // the desktop host's own native processor
+        // (`host_transport_events.rs`) to turn this into
+        // `AudioEvent::SynchronizationUpdated`. Wiring an Android host's
+        // per-listener sync diagnostics the same way is real follow-up work,
+        // not done here -- see `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`.
         ControlMessage::Hello(_)
         | ControlMessage::JoinApproval(_)
         | ControlMessage::JoinRejection(_)
         | ControlMessage::Disconnect(_)
         | ControlMessage::StreamStart(_)
         | ControlMessage::Pause(_)
-        | ControlMessage::Stop(_) => None,
+        | ControlMessage::Stop(_)
+        | ControlMessage::SynchronizationReport(_) => None,
     }
 }

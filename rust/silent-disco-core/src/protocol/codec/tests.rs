@@ -3,11 +3,14 @@ use super::{
     decode_header, encode_frame,
 };
 use crate::{
-    domain::{DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId},
+    domain::{
+        DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId, SyncConfidence,
+    },
     protocol::{
         AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, FRAME_HEADER_BYTES,
         FRAME_HEADER_LENGTH, Hello, JoinRequest, MAX_CONTROL_PAYLOAD_BYTES, MessageKind,
         PROTOCOL_MAGIC, PROTOCOL_VERSION, ProtocolFrame, SyncRequest, SyncResponse,
+        SynchronizationReport,
     },
 };
 
@@ -78,6 +81,20 @@ fn control_sync_and_audio_round_trip_canonically() {
             t2_host_receive_elapsed_ms: MonotonicMillis::new(2_000),
             t3_host_send_elapsed_ms: MonotonicMillis::new(2_001),
         }),
+        // Negative offset and fractional values on purpose: this is the
+        // only control message carrying `f64` fields (D2, `docs/
+        // AUDIO_PLAYBACK_STATE_2026-08-10.md`), and a listener genuinely
+        // running ahead of the host's clock reports a negative offset.
+        ProtocolFrame::Control(ControlMessage::SynchronizationReport(
+            SynchronizationReport {
+                session_id: session_id(),
+                listener_id: device_id(),
+                confidence: SyncConfidence::Excellent,
+                offset_ms: -12.375,
+                round_trip_ms: 24.5,
+                drift_ppm: -3.125,
+            },
+        )),
         ProtocolFrame::Audio(AudioDatagram {
             session_id: session_id(),
             stream_id: stream_id(),

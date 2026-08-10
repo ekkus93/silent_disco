@@ -282,7 +282,7 @@ pub struct TransportPeer {
     pub control_address: SocketAddr,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum TransportEvent {
     PeerAccepted {
         peer: TransportPeer,

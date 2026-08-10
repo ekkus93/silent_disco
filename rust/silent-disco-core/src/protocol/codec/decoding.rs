@@ -2,10 +2,11 @@ use super::{
     AudioCodec, AudioDatagram, ControlMessage, DeviceId, DeviceIdentity, Disconnect,
     FLAG_PAYLOAD_INTEGRITY, FRAME_HEADER_BYTES, FrameHeader, Heartbeat, Hello, JoinApproval,
     JoinRejection, JoinRequest, MAX_DISPLAY_NAME_BYTES, MAX_INVITE_CODE_BYTES, MAX_REASON_BYTES,
-    MAX_SESSION_NAME_BYTES, MessageKind, MonotonicMillis, PROTOCOL_MAGIC, PROTOCOL_VERSION,
-    PacketSequence, Pause, ProtocolError, ProtocolFrame, Reader, ResyncNotice,
-    SUPPORTED_FRAME_FLAGS, SampleIndex, SessionId, Stop, StreamId, StreamStart, SyncRequest,
-    SyncResponse, crc32, validate_audio_parameters, validate_text,
+    MAX_SESSION_NAME_BYTES, MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES, MessageKind, MonotonicMillis,
+    PROTOCOL_MAGIC, PROTOCOL_VERSION, PacketSequence, Pause, ProtocolError, ProtocolFrame, Reader,
+    ResyncNotice, SUPPORTED_FRAME_FLAGS, SampleIndex, SessionId, Stop, StreamId, StreamStart,
+    SyncConfidence, SyncRequest, SyncResponse, SynchronizationReport, crc32,
+    validate_audio_parameters, validate_text,
 };
 
 impl<'a> Reader<'a> {
@@ -64,6 +65,12 @@ impl<'a> Reader<'a> {
             1 => Ok(true),
             value => Err(ProtocolError::InvalidBoolean { value }),
         }
+    }
+
+    /// Decodes an exact `f64` from its IEEE-754 bit pattern -- the exact
+    /// inverse of `Encoder::put_f64`.
+    fn read_f64(&mut self) -> Result<f64, ProtocolError> {
+        Ok(f64::from_bits(self.read_u64()?))
     }
 
     fn read_string(
@@ -184,6 +191,23 @@ fn decode_control(kind: MessageKind, payload: &[u8]) -> Result<ControlMessage, P
             listener_id: input.read_device_id()?,
             reason: input.read_string("reason", MAX_REASON_BYTES, false)?,
         }),
+        MessageKind::SynchronizationReport => {
+            ControlMessage::SynchronizationReport(SynchronizationReport {
+                session_id: input.read_session_id()?,
+                listener_id: input.read_device_id()?,
+                confidence: SyncConfidence::from_wire_name(&input.read_string(
+                    "confidence",
+                    MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES,
+                    false,
+                )?)
+                .map_err(|_| ProtocolError::InvalidField {
+                    field: "confidence",
+                })?,
+                offset_ms: input.read_f64()?,
+                round_trip_ms: input.read_f64()?,
+                drift_ppm: input.read_f64()?,
+            })
+        }
         _ => {
             return Err(ProtocolError::UnsupportedMessageKind { kind: kind.code() });
         }

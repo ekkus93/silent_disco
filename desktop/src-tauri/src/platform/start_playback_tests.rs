@@ -1,10 +1,12 @@
 use super::file_picker::{AudioContainer, InspectedAudioSource, SelectedSourceRegistry};
 use super::network::{AddressRecord, DesktopHostNetworkControl, InterfaceRecord, TestHostPorts};
 use super::start_playback;
-use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, MonotonicMillis, PlaybackState};
+use silent_disco_core::domain::{
+    AppRole, ApprovalMode, DeviceId, MonotonicMillis, PlaybackState, SyncConfidence,
+};
 use silent_disco_core::protocol::{
     ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame, StreamStart, SyncRequest,
-    SyncResponse,
+    SyncResponse, SynchronizationReport,
 };
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorRuntime, CoreCommand,
@@ -95,6 +97,93 @@ fn desktop_host_streams_real_audio_and_answers_sync_requests() {
     wait_snapshot(&handle, |snapshot| {
         snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
     });
+
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// D2 (`docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`): a listener's
+/// `SynchronizationReport` -- the only channel that can ever populate the
+/// host's per-listener sync diagnostics, since the host itself never sees
+/// `t4` -- must reach `HostTransportEventProcessor`, translate into
+/// `AudioEvent::SynchronizationUpdated`, and land on the matching
+/// listener's `snapshot.listeners[].synchronization`. Exercises the real
+/// wire path end to end (encode -> loopback socket -> decode -> validate ->
+/// actor), not just the actor-level handling already covered by
+/// `synchronization_updated_populates_top_level_and_per_listener_summary`
+/// in `host_block12_actor_lifecycle.rs`.
+#[test]
+fn a_listener_synchronization_report_populates_the_hosts_per_listener_diagnostics() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, _registry) = stage_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+    // `join_and_approve_listener` only waits for the listener to observe
+    // its own `JoinApproval` control frame -- the actor's own
+    // `snapshot.listeners` update is a separate, asynchronously-applied
+    // transport effect, so this must poll rather than read
+    // `current_snapshot()` immediately (same reasoning as the D1 tests'
+    // `submit_audio_event` race).
+    let connected = wait_snapshot(&handle, |snapshot| !snapshot.listeners.is_empty());
+    let device_id = connected
+        .listeners
+        .first()
+        .expect("the approved listener is present")
+        .device_id
+        .clone();
+    assert!(
+        connected
+            .listeners
+            .first()
+            .expect("listener present")
+            .synchronization
+            .is_none(),
+        "a freshly joined listener must start with no synchronization summary"
+    );
+
+    listener
+        .send_control(&ControlMessage::SynchronizationReport(
+            SynchronizationReport {
+                session_id: advertisement.session_id.clone(),
+                listener_id: device_id.clone(),
+                confidence: SyncConfidence::Excellent,
+                offset_ms: -8.5,
+                round_trip_ms: 16.25,
+                drift_ppm: 2.5,
+            },
+        ))
+        .expect("send synchronization report");
+
+    let updated = wait_snapshot(&handle, |snapshot| {
+        snapshot
+            .listeners
+            .iter()
+            .any(|entry| entry.device_id == device_id && entry.synchronization.is_some())
+    });
+    let synchronization = updated
+        .listeners
+        .iter()
+        .find(|entry| entry.device_id == device_id)
+        .and_then(|entry| entry.synchronization)
+        .expect("synchronization summary present after wait_snapshot's own predicate");
+    assert_eq!(synchronization.confidence, SyncConfidence::Excellent);
+    assert!((synchronization.offset_ms - (-8.5)).abs() < f64::EPSILON);
+    assert!((synchronization.round_trip_ms - 16.25).abs() < f64::EPSILON);
+    assert!((synchronization.drift_ppm - 2.5).abs() < f64::EPSILON);
 
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");

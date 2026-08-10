@@ -77,7 +77,7 @@ impl fmt::Display for PacketizerError {
 impl Error for PacketizerError {}
 
 /// Result of pushing one decoded chunk through the packetizer.
-#[derive(Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub struct PacketizeOutcome {
     /// Zero or more full-width datagrams ready to broadcast, in order.
     pub frames: Vec<ProtocolFrame>,

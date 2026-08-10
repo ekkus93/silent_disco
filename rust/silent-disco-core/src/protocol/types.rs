@@ -1,6 +1,8 @@
 use core::fmt;
 
-use crate::domain::{DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
+use crate::domain::{
+    DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId, SyncConfidence,
+};
 
 pub const PROTOCOL_MAGIC: [u8; 4] = *b"SDP2";
 pub const PROTOCOL_VERSION: u16 = 2;
@@ -13,6 +15,11 @@ pub const MAX_SESSION_NAME_BYTES: usize = 128;
 pub const MAX_DISPLAY_NAME_BYTES: usize = 128;
 pub const MAX_INVITE_CODE_BYTES: usize = 64;
 pub const MAX_REASON_BYTES: usize = 256;
+/// Bounds `SyncConfidence::wire_name()`, which is always a short static
+/// string ("excellent" is the longest at 9 bytes) -- this is deliberately
+/// generous, not a measured value, since the field only ever holds one of
+/// the fixed variants from `define_stable_enum!`.
+pub const MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES: usize = 32;
 pub const FLAG_PAYLOAD_INTEGRITY: u16 = 0x0001;
 pub const SUPPORTED_FRAME_FLAGS: u16 = FLAG_PAYLOAD_INTEGRITY;
 
@@ -29,6 +36,7 @@ pub enum MessageKind {
     Stop = 8,
     Disconnect = 9,
     ResyncNotice = 10,
+    SynchronizationReport = 11,
     SyncRequest = 100,
     SyncResponse = 101,
     Audio = 200,
@@ -53,6 +61,7 @@ impl MessageKind {
             Self::Stop => "stop",
             Self::Disconnect => "disconnect",
             Self::ResyncNotice => "resync_notice",
+            Self::SynchronizationReport => "synchronization_report",
             Self::SyncRequest => "sync_request",
             Self::SyncResponse => "sync_response",
             Self::Audio => "audio",
@@ -73,6 +82,7 @@ impl MessageKind {
                 | Self::Stop
                 | Self::Disconnect
                 | Self::ResyncNotice
+                | Self::SynchronizationReport
         )
     }
 
@@ -106,6 +116,7 @@ impl TryFrom<u16> for MessageKind {
             8 => Ok(Self::Stop),
             9 => Ok(Self::Disconnect),
             10 => Ok(Self::ResyncNotice),
+            11 => Ok(Self::SynchronizationReport),
             100 => Ok(Self::SyncRequest),
             101 => Ok(Self::SyncResponse),
             200 => Ok(Self::Audio),
@@ -223,7 +234,30 @@ pub struct ResyncNotice {
     pub reason: String,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+/// A listener's own periodic report of its locally-computed synchronization
+/// quality (see `ClockSyncEstimator`/`SyncSnapshot`), so the host can
+/// populate `AudioEvent::SynchronizationUpdated` for its per-listener
+/// diagnostics (D2, `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`).
+///
+/// This exists because the host cannot compute this itself: a
+/// `SyncRequest`/`SyncResponse` round trip only gives the host t1-t3 --
+/// `t4` (the listener's local receipt time of the response) never reaches
+/// the host over any existing channel, so offset/RTT/confidence are only
+/// ever knowable on the listener's own side. The host is a purely passive
+/// sync responder by design (`is_control` note above); this message is the
+/// listener voluntarily reporting what it already knows, not the host
+/// probing for it.
+#[derive(Clone, PartialEq)]
+pub struct SynchronizationReport {
+    pub session_id: SessionId,
+    pub listener_id: DeviceId,
+    pub confidence: SyncConfidence,
+    pub offset_ms: f64,
+    pub round_trip_ms: f64,
+    pub drift_ppm: f64,
+}
+
+#[derive(Clone, PartialEq)]
 pub enum ControlMessage {
     Hello(Hello),
     JoinRequest(JoinRequest),
@@ -235,6 +269,7 @@ pub enum ControlMessage {
     Stop(Stop),
     Disconnect(Disconnect),
     ResyncNotice(ResyncNotice),
+    SynchronizationReport(SynchronizationReport),
 }
 
 impl ControlMessage {
@@ -251,6 +286,7 @@ impl ControlMessage {
             Self::Stop(_) => MessageKind::Stop,
             Self::Disconnect(_) => MessageKind::Disconnect,
             Self::ResyncNotice(_) => MessageKind::ResyncNotice,
+            Self::SynchronizationReport(_) => MessageKind::SynchronizationReport,
         }
     }
 
@@ -267,6 +303,7 @@ impl ControlMessage {
             Self::Stop(value) => &value.session_id,
             Self::Disconnect(value) => &value.session_id,
             Self::ResyncNotice(value) => &value.session_id,
+            Self::SynchronizationReport(value) => &value.session_id,
         }
     }
 }
@@ -325,7 +362,7 @@ pub struct AudioDatagram {
     pub payload: Vec<u8>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum ProtocolFrame {
     Control(ControlMessage),
     SyncRequest(SyncRequest),

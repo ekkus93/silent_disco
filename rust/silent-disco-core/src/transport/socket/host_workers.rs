@@ -335,6 +335,9 @@ fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), Tr
         ControlMessage::ResyncNotice(value) => {
             require_authorized_identity(peer, &value.listener_id)
         }
+        ControlMessage::SynchronizationReport(value) => {
+            require_authorized_identity(peer, &value.listener_id)
+        }
         ControlMessage::Hello(_)
         | ControlMessage::JoinApproval(_)
         | ControlMessage::JoinRejection(_)
