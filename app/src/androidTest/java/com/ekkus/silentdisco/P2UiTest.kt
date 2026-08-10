@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco
 
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -125,6 +126,7 @@ class P2UiTest {
                     onDismiss = {},
                     onJoinOnce = { joinOnce += 1 },
                     onTrustAndJoin = { trust += 1 },
+                    onConnectDirectly = {},
                 )
             }
         }
@@ -135,6 +137,30 @@ class P2UiTest {
             assertThat(joinOnce).isEqualTo(1)
             assertThat(trust).isEqualTo(1)
         }
+    }
+
+    @Test
+    fun verifiedInvitationWithADesktopEndpointOffersConnectInsteadOfDiscovery() {
+        var connected = 0
+        composeRule.setContent {
+            SilentDiscoTheme {
+                VerifiedQrInvitationDialog(
+                    invitation = invitation(connectionPayloadJson = manualEndpointPayloadJson()),
+                    alreadyTrusted = false,
+                    onDismiss = {},
+                    onJoinOnce = {},
+                    onTrustAndJoin = {},
+                    onConnectDirectly = { connected += 1 },
+                )
+            }
+        }
+
+        // A desktop invitation can never be found by BLE/Wi-Fi Direct
+        // discovery -- only the action that can actually succeed shows.
+        composeRule.onNodeWithText("Join once").assertDoesNotExist()
+        composeRule.onNodeWithText("Trust host").assertDoesNotExist()
+        composeRule.onNodeWithText("Connect").assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertThat(connected).isEqualTo(1) }
     }
 
     @Test
@@ -177,7 +203,7 @@ class P2UiTest {
         outcome = P2SessionOutcome.COMPLETED,
     )
 
-    private fun invitation() = P2ValidatedInvitation(
+    private fun invitation(connectionPayloadJson: String? = null) = P2ValidatedInvitation(
         sessionId = "session-1",
         sessionName = "Rooftop Disco",
         hostName = "Host phone",
@@ -187,5 +213,9 @@ class P2UiTest {
         inviteCode = null,
         issuedAtMs = 1L,
         expiresAtMs = 2L,
+        connectionPayloadJson = connectionPayloadJson,
     )
+
+    private fun manualEndpointPayloadJson() =
+        """{"hostAddress":"192.168.1.50","controlPort":41000,"syncPort":41001,"audioPort":41002,"sessionId":"session-1","protocolVersion":2,"inviteCodeRequired":false,"expiresAtMs":null}"""
 }

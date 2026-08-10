@@ -46,6 +46,7 @@ import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
 import com.ekkus.silentdisco.core.rust.ListenerTransportController
 import com.ekkus.silentdisco.core.rust.ManualListenerTransportController
+import com.ekkus.silentdisco.core.rust.P2ValidatedInvitation
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
 import com.ekkus.silentdisco.core.rust.UniFfiListenerCoreController
@@ -257,6 +258,9 @@ class MainViewModel @JvmOverloads constructor(
     fun connectManualEndpoint() = connectManualEndpointImpl()
 
     fun cancelManualEndpointConnect() = cancelManualEndpointConnectImpl()
+
+    fun prefillManualEndpointFromInvitation(invitation: P2ValidatedInvitation) =
+        prefillManualEndpointFromInvitationImpl(invitation)
 
     fun updateInviteCode(code: String) {
         _uiState.value = _uiState.value.copy(

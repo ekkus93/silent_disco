@@ -4,6 +4,7 @@ import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.model.canConnect
 import com.ekkus.silentdisco.core.rust.ManualEndpointParseResult
+import com.ekkus.silentdisco.core.rust.P2ValidatedInvitation
 import kotlinx.coroutines.launch
 
 internal fun MainViewModel.observeManualEndpointConnection() {
@@ -99,6 +100,28 @@ internal fun MainViewModel.connectManualEndpointImpl() {
             inviteCode = form.inviteCode.ifBlank { null },
         )
     }
+}
+
+/**
+ * Pre-fills the manual-endpoint form from a verified QR invitation's
+ * embedded connection payload (Block 31 desktop-QR support) -- the exact
+ * same JSON shape and parser [updateManualEndpointInputImpl] already
+ * accepts from a pasted payload, so this reuses that whole path rather than
+ * connecting directly here. Deliberately does not auto-connect: the form's
+ * own async parse still has to populate its preview fields before
+ * [ManualConnectUiState.canConnect] allows it, and letting the user see and
+ * confirm what they are about to join (host, session, ports) before
+ * connecting matches this app's "no silent auto-admit" posture even though
+ * the payload itself is already signature-verified.
+ *
+ * No-ops if the invitation carries no connection payload (Android's own
+ * peer-to-peer QR flow) -- callers are expected to gate on that themselves,
+ * but this stays defensive rather than silently misbehaving if they don't.
+ */
+internal fun MainViewModel.prefillManualEndpointFromInvitationImpl(invitation: P2ValidatedInvitation) {
+    val connectionPayloadJson = invitation.connectionPayloadJson ?: return
+    updateManualEndpointInputImpl(connectionPayloadJson)
+    updateManualEndpointInviteCodeImpl(invitation.inviteCode.orEmpty())
 }
 
 internal fun MainViewModel.cancelManualEndpointConnectImpl() {

@@ -69,6 +69,18 @@ data class P2ValidatedInvitation(
     val inviteCode: String?,
     val issuedAtMs: Long,
     val expiresAtMs: Long,
+    /**
+     * A host's manual-endpoint connection payload (host address/ports/
+     * session id/protocol version), embedded verbatim -- present only for
+     * hosts with a real network endpoint to hand a listener (a desktop
+     * host today; Android's own peer-to-peer QR flow leaves this null and
+     * keeps relying on BLE/Wi-Fi Direct discovery after verification).
+     * Already structurally validated Rust-side (`ManualHostEndpoint::parse`)
+     * before this ever reaches Kotlin -- safe to feed straight into
+     * [ManualListenerTransportController.connect] as `rawInput` without
+     * re-validating it here.
+     */
+    val connectionPayloadJson: String?,
 )
 
 private fun p2StatusDescription(status: Int): String = when (status) {
@@ -217,6 +229,7 @@ class P2Database internal constructor(nativeHandle: Long) : AutoCloseable {
         inviteCode = value.optionalString("inviteCode"),
         issuedAtMs = value.requiredLong("issuedAtMs", "validated invitation"),
         expiresAtMs = value.requiredLong("expiresAtMs", "validated invitation"),
+        connectionPayloadJson = value.optionalString("connectionPayloadJson"),
     )
 }
 

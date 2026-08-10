@@ -206,6 +206,24 @@ fun SilentDiscoApp(
         workflowViewModel.showTransientMessage("Looking for ${invitation.sessionName} nearby…")
     }
 
+    /**
+     * A desktop-issued invitation names its own network endpoint directly,
+     * so there is nothing to discover -- pre-fills the same manual-connect
+     * form the paste flow already uses and lets the user confirm and press
+     * Connect there, rather than waiting on a BLE/Wi-Fi Direct scan that
+     * would never find a desktop host.
+     */
+    fun startDirectQrConnect() {
+        val invitation = p2UiState.validatedInvitation ?: return
+        showVerifiedQrDialog = false
+        p2ViewModel.dismissValidatedInvitation()
+        viewModel.selectRole(AppRole.LISTENER)
+        viewModel.prefillManualEndpointFromInvitation(invitation)
+        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
+            navController.navigateSingleTop(AppRoutes.ManualConnect)
+        }
+    }
+
     LaunchedEffect(uiState) {
         workflowViewModel.onUiStateChanged(uiState)
         p2ViewModel.observeAppState(uiState)
@@ -693,6 +711,7 @@ fun SilentDiscoApp(
                         p2ViewModel.trustValidatedHost()
                     }
                 },
+                onConnectDirectly = ::startDirectQrConnect,
             )
         }
     }

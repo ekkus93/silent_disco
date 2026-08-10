@@ -89,6 +89,7 @@ class P2PresentationTest {
         inviteCode: String? = null,
         fingerprint: String = "a".repeat(64),
         publicKey: ByteArray = byteArrayOf(1, 2, 3),
+        connectionPayloadJson: String? = null,
     ) = P2ValidatedInvitation(
         sessionId = "session-1",
         sessionName = "Rooftop Disco",
@@ -99,5 +100,6 @@ class P2PresentationTest {
         inviteCode = inviteCode,
         issuedAtMs = 1L,
         expiresAtMs = 2L,
+        connectionPayloadJson = connectionPayloadJson,
     )
 }

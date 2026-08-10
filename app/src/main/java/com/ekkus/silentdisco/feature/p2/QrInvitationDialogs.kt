@@ -79,7 +79,14 @@ fun VerifiedQrInvitationDialog(
     onDismiss: () -> Unit,
     onJoinOnce: () -> Unit,
     onTrustAndJoin: () -> Unit,
+    onConnectDirectly: () -> Unit,
 ) {
+    // A desktop-issued invitation carries its own network endpoint --
+    // there is no BLE/Wi-Fi Direct discovery path for it to ever appear on
+    // (desktop hosts advertise over neither), so "Join once"/"Trust and
+    // join" would only ever end in "not currently nearby". Only offer the
+    // action that can actually succeed for this invitation.
+    val hasDirectConnection = invitation.connectionPayloadJson != null
     AlertDialog(
         modifier = Modifier.testTag("verified-qr-dialog"),
         onDismissRequest = onDismiss,
@@ -111,21 +118,32 @@ fun VerifiedQrInvitationDialog(
         },
         confirmButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onJoinOnce,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("verified-qr-join-once"),
-                ) {
-                    Text("Join once")
-                }
-                Button(
-                    onClick = onTrustAndJoin,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("verified-qr-trust-join"),
-                ) {
-                    Text(if (alreadyTrusted) "Join trusted host" else "Trust host")
+                if (hasDirectConnection) {
+                    Button(
+                        onClick = onConnectDirectly,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("verified-qr-connect-directly"),
+                    ) {
+                        Text("Connect")
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = onJoinOnce,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("verified-qr-join-once"),
+                    ) {
+                        Text("Join once")
+                    }
+                    Button(
+                        onClick = onTrustAndJoin,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("verified-qr-trust-join"),
+                    ) {
+                        Text(if (alreadyTrusted) "Join trusted host" else "Trust host")
+                    }
                 }
             }
         },
