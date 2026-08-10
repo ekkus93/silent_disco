@@ -1678,3 +1678,47 @@ Ralph Loop order in force: `A1 > A2 — A3 — A4.1 ~ A5 D1 —- A6 — A7 (with
 ### Next
 D1 (Block 28.2 device-independent failure tests: corrupt source fixture,
 host read failure — no device needed), per the explicit Ralph Loop order.
+
+## 2026-08-10T04:18:16Z - Claude Sonnet 5 - D1 done: two new device-independent failure regression tests
+
+Ralph Loop order in force: `A1 > A2 — A3 — A4.1 ~ A5 D1 —- A6 — A7 (with D2/D3 alongside A7)`.
+
+- Added two tests to `desktop/src-tauri/src/platform/start_playback_tests.rs`,
+  filling in Block 28.2's two device-independent boxes (no phone needed):
+  - `starting_playback_with_a_corrupt_source_fails_visibly_at_the_orchestration_level`:
+    a WAV truncated to 20 bytes (before the 44-byte header even parses)
+    makes `start_playback::start` fail synchronously with a structured
+    `Err`, and the actor snapshot visibly reaches `PlaybackState::Error`.
+  - `a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming`:
+    a WAV whose header parses fine (declares 3s via `long_pcm_wav`) but
+    whose body is truncated to ~0.1s. Empirically confirmed first (via a
+    throwaway `cargo run --example` probe, since removed) that
+    `StreamingDecodeHandle::open` succeeds and the failure only surfaces
+    later as `DecodeErrorKind::CorruptInput` on `join()` — i.e.
+    `start_playback::start` itself returns `Ok`, matching the TODO item's
+    "host source read failure" wording (a failure *after* claiming to
+    stream, not at open time). The test proves: the pump exits on its own
+    (`playback_is_active()` goes false with nobody calling
+    `stop_playback`), the actor leaves `Playing` on its own,
+    `stream_ended_naturally` stays `false` (not confused with clean EOS),
+    and a subsequent `stop_playback()` call surfaces the real failure as
+    `Err` rather than reporting a clean stop.
+- Both new tests initially failed on their own first run — not a product
+  bug, a race in the test itself: checking `handle.current_snapshot()`
+  immediately after a call that only queues an actor transition
+  (`submit_audio_event`) can observe the pre-transition state, since the
+  actor applies queued events on its own thread. Fixed by polling with the
+  file's existing `wait_snapshot` helper, the same idiom already documented
+  on `resuming_while_already_playing_does_not_corrupt_position`. Recording
+  this because it's the second time this exact race class has shown up in
+  this file — worth remembering as the default assumption for any new test
+  here that checks state right after `submit_audio_event`.
+- `bash scripts/check-rust.sh` and `desktop && npm run check` both green
+  (full runs, not just the two new tests).
+- Updated `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` §10 D1 entry to done.
+
+### Next
+A6 (Block 28.2 device half: disable Android Wi-Fi mid-playback, restore,
+verify disconnect/recovery policy — also the deferred real-device
+confirmation for A3's probe-eviction fix under genuine sustained loss),
+per the explicit Ralph Loop order.

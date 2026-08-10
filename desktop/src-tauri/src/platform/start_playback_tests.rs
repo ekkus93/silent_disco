@@ -611,6 +611,130 @@ fn pause_resume_stop_before_playback_started_are_all_rejected() {
     actor.shutdown().expect("actor shutdown");
 }
 
+/// Block 28.2 "corrupt source fixture fails visibly": a source too damaged
+/// to even parse (here, a WAV truncated before its header is complete) must
+/// fail synchronously and visibly at the `start_playback` orchestration
+/// level -- a structured `Err`, plus the actor snapshot reporting
+/// `PlaybackState::Error` -- not a silent success that later streams
+/// nothing. `start_after_buffering`'s `?` on `prepare_staged_audio_source`
+/// is what should produce this; this test is the regression lock for it,
+/// device-independent per Block 28.2's own split (see `docs/
+/// AUDIO_PLAYBACK_STATE_2026-08-10.md` D1).
+#[test]
+fn starting_playback_with_a_corrupt_source_fails_visibly_at_the_orchestration_level() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_wav_source(&temp, "corrupt-source", corrupt_wav_bytes());
+    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    let error = start_playback::start(&handle, &network, &registry)
+        .expect_err("a corrupt source fixture must fail visibly, not silently succeed");
+    assert!(
+        !error.code.is_empty(),
+        "the failure must carry a stable code"
+    );
+    assert!(
+        !error.message.is_empty(),
+        "the reported failure must say what went wrong"
+    );
+
+    // The failure must be visible in the authoritative snapshot too, not
+    // only in the direct return value -- a caller that only polls state
+    // (e.g. a UI that missed the direct error) must still see it.
+    // `submit_audio_event` only queues the transition; the actor applies it
+    // on its own thread, so this must poll rather than check immediately
+    // (same reasoning as `resuming_while_already_playing_does_not_corrupt_position`).
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == PlaybackState::Error
+    });
+
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Block 28.2 "host source read failure does not claim continued normal
+/// streaming": unlike the corrupt-fixture case above, this source's WAV
+/// header parses fine and declares 3 real seconds of audio, but the file is
+/// truncated to only ~0.1s of actual sample data -- so `start_playback`
+/// itself succeeds (the shared decoder only inspects the header up front;
+/// see `StreamingDecodeHandle::open`), and the read failure only surfaces
+/// once the packetizer worker actually decodes past the truncation point,
+/// exactly the "started fine, host source failed mid-stream" scenario this
+/// item guards. `run_pump`'s non-cancelled error branch is what should:
+/// (a) stop the actor leaving it visibly `Playing` forever, and
+/// (b) surface the real failure through `stop_playback` rather than
+/// reporting a clean stop.
+#[test]
+fn a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_wav_source(
+        &temp,
+        "mid-stream-read-failure",
+        truncated_body_full_header_wav(),
+    );
+    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+
+    start_playback::start(&handle, &network, &registry)
+        .expect("a header that parses fine must start playback, even though its body is short");
+
+    // The pump must notice the read failure and exit on its own -- polling
+    // `playback_is_active` is exactly what `start_playback::start` itself
+    // relies on to detect a finished stream, so it is the right signal here
+    // too. This must go false without anyone calling `stop_playback`.
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    while Instant::now() < deadline && network.playback_is_active().expect("playback state") {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !network
+            .playback_is_active()
+            .expect("playback state after the read failure"),
+        "the pump must exit on its own after the source read failure, not sit claiming an \
+         active stream forever"
+    );
+
+    // `playback_is_active` going false only means the pump thread's closure
+    // returned; the `PlaybackStateChanged(Stopped)` it queued on the way out
+    // is still applied asynchronously by the actor's own thread, so this
+    // must poll rather than check `current_snapshot()` immediately (same
+    // reasoning as the corrupt-fixture test above).
+    let snapshot = wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state != PlaybackState::Playing
+    });
+    assert!(
+        !snapshot.stream_ended_naturally,
+        "a mid-stream read failure is not a clean end-of-file and must not be reported as one"
+    );
+
+    // The failure itself must reach a caller, not be swallowed as a normal
+    // stop just because the pump had already exited by the time this runs.
+    let error = network
+        .stop_playback()
+        .expect_err("stopping after a source read failure must surface that failure");
+    assert!(
+        !error.code.is_empty(),
+        "the failure must carry a stable code"
+    );
+    assert!(
+        !error.message.is_empty(),
+        "the reported failure must say what went wrong"
+    );
+
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
 /// Locks in the Block 27.3 zero-recipient decision: starting playback with
 /// no connected listeners is allowed (the existing delivery-health banner
 /// from 27.2 is the only signal), not blocked outright. See the desktop
@@ -1639,6 +1763,33 @@ fn pcm_wav() -> Vec<u8> {
 /// end-of-file) by the time a mid-stream check runs.
 fn long_pcm_wav() -> Vec<u8> {
     square_wave_pcm_wav(44_100 * 3)
+}
+
+/// Truncated before the 44-byte WAV header is even complete, so the shared
+/// decoder cannot parse it at all -- `StreamingDecodeHandle::open` fails
+/// synchronously. See
+/// `starting_playback_with_a_corrupt_source_fails_visibly_at_the_orchestration_level`.
+fn corrupt_wav_bytes() -> Vec<u8> {
+    let mut bytes = pcm_wav();
+    bytes.truncate(20);
+    bytes
+}
+
+/// A WAV whose header parses fine and declares 3 real seconds of data (via
+/// `long_pcm_wav`), but whose body is cut to only ~0.1s of actual bytes --
+/// the header's declared `data` chunk size is left untouched, so the shared
+/// decoder only discovers the shortfall once it reads past the truncation
+/// point. Confirmed empirically (see `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`
+/// D1 for context): `StreamingDecodeHandle::open` succeeds and the failure
+/// surfaces later as `DecodeErrorKind::CorruptInput` while draining chunks --
+/// exactly the "host source read failure" this fixture exists to trigger.
+/// See `a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming`.
+fn truncated_body_full_header_wav() -> Vec<u8> {
+    let mut bytes = long_pcm_wav();
+    const WAV_HEADER_BYTES: usize = 44;
+    const SURVIVING_DATA_BYTES: usize = 4_410 * 2; // ~0.1s at 44.1kHz mono 16-bit
+    bytes.truncate(WAV_HEADER_BYTES + SURVIVING_DATA_BYTES);
+    bytes
 }
 
 fn square_wave_pcm_wav(frame_count: u32) -> Vec<u8> {

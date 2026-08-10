@@ -344,11 +344,24 @@ criterion, entirely unvalidated on hardware)*
 
 ### Desktop / host
 
-**D1. Block 28.2 device-independent failure tests** *(no phone needed)*
-- D1.1 Corrupt source fixture fails visibly at the `start_playback`
-  orchestration level.
-- D1.2 A host source read failure does not claim continued normal streaming.
-- Only decoder-unit-level coverage exists today.
+**D1. ~~Block 28.2 device-independent failure tests~~ — done 2026-08-10.**
+Both added to `desktop/src-tauri/src/platform/start_playback_tests.rs`:
+- D1.1 `starting_playback_with_a_corrupt_source_fails_visibly_at_the_orchestration_level`
+  — a WAV truncated before its header even parses fails synchronously in
+  `start_playback::start`, and the actor snapshot visibly reaches
+  `PlaybackState::Error` (polled, not checked immediately —
+  `submit_audio_event` only queues the transition).
+- D1.2 `a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming`
+  — a WAV whose header parses fine (declares 3s) but whose body is
+  truncated to ~0.1s fails only once the packetizer worker decodes past the
+  truncation point (confirmed empirically: `open()` succeeds,
+  `DecodeErrorKind::CorruptInput` surfaces later on `join()`). Proves the
+  pump exits on its own (`playback_is_active` goes false unprompted), the
+  actor leaves `Playing` without anyone calling `stop_playback`,
+  `stream_ended_naturally` stays false (not confused with a clean EOS), and
+  a subsequent `stop_playback()` call surfaces the real failure as `Err`
+  rather than reporting a clean stop.
+- Both gates (`scripts/check-rust.sh`, `desktop && npm run check`) green.
 
 **D2. Wire up `AudioEvent::SynchronizationUpdated`** — defined but never
 submitted, so the host's per-listener sync diagnostics are always empty and
