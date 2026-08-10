@@ -1955,21 +1955,71 @@ confirmed via a 2026-08-02 codebase sweep that these correctly return a real
 error rather than silently claiming success; they are simply unbuilt until
 this block.
 
+**Scope correction, 2026-08-10**: `discovery.rs`'s doc comment above is
+partly stale. `PlatformEffectRequest::StartAdvertising`/`StopAdvertising`
+are *already* implemented (`effect_runner.rs` routes them to
+`network.start_host`/`stop_host`, the real socket-binding host transport)
+-- "advertising" today means "the host socket is bound and its endpoint
+computed," with the actual address distribution being 100% manual
+(`HostSessionScreen.tsx`'s "Manual connection details" copy/paste). Only
+`StartDiscovery`/`StopDiscovery`/`EstablishNetwork`/`ReleaseNetwork` still
+route to `unsupported_effect` -- and those four are listener-role-gated
+(`require_role(AppRole::Listener, ...)` in
+`runtime/actor_runtime/state/commands.rs`) and unreachable from the
+desktop's host-only role today, not "unimplemented." So this block's real
+job is narrower than its doc comment implies: add an mDNS **publish/
+withdraw** adapter broadcasting the same `SessionAdvertisement` +
+`NetworkEndpoint` data the manual payload already carries, alongside the
+existing manual path, not replacing it. The Android app has **zero**
+mDNS/NSD client code today (its "Find a session" flow is BLE + Wi-Fi
+Direct, a separate stack) -- closing the loop end to end needs a further,
+not-yet-scoped Android-side discovery block. This block's own acceptance
+criterion already anticipates that: "mDNS is a real convenience layer and
+not a hidden requirement for transport."
+
 ### 30.1 Dependency gate
 
 Evaluate maintained implementations.
 
 Verify:
 
-- [ ] Rust/toolchain compatibility;
-- [ ] Linux interface behavior;
-- [ ] service update/withdrawal;
-- [ ] bounded TXT record handling;
-- [ ] license;
-- [ ] shutdown/join;
-- [ ] testability.
+- [x] Rust/toolchain compatibility -- `mdns-sd` MSRV 1.71.0, well under the
+      pinned 1.97.1 toolchain; builds clean.
+- [x] Linux interface behavior -- spiked directly on this machine
+      (register + browse + resolve + unregister + shutdown, real
+      multicast, no daemon): correctly enumerated 8 real interfaces
+      (`wlo1`, `lo`, Docker bridges/veth) and resolved to the genuine
+      Wi-Fi address (`192.168.88.110` on `wlo1`) exactly as production
+      `first_bindable_private_lan_address` already does for the manual
+      path -- not just docs-read, empirically confirmed.
+- [x] service update/withdrawal -- `ServiceDaemon::register`/`unregister`
+      are separate, explicit calls; re-registering under the same
+      instance name after a change is the documented update path.
+- [x] bounded TXT record handling -- `ServiceInfo::new` takes a
+      `HashMap<String, String>` of TXT properties with no crate-enforced
+      size cap, so 30.2's "validate service and field lengths" is real,
+      new work on top of this crate, not something it does for us.
+- [x] license -- `mdns-sd` itself and its whole dependency tree (`flume`,
+      `if-addrs`, `socket-pktinfo`, `spin`, `mio`, `socket2`, `libc`) are
+      MIT/Apache-2.0/BSD-3-Clause; no copyleft.
+- [x] shutdown/join -- `ServiceDaemon::shutdown()` is explicit and
+      blocking-until-complete; confirmed clean in the spike (no hang, no
+      panic).
+- [x] testability -- the crate exposes both register (server) and browse
+      (client) APIs in one dependency, so 30.3's "discover from a test
+      client" can be a fully self-contained Rust test using the same
+      crate as its own client, no external `avahi-browse`/`dns-sd` tool
+      or physical device dependency.
 
-Record the exact selected version and alternatives.
+**Selected: `mdns-sd` 0.20.3** (Apache-2.0 OR MIT), pinned exact per this
+repo's dependency policy. **Alternative considered and rejected**:
+`libmdns` (advertise-only, no browse API -- would have forced an external
+tool dependency for 30.3's discovery test) and `zeroconf` (wraps
+platform daemons -- Avahi via D-Bus on Linux -- which conflicts with
+30.3's "daemon/multicast unavailable" test needing to exercise a real
+failure mode rather than always failing because no daemon is running by
+default in this environment; `mdns-sd` is pure Rust with its own
+multicast socket, no system daemon dependency at all).
 
 ### 30.2 Implement adapter
 
