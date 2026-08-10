@@ -121,11 +121,21 @@ output device belongs to the connection, not to one track.
 
 ## 5. Known remaining problems, in priority order
 
-1. **The listener never notices the host is gone.** After the host shuts
-   down, the stream stays open and silence-fills indefinitely — burning CPU
-   and radio, with the UI still showing a live stream. It also *contaminates
-   the metrics*: one manual run logged 4,779,792 silence frames of which
-   ~4.7 M was post-run idle. **Highest value, and cheap.**
+1. ~~The listener never notices the host is gone~~ **— investigated
+   2026-08-10, does NOT reproduce.** Tested a graceful `Stop`-then-shutdown
+   (diagnostics pulled within seconds: clean `phase=STOPPED`, zero trailing
+   idle rows) and an abrupt `SIGKILL` of the host process mid-stream
+   (~1 second from last `PLAYING` sample to a clean `phase=STOPPED` summary
+   and an on-screen "Host disconnected" message). `ConnectionClosed` /
+   `HostDisconnected` handling already works correctly and promptly for an
+   actually-closed connection. The 4,779,792-frame reading that motivated
+   this item was almost certainly test-orchestration artifact (an app
+   instance left connected across manual runs without an intervening
+   force-stop), not a code defect. **What this does not test**: a *silent*
+   network partition (Wi-Fi disabled, black-holed) delivers no FIN/RST at
+   all, so TCP would only notice via a keepalive/send-timeout that may be
+   slow or unconfigured — a genuinely different failure mode, and exactly
+   what item 6 below (device Wi-Fi disable/restore) still needs to measure.
 2. **`t4` is stamped after dispatch, not at socket receipt.** The listener's
    sync receiver already captures an accurate `received_at`
    (`socket/listener.rs`), but `map_event` discards it and Kotlin substitutes
@@ -254,12 +264,15 @@ throughout (exact packet cadence, zero queue overflows, full delivery).
 
 ### Android / listener
 
-**A1. Listener does not detect the host is gone** *(highest value, small)*
-- A1.1 Treat host shutdown / transport closure as end-of-stream: stop the
-  runtime and close the Oboe stream instead of silence-filling forever.
-- A1.2 Surface it in the UI as disconnected rather than still streaming.
-- A1.3 Regression test: `ConnectionClosed` / `HostDisconnected` must end
-  playback.
+**A1. ~~Listener does not detect the host is gone~~ — closed, does not
+reproduce** (2026-08-10). Confirmed working for both a graceful stop and an
+abrupt process kill; see §5 item 1. The real open question (silent network
+partition, no FIN/RST) is folded into A6, not tracked separately here.
+
+**A0. (new, found while investigating A1) Android device below API 31 needs
+the legacy `BLUETOOTH` permission** — fixed 2026-08-10. `minSdk` was lowered
+to 26 without adding it; every real-device run before now happened to avoid
+the "Find a session" BLE path that triggers it. See `AndroidManifest.xml`.
 - Also removes the metric contamination described in §5.1.
 
 **A2. Stamp `t4` at socket receipt, not after dispatch**

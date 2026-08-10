@@ -1536,3 +1536,31 @@ Markedly better than earlier in the session -- the catastrophic startup stalls a
 2. `t4` still stamped after dispatch rather than at socket receipt, though the receiver already captures `received_at`. Remaining known RTT contaminant.
 3. Pending sync probes never age out; 64 lost responses would permanently brick probing.
 4. Residual `late`/`concealed` during playback (~14% of seconds in the worse run) -- arrival gaps that the shallow ring cannot absorb; `ringQueued` was observed dropping to 384-720 frames while emitting at full rate.
+
+## 2026-08-10T03:23:50Z - Claude Sonnet 5 - Ralph Loop start: A1 investigated and does NOT reproduce; a real BLUETOOTH permission crash found and fixed first
+
+Picked up the Android-first task order from `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` section 10: A1 -> A2 -> A3 -> A4.1 -> A5 -> D1 -> A6 -> A7 (+D2/D3).
+
+### Blocking prerequisite found and fixed: BLE crash on real devices below API 31
+
+Before A1 could even be tested, the app **crashed** the moment "Find a session" was tapped: `SecurityException: Need BLUETOOTH permission` from `BleDiscoveryService.startScanning` -> `BluetoothAdapter.getBluetoothLeScanner()`. The manifest declares only the API-31+ granular runtime permissions (`BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT`/`BLUETOOTH_ADVERTISE`); pre-31 devices ignore those and need the legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` normal permissions instead. This gap has existed since `minSdk` was lowered to 26 earlier in the session and was simply never hit before, because every prior real-device run used "Connect manually" navigation that (usually) got past this screen without incident, or ran on emulators at higher API levels.
+
+Fixed: added `<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />` and the `BLUETOOTH_ADMIN` equivalent to `AndroidManifest.xml`. Confirmed via `dumpsys package`: `android.permission.BLUETOOTH: granted=true`, and the crash is gone -- "Find a session" now reaches the nearby-sessions screen cleanly. `./gradlew test lintDebug` green.
+
+(One authoring mistake caught immediately by the build: an XML comment containing `--` inside its body, not just as the closing delimiter, is invalid XML and fails manifest merging. Use plain punctuation in manifest comments, not em-dash-style `--`.)
+
+### A1: does NOT reproduce -- corrected from the previous session's writeup
+
+The previous entry's A1 ("listener never notices host is gone", cited as highest-value-and-cheap) was based on a stale diagnostics read, not a controlled experiment. Ran two controlled experiments this time:
+
+1. **Graceful end** (song-b's own `Stop` message, then `network.shutdown()`): pulled diagnostics *immediately* (within seconds) after the desktop test process exited. Result: clean `phase=STOPPED` summary, zero trailing idle rows. This scenario can't leak a runtime by construction -- `Stop` already ends the stream via `handleStreamStopped`, so there is nothing left open regardless of whether disconnect is ever detected.
+2. **Abrupt kill** (SIGKILL'd the desktop `cargo test` process mid-stream, ~10s into song-a, timestamped): last `PLAYING` sample at t=994929, `phase=STOPPED` summary at t=995950 -- **about 1 second** to detect the closed connection and cleanly tear down (runtime stopped, Oboe closed, UI shows "Host disconnected: runtime transport ShuttingDown: transport event channel is closed"). Confirmed on-screen too, well before the first poll at t+31s.
+
+**Conclusion: `ConnectionClosed`/`HostDisconnected` handling already works correctly and promptly for an actual closed connection**, whether the host ends cleanly or is killed outright -- both deliver a TCP FIN/RST the OS acts on immediately. The earlier 4,779,792-silence-frame reading was almost certainly an artifact of test orchestration (an app instance left connected across manual runs without an intervening force-stop), not a reproducible defect. Recording this honestly rather than shipping a fix for a bug that doesn't exist.
+
+**What this does NOT rule out, and is exactly A6's scope, not A1's**: a *silent* network partition (Wi-Fi disabled, cable pulled, black-holed) delivers no FIN/RST at all -- TCP would only notice via a keepalive or send timeout, which may be very slow or unconfigured. That is a genuinely different failure mode from "the process died," untested here, and is precisely what A6 (Wi-Fi disable/restore mid-playback) exists to measure. Do not re-close A6 on the strength of this entry.
+
+**`docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` needs a correction** (not done yet this entry): item A1/section 5.1 should be rewritten to reflect this finding rather than repeat the unverified claim.
+
+### Next
+A2 (stamp `t4` at socket receipt).

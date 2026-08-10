@@ -23,6 +23,19 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!--
+      Pre-API-31 devices ignore the three runtime permissions above and
+      require the legacy normal permissions instead, confirmed as a real
+      crash on a physical Android 8.0 (API 26) device: BleDiscoveryService
+      calling BluetoothAdapter.getBluetoothLeScanner() threw
+      SecurityException: Need BLUETOOTH permission, the moment "Find a
+      session" was opened. minSdk was lowered to 26 without adding these.
+      android:maxSdkVersion scopes them off newer devices, where the
+      BLUETOOTH_* runtime permissions above are already sufficient and these
+      would otherwise appear as unused legacy grants.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.CAMERA" />
 
     <application
