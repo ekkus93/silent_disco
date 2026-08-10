@@ -168,6 +168,14 @@ output device belongs to the connection, not to one track.
    the startup target, but the Android value is left at parity. Lowering it
    to 400 ms was tried and is **indistinguishable** from parity given the
    noise — do not re-litigate without several runs per config.
+6. **MP3 listener quality trails WAV/FLAC.** Single run 2026-08-10 (post
+   A1-A3): `concealed=700 late=271 hardResyncs=2 ringSilenceFilled=186480
+   ringFullEvents=21`, all clearly outside the post-fix WAV/FLAC range (§2,
+   §A5 in §10). No distribution yet for MP3 specifically, so not confirmed
+   as a regression — but distinct enough to be real. Suspected cause: MP3
+   host-side decode has more per-frame timing variance than WAV/FLAC,
+   pressuring the listener ring. Not investigated further; lowest priority
+   until A6/A7 land.
 
 ---
 
@@ -300,8 +308,25 @@ device confirmation under real sustained loss still pending, folded into A6.
 - A4.3 Tune `rebuffer_target_ms` only with several runs per config.
 - A4.4 Count offset-driven rebuffers so `hardResyncs` stops under-reporting.
 
-**A5. Finish Block 28.1** — re-run the FLAC and MP3 listener variants, which
-have not been exercised since any of these fixes.
+**A5. ~~Finish Block 28.1~~ — done 2026-08-10.** Re-ran the FLAC and MP3
+listener variants against the post-A1-A3 code; neither had been exercised
+since those fixes landed.
+
+- FLAC: clean. `concealed=112 late=21 hardResyncs=1 ringSilenceFilled=122304
+  ringFullEvents=0` — sits inside the post-fix WAV distribution's range
+  (§2), confirming normal, non-regressed behavior.
+- MP3: test passed (7077/7077 packets fully or partially delivered, no
+  drops, no disconnect) but listener-side quality is **clearly worse than
+  WAV/FLAC**: `concealed=700 late=271 hardResyncs=2 ringSilenceFilled=186480
+  ringFullEvents=21`. `ringSilenceFilled` is 46% over the post-fix WAV
+  maximum (126,288) and `ringFullEvents` going nonzero hasn't been seen
+  since A1-A3 landed. This is a single run (no distribution yet for MP3
+  specifically), so it is not confirmed as a regression from A1-A3 — but it
+  is different enough from WAV/FLAC on every metric to be a real, separate
+  finding rather than noise. Likely cause: MP3 decode on the host has more
+  per-frame timing variance than WAV/FLAC, pressuring the listener ring
+  buffer. Not investigated further — recorded here as follow-up work, not
+  blocking A6/A7.
 
 **A6. Block 28.2 device half** — disable Android Wi-Fi mid-playback, restore
 it, and verify the disconnect/recovery policy. A1 likely changes this

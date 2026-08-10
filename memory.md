@@ -1644,3 +1644,37 @@ Ran 4 more unattended two-song device runs (8 stream samples) at the current cod
 
 ### Next
 A5 (re-run FLAC and MP3 listener variants, untested since any of this session's fixes).
+
+## 2026-08-10T04:09:56Z - Claude Sonnet 5 - A5 done: FLAC clean, MP3 works but trails WAV/FLAC on quality
+
+Ralph Loop order in force: `A1 > A2 — A3 — A4.1 ~ A5 D1 —- A6 — A7 (with D2/D3 alongside A7)`.
+
+- Re-ran both listener-format variants against the post-A1-A3 code on the
+  real LG G6 (`manual_real_android_listener_plays_flac`,
+  `manual_real_android_listener_plays_mp3`), neither exercised since those
+  fixes landed.
+- **FLAC**: clean pass. Pause/resume exercised correctly (audio genuinely
+  stopped/resumed rather than restarted). Diagnostics summary:
+  `concealed=112 late=21 hardResyncs=1 ringSilenceFilled=122304
+  ringFullEvents=0`. This sits inside the A4.1 post-fix WAV distribution's
+  range (49,152–126,288 for `ringSilenceFilled`), confirming normal,
+  non-regressed behavior.
+- **MP3**: test passed — 7077/7077 packets fully or partially delivered, no
+  drops, no disconnect — but listener-side quality is clearly worse than
+  WAV/FLAC: `concealed=700 late=271 hardResyncs=2 ringSilenceFilled=186480
+  ringFullEvents=21`. `ringSilenceFilled` is 46% over the post-fix WAV
+  maximum and `ringFullEvents` going nonzero hasn't been seen since A1-A3
+  landed. This is a single MP3 run (no per-format distribution yet), so
+  it's not confirmed as an A1-A3 regression — but it's distinct enough from
+  WAV/FLAC on every metric to be a real, separate finding, not noise.
+  Suspected cause: MP3 host-side decode has more per-frame timing variance
+  than WAV/FLAC, pressuring the listener ring. Recorded as a new item in
+  `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` §5 (item 6) and in §10's A5
+  entry; not investigated further this block — lowest priority until
+  A6/A7 land.
+- Updated `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`: A5 struck through as
+  done in §10, MP3 finding added as §5 item 6.
+
+### Next
+D1 (Block 28.2 device-independent failure tests: corrupt source fixture,
+host read failure — no device needed), per the explicit Ralph Loop order.
