@@ -368,8 +368,8 @@ Three distinct, real findings:
    restored — see finding 3), so the actual reconnect UX still needs a
    real run, ideally with a dedicated test script that can approve a second
    join mid-run.
-3. **The host has zero visibility into the disconnect — a real, confirmed
-   gap, more serious than expected.** The scripted test's own timers kept
+3. ~~**The host has zero visibility into the disconnect**~~ **— fixed
+   2026-08-10, same day.** Originally: the scripted test's own timers kept
    running through the entire ~2.5-minute outage (song-a's remainder, the
    song switch, and all 40s of song-b), and its final broadcast stats read
    `attempted=15129 fully_delivered=15129 partially_delivered=0
@@ -377,21 +377,43 @@ Three distinct, real findings:
    listener sat on an error screen having received nothing since the
    outage began. `fully_delivered` counts successful `send()` syscalls, not
    actual receipt; UDP sends to an unreachable peer on the same LAN segment
-   evidently still "succeed" at the OS level. There is no per-peer
-   liveness/heartbeat anywhere (`ListenerLifecycle::Reconnecting` is fully
-   wired in Rust, FFI, and Kotlin, but nothing anywhere ever assigns it —
-   dead state). This directly contradicts CLAUDE.md's "Zero recipients and
-   partial delivery are not full success" and the diagnostics mandate for
-   "packet loss... listener health" — and it pre-emptively fails **A7.4**
-   below ("one listener disconnecting is not reported as full delivery
-   success"), now confirmed as false on real hardware, not just
-   unvalidated. Recorded here as a new, high-priority item rather than
-   fixed inline — building real per-peer liveness tracking (host-side
-   inbound-silence timeout, `Reconnecting`/`Disconnected` state wiring, and
-   an honest delivery-health signal) is cross-cutting, multi-file work
-   across Rust core, desktop, and Android, well beyond this block's
-   "verify the policy" scope. Should be prioritized before or alongside A7,
-   since A7.4 cannot pass without it.
+   evidently still "succeed" at the OS level. This directly contradicted
+   CLAUDE.md's "Zero recipients and partial delivery are not full success"
+   and pre-emptively failed **A7.4** below.
+
+   **Fix**: `PeerState` (`transport/socket/host.rs`) now tracks
+   `last_inbound_millis`, refreshed on every genuine inbound frame from that
+   peer (sync/audio datagram receiver in `host_workers.rs`, and the TCP
+   control reader). `SocketHostTransport::authorized_routes` — called by
+   every broadcast — excludes (and evicts via the same `PeerState::close`
+   path `max_consecutive_failures` already used, so it surfaces through the
+   identical, already-tested `PeerDisconnected` event) any peer silent
+   longer than the new `HostTransportConfig::peer_inbound_silence_timeout`
+   (default 8s, `DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT` — 4x the listener's
+   2000ms steady-state sync cadence, chosen conservatively per the sibling
+   `max_consecutive_failures` mechanism's own documented lesson about being
+   too aggressive). Two new deterministic tests in `transport/tests.rs`
+   using `ManualTransportClock` (no real sleeping): a silent peer is
+   evicted and stops being reported as delivered; a peer that keeps
+   probing normally is never evicted.
+
+   **Confirmed on the real LG G6, same Wi-Fi-disable scenario**: before the
+   fix, `fully_delivered=15129/15129` (100%) for the whole run. After the
+   fix, the same scenario produced `attempted=15128 fully_delivered=9086
+   (60%) partially_delivered=111 without_recipients=5931 (39%)`, and the
+   listener correctly disappeared from the actor's `snapshot.listeners`
+   entirely partway through — a dramatic, measured, confirmed change, not
+   just a code-level argument. One honest caveat: eviction took
+   meaningfully longer in this real run than the nominal 8s config value
+   (`without_recipients` was still 0 at the ~30s mark, only climbing by the
+   ~75s mark) — likely real Android Wi-Fi teardown/ARP timing rather than a
+   logic bug, since the mechanism's *direction* (evicted, honestly
+   reported) is unambiguous; the exact real-world latency bound is not
+   pinned down as tightly as the synthetic tests suggest. Not investigated
+   further this block. `ListenerLifecycle::Reconnecting` remains dead state
+   (still wired end-to-end but never assigned) and the Android UI still
+   doesn't surface this disconnect — out of scope for this fix, which only
+   targeted the host-side delivery-honesty half of A7.4.
 
 **A7. Block 29 — multiple physical listeners** *(the actual product
 criterion, entirely unvalidated on hardware)*
@@ -399,9 +421,10 @@ criterion, entirely unvalidated on hardware)*
 - A7.2 Both complete initial sync.
 - A7.3 Both play the same stream; pause/resume/stop affects both.
 - A7.4 One listener disconnecting is not reported as full delivery success
-  — **known to currently fail**, confirmed on real hardware by A6 above;
-  needs the host-side liveness/delivery-honesty work A6 identified before
-  this can pass.
+  — **host-side half fixed and confirmed 2026-08-10** (A6 above): a silent
+  peer is now evicted and honestly reported as `without_recipients`. Not
+  yet re-confirmed with *two* listeners specifically (one drops, one
+  stays) — that's what A7 itself still needs to exercise.
 - A7.5 Measure inter-device skew, loss, underruns, confidence (29.2).
 - A7.6 Compare listeners against *each other* — "listeners hear the same
   thing" is what none of the single-listener work tests.

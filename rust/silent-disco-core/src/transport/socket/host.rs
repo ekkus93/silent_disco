@@ -59,6 +59,14 @@ pub(super) struct PeerState {
     pub(super) sender: ControlSender,
     pub(super) stop: Arc<AtomicBool>,
     pub(super) shutdown_stream: Mutex<TcpStream>,
+    /// Host clock reading (`TransportClock::now`) at the most recent inbound
+    /// sync/audio datagram genuinely attributed to this peer -- initialized
+    /// to registration time so a freshly authorized peer that hasn't sent
+    /// its first sync probe yet isn't immediately evicted. Read by
+    /// [`SocketHostTransport::authorized_routes`] to presume a peer gone
+    /// after [`super::super::HostTransportConfig::peer_inbound_silence_timeout`]
+    /// of silence -- see that field's doc comment for why this exists.
+    pub(super) last_inbound_millis: AtomicU64,
 }
 
 impl PeerState {
@@ -85,6 +93,17 @@ impl PeerState {
         self.active.store(false, Ordering::Release);
         self.stop.store(true, Ordering::Release);
         shutdown_stream(&self.shutdown_stream)
+    }
+
+    pub(super) fn mark_inbound_activity(&self, at: crate::domain::MonotonicMillis) {
+        self.last_inbound_millis.store(at.get(), Ordering::Release);
+    }
+
+    fn is_inbound_silent(&self, now: crate::domain::MonotonicMillis, timeout: Duration) -> bool {
+        let elapsed = now
+            .get()
+            .saturating_sub(self.last_inbound_millis.load(Ordering::Acquire));
+        elapsed >= u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)
     }
 }
 
@@ -361,6 +380,13 @@ impl SocketHostTransport {
             })
     }
 
+    /// Returns every currently-active authorized route, evicting (and
+    /// excluding from the result) any peer that has sent nothing for longer
+    /// than `peer_inbound_silence_timeout` -- see [`PeerState::last_inbound_millis`]'s
+    /// doc comment for why this exists. Eviction reuses [`PeerState::close`],
+    /// the same mechanism `record_peer_result`'s `max_consecutive_failures`
+    /// path already uses, so it surfaces through the identical, already-
+    /// tested `PeerDisconnected` event path.
     fn authorized_routes(&self) -> Result<Vec<(DeviceId, PeerRoute)>, TransportError> {
         let routes = self.routes.lock().map_err(|_| {
             TransportError::new(
@@ -369,9 +395,22 @@ impl SocketHostTransport {
                 "peer route registry is poisoned",
             )
         })?;
+        let now = self.clock.now();
         Ok(routes
             .iter()
-            .filter(|(_, route)| route.peer.active.load(Ordering::Acquire))
+            .filter(|(_, route)| {
+                if !route.peer.active.load(Ordering::Acquire) {
+                    return false;
+                }
+                if route
+                    .peer
+                    .is_inbound_silent(now, self.config.peer_inbound_silence_timeout)
+                {
+                    drop(route.peer.close());
+                    return false;
+                }
+                true
+            })
             .map(|(device_id, route)| (device_id.clone(), route.clone()))
             .collect())
     }

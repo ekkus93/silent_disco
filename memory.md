@@ -1787,3 +1787,66 @@ A7 (Block 29 — two physical listeners, needs a second phone), with D2/D3
 alongside, per the explicit Ralph Loop order. Given A6's finding #3, worth
 surfacing to the user that A7.4 is known to currently fail before/while
 running A7, rather than discovering it silently mid-block.
+
+## 2026-08-10T04:58:30Z - Claude Sonnet 5 - Fixed and confirmed the A6 host-blindness gap on real hardware
+
+User explicitly chose to fix this now (asked via AskUserQuestion: "Fix
+host-blindness gap now" over waiting for a second device or stopping).
+A7 (needs a second physical Android device — only the LG G6 is connected)
+is paused pending that hardware.
+
+- **Fix, scoped deliberately small**: host-side inbound-silence eviction
+  only, reusing existing machinery rather than building new state.
+  `PeerState` (`rust/silent-disco-core/src/transport/socket/host.rs`) gained
+  `last_inbound_millis: AtomicU64`, refreshed via a new
+  `mark_inbound_activity` call on every genuine inbound frame from that
+  peer — the UDP sync/audio receiver loop and the TCP control reader, both
+  in `host_workers.rs`. `SocketHostTransport::authorized_routes` (called by
+  every single broadcast) now excludes and evicts any peer silent longer
+  than a new `HostTransportConfig::peer_inbound_silence_timeout` field
+  (default `DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT` = 8s, in
+  `transport/types.rs` — 4x the listener's 2000ms steady-state sync
+  cadence, deliberately not tighter given the sibling
+  `max_consecutive_failures` mechanism's own documented real-hardware
+  lesson about over-aggressive eviction). Eviction calls the same
+  `PeerState::close()` the pre-existing `max_consecutive_failures` path
+  already uses, so it surfaces through the identical, already-tested
+  `PeerDisconnected` → `ListenerDisconnected` chain — no new event/state
+  plumbing needed. Updated the one other `HostTransportConfig` struct
+  literal (`rust/silent-disco-ffi/src/host_transport/handle.rs`'s UniFFI
+  `bind()` constructor) to set the new field.
+- **Two new deterministic tests** in `rust/silent-disco-core/src/transport/tests.rs`,
+  using `ManualTransportClock` (no real sleeping, exercises the exact
+  default 8s value): `a_silent_peer_is_evicted_and_stops_being_reported_as_delivered`
+  and `a_listener_that_keeps_probing_is_never_evicted_as_silent` (guards
+  the false-positive direction explicitly). Both pass in ~0.1s.
+- **Confirmed on the real LG G6**, same Wi-Fi-disable/restore scenario as
+  the original A6 finding. Before: `attempted=15129 fully_delivered=15129
+  (100%) without_recipients=0` for the whole 2.5-minute outage. After:
+  `attempted=15128 fully_delivered=9086 (60%) partially_delivered=111
+  without_recipients=5931 (39%)`, and the listener disappeared from the
+  actor's `snapshot.listeners` entirely partway through the run — measured
+  on hardware, not just argued from code. One honest caveat recorded in the
+  state doc: eviction took noticeably longer in this real run than the
+  nominal 8s (`without_recipients` was still 0 at ~30s, only climbing by
+  ~75s) — most likely real Android Wi-Fi teardown/ARP timing, not a logic
+  bug, but the real-world latency bound isn't as tight as the synthetic
+  tests suggest. Not investigated further.
+- Explicitly out of scope, left as-is: `ListenerLifecycle::Reconnecting`
+  remains dead state (still fully wired but never assigned), and the
+  Android UI still doesn't surface a listener-side view of this disconnect
+  — this fix only targeted the host's delivery-honesty half of A7.4.
+- Both gates green: `bash scripts/check-rust.sh` (full run, all crates) and
+  `desktop && npm run check`.
+- Left the LG G6 in a clean state afterward (Wi-Fi re-enabled, app
+  force-stopped).
+- Updated `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`: §10 A6 finding 3
+  struck through as fixed with the full before/after numbers; A7.4 note
+  updated to reflect the host-side half is now fixed, with a note that
+  two-listener re-confirmation is still A7's job.
+
+### Next
+A7 (Block 29 — two physical listeners, needs a second phone), with D2/D3
+alongside, per the explicit Ralph Loop order. Genuinely blocked on
+hardware this session — only one Android device (LG G6) is connected via
+adb. Resume A7 once a second device is available.

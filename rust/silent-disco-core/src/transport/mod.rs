@@ -17,11 +17,11 @@ pub use manual_endpoint::{MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES, ManualHostEndpoint}
 pub use socket::{SocketHostTransport, SocketListenerTransport, SocketTransportFactory};
 pub use types::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,
-    DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY,
-    HostTransportConfig, ListenerDatagramRoutes, ListenerTransportConfig,
-    MAX_TRANSPORT_EVENT_CAPACITY, MAX_TRANSPORT_PEERS, MAX_TRANSPORT_QUEUE_CAPACITY,
-    TransportChannel, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
-    TransportEvent, TransportPeer,
+    DEFAULT_OPERATION_TIMEOUT, DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
+    DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY, HostTransportConfig,
+    ListenerDatagramRoutes, ListenerTransportConfig, MAX_TRANSPORT_EVENT_CAPACITY,
+    MAX_TRANSPORT_PEERS, MAX_TRANSPORT_QUEUE_CAPACITY, TransportChannel, TransportCounters,
+    TransportDelivery, TransportError, TransportErrorKind, TransportEvent, TransportPeer,
 };
 pub use virtual_fault::{FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig};
 pub use virtual_transport::{VirtualTransportFactory, VirtualTransportNetwork};

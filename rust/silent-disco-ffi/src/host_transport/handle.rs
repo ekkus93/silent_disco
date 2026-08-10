@@ -11,9 +11,10 @@ use silent_disco_core::protocol::{
 };
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,
-    DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY,
-    HostTransportConfig, HostTransportNode, SystemTransportClock, TransportChannel, TransportClock,
-    TransportDelivery, TransportEvent, TransportFactory, production_transport_factory,
+    DEFAULT_OPERATION_TIMEOUT, DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
+    DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY, HostTransportConfig,
+    HostTransportNode, SystemTransportClock, TransportChannel, TransportClock, TransportDelivery,
+    TransportEvent, TransportFactory, production_transport_factory,
 };
 
 use super::types::{
@@ -83,6 +84,7 @@ impl FfiHostTransportHandle {
             io_timeout: DEFAULT_IO_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
             max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
+            peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
         };
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
         let transport = production_transport_factory().bind_host(config, clock)?;

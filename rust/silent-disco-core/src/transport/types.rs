@@ -16,6 +16,26 @@ pub const MAX_TRANSPORT_PEERS: usize = 1_024;
 pub const DEFAULT_IO_TIMEOUT: Duration = Duration::from_millis(100);
 pub const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(3);
 pub const DEFAULT_MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// How long the host will keep broadcasting to a listener that has sent it
+/// nothing -- no `SyncRequest`, no inbound datagram of any kind -- before
+/// presuming it gone and evicting it.
+///
+/// Without this, the host has no way to notice a listener that silently
+/// vanished (confirmed on real hardware, 2026-08-10, block A6: disabling
+/// Wi-Fi on a real Android listener mid-stream left the host reporting
+/// `fully_delivered` at 100% for the rest of a 2.5-minute run, because a
+/// UDP `send_to` to an unreachable peer on the same LAN segment still
+/// "succeeds" at the OS level -- see `SocketHostTransport::authorized_routes`).
+///
+/// Set to 4x the listener's steady-state sync-probe cadence
+/// (`SYNC_PROBE_CADENCE_MS` = 2000ms in
+/// `ManualListenerTransportController.kt`), not a tighter multiple: the
+/// `DATAGRAM_SEND_TIMEOUT` doc comment on this same struct's sibling
+/// mechanism (`max_consecutive_failures`) already recorded a real-hardware
+/// lesson that being too aggressive here disconnects a listener that is
+/// still there under ordinary transient congestion/loss, not just a
+/// genuinely gone one.
+pub const DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportChannel {
@@ -129,6 +149,7 @@ pub struct HostTransportConfig {
     pub io_timeout: Duration,
     pub operation_timeout: Duration,
     pub max_consecutive_failures: u32,
+    pub peer_inbound_silence_timeout: Duration,
 }
 
 impl HostTransportConfig {
@@ -146,6 +167,7 @@ impl HostTransportConfig {
             io_timeout: DEFAULT_IO_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
             max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
+            peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
         }
     }
 
@@ -168,6 +190,13 @@ impl HostTransportConfig {
                 TransportErrorKind::InvalidConfiguration,
                 TransportChannel::Runtime,
                 "max_consecutive_failures must be nonzero",
+            ));
+        }
+        if self.peer_inbound_silence_timeout.is_zero() {
+            return Err(TransportError::new(
+                TransportErrorKind::InvalidConfiguration,
+                TransportChannel::Runtime,
+                "peer_inbound_silence_timeout must be nonzero",
             ));
         }
         Ok(())

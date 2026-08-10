@@ -152,6 +152,10 @@ fn register_peer(
         sender: ControlSender::new(write_sender, config.operation_timeout, counters.clone()),
         stop: peer_stop.clone(),
         shutdown_stream: Mutex::new(shutdown_copy),
+        // Registration time, not zero -- a freshly authorized peer that
+        // hasn't had a chance to send its first sync probe yet must not
+        // read as already stale (see the field's own doc comment).
+        last_inbound_millis: AtomicU64::new(clock.now().get()),
     });
     peers
         .lock()
@@ -205,6 +209,8 @@ fn register_peer(
                         counters_for_reader.frame_received(bytes);
                         match validate_host_frame(&reader_peer, &frame) {
                             Ok(()) => {
+                                let received_at = clock_for_reader.now();
+                                reader_peer.mark_inbound_activity(received_at);
                                 send_event(
                                     &event_for_reader,
                                     &counters_for_reader,
@@ -212,7 +218,7 @@ fn register_peer(
                                         channel: TransportChannel::Control,
                                         peer: reader_peer.transport_peer(),
                                         frame,
-                                        received_at: clock_for_reader.now(),
+                                        received_at,
                                     },
                                 );
                                 true
@@ -445,6 +451,8 @@ pub(super) fn spawn_udp_receiver(
                         match result {
                             Ok(frame) if datagram_matches_channel(channel, &frame) => {
                                 counters.datagram_received(channel, length);
+                                let received_at = clock.now();
+                                peer.mark_inbound_activity(received_at);
                                 send_event(
                                     &event_sender,
                                     &counters,
@@ -455,7 +463,7 @@ pub(super) fn spawn_udp_receiver(
                                             control_address: peer.remote,
                                         },
                                         frame,
-                                        received_at: clock.now(),
+                                        received_at,
                                     },
                                 );
                             }
