@@ -3067,3 +3067,140 @@ persisted-recording format with protocol/core version stamps, packet
 hashes, and a divergence diff) is next in the TODO's Phase 11. Per
 this session's established pattern, do not start it unilaterally —
 ask the user first.
+
+## 2026-08-10T20:13:23Z - Claude Sonnet 5 - Block 25: protocol/storage fuzz and property testing, one real bug fixed
+
+**What:** Implemented shared-core Block 25 (`docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`)
+in `rust/silent-disco-core` only: structured fuzz-style/property tests for the
+protocol codec, migration metadata/checksum fuzzing, and storage corrupted-row/
+busy/read-only tests. Ran in an isolated worktree in parallel with another
+agent's unrelated desktop Lab Mode work (Block 40, `00582b0`).
+
+**Fuzzing-approach decision:** No `cargo-fuzz`/`proptest`/`arbitrary` existed
+anywhere in the workspace before this block (checked via grep first). Verified
+`cargo-fuzz` is not usable here: `rust/rust-toolchain.toml` pins stable
+`1.97.1` and no nightly toolchain is installed (`rustup toolchain list` shows
+only stable channels; `rustup run nightly rustc --version` fails —
+"toolchain 'nightly-x86_64-unknown-linux-gnu' is not installed"), and
+`cargo-fuzz` requires nightly + libFuzzer. `cargo add proptest --dry-run`
+confirmed registry/network access *is* available (contrary to an initial
+`curl https://crates.io` 403, which was some unrelated proxy/WAF response —
+`cargo`'s actual index access worked fine), so proptest was a genuine option,
+not one ruled out by network. Chose **not** to add it anyway: this crate
+already has exactly the right minimal-dependency precedent from Block 39
+(`silent_disco_core::transport::DeterministicPrng`, a hand-rolled
+`SplitMix64`-based seeded PRNG, already `pub`), and reusing it directly
+(`use crate::transport::DeterministicPrng;` from the new test modules) gave
+everything actually needed — reproducible seeded generation of malformed
+bytes, structural mutation of valid frames, and randomized-but-valid property
+generators — without a new dependency, consistent with this project's
+established minimal-dependency pattern. New tests:
+- `rust/silent-disco-core/src/protocol/fuzz_tests.rs` (new file, wired via
+  `#[cfg(test)] mod fuzz_tests;` in `protocol/mod.rs`): `generated_valid_frames_round_trip_canonically`
+  (2,000 randomized-but-valid frames across every message kind, asserting
+  `encode -> decode -> encode` byte-identity); `arbitrary_random_buffers_never_panic_across_many_seeds_and_lengths`
+  (64 seeds × 10 lengths of pure-random bytes through `decode_frame`/`decode_header`);
+  `mutated_valid_frames_never_panic_for_any_message_kind` (14 seed frames ×
+  200 randomized bit-flip/truncate/extend/0xFFFF-smash mutations each);
+  `hostile_declared_lengths_are_rejected_before_allocation` (header-level
+  `u32::MAX`/oversized payload_length claims, a control string length prefix
+  of 0xFFFF with 4 real bytes present, an audio `declared_payload_length` of
+  0xFFFF with 4 real bytes present — all rejected with a typed error *before*
+  any allocation of the claimed size, confirming the existing
+  check-before-allocate design in `protocol/codec/decoding.rs` actually holds).
+- `rust/silent-disco-core/src/storage/migrations.rs` (extended the existing
+  `#[cfg(test)] mod tests`): `fuzzed_checksum_corruption_is_always_rejected_never_panics`
+  (200 random non-empty checksum strings written into `schema_migrations.checksum`,
+  always producing a typed `Migration` error); `fuzzed_arbitrary_user_version_values_never_panic_and_never_silently_migrate`
+  (200 random 64-bit `user_version` pragma values, including negative/huge —
+  reads back the *actually stored* value first, since SQLite's `user_version`
+  header field is 32-bit and silently truncates a 64-bit write; skips only the
+  legitimately-valid truncated-to-`0` case, asserts every other stored value
+  fails on a bare database).
+- `rust/silent-disco-core/src/storage/database.rs` (extended the existing
+  `#[cfg(test)] mod tests`): `corrupted_trust_state_surfaces_as_corrupt_row_not_panic`
+  and `corrupted_session_role_and_outcome_surface_as_corrupt_row_not_panic` use
+  `PRAGMA ignore_check_constraints = ON` (confirmed via a standalone `sqlite3`
+  CLI check first, bundled SQLite 3.50.6 behavior) to write enum text that the
+  schema's `CHECK` constraints would otherwise block, then confirm the
+  read/decode path (`trusted_device_repository`/`session_read_repository`,
+  which already call `TrustState::from_wire_name`/`AppRole::from_wire_name`/
+  `SessionOutcome::from_wire_name`) returns a typed `Corruption` `StorageError`,
+  never a panic or silently-decoded bogus value, and that the corrupted row is
+  still exactly what's on disk afterward (no fallback/replacement).
+  `concurrent_writer_produces_busy_not_silent_fallback` opens a second raw
+  `rusqlite::Connection` to the same file, holds `BEGIN IMMEDIATE` (a real
+  write lock, not a mock), and confirms `DatabaseConnection::save_settings`
+  fails with `StorageErrorKind::Busy` within a 50ms configured busy timeout,
+  then succeeds once the lock releases and the write is actually durable on
+  reload. `read_only_file_permission_fails_open_without_recreating_database`
+  (`#[cfg(unix)]`) chmods a real database file to `0o444` and confirms open
+  fails visibly rather than silently degrading — see the bug below, found by
+  this exact test.
+
+**Real bug found and fixed:** `DatabaseConnection::open` (`database.rs`)
+requests `OpenFlags::SQLITE_OPEN_READ_WRITE`, but SQLite's Unix VFS does
+**not** treat a permission-denied `O_RDWR` open as fatal when the file
+already exists — it silently retries read-only and hands back a connection
+that looks identical to a writable one from the caller's side. Because
+`configure_wal`'s `PRAGMA journal_mode = WAL` is a no-op read when the file
+is already in WAL mode (which it always is after the first real open), and a
+migration run against an already-latest schema makes no write at all, `open()`
+returned `Ok` for a `0o444` file this process had zero write permission to —
+confirmed first at the OS level with a standalone Python `os.open(path,
+O_RDWR)` (raises `PermissionError` as expected) before finding the same file
+opened fine through our `DatabaseConnection::open`. This is a real, if
+non-destructive, silent-success gap: nothing in `open()` verified write
+capability was actually granted; the first genuine write later would have
+been the first place this surfaced, with no diagnostic pointing back to "the
+file was never actually writable." **Fix:** added `verify_write_capable`,
+called immediately after `Connection::open_with_flags` succeeds and before
+any pragma configuration — it checks `Connection::is_readonly(rusqlite::MAIN_DB)`
+(rusqlite's wrapper over `sqlite3_db_readonly`) and fails fast with a typed
+`StorageErrorKind::Open` error if the connection is read-only. Covered by
+`read_only_file_permission_fails_open_without_recreating_database`, which
+failed before the fix (open succeeded unexpectedly) and passes after.
+
+**Explicitly left incomplete, with reasoning (see TODO Block 25 for the same
+citations inline):**
+- Disk-**full** (`SQLITE_FULL`) condition: not exercised. This sandboxed
+  environment has no root/mount capability — `unshare --mount
+  --map-root-user --propagation private true` fails with `write failed
+  /proc/self/uid_map: Operation not permitted`, ruling out an unprivileged
+  size-bounded tmpfs/loopback filesystem — and simulating it any other way
+  would require a custom SQLite VFS registered through `unsafe` FFI, which
+  `rust/Cargo.toml`'s `[workspace.lints]` denies (`unsafe_code = "deny"`) for
+  this crate. Marked `[~]` rather than faked.
+- "Test disk-write failure through injectable storage boundary where
+  feasible": not implemented, marked `[ ]`. `DatabaseConnection` wraps
+  `rusqlite::Connection` directly with no IO-injection trait seam — there is
+  no existing storage-boundary abstraction to inject a fault through.
+  Building one (e.g. a pluggable VFS or file-operations trait) is a real
+  architectural addition, not something to bolt on incidentally while writing
+  hardening tests; left for a future block if this project decides it's worth
+  the design cost.
+
+**Environment note (matches the other concurrent agent's own memory entry
+for the same symptom):** the shared build machine's root filesystem hit 0
+bytes free partway through this block (`rustc-LLVM ERROR: IO failure on
+output stream: No space left on device`, then a `SIGBUS` in `ld`). Traced to
+`/home/phil/work/silent_disco/rust/target` (the **non-worktree** main
+checkout's stale build cache) sitting at 9.8G unused while both agents' own
+worktree target dirs (2.3G and 1.4G) were actively needed. Freed ~12G by
+`rm -rf`-ing only that non-worktree, rebuildable cache directory — never
+touched the other agent's worktree or its target dir. `df -h /` went from
+2.1G to 12G free; gate ran clean afterward.
+
+**Gates:** `bash scripts/check-rust.sh` (repo root, pinned toolchain
+`1.97.1`, confirmed active via `rustc --version` inside `rust/`) — green:
+`cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets
+--all-features -- -D warnings` clean (fixed one `doc_markdown` pedantic hit
+and one `cast_precision_loss` along the way), `cargo test --workspace
+--all-features` all green including every new test above (296 passed in
+`silent-disco-core`'s own unit-test binary, 0 failed, 1 pre-existing ignored;
+every other workspace crate/integration-test binary also 0 failed).
+
+### Next
+Committed and pushed per this session's instructions (Block 25 only; do not
+start Block 26 unilaterally). Block 24 (FFI/concurrency hardening) remains
+fully unchecked in the TODO and was explicitly out of scope for this session.

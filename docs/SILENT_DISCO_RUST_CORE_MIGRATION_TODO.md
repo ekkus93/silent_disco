@@ -1656,17 +1656,19 @@ Do not start this block until Rust packetization, scheduler, and Android Oboe ou
 
 ## Block 25 — Protocol and storage fuzz/property testing
 
-- [ ] Fuzz control-frame parser.
-- [ ] Fuzz audio/sync datagram parser.
-- [ ] Property-test encode/decode round trips.
-- [ ] Test bounded allocation under hostile lengths.
-- [ ] Fuzz migration metadata/checksum parsing where applicable.
-- [ ] Test corrupted rows and invalid enum values.
-- [ ] Test database busy/full/read-only conditions.
-- [ ] Test disk-write failure through injectable storage boundary where feasible.
-- [ ] Confirm database failure does not switch to in-memory mode.
+- [x] Fuzz control-frame parser -- `arbitrary_random_buffers_never_panic_across_many_seeds_and_lengths` and `mutated_valid_frames_never_panic_for_any_message_kind` (`rust/silent-disco-core/src/protocol/fuzz_tests.rs`), on top of the pre-existing `arbitrary_inputs_do_not_panic_or_allocate_from_untrusted_lengths` (`rust/silent-disco-core/src/protocol/codec/tests.rs`).
+- [x] Fuzz audio/sync datagram parser -- same two tests exercise `SyncRequest`/`SyncResponse`/`Audio` frames via `random_sync_request`/`random_sync_response`/`random_audio_frame` generators (`rust/silent-disco-core/src/protocol/fuzz_tests.rs`).
+- [x] Property-test encode/decode round trips -- `generated_valid_frames_round_trip_canonically` generates 2,000 randomized-but-valid frames across every message kind and asserts `encode -> decode -> encode` byte-identity (`rust/silent-disco-core/src/protocol/fuzz_tests.rs`).
+- [x] Test bounded allocation under hostile lengths -- `hostile_declared_lengths_are_rejected_before_allocation` covers header-level (`u32::MAX` payload_length), control-string-level (0xFFFF length prefix), and audio-declared-length hostile claims, all rejected before any allocation (`rust/silent-disco-core/src/protocol/fuzz_tests.rs`).
+- [x] Fuzz migration metadata/checksum parsing where applicable -- `fuzzed_checksum_corruption_is_always_rejected_never_panics` (200 random checksum strings) and `fuzzed_arbitrary_user_version_values_never_panic_and_never_silently_migrate` (200 random `user_version` pragma values, including negative/overflow) (`rust/silent-disco-core/src/storage/migrations.rs`).
+- [x] Test corrupted rows and invalid enum values -- `corrupted_trust_state_surfaces_as_corrupt_row_not_panic` and `corrupted_session_role_and_outcome_surface_as_corrupt_row_not_panic` bypass the schema's `CHECK` constraints via `PRAGMA ignore_check_constraints` to write genuinely invalid enum text, then confirm the read path returns a typed `Corruption` error, not a panic or silently-decoded value (`rust/silent-disco-core/src/storage/database.rs`).
+- [~] Test database busy/full/read-only conditions -- busy and read-only are covered: `concurrent_writer_produces_busy_not_silent_fallback` forces a genuine `SQLITE_BUSY` from a second connection holding the write lock, and `read_only_file_permission_fails_open_without_recreating_database` chmods the database file to `0o444` (`rust/silent-disco-core/src/storage/database.rs`). Disk-**full** is not exercised: this sandboxed environment has no root/mount capability to create a size-bounded filesystem (`unshare --mount --map-root-user` fails with `Operation not permitted`), and simulating `SQLITE_FULL` without OS-level quota/mount tooling would require a custom SQLite VFS registered through `unsafe` FFI, which `rust/Cargo.toml`'s workspace lints deny for this crate. Left honestly incomplete rather than faked.
+- [ ] Test disk-write failure through injectable storage boundary where feasible -- not implemented. `DatabaseConnection` (`rust/silent-disco-core/src/storage/database.rs`) wraps `rusqlite::Connection` directly with no IO-injection trait seam between it and the OS; introducing one (e.g. a pluggable VFS or file-operations trait) is a real architectural change beyond this hardening block's scope, not something to bolt on incidentally while fixing bugs found by testing. Documented here rather than silently skipped.
+- [x] Confirm database failure does not switch to in-memory mode -- every new failure-path test above asserts a typed `StorageError` and, where applicable, that the on-disk file/row is untouched (e.g. `corrupted_trust_state_surfaces_as_corrupt_row_not_panic` re-reads the corrupted row straight off disk after the typed failure); this is on top of the pre-existing `corrupt_file_fails_without_recreation` (`rust/silent-disco-core/src/storage/database.rs`), and `rust/Cargo.toml`'s workspace lints deny `unsafe_code`, which rules out an `:memory:` C-API swap smuggled in through FFI.
 
-**Acceptance:** No parser panic, uncontrolled allocation, or destructive database fallback is found in the configured runs.
+**Acceptance:** No parser panic, uncontrolled allocation, or destructive database fallback is found in the configured runs. Met for every sub-item implemented above; the two left incomplete (disk-full simulation, an injectable storage boundary) are explicitly out of reach in this environment/architecture rather than silently dropped -- see the reasoning on each line and the Block 25 entry in `memory.md`.
+
+**Bug found and fixed during this block:** `DatabaseConnection::open` (`rust/silent-disco-core/src/storage/database.rs`) requested `SQLITE_OPEN_READ_WRITE`, but SQLite's Unix VFS silently retries read-only when that open fails on a permission-denied existing file, so `open()` returned `Ok` for a database file this process could not actually write to (only failing much later, on the first real write). Fixed by adding `verify_write_capable`, which checks `Connection::is_readonly` immediately after open and fails fast with a typed `StorageErrorKind::Open` error instead of deferring detection. Covered by `read_only_file_permission_fails_open_without_recreating_database`.
 
 ---
 

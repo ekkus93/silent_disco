@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod fuzz_tests;
+#[cfg(test)]
 mod vector_tests;
 
 mod codec;

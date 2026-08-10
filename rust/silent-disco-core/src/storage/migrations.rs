@@ -405,13 +405,14 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::{Connection, OptionalExtension};
+    use rusqlite::{Connection, OptionalExtension, params};
 
     use super::{
         LATEST_SCHEMA_VERSION, MIGRATION_V1_SQL, Migration, fnv1a64, run_migration_catalog,
         run_migrations,
     };
     use crate::storage::{StorageErrorKind, test_support::TestDatabasePath};
+    use crate::transport::DeterministicPrng;
 
     const BAD_MIGRATION_SQL: &str = r"
 CREATE TABLE should_rollback (
@@ -511,5 +512,86 @@ THIS IS NOT VALID SQL;
             .expect("set newer schema");
         let newer_error = run_migrations(&mut connection).expect_err("newer schema must fail");
         assert_eq!(newer_error.kind, StorageErrorKind::Migration);
+    }
+
+    /// Block 25 migration-metadata fuzzing: a wide range of random garbage
+    /// written into the `schema_migrations.checksum` column must always be
+    /// rejected as a typed `Migration` error -- never accepted, never a
+    /// panic -- regardless of length, charset, or binary content.
+    #[test]
+    fn fuzzed_checksum_corruption_is_always_rejected_never_panics() {
+        let mut prng = DeterministicPrng::new(0x6368_6b73_756d_2130);
+        for _ in 0..200 {
+            let test_path = TestDatabasePath::new("migration-fuzz-checksum");
+            let mut connection =
+                Connection::open(test_path.path()).expect("open temporary database");
+            run_migrations(&mut connection).expect("create latest schema");
+
+            let garbage = fuzz_text(&mut prng);
+            connection
+                .execute(
+                    "UPDATE schema_migrations SET checksum = ?1 WHERE version = 1",
+                    params![garbage],
+                )
+                .expect("tamper checksum with fuzzed value");
+
+            // The only value that would *not* count as corruption is the one
+            // real checksum, which `fuzz_text` cannot produce by construction
+            // (it never emits the `fnv1a64:` prefix followed by the exact
+            // hash of `MIGRATION_V1_SQL`).
+            let error = run_migrations(&mut connection)
+                .expect_err("fuzzed checksum must never be silently accepted");
+            assert_eq!(error.kind, StorageErrorKind::Migration);
+        }
+    }
+
+    /// Block 25 migration-metadata fuzzing: a wide range of random
+    /// `user_version` pragma values (including negative, zero, and far
+    /// beyond `u32::MAX`) fed to a connection with no migration history must
+    /// never panic, and must never be silently accepted unless it is exactly
+    /// the trivial fresh-database value (`0`).
+    #[test]
+    fn fuzzed_arbitrary_user_version_values_never_panic_and_never_silently_migrate() {
+        let mut prng = DeterministicPrng::new(0x7573_6572_5f76_6572);
+        for _ in 0..200 {
+            let test_path = TestDatabasePath::new("migration-fuzz-version");
+            let mut connection =
+                Connection::open(test_path.path()).expect("open temporary database");
+            let raw = prng.next_u64();
+            let candidate = i64::from_ne_bytes(raw.to_ne_bytes());
+            connection
+                .pragma_update(None, "user_version", candidate)
+                .expect("set fuzzed user_version");
+            // SQLite's `user_version` header field is a 32-bit integer, so a
+            // 64-bit fuzzed value is truncated on write. Read back what was
+            // actually stored rather than assuming `candidate` survived --
+            // truncation can coincidentally land on the one legitimately
+            // valid value (a fresh database's `0`), which is already covered
+            // by `empty_database_migrates_to_latest_and_reopens`.
+            let stored: i64 = connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .expect("read back stored user_version");
+            if stored == 0 {
+                continue;
+            }
+            let result = run_migration_catalog(&mut connection, super::MIGRATIONS);
+            assert!(
+                result.is_err(),
+                "fuzzed user_version {candidate} (stored as {stored}) on a bare database must never succeed"
+            );
+        }
+    }
+
+    fn fuzz_text(prng: &mut DeterministicPrng) -> String {
+        const CHARSET: &[u8] =
+            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_- \t";
+        // At least one character: the schema's `CHECK (length(checksum) > 0)`
+        // is a deliberate non-empty invariant, not itself the thing under
+        // fuzz here -- an empty checksum is already excluded at the schema
+        // level, so this generator only needs to cover non-empty garbage.
+        let length = 1 + prng.next_below(300);
+        (0..length)
+            .map(|_| CHARSET[prng.next_below(CHARSET.len())] as char)
+            .collect()
     }
 }
