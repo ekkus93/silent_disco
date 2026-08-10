@@ -1,6 +1,9 @@
 use super::DesktopAppState;
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::identity::{DesktopIdentity, DesktopIdentityError, DesktopIdentityProvider};
+use crate::platform::invitation_identity::{
+    DesktopHostSigningIdentity, DesktopHostSigningIdentityError, DesktopHostSigningIdentityProvider,
+};
 use crate::platform::paths::DesktopProfilePaths;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
 use crate::profile::ProfileId;
@@ -50,6 +53,20 @@ impl DesktopIdentityProvider for FixedIdentityProvider {
     }
 }
 
+/// Never touches a real OS keyring -- these tests exercise profile open/close
+/// lifecycle, not signing-identity storage (that lives in
+/// `invitation_identity.rs`'s own test module).
+struct FixedSigningIdentityProvider(u8);
+
+impl DesktopHostSigningIdentityProvider for FixedSigningIdentityProvider {
+    fn load_or_create(
+        &self,
+        _profile_id: &ProfileId,
+    ) -> Result<DesktopHostSigningIdentity, DesktopHostSigningIdentityError> {
+        Ok(crate::platform::invitation_identity::tests_support::fixed_identity_for_tests(self.0))
+    }
+}
+
 fn profile(root: &TestDirectory) -> (ProfileId, DesktopProfilePaths) {
     let id = ProfileId::parse("main").expect("valid profile ID");
     let paths = DesktopProfilePaths::from_trusted_app_local_data_root(&root.0, &id)
@@ -67,6 +84,7 @@ fn opens_real_storage_actor_and_snapshot_then_shuts_down_idempotently() {
             &paths,
             id,
             &FixedIdentityProvider([9; 32]),
+            &FixedSigningIdentityProvider(9),
             Arc::new(DesktopNotificationBuffer::new()),
         )
         .expect("open profile");
@@ -98,6 +116,7 @@ fn second_open_is_rejected_and_profile_lock_is_retained_until_close() {
             &paths,
             id.clone(),
             &FixedIdentityProvider([4; 32]),
+            &FixedSigningIdentityProvider(4),
             Arc::new(DesktopNotificationBuffer::new()),
         )
         .expect("open profile");
@@ -112,6 +131,7 @@ fn second_open_is_rejected_and_profile_lock_is_retained_until_close() {
                 &paths,
                 id.clone(),
                 &FixedIdentityProvider([4; 32]),
+                &FixedSigningIdentityProvider(4),
                 Arc::new(DesktopNotificationBuffer::new()),
             )
             .is_err()
@@ -138,6 +158,7 @@ fn storage_failure_releases_profile_lock_without_fallback() {
                 &paths,
                 id.clone(),
                 &FixedIdentityProvider([5; 32]),
+                &FixedSigningIdentityProvider(5),
                 Arc::new(DesktopNotificationBuffer::new()),
             )
             .is_err()
@@ -162,6 +183,7 @@ fn observer_setup_failure_releases_actor_database_and_lock() {
                 &paths,
                 id.clone(),
                 &FixedIdentityProvider([6; 32]),
+                &FixedSigningIdentityProvider(6),
                 Arc::new(DesktopNotificationBuffer::failing_initial_notification()),
             )
             .is_err()

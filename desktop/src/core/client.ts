@@ -8,6 +8,7 @@ import type {
   CoreNotificationDto,
   CoreSnapshotDto,
   DesktopErrorDto,
+  HostInvitationDto,
   HostSessionSnapshotDto,
   JoinRequestCommandRequest,
   ListenerCommandRequest,
@@ -361,6 +362,10 @@ export async function setHostNetworkPreference(
   request: SetNetworkBindPreferenceRequest,
 ): Promise<NetworkInterfaceSnapshotDto> {
   return invokeDesktop<NetworkInterfaceSnapshotDto>("set_host_network_preference", { request });
+}
+
+export async function createHostInvitation(): Promise<HostInvitationDto> {
+  return invokeDesktop<HostInvitationDto>("create_host_invitation");
 }
 
 export async function closeProfile(): Promise<BridgeLifecycleDto> {

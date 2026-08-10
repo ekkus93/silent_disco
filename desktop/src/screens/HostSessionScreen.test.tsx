@@ -369,3 +369,55 @@ describe("HostSessionScreen playback controls", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("HostSessionScreen QR invitation (Block 31)", () => {
+  it("creates and renders a signed QR invitation with a copyable text fallback", async () => {
+    vi.mocked(client.createHostInvitation).mockResolvedValue({
+      payload: '{"v":1,"alg":"ES256","sig":"fake"}',
+      expiresAtMs: String(Date.now() + 5 * 60 * 1_000),
+    });
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create QR invitation" }));
+    await waitFor(() => expect(client.createHostInvitation).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByAltText("Signed Silent Disco join QR code")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh QR invitation" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Copy invitation text" })).toBeInTheDocument();
+  });
+
+  it("shows an expired invitation as stale rather than silently reusing it", async () => {
+    vi.mocked(client.createHostInvitation).mockResolvedValue({
+      payload: '{"v":1,"alg":"ES256","sig":"fake"}',
+      expiresAtMs: String(Date.now() - 1_000),
+    });
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create QR invitation" }));
+    expect(await screen.findByText(/This invitation expired/)).toBeInTheDocument();
+    expect(screen.queryByAltText("Signed Silent Disco join QR code")).not.toBeInTheDocument();
+  });
+
+  it("surfaces an invitation creation failure without hiding the manual connection details", async () => {
+    vi.mocked(client.createHostInvitation).mockRejectedValueOnce(invokeError);
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create QR invitation" }));
+    expect(
+      await screen.findByText("join request is stale or no longer pending"),
+    ).toBeInTheDocument();
+    // The unrelated manual-connection panel must still render.
+    expect(screen.getByText("Manual connection details")).toBeInTheDocument();
+    expect(screen.getByText("192.168.1.50")).toBeInTheDocument();
+  });
+
+  it("does not show the invitation panel when no manual endpoint is bound", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(fixture({ connection: null }));
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    expect(screen.queryByRole("button", { name: "Create QR invitation" })).not.toBeInTheDocument();
+  });
+});

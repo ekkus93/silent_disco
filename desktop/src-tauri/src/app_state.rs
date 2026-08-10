@@ -1,5 +1,5 @@
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
-use crate::host_session_dto::HostSessionSnapshotDto;
+use crate::host_session_dto::{HostInvitationDto, HostSessionSnapshotDto};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::notification_channel::TauriNotificationSink;
 use crate::platform::effect_runner::{
@@ -8,6 +8,11 @@ use crate::platform::effect_runner::{
 use crate::platform::file_picker::SelectedSourceRegistry;
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
+};
+use crate::platform::invitation::{build_signed_invitation, current_wall_clock_ms};
+use crate::platform::invitation_identity::{
+    DesktopHostSigningIdentity, DesktopHostSigningIdentityProvider,
+    SystemDesktopHostSigningIdentityProvider,
 };
 use crate::platform::network::DesktopHostNetworkControl;
 use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
@@ -56,6 +61,7 @@ struct ReadyRuntime {
     profile_id: ProfileId,
     sources: PathBuf,
     _identity: DesktopIdentity,
+    signing_identity: DesktopHostSigningIdentity,
     handle: CoreActorHandle,
     notifications: Arc<DesktopNotificationBuffer>,
     network: Arc<DesktopHostNetworkControl>,
@@ -241,6 +247,71 @@ impl DesktopAppState {
             }
         };
         network.snapshot()
+    }
+
+    /// Builds and signs one fresh invitation for the active host session
+    /// (Block 31.1). Never returns a cached previous invitation -- every
+    /// call generates a new nonce and a new 5-minute expiry window, so the
+    /// frontend's explicit "refresh" action always produces something
+    /// genuinely new, and there is no server-side "current invitation" a
+    /// caller could be handed stale by mistake.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when no profile is ready, no host
+    /// endpoint is currently bound (an invitation naming an endpoint that
+    /// does not exist would be worse than none), the signing identity is
+    /// unavailable, or the session data does not fit the shared core's
+    /// invitation bounds.
+    pub(crate) fn create_host_invitation(&self) -> Result<HostInvitationDto, DesktopErrorDto> {
+        let (handle, network, signing_identity) = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => (
+                    ready.handle.clone(),
+                    Arc::clone(&ready.network),
+                    ready.signing_identity.clone(),
+                ),
+                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        let active = network.active_host_session()?.ok_or_else(|| {
+            DesktopErrorDto::new(
+                "desktop.invitation.no_active_endpoint",
+                "validation",
+                "error",
+                true,
+                "start a host session with a bound network endpoint before creating an invitation",
+            )
+        })?;
+        let snapshot = handle.current_snapshot().map_err(DesktopErrorDto::from)?;
+        build_signed_invitation(
+            &active.advertisement,
+            active.endpoint,
+            &snapshot.host_draft,
+            &signing_identity,
+            current_wall_clock_ms(),
+        )
+        .map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.invitation.build_failed",
+                "validation",
+                "error",
+                false,
+                &error.to_string(),
+            )
+        })
     }
 
     pub(crate) fn start_host_playback(
@@ -463,10 +534,11 @@ impl DesktopAppState {
         paths: &DesktopProfilePaths,
         profile_id: ProfileId,
         provider: &dyn DesktopIdentityProvider,
+        signing_provider: &dyn DesktopHostSigningIdentityProvider,
         notifications: Arc<DesktopNotificationBuffer>,
     ) -> Result<OpenProfileResponse, DesktopErrorDto> {
         self.begin_open(&profile_id)?;
-        match open_runtime(paths, profile_id, provider, notifications) {
+        match open_runtime(paths, profile_id, provider, signing_provider, notifications) {
             Ok((ready, snapshot)) => match self.install_ready(ready, snapshot) {
                 Ok(response) => Ok(response),
                 Err(boxed) => {
@@ -541,8 +613,9 @@ pub async fn open_profile(
 
     let notifications = Arc::new(DesktopNotificationBuffer::new());
     let provider = SystemDesktopIdentityProvider;
+    let signing_provider = SystemDesktopHostSigningIdentityProvider;
     let task = tauri::async_runtime::spawn_blocking(move || {
-        open_runtime(&paths, profile_id, &provider, notifications)
+        open_runtime(&paths, profile_id, &provider, &signing_provider, notifications)
     });
     let result = task.await.map_err(|error| {
         DesktopErrorDto::new(
@@ -667,6 +740,7 @@ fn open_runtime(
     paths: &DesktopProfilePaths,
     profile_id: ProfileId,
     provider: &dyn DesktopIdentityProvider,
+    signing_provider: &dyn DesktopHostSigningIdentityProvider,
     notifications: Arc<DesktopNotificationBuffer>,
 ) -> Result<(ReadyRuntime, CoreSnapshotDto), DesktopErrorDto> {
     let lease = ProfileLease::acquire(paths, &profile_id).map_err(|error| {
@@ -688,6 +762,20 @@ fn open_runtime(
         Err(error) => {
             let primary = DesktopErrorDto::new(
                 "desktop.identity.unavailable",
+                "platform",
+                "fatal",
+                false,
+                &error.to_string(),
+            );
+            return Err(cleanup_lease(lease, primary));
+        }
+    };
+
+    let signing_identity = match signing_provider.load_or_create(&profile_id) {
+        Ok(signing_identity) => signing_identity,
+        Err(error) => {
+            let primary = DesktopErrorDto::new(
+                "desktop.invitation_identity.unavailable",
                 "platform",
                 "fatal",
                 false,
@@ -806,6 +894,7 @@ fn open_runtime(
             profile_id,
             sources: paths.sources().to_path_buf(),
             _identity: identity,
+            signing_identity,
             handle,
             notifications: Arc::clone(&notifications),
             network,

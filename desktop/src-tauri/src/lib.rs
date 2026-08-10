@@ -72,6 +72,7 @@ pub fn run() -> tauri::Result<()> {
             host_commands::stop_host_playback,
             host_commands::get_host_network_state,
             host_commands::set_host_network_preference,
+            host_commands::create_host_invitation,
             app_state::attach_notifications,
             app_state::close_profile
         ])

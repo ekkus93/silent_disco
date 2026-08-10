@@ -1,6 +1,8 @@
+import QRCode from "qrcode";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   approveJoinRequest,
+  createHostInvitation,
   endHostSession,
   getHostSessionState,
   pauseHostPlayback,
@@ -13,6 +15,7 @@ import {
 import type {
   CommandReceiptDto,
   DesktopErrorDto,
+  HostInvitationDto,
   HostSessionSnapshotDto,
 } from "../core/generated/desktop-bindings";
 import { ListenerDetailScreen } from "./ListenerDetailScreen";
@@ -97,6 +100,23 @@ function formatTimestamp(ms: string | null): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+// Display-only wall-clock formatting for an invitation's absolute
+// expiration moment -- distinct from formatTimestamp's playback-position
+// elapsed-time formatting above. Never used for sync/playback scheduling,
+// which stays monotonic-only.
+function formatWallClock(ms: string): string {
+  const value = Number(ms);
+  if (!Number.isFinite(value)) {
+    return "unknown";
+  }
+  return new Date(value).toLocaleTimeString();
+}
+
+function isInvitationExpired(invitation: HostInvitationDto): boolean {
+  const expiresAtMs = Number(invitation.expiresAtMs);
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now();
+}
+
 export function HostSessionScreen() {
   const [snapshot, setSnapshot] = useState<HostSessionSnapshotDto | null>(null);
   const [refreshFailure, setRefreshFailure] = useState<DesktopErrorDto | null>(null);
@@ -112,6 +132,10 @@ export function HostSessionScreen() {
   const [removalOperations, setRemovalOperations] = useState<Record<string, PendingOperation>>({});
   const [decisionFailures, setDecisionFailures] = useState<Record<string, DesktopErrorDto>>({});
   const [removalFailures, setRemovalFailures] = useState<Record<string, DesktopErrorDto>>({});
+  const [invitation, setInvitation] = useState<HostInvitationDto | null>(null);
+  const [invitationQrDataUrl, setInvitationQrDataUrl] = useState<string | null>(null);
+  const [invitationPending, setInvitationPending] = useState(false);
+  const [invitationError, setInvitationError] = useState<DesktopErrorDto | null>(null);
 
   const snapshotRef = useRef(snapshot);
   const decisionOperationsRef = useRef(decisionOperations);
@@ -207,6 +231,38 @@ export function HostSessionScreen() {
     const interval = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [refresh]);
+
+  // Renders the QR image from the signed invitation text -- pure
+  // presentation over data the backend already validated and signed;
+  // nothing security-sensitive happens in this step.
+  useEffect(() => {
+    if (!invitation) {
+      setInvitationQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(invitation.payload)
+      .then((dataUrl) => {
+        if (!cancelled) setInvitationQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setInvitationQrDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [invitation]);
+
+  // A session ending (the manual endpoint disappearing) invalidates any
+  // invitation that named it -- clearing here means a leftover invitation
+  // is never shown as though it still points at a live session.
+  useEffect(() => {
+    if (!snapshot?.connection) {
+      setInvitation(null);
+      setInvitationQrDataUrl(null);
+      setInvitationError(null);
+    }
+  }, [snapshot?.connection]);
 
   async function decide(requestId: string, kind: DecisionKind) {
     const current = snapshotRef.current;
@@ -318,6 +374,28 @@ export function HostSessionScreen() {
       setCopyStatus(`${label} copied.`);
     } catch {
       setCopyStatus(`Could not copy ${label.toLowerCase()}.`);
+    }
+  }
+
+  async function refreshInvitation() {
+    if (invitationPending) {
+      return;
+    }
+    setInvitationPending(true);
+    setInvitationError(null);
+    try {
+      const next = await createHostInvitation();
+      // Always overwrite, never merge with whatever was showing before --
+      // a stale invitation must never linger next to (or be mistaken for)
+      // the fresh one this explicit refresh just created (31.2).
+      setInvitation(next);
+      setAnnouncement("Created a new QR invitation.");
+    } catch (error) {
+      setInvitation(null);
+      setInvitationQrDataUrl(null);
+      setInvitationError(error as DesktopErrorDto);
+    } finally {
+      setInvitationPending(false);
     }
   }
 
@@ -486,6 +564,80 @@ export function HostSessionScreen() {
           The core has not published an active manual endpoint.
         </p>
       )}
+
+      {snapshot.connection ? (
+        <section
+          aria-labelledby="invitation-title"
+          className="mt-6 rounded-2xl border border-slate-700 bg-slate-950/70 p-5"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="invitation-title" className="text-xl font-semibold">
+                QR invitation
+              </h2>
+              <p className="mt-2 text-sm text-slate-400">
+                A signed, time-limited invitation a phone can scan to join directly -- a convenience
+                alongside the manual details above, not a replacement for them.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshInvitation()}
+              disabled={invitationPending}
+              className="rounded-lg border border-cyan-500/60 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-950/40 disabled:opacity-50"
+            >
+              {invitationPending
+                ? "Creating…"
+                : invitation
+                  ? "Refresh QR invitation"
+                  : "Create QR invitation"}
+            </button>
+          </div>
+
+          {invitationError ? <ErrorAlert error={invitationError} /> : null}
+
+          {invitation ? (
+            isInvitationExpired(invitation) ? (
+              <p
+                role="status"
+                className="mt-4 rounded-xl border border-amber-500/50 bg-amber-950/30 p-4 text-amber-100"
+              >
+                This invitation expired. Create a new one -- an expired invitation is never reused
+                automatically.
+              </p>
+            ) : (
+              <div className="mt-4 flex flex-wrap items-start gap-4">
+                {invitationQrDataUrl ? (
+                  <img
+                    src={invitationQrDataUrl}
+                    alt="Signed Silent Disco join QR code"
+                    className="h-56 w-56 rounded-xl bg-white p-2"
+                  />
+                ) : (
+                  <p
+                    role="alert"
+                    className="rounded-xl border border-rose-500/60 bg-rose-950/40 p-4 text-rose-100"
+                  >
+                    The signed invitation was created, but this app could not render its QR image.
+                    Use the text fallback below instead.
+                  </p>
+                )}
+                <div className="min-w-[16rem] flex-1 space-y-3">
+                  <Detail label="Expires" value={formatWallClock(invitation.expiresAtMs)} />
+                  <CopyButton
+                    label="Copy invitation text"
+                    onClick={() => void copyValue("Invitation text", invitation.payload)}
+                  />
+                </div>
+              </div>
+            )
+          ) : (
+            <p className="mt-4 text-sm text-slate-400">
+              No invitation created yet. This does not affect manual connections above.
+            </p>
+          )}
+        </section>
+      ) : null}
 
       <section
         aria-labelledby="pending-title"

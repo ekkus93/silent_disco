@@ -1,6 +1,6 @@
 use crate::app_state::DesktopAppState;
 use crate::dto::DesktopErrorDto;
-use crate::host_session_dto::HostSessionSnapshotDto;
+use crate::host_session_dto::{HostInvitationDto, HostSessionSnapshotDto};
 use crate::platform::file_picker::{SelectedSourceRegistry, pick_and_inspect};
 use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
 use crate::platform::source_staging::stage_audio_source;
@@ -266,6 +266,17 @@ pub fn resume_host_playback(state: State<'_, DesktopAppState>) -> Result<(), Des
 #[tauri::command]
 pub fn stop_host_playback(state: State<'_, DesktopAppState>) -> Result<(), DesktopErrorDto> {
     state.stop_host_playback()
+}
+
+/// Builds and signs a fresh QR invitation for the active host session
+/// (Block 31.1). Always regenerates -- there is no cached invitation to
+/// silently reuse, so the frontend's refresh action is genuinely explicit.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn create_host_invitation(
+    state: State<'_, DesktopAppState>,
+) -> Result<HostInvitationDto, DesktopErrorDto> {
+    state.create_host_invitation()
 }
 
 /// Lists classified network addresses and the current bind policy for the ready profile.

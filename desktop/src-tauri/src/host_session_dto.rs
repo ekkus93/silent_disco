@@ -21,6 +21,20 @@ pub struct HostConnectionDto {
     pub expires_at_ms: Option<String>,
 }
 
+/// A freshly generated, signed P2 QR invitation for the desktop's active
+/// host session (Block 31). Never cached backend-side -- each call to the
+/// command that produces this is a brand-new signature over a brand-new
+/// nonce/expiry, so "refresh" and "stale invitation is not silently reused"
+/// (31.2) are automatic: there is no server-held "current invitation" to
+/// silently keep serving.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HostInvitationDto {
+    pub payload: String,
+    pub expires_at_ms: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
