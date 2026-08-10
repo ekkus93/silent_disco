@@ -1,6 +1,7 @@
 use super::{LabRuntime, MAX_LAB_NODES};
 use crate::platform::paths::DesktopProfilePaths;
 use crate::profile::ProfileId;
+use silent_disco_core::transport::TransportClock;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,7 +39,7 @@ impl Drop for TestDirectory {
 #[test]
 fn lab_root_is_disjoint_from_the_production_profiles_root() {
     let root = TestDirectory::new();
-    let lab = LabRuntime::new(&root.0).expect("lab runtime");
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
     let profile_id = ProfileId::parse("main").expect("valid profile id");
     let profile_paths = DesktopProfilePaths::from_trusted_app_local_data_root(&root.0, &profile_id)
         .expect("profile paths");
@@ -54,7 +55,7 @@ fn lab_root_is_disjoint_from_the_production_profiles_root() {
 #[test]
 fn two_nodes_are_fully_isolated_from_each_other() {
     let root = TestDirectory::new();
-    let lab = LabRuntime::new(&root.0).expect("lab runtime");
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
 
     let first_id = lab.start_node().expect("start first node");
     let second_id = lab.start_node().expect("start second node");
@@ -90,7 +91,7 @@ fn synthetic_identity_is_deterministic_per_node_id() {
 #[test]
 fn starting_beyond_the_bound_is_a_reported_error_not_a_silent_drop() {
     let root = TestDirectory::new();
-    let lab = LabRuntime::new(&root.0).expect("lab runtime");
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
 
     for _ in 0..MAX_LAB_NODES {
         lab.start_node().expect("start node within the bound");
@@ -113,7 +114,7 @@ fn starting_beyond_the_bound_is_a_reported_error_not_a_silent_drop() {
 #[test]
 fn a_started_node_has_a_live_handle_and_its_own_derived_identity() {
     let root = TestDirectory::new();
-    let lab = LabRuntime::new(&root.0).expect("lab runtime");
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
     let node_id = lab.start_node().expect("start node");
 
     let handle = lab.node_handle(node_id).expect("node handle present");
@@ -137,7 +138,7 @@ fn a_started_node_has_a_live_handle_and_its_own_derived_identity() {
 #[test]
 fn stop_node_removes_exactly_one_node_and_repeated_stop_is_reported() {
     let root = TestDirectory::new();
-    let lab = LabRuntime::new(&root.0).expect("lab runtime");
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
     let kept = lab.start_node().expect("start kept node");
     let stopped = lab.start_node().expect("start node to stop");
 
@@ -159,7 +160,7 @@ fn stop_node_removes_exactly_one_node_and_repeated_stop_is_reported() {
 #[test]
 fn shutdown_releases_every_node_and_is_idempotent_when_empty() {
     let root = TestDirectory::new();
-    let lab = LabRuntime::new(&root.0).expect("lab runtime");
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
     lab.start_node().expect("start node one");
     lab.start_node().expect("start node two");
     lab.start_node().expect("start node three");
@@ -170,4 +171,67 @@ fn shutdown_releases_every_node_and_is_idempotent_when_empty() {
 
     lab.shutdown()
         .expect("shutdown on an empty runtime is a clean no-op");
+}
+
+/// Block 38.2 "per-node offset" / "per-node drift in ppm": nodes started
+/// with different clock configurations diverge exactly as configured as
+/// the shared scenario timeline advances, while a plain `start_node`
+/// (no configuration) stays in perfect sync with it.
+#[test]
+fn nodes_started_with_different_clock_configurations_diverge_as_the_scenario_advances() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+
+    let steady = lab.start_node().expect("start steady node");
+    let ahead = lab
+        .start_node_with_clock(1_000, 0)
+        .expect("start node with a fixed offset");
+    let fast = lab
+        .start_node_with_clock(0, 50_000)
+        .expect("start node with positive drift"); // +5%
+
+    lab.advance(100_000).expect("advance the shared timeline");
+    assert_eq!(lab.now().get(), 100_000);
+
+    assert_eq!(
+        lab.node_clock(steady)
+            .expect("steady node clock")
+            .now()
+            .get(),
+        100_000
+    );
+    assert_eq!(
+        lab.node_clock(ahead).expect("ahead node clock").now().get(),
+        101_000
+    );
+    assert_eq!(
+        lab.node_clock(fast).expect("fast node clock").now().get(),
+        105_000
+    );
+
+    lab.shutdown().expect("shutdown releases every node");
+}
+
+/// Block 38.2 "checked arithmetic": a drift configuration outside the
+/// supported bound is rejected before a node ID is consumed, a directory
+/// is created, or any resource is opened -- the runtime is left exactly
+/// as it was.
+#[test]
+fn an_invalid_clock_configuration_never_consumes_a_node_slot() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+
+    let error = lab
+        .start_node_with_clock(0, 10_000_000)
+        .expect_err("drift far beyond the supported bound must be rejected");
+    assert_eq!(error.code, "desktop.lab.clock_configuration_invalid");
+    assert!(lab.node_ids().is_empty());
+
+    // The runtime is still fully usable afterward -- a rejected
+    // configuration is not a poisoned or half-broken state.
+    let node_id = lab
+        .start_node()
+        .expect("start node after a rejected attempt");
+    assert_eq!(lab.node_ids(), vec![node_id]);
+    lab.shutdown().expect("shutdown releases the node");
 }

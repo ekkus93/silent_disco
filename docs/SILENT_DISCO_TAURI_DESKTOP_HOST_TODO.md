@@ -3169,38 +3169,118 @@ the only thing failing; this block's own new code (default and
 
 ### 38.1 Shared clock abstraction
 
-If not already present, add a platform-independent trait in the shared core or test-support crate:
-
-```rust
-pub trait MonotonicClock: Send + Sync {
-    fn now(&self) -> MonotonicMillis;
-}
-```
-
-Use the actual existing time abstractions where present. Do not duplicate them.
+- [x] If not already present, add a platform-independent trait in the
+      shared core or test-support crate -- **already present**:
+      `silent_disco_core::transport::TransportClock` (`fn now(&self) ->
+      MonotonicMillis`, `Send + Sync + 'static`) is exactly the trait
+      shape this section calls for, plus a production
+      `SystemTransportClock` and a `ManualTransportClock` already used
+      by `virtual_fault_tests.rs`.
+- [x] Use the actual existing time abstractions where present. Do not
+      duplicate them -- new `desktop/src-tauri/src/lab/clock.rs` builds
+      directly on `ManualTransportClock`/`TransportClock` (wraps one
+      inside `LabClock`, implements the other for `LabNodeClock`)
+      instead of inventing a second, parallel clock trait.
 
 ### 38.2 Virtual clock features
 
-- [ ] deterministic initial time;
-- [ ] manual advance;
-- [ ] scheduled wakeups through the Lab scheduler;
-- [ ] per-node offset;
-- [ ] per-node drift in ppm;
-- [ ] checked arithmetic;
-- [ ] no wall-clock sleep required for deterministic scenarios;
-- [ ] explicit invalid-discontinuity injection only for negative tests.
+Implemented in `desktop/src-tauri/src/lab/clock.rs`, wired into
+`LabRuntime`/`LabNodeHandle` (Block 37's runtime) so every Lab node has
+its own clock view over one shared scenario timeline:
+
+- [x] deterministic initial time -- `LabRuntime::new(app_local_data_root,
+      initial_clock_ms)` / `LabClock::new(initial_ms)`.
+- [x] manual advance -- `LabRuntime::advance(delta_ms)` /
+      `LabClock::advance(delta_ms)`; the only way virtual time ever
+      moves anywhere in a Lab scenario.
+- [x] scheduled wakeups through the Lab scheduler -- `LabClock::schedule(deadline_ms,
+      callback)`; every `advance` drains and runs every wakeup now due,
+      in deterministic `(deadline, then registration order)` order.
+- [x] per-node offset -- `LabRuntime::start_node_with_clock(offset_ms, drift_ppm)`;
+      `LabNodeClock::offset_ms()`.
+- [x] per-node drift in ppm -- same constructor; `LabNodeClock::drift_ppm()`,
+      applied relative to the shared timeline's own origin so two nodes
+      with identical drift always agree at the same shared time
+      regardless of when each was created.
+- [x] checked arithmetic -- `LabClock::advance` uses `checked_add` and
+      rejects an overflowing delta outright, leaving time completely
+      unchanged (never a partial advance); `LabNodeClock::new` rejects a
+      drift configuration beyond a documented sanity bound
+      (`MAX_DRIFT_PPM = 100_000`) at construction, before a node ID is
+      even allocated; `LabNodeClock::now()` itself widens to `i128` (so
+      the realistic range can never overflow) and clamps into `u64`'s
+      valid range on the rare pathological configuration, using the
+      same "clamp on conversion, never wrap or panic" discipline
+      `SystemTransportClock::now()` already uses in the shared core.
+- [x] no wall-clock sleep required for deterministic scenarios --
+      confirmed by `grep -rn "Instant::now\|SystemTime::now"
+      desktop/src-tauri/src/lab/` returning nothing; every test in
+      `lab/clock/tests.rs` runs in milliseconds of real time regardless
+      of how much *virtual* time it advances (one test advances a
+      simulated 400 days across a handful of `advance` calls).
+- [x] explicit invalid-discontinuity injection only for negative tests --
+      `LabClock::force_discontinuity(new_now_ms)`: can move time
+      *backward*, bypassing `advance`'s checked, monotonic path
+      entirely; distinct name and extensive doc warning make accidental
+      ordinary-scenario use conspicuous, and normal advancement always
+      goes through `advance` instead.
 
 ### 38.3 Tests
 
-- [ ] exact offset;
-- [ ] positive and negative drift;
-- [ ] long-run arithmetic;
-- [ ] overflow rejection;
-- [ ] deterministic repeated seed;
-- [ ] scheduler event order at equal timestamps;
-- [ ] no production direct system clock remains in shared scheduling logic.
+All in `desktop/src-tauri/src/lab/clock/tests.rs` unless noted:
 
-**Acceptance:** Sync and scheduling scenarios can run deterministically without real time.
+- [x] exact offset -- `a_pure_offset_shifts_time_exactly`.
+- [x] positive and negative drift -- `positive_and_negative_drift_move_time_proportionally`
+      (a +1%/-1% node pair diverge in exact proportion to elapsed base
+      time).
+- [x] long-run arithmetic -- `long_run_advances_match_the_drift_formula_exactly`
+      (400 simulated days across repeated large advances match the
+      drift formula's prediction exactly, with no accumulated rounding
+      error beyond the single final integer truncation).
+- [x] overflow rejection --
+      `overflow_and_out_of_bounds_configuration_are_rejected_not_silently_accepted`
+      (an overflowing `advance` is rejected and leaves time unchanged; an
+      out-of-bounds drift is rejected at construction).
+- [x] deterministic repeated seed -- `identical_seeds_and_advances_produce_identical_results`
+      (two independently constructed clocks given the identical seed and
+      the identical advance sequence produce byte-identical results at
+      every step).
+- [x] scheduler event order at equal timestamps --
+      `wakeups_at_the_same_deadline_run_in_registration_order` (five
+      wakeups at the exact same deadline always fire in registration
+      order, never `BinaryHeap`'s own unspecified tie-breaking).
+- [x] no production direct system clock remains in shared scheduling
+      logic -- confirmed via `grep -rln "Instant::now\|SystemTime::now"
+      rust/silent-disco-core/src/sync/ rust/silent-disco-core/src/runtime/
+      rust/silent-disco-core/src/audio/` (excluding tests) returning
+      nothing: the shared core's sync estimator, actor runtime, and
+      audio scheduling logic already depend only on the injectable
+      `TransportClock` boundary, never the OS clock directly.
+
+Also added, integrating this block with Block 37's `LabRuntime` (in
+`lab/tests.rs`, not `lab/clock/tests.rs`):
+`nodes_started_with_different_clock_configurations_diverge_as_the_scenario_advances`
+and `an_invalid_clock_configuration_never_consumes_a_node_slot`.
+
+New tests this block: 10 (8 `lab/clock/tests.rs`, 2 `lab/tests.rs`) --
+`cargo test --features lab-mode` went from 200 to 210 passed; the
+default (no `lab-mode`) build is unaffected (193 passed, unchanged,
+since `clock.rs` lives inside the same `#[cfg(feature = "lab-mode")]`
+module boundary Block 37 established). 0 failed in both configurations.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`
+(full workspace, 0 failed), `cd desktop && npm run check`
+(bindings-check, biome, `cargo fmt --check`, tsc, 72/72 Vitest,
+production build -- unaffected, this block touched no frontend code) --
+`./gradlew test lintDebug` not re-run (desktop-only change, no Kotlin
+touched). Manually ran `cargo clippy --all-targets --all-features -- -D
+warnings` (`--all-features` includes `lab-mode`) -- fixed one new lint
+this block's own tests introduced (`clippy::items_after_statements`,
+matching an already-precedented pattern elsewhere in this crate) before
+landing; the remaining 8 deny-level errors are the identical,
+unrelated pre-existing set noted in the Block 35/36/37 memory entries.
+
+**Acceptance:** Sync and scheduling scenarios can run deterministically without real time. `LabClock`/`LabNodeClock` prove this directly: every test above advances anywhere from milliseconds to a simulated 400 days of virtual time while itself completing in real time on the order of milliseconds, with zero wall-clock sleeps anywhere in the module.
 
 ---
 

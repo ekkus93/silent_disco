@@ -16,11 +16,13 @@
 //! or any other production singleton (Block 37.2 "no global production
 //! singleton reuse").
 //!
-//! This block only establishes the isolated core+storage+identity
-//! scaffolding; virtual transport and clock wiring (spec section 29.2/
+//! This block establishes the isolated core+storage+identity scaffolding
+//! plus a deterministic virtual clock per node (Block 38, see
+//! [`clock`]); virtual transport/fault-injection wiring (spec section
 //! 29.3, already present in `silent_disco_core::transport`'s
-//! `VirtualTransportFactory`/`ManualTransportClock`) are a later Lab
-//! Mode block's concern.
+//! `VirtualTransportFactory`) is a later Lab Mode block's concern.
+
+mod clock;
 
 use crate::dto::DesktopErrorDto;
 use crate::platform::identity::DesktopIdentity;
@@ -28,13 +30,16 @@ use crate::platform::paths::{
     ProfilePathError, canonicalize, ensure_owned_directory, reject_symlink_or_non_directory,
     validate_trusted_root,
 };
+use clock::{LabClock, LabNodeClock};
 use sha2::{Digest, Sha256};
+use silent_disco_core::domain::MonotonicMillis;
 use silent_disco_core::runtime::{CoreActorConfig, CoreActorHandle, CoreActorRuntime};
 use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -63,6 +68,7 @@ pub(crate) struct LabNodeHandle {
     identity: DesktopIdentity,
     actor: CoreActorRuntime,
     database: DatabaseWorker,
+    clock: Arc<LabNodeClock>,
 }
 
 impl LabNodeHandle {
@@ -80,34 +86,77 @@ impl LabNodeHandle {
     pub(crate) fn identity(&self) -> &DesktopIdentity {
         &self.identity
     }
+
+    #[must_use]
+    pub(crate) fn clock(&self) -> Arc<LabNodeClock> {
+        Arc::clone(&self.clock)
+    }
 }
 
 pub(crate) struct LabRuntime {
     lab_root: PathBuf,
     next_id: AtomicU32,
     nodes: Mutex<HashMap<LabNodeId, LabNodeHandle>>,
+    /// The whole scenario's one shared virtual timeline (Block 38.2).
+    /// Every node's own [`LabNodeClock`] is an offset/drift view over
+    /// this same clock, so advancing it is the only way virtual time
+    /// ever moves for any node in this runtime.
+    clock: Arc<LabClock>,
 }
 
 impl LabRuntime {
     /// Creates a Lab runtime rooted under a dedicated `lab` subtree of
-    /// the trusted application-local-data root.
+    /// the trusted application-local-data root, with its virtual
+    /// timeline starting at `initial_clock_ms` (Block 38.2 "deterministic
+    /// initial time").
     ///
     /// # Errors
     ///
     /// Returns [`ProfilePathError`] when the trusted root is relative or
     /// contains a lexical parent traversal component.
-    pub(crate) fn new(app_local_data_root: &Path) -> Result<Self, ProfilePathError> {
+    pub(crate) fn new(
+        app_local_data_root: &Path,
+        initial_clock_ms: u64,
+    ) -> Result<Self, ProfilePathError> {
         validate_trusted_root(app_local_data_root)?;
         Ok(Self {
             lab_root: app_local_data_root.join("lab"),
             next_id: AtomicU32::new(1),
             nodes: Mutex::new(HashMap::new()),
+            clock: Arc::new(LabClock::new(initial_clock_ms)),
         })
     }
 
     #[must_use]
     pub(crate) fn lab_root(&self) -> &Path {
         &self.lab_root
+    }
+
+    /// Returns the scenario's current shared virtual time (Block 38.2).
+    #[must_use]
+    pub(crate) fn now(&self) -> MonotonicMillis {
+        self.clock.now()
+    }
+
+    /// Moves the scenario's shared virtual timeline forward by exactly
+    /// `delta_ms`, running any due scheduled wakeups in deterministic
+    /// order (Block 38.2 "manual advance"; Block 38.3 "scheduler event
+    /// order at equal timestamps"). Never sleeps.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when `delta_ms` would overflow the
+    /// current virtual time; time is left completely unchanged.
+    pub(crate) fn advance(&self, delta_ms: u64) -> Result<MonotonicMillis, DesktopErrorDto> {
+        self.clock.advance(delta_ms).map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.lab.clock_advance_failed",
+                "runtime",
+                "error",
+                false,
+                &error.to_string(),
+            )
+        })
     }
 
     #[must_use]
@@ -140,17 +189,50 @@ impl LabRuntime {
             .and_then(|nodes| nodes.get(&node_id).map(|handle| handle.identity().clone()))
     }
 
+    /// Returns one node's own clock view -- a per-node offset/drift
+    /// window over the scenario's shared timeline (Block 38.2 "per-node
+    /// offset", "per-node drift in ppm") -- for a later Lab Mode block's
+    /// virtual transport wiring to time-stamp that node's events with.
+    /// `None` once the node has been stopped or never existed.
+    #[must_use]
+    pub(crate) fn node_clock(&self, node_id: LabNodeId) -> Option<Arc<LabNodeClock>> {
+        self.nodes
+            .lock()
+            .ok()
+            .and_then(|nodes| nodes.get(&node_id).map(LabNodeHandle::clock))
+    }
+
+    /// Starts one new, fully isolated Lab node with no clock offset or
+    /// drift (in sync with the shared scenario timeline) -- the common
+    /// case. See [`Self::start_node_with_clock`] for a node that should
+    /// run ahead/behind or drift relative to the others.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::start_node_with_clock`].
+    pub(crate) fn start_node(&self) -> Result<LabNodeId, DesktopErrorDto> {
+        self.start_node_with_clock(0, 0)
+    }
+
     /// Starts one new, fully isolated Lab node: its own directory, its
-    /// own database file, and its own synthetic (never-keyring) identity
-    /// (Block 37.2 "isolated databases", "isolated identities", "explicit
-    /// start"; Block 37.3 "profile roots differ").
+    /// own database file, its own synthetic (never-keyring) identity, and
+    /// its own clock view offset by `offset_ms` and drifting by
+    /// `drift_ppm` relative to the shared scenario timeline (Block 37.2
+    /// "isolated databases", "isolated identities", "explicit start";
+    /// Block 37.3 "profile roots differ"; Block 38.2 "per-node offset",
+    /// "per-node drift in ppm").
     ///
     /// # Errors
     ///
     /// Returns a structured error when the bounded node count is already
-    /// reached, the node's directory cannot be prepared safely, its
-    /// database cannot be opened, or its core actor fails to start.
-    pub(crate) fn start_node(&self) -> Result<LabNodeId, DesktopErrorDto> {
+    /// reached, `drift_ppm` is out of the supported bound, the node's
+    /// directory cannot be prepared safely, its database cannot be
+    /// opened, or its core actor fails to start.
+    pub(crate) fn start_node_with_clock(
+        &self,
+        offset_ms: i64,
+        drift_ppm: i64,
+    ) -> Result<LabNodeId, DesktopErrorDto> {
         let mut nodes = self.nodes.lock().map_err(|_| lab_poisoned_error())?;
         if nodes.len() >= MAX_LAB_NODES {
             return Err(DesktopErrorDto::new(
@@ -161,6 +243,21 @@ impl LabRuntime {
                 &format!("Lab Mode is bounded to {MAX_LAB_NODES} concurrent nodes"),
             ));
         }
+        // Validated before allocating a node ID or touching the
+        // filesystem -- an out-of-bounds clock configuration never
+        // consumes a node slot or leaves a half-created node behind.
+        let clock = Arc::new(
+            LabNodeClock::new(Arc::clone(&self.clock), offset_ms, drift_ppm).map_err(|error| {
+                DesktopErrorDto::new(
+                    "desktop.lab.clock_configuration_invalid",
+                    "runtime",
+                    "error",
+                    false,
+                    &error.to_string(),
+                )
+            })?,
+        );
+
         let node_id = LabNodeId(self.next_id.fetch_add(1, Ordering::AcqRel));
         let node_root = self.lab_root.join(node_id.directory_name());
         prepare_node_directory(&self.lab_root, &node_root)
@@ -224,6 +321,7 @@ impl LabRuntime {
                 identity,
                 actor,
                 database,
+                clock,
             },
         );
         Ok(node_id)

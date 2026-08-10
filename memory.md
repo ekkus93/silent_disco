@@ -2557,3 +2557,103 @@ shared core's clock/transport virtualization primitives already exist
 (`ManualTransportClock`, `VirtualTransportFactory`) and just need
 wiring into `LabRuntime`. Per this session's established pattern, do
 not start it unilaterally — ask the user first.
+
+## 2026-08-10T17:33:39Z - Sonnet 5 - Block 38 complete: deterministic virtual clocks
+
+Implemented all three sub-blocks (38.1 shared clock abstraction, 38.2
+virtual clock features, 38.3 tests) from
+`docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`. TODO doc's Block 38
+checkboxes updated with full evidence citations; this entry records the
+architectural decisions worth remembering.
+
+**Key decisions:**
+- 38.1 was essentially already done: `silent_disco_core::transport::TransportClock`
+  (`fn now(&self) -> MonotonicMillis`, `Send + Sync + 'static`) already
+  matches the TODO's own proposed trait shape exactly, with a production
+  `SystemTransportClock` and a `ManualTransportClock` already in use by
+  `virtual_fault_tests.rs`. Followed the TODO's own instruction ("use
+  the actual existing time abstractions where present, do not duplicate
+  them") literally: new `desktop/src-tauri/src/lab/clock.rs` wraps
+  `ManualTransportClock` (`LabClock`) and implements `TransportClock`
+  for a new per-node type (`LabNodeClock`) rather than inventing a
+  second, parallel clock trait.
+- `LabClock` (one shared whole-scenario timeline) is genuinely two
+  things: a checked-arithmetic manual clock, and a deterministic event
+  scheduler (`BinaryHeap` keyed by `(deadline_ms, registration_sequence)`,
+  so same-deadline wakeups always fire in registration order, never
+  `BinaryHeap`'s own unspecified tie-breaking). `advance()` is the only
+  way virtual time ever moves — no wall-clock sleep anywhere in the
+  module, proven by a test that advances a simulated 400 days across a
+  handful of calls while itself running in milliseconds.
+- `LabNodeClock` (per-node offset/drift view, implements `TransportClock`
+  directly) applies drift relative to the shared timeline's own origin
+  (t=0), not each node's own construction time — so two nodes configured
+  with identical drift always agree at the same shared time, regardless
+  of when each was created. Chose this over "drift relative to node
+  creation time" specifically for that cross-node consistency property.
+- "Checked arithmetic" split across two layers since `TransportClock::now()`
+  can't return a `Result` (trait signature is infallible, matching
+  production's own `SystemTransportClock`/`ManualTransportClock`):
+  (1) `LabClock::advance` and `LabNodeClock::new` are genuinely fallible
+  and reject bad input outright (overflowing advance, out-of-bounds
+  drift) before touching any state; (2) `LabNodeClock::now()` itself
+  widens to `i128` (so the realistic range can't overflow at all) and
+  clamps into `u64`'s valid range for the rare pathological case,
+  reusing the exact "clamp on conversion, never wrap or panic"
+  discipline `SystemTransportClock::now()` already has in the shared
+  core (`unwrap_or(u64::MAX)`) — deliberately not inventing a new
+  fallback policy.
+- Wired clocks into Block 37's `LabRuntime`/`LabNodeHandle` rather than
+  leaving `clock.rs` a disconnected utility: `LabRuntime` now owns one
+  shared `LabClock`, `LabRuntime::new` takes an `initial_clock_ms`
+  parameter (existing Block 37 tests updated to pass `0`), and a new
+  `start_node_with_clock(offset_ms, drift_ppm)` gives each node its own
+  `LabNodeClock` (validated *before* a node ID is allocated or any
+  directory/database/actor resource is touched — a rejected
+  configuration never leaves a half-created node behind). Plain
+  `start_node()` still works unchanged, delegating to
+  `start_node_with_clock(0, 0)`.
+- Confirmed via `grep -rn "Instant::now\|SystemTime::now"` (both on the
+  new `lab` module and on the shared core's `sync`/`runtime`/`audio`
+  directories, excluding tests) that neither the new Lab code nor the
+  shared core's existing scheduling logic ever reads the OS clock
+  directly outside the one sanctioned `SystemTransportClock`
+  implementation — satisfying 38.3's "no production direct system clock
+  remains in shared scheduling logic" as a real, grep-verified fact
+  rather than an assumption.
+- Fixed one new `clippy::items_after_statements` lint this block's own
+  tests introduced (a `const` declared after a `let` inside a test
+  function) before landing, by reordering — matching how this exact
+  same lint is already tolerated as pre-existing debt elsewhere in the
+  crate (`start_playback_tests.rs`), but choosing to actually fix it
+  here since it was trivial and new, not carried-forward debt.
+
+**Gates:** `bash scripts/check-rust.sh` green (full workspace).
+`cd desktop && npm run check` green (bindings-check, biome,
+`cargo fmt --check`, tsc, 72/72 Vitest — unchanged, this block touched
+no frontend code — production build). `desktop/src-tauri cargo test`
+(default, no `lab-mode`): 193 passed, unchanged (clock.rs lives inside
+the same feature-gated module boundary Block 37 established).
+`cargo test --features lab-mode`: 210 passed (was 200 before this
+block). Both 0 failed. Manually ran
+`cargo clippy --all-targets --all-features -- -D warnings` — fixed the
+one new lint noted above before landing; the remaining 8 deny-level
+errors are the identical, unrelated pre-existing set from the Block
+35/36/37 audits. `./gradlew test lintDebug` not re-run (desktop-only
+change, no Kotlin touched).
+
+**Known carried-forward gap, still not this block's to fix:** desktop's
+own clippy remains outside the enforced `npm run check` gate (same
+~8-error pre-existing set noted in Blocks 35/36/37's memory entries,
+unchanged in count and file list this session).
+
+### Next
+Committed and pushed. No open threads from this block. Block 39
+(virtual transport and fault injection) is next in the TODO's Phase
+11 — the shared core already has `VirtualTransportFactory`/
+`VirtualTransportNetwork`/`VirtualUdpFaultConfig`
+(`rust/silent-disco-core/src/transport/virtual_transport.rs` /
+`virtual_fault.rs`), and `LabNodeClock` (this block) is exactly the
+per-node clock a virtual transport binding would need to time-stamp
+events with. Per this session's established pattern, do not start it
+unilaterally — ask the user first.
