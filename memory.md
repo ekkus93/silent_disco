@@ -1512,3 +1512,27 @@ Three separate over-replacements happened while editing (`str.replace` hit the *
 - `t4` is still stamped after dispatch rather than at socket receipt, though the receiver already captures an accurate `received_at`. Now a smaller effect, but it is the remaining known contaminant.
 - Pending sync probes never age out (`estimator.rs`); 64 lost responses would permanently brick probing. Latent, but a real reliability hazard.
 - Startup still costs ~1s of buffering by design (`STARTUP_BUFFER_MS`), now the dominant remaining silence.
+
+### Listening check after the recv_event fix: "wasn't bad, a little popping and crackling"
+
+Two listening runs on identical code, and they differed sharply -- variance is still the dominant feature.
+
+| | run 1 | run 2 (the one heard) |
+|---|---|---|
+| song-a concealed / late | 2 / 0 | 168 / 92 |
+| sync acceptance | 31/31 (100%) | 35/40 (87%) |
+| PLAYING seconds with any underrun/silence | ~0 | **10 of 71** |
+
+The user's report ("wasn't bad, a little popping and crackling") matches run 2's numbers closely, which is a useful validation that these counters track perception. Of the 10 bad seconds, two were substantial (~375ms of silence each, clearly audible) and several were 1ms blips that would not be. One row is a genuine arrival gap: `emitted=+0 concealed=+84 ringQueued=0 phase=PLAYING`.
+
+**A metric contaminant found and worth remembering**: `ringSilenceFilled` totals include time *after* the host shuts down, because the listener does not notice the host is gone and keeps silence-filling indefinitely. One manual run logged 4,779,792 silence frames of which ~4.7M was post-run idle. The automated driver force-stops the app at the start of each run so its distributions were consistently bounded, but any manually-driven run must be force-stopped promptly or the totals are meaningless. Compare `PLAYING`-phase rows rather than lifetime totals.
+
+That idle silence-fill is also a real robustness gap on its own: burning CPU and radio, with the UI still showing a live stream.
+
+### Honest status
+
+Markedly better than earlier in the session -- the catastrophic startup stalls are gone and sync acquires reliably -- but **not clean**. Remaining known work, in order:
+1. Listener does not detect host shutdown; silence-fills forever (robustness + metric contamination).
+2. `t4` still stamped after dispatch rather than at socket receipt, though the receiver already captures `received_at`. Remaining known RTT contaminant.
+3. Pending sync probes never age out; 64 lost responses would permanently brick probing.
+4. Residual `late`/`concealed` during playback (~14% of seconds in the worse run) -- arrival gaps that the shallow ring cannot absorb; `ringQueued` was observed dropping to 384-720 frames while emitting at full rate.
