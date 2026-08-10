@@ -268,6 +268,20 @@ pub fn stop_host_playback(state: State<'_, DesktopAppState>) -> Result<(), Deskt
     state.stop_host_playback()
 }
 
+/// Sets the desktop host's local-monitor preference (Block 34.2). Disabling
+/// takes effect immediately; enabling takes effect on the next stream
+/// start. The resulting status (active/failed) is surfaced through
+/// `HostSessionSnapshotDto.monitor` on the next `get_host_session_state`
+/// poll, not from this call's own result.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_host_monitor_enabled(
+    state: State<'_, DesktopAppState>,
+    enabled: bool,
+) -> Result<(), DesktopErrorDto> {
+    state.set_monitor_enabled(enabled)
+}
+
 /// Builds and signs a fresh QR invitation for the active host session
 /// (Block 31.1). Always regenerates -- there is no cached invitation to
 /// silently reuse, so the frontend's refresh action is genuinely explicit.

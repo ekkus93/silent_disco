@@ -9,6 +9,7 @@ import {
   rejectJoinRequest,
   removeListener,
   resumeHostPlayback,
+  setHostMonitorEnabled,
   startHostPlayback,
   stopHostPlayback,
 } from "../core/client";
@@ -136,6 +137,7 @@ export function HostSessionScreen() {
   const [invitationQrDataUrl, setInvitationQrDataUrl] = useState<string | null>(null);
   const [invitationPending, setInvitationPending] = useState(false);
   const [invitationError, setInvitationError] = useState<DesktopErrorDto | null>(null);
+  const [monitorPending, setMonitorPending] = useState(false);
 
   const snapshotRef = useRef(snapshot);
   const decisionOperationsRef = useRef(decisionOperations);
@@ -440,6 +442,24 @@ export function HostSessionScreen() {
       setAnnouncement(`Playback ${action} failed.`);
     } finally {
       setPlaybackPending(false);
+    }
+  }
+
+  // Never affects whether playback itself keeps streaming to listeners --
+  // a failed or disabled monitor is purely a local-listening concern.
+  async function toggleMonitor(enabled: boolean) {
+    if (monitorPending) {
+      return;
+    }
+    setMonitorPending(true);
+    try {
+      await setHostMonitorEnabled(enabled);
+      setAnnouncement(enabled ? "Local monitor enabled." : "Local monitor disabled.");
+    } catch (error) {
+      setRefreshFailure(error as DesktopErrorDto);
+      setAnnouncement("Local monitor preference failed to update.");
+    } finally {
+      setMonitorPending(false);
     }
   }
 
@@ -832,6 +852,32 @@ export function HostSessionScreen() {
           >
             Stop
           </button>
+        </div>
+
+        <div className="mt-4 border-t border-slate-800 pt-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={snapshot.monitor.enabled}
+              disabled={monitorPending}
+              onChange={(event) => void toggleMonitor(event.target.checked)}
+            />
+            Local monitor (optional -- never affects listener transmission)
+          </label>
+          {snapshot.monitor.enabled ? (
+            <p
+              role={snapshot.monitor.active ? "status" : "alert"}
+              className={`mt-2 text-sm ${
+                snapshot.monitor.active ? "text-emerald-200" : "text-amber-200"
+              }`}
+            >
+              {snapshot.monitor.active
+                ? "Monitor is playing through the local audio device."
+                : `Monitor is enabled but not active${
+                    snapshot.monitor.failureReason ? `: ${snapshot.monitor.failureReason}` : "."
+                  } Listener transmission is unaffected.`}
+            </p>
+          ) : null}
         </div>
       </section>
 

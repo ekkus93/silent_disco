@@ -1,5 +1,6 @@
 use crate::dto::DesktopErrorDto;
 use crate::platform::host_transport::ActiveHostSessionSnapshot;
+use crate::platform::network_dto::MonitorStatusDto;
 use crate::runtime_dto::AudioSourceSummaryDto;
 use silent_disco_core::domain::HostLifecycle;
 use silent_disco_core::runtime::{
@@ -104,6 +105,10 @@ pub struct HostSessionSnapshotDto {
     pub transport_error: Option<String>,
     pub broadcast: Option<BroadcastDeliveryDto>,
     pub last_error: Option<DesktopErrorDto>,
+    /// Local monitor status (Block 34). Independent of `connection`/network
+    /// state -- monitor audio affects only what is heard at this desktop
+    /// machine, never what a listener receives.
+    pub monitor: MonitorStatusDto,
 }
 
 /// Delivery and queue-pressure accounting for the real-time broadcast path,
@@ -134,6 +139,7 @@ impl HostSessionSnapshotDto {
     pub(crate) fn from_parts(
         snapshot: &CoreSnapshot,
         active: Option<&ActiveHostSessionSnapshot>,
+        monitor: MonitorStatusDto,
     ) -> Self {
         let observed_at_ms = active.map_or(0, |value| value.observed_at_ms);
         let connection = active.map(|value| HostConnectionDto {
@@ -228,6 +234,7 @@ impl HostSessionSnapshotDto {
             transport_error: active.and_then(|value| value.last_error.clone()),
             broadcast,
             last_error: snapshot.last_error.clone().map(DesktopErrorDto::from),
+            monitor,
         }
     }
 }
@@ -314,6 +321,7 @@ const fn recoverable_action_name(value: RecoverableAction) -> &'static str {
 mod tests {
     use super::HostSessionSnapshotDto;
     use crate::platform::host_transport::ActiveHostSessionSnapshot;
+    use crate::platform::network_dto::MonitorStatusDto;
     use silent_disco_core::domain::{
         ApprovalMode, DeviceId, HostLifecycle, MonotonicMillis, RequestId, SessionId,
         SyncConfidence, TransportState, TrustState,
@@ -391,7 +399,15 @@ mod tests {
             },
         };
 
-        let dto = HostSessionSnapshotDto::from_parts(&snapshot, Some(&active));
+        let dto = HostSessionSnapshotDto::from_parts(
+            &snapshot,
+            Some(&active),
+            MonitorStatusDto {
+                enabled: false,
+                active: false,
+                failure_reason: None,
+            },
+        );
         // Broadcast delivery must reach the UI as distinguishable outcomes,
         // not be folded into one last-error string.
         let broadcast = dto.broadcast.as_ref().expect("broadcast diagnostics");

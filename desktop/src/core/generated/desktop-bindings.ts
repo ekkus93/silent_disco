@@ -52,11 +52,27 @@ export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, 
  * distinct from an explicit stop -- both otherwise present as the same
  * generic `playback_state` of `stopped`.
  */
-streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, };
+streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, 
+/**
+ * Local monitor status (Block 34). Independent of `connection`/network
+ * state -- monitor audio affects only what is heard at this desktop
+ * machine, never what a listener receives.
+ */
+monitor: MonitorStatusDto, };
 
 export type HostInvitationDto = { payload: string, expiresAtMs: string, };
 
 export type MdnsStatusDto = { active: boolean, failureReason: string | null, };
+
+export type MonitorStatusDto = { 
+/**
+ * The user's current on/off preference (34.2 "monitor enable is explicit").
+ */
+enabled: boolean, 
+/**
+ * True only while a real output stream is actually running.
+ */
+active: boolean, failureReason: string | null, };
 
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, mdns: MdnsStatusDto, };
 

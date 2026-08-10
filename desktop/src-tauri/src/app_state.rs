@@ -222,6 +222,7 @@ impl DesktopAppState {
         Ok(HostSessionSnapshotDto::from_parts(
             &snapshot,
             active.as_ref(),
+            network.monitor_status(),
         ))
     }
 
@@ -312,6 +313,32 @@ impl DesktopAppState {
                 &error.to_string(),
             )
         })
+    }
+
+    /// Sets the desktop host's local-monitor preference (Block 34.2
+    /// "monitor enable is explicit"). Never fails on its own -- disabling
+    /// always succeeds, and enabling only records a preference that takes
+    /// effect on the next stream start; any failure to actually stand up a
+    /// monitor stream is surfaced through `HostSessionSnapshotDto.monitor`
+    /// on the next snapshot, not as an error from this call.
+    pub(crate) fn set_monitor_enabled(&self, enabled: bool) -> Result<(), DesktopErrorDto> {
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        match &*state {
+            DesktopRuntimeState::Ready(ready) => {
+                ready.network.set_monitor_enabled(enabled);
+                Ok(())
+            }
+            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Closed
+            | DesktopRuntimeState::Opening { .. }
+            | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
+                "desktop.profile.not_ready",
+                "runtime",
+                "error",
+                true,
+                "no desktop profile is ready",
+            )),
+        }
     }
 
     pub(crate) fn start_host_playback(

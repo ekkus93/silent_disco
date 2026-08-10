@@ -1,10 +1,13 @@
+use super::audio_device::{CpalAudioOutputBackend, NullAudioOutputBackend};
 use super::failure::DesktopPlatformFailure;
 use super::host_transport::{ActiveHostSessionSnapshot, DesktopHostTransportRuntime};
 use super::host_transport_events::DesktopHostTransportEventSink;
 use super::mdns::{MdnsPublicationState, MdnsPublisher, MdnsSdPublisher, NullMdnsPublisher};
+use super::monitor::{DesktopMonitorControl, MonitorStatus};
 use super::network_dto::{
-    MdnsStatusDto, NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
-    NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
+    MdnsStatusDto, MonitorStatusDto, NetworkAddressCandidateDto, NetworkAddressClassDto,
+    NetworkBindPreferenceDto, NetworkBindingDto, NetworkInterfaceSnapshotDto,
+    SetNetworkBindPreferenceRequest,
 };
 pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};
 use super::playback_streamer::DesktopPlaybackStreamer;
@@ -201,6 +204,7 @@ pub(crate) struct DesktopHostNetworkControl {
     transport_factory: Arc<dyn TransportFactory>,
     ports: HostPorts,
     mdns: Arc<dyn MdnsPublisher>,
+    pub(super) monitor: Arc<DesktopMonitorControl>,
     state: Mutex<NetworkState>,
 }
 
@@ -213,6 +217,7 @@ impl DesktopHostNetworkControl {
             HostPorts::default(),
         )
         .with_mdns_publisher(Arc::new(MdnsSdPublisher::new()))
+        .with_monitor_backend(Arc::new(CpalAudioOutputBackend))
     }
 
     pub(super) fn with_components(
@@ -225,6 +230,7 @@ impl DesktopHostNetworkControl {
             transport_factory,
             ports,
             mdns: Arc::new(NullMdnsPublisher),
+            monitor: DesktopMonitorControl::new(Arc::new(NullAudioOutputBackend)),
             state: Mutex::new(NetworkState {
                 preference: BindPreference::Automatic,
                 active: None,
@@ -240,6 +246,31 @@ impl DesktopHostNetworkControl {
     pub(super) fn with_mdns_publisher(mut self, mdns: Arc<dyn MdnsPublisher>) -> Self {
         self.mdns = mdns;
         self
+    }
+
+    /// Replaces this control's local monitor audio output backend, same
+    /// builder pattern as [`Self::with_mdns_publisher`].
+    #[must_use]
+    pub(super) fn with_monitor_backend(
+        mut self,
+        backend: Arc<dyn super::audio_device::AudioOutputBackend>,
+    ) -> Self {
+        self.monitor = DesktopMonitorControl::new(backend);
+        self
+    }
+
+    /// Sets the desktop host's local-monitor preference (34.2 "monitor
+    /// enable is explicit"). Disabling takes effect immediately; enabling
+    /// takes effect on the next stream start -- see `monitor.rs`'s module
+    /// doc comment for why.
+    pub(crate) fn set_monitor_enabled(&self, enabled: bool) {
+        self.monitor.set_enabled(enabled);
+    }
+
+    /// Current desktop monitor status, safe to surface as-is.
+    #[must_use]
+    pub(crate) fn monitor_status(&self) -> MonitorStatusDto {
+        monitor_status_dto(&self.monitor.status())
     }
 
     /// Returns a bounded, classified interface snapshot and detects changes to an active bind.
@@ -806,6 +837,14 @@ fn mdns_status_dto(mdns: &MdnsPublicationState) -> MdnsStatusDto {
             active: false,
             failure_reason: Some(error.to_string()),
         },
+    }
+}
+
+fn monitor_status_dto(status: &MonitorStatus) -> MonitorStatusDto {
+    MonitorStatusDto {
+        enabled: status.enabled,
+        active: status.active,
+        failure_reason: status.failure_reason.clone(),
     }
 }
 

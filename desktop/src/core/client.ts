@@ -335,6 +335,10 @@ export async function stopHostPlayback(): Promise<void> {
   return invokeDesktop<void>("stop_host_playback");
 }
 
+export async function setHostMonitorEnabled(enabled: boolean): Promise<void> {
+  return invokeDesktop<void>("set_host_monitor_enabled", { enabled });
+}
+
 export async function approveJoinRequest(request: ApproveJoinRequest): Promise<CommandReceiptDto> {
   return invokeDesktop<CommandReceiptDto>("approve_join_request", { request });
 }

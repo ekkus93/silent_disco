@@ -74,6 +74,21 @@ pub struct NetworkBindingDto {
     pub mdns: MdnsStatusDto,
 }
 
+/// Desktop local monitor status (Block 34). Never tied to a network
+/// binding -- unlike `mdns`, monitor audio has nothing to do with what any
+/// listener receives, so this is not part of [`NetworkBindingDto`]; it is
+/// surfaced at the top level of `HostSessionSnapshotDto` instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct MonitorStatusDto {
+    /// The user's current on/off preference (34.2 "monitor enable is explicit").
+    pub enabled: bool,
+    /// True only while a real output stream is actually running.
+    pub active: bool,
+    pub failure_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]

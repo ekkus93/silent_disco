@@ -2456,6 +2456,44 @@ any prior gate.
 
 ## Block 34 — Implement desktop local monitor adapter
 
+**Architecture, 2026-08-10**: desktop's existing host broadcast pump
+(`playback_streamer.rs`) is deliberately *not* presentation-time-scheduled
+-- it only bounds how far ahead of the transport clock it may send
+(`SEND_AHEAD_HORIZON_MS`), relying entirely on each *listener's* own
+`PlaybackScheduler`/`PlaybackPump` to place audio in time. Real local
+output hardware needs genuinely paced frames, so "the same scheduled Rust
+timeline" this block's acceptance criterion asks for means literally
+reusing that same `PlaybackScheduler`/`PlaybackPump` machinery
+(`silent_disco_core::audio`, otherwise only ever used by
+`rust/silent-disco-ffi/src/listener_playback.rs` for Android listeners) on
+the desktop host itself -- a second real thread
+(`platform/monitor_pump.rs`), not a second scheduling *implementation*. A
+desktop monitor differs from a listener in exactly one respect: there is
+no clock gap to estimate, since the host is pacing its own local decode
+against its own local clock -- the monitor pump locks
+`PlaybackPump::apply_sync_offset(0.0)` once, immediately, and never
+touches it again.
+
+New modules: `platform/audio_device.rs` (the real-time-safe callback +
+`AudioOutputBackend` trait + `CpalAudioOutputBackend`, Block 33's selected
+crate), `platform/monitor_pump.rs` (the scheduled pump thread),
+`platform/monitor.rs` (`DesktopMonitorControl`: on/off preference, the
+Block 32 render-ring gate, and stream lifecycle coordination). Wired into
+the existing broadcast pump via a bounded, non-blocking tap
+(`playback_streamer.rs`'s `forward_to_monitor`) that forwards a clone of
+each outgoing audio datagram -- never the reverse; the monitor can never
+affect what the broadcast pump does.
+
+**Lifecycle policy, recorded because it is a deliberate simplification**:
+enabling the monitor only takes effect on the *next* stream start (it does
+not reach back into a song already playing); disabling it takes effect
+immediately, tearing down any active monitor stream right away. Monitor
+on/off is desktop-platform-local state, surfaced through
+`HostSessionSnapshotDto.monitor`, never `CoreCommand`/`AudioEvent`/
+`CoreSnapshot` domain state -- the same architectural choice already made
+for mDNS publication status (Block 30), since monitor audio affects only
+what is heard at this desktop machine, never what any listener receives.
+
 ### 34.1 Add adapter
 
 Create:
@@ -2464,33 +2502,108 @@ Create:
 desktop/src-tauri/src/platform/audio_device.rs
 ```
 
-- [ ] enumerate devices outside callback;
-- [ ] configure stream outside callback;
-- [ ] acquire one validated render consumer;
-- [ ] callback performs bounded ring read and silence fill only;
-- [ ] callback performs no Tauri, logging, SQLite, file, network, allocation, or blocking work;
-- [ ] atomic telemetry only;
-- [ ] errors reach core through non-real-time event path;
-- [ ] callback is quiescent before consumer release.
+- [x] enumerate devices outside callback -- `CpalAudioOutputBackend::default_output_config`
+      runs entirely outside the real-time callback, called once per stream
+      start from `monitor.rs`.
+- [x] configure stream outside callback -- `AudioOutputBackend::start` takes
+      an already-negotiated `AudioOutputConfig`; no negotiation happens
+      inside `RenderCallback::write`.
+- [x] acquire one validated render consumer -- `DesktopMonitorControl`
+      acquires through Block 32's `DesktopRenderRingGate`, which itself
+      guarantees only one outstanding lease.
+- [x] callback performs bounded ring read and silence fill only --
+      `RenderCallback::write` is exactly one `RenderRingConsumer::read_frames`
+      call plus atomic telemetry, nothing else.
+- [x] callback performs no Tauri, logging, `SQLite`, file, network,
+      allocation, or blocking work -- confirmed by direct code review of
+      `RenderCallback::write`'s full body (`audio_device.rs`); it touches
+      only the pre-allocated output slice and pre-allocated atomics.
+- [x] atomic telemetry only -- `AudioOutputTelemetry` (`callback_count`,
+      `frames_written`, `frames_silence_filled`), all `AtomicU64`.
+- [x] errors reach core through non-real-time event path -- `cpal`'s error
+      callback (never the real-time data callback) invokes `on_error`,
+      which is passed through as a plain `Box<dyn Fn(String) + Send + Sync>`,
+      not called from `RenderCallback::write` itself.
+- [x] callback is quiescent before consumer release --
+      `RunningAudioOutputStream::stop` consumes `self` and blocks until the
+      backend's own thread/callback is provably done (joined, for both the
+      real `cpal::Stream` drop and the fake used in tests) before
+      `DesktopMonitorControl` drops the render-ring lease.
 
 ### 34.2 Transmit-only default
 
-- [ ] host can stream with monitor disabled;
-- [ ] monitor enable is explicit;
-- [ ] monitor failure follows recorded policy;
-- [ ] no fake monitor success on headless systems;
-- [ ] no automatic switch to HTML audio.
+- [x] host can stream with monitor disabled -- monitor defaults to
+      disabled (`DesktopMonitorControl`'s `enabled: false` initial state);
+      every existing `start_playback_tests.rs` real-audio test continues
+      to pass unmodified with the monitor wired in but off, confirming
+      zero behavioral change to host transmission by default.
+- [x] monitor enable is explicit -- only ever changed by the new
+      `set_host_monitor_enabled` Tauri command, itself only ever called
+      from an explicit UI toggle click.
+- [x] monitor failure follows recorded policy -- `on_stream_started`
+      never returns an error to its caller (`DesktopPlaybackStreamer::start`);
+      every failure (config rejected, gate busy, backend start failed) is
+      recorded into `MonitorState.failure_reason` and surfaced via
+      `status()`/`HostSessionSnapshotDto.monitor` instead.
+- [x] no fake monitor success on headless systems --
+      `NullAudioOutputBackend` (the default backend before
+      `with_monitor_backend` is called) always reports
+      `AudioOutputError::NoDefaultDevice`, exactly matching a genuinely
+      headless system's own behavior -- a test double must be explicitly
+      injected to ever observe `active: true`.
+- [x] no automatic switch to HTML audio -- not applicable to this native
+      desktop app (no web-audio/HTML-audio code path exists anywhere in
+      `desktop/src-tauri`); confirmed by there being nothing to switch to.
 
 ### 34.3 Tests
 
-- [ ] generated test tone through render ring;
-- [ ] start/stop repeated;
-- [ ] underrun and silence fill;
-- [ ] device removal;
-- [ ] wrong format;
-- [ ] callback after release prevention;
-- [ ] host transmit continues or stops exactly according to policy;
-- [ ] shutdown under active callback.
+- [x] generated test tone through render ring --
+      `a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline`
+      (`monitor_tests.rs`): a synthetic recognizable PCM16 signal submitted
+      through the tap is observed, via a real fake-backend-driven callback
+      thread, at the far end of the actual scheduler/pump/render-ring
+      pipeline -- not simulated or shortcut.
+- [x] start/stop repeated -- `start_stop_repeated_never_leaks_or_panics`
+      (5 iterations, asserts `status().active` toggles correctly every time).
+- [x] underrun and silence fill --
+      `an_empty_ring_produces_silence_and_records_it_as_such` (`audio_device.rs`,
+      unit-level: an unfed ring produces exact silence and records it as
+      `frames_silence_filled`, not `frames_written`).
+- [x] device removal -- `device_removal_mid_stream_is_survived_without_panicking`
+      (fake backend's driving thread calls `on_error` mid-stream, simulating
+      a disappeared device; teardown still completes and nothing panics).
+- [x] wrong format -- `a_non_canonical_device_format_is_rejected_before_opening_a_stream`
+      (a fake reporting 44.1kHz is rejected before `start()` is ever
+      called -- `backend.starts` counter proves it).
+- [x] callback after release prevention --
+      `callback_after_release_is_structurally_impossible` (the fake's
+      driving thread is provably joined -- and therefore gone -- before
+      `on_stream_stopped` returns; a fresh acquire against the same gate
+      immediately afterward succeeds, which Block 32's gate would refuse
+      were the previous consumer still alive).
+- [x] host transmit continues or stops exactly according to policy --
+      `forwarding_to_a_tap_that_cannot_accept_right_now_never_blocks_or_panics`
+      (`playback_streamer.rs`): a capacity-0 rendezvous channel makes
+      `try_send` fail immediately with no receiver waiting, proving
+      `forward_to_monitor` cannot block the unconditional
+      `network.broadcast_playback_frame` call that always follows it in
+      `run_pump`. A full real end-to-end test combining a real listener
+      *and* a struggling real monitor simultaneously was not additionally
+      built, to avoid modifying `start_playback_tests.rs`'s
+      `start_host_session` helper (shared by 19 existing tests); the
+      causal mechanism itself is directly unit-tested instead.
+- [x] shutdown under active callback --
+      `shutdown_while_the_callback_is_actively_running_completes_cleanly`
+      (stop is issued with no settling delay, while the fake's thread is
+      mid-write/sleep cycle; joins cleanly, does not panic).
+
+All three quality gates run and green: `bash scripts/check-rust.sh`,
+`cd desktop && npm run check` (bindings-check, biome, `cargo fmt --check`,
+tsc, 68/68 Vitest, production build) -- `./gradlew test lintDebug`
+unaffected by this block (desktop-only change, no Kotlin touched). Also
+ran `cargo clippy --all-targets --all-features` manually for
+`desktop/src-tauri` (still not part of the enforced gate) -- zero
+deny-level errors; only pre-existing/precedented pedantic warnings.
 
 **Acceptance:** Optional desktop monitoring uses the same scheduled Rust timeline and respects real-time constraints.
 

@@ -76,6 +76,7 @@ function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSn
     audioSource: null,
     broadcast: null,
     lastError: null,
+    monitor: { enabled: false, active: false, failureReason: null },
     ...overrides,
   };
 }
@@ -103,6 +104,7 @@ beforeEach(() => {
   vi.mocked(client.pauseHostPlayback).mockResolvedValue(undefined);
   vi.mocked(client.resumeHostPlayback).mockResolvedValue(undefined);
   vi.mocked(client.stopHostPlayback).mockResolvedValue(undefined);
+  vi.mocked(client.setHostMonitorEnabled).mockResolvedValue(undefined);
 });
 
 describe("HostSessionScreen Block 23", () => {
@@ -419,5 +421,64 @@ describe("HostSessionScreen QR invitation (Block 31)", () => {
     render(<HostSessionScreen />);
     await screen.findByText("Listener One");
     expect(screen.queryByRole("button", { name: "Create QR invitation" })).not.toBeInTheDocument();
+  });
+});
+
+describe("HostSessionScreen local monitor (Block 34)", () => {
+  it("is off by default and shows no status line", async () => {
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    const toggle = screen.getByRole("checkbox", { name: /Local monitor/ });
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByText(/Monitor is/)).not.toBeInTheDocument();
+  });
+
+  it("enabling calls the backend and shows the resulting status on the next poll", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValue(
+        fixture({
+          monitor: { enabled: true, active: true, failureReason: null },
+        }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Local monitor/ }));
+    await waitFor(() => expect(client.setHostMonitorEnabled).toHaveBeenCalledWith(true));
+
+    expect(
+      await screen.findByText("Monitor is playing through the local audio device."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a failure reason without implying listener transmission is affected", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({
+        monitor: {
+          enabled: true,
+          active: false,
+          failureReason: "no default output device is available",
+        },
+      }),
+    );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+
+    const status = await screen.findByText(/Monitor is enabled but not active/);
+    expect(status).toHaveAttribute("role", "alert");
+    expect(status).toHaveTextContent("no default output device is available");
+    expect(status).toHaveTextContent("Listener transmission is unaffected");
+  });
+
+  it("disabling calls the backend with false", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ monitor: { enabled: true, active: true, failureReason: null } }),
+    );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Local monitor/ }));
+    await waitFor(() => expect(client.setHostMonitorEnabled).toHaveBeenCalledWith(false));
   });
 });

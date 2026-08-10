@@ -18,6 +18,8 @@ pub mod identity;
 pub(crate) mod invitation;
 pub mod invitation_identity;
 mod mdns;
+mod monitor;
+mod monitor_pump;
 pub mod network;
 pub mod network_dto;
 mod network_error;
@@ -29,10 +31,6 @@ pub mod paths;
 mod playback_streamer;
 pub mod profile_lock;
 pub mod profile_metadata;
-#[allow(
-    dead_code,
-    reason = "Desktop Block 33 consumes this render-ring consumer acquisition gate"
-)]
 pub(crate) mod render_ring;
 pub(crate) mod source_staging;
 pub(crate) mod source_staging_control;
@@ -58,6 +56,8 @@ mod file_picker_tests;
 mod host_transport_admission_tests;
 #[cfg(test)]
 mod host_transport_tests;
+#[cfg(test)]
+mod monitor_tests;
 #[cfg(test)]
 mod network_tests;
 #[cfg(test)]

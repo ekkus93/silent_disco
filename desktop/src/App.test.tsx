@@ -147,6 +147,7 @@ const hostSessionSnapshot: HostSessionSnapshotDto = {
   audioSource: null,
   broadcast: null,
   lastError: null,
+  monitor: { enabled: false, active: false, failureReason: null },
 };
 
 const connection = {

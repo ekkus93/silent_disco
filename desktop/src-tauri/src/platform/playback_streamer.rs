@@ -7,11 +7,13 @@ use super::network::DesktopHostNetworkControl;
 use crate::dto::DesktopErrorDto;
 use silent_disco_core::audio::{PacketizerWorkerErrorKind, StreamingPacketizeHandle};
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, SessionId, StreamId};
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, Stop, StreamStart};
+use silent_disco_core::protocol::{
+    AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart,
+};
 use silent_disco_core::runtime::{AudioEvent, CoreActorHandle};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -96,6 +98,25 @@ impl DesktopPlaybackStreamer {
         };
         let host_start_time_ms = stream_start.host_start_time_ms.get();
 
+        // Standing up the monitor (if enabled) never fails this stream's
+        // start -- a `None` tap here just means nothing gets forwarded
+        // below; the monitor's own failure reason is recorded separately
+        // and surfaced through `DesktopHostNetworkControl::monitor_status`
+        // (Block 34.2: monitor failure never affects host transmission).
+        let monitor_now = {
+            let network = Arc::clone(&network);
+            move || network.transport_now().ok().map(MonotonicMillis::get)
+        };
+        let monitor_tap = network.monitor.on_stream_started(
+            session_id.clone(),
+            stream_id.clone(),
+            host_start_time_ms,
+            stream_start.sample_rate,
+            stream_start.channels,
+            stream_start.samples_per_packet,
+            monitor_now,
+        );
+
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
         let paused_at_ms = Arc::new(AtomicU64::new(0));
@@ -110,6 +131,7 @@ impl DesktopPlaybackStreamer {
             Arc::clone(&stop),
             Arc::clone(&paused),
             Arc::clone(&accumulated_pause_offset_ms),
+            monitor_tap,
         )?;
 
         Ok(Self {
@@ -190,6 +212,7 @@ fn spawn_pump(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     accumulated_pause_offset_ms: Arc<AtomicU64>,
+    monitor_tap: Option<SyncSender<AudioDatagram>>,
 ) -> Result<JoinHandle<Result<(), DesktopErrorDto>>, DesktopErrorDto> {
     thread::Builder::new()
         .name("silent-disco-desktop-playback-pump".to_owned())
@@ -204,6 +227,7 @@ fn spawn_pump(
                 &stop,
                 &paused,
                 &accumulated_pause_offset_ms,
+                monitor_tap.as_ref(),
             )
         })
         .map_err(|error| {
@@ -228,6 +252,7 @@ fn run_pump(
     stop: &AtomicBool,
     paused: &AtomicBool,
     accumulated_pause_offset_ms: &AtomicU64,
+    monitor_tap: Option<&SyncSender<AudioDatagram>>,
 ) -> Result<(), DesktopErrorDto> {
     let mut last_reported_position_ms: Option<u64> = None;
     loop {
@@ -256,6 +281,7 @@ fn run_pump(
                     &mut frame,
                     accumulated_pause_offset_ms.load(Ordering::Acquire),
                 );
+                forward_to_monitor(&frame, monitor_tap);
                 if !wait_until_within_send_ahead_horizon(&frame, network, stop) {
                     break;
                 }
@@ -265,6 +291,13 @@ fn run_pump(
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
+    // Tearing the monitor down is attempted unconditionally, exactly like
+    // every other shutdown step below -- and, like them, is never allowed
+    // to prevent listeners being told the stream ended or the actor
+    // leaving `Playing`. Ordered before the packetizer cancellation only so
+    // the monitor's own thread/device stop first, not because anything
+    // downstream depends on that order.
+    network.monitor.on_stream_stopped();
     // Every shutdown step is attempted even when an earlier one fails -- a
     // packetizer that will not cancel must not prevent the listeners being
     // told the stream ended, nor the actor leaving `Playing` -- and the first
@@ -376,6 +409,23 @@ fn apply_pause_offset(frame: &mut ProtocolFrame, offset_ms: u64) {
     }
 }
 
+/// Forwards one outgoing audio frame's datagram to the local monitor pump,
+/// if a monitor is currently active for this stream (Block 34).
+///
+/// Best-effort and non-blocking (`try_send`): a monitor that cannot keep up
+/// simply misses frames rather than ever slowing or blocking the network
+/// broadcast path below this call, which must never be affected by monitor
+/// health (34.2 policy). Runs after [`apply_pause_offset`] so the monitor's
+/// own scheduler sees the same pause-corrected timeline the network
+/// broadcast does, and before the send-ahead wait, since the monitor has no
+/// use for that network-specific pacing at all.
+fn forward_to_monitor(frame: &ProtocolFrame, monitor_tap: Option<&SyncSender<AudioDatagram>>) {
+    let (Some(tap), ProtocolFrame::Audio(datagram)) = (monitor_tap, frame) else {
+        return;
+    };
+    drop(tap.try_send(datagram.clone()));
+}
+
 /// Blocks, in short stop-responsive increments, until `frame`'s presentation
 /// time is no more than [`SEND_AHEAD_HORIZON_MS`] ahead of the transport's
 /// current time. Non-audio frames (there are none on this path today, but
@@ -408,7 +458,7 @@ fn wait_until_within_send_ahead_horizon(
 
 #[cfg(test)]
 mod tests {
-    use super::apply_pause_offset;
+    use super::{apply_pause_offset, forward_to_monitor};
     use silent_disco_core::domain::{
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
     };
@@ -494,5 +544,49 @@ mod tests {
             ProtocolFrame::Control(_) => panic!("expected an audio frame, got a control frame"),
             _ => panic!("expected an audio frame"),
         }
+    }
+
+    /// Block 34.3 "host transmit continues or stops exactly according to
+    /// policy": this is the actual mechanism that guarantees it. A
+    /// capacity-0 `sync_channel` (a rendezvous channel) makes `try_send`
+    /// fail immediately whenever no receiver is concurrently waiting --
+    /// exactly the "monitor cannot keep up right now" case -- and
+    /// `forward_to_monitor` must swallow that and return normally rather
+    /// than blocking or propagating an error, since [`run_pump`]'s call
+    /// site always reaches the unconditional broadcast immediately after
+    /// this call regardless of what happened here.
+    #[test]
+    fn forwarding_to_a_tap_that_cannot_accept_right_now_never_blocks_or_panics() {
+        let (tap, _receiver) = std::sync::mpsc::sync_channel(0);
+        let frame = audio_frame(1_000);
+        forward_to_monitor(&frame, Some(&tap));
+        // Reaching here at all is the proof: a blocking or panicking
+        // implementation would never return control to this line.
+    }
+
+    /// The overwhelmingly common case -- no monitor active at all -- must
+    /// also be a true no-op.
+    #[test]
+    fn forwarding_with_no_monitor_tap_is_a_no_op() {
+        let frame = audio_frame(1_000);
+        forward_to_monitor(&frame, None);
+    }
+
+    /// A non-audio frame must never be forwarded to the monitor, which only
+    /// ever understands `AudioDatagram`s.
+    #[test]
+    fn a_non_audio_frame_is_never_forwarded_to_the_monitor() {
+        let (tap, receiver) = std::sync::mpsc::sync_channel(1);
+        let frame = ProtocolFrame::Control(ControlMessage::Disconnect(Disconnect {
+            session_id: SessionId::new("session-pump-test").expect("session id"),
+            listener_id: silent_disco_core::domain::DeviceId::new("device-pump-test")
+                .expect("device id"),
+            reason: "test".to_owned(),
+        }));
+        forward_to_monitor(&frame, Some(&tap));
+        assert!(
+            receiver.try_recv().is_err(),
+            "a control frame must never reach the monitor tap"
+        );
     }
 }
