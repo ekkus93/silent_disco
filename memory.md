@@ -1952,3 +1952,46 @@ D3 (host-side multi-listener capacity/high-water marks) is explicitly
 to mean anything — likely blocked for the same reason. Worth checking with
 the user again once a second device is available, or whether to attempt
 D3's instrumentation-only groundwork solo in the meantime.
+
+## 2026-08-10T06:57:56Z - Claude Sonnet 5 - D4 bookkeeping: closed out Block 28.1/28.2 in the desktop TODO, left 28.3 honestly partial
+
+User chose D4 (bookkeeping only, no device needed) over stopping, since
+A7/D3 both remain blocked on a second physical Android device that never
+appeared this session.
+
+- Updated `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` Block 28:
+  - **28.1 (one listener)**: all 8 boxes checked, each with a one-line
+    citation of the real evidence (which test, which run, which numbers).
+    The "record sync, RTT, packet-loss, underrun diagnostics" box was only
+    half-true before D2 — checked now that D2 makes it fully true.
+    "Repeat with MP3" checked but explicitly annotated as flagged-not-clean
+    (points at the known quality gap from A5/§5 item 6) — checking a box
+    should never quietly launder a known problem into "done and fine".
+  - **28.2 (failure tests)**: all 6 boxes checked, citing A6 and D1
+    specifically.
+  - **28.3 (regressions)**: did **not** check the first box
+    ("every software defect receives an automated regression test").
+    Audited it rather than assuming: grepped for test coverage of every
+    fix made from A1 onward this session and found two real, honest gaps
+    — the A1-prerequisite BLUETOOTH permission fix
+    (`AndroidManifest.xml`, needs an instrumented API<31 test to catch,
+    out of scope so far) and A2's Kotlin `translateToPumpClock` (a private
+    function, no dedicated unit test). Recorded both explicitly as known
+    gaps rather than silently marking the box done. Deliberately scoped
+    the audit to fixes from A1 onward (visible in this session's active
+    context) — did **not** re-audit earlier-session fixes (the Block 27
+    `stop_playback` bug, the Kotlin audio-path rewrite, etc.), and said so
+    in the doc rather than implying a complete audit.
+  - The 6.-item "record exact results in `memory.md`" box: checked — every
+    fix this session has a dated, detailed entry with real device numbers.
+  - Added an acceptance-criterion note: Block 28's stated acceptance ("one
+    Android listener plays synchronized audio") is met for WAV and FLAC,
+    with MP3 explicitly flagged as working-but-degraded rather than fully
+    met.
+- No code changes, no gates to re-run.
+
+### Next
+A7 (two physical listeners) and D3 (alongside it) remain the only open
+items from this session's Ralph Loop, both blocked on a second physical
+Android device. Nothing further to do without one — surface this plainly
+if a new session picks this up.

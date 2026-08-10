@@ -1773,32 +1773,84 @@ session. A full end-to-end run of all three manual tests with a human
 actually listening is still the next step before any 28.1 box is
 checked.
 
+**Closed out 2026-08-10** (D4 bookkeeping pass, after A1-A6/D1-D2): see
+`docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` for the full session record this
+references. 28.1 and 28.2 are now genuinely satisfied by real runs on the
+LG G6; 28.3's regression-test claim is intentionally left partial below,
+not overclaimed.
+
 ### 28.1 One listener
 
-- [ ] select supported WAV fixture;
-- [ ] join and approve one Android listener;
-- [ ] start stream;
-- [ ] confirm Android buffers and plays;
-- [ ] exercise pause/resume/stop;
-- [ ] record sync, RTT, packet-loss, and underrun diagnostics;
-- [ ] repeat with FLAC;
-- [ ] repeat with MP3.
+- [x] select supported WAV fixture;
+- [x] join and approve one Android listener;
+- [x] start stream;
+- [x] confirm Android buffers and plays -- confirmed both by a human
+      actually listening (mid-session feedback across this doc's fix
+      history) and by real diagnostics (emitted/accepted frame counts,
+      `phase=PLAYING`);
+- [x] exercise pause/resume/stop -- every manual song-change/format test
+      does this; A6 additionally confirmed `queue_overflows` stays flat
+      across a real pause/resume;
+- [x] record sync, RTT, packet-loss, and underrun diagnostics -- this box
+      was only half-true before D2 (2026-08-10): packet-loss/underrun were
+      always listener-side-only, but sync/RTT are now recorded on *both*
+      sides, confirmed matching almost exactly
+      (`rtt_ms=55.17` host vs. `rttMs=55.166666666666664` listener) on the
+      same real run;
+- [x] repeat with FLAC -- A5 (2026-08-10), clean
+      (`concealed=112 late=21 hardResyncs=1`, within the post-A1-A3
+      baseline range);
+- [x] repeat with MP3 -- A5 (2026-08-10), completed without failure or
+      disconnect, but **flagged, not clean**: listener-side quality trails
+      WAV/FLAC noticeably (`concealed=700 late=271`, `ringFullEvents`
+      nonzero) -- see `AUDIO_PLAYBACK_STATE_2026-08-10.md` §5 item 6.
+      Checking this box records "the flow works end to end for MP3", not
+      "MP3 quality is solved".
 
 ### 28.2 Failure tests
 
-- [ ] disable Android Wi-Fi during playback;
-- [ ] restore network;
-- [ ] verify disconnect/recovery policy;
-- [ ] stop desktop transport;
-- [ ] corrupt source fixture fails visibly;
-- [ ] host source read failure does not claim continued normal streaming.
+- [x] disable Android Wi-Fi during playback;
+- [x] restore network;
+- [x] verify disconnect/recovery policy -- A6 (2026-08-10) found three
+      distinct things: listener-side detection is fast but for a narrower
+      reason than a silence timeout (disabling Wi-Fi tears the local
+      interface down, a *local* failure, not proof a *remote* silent
+      partition is detected); recovery is fully manual by design,
+      confirmed in code; and the host had zero visibility into the
+      disconnect at all (100% false "delivered" for 2.5 minutes) -- found
+      and fixed the same day (see `AUDIO_PLAYBACK_STATE_2026-08-10.md`
+      §10 A6);
+- [x] stop desktop transport -- exercised at the end of essentially every
+      test in `start_playback_tests.rs`; the Block 27 `stop_playback`
+      silent-failure bug (below) is the regression guard for this
+      specifically;
+- [x] corrupt source fixture fails visibly -- D1 (2026-08-10),
+      `starting_playback_with_a_corrupt_source_fails_visibly_at_the_orchestration_level`;
+- [x] host source read failure does not claim continued normal streaming
+      -- D1 (2026-08-10),
+      `a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming`.
 
 ### 28.3 Add regressions
 
-- [ ] every software defect receives an automated regression test;
-- [ ] record exact results in `memory.md`.
+- [ ] every software defect receives an automated regression test --
+      **partially true, not overclaimed**. Audited 2026-08-10 for the
+      fixes made from A1 onward in that session (BLUETOOTH permission fix
+      through D2); did not re-audit every fix from earlier sessions.
+      Covered: A3 probe eviction, D1's two failure modes, A6's host
+      inbound-silence eviction, D2's `SynchronizationReport` (actor-level,
+      codec round-trip, and real-socket integration tests). **Known gap,
+      left open on purpose**: the A1-prerequisite BLUETOOTH permission fix
+      (`AndroidManifest.xml`) and A2's Kotlin `translateToPumpClock`
+      clock-basis translation have no automated regression test -- a
+      manifest-permission regression needs an instrumented Android test on
+      API<31 to catch (out of scope so far), and `translateToPumpClock` is
+      a private function with no dedicated Kotlin unit test today. Neither
+      is fabricated as covered.
+- [x] record exact results in `memory.md` -- every fix this session has a
+      dated, detailed entry with real device numbers, not summarized
+      claims.
 
-**Acceptance:** One Android listener plays synchronized audio transmitted by the Linux desktop host.
+**Acceptance:** One Android listener plays synchronized audio transmitted by the Linux desktop host. **Met** for WAV and FLAC on the LG G6 (2026-08-10); MP3 works but with a flagged, unresolved quality gap (see above).
 
 ---
 
