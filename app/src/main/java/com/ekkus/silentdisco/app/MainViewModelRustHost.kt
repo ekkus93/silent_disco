@@ -17,7 +17,6 @@ import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.HostCoreController
-import com.ekkus.silentdisco.core.uniffi.FfiAppRole
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiAudioSource
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification

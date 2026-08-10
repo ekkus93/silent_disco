@@ -290,3 +290,16 @@ fun AppUiState.canManualResync(): Boolean =
         ListenerLifecycleState.DISCONNECTED,
         ListenerLifecycleState.ERROR,
     )
+
+/**
+ * Single source of truth for the host dashboard's play/pause button
+ * legality, so Compose renders it rather than re-deriving the same
+ * condition inline (Block 21.2: button enablement must derive from a
+ * canonical presentation helper, not be reconstructed per screen).
+ */
+fun AppUiState.canStartOrPauseHostPlayback(): Boolean =
+    hostForm.selectedAudio != null && hostPlaybackState != PlaybackState.BUFFERING
+
+/** Companion legality check for the host dashboard's stop button; see [canStartOrPauseHostPlayback]. */
+fun AppUiState.canStopHostPlayback(): Boolean =
+    hostPlaybackState !in setOf(PlaybackState.STOPPED, PlaybackState.ERROR)

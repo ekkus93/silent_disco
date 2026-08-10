@@ -1493,56 +1493,53 @@ verified or modified in this session.
 
 ## Block 21 — Reduce `MainViewModel` to presentation/platform coordination
 
+Investigated the full `MainViewModel*.kt` satellite-file set against the
+already-shipped Rust FFI surface (`FfiCoreSnapshot`, `HostCoreController`/
+`ListenerCoreController`, `FfiListenerPlaybackHandle`, `RustCoreBridge`)
+before changing anything. Most of 21.1/21.2's targets turned out to already
+be correctly owned by Rust from earlier blocks (12/13/19/20); this block's
+real, verified work was (a) deleting genuinely dead Kotlin left over from
+that migration and (b) fixing the one remaining Compose legality
+reconstruction. See `memory.md`'s Block 21 entry for the full investigation
+and the two items deliberately left unchecked with cited reasoning.
+
 ### 21.1 Remove duplicate domain fields/jobs
 
 Remove Kotlin ownership of:
 
-- [ ] current session/stream domain IDs where Rust snapshot suffices;
-- [ ] sync controller;
-- [ ] listener scheduler;
-- [ ] packet list and pending transport packets;
-- [ ] host stream packetization job;
-- [ ] listener playback frame-write job;
-- [ ] periodic domain resync job;
-- [ ] domain diagnostics store;
-- [ ] domain metrics store;
-- [ ] domain settings persistence.
-
-Retain only platform lifecycle/effect jobs with explicit ownership.
+- [ ] current session/stream domain IDs where Rust snapshot suffices -- does not apply as written: `FfiCoreSnapshot` carries no `session_id`/`stream_id` field, so `MainViewModel.currentSessionId`/`currentStreamId` are not duplicate domain state; they are the only place Android can remember the id it received from a one-shot `FfiPlatformEffect.StartAdvertising` notification, needed later to bind `HostTransportController`/`ListenerTransportController` (`MainViewModelRustHost.kt:completeRustHostAdvertising`). Retained deliberately.
+- [ ] sync controller -- partially retained. `MainViewModelRustListener.kt`'s post-runtime path (`handleTransportSyncResponse`/`applyRuntimeSyncOutcome`) is already fully Rust-authoritative via `FfiListenerPlaybackHandle.observeSyncResponse`. The pre-runtime path in `MainViewModelSynchronization.kt` (`requestListenerSyncProbe`/`applySyncResponse`) still uses local `ListenerSyncController`/`ClockSyncEstimator`. Found that `rust/silent-disco-ffi` already exposes an equivalent standalone estimator (`RustCoreBridge.openSyncEstimator()`/`RustSyncEstimator`, exercised by `RustSyncEstimatorInstrumentedTest`) that is *not yet wired into this pre-runtime path* -- this is a real, already-available fix, not a Rust-core gap, but rewiring a sync-critical production path without physical-device verification in this session was judged too risky to rush; deliberately deferred to a dedicated follow-up with device access.
+- [x] listener scheduler -- verified already fully Rust-owned: `MainViewModelRustListener.kt:startListenerPlaybackDiagnostics` polls `FfiListenerPlaybackHandle.diagnostics()` only (a read-only ~100ms UI mirror); real-time frame writes happen entirely inside Rust's render ring consumed by the Oboe C ABI callback (`OboeBridge.nativeOboeOpen(runtime.engineToken())`). `ListenerPlaybackScheduler` (the pre-Rust class name) no longer exists anywhere in `app/src/main/java`.
+- [x] packet list and pending transport packets -- `pendingTransportPackets: ArrayDeque<AudioPacket>` was dead (zero references outside its own declaration); removed from `MainViewModel.kt`. `latestPackets: List<AudioPacket>` remains; see the packetization-job note below.
+- [ ] host stream packetization job -- retained; genuinely still load-bearing. `MainViewModelHostActions.kt`/`MainViewModelHostPlayback.kt` decode, packetize (`PcmPacketizer`), pace, and broadcast host audio entirely in Kotlin. Confirmed Rust already models this as a domain effect (`FfiPlatformEffect.PrepareAudioSource`/`StartAudioOutput`/`StopAudioOutput` in `rust/silent-disco-ffi/src/host_control/types.rs`) and even has a standalone streaming packetizer (`rust/silent-disco-core/src/audio/packetizer_worker.rs`), but Android's handler explicitly fails these effects today ("Platform effect is outside Android host Block 12", `MainViewModelRustHost.kt:executeRustPlatformEffect`) -- there is no Android-callable FFI entry point yet that packetizes/paces decoded PCM for Kotlin to call instead. This is squarely Block 23 (decoder boundary) scope, not 21; left in place rather than deleting host audio broadcast with no replacement.
+- [x] listener playback frame-write job -- see "listener scheduler" above; verified there is no Kotlin-side frame-write loop left in the real (non-demo) path.
+- [ ] periodic domain resync job -- `startPeriodicListenerResync()` remains in Kotlin (`MainViewModelSynchronization.kt`); it decides *when* to probe (cadence) and delegates the probe itself to Rust once a runtime exists, but pre-runtime it still calls into the local sync-controller path noted above, so left unchecked for the same reason.
+- [ ] domain diagnostics store / [ ] domain metrics store -- retained. `DiagnosticsStore`/`DiagnosticsMetrics` are read-only, ephemeral presentation-layer telemetry mirrors that never feed back into a legality decision (verified by reading every call site); architecture spec section 17 explicitly permits Kotlin to "share diagnostic exports", and `FfiCoreSnapshot` does not carry the finer-grained per-packet timing detail (send-rate, byte histograms) these currently display. Left unchecked because this is a judgment call, not a verified removal, and CLAUDE.md marks diagnostics mandatory.
+- [x] domain settings persistence -- already fully migrated in an earlier block: `AndroidRustDomainStore` (`app/src/main/java/com/ekkus/silentdisco/platform/persistence/AndroidRustDomainStore.kt`) touches `SharedPreferences` only as a one-time legacy-import source on first launch, then deletes those keys once Rust confirms the import committed; all reads/writes after that go through `RustDatabaseBridge`.
 
 ### 21.2 Make Compose render Rust-backed state
 
-- [ ] Map `CoreSnapshot` to localized presentation models.
-- [ ] Labels remain Kotlin resources/presentation functions.
-- [ ] Button enablement derives from Rust-provided capabilities or legal actions.
-- [ ] UI does not reconstruct lifecycle legality independently.
-- [ ] Error details can be exported without exposing secrets.
+- [x] Map `CoreSnapshot` to localized presentation models -- verified: `applyRustHostSnapshot`/`applyRustListenerSnapshot` (`MainViewModelRustHost.kt`, `MainViewModelRustListener.kt`) map every `FfiCoreSnapshot` field into `AppUiState`.
+- [x] Labels remain Kotlin resources/presentation functions -- verified via `AppState.kt`/`AppPresentation.kt` (`label()`, `listenerStateLabel()`, `hostSessionHealthSummary()`, etc.).
+- [x] Button enablement derives from Rust-provided capabilities or legal actions -- most call sites already used canonical `AppUiState.canX()` helpers (`canSelectSession`, `canManualResync`, `form.canConnect()`). Found and fixed the one remaining exception this session: `HostDashboardScreen.kt`'s play/pause/stop buttons recomputed `hostPlaybackState` set-membership inline; added `AppUiState.canStartOrPauseHostPlayback()`/`canStopHostPlayback()` to `AppState.kt` (tested in `HostPlaybackControlStateTest.kt`) and wired them in.
+- [x] UI does not reconstruct lifecycle legality independently -- same fix as above; re-swept `feature/**` for inline `enabled =` legality after the fix and found no remaining case.
+- [x] Error details can be exported without exposing secrets -- `SupportReport.kt:buildSupportReport` already redacts invite codes, session ids, and the selected-audio URI before building the export string; covered by the existing `SupportReportTest.kt`.
 
 ### 21.3 Remove obsolete production helpers
 
-- [ ] Delete copied validators/state transition helpers now owned by Rust.
-- [ ] Delete obsolete Kotlin packet/sync/jitter code after equivalent Rust tests.
-- [ ] Keep platform-specific decoder/discovery/audio adapters only.
-- [ ] Search for dangerous old fallback calls and remove them.
-
-Suggested checks:
-
-```bash
-grep -R "AudioTrackPlaybackEngine\|ListenerPlaybackScheduler\|PcmPacketizer\|ClockSyncEstimator" app/src/main/java -n
-grep -R "getSharedPreferences\|SQLiteDatabase\|Room\.databaseBuilder" app/src/main/java -n
-grep -R "runCatching.*logger\|onFailure.*logger" app/src/main/java -n
-```
-
-Every remaining match must be justified as platform-specific or removed.
+- [ ] Delete copied validators/state transition helpers now owned by Rust -- partial. Deleted this session: `MainViewModelAudioPipeline.kt` (71 lines, entirely dead -- imports only, zero declarations), the dead `HostTimeMapper` class (`core/sync/ClockSync.kt`, zero instantiations anywhere), and dead `pendingTransportPackets`. `PcmPacketizer`/`ClockSyncEstimator` retained; both are still genuinely load-bearing (see 21.1 notes on the packetization job and sync controller) and deleting them now would silently break real host audio broadcast and pre-runtime listener sync with no Rust-callable replacement wired up.
+- [ ] Delete obsolete Kotlin packet/sync/jitter code after equivalent Rust tests -- same reasoning as above; `HostTimeMapper` deleted (unused), `PcmPacketizer`/`ClockSyncEstimator` retained pending the Block 23 packetization-effect wiring and the sync-estimator rewiring noted in 21.1.
+- [x] Keep platform-specific decoder/discovery/audio adapters only -- ran the suggested grep; `AudioTrackPlaybackEngine`/`ListenerPlaybackScheduler` (pre-Rust class names) no longer exist anywhere in `app/src/main/java` (already removed in an earlier block). Every remaining `PcmPacketizer`/`ClockSyncEstimator` match is individually justified above rather than blanket-kept.
+- [x] Search for dangerous old fallback calls and remove them -- ran all three suggested greps: `runCatching.*logger|onFailure.*logger` has zero matches; the two `getSharedPreferences` call sites are `DeviceIdentityStore` (a public device id, not a secret) and `AndroidRustDomainStore`'s one-time legacy-import path (see 21.1); no `SQLiteDatabase`/`Room.databaseBuilder` usage anywhere. Also swept the debug-only demo path (`MainViewModelDemo.kt`) for silent success: it fails loudly through the same `handleListenerConnectionFailure`/`handleSyncFailure` paths as production code, never fabricates a success state. Additionally deleted ~350 lines of dead copy-pasted imports (`PcmPacketizer`/`ClockSyncEstimator`/`HostTimeMapper`/etc.) across 13 of the `MainViewModel*.kt` satellite files that were never referenced in those files' bodies -- not a "fallback" per se, but exactly the kind of stale-migration residue this check exists to surface.
 
 ### 21.4 Update Android tests
 
-- [ ] UI tests submit commands through facade.
-- [ ] Effect runner tests report real completion/failure facts.
-- [ ] No tests validate copied Rust rules in Kotlin.
-- [ ] Existing FIX3/FIX4/FIX5 failure visibility remains covered.
+- [x] UI tests submit commands through facade -- verified via static search: no file under `app/src/test` or `app/src/androidTest` constructs `MainViewModel` directly (`grep -rl "MainViewModel(" app/src/test app/src/androidTest` returns nothing); the JVM suite exercises extracted pure functions (state-transition/mapping helpers), and Compose UI tests drive real click handlers, so there is no test path that bypasses the production command facade.
+- [ ] Effect runner tests report real completion/failure facts -- gap found, not fixed this session: no test (JVM or instrumented) exists for `executeRustPlatformEffect`/`executeRustTransportEffect`/`executeRustStorageEffect` (`MainViewModelRustHost.kt`/`MainViewModelRustListener.kt`) at all -- not even ones with synthesized success. Adding real coverage needs fake `HostCoreController`/`ListenerCoreController`/transport-controller infrastructure that does not exist yet; left as an honest gap rather than fabricated.
+- [ ] No tests validate copied Rust rules in Kotlin -- self-consistent with 21.3's decisions (`PcmPacketizer`/`ClockSyncEstimator` tests remain legitimate because the code they test is still live production logic, not deleted), but a full audit of every test file for this specific concern was not performed this session; left unchecked rather than claiming full coverage.
+- [x] Existing FIX3/FIX4/FIX5 failure visibility remains covered -- confirmed the named regression tests (`ManualResyncStateTest.kt`, `BroadcastDeliveryTest.kt`, `SessionSelectionGuardTest.kt`, `HostPlaybackIdentityTest.kt`, `BleDiscoveryServiceTest.kt`/`BleDiscoveryServiceInstrumentedTest.kt`, `PermissionCatalogueTest.kt`) all still exist and pass in this session's `./gradlew test` run (275/275). `HostSessionValidator` (FIX5) no longer exists under that name, but its concern (host form validation before session creation) is legitimately superseded by `HostMusicSetupScreen`'s `missingItems` gate plus Rust's own `configureAndCreate(draft)` rejection path -- not silently dropped.
 
-**Acceptance:** Kotlin/Compose is a native presentation and platform adapter shell; Rust is the only domain/data engine.
+**Acceptance:** Kotlin/Compose is a native presentation and platform adapter shell; Rust is the only domain/data engine. Not yet fully met -- host audio packetization and pre-runtime listener sync estimation remain Kotlin-owned pending Block 23 and a dedicated sync-estimator rewiring session respectively (see notes above).
 
 ---
 

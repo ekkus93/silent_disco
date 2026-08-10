@@ -1,8 +1,6 @@
 package com.ekkus.silentdisco.app
 
 import androidx.lifecycle.viewModelScope
-import com.ekkus.silentdisco.core.audio.AudioFormatSpec
-import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.model.PlaybackState
@@ -10,7 +8,6 @@ import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
-import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket

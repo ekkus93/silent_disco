@@ -55,18 +55,3 @@ class ClockSyncEstimator(
         )
     }
 }
-
-data class HostTimeMapper(
-    val offsetMs: Double,
-    val skewPpm: Double = 0.0,
-) {
-    fun hostToLocal(hostElapsedMs: Long): Long {
-        val skewAdjusted = hostElapsedMs + (hostElapsedMs * (skewPpm / 1_000_000.0))
-        return (skewAdjusted - offsetMs).toLong()
-    }
-
-    fun localToHost(localElapsedMs: Long): Long {
-        val adjusted = localElapsedMs + offsetMs
-        return adjusted.toLong()
-    }
-}

@@ -48,6 +48,8 @@ import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.JoinApprovalAction
 import com.ekkus.silentdisco.app.SessionHealthLevel
+import com.ekkus.silentdisco.app.canStartOrPauseHostPlayback
+import com.ekkus.silentdisco.app.canStopHostPlayback
 import com.ekkus.silentdisco.app.hostSessionHealthSummary
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.JoinRequest
@@ -200,8 +202,7 @@ fun HostDashboardScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(
                                 onClick = onPlayPause,
-                                enabled = uiState.hostForm.selectedAudio != null &&
-                                    uiState.hostPlaybackState != PlaybackState.BUFFERING,
+                                enabled = uiState.canStartOrPauseHostPlayback(),
                                 modifier = Modifier.weight(1f),
                             ) {
                                 val playing = uiState.hostPlaybackState == PlaybackState.PLAYING
@@ -213,10 +214,7 @@ fun HostDashboardScreen(
                             }
                             Button(
                                 onClick = onStop,
-                                enabled = uiState.hostPlaybackState !in setOf(
-                                    PlaybackState.STOPPED,
-                                    PlaybackState.ERROR,
-                                ),
+                                enabled = uiState.canStopHostPlayback(),
                                 modifier = Modifier.weight(1f),
                             ) {
                                 Icon(Icons.Filled.Stop, contentDescription = null)

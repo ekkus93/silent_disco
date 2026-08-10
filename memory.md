@@ -2772,3 +2772,133 @@ injection or latency into `LabRuntime`'s own node-management API yet
 (both remain standalone, tested primitives). Per this session's
 established pattern, do not start it unilaterally — ask the user
 first.
+
+## 2026-08-10T19:10:00Z - Claude Sonnet 5 - Block 21 (Android `MainViewModel` presentation reduction) investigated and partially completed
+
+**Scope:** Rust Core Migration TODO Block 21 (21.1-21.4). Worked entirely
+inside `app/` in an isolated worktree, parallel to unrelated desktop/Rust-core
+work on the same branch. Did not touch `desktop/` or add Rust domain logic.
+
+**Finding that shaped the whole session:** `MainViewModel` is *much* further
+migrated than Block 21's checklist assumes. `MainViewModelRustHost.kt`/
+`MainViewModelRustListener.kt` (from earlier, unlogged blocks) already map
+`FfiCoreSnapshot` into `AppUiState`, drive host/listener lifecycle entirely
+through `HostCoreController`/`ListenerCoreController`, and real audio
+playback already runs entirely inside Rust's render ring consumed by the
+Oboe C ABI (`FfiListenerPlaybackHandle` + `OboeBridge.nativeOboeOpen`) — the
+"listener scheduler" and "listener playback frame-write job" 21.1 bullets
+were already done. `AndroidRustDomainStore` already reduces
+`SharedPreferences` to a one-time legacy-import source. The remaining
+`MainViewModelHostActions.kt`/`HostPlayback.kt`/`Synchronization.kt`/
+`ListenerPlayback.kt` files (pre-Rust vintage) are *not* dead: they still run
+two genuinely load-bearing paths with no Rust replacement wired up yet —
+(1) host audio decode/packetize/pace/broadcast (`PcmPacketizer` +
+`startHostStreamingLoop`), and (2) pre-runtime listener sync estimation
+(`ListenerSyncController`/`ClockSyncEstimator`) used before
+`FfiListenerPlaybackHandle` exists. Deleting either without a working
+replacement would have silently broken host audio or listener sync —
+forbidden by this project's own rules — so both were left in place with the
+exact reasoning recorded in the TODO file itself (see Block 21 section).
+
+**Real, verified changes made:**
+- Deleted `MainViewModelAudioPipeline.kt` outright (71 lines, entirely
+  copy-pasted imports, zero declarations — dead on arrival).
+- Deleted the `HostTimeMapper` class from `core/sync/ClockSync.kt` (zero
+  instantiations anywhere in the app; fully superseded by Rust's own
+  host-time mapping inside the playback runtime).
+- Removed the dead `pendingTransportPackets: ArrayDeque<AudioPacket>` field
+  from `MainViewModel.kt` (zero references outside its own declaration).
+- Removed an unused `import ...HostTimeMapper` from
+  `ManualListenerTransportController.kt`.
+- Swept every `MainViewModel*.kt` satellite file for unused imports (these
+  files were clearly built by copy-pasting the original monolith's header
+  block) and removed ~350 dead import lines across 13 files, verified by a
+  script cross-checking each imported symbol's last-path-component against
+  actual body usage, then confirmed by a full `./gradlew test lintDebug`
+  pass. `PcmPacketizer`/`ClockSyncEstimator` imports were *kept* wherever
+  they're genuinely still used (verified per-file, not blanket-kept).
+- Fixed the one Compose screen still reconstructing lifecycle legality
+  inline: `HostDashboardScreen.kt`'s play/pause/stop buttons recomputed
+  `hostPlaybackState` set-membership by hand. Added
+  `AppUiState.canStartOrPauseHostPlayback()`/`canStopHostPlayback()` to
+  `AppState.kt` (matching the established `canSelectSession`/
+  `canManualResync` convention) and wired them in, with a new
+  `HostPlaybackControlStateTest.kt` (5 tests).
+- Confirmed `SupportReport.kt`'s existing `buildSupportReport()` already
+  redacts invite codes/session ids/audio URIs — 21.2's export-without-secrets
+  bullet was already satisfied.
+
+**Real gap found, not fixed (deliberately, explained in TODO):** Rust
+already exposes a standalone, non-real-time-safe control-plane sync
+estimator via C ABI —
+`RustCoreBridge.openSyncEstimator()`/`RustSyncEstimator` in
+`core/rust/RustCoreBridge.kt`, exercised today only by
+`RustSyncEstimatorInstrumentedTest.kt` — that is architecturally exactly
+what the pre-runtime listener sync path in `MainViewModelSynchronization.kt`
+needs instead of its local `ListenerSyncController`/`ClockSyncEstimator`.
+This is **not** a Rust-core gap (nothing new needs building in `rust/`); it's
+an unwired Kotlin integration. Deliberately did not rewire it this session:
+it's a sync-critical production path with detailed existing doc-comments
+about exact ordering/correlation-id behavior, I have no physical device or
+emulator run in this session to verify real NTP-exchange behavior against,
+and a rushed change here risks exactly the kind of silent sync regression
+this project's rules exist to prevent. Recorded precisely in the TODO so a
+future session with device access can pick it up directly instead of
+rediscovering it.
+
+**Also found, not fixed:** No test (JVM or instrumented) exists at all for
+`executeRustPlatformEffect`/`executeRustTransportEffect`/
+`executeRustStorageEffect` — the functions that turn Rust-emitted platform
+effects into real Android actions and report completion/failure back to
+Rust. Not even a synthesized-success version exists; there's simply no
+coverage. Real coverage needs fake `HostCoreController`/
+`ListenerCoreController`/transport-controller test doubles that don't exist
+yet — flagged as a genuine 21.4 gap rather than invented.
+
+**Host audio packetization gap (Block 23 territory, not 21):** Rust's domain
+model already anticipates this — `FfiPlatformEffect::PrepareAudioSource`/
+`StartAudioOutput`/`StopAudioOutput` exist in
+`rust/silent-disco-ffi/src/host_control/types.rs`, and a full streaming
+packetizer worker already exists at
+`rust/silent-disco-core/src/audio/packetizer_worker.rs` — but Android's
+`executeRustPlatformEffect` explicitly fails these three effects today
+("Platform effect is outside Android host Block 12"), and nothing in
+`silent-disco-ffi` exposes an Android-callable entry point that packetizes
+decoded PCM and paces/broadcasts it. This is why `MainViewModelHostActions.kt`
+still packetizes and paces host audio entirely in Kotlin. This is real,
+pre-existing Block 23 (decoder boundary) scope, not something to invent a
+fix for in Block 21 — noted for whoever picks up Block 23.
+
+**Gate results (real, actually executed):**
+```
+./gradlew test lintDebug --stacktrace --console=plain
+BUILD SUCCESSFUL in 2m 35s (first run) / 41s (re-run after final edit)
+84 actionable tasks: 84 executed
+```
+Unit tests: 275/275 passed, 0 failures, 0 errors, 0 skipped (includes the
+5 new `HostPlaybackControlStateTest` cases). Lint: 0 errors, 7 warnings, all
+pre-existing `GradleDependency`/`UnsafeOptInUsageWarning` notices unrelated
+to this change (matches the pre-existing baseline noted in earlier entries).
+No physical device or emulator was available/used this session; only
+`./gradlew test lintDebug` was run, per this block's stated scope.
+
+**Files touched:** `app/src/main/java/com/ekkus/silentdisco/app/AppState.kt`,
+`MainViewModel.kt`, `MainViewModelDemo.kt`, `MainViewModelDiagnostics.kt`,
+`MainViewModelHostPlayback.kt`, `MainViewModelListenerActions.kt`,
+`MainViewModelListenerPlayback.kt`, `MainViewModelPersistence.kt`,
+`MainViewModelRustHost.kt`, `MainViewModelRustListener.kt`,
+`MainViewModelSynchronization.kt`, `MainViewModelTransport.kt`,
+`core/rust/ManualListenerTransportController.kt`, `core/sync/ClockSync.kt`,
+`feature/host/HostDashboardScreen.kt`; deleted
+`MainViewModelAudioPipeline.kt`; added
+`app/src/test/java/com/ekkus/silentdisco/app/HostPlaybackControlStateTest.kt`.
+
+### Next
+Block 21 is not fully checked off — see the TODO file's own per-bullet
+notes. The two highest-value follow-ups: (1) wire
+`RustCoreBridge.openSyncEstimator()` into
+`MainViewModelSynchronization.kt`'s pre-runtime path with real device
+verification available; (2) add fake-controller test infrastructure to
+cover `executeRust*Effect`. Both were deliberately left for a session with
+more room to verify sync-critical behavior safely, not because they're hard
+to find.
