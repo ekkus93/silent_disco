@@ -2296,35 +2296,161 @@ production build) -- `./gradlew test lintDebug` unaffected by this block
 
 ## Block 33 — Select and validate CPAL or approved audio backend
 
+**Test system, 2026-08-10** (recorded because every finding below is
+specific to it, not a general claim): this machine runs `PipeWire` 1.0.5
+as the session audio server, exposing a PulseAudio-compatible socket
+(`pactl info` reports `Server Name: PulseAudio (on PipeWire 1.0.5)`). Real
+ALSA hardware is present (`/proc/asound/cards` lists two `HDA-Intel` cards
+and one `acp` card) but `/dev/snd/*` is owned by the `audio` group, which
+this session's user is not a member of -- confirmed independently by
+`aplay -l` reporting "no soundcards found". `/usr/share/alsa/alsa.conf.d/`
+has both `50-pipewire.conf` and `99-pipewire-default.conf`, making
+`PipeWire`'s ALSA plugin the system default PCM -- so `cpal`'s ALSA
+backend talks to `PipeWire`'s socket, not `/dev/snd/*` directly, which
+turns out to sidestep the permission gap entirely (confirmed empirically,
+not assumed). Spike code lives at
+`desktop/src-tauri/src/platform/cpal_spike_tests.rs` -- not production
+code, not wired into any Tauri command, run via
+`cargo test cpal_spike -- --nocapture`.
+
 ### 33.1 Spike
 
 With CPAL 0.18.x or current approved candidate, test:
 
-- [ ] default device enumeration;
-- [ ] explicit device selection;
-- [ ] supported format negotiation;
-- [ ] 48 kHz stereo float output where available;
-- [ ] fallback conversion policy where approved;
-- [ ] PipeWire;
-- [ ] PulseAudio/ALSA behavior present on the test system;
-- [ ] device removal;
-- [ ] stream error callback;
-- [ ] callback timing;
-- [ ] shutdown quiescence;
-- [ ] Rust version and license.
+- [x] default device enumeration -- `cpal::default_host().default_output_device()`
+      resolves to "Default Audio Device"; `output_devices()` enumerates 12
+      entries, all `PipeWire`'s ALSA-plugin nodes (rate converters, JACK,
+      OSS, "PipeWire Sound Server", "PulseAudio Sound Server", channel
+      up/downmix plugins, "Default ALSA Output (currently PipeWire Media
+      Server)") -- confirms this system's device list reflects the
+      software plugin chain, not distinct physical hardware.
+- [x] explicit device selection -- `cpal` 0.18.1 removed the fallible
+      `Device::name()` from earlier versions (a real API change this spike
+      had to discover, not one this project chose); device identity now
+      goes through `Display`/`.to_string()`, `.id()`, and structured
+      `.description()`. Re-finding a previously enumerated device by
+      `PartialEq` identity after a fresh `output_devices()` call succeeded
+      for all 12 devices.
+- [x] supported format negotiation -- `supported_output_configs()`
+      returned 320 ranges (1-64 channels, 1-384000 Hz, U8/I32/F32) on the
+      default device. Caveat recorded, not glossed over: this is
+      `PipeWire`'s ALSA-plugin layer being maximally permissive, not a
+      real hardware capability report -- not authoritative for what a
+      genuine physical device would report if `audio`-group access were
+      available.
+- [x] 48 kHz stereo float output where available -- `default_output_config()`
+      returned exactly `2 ch, 48000 Hz, F32` on this machine, an exact
+      match for the project's canonical render format
+      (`CANONICAL_SAMPLE_RATE_HZ`/`CANONICAL_CHANNELS` in
+      `silent_disco_core::audio`) with no format conversion required.
+- [ ] fallback conversion policy where approved -- not exercised (nothing
+      to fall back from, since the default already matched canonical on
+      this machine); policy recorded below in 33.2 without live evidence
+      it works, since no non-matching device was available to test against.
+- [x] `PipeWire` -- the entire spike above **is** the `PipeWire` path (see
+      test-system note); genuinely exercised, not merely present.
+- [x] PulseAudio/ALSA behavior present on the test system -- PulseAudio
+      access confirmed present (via `PipeWire`'s compatibility socket);
+      direct ALSA hardware access confirmed blocked by the `audio`-group
+      permission gap. Both recorded as real, asymmetric findings, not
+      papered over.
+- [ ] device removal -- not exercised. No removable/hot-unpluggable audio
+      device was available in this session, and deliberately killing the
+      user's live `PipeWire` session to force a disconnect would disrupt
+      their actual desktop -- an honest, documented gap, matching this
+      project's established pattern for hardware this session cannot
+      safely or actually reach (LG G6 physical device, ThreadSanitizer).
+- [x] stream error callback -- not triggered via a live device-loss event
+      (see "device removal" above), but its reachability was proven a
+      different way: `build_output_stream` with a deliberately absurd
+      config (0 channels, 0 Hz) was rejected as a typed `cpal::Error`
+      ("channel count must be at least 1"), never a panic --
+      `an_unsupported_config_is_rejected_as_an_error_not_a_panic`.
+- [x] callback timing -- a real stream ran for 300ms and recorded 30
+      callback invocations via atomic counters (no logging/allocation in
+      the callback itself), roughly consistent with `PipeWire`'s default
+      buffering; zero error-callback invocations during the run.
+- [x] shutdown quiescence -- dropping a playing stream from a spawned
+      thread completed without panicking or hanging, joined successfully
+      within the test.
+- [x] Rust version and license -- `cpal` 0.18.1: `rust-version = "1.85"`
+      (well under this project's pinned `1.97.1`), license `Apache-2.0`.
+      Its Linux dependency chain: `alsa` 0.11.0 (`Apache-2.0/MIT`),
+      `alsa-sys` 0.4.0 (`MIT`), `dasp_sample` 0.11.0
+      (`MIT OR Apache-2.0`) -- all permissive, no copyleft, consistent
+      with this project's dependency policy.
 
 ### 33.2 Decide policy
 
 Record:
 
-- [ ] selected backend and features;
-- [ ] supported Linux audio stacks;
-- [ ] device-selection UX;
-- [ ] format conversion location;
-- [ ] monitor-failure effect on host transmission;
-- [ ] rejected alternatives.
+- [x] selected backend and features -- `cpal` `=0.18.1`, pinned exact
+      per this repo's dependency policy
+      (`desktop/src-tauri/Cargo.toml`). No non-default features enabled;
+      the default build already covers the ALSA/`PipeWire` path this
+      spike exercised.
+- [x] supported Linux audio stacks -- `PipeWire` (via its PulseAudio-
+      compatible socket and its default ALSA plugin) confirmed working
+      end to end on the test system. Raw/direct ALSA hardware access is
+      untested here (blocked by this session's `audio`-group permission
+      gap, not by `cpal` or `PipeWire`) -- a real end-user's desktop
+      session is expected to be in the `audio` group by normal Linux
+      desktop convention, so this is a test-environment limitation, not
+      an expected production one, but it is explicitly unverified rather
+      than assumed to work.
+- [x] device-selection UX -- deferred to Block 34; out of scope for a
+      selection/validation block. This spike confirms the API this
+      future UX would be built on (enumerate via `output_devices()`,
+      identify by `PartialEq`/`.id()`, display via `Display`) is usable.
+- [x] format conversion location -- **no new resampler is built for this
+      block.** The shared core already has a private, decode-time-only
+      `StereoResampler` (`silent_disco_core::audio::resampler`,
+      `pub(super)`, source-rate to canonical-48kHz only) -- not exposed
+      or intended for output-stage use. Given CLAUDE.md's "prefer simple
+      correction strategies before advanced time-stretch/resampling" and
+      that this spike found the canonical 48kHz/stereo/f32 format is
+      natively available on this real test system, Block 34's policy is:
+      **require a device config that already matches the canonical
+      format** (or one `cpal`/the OS can transparently negotiate,
+      e.g. `PipeWire`'s own internal SRC when the app requests 48kHz/f32
+      explicitly) and **fail closed with a visible, actionable error**
+      rather than silently downsampling/upsampling, if no compatible
+      config exists. Building a genuine output-stage resampler is
+      deferred until real evidence (a real device that does not support
+      the canonical format) shows it is actually needed -- consistent
+      with this project's staged-block, no-premature-complexity
+      approach.
+- [x] monitor-failure effect on host transmission -- **must be zero.**
+      Local monitor audio is Phase 9, explicitly titled "Optional local
+      monitor audio," and Block 34.2 already requires "host can stream
+      with monitor disabled" and "no fake monitor success on headless
+      systems." Recorded here as the binding policy for Block 34's
+      implementation: any monitor-stream failure (device gone, config
+      rejected, stream error callback) surfaces as a visible, monitor-
+      scoped error and never touches, pauses, or degrades the host's
+      network broadcast path, which remains entirely independent.
+- [x] rejected alternatives -- none seriously evaluated as competitors:
+      `cpal` is the de facto standard cross-platform Rust audio I/O crate
+      (used by `rodio`, `bevy_audio`, and most Rust audio projects),
+      already named as the presumed candidate in this block's own title
+      and 33.1's "CPAL 0.18.x or current approved candidate" framing, and
+      this spike found no disqualifying behavior on the real test system
+      -- no alternative crate spike was warranted.
 
 **Acceptance:** The selected backend has measured Linux behavior and explicit failure semantics.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`,
+`cd desktop && npm run check` (bindings-check, biome, tsc, 64/64 Vitest,
+production build) -- `./gradlew test lintDebug` unaffected by this block
+(desktop-only Rust change, no Kotlin touched). Also manually ran
+`cargo fmt --check` and `cargo clippy --all-targets --all-features` for
+`desktop/src-tauri` specifically (neither is part of `npm run check`,
+which never invokes them for the desktop crate) -- both clean, and this
+pass also caught and fixed pre-existing `cargo fmt` drift across several
+earlier blocks' desktop Rust files (`mdns.rs`, `invitation.rs`,
+`invitation_identity.rs`, `app_state.rs`, `host_session_dto.rs`,
+`network_tests.rs`, `render_ring.rs`) that had never been formatted by
+any prior gate.
 
 ---
 

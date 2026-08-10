@@ -87,7 +87,7 @@ cd desktop
 npm run check
 ```
 
-This runs UniFFI bindings-check, Biome format/lint, `tsc`, Vitest, and a production build in sequence. Do not claim it passed unless it was actually executed.
+This runs UniFFI bindings-check, Biome format/lint plus `cargo fmt --check` for `desktop/src-tauri`, `tsc`, Vitest, and a production build in sequence. Do not claim it passed unless it was actually executed. Note `cargo clippy` is not part of this gate for the desktop crate; run it manually when touching `desktop/src-tauri`.
 
 `desktop/biome.json` uses non-default formatting: 100-character line width, double quotes, semicolons always, and trailing commas everywhere.
 

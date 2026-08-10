@@ -109,7 +109,9 @@ impl DesktopHostSigningIdentityProvider for SystemDesktopHostSigningIdentityProv
                     }
                     Err(error) => {
                         generated.fill(0);
-                        return Err(DesktopHostSigningIdentityError::VerifyPersistedSecret(error));
+                        return Err(DesktopHostSigningIdentityError::VerifyPersistedSecret(
+                            error,
+                        ));
                     }
                 }
             }
@@ -256,14 +258,12 @@ mod tests {
 
     #[test]
     fn a_signature_does_not_verify_against_a_different_key() {
-        let identity_a = DesktopHostSigningIdentity::from_signing_key(
-            generate_signing_key().expect("key a"),
-        )
-        .expect("identity a");
-        let identity_b = DesktopHostSigningIdentity::from_signing_key(
-            generate_signing_key().expect("key b"),
-        )
-        .expect("identity b");
+        let identity_a =
+            DesktopHostSigningIdentity::from_signing_key(generate_signing_key().expect("key a"))
+                .expect("identity a");
+        let identity_b =
+            DesktopHostSigningIdentity::from_signing_key(generate_signing_key().expect("key b"))
+                .expect("identity b");
         let signature_base64url = identity_a.sign_base64url(b"message");
         let signature_der = base64::Engine::decode(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD,

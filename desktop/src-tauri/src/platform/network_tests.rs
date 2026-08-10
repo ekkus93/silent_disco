@@ -349,12 +349,9 @@ fn a_publish_failure_does_not_fail_host_start_but_is_visible_in_the_snapshot() {
     let records = vec![interface("enp1s0", 2, IpAddr::V4(address))];
     let provider = Arc::new(SequenceProvider::new([records.clone(), records]));
     let factory = Arc::new(FakeTransportFactory::new(Arc::new(AtomicBool::new(false))));
-    let control = DesktopHostNetworkControl::with_components(
-        provider,
-        factory,
-        TestHostPorts::default(),
-    )
-    .with_mdns_publisher(Arc::new(DaemonUnavailableMdnsPublisher));
+    let control =
+        DesktopHostNetworkControl::with_components(provider, factory, TestHostPorts::default())
+            .with_mdns_publisher(Arc::new(DaemonUnavailableMdnsPublisher));
 
     control
         .start_host_inner(&advertisement())
@@ -388,24 +385,15 @@ fn a_withdraw_failure_still_tears_down_the_host_but_is_reported_not_swallowed() 
     let provider = Arc::new(SequenceProvider::new([records.clone(), records]));
     let shutdown_called = Arc::new(AtomicBool::new(false));
     let factory = Arc::new(FakeTransportFactory::new(Arc::clone(&shutdown_called)));
-    let control = DesktopHostNetworkControl::with_components(
-        provider,
-        factory,
-        TestHostPorts::default(),
-    )
-    .with_mdns_publisher(Arc::new(VanishingInterfaceMdnsPublisher));
+    let control =
+        DesktopHostNetworkControl::with_components(provider, factory, TestHostPorts::default())
+            .with_mdns_publisher(Arc::new(VanishingInterfaceMdnsPublisher));
 
     control
         .start_host_inner(&advertisement())
         .expect("bind host endpoint");
     let snapshot = control.snapshot().expect("bound snapshot");
-    assert!(
-        snapshot
-            .active_binding
-            .expect("active binding")
-            .mdns
-            .active
-    );
+    assert!(snapshot.active_binding.expect("active binding").mdns.active);
 
     let stop_result = control.stop_host_inner();
     assert!(

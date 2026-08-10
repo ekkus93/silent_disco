@@ -177,16 +177,17 @@ impl HostSessionSnapshotDto {
         let playback_controls_enabled = can_remove
             && active.is_some_and(|value| value.worker_running)
             && snapshot.host_draft.audio_source.is_some();
-        let audio_source = snapshot
-            .host_draft
-            .audio_source
-            .as_ref()
-            .map(|source| AudioSourceSummaryDto {
-                source_id: source.source_id.clone(),
-                display_name: source.display_name.clone(),
-                byte_length: source.byte_length.map(|length| length.to_string()),
-                duration_ms: source.duration_ms.map(|duration| duration.to_string()),
-            });
+        let audio_source =
+            snapshot
+                .host_draft
+                .audio_source
+                .as_ref()
+                .map(|source| AudioSourceSummaryDto {
+                    source_id: source.source_id.clone(),
+                    display_name: source.display_name.clone(),
+                    byte_length: source.byte_length.map(|length| length.to_string()),
+                    duration_ms: source.duration_ms.map(|duration| duration.to_string()),
+                });
 
         Self {
             revision: snapshot.revision.get().to_string(),

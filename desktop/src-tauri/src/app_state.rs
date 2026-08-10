@@ -615,7 +615,13 @@ pub async fn open_profile(
     let provider = SystemDesktopIdentityProvider;
     let signing_provider = SystemDesktopHostSigningIdentityProvider;
     let task = tauri::async_runtime::spawn_blocking(move || {
-        open_runtime(&paths, profile_id, &provider, &signing_provider, notifications)
+        open_runtime(
+            &paths,
+            profile_id,
+            &provider,
+            &signing_provider,
+            notifications,
+        )
     });
     let result = task.await.map_err(|error| {
         DesktopErrorDto::new(

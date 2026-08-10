@@ -76,7 +76,10 @@ pub(crate) fn build_signed_invitation(
 /// details" panel already offers for copy/paste
 /// (`transport::manual_endpoint::ManualHostEndpoint`'s wire shape) -- one
 /// connection-payload format, not two.
-fn connection_payload_json(advertisement: &SessionAdvertisement, endpoint: NetworkEndpoint) -> String {
+fn connection_payload_json(
+    advertisement: &SessionAdvertisement,
+    endpoint: NetworkEndpoint,
+) -> String {
     format!(
         r#"{{"hostAddress":"{}","controlPort":{},"syncPort":{},"audioPort":{},"sessionId":"{}","protocolVersion":{},"inviteCodeRequired":{},"expiresAtMs":null}}"#,
         endpoint.address,
@@ -153,8 +156,13 @@ mod tests {
     }
 
     fn endpoint() -> NetworkEndpoint {
-        NetworkEndpoint::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 41_000, 41_001, 41_002)
-            .expect("endpoint")
+        NetworkEndpoint::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
+            41_000,
+            41_001,
+            41_002,
+        )
+        .expect("endpoint")
     }
 
     fn identity() -> DesktopHostSigningIdentity {
@@ -169,7 +177,10 @@ mod tests {
         assert_eq!(p2_wire_name(ApprovalMode::InviteCode), "invite_code");
         // Deliberately NOT the domain wire_name() ("trusted_devices") --
         // P2's own validator only accepts "approved_devices" for this mode.
-        assert_eq!(p2_wire_name(ApprovalMode::TrustedDevices), "approved_devices");
+        assert_eq!(
+            p2_wire_name(ApprovalMode::TrustedDevices),
+            "approved_devices"
+        );
     }
 
     #[test]

@@ -162,10 +162,7 @@ fn build_txt_properties(
     let invite_code_required = advertisement.approval_mode == ApprovalMode::InviteCode;
     let mut properties = HashMap::new();
     properties.insert("sessionId".to_owned(), advertisement.session_id.to_string());
-    properties.insert(
-        "sessionName".to_owned(),
-        advertisement.session_name.clone(),
-    );
+    properties.insert("sessionName".to_owned(), advertisement.session_name.clone());
     properties.insert(
         "protocolVersion".to_owned(),
         advertisement.protocol_version.to_string(),
@@ -187,9 +184,7 @@ fn build_txt_properties(
 /// only be genuinely exercised, including its rejection paths, against a
 /// directly-constructed payload. See the `oversized_metadata_is_rejected`
 /// test.
-fn validate_txt_properties(
-    properties: &HashMap<String, String>,
-) -> Result<(), MdnsPublishError> {
+fn validate_txt_properties(properties: &HashMap<String, String>) -> Result<(), MdnsPublishError> {
     let mut total_bytes = 0_usize;
     for (field, value) in properties {
         let field_bytes = value.len();
@@ -313,12 +308,11 @@ struct MdnsSdRegistration {
 
 impl MdnsRegistration for MdnsSdRegistration {
     fn withdraw(&self) -> Result<(), MdnsPublishError> {
-        let receiver = self
-            .daemon
-            .unregister(&self.fullname)
-            .map_err(|error| MdnsPublishError::WithdrawFailed {
+        let receiver = self.daemon.unregister(&self.fullname).map_err(|error| {
+            MdnsPublishError::WithdrawFailed {
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         match receiver.recv_timeout(WITHDRAW_CONFIRM_TIMEOUT) {
             Ok(mdns_sd::UnregisterStatus::OK) => Ok(()),
             Ok(mdns_sd::UnregisterStatus::NotFound) => Err(MdnsPublishError::WithdrawFailed {
@@ -420,7 +414,10 @@ mod tests {
 
     #[test]
     fn builds_expected_properties_for_a_normal_advertisement() {
-        let properties = build_txt_properties(&advertisement("Living Room", ApprovalMode::Manual), &endpoint());
+        let properties = build_txt_properties(
+            &advertisement("Living Room", ApprovalMode::Manual),
+            &endpoint(),
+        );
         assert_eq!(
             properties.get("sessionId").map(String::as_str),
             Some("session-mdns-test")
@@ -433,8 +430,14 @@ mod tests {
             properties.get("protocolVersion").map(String::as_str),
             Some("2")
         );
-        assert_eq!(properties.get("syncPort").map(String::as_str), Some("41101"));
-        assert_eq!(properties.get("audioPort").map(String::as_str), Some("41102"));
+        assert_eq!(
+            properties.get("syncPort").map(String::as_str),
+            Some("41101")
+        );
+        assert_eq!(
+            properties.get("audioPort").map(String::as_str),
+            Some("41102")
+        );
         assert_eq!(
             properties.get("inviteCodeRequired").map(String::as_str),
             Some("false")
@@ -444,7 +447,10 @@ mod tests {
 
     #[test]
     fn invite_code_required_reflects_the_approval_mode() {
-        let properties = build_txt_properties(&advertisement("Kitchen", ApprovalMode::InviteCode), &endpoint());
+        let properties = build_txt_properties(
+            &advertisement("Kitchen", ApprovalMode::InviteCode),
+            &endpoint(),
+        );
         assert_eq!(
             properties.get("inviteCodeRequired").map(String::as_str),
             Some("true")
@@ -457,7 +463,10 @@ mod tests {
         // comfortably under MAX_TXT_VALUE_BYTES (255) -- confirms the
         // whole realistic input space stays valid, not just one example.
         let longest_name = "x".repeat(128);
-        let properties = build_txt_properties(&advertisement(&longest_name, ApprovalMode::Manual), &endpoint());
+        let properties = build_txt_properties(
+            &advertisement(&longest_name, ApprovalMode::Manual),
+            &endpoint(),
+        );
         validate_txt_properties(&properties)
             .expect("the longest session name this project's own validation allows must still fit");
     }
@@ -470,8 +479,12 @@ mod tests {
         // the rejection path is proven correct even though production
         // inputs can't reach it yet.
         let mut properties = HashMap::new();
-        properties.insert("sessionName".to_owned(), "x".repeat(MAX_TXT_VALUE_BYTES + 1));
-        let error = validate_txt_properties(&properties).expect_err("oversized field must be rejected");
+        properties.insert(
+            "sessionName".to_owned(),
+            "x".repeat(MAX_TXT_VALUE_BYTES + 1),
+        );
+        let error =
+            validate_txt_properties(&properties).expect_err("oversized field must be rejected");
         assert_eq!(
             error,
             MdnsPublishError::FieldTooLarge {
@@ -489,8 +502,11 @@ mod tests {
         for index in 0..10 {
             properties.insert(format!("field{index}"), "x".repeat(200));
         }
-        let error = validate_txt_properties(&properties).expect_err("oversized payload must be rejected");
-        assert!(matches!(error, MdnsPublishError::PayloadTooLarge { bytes } if bytes > MAX_TOTAL_TXT_BYTES));
+        let error =
+            validate_txt_properties(&properties).expect_err("oversized payload must be rejected");
+        assert!(
+            matches!(error, MdnsPublishError::PayloadTooLarge { bytes } if bytes > MAX_TOTAL_TXT_BYTES)
+        );
     }
 
     // Real end-to-end tests against a genuine `mdns-sd` daemon (30.3) --
@@ -522,7 +538,10 @@ mod tests {
         )
     }
 
-    fn advertisement_with_session(session_id: &str, endpoint: NetworkEndpoint) -> SessionAdvertisement {
+    fn advertisement_with_session(
+        session_id: &str,
+        endpoint: NetworkEndpoint,
+    ) -> SessionAdvertisement {
         SessionAdvertisement::new(
             SessionId::new(session_id).expect("session id"),
             DeviceId::new("mdns-e2e-host").expect("device id"),
@@ -537,7 +556,9 @@ mod tests {
     /// Browses with a fresh, independent `ServiceDaemon` -- standing in for
     /// a genuinely separate client process, since `mdns-sd` daemons don't
     /// share any in-process state.
-    fn resolve_from_a_fresh_client(instance_fullname: &str) -> Option<Box<mdns_sd::ResolvedService>> {
+    fn resolve_from_a_fresh_client(
+        instance_fullname: &str,
+    ) -> Option<Box<mdns_sd::ResolvedService>> {
         let client = mdns_sd::ServiceDaemon::new().expect("test client daemon");
         let receiver = client.browse(SERVICE_TYPE).expect("browse");
         let deadline = Instant::now() + DISCOVERY_TIMEOUT;
@@ -570,8 +591,8 @@ mod tests {
             .expect("publish should succeed");
 
         let fullname = format!("{}.{}", advertisement.session_id.as_str(), SERVICE_TYPE);
-        let resolved =
-            resolve_from_a_fresh_client(&fullname).expect("a fresh client should discover the service");
+        let resolved = resolve_from_a_fresh_client(&fullname)
+            .expect("a fresh client should discover the service");
         assert_eq!(resolved.get_port(), endpoint.control_port);
         assert!(
             resolved
@@ -613,7 +634,9 @@ mod tests {
             "must be discoverable before withdrawal"
         );
 
-        registration.withdraw().expect("withdraw should succeed and be confirmed");
+        registration
+            .withdraw()
+            .expect("withdraw should succeed and be confirmed");
 
         assert!(
             resolve_from_a_fresh_client(&fullname).is_none(),

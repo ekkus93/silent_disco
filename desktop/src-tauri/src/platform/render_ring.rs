@@ -174,7 +174,10 @@ mod tests {
         let (producer, mut lease) = gate.acquire(RenderRingConfig::default()).expect("acquire");
 
         let frames = [0.1_f32, -0.1, 0.2, -0.2];
-        assert_eq!(producer.push_frames(&frames), frames.len() / RENDER_CHANNELS);
+        assert_eq!(
+            producer.push_frames(&frames),
+            frames.len() / RENDER_CHANNELS
+        );
 
         let mut output = [0.0_f32; 4];
         let outcome = lease.consumer_mut().read_frames(&mut output);
@@ -185,7 +188,9 @@ mod tests {
     #[test]
     fn a_second_acquire_while_active_is_rejected() {
         let gate = DesktopRenderRingGate::new();
-        let _first = gate.acquire(RenderRingConfig::default()).expect("first acquire");
+        let _first = gate
+            .acquire(RenderRingConfig::default())
+            .expect("first acquire");
 
         assert_eq!(
             gate.acquire(RenderRingConfig::default()).err(),
@@ -196,7 +201,9 @@ mod tests {
     #[test]
     fn dropping_the_lease_allows_a_fresh_acquire() {
         let gate = DesktopRenderRingGate::new();
-        let first = gate.acquire(RenderRingConfig::default()).expect("first acquire");
+        let first = gate
+            .acquire(RenderRingConfig::default())
+            .expect("first acquire");
         drop(first);
 
         assert!(gate.acquire(RenderRingConfig::default()).is_ok());

@@ -49,6 +49,8 @@ mod audio_decode_tests;
 #[cfg(test)]
 mod capability_tests;
 #[cfg(test)]
+mod cpal_spike_tests;
+#[cfg(test)]
 mod effect_runner_tests;
 #[cfg(test)]
 mod file_picker_tests;
