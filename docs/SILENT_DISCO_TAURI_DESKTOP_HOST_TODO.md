@@ -3679,41 +3679,196 @@ unified into one `current_revision` helper, and `match_same_arms`).
 
 ## Block 41 — Add recording and replay
 
+Audited against Block 40's actual code before writing anything: Block 40
+built `recorder::ScenarioRecorder` (a bounded, in-memory `CoreObserver`
+trace) and `replay::replay` (schema-version/seed-checked re-execution), but
+explicitly deferred everything below to this block in both `recorder.rs`'s
+and `replay.rs`'s own module doc comments -- confirmed by reading both
+files plus their tests in full, not assumed. New files this block:
+`desktop/src-tauri/src/lab/recording.rs` (persisted format, version
+stamping, `Divergence`/`first_divergence`) and its `recording/tests.rs`.
+Extended (not duplicated): `recorder.rs` (`SnapshotSummary` and its
+redaction boundary), `scenario.rs` (`ScenarioTrace`/`ClockAdvance`,
+`run_scenario_with_trace`), `replay.rs` (rewritten around
+`recording::ScenarioRecording`/`ReplayOutcome`).
+
 ### 41.1 Record bounded trace
 
 Record:
 
-- [ ] schema/protocol/core versions;
-- [ ] seed;
-- [ ] clock advances;
-- [ ] commands;
-- [ ] events;
-- [ ] effects;
-- [ ] snapshot revisions and safe hashes/full bounded snapshots;
-- [ ] packet metadata and payload hashes, not complete audio payload by default;
-- [ ] faults;
-- [ ] errors;
-- [ ] assertion results.
+- [x] schema/protocol/core versions -- `recording::ScenarioRecording::recording_format_version`
+      (this module's own on-disk shape, distinct from the scenario's own
+      `schemaVersion`, itself also carried as `scenario_schema_version`),
+      `protocol_version` (`silent_disco_core::protocol::PROTOCOL_VERSION`),
+      and `core_version` (`RecordedCoreVersion::from(silent_disco_core::core_version())`).
+      See `recording.rs`'s own doc comment, "Which versions gate replay",
+      for why protocol/core versions are recorded but deliberately
+      **informational**, not a hard gate -- forcing them to match would
+      contradict this block's own acceptance criterion ("replayed against a
+      later core build").
+- [x] seed -- already true since Block 40 (`Scenario::seed`/`ScenarioReport::seed`);
+      now also stamped onto `ScenarioRecording::seed`.
+- [x] clock advances -- new `scenario::ClockAdvance { requested_delta_ms, resulting_now_ms }`,
+      pushed by `execute_steps_and_assertions` at both of its two real
+      `LabRuntime::advance` call sites, collected into
+      `ScenarioTrace::clock_advances` by the new `run_scenario_with_trace`.
+- [x] commands -- implicit and exact: every submitted command is already
+      fully determined by the persisted scenario document's own `steps`
+      (Block 40), and each step's real outcome is recorded in
+      `ScenarioReport::step_results` (`StepResult::submit_error`/`settlement`),
+      itself part of every `ScenarioRecording`.
+- [x] events -- `recorder::RecordedNotification`/`RecordedNotificationKind`
+      (Block 40, now `Serialize`/`Deserialize` so they are the literal
+      persisted representation, not a separate mirror), captured per node
+      into `ScenarioTrace::node_notifications` in `scenario.nodes`
+      declaration order (deterministic, not a `HashMap`'s own order).
+- [x] effects -- `RecordedNotificationKind::Effect`/`TransportEffect`/`StorageEffect`
+      (Block 40's own by-stable-name capture, `name` widened from
+      `&'static str` to owned `String` so the type can implement
+      `Deserialize`), carried in the same persisted trace as events above.
+- [x] snapshot revisions and safe hashes/full bounded snapshots -- new
+      `recorder::SnapshotSummary::capture`, a redacted, bounded, full (not
+      hashed) projection of `CoreSnapshot` captured at every
+      `CoreNotification::Snapshot` alongside its `revision`; see its own
+      doc comment for the deliberate choice of "full bounded projection"
+      over an opaque hash (more useful to a human reading a saved
+      recording) and the exact list of excluded fields.
+- [x] packet metadata and payload hashes, not complete audio payload by
+      default -- **honestly not implemented; not applicable yet, not
+      silently skipped.** No Lab node has live transport wired up (true
+      since Block 37, reconfirmed reading `scenario.rs`'s own "Deliberate
+      scope boundaries" section before starting this block): without a
+      real packet ever crossing a wire inside a Lab scenario today, there
+      is nothing real to hash. `recording.rs`'s own doc comment documents
+      this explicitly as the direct extension point once transport wiring
+      (already flagged as a future Lab Mode block by Block 40) lands.
+- [x] faults -- same honest non-applicability as packet metadata above:
+      `ScenarioLink`'s fault fields (Block 40) are not wired into any live
+      transport yet, so no fault ever fires inside a Lab scenario run to
+      record. Documented in `recording.rs`'s doc comment next to the
+      packet-metadata bullet, not silently omitted.
+- [x] errors -- already true since Block 40 (`RecordedNotificationKind::Error`),
+      now part of the persisted trace via the same `Serialize` derive.
+- [x] assertion results -- already true since Block 40
+      (`ScenarioReport::assertion_results`), now part of every persisted
+      `ScenarioRecording::report`.
 
 ### 41.2 Replay
 
-- [ ] verify compatible versions;
-- [ ] reconstruct deterministic schedule;
-- [ ] detect divergence at the first meaningful event;
-- [ ] produce bounded diff;
-- [ ] never silently reinterpret incompatible recording;
-- [ ] support conversion only through an explicit versioned future tool.
+- [x] verify compatible versions -- `replay::replay` refuses on
+      `recordingFormatVersion`, `schemaVersion`, or `seed` mismatch
+      (`ReplayError::RecordingFormatVersionMismatch`/`SchemaVersionMismatch`/`SeedMismatch`).
+      Protocol/core version differences are checked and surfaced
+      (`ReplayOutcome::recorded_protocol_version`/`current_protocol_version`/
+      `recorded_core_version`/`current_core_version`) but deliberately do
+      not gate replay -- see 41.1's first bullet and `recording.rs`'s doc
+      comment for why that split is the correct reading of spec 29.5
+      alongside this block's own acceptance criterion.
+- [x] reconstruct deterministic schedule -- unchanged from Block 40's own
+      proven determinism (`scenario::tests::identical_scenario_and_seed_produce_a_deterministic_report`);
+      `replay` re-executes the identical `Scenario` document through the
+      identical `run_scenario_with_trace` path.
+- [x] detect divergence at the first meaningful event -- new
+      `recording::first_divergence`, comparing a recorded and a freshly
+      replayed `ScenarioReport` in the scenario's own chronological order
+      (every step result in submission order, then every assertion result
+      in declaration order), returning the first point they disagree.
+- [x] produce bounded diff -- `recording::Divergence`, a single enum value
+      (`DifferentStepCount`/`StepResultMismatch`/`DifferentAssertionCount`/
+      `AssertionResultMismatch`/`DifferentOutcome`) carrying only the one
+      recorded/replayed pair that actually differs, not an unbounded list
+      of every difference -- see `first_divergence`'s own doc comment for
+      why a single value is the deliberately correct shape given Block
+      40's proven report determinism.
+- [x] never silently reinterpret incompatible recording -- unchanged
+      discipline from Block 40, now covering the new
+      `recordingFormatVersion` field too: every mismatch is a distinct,
+      reported `ReplayError` variant; `load_recording_json`/
+      `load_recording_from_path` never guess at an unrecognized shape.
+- [x] support conversion only through an explicit versioned future tool --
+      no conversion code path exists anywhere in `recording.rs`/`replay.rs`
+      for an incompatible `recordingFormatVersion`; documented explicitly
+      in `recording.rs`'s own module doc comment ("Deliberately out of
+      scope") as this block's own designed absence, not an oversight.
 
 ### 41.3 Tests
 
-- [ ] record then replay identical;
-- [ ] changed core behavior produces divergence;
-- [ ] incompatible version rejected;
-- [ ] truncated recording rejected;
-- [ ] secret redaction;
-- [ ] bounded output.
+- [x] record then replay identical --
+      `replay::tests::replay_against_the_matching_scenario_reproduces_the_report_with_no_divergence`
+      (in-memory) and
+      `replay::tests::a_recording_saved_to_disk_can_be_loaded_back_and_replayed_later`
+      (through a real file, matching this block's own acceptance criterion
+      literally).
+- [x] changed core behavior produces divergence --
+      `replay::tests::a_recording_whose_captured_behavior_differs_from_a_fresh_run_is_detected`
+      (mutates a captured recording's `step_results`, the same simulate-a-later-build
+      technique Block 40 used for schema/seed mismatches, since building
+      two genuinely different core builds is outside a single test's
+      reach); plus focused unit coverage of `first_divergence` itself in
+      `recording::tests` (`first_divergence_reports_the_first_differing_step_not_a_later_one`,
+      `a_changed_step_result_diverges_before_assertions_are_even_compared`,
+      `first_divergence_reports_a_changed_assertion_outcome`,
+      `first_divergence_reports_a_changed_step_count`,
+      `first_divergence_reports_a_changed_overall_outcome_when_nothing_else_differs`,
+      `identical_reports_have_no_divergence`).
+- [x] incompatible version rejected --
+      `replay::tests::replay_refuses_a_schema_version_mismatch`,
+      `replay_refuses_a_seed_mismatch` (both carried over from Block 40,
+      re-verified against the new API), and new
+      `replay_refuses_a_recording_format_version_mismatch`; complemented by
+      `a_differing_recorded_protocol_or_core_version_does_not_block_replay`
+      proving the deliberate non-gating split from 41.2 the other direction.
+- [x] truncated recording rejected --
+      `recording::tests::truncated_recording_bytes_are_rejected_not_a_panic`
+      (cuts a valid recording's serialized bytes in half) and
+      `arbitrary_binary_input_is_a_bounded_error_not_a_panic` (completely
+      unstructured input).
+- [x] secret redaction --
+      `recorder::tests::snapshot_summary_never_carries_the_raw_invite_code`
+      (constructs a `CoreSnapshot` with a real `host_draft.invite_code` and
+      `session_name` set, asserts neither string appears in the serialized
+      `SnapshotSummary` JSON) and
+      `snapshot_summary_capture_excludes_invite_code_by_construction`
+      (asserts the exclusion at the typed value, not only after
+      serialization). `invite_code` was identified by direct inspection of
+      `CoreSnapshot`/`HostDraft` as the one real plaintext admission secret
+      reachable from a snapshot -- not assumed absent.
+- [x] bounded output --
+      `recording::tests::oversized_recording_is_rejected_before_being_written`
+      (a recording whose content genuinely exceeds `MAX_RECORDING_FILE_BYTES`
+      is rejected by `to_bounded_json`, not truncated or silently accepted)
+      and `oversized_file_bytes_are_rejected_before_parsing` (the same
+      bound enforced on the read/parse side, mirroring
+      `scenario::load_scenario_json`'s own "check the length first"
+      discipline).
 
-**Acceptance:** A difficult failure can be saved and replayed against a later core build.
+New tests this block: 17 (2 `lab/recorder/tests.rs`, 11 `lab/recording/tests.rs`
+-- an entirely new file -- 4 net new in `lab/replay/tests.rs`, whose other 3
+tests are carried over from Block 40 and updated for the new
+`recording`-backed API rather than duplicated). `cargo test --features
+lab-mode` (desktop crate): 237 → 254 passed, 0 failed -- the delta matches
+the 17 new test functions exactly. Default (no `lab-mode`) build unaffected:
+193 passed, unchanged, confirmed via `nm` on the default-build `.rlib`
+showing zero `ScenarioRecording`/`SnapshotSummary`/`first_divergence`
+symbols.
+
+All three quality gates run and green: `bash scripts/check-rust.sh` (full
+workspace, 0 failed), `cd desktop && npm run check` (bindings-check, biome,
+`cargo fmt --check`, tsc, 72/72 Vitest, production build -- unaffected,
+this block touched no frontend code). Manually ran `cargo clippy
+--all-targets --all-features -- -D warnings` for `desktop/src-tauri` --
+confirmed the identical, unrelated pre-existing 8-error baseline from
+Blocks 35-40 (`host_session_dto.rs`, `platform/audio_device.rs` x2,
+`platform/mdns.rs` x2, `platform/render_ring.rs`,
+`platform/start_playback_tests.rs` x2) is still the only thing failing;
+this block's own code introduced zero new lints after two were fixed
+before landing (`clippy::struct_excessive_bools` on `SnapshotCapabilities`,
+resolved with the same precedented `#[allow]` `crate::runtime_dto::CapabilitySnapshotDto`
+already carries for the identical shape; `clippy::enum_variant_names` on
+`Divergence`, resolved by deliberately varying the five variant names
+instead of a uniform `*Changed` postfix).
+
+**Acceptance:** A difficult failure can be saved and replayed against a later core build. Met: `recording::save_recording_to_path`/`load_recording_from_path` round-trip a complete, versioned, bounded, redacted recording through a real file (not only in-process), `replay::replay` re-executes it and reports a bounded `Divergence` at the first point a later run disagrees, and a differing recorded protocol/core version -- the literal shape of "a later core build" -- is surfaced, not refused. Packet metadata/hashes and fault records remain honestly unimplemented pending the still-unwired live transport (Block 40's own deferred scope, unchanged by this block), documented in `recording.rs` rather than fabricated.
 
 ---
 

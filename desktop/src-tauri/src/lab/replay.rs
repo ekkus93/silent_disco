@@ -1,54 +1,29 @@
-//! Replay: detecting an incompatible recording rather than silently
-//! reinterpreting it (Block 40.2/spec section 29.5).
+//! Replay: re-executing a persisted [`super::recording::ScenarioRecording`]
+//! and reporting how (if at all) it diverges from what actually happened
+//! (Block 41.2; spec section 29.5).
 //!
-//! Scope for Block 40: a [`ScenarioRecording`] pairs the schema version and
-//! seed a scenario run was captured under with the [`super::scenario::ScenarioReport`]
-//! that run produced. [`replay`] re-executes the *same* [`super::scenario::Scenario`]
-//! document through the *same* [`super::LabRuntime::run_scenario`]-style
-//! path (`super::scenario::run_scenario`) after checking that the document
-//! being replayed against still declares the recorded schema version and
-//! seed -- refusing outright, rather than silently reinterpreting, when it
-//! does not (spec 29.5: "Replay must detect version incompatibility rather
-//! than silently reinterpret an old recording").
-//!
-//! **Deliberately out of scope for Block 40**, and left to Block 41 (whose
-//! own TODO section already lists these as its own bullets, not
-//! duplicated here): persisting a recording to disk (protocol/core version
-//! stamping, packet metadata/payload hashes, secret redaction), comparing a
-//! fresh replay's report against the original to compute a bounded
-//! divergence diff, and a conversion tool for an older, structurally
-//! incompatible recording. Block 40's own "deterministic report" guarantee
-//! (`super::scenario::tests`) is what makes a future divergence diff
-//! meaningful in the first place: two runs of the same scenario and seed
-//! already produce an equal [`super::scenario::ScenarioReport`], so any
-//! future replay divergence is real, not incidental nondeterminism.
+//! Block 40 built a first-cut version of this that only checked a
+//! scenario's own `schemaVersion`/`seed` before re-running it. This module
+//! is Block 41's extension: it now checks the recorded on-disk format
+//! version too, and -- the genuinely new capability -- compares the fresh
+//! run's [`super::scenario::ScenarioReport`] against the one captured in
+//! the recording, surfacing the first point they disagree
+//! ([`super::recording::Divergence`]) rather than only reporting pass/fail.
+//! See `super::recording`'s own module doc comment ("Which versions gate
+//! replay") for exactly which recorded versions block replay outright
+//! versus which are informational -- that distinction is what makes "replay
+//! against a later core build" (this block's own acceptance criterion) and
+//! "detect version incompatibility" (spec 29.5) simultaneously true rather
+//! than contradictory.
 
 use super::LabRuntime;
-use super::scenario::{Scenario, ScenarioExecutionError, ScenarioReport, run_scenario};
+use super::recording::{Divergence, RECORDING_FORMAT_VERSION, ScenarioRecording, first_divergence};
+use super::scenario::{Scenario, ScenarioExecutionError, ScenarioReport, run_scenario_with_trace};
 use std::fmt;
-
-/// What a scenario run was recorded under, plus the report it produced.
-/// Test/in-process only for Block 40 -- see the module doc comment.
-#[derive(Debug, Clone)]
-pub(crate) struct ScenarioRecording {
-    pub(crate) schema_version: u32,
-    pub(crate) seed: u64,
-    pub(crate) report: ScenarioReport,
-}
-
-impl ScenarioRecording {
-    #[must_use]
-    pub(crate) fn capture(scenario: &Scenario, report: ScenarioReport) -> Self {
-        Self {
-            schema_version: scenario.schema_version,
-            seed: scenario.seed,
-            report,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(crate) enum ReplayError {
+    RecordingFormatVersionMismatch { recorded: u32, current: u32 },
     SchemaVersionMismatch { recorded: u32, replaying: u32 },
     SeedMismatch { recorded: u64, replaying: u64 },
     Execution(ScenarioExecutionError),
@@ -57,6 +32,13 @@ pub(crate) enum ReplayError {
 impl fmt::Display for ReplayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RecordingFormatVersionMismatch { recorded, current } => write!(
+                formatter,
+                "recording was saved under recordingFormatVersion {recorded}, but this build \
+                 understands {current}; refusing to reinterpret it -- a version-specific \
+                 conversion tool would be a separate, explicitly versioned addition, not an \
+                 automatic reinterpretation here"
+            ),
             Self::SchemaVersionMismatch {
                 recorded,
                 replaying,
@@ -80,24 +62,48 @@ impl fmt::Display for ReplayError {
 
 impl std::error::Error for ReplayError {}
 
-/// Re-executes `scenario` and checks the fresh run against what
-/// `recording` was captured under -- never silently reinterprets an
-/// incompatible recording (spec 29.5).
+/// Everything a replay run produces: the fresh report itself, whether it
+/// diverges from what was recorded, and both the recorded and current
+/// protocol/core versions for a caller (a future Block 42 UI, or a
+/// maintainer reading test output) to present alongside the divergence --
+/// see `super::recording`'s own doc comment for why these two versions are
+/// informational rather than a hard gate.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ReplayOutcome {
+    pub(crate) report: ScenarioReport,
+    pub(crate) divergence: Option<Divergence>,
+    pub(crate) recorded_protocol_version: u16,
+    pub(crate) current_protocol_version: u16,
+    pub(crate) recorded_core_version: super::recording::RecordedCoreVersion,
+    pub(crate) current_core_version: super::recording::RecordedCoreVersion,
+}
+
+/// Re-executes `scenario` and compares the fresh run against `recording` --
+/// never silently reinterprets a structurally incompatible recording (spec
+/// 29.5), but a differing protocol/core version alone is not refused (see
+/// this module's own doc comment).
 ///
 /// # Errors
 ///
-/// Returns [`ReplayError::SchemaVersionMismatch`] or
-/// [`ReplayError::SeedMismatch`] when `scenario` no longer matches what
+/// Returns [`ReplayError::RecordingFormatVersionMismatch`],
+/// [`ReplayError::SchemaVersionMismatch`], or [`ReplayError::SeedMismatch`]
+/// when `scenario`/the current build no longer structurally matches what
 /// `recording` was captured under, or [`ReplayError::Execution`] when the
 /// fresh run itself fails.
 pub(crate) fn replay(
     lab: &LabRuntime,
     scenario: &Scenario,
     recording: &ScenarioRecording,
-) -> Result<ScenarioReport, ReplayError> {
-    if recording.schema_version != scenario.schema_version {
+) -> Result<ReplayOutcome, ReplayError> {
+    if recording.recording_format_version != RECORDING_FORMAT_VERSION {
+        return Err(ReplayError::RecordingFormatVersionMismatch {
+            recorded: recording.recording_format_version,
+            current: RECORDING_FORMAT_VERSION,
+        });
+    }
+    if recording.scenario_schema_version != scenario.schema_version {
         return Err(ReplayError::SchemaVersionMismatch {
-            recorded: recording.schema_version,
+            recorded: recording.scenario_schema_version,
             replaying: scenario.schema_version,
         });
     }
@@ -107,7 +113,21 @@ pub(crate) fn replay(
             replaying: scenario.seed,
         });
     }
-    run_scenario(lab, scenario).map_err(ReplayError::Execution)
+
+    let (report, _trace) =
+        run_scenario_with_trace(lab, scenario).map_err(ReplayError::Execution)?;
+    let divergence = first_divergence(&recording.report, &report);
+    let current_core_version =
+        super::recording::RecordedCoreVersion::from(silent_disco_core::core_version());
+
+    Ok(ReplayOutcome {
+        report,
+        divergence,
+        recorded_protocol_version: recording.protocol_version,
+        current_protocol_version: silent_disco_core::protocol::PROTOCOL_VERSION,
+        recorded_core_version: recording.core_version,
+        current_core_version,
+    })
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@
 mod clock;
 mod fault;
 pub(crate) mod recorder;
+pub(crate) mod recording;
 pub(crate) mod replay;
 pub(crate) mod scenario;
 

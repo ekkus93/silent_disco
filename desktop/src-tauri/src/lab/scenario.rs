@@ -93,11 +93,13 @@
 //! stays true for this file).
 
 use super::clock::LabClockError;
-use super::recorder::{RecordedNotificationKind, RecordingObserver, ScenarioRecorder};
+use super::recorder::{
+    RecordedNotification, RecordedNotificationKind, RecordingObserver, ScenarioRecorder,
+};
 use super::{LabNodeId, LabRuntime, MAX_LAB_NODES};
 use crate::dto::DesktopErrorDto;
 use serde::de::Error as _;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use silent_disco_core::domain::{
     AppRole, DeliverySeverity, DeviceId, EnumDecodeError, HostLifecycle, ListenerLifecycle,
     OperationId, PlaybackState, RequestId, SyncConfidence,
@@ -175,7 +177,14 @@ fn parse_bounded_token(kind: &'static str, value: &str) -> Result<String, Scenar
 
 macro_rules! define_scenario_token {
     ($name:ident, $kind:literal) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        /// `Serialize` is derived transparently (the bare inner string,
+        /// mirroring this type's own hand-written `Deserialize` below) so a
+        /// [`super::recording::ScenarioRecording`] can persist a
+        /// [`StepResult`]/[`AssertionResult`]'s node reference as plain
+        /// JSON text rather than needing a separate owned-`String` mirror
+        /// type (Block 41.1's persisted trace).
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+        #[serde(transparent)]
         pub(crate) struct $name(String);
 
         impl $name {
@@ -1024,13 +1033,14 @@ impl std::error::Error for ScenarioExecutionError {}
 /// re-selecting an already-held role) can never be observed as `Settled`,
 /// since neither the snapshot nor the notification stream changes for it --
 /// see the module doc comment's "Step settlement" section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum StepSettlement {
     Settled,
     TimedOut,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct StepResult {
     pub(crate) index: usize,
     pub(crate) at_ms: u64,
@@ -1047,21 +1057,26 @@ pub(crate) struct StepResult {
 /// event as "never becomes true", covering both "impossible assertion" and
 /// "timeout" -- see `scenario::tests` for scenarios distinguishing why each
 /// one failed to hold even though the mechanical outcome is the same type).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum AssertionOutcome {
     Held,
     TimedOut,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AssertionResult {
-    pub(crate) kind: &'static str,
+    /// Owned rather than `&'static str` so this type can implement
+    /// `Deserialize` for [`super::recording::ScenarioRecording`] (Block
+    /// 41.1's persisted trace) -- a borrowed `'static` field cannot be
+    /// produced from deserialized input.
+    pub(crate) kind: String,
     pub(crate) node: NodeId,
     pub(crate) by_ms: u64,
     pub(crate) outcome: AssertionOutcome,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ScenarioOutcome {
     Completed,
     TimedOut,
@@ -1071,7 +1086,8 @@ pub(crate) enum ScenarioOutcome {
 /// A deterministic, bounded record of one scenario run (Block 40.4
 /// "deterministic report": two runs of the same scenario and seed produce
 /// an equal report).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ScenarioReport {
     pub(crate) schema_version: u32,
     pub(crate) seed: u64,
@@ -1081,15 +1097,57 @@ pub(crate) struct ScenarioReport {
     pub(crate) assertion_results: Vec<AssertionResult>,
 }
 
+/// One virtual-clock advance the scenario runner performed, in the order it
+/// happened (Block 41.1 "clock advances"). Purely derived from
+/// `scenario.steps`/`timeoutMs` -- recording it explicitly still gives a
+/// direct, self-contained signal in a persisted recording rather than
+/// requiring a reader to re-derive it from the scenario document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClockAdvance {
+    pub(crate) requested_delta_ms: u64,
+    pub(crate) resulting_now_ms: u64,
+}
+
+/// Everything [`run_scenario_with_trace`] captured beyond the summary
+/// [`ScenarioReport`] (Block 41.1): every virtual-clock advance, and every
+/// node's full (bounded, redacted -- see [`RecordedNotification`]) recorded
+/// notification trace, in `scenario.nodes` declaration order (not a
+/// `HashMap`'s own unspecified iteration order, so a persisted recording's
+/// node ordering is itself deterministic).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScenarioTrace {
+    pub(crate) clock_advances: Vec<ClockAdvance>,
+    pub(crate) node_notifications: Vec<(String, Vec<RecordedNotification>)>,
+}
+
 /// Executes one validated [`Scenario`] against a fresh set of nodes on a
 /// [`LabRuntime`] (Block 40 "runner"). Each call starts its own nodes and
 /// tears them down at the end -- callers wanting to inspect a still-running
 /// scenario's nodes should not use this entry point (there is none yet;
 /// out of scope for Block 40, see `LabScreen` in Block 42).
+///
+/// A thin wrapper over [`run_scenario_with_trace`] that discards the
+/// [`ScenarioTrace`] -- kept as its own entry point so every existing Block
+/// 40 caller/test is unaffected by Block 41's additional trace capture.
 pub(crate) fn run_scenario(
     lab: &LabRuntime,
     scenario: &Scenario,
 ) -> Result<ScenarioReport, ScenarioExecutionError> {
+    run_scenario_with_trace(lab, scenario).map(|(report, _trace)| report)
+}
+
+/// As [`run_scenario`], but also returns the full [`ScenarioTrace`] Block
+/// 41.1 requires a persisted recording to carry (every virtual-clock
+/// advance and every node's complete, bounded, redacted notification
+/// trace) -- used by [`super::recording::ScenarioRecording::capture`] and
+/// by [`super::replay::replay`] to compare a fresh run against one
+/// previously recorded.
+pub(crate) fn run_scenario_with_trace(
+    lab: &LabRuntime,
+    scenario: &Scenario,
+) -> Result<(ScenarioReport, ScenarioTrace), ScenarioExecutionError> {
     scenario
         .validate()
         .map_err(ScenarioExecutionError::Validation)?;
@@ -1114,7 +1172,28 @@ pub(crate) fn run_scenario(
         recorders.insert(node.id.as_str(), recorder);
     }
 
-    let run_result = execute_steps_and_assertions(lab, scenario, &lab_node_ids, &recorders);
+    let mut clock_advances = Vec::new();
+    let run_result = execute_steps_and_assertions(
+        lab,
+        scenario,
+        &lab_node_ids,
+        &recorders,
+        &mut clock_advances,
+    );
+
+    // Captured before teardown, but nothing about a recorder's own already
+    // (bounded, in-memory) recorded entries depends on the node still being
+    // alive -- `ScenarioRecorder` is a plain `Arc`-owned value independent
+    // of the `LabNodeHandle` it was attached to.
+    let node_notifications: Vec<(String, Vec<RecordedNotification>)> = scenario
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            recorders
+                .get(node.id.as_str())
+                .map(|recorder| (node.id.to_string(), recorder.entries()))
+        })
+        .collect();
 
     // Every node started for this run is torn down regardless of outcome --
     // a scenario that fails midway must never leak Lab nodes.
@@ -1129,7 +1208,13 @@ pub(crate) fn run_scenario(
     if !teardown_ok && report.outcome == ScenarioOutcome::Completed {
         report.outcome = ScenarioOutcome::ExecutionError;
     }
-    Ok(report)
+    Ok((
+        report,
+        ScenarioTrace {
+            clock_advances,
+            node_notifications,
+        },
+    ))
 }
 
 fn execute_steps_and_assertions(
@@ -1137,6 +1222,7 @@ fn execute_steps_and_assertions(
     scenario: &Scenario,
     lab_node_ids: &HashMap<&str, LabNodeId>,
     recorders: &HashMap<&str, std::sync::Arc<ScenarioRecorder>>,
+    clock_advances: &mut Vec<ClockAdvance>,
 ) -> Result<ScenarioReport, ScenarioExecutionError> {
     let mut current_ms = lab.now().get();
     let mut step_results = Vec::with_capacity(scenario.steps.len());
@@ -1151,9 +1237,13 @@ fn execute_steps_and_assertions(
             break;
         }
         if step.at_ms > current_ms {
-            lab.advance(step.at_ms - current_ms)
-                .map_err(ScenarioExecutionError::Lab)?;
+            let delta = step.at_ms - current_ms;
+            lab.advance(delta).map_err(ScenarioExecutionError::Lab)?;
             current_ms = step.at_ms;
+            clock_advances.push(ClockAdvance {
+                requested_delta_ms: delta,
+                resulting_now_ms: current_ms,
+            });
         }
 
         let lab_node_id = *lab_node_ids
@@ -1189,9 +1279,13 @@ fn execute_steps_and_assertions(
     // Advance to the scenario's overall timeout so every assertion's
     // deadline has genuinely been reached before being evaluated.
     if scenario.timeout_ms > current_ms {
-        lab.advance(scenario.timeout_ms - current_ms)
-            .map_err(ScenarioExecutionError::Lab)?;
+        let delta = scenario.timeout_ms - current_ms;
+        lab.advance(delta).map_err(ScenarioExecutionError::Lab)?;
         current_ms = scenario.timeout_ms;
+        clock_advances.push(ClockAdvance {
+            requested_delta_ms: delta,
+            resulting_now_ms: current_ms,
+        });
     }
 
     let mut assertion_results = Vec::with_capacity(scenario.assertions.len());
@@ -1219,7 +1313,7 @@ fn execute_steps_and_assertions(
             outcome = ScenarioOutcome::TimedOut;
         }
         assertion_results.push(AssertionResult {
-            kind: assertion.kind_name(),
+            kind: assertion.kind_name().to_owned(),
             node: assertion.node().clone(),
             by_ms: assertion.by_ms(),
             outcome: assertion_outcome,
@@ -1269,7 +1363,7 @@ fn wait_for_step_settled(
                 continue;
             }
             match entry.kind {
-                RecordedNotificationKind::Snapshot { revision }
+                RecordedNotificationKind::Snapshot { revision, .. }
                     if revision > revision_before.get() =>
                 {
                     return StepSettlement::Settled;

@@ -3204,3 +3204,135 @@ every other workspace crate/integration-test binary also 0 failed).
 Committed and pushed per this session's instructions (Block 25 only; do not
 start Block 26 unilaterally). Block 24 (FFI/concurrency hardening) remains
 fully unchecked in the TODO and was explicitly out of scope for this session.
+
+## 2026-08-10T20:21:32Z - Sonnet 5 - Block 41 complete: recording and replay
+
+Audited Block 40's `recorder.rs`/`replay.rs`/`scenario.rs` line-by-line
+before writing anything (per this task's own instruction not to assume
+Block 41 was unstarted). Confirmed genuinely done already: the in-memory
+bounded `ScenarioRecorder` trace, and `replay`'s schema-version/seed
+mismatch refusal. Confirmed genuinely missing: any on-disk persisted
+format, protocol/core version stamping, clock-advance capture, a redacted
+snapshot projection, and any divergence detection beyond "did it run
+without error" — `replay` previously just re-ran the scenario and returned
+whatever `ScenarioReport` came out, with no comparison against what was
+recorded at all.
+
+**What was added** (`desktop/src-tauri/src/lab/recording.rs`, new; plus
+extensions to `recorder.rs`/`scenario.rs`/`replay.rs`):
+
+- **Persisted, versioned recording format** — `recording::ScenarioRecording`
+  (JSON via the same pinned `serde`/`serde_json` Block 40 already used),
+  `save_recording_to_path`/`load_recording_from_path`, both size-bounded
+  (`MAX_RECORDING_FILE_BYTES = 4 MiB`, checked before parsing, mirroring
+  `scenario::load_scenario_json`'s own "check the length first" discipline).
+- **Version stamping, split into two deliberately different treatments** —
+  `recordingFormatVersion`/`schemaVersion`/`seed` are hard gates (a
+  mismatch refuses replay outright, never reinterpreted); `protocolVersion`/
+  `coreVersion` are recorded and surfaced but **not** a gate. This split is
+  the key design decision of the block: spec 29.5 says "detect version
+  incompatibility", but Block 41's own acceptance criterion is "replayed
+  against a **later core build**" — those two requirements only make sense
+  together if "incompatibility" means structural (can't even be compared)
+  rather than semantic (expected to differ, and exactly what a divergence
+  diff should reveal). Documented at length in `recording.rs`'s own module
+  doc comment so a future reader doesn't mistake the non-gating as an
+  oversight.
+- **Divergence detection** — `recording::first_divergence` compares a
+  recorded and a freshly replayed `ScenarioReport` in chronological order
+  (steps, then assertions) and returns a single bounded `Divergence` enum
+  value at the first disagreement — not an unbounded diff list. Relies
+  directly on Block 40's own proven `ScenarioReport` determinism (two runs
+  of the same scenario/seed produce byte-identical reports), so any
+  divergence a replay finds is real regression signal, not incidental
+  nondeterminism.
+- **Clock advances** — new `scenario::ClockAdvance`, pushed at both of
+  `execute_steps_and_assertions`'s two real `LabRuntime::advance` call
+  sites, collected via a new `run_scenario_with_trace` (a thin superset of
+  the existing `run_scenario`, which now just discards the trace — zero
+  behavior change for every existing Block 40 caller/test).
+- **Secret redaction — the one concretely security-relevant finding this
+  block made**: `CoreSnapshot.host_draft.invite_code` is a real plaintext
+  host-admission secret reachable from a snapshot. New
+  `recorder::SnapshotSummary::capture` is the one and only place a raw
+  `CoreSnapshot` is read for recording purposes, and it has no field that
+  could hold `invite_code`, `session_name`, or any listener/join-request
+  display name — only bounded enums/counts/numbers. Tested directly
+  (`recorder::tests::snapshot_summary_never_carries_the_raw_invite_code`
+  constructs a snapshot with a real invite code set and asserts it never
+  appears in the serialized JSON). `UpdateHostDraft` (the only command that
+  could actually set `invite_code` today) is still excluded from the Lab
+  scenario command surface per Block 40's own scope, so this redaction is
+  currently defense-in-depth for a field the runner can't populate yet —
+  deliberately built in now rather than left as a landmine for whichever
+  future block adds `UpdateHostDraft` to the scenario schema.
+- **Honest non-completion, not silently skipped**: packet metadata/hashes
+  and fault records (both listed in 41.1) are not implemented, because no
+  Lab node has live transport wired up — there is no real packet or fault
+  event inside a Lab scenario today to hash or record. Documented
+  explicitly in `recording.rs`'s own doc comment as this block's honest
+  extension point, matching the exact same treatment Block 40 gave to
+  `links` not being wired into live transport.
+
+**Refactors required to make persistence possible, all backward-compatible**:
+`RecordedNotificationKind::Effect`/`TransportEffect`/`StorageEffect`'s
+`name` field widened from `&'static str` to owned `String` (needed for
+`Deserialize`, since a borrowed `'static` field can't come from
+deserialized input); same for `AssertionResult::kind`. `NodeId` gained a
+transparent `Serialize` impl alongside its existing hand-written
+`Deserialize`. Chose to derive `Serialize`/`Deserialize` directly on the
+existing runtime types (`RecordedNotification`, `ScenarioReport`,
+`StepResult`, `AssertionResult`, `ScenarioTrace`, `ClockAdvance`, ...)
+rather than building a parallel "Persisted*" DTO hierarchy — once the
+`&'static str` fields were widened, every field was already an owned,
+serde-friendly type, so a second mirror layer would have been pure
+duplication for this case (unlike `crate::dto`/`crate::runtime_dto`, whose
+DTO/domain split exists because the domain types genuinely can't or
+shouldn't carry serde).
+
+**Environment note**: the shared build machine hit "No space left on
+device" repeatedly during this block's `cargo build`/`cargo test`/`cargo
+clippy` runs (root filesystem at 100%, ~2 MiB free at one point) — a
+different, concurrently running agent's own worktree builds, not anything
+this block's code did. `cargo clean`-ing only this worktree's own
+`desktop/src-tauri/target` reclaimed space exactly once before it filled
+again from concurrent activity; switched to building with
+`CARGO_TARGET_DIR` pointed at `/dev/shm` (tmpfs, ~14 GiB free, ~18 GiB RAM
+free) for the remainder of the session instead of repeatedly fighting the
+same disk contention — a real, disk-only environment constraint, not a
+code issue, and not touching any other agent's worktree or files. No
+on-disk `target/` directory was left behind by this session (confirmed
+absent from `desktop/src-tauri/` at session end).
+
+**Gates:** `bash scripts/check-rust.sh` green (full workspace, 0 failed,
+run with `CARGO_TARGET_DIR` on tmpfs for the reason above). `cd desktop &&
+npm run check` green (bindings-check, biome, `cargo fmt --check`, tsc,
+72/72 Vitest, production build — required `npm install` and one `npm run
+build` first since neither `node_modules/` nor `dist/` existed yet in this
+worktree; unaffected otherwise, this block touched no frontend code).
+`desktop/src-tauri cargo test --features lab-mode`: 237 → 254 passed, 0
+failed — the +17 delta matches the 17 new test functions exactly (2
+`recorder/tests.rs`, 11 `recording/tests.rs`, 4 net new in
+`replay/tests.rs`). Default (no `lab-mode`) build: 193 passed, unchanged,
+confirmed via `nm` on the default-build `.rlib` showing zero
+`ScenarioRecording`/`SnapshotSummary`/`first_divergence` symbols. `cargo
+clippy --all-targets --all-features -- -D warnings` for
+`desktop/src-tauri` — fixed two new lints this block's own code introduced
+before landing (`clippy::struct_excessive_bools` on the new
+`SnapshotCapabilities`, resolved with the same precedented `#[allow]`
+`crate::runtime_dto::CapabilitySnapshotDto` already carries for the
+identical six-bool shape; `clippy::enum_variant_names` on the new
+`Divergence` enum, resolved by deliberately varying its five variant names
+instead of a uniform `*Changed` postfix); the remaining 8 deny-level
+errors are the identical, unrelated pre-existing baseline from Blocks
+35-40 (`host_session_dto.rs`, `platform/audio_device.rs` x2,
+`platform/mdns.rs` x2, `platform/render_ring.rs`,
+`platform/start_playback_tests.rs` x2), confirmed unchanged in count and
+location.
+
+### Next
+Committed and pushed. TODO's Block 41 checkboxes updated with full
+evidence citations, including the two honestly-unimplemented 41.1 bullets
+(packet metadata/hashes, faults) explained rather than fabricated. Block
+42 (build Lab Mode UI) is next in the TODO — per this session's
+established pattern, do not start it unilaterally.
