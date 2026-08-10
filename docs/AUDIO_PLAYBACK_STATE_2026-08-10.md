@@ -167,13 +167,19 @@ output device belongs to the connection, not to one track.
    scenario where the listener's connection *stays up* while responses
    stop arriving (e.g. host-side packet loss/black-holing, not the
    listener's own interface going down) — still open.
-4. **Residual arrival gaps.** `ringQueued` was seen dropping to 384-720
-   frames while emitting at full rate. Startup buffering (`STARTUP_BUFFER_MS`
-   = 1000 ms) is now the dominant remaining silence, by design.
-5. **`rebuffer_target_ms` is unturned.** The knob exists and is clamped to
-   the startup target, but the Android value is left at parity. Lowering it
-   to 400 ms was tried and is **indistinguishable** from parity given the
-   noise — do not re-litigate without several runs per config.
+4. ~~**Residual arrival gaps.**~~ `ringQueued` was seen dropping to 384-720
+   frames while emitting at full rate. `STARTUP_BUFFER_MS` was 1000ms when
+   this was written, deliberately dominating remaining silence — **lowered
+   back to 400ms in A4.2** (2026-08-10) once real-device measurement
+   showed the larger value was no longer helping and was itself causing a
+   different failure (ring-full events). See A4.2 in §10.
+5. ~~**`rebuffer_target_ms` is unturned.**~~ **Turned in A4.2/A4.3,
+   2026-08-10 — see §10.** The earlier note here ("lowering to 400ms is
+   indistinguishable from parity") was a single-run finding from before
+   the A1-A3/A6 supply fixes and did not hold up: a proper 4-runs-per-value
+   controlled comparison after those fixes showed 400ms clearly better,
+   non-overlapping ranges. Both `STARTUP_BUFFER_MS` and
+   `REBUFFER_TARGET_MS` are now 400ms.
 6. **MP3 listener quality trails WAV/FLAC.** Single run 2026-08-10 (post
    A1-A3): `concealed=700 late=271 hardResyncs=2 ringSilenceFilled=186480
    ringFullEvents=21`, all clearly outside the post-fix WAV/FLAC range (§2,
@@ -311,8 +317,31 @@ device confirmation under real sustained loss still pending, folded into A6.
 **A4. Close the residual gaps**
 - A4.1 ~~Re-measure §2 as a distribution (≥4 runs) for a clean baseline.~~
   Done — see §2.
-- A4.2 Revisit `STARTUP_BUFFER_MS` (1000 ms) now that supply is healthy.
-- A4.3 Tune `rebuffer_target_ms` only with several runs per config.
+- A4.2 ~~Revisit `STARTUP_BUFFER_MS` (1000 ms) now that supply is
+  healthy.~~ **Done 2026-08-10, real device, controlled A/B.** Lowered
+  back to 400ms. 4 runs per value, same session, same code except this one
+  constant (`ManualListenerTransportController.kt`):
+
+  | metric | 400ms (n=4) | 1000ms (n=4) |
+  |---|---|---|
+  | `ringSilenceFilled` | 53,520–62,832 | 99,504–121,296 |
+  | `ringUnderruns` | 280–328 | 519–632 |
+  | `ringFullEvents` nonzero | 0/4 runs | 2/4 runs |
+  | `ringPeakFrames` hit the ring's 48,000-frame cap | 0/4 runs | 2/4 runs |
+
+  Non-overlapping ranges on every metric that differed, all favoring
+  400ms. The original 1000ms experiment targeted startup-transient
+  underruns that no longer reproduce now that A1-A3/A6 fixed the supply
+  side — and the larger cushion was itself creating a *different* failure
+  mode (the ring reaching its absolute capacity) that the smaller one
+  never did.
+- A4.3 ~~Tune `rebuffer_target_ms` only with several runs per config.~~
+  **Done 2026-08-10, folded into A4.2's measurement.** `rebuffer_target_ms`
+  is still tied to `STARTUP_BUFFER_MS` (`REBUFFER_TARGET_MS =
+  STARTUP_BUFFER_MS` in Kotlin), so A4.2's 4-run A/B at 400/400 vs.
+  1000/1000 covers it too, reversing an earlier *single-run* finding
+  (pre-A1-A3/A6) that lowering it to 400ms measured worse. No evidence yet
+  that diverging the two values from each other helps, so they stay tied.
 - A4.4 ~~Count offset-driven rebuffers so `hardResyncs` stops
   under-reporting.~~ **Done and confirmed on real hardware, 2026-08-10.**
   `SyncApplyOutcome::Rebuffered` (produced whenever a clock-offset jump

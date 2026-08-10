@@ -2008,6 +2008,66 @@ still-open silent-partition case (listener's own link stays up, host
 silently vanishes — the harder case A6's Wi-Fi-disable test didn't
 exercise). Then move to desktop-app work per the user's explicit request.
 
+## 2026-08-10T07:53:37Z - Claude Sonnet 5 - A4.2 + A4.3 done together: STARTUP_BUFFER_MS/REBUFFER_TARGET_MS lowered 1000ms -> 400ms, reversing the pre-fix decision with a real controlled A/B
+
+Both items are the same tied constant
+(`REBUFFER_TARGET_MS = STARTUP_BUFFER_MS` in
+`ManualListenerTransportController.kt`), so one measurement pass answered
+both.
+
+- **Method**: extended the A4.1 variance-runs driver
+  (`/tmp/variance_runs.sh` → a new copy with per-run diagnostics pulling,
+  `/tmp/claude-.../scratchpad/variance_runs_with_diag.sh`) to also archive
+  `manual-listener-diagnostics.log` per run, since the desktop-side log
+  alone doesn't carry ring/underrun numbers. Ran 4 real-device runs at
+  400ms, then reverted to 1000ms, rebuilt/reinstalled, ran 4 more — same
+  session, same code, only this one constant differing, matching the
+  established "≥4 runs, non-overlapping ranges" bar from A4.1.
+- **Result, unambiguous**:
+
+  | metric | 400ms (n=4) | 1000ms (n=4) |
+  |---|---|---|
+  | `ringSilenceFilled` | 53,520–62,832 | 99,504–121,296 |
+  | `ringUnderruns` | 280–328 | 519–632 |
+  | `ringFullEvents` nonzero | 0/4 | 2/4 (one run hit 63) |
+  | `ringPeakFrames` at the ring's 48,000-frame cap | 0/4 | 2/4 |
+  | `hardResyncs` | 1 in all 4 | 1 in all 4 (unrelated to this knob) |
+
+  400ms wins cleanly on every metric that differed, non-overlapping
+  ranges. The original 1000ms experiment (from an earlier session) was
+  targeting startup-transient underruns under a supply side that had
+  blocking sends, premature disconnects, and dispatch delay — all fixed by
+  A1-A3/A6 this session. With those fixed, the bigger cushion isn't just
+  unnecessary, it's actively worse: it lets the ring build up close to its
+  absolute capacity (`ringPeakFrames` hit 48,000 — the literal ceiling —
+  in 2 of 4 runs), which is its own failure mode 400ms never triggered.
+  `hardResyncs=1` appeared in *all 8* runs regardless of buffer size, at
+  identical concealment=1/offset=0 attribution — confirms it's an artifact
+  of the two-song test's stream transition, not sensitive to this knob at
+  all (worth remembering if anyone chases it later).
+- **Change**: `STARTUP_BUFFER_MS` 1000L → 400L. `REBUFFER_TARGET_MS` stays
+  tied (no evidence yet that diverging it helps). Rewrote both doc
+  comments in `ManualListenerTransportController.kt` — the old ones
+  actively claimed the opposite of what this measurement found
+  (1000ms better, 400ms "measured worse") and would have misled the next
+  person who reads them without this context.
+- Also updated `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`: §5 items 4 and 5
+  (which described the 1000ms/unturned-knob state as current) struck
+  through and pointed at A4.2's entry; §10 A4.2/A4.3 entries filled in
+  with the full table.
+- All three gates green: `bash scripts/check-rust.sh`, `desktop && npm run
+  check`, `./gradlew test lintDebug`. No new automated tests needed (this
+  is a tuning-constant change, not new logic) — the regression coverage is
+  the real-device measurement itself, recorded here and in the state doc.
+
+### Next
+A6's still-open silent-partition case (listener's own link stays up while
+the host silently vanishes — the harder case A6's Wi-Fi-disable test
+didn't exercise, since disabling Wi-Fi tears the listener's own interface
+down instead). Then move to desktop-app work per the user's explicit
+request — everything else in the "Android tasks that don't need a second
+phone" list is now done.
+
 ## 2026-08-10T06:57:56Z - Claude Sonnet 5 - D4 bookkeeping: closed out Block 28.1/28.2 in the desktop TODO, left 28.3 honestly partial
 
 User chose D4 (bookkeeping only, no device needed) over stopping, since

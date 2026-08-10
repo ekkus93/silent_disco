@@ -82,32 +82,41 @@ private const val OBOE_ADAPTER_STATUS_OK = 0
 
 /**
  * How much scheduled-timeline span must be buffered before playback starts
- * (forwarded to the Rust scheduler). Larger than its 400ms default as an
- * experiment against the observed startup-transient underruns
- * (small dropouts clustered in the first ~1.2s of a stream): with the host's
- * send-ahead horizon now genuinely delivering content this far in advance,
- * a bigger cushion here gives the render ring and coroutine dispatcher more
- * real wall-clock time to reach steady cadence before playback begins,
- * rather than starting the instant the minimum threshold is technically met.
+ * (forwarded to the Rust scheduler).
+ *
+ * Was raised to 1000ms for a session as an experiment against observed
+ * startup-transient underruns, on the theory that a bigger cushion gives
+ * the render ring and coroutine dispatcher more real wall-clock time to
+ * reach steady cadence before playback begins. That was before the A1-A3
+ * and A6 fixes to the underlying supply bugs (blocking sends, premature
+ * peer disconnects, host inbound-silence blindness). Re-measured 2026-08-10
+ * (A4.2) with those fixes in place, controlled same-session A/B, 4 real
+ * device runs per value: 400ms measurably *beat* 1000ms on every metric
+ * that differed, non-overlapping ranges --
+ * `ringSilenceFilled` 53,520-62,832 (400ms) vs. 99,504-121,296 (1000ms);
+ * `ringUnderruns` 280-328 vs. 519-632; `ringFullEvents` zero in all four
+ * 400ms runs vs. nonzero (and the ring hitting its absolute capacity) in
+ * two of four 1000ms runs. The original problem this 1000ms experiment
+ * targeted no longer reproduces now that the supply side is healthy, and
+ * the larger cushion itself was creating a *different* failure mode (ring
+ * overflow) that a smaller one doesn't. See `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`
+ * A4.2 for the full numbers.
  */
-private const val STARTUP_BUFFER_MS = 1_000L
+private const val STARTUP_BUFFER_MS = 400L
 
 /**
  * Span rebuilt before playback resumes after a *mid-stream* rebuffer.
  *
- * Deliberately left equal to [STARTUP_BUFFER_MS] for now, which reproduces
- * the previous behaviour exactly. Lowering it to 400ms was tried on a real
- * device and **measured worse**, so it was reverted rather than shipped:
- * resuming on a shallower span left the render ring permanently shallow
- * (`ringQueued` collapsing to 480-1056 frames, ~10-22ms, while emitting at
- * full rate, and ring peak fill capped at 19392 against 46992 on the run
- * before), so every subsequent hiccup became audible. One stream improved
- * and the other got substantially worse in the same run.
- *
- * The separate knob is still worth having -- the scheduler now supports it
- * and clamps it to the startup target -- but choosing a value needs
- * repeated runs to separate the effect from the large run-to-run variance
- * seen here, not a single measurement.
+ * Left equal to [STARTUP_BUFFER_MS], which the A4.2 measurement above
+ * exercised too (this knob and the startup one were tied for that test,
+ * both at 400ms) -- so the same controlled real-device evidence covers
+ * this value as well (A4.3), reversing an earlier single-run finding that
+ * lowering it to 400ms measured worse. That earlier attempt predates the
+ * A1-A3/A6 supply fixes and was never confirmed with repeated runs; this
+ * one was. The knob remains separately settable -- the scheduler still
+ * supports diverging it from the startup target -- but there is no
+ * evidence yet that diverging it from [STARTUP_BUFFER_MS] helps, so it
+ * stays tied until there is.
  */
 private const val REBUFFER_TARGET_MS = STARTUP_BUFFER_MS
 
