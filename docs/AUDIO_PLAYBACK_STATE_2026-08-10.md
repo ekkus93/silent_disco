@@ -158,9 +158,15 @@ output device belongs to the connection, not to one track.
 3. ~~Pending sync probes never age out~~ **— fixed 2026-08-10.**
    `begin_probe` now evicts anything older than 5s before checking capacity,
    so sustained response loss recovers on the next probe attempt instead of
-   permanently bricking probing. Verified with deterministic tests, not yet
-   device-confirmed under real sustained loss — deferred to item 6
-   (Wi-Fi disable/restore), which will exercise it for real.
+   permanently bricking probing. Verified with deterministic tests. Still
+   **not** device-confirmed under genuine real sustained loss: item 6's
+   (A6) Wi-Fi disable/restore run turned out not to exercise this hazard at
+   all — disabling Wi-Fi tears the listener's own transport down almost
+   immediately (~7s), so it stops sending probes entirely rather than
+   sending them into a silent void. Exercising this for real needs a
+   scenario where the listener's connection *stays up* while responses
+   stop arriving (e.g. host-side packet loss/black-holing, not the
+   listener's own interface going down) — still open.
 4. **Residual arrival gaps.** `ringQueued` was seen dropping to 384-720
    frames while emitting at full rate. Startup buffering (`STARTUP_BUFFER_MS`
    = 1000 ms) is now the dominant remaining silence, by design.
@@ -328,16 +334,74 @@ since those fixes landed.
   buffer. Not investigated further — recorded here as follow-up work, not
   blocking A6/A7.
 
-**A6. Block 28.2 device half** — disable Android Wi-Fi mid-playback, restore
-it, and verify the disconnect/recovery policy. A1 likely changes this
-behaviour, so do it after A1.
+**A6. ~~Block 28.2 device half~~ — verified 2026-08-10 on the real LG G6.**
+Disabled Wi-Fi mid-playback via the system Wi-Fi settings toggle (`svc wifi
+disable` is killed outright by this device's OS — `Killed`/exit 137 every
+time; the UI toggle is the only thing that works here), left it off for
+~2.5 minutes spanning the rest of the two-song test, then restored it.
+Three distinct, real findings:
+1. **Listener-side detection is fast and clear, but for a narrower reason
+   than "silence timeout".** The app showed "Host disconnected" /
+   `runtime transport ShuttingDown: transport event channel is closed`
+   within ~7s of the toggle, reusing the same `ConnectionClosed`/
+   `HostDisconnected` path item 1 above already verified. This is fast
+   because disabling Wi-Fi tears the phone's own `wlan0` interface down
+   entirely, which errors its already-open sockets immediately — a *local*
+   failure, not detection of a *remote* silence. The harder case item 1
+   explicitly flagged as still untested (interface stays up, packets are
+   silently black-holed — e.g. the host vanishing from the LAN without the
+   listener's own link dropping) remains genuinely unverified; this run
+   answers Block 28.2's literal "disable Android Wi-Fi" wording, not that
+   broader question.
+2. **Recovery is fully manual, by design, confirmed in code.** The app
+   surfaces a "Try again" button (`MainViewModel.retryJoin()`), no
+   auto-reconnect. A rejoin also always re-enters
+   `pending_join_requests` and needs a fresh `CoreCommand::ApproveJoin` from
+   the host operator (`ActorState::handle_join_request`,
+   `runtime/actor_runtime/state/admission.rs` — it never consults the
+   current session's `snapshot.listeners`, so a still-listed vs.
+   already-removed device is treated identically). This matches
+   CLAUDE.md's "no silent auto-admit, manual approval is the default"
+   exactly — not a gap, the intended behavior. Not yet exercised live
+   end-to-end (the scripted test's one-shot approval helper had already
+   returned and the host process had already exited by the time Wi-Fi was
+   restored — see finding 3), so the actual reconnect UX still needs a
+   real run, ideally with a dedicated test script that can approve a second
+   join mid-run.
+3. **The host has zero visibility into the disconnect — a real, confirmed
+   gap, more serious than expected.** The scripted test's own timers kept
+   running through the entire ~2.5-minute outage (song-a's remainder, the
+   song switch, and all 40s of song-b), and its final broadcast stats read
+   `attempted=15129 fully_delivered=15129 partially_delivered=0
+   without_recipients=0` — a clean 100% success report — while the real
+   listener sat on an error screen having received nothing since the
+   outage began. `fully_delivered` counts successful `send()` syscalls, not
+   actual receipt; UDP sends to an unreachable peer on the same LAN segment
+   evidently still "succeed" at the OS level. There is no per-peer
+   liveness/heartbeat anywhere (`ListenerLifecycle::Reconnecting` is fully
+   wired in Rust, FFI, and Kotlin, but nothing anywhere ever assigns it —
+   dead state). This directly contradicts CLAUDE.md's "Zero recipients and
+   partial delivery are not full success" and the diagnostics mandate for
+   "packet loss... listener health" — and it pre-emptively fails **A7.4**
+   below ("one listener disconnecting is not reported as full delivery
+   success"), now confirmed as false on real hardware, not just
+   unvalidated. Recorded here as a new, high-priority item rather than
+   fixed inline — building real per-peer liveness tracking (host-side
+   inbound-silence timeout, `Reconnecting`/`Disconnected` state wiring, and
+   an honest delivery-health signal) is cross-cutting, multi-file work
+   across Rust core, desktop, and Android, well beyond this block's
+   "verify the policy" scope. Should be prioritized before or alongside A7,
+   since A7.4 cannot pass without it.
 
 **A7. Block 29 — multiple physical listeners** *(the actual product
 criterion, entirely unvalidated on hardware)*
 - A7.1 Two devices join and are approved.
 - A7.2 Both complete initial sync.
 - A7.3 Both play the same stream; pause/resume/stop affects both.
-- A7.4 One listener disconnecting is not reported as full delivery success.
+- A7.4 One listener disconnecting is not reported as full delivery success
+  — **known to currently fail**, confirmed on real hardware by A6 above;
+  needs the host-side liveness/delivery-honesty work A6 identified before
+  this can pass.
 - A7.5 Measure inter-device skew, loss, underruns, confidence (29.2).
 - A7.6 Compare listeners against *each other* — "listeners hear the same
   thing" is what none of the single-listener work tests.

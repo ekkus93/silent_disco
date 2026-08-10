@@ -1722,3 +1722,68 @@ A6 (Block 28.2 device half: disable Android Wi-Fi mid-playback, restore,
 verify disconnect/recovery policy — also the deferred real-device
 confirmation for A3's probe-eviction fix under genuine sustained loss),
 per the explicit Ralph Loop order.
+
+## 2026-08-10T04:35:22Z - Claude Sonnet 5 - A6 done on real hardware: found a serious, confirmed host-side blindness gap
+
+Ralph Loop order in force: `A1 > A2 — A3 — A4.1 ~ A5 D1 —- A6 — A7 (with D2/D3 alongside A7)`.
+
+Ran `manual_real_android_listener_plays_a_song_change` against the real LG
+G6 again, this time disabling Wi-Fi mid-playback (song-a) via the system
+Wi-Fi settings toggle — `svc wifi disable` is killed outright by this
+device's OS (`Killed`, exit 137, every attempt; `cmd wifi` isn't
+implemented on this API 26 device either) — left it off ~2.5 minutes, then
+restored it. Three real findings, most important last:
+
+1. **Listener-side detection is fast (~7s) but for a narrower reason than
+   a silence timeout.** "Host disconnected" appeared quickly via the same
+   `ConnectionClosed`/`HostDisconnected` path A1 already verified — because
+   disabling Wi-Fi tears the phone's own `wlan0` down, erroring its
+   already-open sockets immediately (a *local* failure). The harder case
+   (interface stays up, packets silently black-holed) remains genuinely
+   unverified — A6 answers Block 28.2's literal wording, not that broader
+   question. Listener diagnostics confirm this: healthy `PLAYING` samples
+   right up to the last one, then straight to a `phase=STOPPED` summary —
+   no gradual degradation, no concealment ramp.
+2. **Recovery is fully manual, by design, confirmed in code**: a "Try
+   again" button (`MainViewModel.retryJoin()`), no auto-reconnect. A
+   rejoin also always needs a fresh `CoreCommand::ApproveJoin` — checked via
+   a targeted subagent read of `ActorState::handle_join_request`
+   (`runtime/actor_runtime/state/admission.rs`), which never consults
+   `snapshot.listeners`, so a still-listed vs. already-removed device is
+   treated identically. Matches CLAUDE.md's "no silent auto-admit, manual
+   approval is the default" exactly. Not yet exercised live end-to-end —
+   the scripted test's one-shot approval helper and the host process had
+   both already finished by the time Wi-Fi was restored (see #3).
+3. **The host has zero visibility into the disconnect — worse than
+   expected, confirmed on real hardware.** The scripted test kept running
+   through the whole ~2.5-minute outage (song-a's remainder, the song
+   switch, all 40s of song-b) and its final broadcast stats read
+   `attempted=15129 fully_delivered=15129 without_recipients=0` — a clean
+   100% success report — while the real listener had received nothing
+   since the outage began. `fully_delivered` only counts successful
+   `send()` syscalls, not receipt; there is no per-peer liveness/heartbeat
+   anywhere (`ListenerLifecycle::Reconnecting` is fully wired end-to-end in
+   Rust/FFI/Kotlin but nothing ever assigns it — dead state). This directly
+   contradicts CLAUDE.md's "zero recipients and partial delivery are not
+   full success" and pre-emptively fails **A7.4** ("one listener
+   disconnecting is not reported as full delivery success"), now confirmed
+   false on real hardware rather than just unvalidated.
+- Did **not** attempt to fix #3 inline — real per-peer liveness tracking
+  (host-side inbound-silence timeout, `Reconnecting`/`Disconnected` state
+  wiring, an honest delivery-health signal) is cross-cutting, multi-file
+  work across Rust core, desktop, and Android, well beyond "verify the
+  policy" scope for one block. Recorded as a new high-priority item in
+  `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` §10's A6 entry and cross-linked
+  from A7.4, since A7 (the next loop item) cannot fully pass without it —
+  worth raising with the user before or during A7.
+- Also corrected §5 item 3's claim that A6 would device-confirm A3's
+  probe-eviction fix under sustained loss: it doesn't, because disabling
+  Wi-Fi tears the listener's connection down almost immediately rather
+  than producing sustained silent probe loss with the connection still up.
+  That confirmation is still open.
+
+### Next
+A7 (Block 29 — two physical listeners, needs a second phone), with D2/D3
+alongside, per the explicit Ralph Loop order. Given A6's finding #3, worth
+surfacing to the user that A7.4 is known to currently fail before/while
+running A7, rather than discovering it silently mid-block.
