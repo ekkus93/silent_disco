@@ -128,6 +128,12 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
             issued_at_ms: u64::try_from(issued_at_ms).map_err(|_| Status::InvalidArgument)?,
             expires_at_ms: u64::try_from(expires_at_ms).map_err(|_| Status::InvalidArgument)?,
             nonce: java_string(&mut env, &nonce)?,
+            // Android's own peer-to-peer QR flow has no network endpoint to
+            // embed -- connection happens over BLE/Wi-Fi Direct discovery
+            // after verification, not a carried address. Only a desktop
+            // host (linking this crate directly, no JNI involved) sets this
+            // field. See `QrInvitationInput::connection_payload_json`.
+            connection_payload_json: None,
         };
         prepare_unsigned_qr(&input)
             .map(Value::String)

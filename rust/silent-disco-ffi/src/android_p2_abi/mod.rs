@@ -203,6 +203,7 @@ fn invitation_json(value: &ValidatedQrInvitation) -> Value {
         "inviteCode": value.invite_code,
         "issuedAtMs": value.issued_at_ms,
         "expiresAtMs": value.expires_at_ms,
+        "connectionPayloadJson": value.connection_payload_json,
     })
 }
 

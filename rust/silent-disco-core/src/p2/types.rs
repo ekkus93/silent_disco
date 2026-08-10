@@ -125,6 +125,17 @@ pub struct QrInvitationInput {
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
     pub nonce: String,
+    /// The host's own manual-endpoint connection payload (see
+    /// [`crate::transport::ManualHostEndpoint`]), embedded verbatim as an
+    /// opaque, canonically-signed string -- present only for hosts with a
+    /// real network endpoint to hand a listener (desktop today; Android's
+    /// own peer-to-peer QR flow leaves this `None` and keeps relying on
+    /// BLE/Wi-Fi Direct discovery after verification). Carrying the exact
+    /// same JSON shape the manual paste flow already accepts means the
+    /// listener side can validate and connect with it via the identical,
+    /// already-tested `ManualHostEndpoint::parse` path, not a second
+    /// parallel implementation.
+    pub connection_payload_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +150,12 @@ pub struct ValidatedQrInvitation {
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
     pub nonce: String,
+    /// See [`QrInvitationInput::connection_payload_json`]. Already validated
+    /// as well-formed by [`validate_unsigned`] (structurally parsed via
+    /// [`ManualHostEndpoint::parse`]), but a caller still has to re-parse it
+    /// to get typed fields back out -- this module only ever carries it as
+    /// an opaque, size-bounded string.
+    pub connection_payload_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +172,8 @@ struct UnsignedQrDocument {
     iat: u64,
     exp: u64,
     nonce: String,
+    #[serde(default)]
+    conn: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +190,8 @@ struct SignedQrDocument {
     iat: u64,
     exp: u64,
     nonce: String,
+    #[serde(default)]
+    conn: Option<String>,
     sig: String,
 }
 
@@ -188,6 +209,7 @@ impl From<SignedQrDocument> for UnsignedQrDocument {
             iat: value.iat,
             exp: value.exp,
             nonce: value.nonce,
+            conn: value.conn,
         }
     }
 }

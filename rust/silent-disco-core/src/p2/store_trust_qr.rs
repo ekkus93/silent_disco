@@ -145,6 +145,7 @@ impl P2Store {
             issued_at_ms: unsigned.iat,
             expires_at_ms: unsigned.exp,
             nonce: unsigned.nonce,
+            connection_payload_json: unsigned.conn,
         })
     }
 

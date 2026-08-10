@@ -22,7 +22,17 @@ mod tests {
         }
     }
 
-    fn signed_payload(now: u64) -> (String, Vec<u8>) {
+    /// Matches `ManualHostEndpoint::parse`'s own `valid_payload` fixture
+    /// exactly (`transport::manual_endpoint::tests`), since a desktop host's
+    /// real embedded connection payload is produced the same way.
+    fn connection_payload_json() -> String {
+        format!(
+            r#"{{"hostAddress":"192.168.1.50","controlPort":41000,"syncPort":41001,"audioPort":41002,"sessionId":"550e8400-e29b-41d4-a716-446655440000","protocolVersion":{},"inviteCodeRequired":true,"expiresAtMs":null}}"#,
+            crate::runtime::current_protocol_version()
+        )
+    }
+
+    fn input(now: u64, connection_payload_json: Option<String>) -> (QrInvitationInput, SigningKey) {
         let signing_key = SigningKey::from_bytes((&[7_u8; 32]).into()).expect("fixed key");
         let public_key = signing_key
             .verifying_key()
@@ -30,25 +40,37 @@ mod tests {
             .expect("public DER")
             .as_bytes()
             .to_vec();
-        let unsigned = prepare_unsigned_qr(&QrInvitationInput {
-            session_id: "550e8400-e29b-41d4-a716-446655440000".to_owned(),
-            session_name: "Rooftop Disco".to_owned(),
-            host_name: "Phillip's host".to_owned(),
-            host_public_key_der: public_key.clone(),
-            approval_mode: "invite_code".to_owned(),
-            invite_code: Some("4826".to_owned()),
-            issued_at_ms: now,
-            expires_at_ms: now + 300_000,
-            nonce: "nonce-1234567890abcdef".to_owned(),
-        })
-        .expect("unsigned payload");
+        (
+            QrInvitationInput {
+                session_id: "550e8400-e29b-41d4-a716-446655440000".to_owned(),
+                session_name: "Rooftop Disco".to_owned(),
+                host_name: "Phillip's host".to_owned(),
+                host_public_key_der: public_key,
+                approval_mode: "invite_code".to_owned(),
+                invite_code: Some("4826".to_owned()),
+                issued_at_ms: now,
+                expires_at_ms: now + 300_000,
+                nonce: "nonce-1234567890abcdef".to_owned(),
+                connection_payload_json,
+            },
+            signing_key,
+        )
+    }
+
+    fn sign(unsigned_input: &QrInvitationInput, signing_key: &SigningKey) -> String {
+        let unsigned = prepare_unsigned_qr(unsigned_input).expect("unsigned payload");
         let signature: Signature = signing_key.sign(unsigned.as_bytes());
-        let payload = finalize_qr(
+        finalize_qr(
             &unsigned,
             &URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes()),
         )
-        .expect("signed payload");
-        (payload, public_key)
+        .expect("signed payload")
+    }
+
+    fn signed_payload(now: u64) -> (String, Vec<u8>) {
+        let (qr_input, signing_key) = input(now, None);
+        let public_key = qr_input.host_public_key_der.clone();
+        (sign(&qr_input, &signing_key), public_key)
     }
 
     #[test]
@@ -142,5 +164,94 @@ mod tests {
         );
         drop(store);
         remove_database(&path);
+    }
+
+    /// Block 31.1/31.3: a desktop host's invitation carries a real
+    /// connection endpoint, embedded verbatim and validated/round-tripped
+    /// through the signed envelope exactly like every other field.
+    #[test]
+    fn qr_with_a_valid_embedded_connection_payload_round_trips() {
+        let path = test_path("qr-conn-valid");
+        let now = 2_000_000_000_u64;
+        let (qr_input, signing_key) = input(now, Some(connection_payload_json()));
+        let payload = sign(&qr_input, &signing_key);
+        let mut store = P2Store::open(&path).expect("open");
+        let validated = store
+            .validate_and_consume_qr(&payload, now + 1_000)
+            .expect("validate");
+        assert_eq!(
+            validated.connection_payload_json,
+            Some(connection_payload_json())
+        );
+        drop(store);
+        remove_database(&path);
+    }
+
+    /// A QR with no embedded connection payload (Android's own
+    /// peer-to-peer QR flow) must keep validating exactly as before --
+    /// this field is additive, not required.
+    #[test]
+    fn qr_without_a_connection_payload_still_validates() {
+        let path = test_path("qr-conn-absent");
+        let now = 2_000_000_000_u64;
+        let (payload, _) = signed_payload(now);
+        let mut store = P2Store::open(&path).expect("open");
+        let validated = store
+            .validate_and_consume_qr(&payload, now + 1_000)
+            .expect("validate");
+        assert_eq!(validated.connection_payload_json, None);
+        drop(store);
+        remove_database(&path);
+    }
+
+    /// Tampering with the embedded connection payload is caught the same
+    /// way as tampering with any other signed field: the canonical form no
+    /// longer matches what was signed.
+    #[test]
+    fn qr_with_a_tampered_connection_payload_is_rejected() {
+        let path = test_path("qr-conn-tampered");
+        let now = 2_000_000_000_u64;
+        let (qr_input, signing_key) = input(now, Some(connection_payload_json()));
+        let payload = sign(&qr_input, &signing_key);
+        let tampered = payload.replace("192.168.1.50", "10.0.0.99");
+        let mut store = P2Store::open(&path).expect("open");
+        assert_eq!(
+            store.validate_and_consume_qr(&tampered, now + 1_000),
+            Err(P2Error::InvalidSignature)
+        );
+        drop(store);
+        remove_database(&path);
+    }
+
+    /// An oversized connection payload is rejected up front, before the
+    /// host ever signs it -- never surfaced only once a listener tries to
+    /// act on an unusable invitation.
+    #[test]
+    fn qr_with_an_oversized_connection_payload_is_rejected_before_signing() {
+        let (mut qr_input, _signing_key) = input(2_000_000_000_u64, None);
+        let filler = "a".repeat(MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES + 1);
+        qr_input.connection_payload_json = Some(format!(r#"{{"hostAddress":"{filler}"}}"#));
+        assert_eq!(
+            prepare_unsigned_qr(&qr_input),
+            Err(P2Error::InvalidQr(
+                "connection payload size is unsupported".to_owned()
+            ))
+        );
+    }
+
+    /// A structurally invalid connection payload (not the manual-endpoint
+    /// JSON shape at all) is rejected up front too, via the same
+    /// `ManualHostEndpoint::parse` the manual paste flow already uses.
+    #[test]
+    fn qr_with_a_structurally_invalid_connection_payload_is_rejected_before_signing() {
+        let (mut qr_input, _signing_key) = input(2_000_000_000_u64, None);
+        qr_input.connection_payload_json = Some("not json".to_owned());
+        let error = prepare_unsigned_qr(&qr_input).expect_err("must reject malformed JSON");
+        match error {
+            P2Error::InvalidQr(message) => {
+                assert!(message.starts_with("connection payload is invalid:"));
+            }
+            other => panic!("expected InvalidQr, got {other:?}"),
+        }
     }
 }

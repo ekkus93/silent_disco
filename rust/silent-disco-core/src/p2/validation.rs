@@ -18,6 +18,7 @@ fn unsigned_document(input: &QrInvitationInput) -> Result<UnsignedQrDocument, P2
         iat: input.issued_at_ms,
         exp: input.expires_at_ms,
         nonce: input.nonce.clone(),
+        conn: input.connection_payload_json.clone(),
     })
 }
 
@@ -73,12 +74,33 @@ fn validate_unsigned(document: &UnsignedQrDocument, now_ms: u64) -> Result<(), P
         return Err(P2Error::ExpiredQr);
     }
     validate_nonce(&document.nonce)?;
+    validate_connection_payload(document.conn.as_deref(), now_ms)?;
+    Ok(())
+}
+
+/// Validates an embedded [`QrInvitationInput::connection_payload_json`], when
+/// present, by structurally parsing it through the exact same
+/// [`ManualHostEndpoint::parse`] the manual paste flow already uses -- one
+/// validated implementation, not two. A malformed or oversized connection
+/// payload fails the whole invitation rather than surfacing only once a
+/// listener tries to act on it.
+fn validate_connection_payload(value: Option<&str>, now_ms: u64) -> Result<(), P2Error> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty() || value.len() > MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES {
+        return Err(P2Error::InvalidQr(
+            "connection payload size is unsupported".to_owned(),
+        ));
+    }
+    ManualHostEndpoint::parse(value, now_ms)
+        .map_err(|error| P2Error::InvalidQr(format!("connection payload is invalid: {error}")))?;
     Ok(())
 }
 
 fn canonical_unsigned(document: &UnsignedQrDocument) -> Result<String, P2Error> {
     Ok(format!(
-        "{{\"v\":{},\"alg\":{},\"sid\":{},\"sn\":{},\"hn\":{},\"pk\":{},\"am\":{},\"code\":{},\"iat\":{},\"exp\":{},\"nonce\":{}}}",
+        "{{\"v\":{},\"alg\":{},\"sid\":{},\"sn\":{},\"hn\":{},\"pk\":{},\"am\":{},\"code\":{},\"iat\":{},\"exp\":{},\"nonce\":{},\"conn\":{}}}",
         document.v,
         json_string(&document.alg)?,
         json_string(&document.sid)?,
@@ -93,6 +115,10 @@ fn canonical_unsigned(document: &UnsignedQrDocument) -> Result<String, P2Error> 
         document.iat,
         document.exp,
         json_string(&document.nonce)?,
+        match &document.conn {
+            Some(conn) => json_string(conn)?,
+            None => "null".to_owned(),
+        },
     ))
 }
 

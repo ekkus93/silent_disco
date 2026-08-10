@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::domain::SessionId;
+use crate::transport::{MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES, ManualHostEndpoint};
 
 pub const P2_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_RECENT_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
