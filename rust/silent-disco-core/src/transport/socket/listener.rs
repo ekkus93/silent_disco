@@ -34,7 +34,12 @@ pub struct SocketListenerTransport {
     control_sender: ControlSender,
     control_stream: Mutex<TcpStream>,
     sync_socket: Arc<UdpSocket>,
-    event_receiver: Receiver<TransportEvent>,
+    /// The receiver has its own lock, held only for the duration of a
+    /// receive. It is deliberately *not* the lock the send methods use:
+    /// `recv_event` takes `&self` so a poll parked here cannot delay a
+    /// concurrent send, which is what previously made a clock-sync probe's
+    /// measured round trip include the poll's own wait.
+    event_receiver: Mutex<Receiver<TransportEvent>>,
     workers: Mutex<Vec<thread::JoinHandle<()>>>,
     shutdown_complete: bool,
 }
@@ -190,7 +195,7 @@ impl SocketListenerTransport {
             control_sender,
             control_stream: Mutex::new(shutdown_copy),
             sync_socket,
-            event_receiver,
+            event_receiver: Mutex::new(event_receiver),
             workers: Mutex::new(workers),
             shutdown_complete: false,
         })
@@ -266,8 +271,12 @@ impl ListenerTransportNode for SocketListenerTransport {
         }
     }
 
-    fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
-        recv_event(&self.event_receiver, timeout)
+    fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError> {
+        let receiver = self
+            .event_receiver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        recv_event(&receiver, timeout)
     }
 
     fn counters(&self) -> TransportCounters {

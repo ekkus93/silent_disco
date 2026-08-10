@@ -344,9 +344,6 @@ fn wait_for_host_join_request(
 /// borderline samples past the estimator's 200ms acceptance gate, and a
 /// stream that cannot accept a single sample cannot start playing at all.
 #[test]
-#[ignore = "known defect: recv_event needs &mut self, so poll_event holds the mutex sends \
-            also need. Fixing it means letting recv_event take &self (its channel receiver \
-            already allows that) -- a core trait change. See memory.md 2026-08-10."]
 fn a_sync_probe_is_not_blocked_by_a_concurrent_poll() {
     let session_id = SessionId::new("listener-probe-not-blocked").expect("session id");
     let mut host = bind_loopback_host(&session_id);

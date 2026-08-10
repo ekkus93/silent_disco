@@ -1476,3 +1476,39 @@ Reproduced with a new integration test, `a_sync_probe_is_not_blocked_by_a_concur
 - **`t4` is stamped after dispatch, not at receipt.** The listener's sync receiver already stamps an accurate `received_at` at the socket, but `map_event` discards it. Host side is clean by comparison (t2 at socket receipt, t3 at send, so host hold time is correctly subtracted).
 - **Pending probes never expire** (`estimator.rs`): the map only shrinks in `observe_response`, so 64 lost responses permanently brick `beginSyncProbe`, after which the Kotlin loop silently stops sending for the rest of the stream. A heavy-loss stall would become *permanent* silence. Latent here (pending peaked ~12) but a real reliability hazard.
 - Pre-lock discard is deliberate and correct (buffering them overflows the reorder window); a bounded pre-sync buffer could save at most ~1s and cannot touch a 23s acquisition stall.
+
+## 2026-08-10T00:40:00Z - Claude Opus 5 - recv_event(&self) landed: sync acceptance 19% -> 98%, catastrophic tail eliminated
+
+Implemented the deferred fix. `ListenerTransportNode::recv_event` now takes `&self`, so `poll_event` no longer holds a lock that the send methods need.
+
+### What it actually took
+
+- **The trait change was trivial**: all three `recv_event` impls already only used `&self` internally (`recv_event(&self.event_receiver, timeout)`); the `&mut self` was pure signature artifact.
+- **Real obstacle 1**: `mpsc::Receiver` is `Send` but **not `Sync`**, so `&self` alone was not enough. Each listener's receiver is now wrapped in its *own* mutex, deliberately separate from the send path -- a parked receive holds only the receiver lock.
+- **Real obstacle 2**: `FaultInjectingListenerTransport` genuinely mutates while receiving, so its fault state got interior mutability (test-only helper, lock cost irrelevant).
+- `ListenerTransportNode` now requires `Send + Sync` -- the honest bound, since the transport is now genuinely shared across threads rather than merely moved.
+- The FFI handle went `Mutex` -> `RwLock`: poll and sends take **read** guards concurrently; only teardown takes the write guard.
+- `HostTransportNode::recv_event` was left `&mut self` -- the host has no equivalent contention today.
+
+### Measured on the LG G6, 3 unattended runs each side
+
+| | before (n=8) | after (n=6) |
+|---|---|---|
+| sync acceptance | 39/210 = **19%** | 116/118 = **98%** |
+| accepted RTT median / max | 120.3 / 183.0 ms | **23.0 / 73.0 ms** |
+| ringSilenceFilled min/median/max | 71,376 / 172,920 / **1,281,840** | 50,256 / **91,704** / **121,968** |
+| droppedBeforeSync max | 4,629 | **319** |
+
+**The catastrophic tail is eliminated**: worst case fell 10.5x, and the *entire* after-distribution now sits below the before-*median*. The spread collapsed from 18x to 2.4x. Against the noise floor established earlier (differences under ~2x are indistinguishable), this is categorical, not variance -- which is the standard this session had to learn the hard way.
+
+Confirms the diagnosis exactly: measured RTT was self-inflicted. Removing a lock the sends never needed took median RTT from 120ms to 23ms against a 7.7ms physical floor, and with samples no longer pushed past the 200ms acceptance gate, sync acquires almost immediately instead of stalling for tens of seconds.
+
+### Process note worth keeping
+
+Three separate over-replacements happened while editing (`str.replace` hit the *host* trait, then host impls, then the host constructor) because host and listener share method names within the same files. The compiler caught each immediately, but targeting by struct name from the start would have avoided the churn. When two similar traits live in one file, anchor edits on the enclosing type.
+
+### Still open
+
+- `t4` is still stamped after dispatch rather than at socket receipt, though the receiver already captures an accurate `received_at`. Now a smaller effect, but it is the remaining known contaminant.
+- Pending sync probes never age out (`estimator.rs`); 64 lost responses would permanently brick probing. Latent, but a real reliability hazard.
+- Startup still costs ~1s of buffering by design (`STARTUP_BUFFER_MS`), now the dominant remaining silence.

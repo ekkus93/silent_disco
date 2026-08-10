@@ -153,7 +153,7 @@ impl TransportFactory for VirtualTransportFactory {
             device_id: config.device_id,
             control_address,
             local_routes: routes,
-            event_receiver,
+            event_receiver: Mutex::new(event_receiver),
             counters: Arc::new(Mutex::new(TransportCounters::default())),
             shutdown_complete: false,
         }))
@@ -499,7 +499,12 @@ struct VirtualListenerTransport {
     device_id: DeviceId,
     control_address: SocketAddr,
     local_routes: ListenerDatagramRoutes,
-    event_receiver: Receiver<TransportEvent>,
+    /// The receiver has its own lock, held only for the duration of a
+    /// receive. It is deliberately *not* the lock the send methods use:
+    /// `recv_event` takes `&self` so a poll parked here cannot delay a
+    /// concurrent send, which is what previously made a clock-sync probe's
+    /// measured round trip include the poll's own wait.
+    event_receiver: Mutex<Receiver<TransportEvent>>,
     counters: Arc<Mutex<TransportCounters>>,
     shutdown_complete: bool,
 }
@@ -607,8 +612,12 @@ impl ListenerTransportNode for VirtualListenerTransport {
         TransportDelivery::new(1, 1, 0, u64::try_from(encoded_len).unwrap_or(u64::MAX))
     }
 
-    fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
-        recv_virtual_event(&self.event_receiver, timeout)
+    fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError> {
+        let receiver = self
+            .event_receiver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        recv_virtual_event(&receiver, timeout)
     }
 
     fn counters(&self) -> TransportCounters {

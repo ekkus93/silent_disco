@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::domain::DeviceId;
@@ -71,7 +71,7 @@ impl TransportFactory for FaultInjectingVirtualTransportFactory {
         let inner = self.inner.connect_listener(config, clock)?;
         Ok(Box::new(FaultInjectingListenerTransport {
             inner,
-            faults: VirtualUdpFaultState::new(self.config),
+            faults: Mutex::new(VirtualUdpFaultState::new(self.config)),
         }))
     }
 }
@@ -155,7 +155,12 @@ impl HostTransportNode for FaultInjectingHostTransport {
 
 struct FaultInjectingListenerTransport {
     inner: Box<dyn ListenerTransportNode>,
-    faults: VirtualUdpFaultState,
+    /// Behind a mutex because `ListenerTransportNode::recv_event` takes
+    /// `&self` -- deliberately, so a receive cannot serialise against the
+    /// send methods. Fault injection is the one listener implementation that
+    /// genuinely mutates while receiving, and this is a test-only helper, so
+    /// the lock costs nothing that matters.
+    faults: Mutex<VirtualUdpFaultState>,
 }
 
 impl ListenerTransportNode for FaultInjectingListenerTransport {
@@ -174,9 +179,14 @@ impl ListenerTransportNode for FaultInjectingListenerTransport {
         self.inner.send_sync_request(request)
     }
 
-    fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
-        let Self { inner, faults } = self;
-        recv_faulted_event(timeout, faults, |remaining| inner.recv_event(remaining))
+    fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError> {
+        let mut faults = self
+            .faults
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        recv_faulted_event(timeout, &mut faults, |remaining| {
+            self.inner.recv_event(remaining)
+        })
     }
 
     fn counters(&self) -> TransportCounters {

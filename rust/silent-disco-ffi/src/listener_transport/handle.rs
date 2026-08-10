@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use silent_disco_core::domain::{DeviceId, MonotonicMillis};
@@ -66,7 +66,11 @@ pub fn parse_manual_host_endpoint(
 /// its own.
 #[derive(uniffi::Object)]
 pub struct FfiListenerTransportHandle {
-    inner: Mutex<Option<Inner>>,
+    /// A read/write lock, not a mutex, and that distinction is the point:
+    /// `poll_event` blocks inside its receive while holding a **read**
+    /// guard, and the send methods take read guards too, so a probe can be
+    /// sent while a poll is parked. Only teardown needs the write guard.
+    inner: RwLock<Option<Inner>>,
     /// When set, received audio datagrams are submitted straight to this
     /// runtime inside [`Self::poll_event`] instead of being surfaced to the
     /// foreign caller. See [`Self::attach_playback`].
@@ -129,7 +133,7 @@ impl FfiListenerTransportHandle {
         Ok(Arc::new(Self {
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
-            inner: Mutex::new(Some(Inner {
+            inner: RwLock::new(Some(Inner {
                 transport,
                 session_id,
                 device_id,
@@ -252,8 +256,8 @@ impl FfiListenerTransportHandle {
                 return Ok(None);
             }
             let event = {
-                let mut guard = self.lock()?;
-                let inner = guard.as_mut().ok_or_else(|| {
+                let guard = self.read()?;
+                let inner = guard.as_ref().ok_or_else(|| {
                     FfiListenerTransportError::Closed("transport is closed".to_owned())
                 })?;
                 match inner.transport.recv_event(remaining) {
@@ -311,7 +315,7 @@ impl FfiListenerTransportHandle {
 
     /// Idempotently shuts down and joins every transport worker.
     pub fn shutdown(&self) -> Result<(), FfiListenerTransportError> {
-        let mut guard = self.lock()?;
+        let mut guard = self.write()?;
         let Some(mut inner) = guard.take() else {
             return Ok(());
         };
@@ -320,19 +324,29 @@ impl FfiListenerTransportHandle {
 }
 
 impl FfiListenerTransportHandle {
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Option<Inner>>, FfiListenerTransportError> {
-        self.inner.lock().map_err(|_| {
+    fn read(
+        &self,
+    ) -> Result<std::sync::RwLockReadGuard<'_, Option<Inner>>, FfiListenerTransportError> {
+        self.inner.read().map_err(|_| {
+            FfiListenerTransportError::Closed("transport lock was poisoned".to_owned())
+        })
+    }
+
+    fn write(
+        &self,
+    ) -> Result<std::sync::RwLockWriteGuard<'_, Option<Inner>>, FfiListenerTransportError> {
+        self.inner.write().map_err(|_| {
             FfiListenerTransportError::Closed("transport lock was poisoned".to_owned())
         })
     }
 
     fn with_transport<T>(
         &self,
-        action: impl FnOnce(&mut Inner) -> Result<T, FfiListenerTransportError>,
+        action: impl FnOnce(&Inner) -> Result<T, FfiListenerTransportError>,
     ) -> Result<T, FfiListenerTransportError> {
-        let mut guard = self.lock()?;
+        let guard = self.read()?;
         let inner = guard
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| FfiListenerTransportError::Closed("transport is closed".to_owned()))?;
         action(inner)
     }
@@ -340,7 +354,7 @@ impl FfiListenerTransportHandle {
 
 impl Drop for FfiListenerTransportHandle {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.inner.lock()
+        if let Ok(mut guard) = self.inner.write()
             && let Some(mut inner) = guard.take()
         {
             drop(inner.transport.shutdown());
@@ -482,7 +496,7 @@ mod audio_forwarding_tests {
     use silent_disco_core::protocol::{AudioCodec, AudioDatagram, ControlMessage, Disconnect};
     use silent_disco_core::transport::{TransportChannel, TransportEvent, TransportPeer};
     use std::sync::atomic::AtomicU64;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
 
     const SAMPLES_PER_PACKET: u32 = 240;
 
@@ -491,7 +505,7 @@ mod audio_forwarding_tests {
     /// without sockets or timing.
     fn detached_handle() -> FfiListenerTransportHandle {
         FfiListenerTransportHandle {
-            inner: Mutex::new(None),
+            inner: RwLock::new(None),
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
         }

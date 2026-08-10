@@ -56,12 +56,25 @@ pub trait HostTransportNode: Send {
     fn shutdown(&mut self) -> Result<(), TransportError>;
 }
 
-pub trait ListenerTransportNode: Send {
+/// `Sync` as well as `Send`: [`Self::recv_event`] takes `&self`, so a
+/// listener transport is genuinely shared across threads -- one polling
+/// while another sends -- rather than merely moved between them.
+pub trait ListenerTransportNode: Send + Sync {
     fn local_routes(&self) -> ListenerDatagramRoutes;
     fn send_control(&self, message: &ControlMessage) -> Result<TransportDelivery, TransportError>;
     fn send_sync_request(&self, request: &SyncRequest)
     -> Result<TransportDelivery, TransportError>;
-    fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError>;
+    /// Receives the next event, blocking up to `timeout`.
+    ///
+    /// Takes `&self` deliberately: every implementation delegates to a
+    /// channel receiver, which needs no exclusivity, and requiring `&mut`
+    /// forced callers to hold an exclusive lock across a long blocking
+    /// receive -- which then serialised against the `&self` send methods
+    /// above. That made a clock-sync probe wait for the current receive
+    /// before it could be sent, and since round-trip time is measured from
+    /// a timestamp taken before the send, the wait was counted as network
+    /// latency.
+    fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError>;
     fn counters(&self) -> TransportCounters;
     fn shutdown(&mut self) -> Result<(), TransportError>;
 }
