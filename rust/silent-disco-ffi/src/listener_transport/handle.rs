@@ -91,6 +91,11 @@ struct Inner {
     transport: Box<dyn ListenerTransportNode>,
     session_id: silent_disco_core::domain::SessionId,
     device_id: DeviceId,
+    /// The exact clock instance passed to `connect_listener`, retained so
+    /// `FfiListenerTransportHandle::now_ms` can be queried on the same
+    /// timeline `TransportEvent::FrameReceived::received_at` is stamped on.
+    /// See `now_ms`'s doc comment for why that matters.
+    clock: Arc<dyn TransportClock>,
 }
 
 #[allow(
@@ -129,7 +134,8 @@ impl FfiListenerTransportHandle {
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
         };
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
-        let transport = production_transport_factory().connect_listener(config, clock)?;
+        let transport =
+            production_transport_factory().connect_listener(config, Arc::clone(&clock))?;
         Ok(Arc::new(Self {
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
@@ -137,6 +143,7 @@ impl FfiListenerTransportHandle {
                 transport,
                 session_id,
                 device_id,
+                clock,
             })),
         }))
     }
@@ -282,6 +289,20 @@ impl FfiListenerTransportHandle {
         }
     }
 
+    /// This transport's own clock, read now.
+    ///
+    /// On a *different* timeline than the playback runtime's `now_ms` --
+    /// each is `Instant::now()` at its own construction, and the transport
+    /// connects before a stream's runtime exists. To translate a
+    /// `SyncResponseReceived.received_at_elapsed_ms` onto the runtime's
+    /// timeline, read both clocks back-to-back at runtime creation and
+    /// subtract: since both wrap the same underlying monotonic source, that
+    /// one-time delta stays exact for the rest of the process (Instant
+    /// deltas are not subject to drift the way wall-clock deltas are).
+    pub fn now_ms(&self) -> Result<u64, FfiListenerTransportError> {
+        self.with_transport(|inner| Ok(inner.clock.now().get()))
+    }
+
     pub fn local_routes(&self) -> Result<FfiListenerDatagramRoutes, FfiListenerTransportError> {
         self.with_transport(|inner| {
             let routes = inner.transport.local_routes();
@@ -407,12 +428,14 @@ fn map_event(event: TransportEvent) -> Option<FfiListenerTransportEvent> {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Synchronization,
             frame: ProtocolFrame::SyncResponse(response),
+            received_at,
             ..
         } => Some(FfiListenerTransportEvent::SyncResponseReceived {
             correlation_id: response.correlation_id,
             t1_listener_send_elapsed_ms: response.t1_listener_send_elapsed_ms.get(),
             t2_host_receive_elapsed_ms: response.t2_host_receive_elapsed_ms.get(),
             t3_host_send_elapsed_ms: response.t3_host_send_elapsed_ms.get(),
+            received_at_elapsed_ms: received_at.get(),
         }),
         TransportEvent::FrameReceived {
             channel: TransportChannel::Audio,

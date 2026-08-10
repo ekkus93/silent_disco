@@ -1564,3 +1564,38 @@ The previous entry's A1 ("listener never notices host is gone", cited as highest
 
 ### Next
 A2 (stamp `t4` at socket receipt).
+
+## 2026-08-10T03:42:07Z - Claude Sonnet 5 - A2: t4 stamped at socket receipt via a translated clock delta
+
+### Implementation
+
+`t4` was stamped in Kotlin via `runtime.nowMs()` (`PumpClock`) at whatever moment the event happened to be *processed*, after any dispatch delay. The transport's own receiver thread already stamps an accurate `received_at` (`TransportClock`) at socket receipt, but `map_event` discarded it.
+
+The two clocks have different origins (the transport connects before any stream's `FfiListenerPlaybackHandle`/`PumpClock` exists), so `received_at` cannot be used as `t4` directly -- mixing clock bases would corrupt both the RTT and the absolute offset used to schedule playback, not just the diagnostics. Both are `Instant`-backed, so a **one-time delta**, captured by reading both clocks back-to-back at the moment a new runtime is created, is exact and stable for the process lifetime (`Instant` deltas do not drift the way wall-clock deltas can -- both wrap the same underlying monotonic source).
+
+Changes:
+- `FfiListenerTransportHandle::now_ms()` (Rust): retains the exact `Arc<dyn TransportClock>` passed to `connect_listener` on `Inner`, so it can be queried later without touching the `ListenerTransportNode` trait.
+- `SyncResponseReceived` gained `received_at_elapsed_ms: u64`, the transport clock's reading at receipt (`map_event` now binds `received_at` instead of discarding it via `..`).
+- Kotlin: `transportClockOriginMs` captured once per new playback runtime (right where `playbackRuntime = runtime` is set in `handleStreamStarted`'s new-stream branch -- the pump clock's `nowMs()` is ~0 at that instant). `translateToPumpClock()` computes `receivedAtElapsedMs - origin`, falling back to the old `runtime.nowMs()` behaviour if no origin was captured. Reset to null on `endStream` alongside the other per-runtime fields.
+
+### Verified, not just built
+
+Real-device run, split by stream (the only valid comparison, since each stream's `PumpClock` origin differs -- confirmed the aggregate offset spread of 36,658ms is exactly that cross-stream artifact, not a bug, matching what an earlier session entry already found for the analogous cross-stream RTT-step false alarm):
+
+| | stream 1 | stream 2 |
+|---|---|---|
+| sync acceptance | 13/21 (62%) | 17/20 (85%) |
+| accepted RTT median | 64.0ms | 53.0ms |
+| **within-stream** offsetMs spread | 47.3ms | 69.8ms |
+| hardResyncs | 0 | 0 |
+
+**No evidence of a translation bug**: within-stream offset stays tightly bounded and in a sane range for both streams, which is what a correct delta translation predicts and what a wrong one would not produce. `hardResyncs=0` on both streams, at or better than any prior run.
+
+**RTT is higher than the single best prior run (23ms median)**, but this session already established (n=8, before any A2/A3 work) that accepted-RTT distributions swing roughly 20-45ms+ run to run on identical code, with concealed/late/silence spans varying up to 18x. One run cannot separate "A2 made RTT worse" from "this is where today's noise floor happens to land" -- that judgment is exactly what A4.1 (distribution over >=4 runs, after A2 and A3 both land) is for, and is deliberately deferred there rather than over-interpreted from n=1 here.
+
+### Gates
+
+`bash scripts/check-rust.sh`, `cd desktop && npm run check`, `./gradlew test lintDebug` all green. One clippy function-length lint required extracting a test assertion into `assert_sync_response_matches`; one manifest XML lesson from earlier in this entry's session (comments cannot contain `--` except as the closing delimiter) did not recur here.
+
+### Next
+A3 (expire pending sync probes, `sync/estimator.rs`).

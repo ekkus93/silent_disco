@@ -93,6 +93,14 @@ pub enum FfiListenerTransportEvent {
         t1_listener_send_elapsed_ms: u64,
         t2_host_receive_elapsed_ms: u64,
         t3_host_send_elapsed_ms: u64,
+        /// This transport's own clock reading at the moment the response's
+        /// receiver thread pulled it off the socket -- i.e. as close to `t4`
+        /// as this layer can get, before any FFI/dispatch delay. On a
+        /// *different* timeline than `now_ms` on the playback runtime, so a
+        /// caller combining the two must first translate through
+        /// `FfiListenerTransportHandle::now_ms`, not use this value
+        /// directly as `t4`.
+        received_at_elapsed_ms: u64,
     },
     /// One inbound audio datagram, in wire order, not yet scheduled for playback.
     AudioReceived {

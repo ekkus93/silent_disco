@@ -151,6 +151,16 @@ class ManualListenerTransportController(
     private var playbackRuntime: FfiListenerPlaybackHandle? = null
     private var currentStreamId: StreamId? = null
 
+    /**
+     * The transport's own clock, read at [playbackRuntime]'s construction
+     * (when its `nowMs()` was ~0), so it doubles as that transport-clock
+     * reading's translation into the runtime's timeline. The transport
+     * connects before any stream's runtime exists, so the two clocks have
+     * different origins -- see [FfiListenerTransportEvent.SyncResponseReceived]'s
+     * `receivedAtElapsedMs` doc comment and [translateToPumpClock].
+     */
+    private var transportClockOriginMs: ULong? = null
+
     private val _connectState = MutableStateFlow<ManualConnectUiState>(ManualConnectUiState.Idle)
     val connectState: StateFlow<ManualConnectUiState> = _connectState.asStateFlow()
 
@@ -376,13 +386,37 @@ class ManualListenerTransportController(
     }
 
     /**
+     * Translates a [FfiListenerTransportEvent.SyncResponseReceived.receivedAtElapsedMs]
+     * (the transport's own clock) onto [playbackRuntime]'s timeline, using
+     * the one-time delta captured in [transportClockOriginMs].
+     *
+     * Both clocks are `Instant`-backed with different origins, so their
+     * *deltas* -- not raw readings -- are what is comparable. `elapsedTransport
+     * - originTransport` is the elapsed time since the runtime's own t=0, in
+     * transport-clock units; since both clocks tick at the same real rate,
+     * that is exactly the runtime-clock elapsed time too. Falls back to the
+     * live `nowMs()` (the pre-fix behaviour, dispatch delay included) if no
+     * origin was captured -- still correct, just not as tight.
+     */
+    private fun translateToPumpClock(runtime: FfiListenerPlaybackHandle, elapsedTransportMs: ULong): ULong {
+        val origin = transportClockOriginMs ?: return runtime.nowMs()
+        return if (elapsedTransportMs >= origin) elapsedTransportMs - origin else 0uL
+    }
+
+    /**
      * Forwards one four-timestamp exchange to the Rust estimator.
      *
-     * `t4` is the moment this event is observed, taken from the runtime's own
-     * clock so the estimate and the playback timeline share one timeline.
-     * Nothing here interprets the sample: acceptance, offset, and skew are the
-     * estimator's to decide, and a listener that computed any of them would be
-     * duplicating domain logic it cannot keep consistent.
+     * `t4` is stamped as close to the response's actual socket receipt as
+     * this layer can get -- translated from the transport's own clock via
+     * [translateToPumpClock] -- rather than at the moment this event happens
+     * to be processed. The two used to be conflated: any delay between
+     * receipt and processing (dispatch, queued audio ahead of it in the old
+     * per-packet event stream) was counted as network round-trip time,
+     * which is what pushed marginal samples past the estimator's acceptance
+     * gate on a real device. Nothing here interprets the sample: acceptance,
+     * offset, and skew are the estimator's to decide, and a listener that
+     * computed any of them would be duplicating domain logic it cannot keep
+     * consistent.
      */
     private fun handleSyncResponse(event: FfiListenerTransportEvent.SyncResponseReceived) {
         val runtime = playbackRuntime ?: return
@@ -392,7 +426,7 @@ class ManualListenerTransportController(
                 event.t1ListenerSendElapsedMs,
                 event.t2HostReceiveElapsedMs,
                 event.t3HostSendElapsedMs,
-                runtime.nowMs(),
+                translateToPumpClock(runtime, event.receivedAtElapsedMs),
             )
         }.getOrElse { error ->
             logger.w("manual.audio.sync_rejected", error.message ?: "sync response rejected")
@@ -493,6 +527,12 @@ class ManualListenerTransportController(
         }
         playbackRuntime = runtime
         currentStreamId = StreamId(event.streamId)
+        // Read back-to-back with the runtime's own clock (just constructed,
+        // so its `nowMs()` is ~0) so `transportClockOriginMs` is the
+        // transport clock's reading at the runtime's own t=0. See
+        // `translateToPumpClock` for how this turns a transport-clock
+        // receive timestamp into the runtime's timeline.
+        transportClockOriginMs = runCatching { handle.nowMs() }.getOrNull()
 
         // Reuse the stream this session was already granted whenever one is
         // open, so a track change swaps only the content. Reopening is the
@@ -615,6 +655,7 @@ class ManualListenerTransportController(
         }
         playbackRuntime = null
         currentStreamId = null
+        transportClockOriginMs = null
         // Detach before stopping: the transport must not submit into a
         // runtime that is shutting down.
         runCatching { handleRef.get()?.detachPlayback() }

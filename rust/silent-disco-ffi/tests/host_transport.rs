@@ -68,6 +68,33 @@ fn poll_listener_until(
     }
 }
 
+/// `received_at_elapsed_ms` is a real clock reading taken when the response
+/// was pulled off the socket, not a value a test can predict -- the wire
+/// fields are checked exactly, and the new one only for sanity (present,
+/// and not absurdly large for a test that runs in well under a second).
+fn assert_sync_response_matches(event: &FfiListenerTransportEvent) {
+    match *event {
+        FfiListenerTransportEvent::SyncResponseReceived {
+            correlation_id,
+            t1_listener_send_elapsed_ms,
+            t2_host_receive_elapsed_ms,
+            t3_host_send_elapsed_ms,
+            received_at_elapsed_ms,
+        } => {
+            assert_eq!(correlation_id, 42);
+            assert_eq!(t1_listener_send_elapsed_ms, 1_000);
+            assert_eq!(t2_host_receive_elapsed_ms, 1_005);
+            assert_eq!(t3_host_send_elapsed_ms, 1_007);
+            assert!(
+                received_at_elapsed_ms < 60_000,
+                "received_at_elapsed_ms should be a small elapsed-since-connect reading for a \
+                 fast test, got {received_at_elapsed_ms}"
+            );
+        }
+        ref other => panic!("expected SyncResponseReceived, got {other:?}"),
+    }
+}
+
 #[test]
 fn host_transport_completes_join_request_through_approval_and_disconnect() {
     let host = FfiHostTransportHandle::bind(
@@ -299,15 +326,7 @@ fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
             FfiListenerTransportEvent::SyncResponseReceived { .. }
         )
     });
-    assert_eq!(
-        sync_response,
-        FfiListenerTransportEvent::SyncResponseReceived {
-            correlation_id: 42,
-            t1_listener_send_elapsed_ms: 1_000,
-            t2_host_receive_elapsed_ms: 1_005,
-            t3_host_send_elapsed_ms: 1_007,
-        }
-    );
+    assert_sync_response_matches(&sync_response);
 
     // PCM16 stereo payload size must equal samples_per_packet * channels * 2 bytes.
     let payload_bytes: Vec<u8> = (0..3_840_u32)
