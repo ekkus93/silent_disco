@@ -331,3 +331,63 @@ fn wait_for_host_join_request(
         }
     }
 }
+
+/// A clock-sync probe must be sendable immediately, even while another
+/// thread is parked in `poll_event` waiting for inbound events.
+///
+/// `poll_event` used to hold the handle's transport mutex for the whole of
+/// its blocking receive, and `send_sync_request` needs that same mutex. A
+/// probe therefore stamped its `t1` and then blocked until the next event
+/// arrived or the poll timed out -- and since round-trip time is computed as
+/// `(t4 - t1) - (t3 - t2)`, every millisecond of that self-inflicted block
+/// was counted as network latency. Measured on a real device, that pushed
+/// borderline samples past the estimator's 200ms acceptance gate, and a
+/// stream that cannot accept a single sample cannot start playing at all.
+#[test]
+#[ignore = "known defect: recv_event needs &mut self, so poll_event holds the mutex sends \
+            also need. Fixing it means letting recv_event take &self (its channel receiver \
+            already allows that) -- a core trait change. See memory.md 2026-08-10."]
+fn a_sync_probe_is_not_blocked_by_a_concurrent_poll() {
+    let session_id = SessionId::new("listener-probe-not-blocked").expect("session id");
+    let mut host = bind_loopback_host(&session_id);
+    let endpoint = host.endpoint();
+    let payload = manual_payload(
+        &endpoint.address.to_string(),
+        endpoint.control_port,
+        endpoint.sync_port,
+        endpoint.audio_port,
+        session_id.as_str(),
+        current_protocol_version(),
+    );
+    let listener = FfiListenerTransportHandle::connect(
+        payload,
+        0,
+        "listener-probe-device".to_owned(),
+        "127.0.0.1".to_owned(),
+    )
+    .expect("listener connects");
+
+    // Park a thread in a long poll with no events flowing, so the poll is
+    // sitting in its blocking receive when the probe below is sent.
+    let polling = Arc::clone(&listener);
+    let poller = std::thread::spawn(move || {
+        let _ = polling.poll_event(1_000);
+    });
+    std::thread::sleep(Duration::from_millis(100));
+
+    let started = Instant::now();
+    listener
+        .send_sync_request(1, 0)
+        .expect("probe should be sendable while another thread polls");
+    let elapsed = started.elapsed();
+
+    poller.join().expect("poll thread");
+    listener.shutdown().expect("listener shuts down");
+    host.shutdown().expect("host stops");
+
+    assert!(
+        elapsed < Duration::from_millis(150),
+        "sending a sync probe took {elapsed:?} while a poll was in flight; it must not wait for \
+         the poll's receive to finish, or the wait is miscounted as network round-trip time"
+    );
+}

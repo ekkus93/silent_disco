@@ -1448,3 +1448,31 @@ Ran the manual test 3 more times unattended (a driver script starts the test, au
 **Consequence 3 -- a genuine reliability finding, not a measurement artifact.** One of 8 streams (12.5%) logged **1,281,840 silence frames -- ~27 seconds** of injected silence, with 6,677 underruns and 4,629 droppedBeforeSync. That is a catastrophic-outcome tail of roughly 1 stream in 8, against a project success criterion of "listeners hear the same thing about 99% of the time". The tail, not the median, is the thing to chase next: the median stream is now decent, but the worst case is not close to acceptable.
 
 **Standing rule for this device:** compare distributions over >=4 runs per configuration, never single numbers. Differences under ~2x are indistinguishable from noise.
+
+## 2026-08-10T00:10:00Z - Claude Opus 5 - The 12.5% "tail" is a startup stall; a real self-inflicted RTT defect found and reproduced (fix deferred)
+
+### The outlier is not a tail, it is a startup stall
+
+Examined the per-second trace of the catastrophic stream (1,281,840 silence frames). It is **26 consecutive seconds of `phase=BUFFERING` with `ringQueued=0, emitted=0` before playback ever began**, followed by a flawless remainder (`underruns=+0 silenceFrames=+0`, ring steady at ~19,200). So the median stream and the "catastrophic" stream differ only in **how long they take to start**, not in steady-state quality. Chase startup, not steady state.
+
+Mechanism: **88 of 92 sync probes rejected**; the 4 accepted had RTT 176 / 89 / 74 / 81.5ms against a 200ms gate. Playback cannot start until sync locks, and pre-lock packets are discarded -- `droppedBeforeSync=4,629` is ~23s at 200 pkt/s, matching the stall. The first accepted sample (176ms) barely squeaked under the gate; the next three at 74-89ms show latency collapsing right then, i.e. an external radio-state change ended it.
+
+### My pre-attach-flood hypothesis was refuted, structurally
+
+A code review established that **no sync probes exist pre-attach at all**: the probe loop's first statement is `val runtime = playbackRuntime ?: break`, and `playbackRuntime` is only assigned in `handleStreamStarted`, so the loop started at `JoinApproved` exits immediately. Every measured probe ran post-attach, where audio is consumed inside Rust. The pre-attach window is also sub-second (`StreamStart` goes over TCP ahead of the datagrams, and all receiver threads share one FIFO channel).
+
+### The real defect found -- and reproduced deterministically
+
+`poll_event` holds the handle's transport mutex **across its whole blocking receive** (`handle.rs`), and `send_control`/`send_sync_request` need that same mutex. A probe stamps `t1`, then blocks until the next event arrives or the poll times out -- and since `RTT = (t4 - t1) - (t3 - t2)`, that self-inflicted wait is **counted as network latency**. This is why borderline samples get pushed past the 200ms gate.
+
+Reproduced with a new integration test, `a_sync_probe_is_not_blocked_by_a_concurrent_poll` (`rust/silent-disco-ffi/tests/listener_transport.rs`): park a thread in `poll_event(1000)` with no events flowing, then time `send_sync_request`. **Measured 900ms.** No device, no network variance.
+
+**An attempted fix did NOT work and was reverted**: slicing the receive into 10ms chunks so the guard is released between them. Still 900ms -- releasing for microseconds before the poll loop re-acquires starves the waiter, because `std::sync::Mutex` is not fair. Worth remembering: "release the lock more often" does not help against a tight re-acquire loop.
+
+**The correct fix, deferred:** the trait already has `send_control(&self)` and `send_sync_request(&self)` -- only `recv_event(&mut self)` needs exclusivity (`transport/boundary.rs:59-67`). Letting `recv_event` take `&self` removes the need for sends to share the receive lock at all; the socket listener's underlying `mpsc::Receiver::recv_timeout` already takes `&self`, so this is mostly mechanical, but it changes a core trait and its implementors (socket + virtual transport). The test is committed `#[ignore]`d with that reason so the reproduction is not lost.
+
+### Also flagged for later (from the same review, not yet acted on)
+
+- **`t4` is stamped after dispatch, not at receipt.** The listener's sync receiver already stamps an accurate `received_at` at the socket, but `map_event` discards it. Host side is clean by comparison (t2 at socket receipt, t3 at send, so host hold time is correctly subtracted).
+- **Pending probes never expire** (`estimator.rs`): the map only shrinks in `observe_response`, so 64 lost responses permanently brick `beginSyncProbe`, after which the Kotlin loop silently stops sending for the rest of the stream. A heavy-loss stall would become *permanent* silence. Latent here (pending peaked ~12) but a real reliability hazard.
+- Pre-lock discard is deliberate and correct (buffering them overflows the reorder window); a bounded pre-sync buffer could save at most ~1s and cannot touch a 23s acquisition stall.
