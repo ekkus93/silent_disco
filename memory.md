@@ -1599,3 +1599,28 @@ Real-device run, split by stream (the only valid comparison, since each stream's
 
 ### Next
 A3 (expire pending sync probes, `sync/estimator.rs`).
+
+## 2026-08-10T03:47:13Z - Claude Sonnet 5 - A3: pending sync probes now expire instead of permanently bricking the estimator
+
+### Implementation
+
+`ClockSyncEstimator::pending` (`rust/silent-disco-core/src/sync/estimator.rs`) only ever shrank in `observe_response`, so sustained response loss was unbounded: once 64 probes went unanswered, `begin_probe` failed with `PendingProbeLimitReached` forever, and the Kotlin probe loop treats a failed `begin_probe` as "do not send this probe either" -- so probing itself stopped, not just its accounting. A bad enough stall would have turned into *permanent* silence for the rest of the stream, not just a temporary one.
+
+Fixed with age-based eviction inside `begin_probe` itself: `local_send_time` (the caller's own fresh "now" for the probe being registered) doubles as the current-time reference for evicting anything older than `PENDING_PROBE_MAX_AGE_MS` (5000ms -- comfortably longer than the 200ms acceptance gate or anything observed on a real congested device this session). No new clock reference or scheduled sweep needed; a stall recovers on the very next probe attempt.
+
+### Tests (deterministic, no device)
+
+- `stale_pending_probes_are_evicted_so_probing_recovers_from_sustained_loss`: fills to `MAX_PENDING_PROBES`, confirms still-stuck one millisecond before the threshold, then confirms a probe succeeds *and every stale entry is gone* (not just one slot freed) once the threshold passes.
+- `a_probe_within_its_age_window_survives_a_later_begin_probe`: a young pending probe must still be answerable after a later `begin_probe` call -- eviction must not be trigger-happy and drop a probe whose real response is still in flight.
+- The pre-existing capacity test (`correlation_ids_are_bounded_unique_and_single_use`) registers all 64 probes at the identical timestamp and still expects the limit error -- passed unmodified, confirming eviction does not fire when nothing has actually aged.
+
+### Verification note -- deliberately NOT device-tested this entry
+
+This is a latent-hazard fix: triggering it for real needs 64 *consecutive* lost sync responses, which never happened in any run measured this session (`pending_probe_count` peaked around 12). Forcing that artificially right now would be a one-off, unrepresentative rig. **A6 (Wi-Fi disable/restore mid-playback) already induces real sustained loss** and will be the honest confirmation that this holds under real conditions -- deferring to it rather than inventing a redundant device experiment now.
+
+### Gates
+
+`bash scripts/check-rust.sh`, `cd desktop && npm run check`, `./gradlew test lintDebug` all green. No FFI/Kotlin signature changed, so no device install was needed for this entry.
+
+### Next
+A4.1 (re-measure quality as a distribution, >=4 runs, now that A1/A2/A3 have all landed).

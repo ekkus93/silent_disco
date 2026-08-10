@@ -14,6 +14,21 @@ use super::types::{
 pub const MAX_PENDING_PROBES: usize = 64;
 pub const MAX_ESTIMATOR_SAMPLES: usize = 128;
 pub const MAX_DRIFT_HISTORY_SAMPLES: usize = 256;
+/// Longest a probe may sit unanswered before `begin_probe` evicts it.
+///
+/// `pending` used to shrink only in `observe_response`, so response loss
+/// was unbounded: enough lost responses filled it to `MAX_PENDING_PROBES`
+/// and every later `begin_probe` failed permanently for the rest of the
+/// stream -- the caller's probe loop (Kotlin) treats a failed `begin_probe`
+/// as "do not send this probe either", so probing itself stopped, not just
+/// accounting for it. A stall that dropped enough responses in a row would
+/// have turned into permanent silence rather than eventual recovery. Five
+/// seconds is comfortably longer than any real round trip this estimator
+/// would ever accept (`max_accepted_rtt_ms` defaults to 200ms) or has been
+/// observed taking even on a badly congested real device this session, so
+/// eviction only ever discards probes whose response is genuinely never
+/// coming, not a slow-but-real one.
+pub const PENDING_PROBE_MAX_AGE_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SyncEstimatorConfig {
@@ -203,6 +218,10 @@ impl ClockSyncEstimator {
         if self.pending.contains_key(&correlation_id) {
             return Err(SyncEstimatorError::DuplicateCorrelationId { correlation_id });
         }
+        // `local_send_time` is the caller's own fresh "now" for this probe,
+        // so it doubles as the current time for evicting older ones -- no
+        // separate clock reference needed here.
+        self.evict_stale_pending_probes(local_send_time);
         if self.pending.len() >= MAX_PENDING_PROBES {
             return Err(SyncEstimatorError::PendingProbeLimitReached {
                 maximum: MAX_PENDING_PROBES,
@@ -210,6 +229,16 @@ impl ClockSyncEstimator {
         }
         self.pending.insert(correlation_id, local_send_time);
         Ok(())
+    }
+
+    /// Drops pending probes older than [`PENDING_PROBE_MAX_AGE_MS`]. Runs on
+    /// every `begin_probe`, so a stall recovers by itself on the very next
+    /// probe attempt rather than needing an explicit, separately-scheduled
+    /// sweep.
+    fn evict_stale_pending_probes(&mut self, now: LocalMonotonicMillis) {
+        self.pending.retain(|_, &mut sent_at| {
+            now.get().saturating_sub(sent_at.get()) < PENDING_PROBE_MAX_AGE_MS
+        });
     }
 
     /// Consumes one correlated response and updates the estimate when its RTT is
@@ -389,8 +418,8 @@ fn usize_to_f64(value: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClockSyncEstimator, MAX_PENDING_PROBES, SyncDecision, SyncEstimatorConfig,
-        SyncEstimatorError, SyncSnapshot,
+        ClockSyncEstimator, MAX_PENDING_PROBES, PENDING_PROBE_MAX_AGE_MS, SyncDecision,
+        SyncEstimatorConfig, SyncEstimatorError, SyncSnapshot,
     };
     use crate::{
         domain::SyncConfidence,
@@ -506,6 +535,82 @@ mod tests {
             ),
             Err(SyncEstimatorError::PendingProbeLimitReached { .. })
         ));
+    }
+
+    /// The regression this exists to prevent: before eviction, filling
+    /// `pending` with lost responses bricked `begin_probe` for the rest of
+    /// the stream, since nothing ever removed an entry except a matching
+    /// `observe_response`. A probe attempt after the age threshold must
+    /// recover on its own, not require every prior probe to eventually
+    /// answer.
+    #[test]
+    fn stale_pending_probes_are_evicted_so_probing_recovers_from_sustained_loss() {
+        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
+            .expect("default config is valid");
+        for id in 0..MAX_PENDING_PROBES {
+            estimator
+                .begin_probe(
+                    SyncCorrelationId::new(u64::try_from(id).expect("index fits u64")),
+                    LocalMonotonicMillis::new(1_000),
+                )
+                .expect("pending capacity not reached");
+        }
+        assert_eq!(estimator.pending_probe_count(), MAX_PENDING_PROBES);
+
+        // Still fully stuck one millisecond before the age threshold.
+        assert!(matches!(
+            estimator.begin_probe(
+                SyncCorrelationId::new(20_000),
+                LocalMonotonicMillis::new(1_000 + PENDING_PROBE_MAX_AGE_MS - 1),
+            ),
+            Err(SyncEstimatorError::PendingProbeLimitReached { .. })
+        ));
+
+        // At the threshold, every one of the 64 lost probes is stale and a
+        // fresh probe succeeds -- this is "recovers", not "shrinks slowly".
+        estimator
+            .begin_probe(
+                SyncCorrelationId::new(20_001),
+                LocalMonotonicMillis::new(1_000 + PENDING_PROBE_MAX_AGE_MS),
+            )
+            .expect("probing recovers once the lost probes have aged out");
+        assert_eq!(
+            estimator.pending_probe_count(),
+            1,
+            "eviction must drop every stale entry, not just make room for one"
+        );
+    }
+
+    /// Eviction must not be trigger-happy: a probe still within its answer
+    /// window has to survive a later `begin_probe` call, or a real,
+    /// in-flight response would arrive to find its correlation ID already
+    /// gone.
+    #[test]
+    fn a_probe_within_its_age_window_survives_a_later_begin_probe() {
+        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
+            .expect("default config is valid");
+        let first = SyncCorrelationId::new(1);
+        estimator
+            .begin_probe(first, LocalMonotonicMillis::new(1_000))
+            .expect("first probe registers");
+
+        estimator
+            .begin_probe(
+                SyncCorrelationId::new(2),
+                LocalMonotonicMillis::new(1_000 + PENDING_PROBE_MAX_AGE_MS - 1),
+            )
+            .expect("second probe registers just under the age threshold");
+
+        // The still-young first probe must still be answerable.
+        estimator
+            .observe_response(
+                first,
+                LocalMonotonicMillis::new(1_000),
+                HostMonotonicMillis::new(1_010),
+                HostMonotonicMillis::new(1_011),
+                LocalMonotonicMillis::new(1_020),
+            )
+            .expect("a response within the age window must still find its correlation ID");
     }
 
     #[test]
