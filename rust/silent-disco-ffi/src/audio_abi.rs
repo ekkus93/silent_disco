@@ -658,4 +658,103 @@ mod tests {
         registry.entries.remove(&last_token);
         registry.next_token = 1_000_000;
     }
+
+    /// Block 24: a real-time reader thread (standing in for the Oboe/JNI
+    /// callback) hammers `silent_disco_audio_read_interleaved_f32` on a live
+    /// token while the control-plane thread releases it mid-flight, repeated
+    /// many times with a fresh ring each iteration to vary the interleaving.
+    /// Every observed status must be one of the three the real-time path is
+    /// allowed to report (`Ok`, `Partial`, `Stopping`); `PanicContained`
+    /// would mean the release itself made the read path panic, and any other
+    /// value would mean a released token was misreported. Once
+    /// `release_render_ring` returns, every subsequent read on that token
+    /// must report `Stopping`, never fall back to `InvalidState` (which would
+    /// mean the registry lost track of a token that really did exist).
+    #[test]
+    fn concurrent_release_races_with_concurrent_reads_and_never_reports_panic_or_invalid_state() {
+        let _guard = registry_test_guard();
+        for iteration in 0_u32..200 {
+            let (producer, token) = register_render_ring(small_ring_config()).expect("registered");
+            // Give the reader something real to drain on some iterations, and
+            // nothing on others, so both a full-ring race and an empty-ring
+            // race against release are exercised.
+            if iteration % 2 == 0 {
+                let _ = producer.push_frames(&[1.0, 2.0]);
+            }
+
+            let reader_token = token;
+            let reader = std::thread::spawn(move || {
+                for _ in 0..500 {
+                    let mut output = [0.0_f32; 2];
+                    let mut frames_from_ring = 0_u32;
+                    let status = silent_disco_audio_read_interleaved_f32(
+                        token_as_engine(reader_token),
+                        output.as_mut_ptr(),
+                        1,
+                        2,
+                        &raw mut frames_from_ring,
+                    );
+                    assert!(
+                        (0..=2).contains(&status),
+                        "read during a release race reported {status}, not Ok/Partial/Stopping"
+                    );
+                }
+            });
+
+            release_render_ring(token).expect("released exactly once");
+            reader.join().expect("reader thread must not panic");
+
+            // A read taken strictly after release must be Stopping, never
+            // InvalidState (which would mean the token's identity was lost,
+            // not just its liveness).
+            let mut output = [0.0_f32; 2];
+            let mut frames_from_ring = 0_u32;
+            let status_after = silent_disco_audio_read_interleaved_f32(
+                token_as_engine(token),
+                output.as_mut_ptr(),
+                1,
+                2,
+                &raw mut frames_from_ring,
+            );
+            assert_eq!(status_after, 2 /* STOPPING */);
+        }
+    }
+
+    /// Block 24: many threads concurrently register and release rings
+    /// against the shared, process-global registry. No two threads may ever
+    /// be handed the same token (the registry's `next_token` counter must
+    /// stay correctly serialized under contention), and no thread's release
+    /// may fail as though its own registration never happened.
+    #[test]
+    fn concurrent_register_and_release_across_many_threads_never_collide_or_leak() {
+        let _guard = registry_test_guard();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let mut tokens = Vec::with_capacity(100);
+                    for _ in 0..100 {
+                        let (_producer, token) =
+                            register_render_ring(small_ring_config()).expect("registered");
+                        tokens.push(token);
+                    }
+                    for token in &tokens {
+                        release_render_ring(*token).expect("released exactly once");
+                    }
+                    tokens
+                })
+            })
+            .collect();
+
+        let mut all_tokens = Vec::new();
+        for thread in threads {
+            all_tokens.extend(thread.join().expect("worker thread must not panic"));
+        }
+
+        let unique: std::collections::BTreeSet<_> = all_tokens.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            all_tokens.len(),
+            "two threads were handed the same token concurrently"
+        );
+    }
 }

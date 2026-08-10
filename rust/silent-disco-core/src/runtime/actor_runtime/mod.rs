@@ -14,7 +14,7 @@ use crate::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 pub const DEFAULT_ACTOR_QUEUE_CAPACITY: usize = 64;
@@ -109,7 +109,15 @@ pub struct CoreActorRuntime {
 
 struct ActorShared {
     accepting: AtomicBool,
-    snapshot: RwLock<CoreSnapshot>,
+    /// A plain `Mutex`, not a `RwLock`, deliberately: `std::sync::RwLock`
+    /// makes no fairness guarantee between readers and writers, and on this
+    /// platform's implementation a sustained stream of `current_snapshot`
+    /// read-lock acquisitions from multiple foreign-call threads can starve
+    /// the actor's own write lock in `write_snapshot` indefinitely -- proven
+    /// by a genuine hang under `silent-disco-ffi`'s Block 24 concurrent
+    /// command-submission-during-shutdown stress test, not a hypothetical.
+    /// A `Mutex` has no such reader-preference bias.
+    snapshot: Mutex<CoreSnapshot>,
     actor_failure: Mutex<Option<CoreError>>,
     next_command_sequence: AtomicU64,
 }
@@ -156,7 +164,7 @@ impl CoreActorRuntime {
         let (sender, receiver) = sync_channel(config.actor_queue_capacity);
         let shared = Arc::new(ActorShared {
             accepting: AtomicBool::new(true),
-            snapshot: RwLock::new(CoreSnapshot::default()),
+            snapshot: Mutex::new(CoreSnapshot::default()),
             actor_failure: Mutex::new(None),
             next_command_sequence: AtomicU64::new(1),
         });
@@ -446,7 +454,7 @@ impl CoreActorHandle {
     fn read_snapshot(&self) -> Result<CoreSnapshot, CoreError> {
         self.shared
             .snapshot
-            .read()
+            .lock()
             .map(|snapshot| snapshot.clone())
             .map_err(|_| shared_state_error("actor snapshot cache was poisoned"))
     }
@@ -553,7 +561,7 @@ fn send_notification(
 fn write_snapshot(shared: &ActorShared, snapshot: &CoreSnapshot) -> Result<(), CoreError> {
     shared
         .snapshot
-        .write()
+        .lock()
         .map(|mut current| current.clone_from(snapshot))
         .map_err(|_| shared_state_error("actor snapshot cache was poisoned"))
 }

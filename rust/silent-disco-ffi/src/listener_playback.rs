@@ -1170,6 +1170,104 @@ mod tests {
         );
         assert_eq!(status, 2 /* STOPPING */);
     }
+
+    /// Block 24: repeatedly races `stop()` against a simulated Oboe callback
+    /// thread (continuously reading the engine token) and a simulated
+    /// network-arrival thread (continuously submitting packets), across many
+    /// fresh runtimes. This is the scenario the architecture spec calls out
+    /// by name: "stop and join the stream before releasing the Rust engine
+    /// token" -- if that ordering were ever violated, the callback thread
+    /// would read a released or reused token while still "active" from the
+    /// platform's point of view.
+    ///
+    /// Every iteration must: never panic on any thread, have `stop()` return
+    /// in bounded time regardless of how much concurrent traffic is in
+    /// flight, and leave the token reporting `Stopping` (never
+    /// `InvalidState`) once both threads have been joined.
+    #[test]
+    fn stop_races_repeatedly_against_a_simulated_audio_callback_and_packet_arrivals() {
+        let _guard = registry_test_guard();
+        for iteration in 0_u64..20 {
+            let runtime = Arc::new(
+                ListenerPlaybackRuntime::start(
+                    scheduler_config(),
+                    ring_config(),
+                    PlaybackPumpConfig::default(),
+                    0.0,
+                )
+                .expect("runtime starts"),
+            );
+            lock_sync_at_zero_offset(&runtime);
+            let token = runtime.engine_token();
+
+            let callback_running = Arc::new(AtomicBool::new(true));
+            let callback_flag = Arc::clone(&callback_running);
+            let callback_thread = thread::spawn(move || {
+                let mut output = [0.0_f32; 512];
+                while callback_flag.load(Ordering::SeqCst) {
+                    let mut frames_read = 0_u32;
+                    let status = silent_disco_audio_read_interleaved_f32(
+                        token_as_engine(token),
+                        output.as_mut_ptr(),
+                        256,
+                        2,
+                        &raw mut frames_read,
+                    );
+                    assert_ne!(
+                        status, -3, /* PANIC_CONTAINED */
+                        "the real-time read path must never panic under a stop race"
+                    );
+                }
+            });
+
+            let arrivals_running = Arc::new(AtomicBool::new(true));
+            let arrivals_flag = Arc::clone(&arrivals_running);
+            let arrivals_runtime = Arc::clone(&runtime);
+            let arrivals_thread = thread::spawn(move || {
+                let mut sequence = iteration * 10_000;
+                while arrivals_flag.load(Ordering::SeqCst) {
+                    // Both outcomes (accepted, or rejected because the
+                    // runtime already stopped) are legitimate; only a panic
+                    // or hang here would be a bug.
+                    let _ = arrivals_runtime.submit_packet(datagram(sequence));
+                    sequence += 1;
+                }
+            });
+
+            // Let both threads generate real concurrent load before racing
+            // the stop itself.
+            thread::sleep(Duration::from_millis(5));
+            let stop_started = Instant::now();
+            runtime
+                .stop()
+                .expect("stop succeeds even under concurrent load");
+            let stop_elapsed = stop_started.elapsed();
+            assert!(
+                stop_elapsed < Duration::from_secs(3),
+                "stop took {stop_elapsed:?} while racing a simulated audio callback"
+            );
+
+            arrivals_running.store(false, Ordering::SeqCst);
+            arrivals_thread
+                .join()
+                .expect("arrivals thread must not panic");
+            callback_running.store(false, Ordering::SeqCst);
+            callback_thread
+                .join()
+                .expect("callback thread must not panic");
+
+            let mut output = [0.0_f32; 2];
+            let mut frames_from_ring = 0_u32;
+            let status_after = silent_disco_audio_read_interleaved_f32(
+                token_as_engine(token),
+                output.as_mut_ptr(),
+                1,
+                2,
+                &raw mut frames_from_ring,
+            );
+            assert_eq!(status_after, 2 /* STOPPING */);
+        }
+    }
 }
 
 /// Everything needed to start one listener playback stream, flattened for the

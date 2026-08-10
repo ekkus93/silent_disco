@@ -110,3 +110,122 @@ fn trusted_device_cache_lists_and_deletes_authoritatively() {
     close_database(handle).expect("database closes");
     remove_database(&path);
 }
+
+/// Block 24: races `close_database` against a writer thread that never stops
+/// submitting real `SQLite` writes, repeated across several fresh databases to
+/// vary which side wins the race. Whichever side gets there first, every
+/// individual call must return a well-typed result (`Ok`, or an explicit
+/// `InvalidHandle`/`WorkerUnavailable`-shaped failure once close has won) --
+/// never a panic, and never a write that appears to succeed after the worker
+/// has actually been torn down. After close, the file must still be a valid,
+/// reopenable database: a shutdown mid-write must not corrupt or truncate it,
+/// which is exactly what `DatabaseWorker`'s own drain-before-stop contract
+/// promises and this exercises from the FFI boundary that actually calls it.
+#[test]
+fn close_races_with_concurrent_writes_never_panics_and_leaves_a_reopenable_database() {
+    for iteration in 0_u64..10 {
+        let path = test_path();
+        let handle = open_database(path.clone()).expect("database opens");
+
+        let writer_handle = handle;
+        let writer = std::thread::spawn(move || {
+            for sequence in 0..500_u64 {
+                let device = TrustedDevice {
+                    device_id: DeviceId::new(format!("race-device-{iteration}-{sequence}"))
+                        .expect("valid device id"),
+                    display_name: "Racing phone".to_owned(),
+                    public_key: None,
+                    private_key_ref: None,
+                    trust_state: TrustState::Trusted,
+                    first_seen_ms: sequence,
+                    last_seen_ms: sequence,
+                    updated_at_ms: sequence,
+                };
+                // Either a real success or an explicit typed failure (once
+                // `close_database` has won the race) is acceptable; only a
+                // panic, or a status outside the documented taxonomy, is not.
+                let result = with_database_entry(writer_handle, |entry| {
+                    entry
+                        .worker
+                        .as_ref()
+                        .ok_or(AndroidDatabaseStatus::InvalidHandle)?
+                        .client()
+                        .upsert_trusted_device(&device)
+                        .map_err(|error| super::map_storage_error(&error))
+                });
+                if result == Err(AndroidDatabaseStatus::InvalidHandle) {
+                    // The handle was closed out from under this write; later
+                    // iterations will see the same thing, so stop early
+                    // rather than spinning uselessly.
+                    break;
+                }
+            }
+        });
+
+        // Let real writes land before racing the close.
+        std::thread::sleep(std::time::Duration::from_micros(200));
+        close_database(handle).expect("close succeeds even under concurrent write load");
+        writer.join().expect("writer thread must not panic");
+
+        // Closing again is an explicit, typed failure, not a silent no-op or
+        // a panic against a partially torn-down entry.
+        assert_eq!(
+            close_database(handle),
+            Err(AndroidDatabaseStatus::InvalidHandle)
+        );
+
+        // The file itself must still be a clean, readable database: a
+        // concurrent shutdown must not have corrupted or truncated it.
+        let reopened = open_database(path.clone()).expect("database reopens after a race close");
+        with_database_entry(reopened, |entry| {
+            entry
+                .worker
+                .as_ref()
+                .expect("worker present")
+                .client()
+                .list_trusted_devices()
+                .map_err(|error| super::map_storage_error(&error))
+        })
+        .expect("reopened database is queryable, not corrupted");
+        close_database(reopened).expect("reopened database closes cleanly");
+
+        remove_database(&path);
+    }
+}
+
+/// Block 24: repeated failed opens (a parent directory that does not exist,
+/// so `SQLite` itself cannot create the file) must each fail explicitly and
+/// leave nothing behind in the shared registry -- a leaked entry from a
+/// failed open would eventually let some *other*, unrelated handle number
+/// collide with a phantom one. After many failures, a valid open must still
+/// succeed and behave completely normally, proving retry after repeated
+/// failure is not degraded by the failures that preceded it.
+#[test]
+fn repeated_open_failure_then_successful_open_leaves_no_residue() {
+    let doomed_path =
+        PathBuf::from("/silent-disco-nonexistent-directory-for-block-24/unreachable.sqlite3");
+
+    for _ in 0..25 {
+        let result = open_database(doomed_path.clone());
+        assert!(
+            result.is_err(),
+            "opening under a nonexistent parent directory must fail explicitly"
+        );
+    }
+
+    let path = test_path();
+    let handle = open_database(path.clone())
+        .expect("a valid open still succeeds after repeated failed retries");
+    with_database_entry(handle, |entry| {
+        entry
+            .worker
+            .as_ref()
+            .expect("worker present")
+            .client()
+            .list_trusted_devices()
+            .map_err(|error| super::map_storage_error(&error))
+    })
+    .expect("the database opened after repeated failures behaves normally");
+    close_database(handle).expect("database closes");
+    remove_database(&path);
+}

@@ -3502,3 +3502,113 @@ agent is pushing unrelated Rust-core/FFI hardening work to the same
 branch this session). Block 43 (security/Tauri capability audit) is next
 in the TODO; per this session's established pattern, do not start it
 unilaterally.
+
+## 2026-08-10T21:55:36Z - Claude Sonnet 5 - Shared Block 24 FFI and concurrency hardening complete
+
+- **SAFETY audit finding**: the entire workspace has exactly 3 genuine
+  `unsafe` blocks (pointer/memory operations, not attribute syntax), all
+  in `rust/silent-disco-ffi/src/audio_abi.rs` from Block 17, all already
+  carrying `# Safety` justification. `silent-disco-core` and
+  `silent-disco-test-support` both use `#![forbid(unsafe_code)]` and
+  contain zero unsafe code at all — the "2 unsafe occurrences" this
+  block's own brief expected in each of those crates turned out to be a
+  stale/rough grep matching the English word "unsafe" in doc comments,
+  not real code. No new `// SAFETY:` comments were needed anywhere.
+- **Real bug found and fixed**: `CoreActorRuntime`'s
+  `ActorShared::snapshot` (`rust/silent-disco-core/src/runtime/actor_runtime/mod.rs`)
+  was a `std::sync::RwLock<CoreSnapshot>`. Rust's std `RwLock` makes no
+  reader/writer fairness guarantee, and a sustained stream of
+  `current_snapshot()` reads from multiple foreign-call threads starved
+  the actor worker's own write lock in `write_snapshot` indefinitely —
+  a genuine, reproducible hang, not a hypothetical, caught by a new
+  concurrent-shutdown-vs-command-submission stress test. Confirmed via
+  `/proc/<pid>/task/*/{comm,wchan}` thread inspection (gdb/strace were
+  both blocked by this sandbox's ptrace restrictions — `Operation not
+  permitted` even same-uid) showing the actor and test threads parked in
+  `futex_do_wait` forever, and confirmed fixed via temporary trace
+  instrumentation plus a clean `git stash`/pop before-vs-after comparison
+  against the pristine base commit. Fixed by swapping to a plain
+  `Mutex<CoreSnapshot>` (`.read()`/`.write()` → `.lock()` at both call
+  sites); a Mutex has no reader-preference bias. **General lesson: an
+  `RwLock` guarding state that a hot read path polls in a tight loop
+  while a single writer must periodically get in is a latent starvation
+  hazard in std Rust — prefer a plain `Mutex` unless there's a measured
+  need for concurrent multi-reader throughput.**
+- **Test-design lesson, separate from the production bug**: the stress
+  test's first full-scale version (4 submitter threads × 200 submissions
+  × 15 outer iterations, no yields) reliably passed alone but was itself
+  flaky under real parallel-suite contention on this shared host (another
+  agent was concurrently building/testing in a sibling worktree the whole
+  session) — a pure busy-spin can starve fair scheduling for *other*
+  threads even once the lock itself is correct, and this got dramatically
+  worse under ASan/TSan instrumentation overhead specifically. Tuned down
+  to 3×40×8 and added a per-iteration `thread::yield_now()` in the
+  submitter loop; reproduced passing repeatedly afterward, including
+  under artificial `--test-threads=64` oversubscription on a 16-core box.
+  **General lesson: a concurrency stress test needs a cooperative yield
+  in any unbounded-looking busy loop, or it becomes a source of its own
+  flakiness on a shared/loaded machine, independent of whatever
+  correctness property it's actually trying to prove.**
+- **Six new stress tests**, one per Block 24 named scenario: handle
+  reuse/release races (`audio_abi.rs`, 2 tests), observer removal during
+  notification (`host_control/handle.rs`), shutdown during database write
+  (`android_database_abi/tests.rs`), shutdown during network load
+  (`host_transport/handle.rs`, real loopback TCP/UDP sockets), stop while
+  audio callback active (`listener_playback.rs`), repeated init
+  failure/retry (`android_database_abi/tests.rs`). All six pass under
+  both ASan and TSan (`RUSTFLAGS="-Z sanitizer=address|thread" cargo
+  +nightly test ... --target x86_64-unknown-linux-gnu -Z build-std`).
+- **Sanitizer feasibility, corrected from Blocks 16/17's assumption**:
+  ASan and TSan are genuinely usable in *this* environment —
+  `rustup toolchain install nightly` succeeds (it failed once with a
+  corrupted-partial-install error; `rustup toolchain uninstall nightly`
+  then reinstalling cleanly fixed it), and `-Z build-std` compiles a
+  sanitizer-instrumented std against the pinned crate code. Not wired
+  into `scripts/check-rust.sh` or CI (that must stay on the pinned stable
+  1.97.1 toolchain per project rules); documented as an ad hoc local
+  validation command instead.
+- **loom: investigated, deliberately not added.** Not already a
+  workspace dependency. Adding it would mean routing the render
+  ring/registries' atomics and locks through `loom::sync` behind a `cfg`
+  shim — a real, invasive rewrite of already-shipped, already-tested
+  Block 16/17 code, not a drop-in addition. More to the point: this
+  block's actual bug was OS-scheduler-level `RwLock` starvation, which is
+  exactly the class of defect real `std::thread` stress tests under real
+  contention (plus TSan) catch and loom's own-primitive interleaving
+  model does not represent. Left honestly unchecked in the TODO rather
+  than added speculatively.
+- **Pre-existing, unrelated flake found incidentally, not fixed**:
+  `listener_playback::tests::final_diagnostics_survive_the_teardown_that_produced_them`
+  fails intermittently under `--release --lib` when run as part of the
+  full parallel suite (never in isolation, never in debug mode). Confirmed
+  via `git stash`/pop that this test is byte-identical to the pristine
+  base commit and reproduces on *unmodified* code — not caused by
+  anything in this block. It hardcodes a synthetic sync exchange
+  (`observe_sync_response(1, 0, 500_000, 500_001, 20)`) instead of using
+  the file's own `lock_sync_at_zero_offset` helper, which is plausibly
+  why it's timing-sensitive under release-mode scheduling variance. Out
+  of Block 24's scope (playback scheduler/pump territory, Blocks 15/17),
+  left as a recorded follow-up rather than silently patched or silently
+  ignored.
+- **Gates**: `bash scripts/check-rust.sh` (pinned 1.97.1) run 4 times
+  after the final fix/tuning, all 4 clean — 0 failures, ~397 passing test
+  lines each run (`cargo fmt --check`, `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`, `cargo test --workspace
+  --all-features`). `silent-disco-ffi` alone additionally run 5+ more
+  times in isolation (default and `--test-threads=64` oversubscribed),
+  consistently ~1.1s clean. Real clippy findings fixed along the way (not
+  fabricated as pre-passing): a `doc_markdown` backtick-missing lint on
+  "SQLite" in doc comments, a `manual_range_patterns` lint
+  (`matches!(status, 0 | 1 | 2)` → `(0..=2).contains(&status)`), and a
+  `map_unwrap_or` lint (`.map(...).unwrap_or(0)` →
+  `.map_or(0, ...)`).
+- Committed as (see git log; commit hash recorded at push time).
+
+### Next
+Committed and pushed. TODO's Block 24 checkboxes updated with full
+evidence citations; one item (loom) left honestly unchecked with
+reasoning, matching this session's established pattern for genuinely
+declined tooling. The `final_diagnostics_survive_the_teardown_that_produced_them`
+release-mode flake is recorded above as a real, pre-existing, unrelated
+follow-up for whoever next touches the playback scheduler/pump (Blocks
+15/17 territory) — do not attribute it to Block 24.
