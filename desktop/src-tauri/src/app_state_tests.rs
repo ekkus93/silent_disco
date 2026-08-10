@@ -171,6 +171,42 @@ fn storage_failure_releases_profile_lock_without_fallback() {
     assert!(!paths.root().join("fallback.sqlite3").exists());
 }
 
+/// Block 35.4 "export after startup failure": diagnostics must surface the
+/// real, stored startup failure -- the same `DesktopErrorDto` `open_profile`
+/// itself returned -- not a fabricated generic error and not a false
+/// success. There is no `ReadyRuntime` to query in this state, so an error
+/// (not a synthesized partial snapshot) is the honest answer, matching
+/// every other `DesktopAppState` accessor's behavior in `Failed` state.
+#[test]
+fn diagnostics_after_startup_failure_surfaces_the_stored_failure() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    paths.prepare_directories().expect("prepare paths");
+    fs::create_dir(paths.domain_database()).expect("invalid database directory");
+    let state = DesktopAppState::new();
+
+    let open_error = state
+        .open_profile_sync(
+            &paths,
+            id.clone(),
+            &FixedIdentityProvider([7; 32]),
+            &FixedSigningIdentityProvider(7),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect_err("storage failure");
+
+    let diagnostics_error = state
+        .host_diagnostics()
+        .expect_err("diagnostics must surface the startup failure, not a false success");
+    assert_eq!(diagnostics_error, open_error);
+
+    state.close_sync().expect("clear failed state");
+    ProfileLease::acquire(&paths, &id)
+        .expect("lock released after startup failure")
+        .release()
+        .expect("release verification lease");
+}
+
 #[test]
 fn observer_setup_failure_releases_actor_database_and_lock() {
     let root = TestDirectory::new();

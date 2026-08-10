@@ -2617,57 +2617,202 @@ deny-level errors; only pre-existing/precedented pedantic warnings.
 
 Expose bounded summaries for:
 
-- [ ] versions;
-- [ ] profile/platform;
-- [ ] storage;
-- [ ] identity availability without secrets;
-- [ ] endpoints/interface;
-- [ ] transport queues and delivery;
-- [ ] listeners;
-- [ ] synchronization;
-- [ ] decoder/source queues;
-- [ ] packetizer;
-- [ ] local monitor and render counters;
-- [ ] notification bridge;
-- [ ] last structured errors;
-- [ ] shutdown state.
+- [x] versions -- `VersionsDiagnosticsDto` (`diagnostics_dto.rs`): core
+      version, app version (`CARGO_PKG_VERSION`), export schema version.
+- [x] profile/platform -- `ProfileDiagnosticsDto`: profile ID,
+      `std::env::consts::OS`.
+- [x] storage -- `StorageDiagnosticsDto`, populated in
+      `app_state.rs::host_diagnostics` via
+      `DatabaseWorker::client().metadata()` against the already-open
+      worker (not `storage_inspection.rs`'s pre-session
+      lease-acquire/open/close cycle, which would conflict with the
+      session's already-held lease); `available: false` +
+      `failure_reason` on query failure, never fabricated as healthy.
+- [x] identity availability without secrets -- `IdentityDiagnosticsDto`:
+      presence booleans plus a SHA-256 public-key fingerprint via the
+      existing `silent_disco_core::p2::public_key_fingerprint`; raw DER
+      and the device-identity secret never touched.
+- [x] endpoints/interface -- `endpoint: Option<HostConnectionDto>`,
+      reusing the exact same `host_connection_dto` mapping
+      `HostSessionSnapshotDto` uses (extracted to a shared
+      `pub(crate)` function in `host_session_dto.rs` for this reuse).
+- [x] transport queues and delivery -- `TransportDiagnosticsDto`
+      (`state`, `lastDelivery`, `broadcast`), reusing
+      `broadcast_delivery_dto` the same way.
+- [x] listeners -- `Vec<ListenerDiagnosticsDto>`, bounded to
+      `MAX_DIAGNOSTICS_LISTENERS = 64` with `listeners_truncated: bool`
+      set whenever the real count exceeds it (see 35.3's
+      truncation/omission requirement).
+- [x] synchronization -- `SynchronizationDiagnosticsDto`
+      (confidence/offset/RTT/drift), mapped from `CoreSnapshot`'s
+      existing `SynchronizationSummary`.
+- [x] decoder/source queues -- `DecodeQueueDiagnosticsDto`, sourced from
+      a new `DecodeStatisticsReader` (`rust/silent-disco-core/src/audio/decoder.rs`):
+      a small `Clone`-able reader that clones out the decoder's existing
+      `Arc<SharedStatistics>` *before* the handle is consumed by the
+      packetizer worker, since the handle's own `statistics()` becomes
+      unreachable once ownership transfers.
+- [x] packetizer -- `PacketizeQueueDiagnosticsDto`, sourced from a new,
+      analogous `PacketizeStatisticsReader`
+      (`rust/silent-disco-core/src/audio/packetizer_worker.rs`), taken
+      before the packetizer is moved into the playback pump thread.
+- [x] local monitor and render counters -- `MonitorDiagnosticsDto`.
+      Fixed a real Block 34 gap while wiring this: `AudioOutputTelemetry`'s
+      `Arc` was constructed in `DesktopMonitorControl::start_stream` and
+      handed only to the render callback, with no other reference
+      retained anywhere -- live telemetry was structurally unreachable.
+      `ActiveMonitorStream` now retains its own `Arc::clone`, and
+      `status()` reports it as `MonitorTelemetrySnapshot`.
+- [x] notification bridge -- `NotificationBridgeDiagnosticsDto`
+      (`delivery_failure: Option<DesktopErrorDto>`).
+- [x] last structured errors -- `last_error: Option<DesktopErrorDto>`,
+      direct from `CoreSnapshot.last_error`.
+- [x] shutdown state -- `shutting_down: bool`, direct from
+      `CoreSnapshot.shutting_down`.
+
+Assembly is a pure builder,
+`platform::diagnostics::build_diagnostics_snapshot`: it takes only
+already-resolved plain data and does zero locking/querying itself
+(mirroring `HostSessionSnapshotDto::from_parts`'s own discipline), so it
+is unit-testable with fixture inputs; all real I/O happens in the new
+`app_state.rs::host_diagnostics()` caller. Deliberately bypasses the
+pre-existing `CoreCommand::ExportDiagnostics` /
+`PlatformEffectRequest::ShareDiagnostics` pathway entirely -- confirmed
+via `grep -rn "ExportDiagnostics" desktop/` to be completely unwired from
+any UI today -- in favor of the same "direct `DesktopAppState` method +
+independent Tauri command" pattern already used for
+`create_host_invitation`/`set_host_monitor_enabled`.
 
 ### 35.2 Screen
 
-Create:
+Created:
 
 ```text
 desktop/src/screens/DiagnosticsScreen.tsx
 ```
 
-- [ ] bounded display;
-- [ ] severity and subsystem filters;
-- [ ] no color-only communication;
-- [ ] safe copy behavior;
-- [ ] no private identity or invite secrets;
-- [ ] clear stale-data indicator.
+- [x] bounded display -- renders exactly the bounded DTO; the listener
+      list additionally shows its own truncation flag.
+- [x] severity and subsystem filters -- `deriveFindings` turns the DTO
+      into a bounded findings list, each carrying a real subsystem and
+      severity (`DesktopErrorDto`'s own fields where available,
+      synthesized for boolean/enum-shaped facts); two `<select>` filters
+      narrow that list without hiding the full detail sections below it.
+- [x] no color-only communication -- every finding renders a text
+      severity label (`[ERROR]`/`[WARNING]`/`[FATAL]`/`[OK]`) alongside
+      its color class; the stale banner and error alerts are always text
+      first.
+- [x] safe copy behavior -- "Copy diagnostics JSON" copies the DTO
+      exactly as received (already redacted server-side; nothing added
+      client-side).
+- [x] no private identity or invite secrets -- the screen renders only
+      `DesktopDiagnosticsDto` fields; nothing else is fetched or joined
+      in.
+- [x] clear stale-data indicator -- `generatedAtMs`-derived age is always
+      shown ("Snapshot captured N s ago"); an age past `STALE_AFTER_MS`
+      (5s, more than double the 2s poll interval) renders an explicit
+      `role="alert"` STALE banner.
+
+Reachable via a always-visible "Diagnostics" toggle in `App.tsx`'s
+header, independent of host lifecycle -- including the bridge-failed
+state, since diagnosing a startup failure is exactly when this screen
+matters most.
 
 ### 35.3 Export
 
-- [ ] Rust creates versioned bounded export;
-- [ ] save dialog selects destination;
-- [ ] temporary write then atomic rename where supported;
-- [ ] cancellation distinct from failure;
-- [ ] truncation/omission reported;
-- [ ] no audio payloads;
-- [ ] no raw private paths unless redacted policy approves;
-- [ ] no success until file is committed.
+- [x] Rust creates versioned bounded export -- writes the same
+      `DesktopDiagnosticsDto` the screen displays (one DTO, two
+      consumers, per its own module doc comment); `exportSchemaVersion`
+      carries the version.
+- [x] save dialog selects destination -- new
+      `DiagnosticsSaveDialog`/`TauriDiagnosticsSaveDialog`
+      (`diagnostics_export.rs`), mirroring `file_picker.rs`'s
+      `AudioFileDialog`/`TauriAudioFileDialog` pattern, using
+      `tauri-plugin-dialog`'s `blocking_save_file()` (this codebase's
+      first save-, not open-, dialog).
+- [x] temporary write then atomic rename where supported --
+      `write_diagnostics_export`: create-new temp file beside the
+      destination, write/flush/`sync_all`, then `fs::rename`. POSIX
+      `rename` already replaces an existing destination atomically; on
+      Windows (which does not) `install_atomically` removes the existing
+      destination first and retries once -- the payload is already fully
+      durable in the temp file before either path runs.
+- [x] cancellation distinct from failure -- `DiagnosticsExportOutcome::{Saved,Cancelled}`;
+      a `None` from the dialog produces `Ok(Cancelled)`, never an `Err`.
+- [x] truncation/omission reported -- `listeners_truncated` travels
+      inside the exported DTO itself (see 35.1); the export mechanism
+      never truncates further.
+- [x] no audio payloads -- the DTO has no field capable of carrying
+      audio; nothing beyond `DesktopDiagnosticsDto` is ever serialized.
+- [x] no raw private paths unless redacted policy approves -- no path
+      of any kind appears in the DTO; the chosen destination path itself
+      never leaves the Rust write function.
+- [x] no success until file is committed -- `export_with_dialog` only
+      returns `Saved` after `write_diagnostics_export` returns `Ok`,
+      which itself only returns `Ok` after the final rename and parent-
+      directory `sync_all` succeed.
 
 ### 35.4 Tests
 
-- [ ] secret redaction;
-- [ ] bounded size;
-- [ ] destination failure;
-- [ ] cancellation;
-- [ ] existing file policy;
-- [ ] partial write cleanup;
-- [ ] export after startup failure;
-- [ ] export after transport failure.
+- [x] secret redaction --
+      `no_secret_shaped_content_appears_in_the_serialized_snapshot`
+      (`diagnostics.rs`): a realistic invite-code-gated, signed,
+      actively-monitored fixture is serialized and checked for
+      `privateKey`/`secret`/`DER`/`keyring`-shaped substrings.
+- [x] bounded size -- `an_oversized_listener_list_is_truncated_and_reported`
+      / `a_normal_sized_listener_list_is_not_reported_as_truncated`
+      (`diagnostics.rs`, DTO-level) and
+      `an_oversized_payload_is_rejected_before_any_write`
+      (`diagnostics_export.rs`, byte-level defense in depth against
+      `MAX_EXPORT_BYTES = 1 MiB`).
+- [x] destination failure --
+      `a_missing_destination_directory_is_a_reported_failure`
+      (`diagnostics_export.rs`): a real, portable I/O fault (missing
+      parent directory) surfaces a structured error.
+- [x] cancellation -- `a_cancelled_dialog_produces_cancelled_not_an_error`
+      (`diagnostics_export.rs`): a fake dialog returning `None` produces
+      `Ok(Cancelled)`.
+- [x] existing file policy -- `a_pre_existing_destination_is_overwritten`
+      (`diagnostics_export.rs`): a pre-seeded destination file is
+      replaced, not rejected -- the native save dialog already confirmed
+      the overwrite.
+- [x] partial write cleanup -- `an_install_failure_cleans_up_its_temporary_file`
+      (`diagnostics_export.rs`): a real, portable install fault (the
+      destination already exists as a directory, so the final rename
+      cannot succeed) is forced *after* the temp file was already
+      written/flushed/synced; asserts the temp file left behind by that
+      successful write stage is removed, not orphaned.
+- [x] export after startup failure --
+      `diagnostics_after_startup_failure_surfaces_the_stored_failure`
+      (`app_state_tests.rs`): while `DesktopRuntimeState::Failed` (no
+      `ReadyRuntime` exists to query), `host_diagnostics()` returns the
+      exact same stored `DesktopErrorDto` `open_profile_sync` itself
+      returned -- matching every other `DesktopAppState` accessor's
+      established behavior in that state, not a fabricated generic error
+      or a false success.
+- [x] export after transport failure --
+      `a_transport_failure_is_surfaced_in_the_snapshot_not_hidden`
+      (`diagnostics.rs`): unlike a startup failure, a transport failure
+      happens on an otherwise-ready runtime, so the snapshot still
+      succeeds and carries `transport.state == "failed"` and
+      `last_error` as data instead of hiding it.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`
+(275 `silent-disco-core` tests + full workspace, 0 failed),
+`cd desktop && npm run check` (bindings-check, biome, `cargo fmt --check`,
+tsc, 68/68 Vitest, production build) -- `./gradlew test lintDebug` not
+re-run (desktop-only change, no Kotlin touched, matching established
+session precedent). `desktop/src-tauri`'s own `cargo test` run:
+181 passed, 0 failed (was 173 before this block; +8 new tests). Also ran
+`cargo clippy --all-targets --all-features -- -D warnings` manually for
+`desktop/src-tauri` (still not part of the enforced `npm run check`
+gate) -- confirmed via `git stash` that the small set of remaining
+deny-level errors (in `mdns.rs`, `host_session_dto.rs`'s pre-existing
+test, `audio_device.rs`, `render_ring.rs`, `start_playback_tests.rs`)
+are 100% pre-existing on `master`, unrelated to this block; the one
+new lint this block's own code triggered
+(`clippy::field_reassign_with_default` in a `diagnostics.rs` test) was
+fixed with a scoped, justified `#[allow]`.
 
 **Acceptance:** Operational state and failures are diagnosable without leaking secrets.
 

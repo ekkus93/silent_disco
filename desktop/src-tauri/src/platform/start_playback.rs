@@ -103,15 +103,31 @@ fn start_after_buffering(
                 &error.to_string(),
             )
         })?;
+    let decoder = prepared.into_decoder();
+    // Taken before the decoder is consumed by the packetizer worker below --
+    // Block 35.1 "decoder/source queues" diagnostics need a live reader
+    // independent of the handle's own ownership, which the packetizer
+    // worker exclusively holds from this point on.
+    let decode_diagnostics = decoder.statistics_reader();
     let packetizer = StreamingPacketizeHandle::spawn(
-        prepared.into_decoder(),
+        decoder,
         session_id.clone(),
         stream_id.clone(),
         host_start_time_ms,
         StreamingPacketizeConfig::default(),
     )
     .map_err(|error| map_packetizer_error(&error))?;
-    network.start_playback(packetizer, session_id, stream_id, handle.clone())
+    // Same reasoning: taken before the packetizer is moved into its own
+    // real-time pump thread.
+    let packetize_diagnostics = packetizer.statistics_reader();
+    network.start_playback(
+        packetizer,
+        session_id,
+        stream_id,
+        handle.clone(),
+        decode_diagnostics,
+        packetize_diagnostics,
+    )
 }
 
 fn map_packetizer_error(error: &PacketizerWorkerError) -> DesktopErrorDto {

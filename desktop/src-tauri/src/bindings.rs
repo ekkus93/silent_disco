@@ -1,3 +1,9 @@
+use crate::diagnostics_dto::{
+    DecodeQueueDiagnosticsDto, DesktopDiagnosticsDto, IdentityDiagnosticsDto,
+    ListenerDiagnosticsDto, MonitorDiagnosticsDto, NotificationBridgeDiagnosticsDto,
+    PacketizeQueueDiagnosticsDto, ProfileDiagnosticsDto, StorageDiagnosticsDto,
+    SynchronizationDiagnosticsDto, TransportDiagnosticsDto, VersionsDiagnosticsDto,
+};
 use crate::dto::{
     BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto, MigrationSummaryDto, ProfileSummaryDto,
     StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
@@ -6,6 +12,7 @@ use crate::host_session_dto::{
     BroadcastDeliveryDto, ConnectedListenerDto, DeliveryReportDto, HostConnectionDto,
     HostInvitationDto, HostSessionSnapshotDto, PendingJoinRequestDto,
 };
+use crate::platform::diagnostics_export::DiagnosticsExportOutcome;
 use crate::platform::network_dto::{
     MdnsStatusDto, MonitorStatusDto, NetworkAddressCandidateDto, NetworkAddressClassDto,
     NetworkBindPreferenceDto, NetworkBindingDto, NetworkInterfaceSnapshotDto,
@@ -78,6 +85,19 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<DiagnosticFieldDto>(&config),
         declaration::<CoreDiagnosticDto>(&config),
         declaration::<CoreNotificationDto>(&config),
+        declaration::<VersionsDiagnosticsDto>(&config),
+        declaration::<ProfileDiagnosticsDto>(&config),
+        declaration::<StorageDiagnosticsDto>(&config),
+        declaration::<IdentityDiagnosticsDto>(&config),
+        declaration::<TransportDiagnosticsDto>(&config),
+        declaration::<ListenerDiagnosticsDto>(&config),
+        declaration::<SynchronizationDiagnosticsDto>(&config),
+        declaration::<DecodeQueueDiagnosticsDto>(&config),
+        declaration::<PacketizeQueueDiagnosticsDto>(&config),
+        declaration::<MonitorDiagnosticsDto>(&config),
+        declaration::<NotificationBridgeDiagnosticsDto>(&config),
+        declaration::<DesktopDiagnosticsDto>(&config),
+        declaration::<DiagnosticsExportOutcome>(&config),
     ];
 
     let mut output = String::from(GENERATED_HEADER);

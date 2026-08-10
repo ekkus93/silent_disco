@@ -102,3 +102,42 @@ export type CoreDiagnosticDto = { name: string, fields: Array<DiagnosticFieldDto
 
 export type CoreNotificationDto = { "kind": "snapshot", "details": CoreSnapshotDto } | { "kind": "effect", "details": PlatformEffectDto } | { "kind": "error", "details": DesktopErrorDto } | { "kind": "diagnostic", "details": CoreDiagnosticDto };
 
+export type VersionsDiagnosticsDto = { coreVersion: CoreVersionDto, appVersion: string, exportSchemaVersion: number, };
+
+export type ProfileDiagnosticsDto = { profileId: string, platform: string, };
+
+export type StorageDiagnosticsDto = { available: boolean, schemaVersion: number | null, journalMode: string | null, foreignKeysEnabled: boolean | null, integrityCheck: string | null, appliedMigrationCount: number | null, failureReason: string | null, };
+
+export type IdentityDiagnosticsDto = { deviceIdentityPresent: boolean, signingIdentityPresent: boolean, signingKeyFingerprint: string | null, };
+
+export type TransportDiagnosticsDto = { state: string, lastDelivery: DeliveryReportDto | null, broadcast: BroadcastDeliveryDto | null, };
+
+export type ListenerDiagnosticsDto = { deviceId: string, displayName: string, trustState: string, transportState: string, syncConfidence: string | null, };
+
+export type SynchronizationDiagnosticsDto = { confidence: string, offsetMs: string, roundTripMs: string, driftPpm: string, };
+
+export type DecodeQueueDiagnosticsDto = { state: string, queuedChunks: number, queueCapacityChunks: number, backpressureEvents: string, emittedFrames: string, };
+
+export type PacketizeQueueDiagnosticsDto = { queuedPackets: number, queueCapacity: number, backpressureEvents: string, emittedPackets: string, };
+
+export type MonitorDiagnosticsDto = { enabled: boolean, active: boolean, failureReason: string | null, callbackCount: string | null, framesWritten: string | null, framesSilenceFilled: string | null, };
+
+export type NotificationBridgeDiagnosticsDto = { deliveryFailure: DesktopErrorDto | null, };
+
+export type DesktopDiagnosticsDto = { versions: VersionsDiagnosticsDto, profile: ProfileDiagnosticsDto, storage: StorageDiagnosticsDto, identity: IdentityDiagnosticsDto, endpoint: HostConnectionDto | null, transport: TransportDiagnosticsDto, listeners: Array<ListenerDiagnosticsDto>, 
+/**
+ * True whenever the real listener count exceeded the bounded
+ * `listeners` list above -- 35.3 "truncation/omission reported": a
+ * bounded export must say so, not silently drop entries and look
+ * complete.
+ */
+listenersTruncated: boolean, synchronization: SynchronizationDiagnosticsDto | null, decodeQueue: DecodeQueueDiagnosticsDto | null, packetizeQueue: PacketizeQueueDiagnosticsDto | null, monitor: MonitorDiagnosticsDto, notificationBridge: NotificationBridgeDiagnosticsDto, lastError: DesktopErrorDto | null, shuttingDown: boolean, 
+/**
+ * Wall-clock capture time, for a frontend "stale data" indicator
+ * (35.2) -- never used for sync/playback scheduling, which remains
+ * monotonic-only per this project's rules.
+ */
+generatedAtMs: string, };
+
+export type DiagnosticsExportOutcome = { "kind": "saved" } | { "kind": "cancelled" };
+

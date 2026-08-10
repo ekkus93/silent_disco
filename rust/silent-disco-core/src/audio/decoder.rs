@@ -54,6 +54,22 @@ impl SharedStatistics {
     }
 }
 
+/// Cheap, cloneable, lock-free reader of one decoder's queue statistics,
+/// independent of the owning [`StreamingDecodeHandle`]'s own lifecycle
+/// (Block 35.1 "decoder/source queues" diagnostics).
+#[derive(Clone)]
+pub struct DecodeStatisticsReader {
+    statistics: Arc<SharedStatistics>,
+    config: StreamingDecodeConfig,
+}
+
+impl DecodeStatisticsReader {
+    #[must_use]
+    pub fn snapshot(&self) -> DecodeStatistics {
+        self.statistics.snapshot(self.config)
+    }
+}
+
 /// Owner of one cancellable worker and its bounded decoded-PCM receiver.
 ///
 /// Dropping the handle cancels and joins the worker. Normal completion should
@@ -128,6 +144,19 @@ impl StreamingDecodeHandle {
     #[must_use]
     pub fn statistics(&self) -> DecodeStatistics {
         self.statistics.snapshot(self.config)
+    }
+
+    /// Returns a cheap, cloneable, lock-free reader of this decoder's
+    /// statistics -- obtainable before `self` is consumed or handed off
+    /// elsewhere (e.g. wrapped by a packetizer worker), so a caller that
+    /// only wants read-only visibility (diagnostics) never needs to
+    /// contend for exclusive ownership of the handle itself.
+    #[must_use]
+    pub fn statistics_reader(&self) -> DecodeStatisticsReader {
+        DecodeStatisticsReader {
+            statistics: Arc::clone(&self.statistics),
+            config: self.config,
+        }
     }
 
     /// Receives the next bounded chunk, blocking until data or disconnect.

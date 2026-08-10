@@ -118,6 +118,29 @@ struct SharedStatistics {
     emitted_packets: AtomicU64,
 }
 
+/// Cheap, cloneable, lock-free reader of one packetizer's queue statistics,
+/// independent of the owning [`StreamingPacketizeHandle`]'s own lifecycle
+/// (Block 35.1 "packetizer" diagnostics). Fields match
+/// [`StreamingPacketizeHandle::statistics`]'s tuple order: queued packets,
+/// configured queue capacity, backpressure events, emitted packets.
+#[derive(Clone)]
+pub struct PacketizeStatisticsReader {
+    statistics: Arc<SharedStatistics>,
+    queue_capacity: usize,
+}
+
+impl PacketizeStatisticsReader {
+    #[must_use]
+    pub fn snapshot(&self) -> (usize, usize, u64, u64) {
+        (
+            self.statistics.queued_packets.load(Ordering::Acquire),
+            self.queue_capacity,
+            self.statistics.backpressure_events.load(Ordering::Acquire),
+            self.statistics.emitted_packets.load(Ordering::Acquire),
+        )
+    }
+}
+
 /// Owner of one cancellable packetizer worker and its bounded frame receiver.
 ///
 /// Dropping the handle cancels and joins the worker and its underlying
@@ -206,6 +229,19 @@ impl StreamingPacketizeHandle {
             self.statistics.backpressure_events.load(Ordering::Acquire),
             self.statistics.emitted_packets.load(Ordering::Acquire),
         )
+    }
+
+    /// Returns a cheap, cloneable, lock-free reader of this packetizer's
+    /// statistics -- obtainable before `self` is consumed or moved
+    /// elsewhere (e.g. into a dedicated pump thread), so a caller that only
+    /// wants read-only visibility (diagnostics) never needs to contend for
+    /// exclusive ownership of the handle itself.
+    #[must_use]
+    pub fn statistics_reader(&self) -> PacketizeStatisticsReader {
+        PacketizeStatisticsReader {
+            statistics: Arc::clone(&self.statistics),
+            queue_capacity: self.config.queue_capacity,
+        }
     }
 
     /// Receives the next bounded audio datagram with a caller-selected timeout.

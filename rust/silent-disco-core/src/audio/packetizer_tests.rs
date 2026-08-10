@@ -490,6 +490,55 @@ fn worker_reports_backpressure_without_dropping_packets() {
     );
 }
 
+/// Block 35.1 "packetizer" diagnostics: a reader taken before the handle is
+/// consumed by a drain loop must observe live queue state, not a frozen
+/// snapshot -- and must remain readable even once the handle it was taken
+/// from is busy being drained elsewhere.
+#[test]
+fn a_statistics_reader_observes_live_backpressure_independent_of_the_handle() {
+    let _guard = super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let decoder = open_canonical_decoder(&temp, 1);
+    let handle = StreamingPacketizeHandle::spawn(
+        decoder,
+        SessionId::new("session-stats-reader").expect("session id"),
+        StreamId::new("stream-stats-reader").expect("stream id"),
+        MonotonicMillis::new(0),
+        StreamingPacketizeConfig {
+            packet_duration_ms: 20,
+            queue_capacity: 1,
+        },
+    )
+    .expect("spawn packetizer worker");
+    let reader = handle.statistics_reader();
+
+    // Let the worker run ahead of the tiny queue before draining.
+    std::thread::sleep(Duration::from_millis(100));
+    let (queued, capacity, backpressure_events, _emitted) = reader.snapshot();
+    assert_eq!(capacity, 1);
+    assert!(queued <= capacity);
+    assert!(
+        backpressure_events > 0,
+        "a queue capacity of 1 with the worker run ahead must observe backpressure"
+    );
+
+    let mut packets = 0_u64;
+    loop {
+        match handle.recv_timeout(TEST_TIMEOUT) {
+            Ok(_frame) => packets += 1,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("packetizer worker did not complete in time")
+            }
+        }
+    }
+    let summary = handle.join().expect("worker completes successfully");
+    assert_eq!(packets, 50);
+    // The reader's own final count must match the handle's own summary --
+    // same underlying atomics, not two independently maintained tallies.
+    assert_eq!(reader.snapshot().3, summary.emitted_packets);
+}
+
 #[test]
 fn cancelling_the_worker_stops_it_without_a_panic() {
     let _guard = super::tests::audio_test_guard();

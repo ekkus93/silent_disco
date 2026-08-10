@@ -10,6 +10,7 @@ import {
 import { useAppDispatch, useAppSelector } from "./app/store";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
 import { toDesktopBridgeError } from "./core/client";
+import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
 
@@ -36,6 +37,7 @@ export function App() {
   const latestError = useAppSelector(selectLatestCoreError);
   const staleNotifications = useAppSelector(selectStaleNotificationCounters);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   useEffect(() => {
     const profileId = "main";
@@ -77,16 +79,26 @@ export function App() {
             </p>
             <h1 className="mt-2 text-4xl font-bold tracking-tight">Host control</h1>
           </div>
-          {ready ? (
-            <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-violet-100/65">
-              <dt>Revision</dt>
-              <dd className="font-mono text-right text-cyan-200">{snapshot.revision}</dd>
-              <dt>Lifecycle</dt>
-              <dd className="font-mono text-right">{snapshot.hostLifecycle}</dd>
-              <dt>Stale rejected</dt>
-              <dd className="font-mono text-right">{staleNotifications.snapshots}</dd>
-            </dl>
-          ) : null}
+          <div className="flex items-center gap-4">
+            {ready ? (
+              <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-violet-100/65">
+                <dt>Revision</dt>
+                <dd className="font-mono text-right text-cyan-200">{snapshot.revision}</dd>
+                <dt>Lifecycle</dt>
+                <dd className="font-mono text-right">{snapshot.hostLifecycle}</dd>
+                <dt>Stale rejected</dt>
+                <dd className="font-mono text-right">{staleNotifications.snapshots}</dd>
+              </dl>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setShowDiagnostics((current) => !current)}
+              aria-pressed={showDiagnostics}
+              className="rounded-lg border border-violet-300/40 px-4 py-2 text-sm font-semibold text-violet-100 hover:border-violet-200"
+            >
+              {showDiagnostics ? "Hide diagnostics" : "Diagnostics"}
+            </button>
+          </div>
         </header>
 
         <div className="mt-7">
@@ -109,6 +121,9 @@ export function App() {
               </p>
             </div>
           ) : null}
+          {/* Available even when the bridge failed to open -- diagnosing a
+              startup failure is exactly when this screen matters most. */}
+          {showDiagnostics ? <DiagnosticsScreen /> : null}
         </div>
       </section>
     </main>

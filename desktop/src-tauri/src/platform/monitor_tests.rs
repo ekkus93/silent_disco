@@ -224,6 +224,38 @@ fn a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline()
     );
 }
 
+/// Block 35.1 "local monitor and render counters": once a stream is
+/// active, `status().telemetry` must reflect real, live callback activity
+/// -- not stay `None` forever (the gap this block closes: the telemetry
+/// handle used to be created and immediately orphaned from the control
+/// layer, unreachable by anything outside the render callback itself).
+#[test]
+fn active_status_reports_live_telemetry_counters() {
+    let backend = Arc::new(FakeBackend::new());
+    let monitor = DesktopMonitorControl::new(backend);
+    monitor.set_enabled(true);
+
+    let (clock_fn, clock) = controllable_clock();
+    clock.store(HOST_START_MS, Ordering::Release);
+    let _tap = start_stream(&monitor, clock_fn).expect("monitor stream starts");
+    thread::sleep(Duration::from_millis(50));
+
+    let telemetry = monitor
+        .status()
+        .telemetry
+        .expect("telemetry present while active");
+    assert!(
+        telemetry.callback_count > 0,
+        "the fake's driving thread must have called write"
+    );
+
+    monitor.on_stream_stopped();
+    assert!(
+        monitor.status().telemetry.is_none(),
+        "telemetry must disappear once the stream is no longer active"
+    );
+}
+
 /// 34.3 "start/stop repeated": enabling/disabling and starting/stopping
 /// streams several times in a row must never leak a stuck gate, panic, or
 /// hang.

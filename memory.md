@@ -2235,3 +2235,106 @@ A7 (two physical listeners) and D3 (alongside it) remain the only open
 items from this session's Ralph Loop, both blocked on a second physical
 Android device. Nothing further to do without one — surface this plainly
 if a new session picks this up.
+
+## 2026-08-10T13:20:48Z - Sonnet 5 - Block 35 complete: desktop diagnostics screen and export
+
+Implemented all four sub-blocks (35.1 DTO, 35.2 screen, 35.3 export,
+35.4 tests) from `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`.
+TODO doc's Block 35 checkboxes updated with full evidence citations —
+see that doc for the complete per-item breakdown; this entry records
+the decisions and gaps worth remembering.
+
+**Key decisions:**
+- Bypassed the pre-existing `CoreCommand::ExportDiagnostics` /
+  `PlatformEffectRequest::ShareDiagnostics` pathway entirely — confirmed
+  via `grep -rn "ExportDiagnostics" desktop/` that it's completely
+  unwired from any UI. New work instead uses the established
+  "direct `DesktopAppState` method + independent Tauri command" pattern
+  (same as `create_host_invitation`/`set_host_monitor_enabled`). The old
+  `diagnostics_export.rs::write_export` (fixed app-owned directory,
+  narrow `CoreSnapshot`-only DTO) is untouched and still only reachable
+  from that unused pathway.
+- Added `DecodeStatisticsReader`/`PacketizeStatisticsReader` to
+  `silent-disco-core`'s audio module: small `Clone`-able wrappers that
+  clone out the decoder's/packetizer's existing `Arc<SharedStatistics>`
+  *before* the handle is consumed by the next pipeline stage (decoder →
+  packetizer worker; packetizer → desktop playback pump thread), since
+  the handles' own `statistics()` methods become unreachable once
+  ownership transfers. Rejected alternative: wrapping the handles
+  themselves in `Arc` and sharing — rejected because `join`/
+  `cancel_and_join` consume `self` by value and would conflict with a
+  retained `Arc` reference during shutdown.
+- Found and fixed a real Block 34 gap while wiring monitor telemetry
+  into diagnostics: `AudioOutputTelemetry`'s `Arc` was constructed in
+  `DesktopMonitorControl::start_stream` and handed only to the render
+  callback, with no other reference retained anywhere — live monitor
+  telemetry was structurally unreachable, not merely unbuilt.
+  `ActiveMonitorStream` now retains its own `Arc::clone`.
+- Storage diagnostics query uses `DatabaseWorker::client().metadata()`
+  against the already-open worker in `DesktopOwnedResources`, not
+  `storage_inspection.rs`'s `inspect_profile_storage` (which does its
+  own lease-acquire/open/close cycle designed for pre-session inspection
+  and would conflict with the active session's already-held lease).
+- Listener list bounded to `MAX_DIAGNOSTICS_LISTENERS = 64` with an
+  explicit `listeners_truncated: bool` — satisfies both 35.1's "bounded"
+  and 35.3's "truncation/omission reported" in one mechanism. Documented
+  as a defensive bound (CLAUDE.md excludes large-crowd optimization from
+  scope), not a realistic ceiling.
+- Export atomicity: `fs::rename` already replaces an existing
+  destination atomically on POSIX; Windows does not, so
+  `install_atomically` removes the existing destination first and
+  retries once — only after the payload is already fully durable in the
+  temp file. First save- (not open-) dialog in this codebase
+  (`tauri-plugin-dialog`'s `blocking_save_file()`), following
+  `file_picker.rs`'s existing open-dialog trait pattern.
+- "export after startup failure" test deliberately confirms
+  `host_diagnostics()` returns the same stored `DesktopErrorDto`
+  `open_profile_sync` returned (matching every other `DesktopAppState`
+  accessor's established behavior when `DesktopRuntimeState::Failed` —
+  no `ReadyRuntime` exists to query) rather than redesigning it to
+  synthesize a partial DTO. "export after transport failure" is the
+  contrasting case: a transport failure happens on an otherwise-ready
+  runtime, so the snapshot still succeeds and carries the failure as
+  data (`transport.state`, `last_error`) instead of erroring out.
+- Partial-write-cleanup test forces a *real* portable I/O fault (the
+  destination path already exists as a directory when installing over
+  it) rather than a fake/mocked writer — exercises the actual
+  `write_diagnostics_export` cleanup branch after a real successful
+  temp-file write.
+
+**Frontend:** `DiagnosticsScreen.tsx` reachable via an always-visible
+"Diagnostics" toggle in `App.tsx`'s header, independent of host
+lifecycle state (including the bridge-failed state — diagnosing a
+startup failure is exactly when it matters most). Findings list derives
+severity/subsystem tags from the DTO (real `DesktopErrorDto` fields
+where available, synthesized for boolean/enum facts) to drive the two
+filter dropdowns; every severity renders a text label alongside its
+color class (no color-only signal); stale indicator computed from
+`generatedAtMs` vs. a 5s threshold (2.5x the 2s poll interval).
+
+**Gates:** `bash scripts/check-rust.sh` green (275 `silent-disco-core`
+tests). `cd desktop && npm run check` green (bindings-check, biome,
+`cargo fmt --check`, tsc, 68/68 Vitest, production build).
+`desktop/src-tauri cargo test`: 181 passed (was 173; +8 new). Manually
+ran `cargo clippy --all-targets --all-features -- -D warnings` for
+`desktop/src-tauri` (still not part of the enforced gate) — confirmed
+via `git stash` that all remaining deny-level errors are 100%
+pre-existing on `master` (in `mdns.rs`, `host_session_dto.rs`'s
+pre-existing test, `audio_device.rs`, `render_ring.rs`,
+`start_playback_tests.rs`), unrelated to this block. The one new lint
+this block's own code triggered (`clippy::field_reassign_with_default`)
+was fixed with a scoped `#[allow]`. `./gradlew test lintDebug` not
+re-run (desktop-only change, no Kotlin touched).
+
+**Known gap carried forward, not this block's to fix:** desktop's own
+clippy is still not part of the enforced `npm run check` gate, and
+`master` already carries ~9 pre-existing deny-level clippy errors under
+`-D warnings` (confirmed by `git stash`, listed above). Worth a
+dedicated cleanup block if the project wants desktop clippy actually
+enforced.
+
+### Next
+Committed and pushed. No open threads from this block. Next session
+should ask the user what to work on (Block 36 — deterministic shutdown
+— is next in the TODO's Phase 10, but per this session's established
+pattern, do not start it unilaterally).

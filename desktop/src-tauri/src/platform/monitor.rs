@@ -31,6 +31,7 @@ use silent_disco_core::audio::{
 };
 use silent_disco_core::domain::{SessionId, StreamId};
 use silent_disco_core::protocol::AudioDatagram;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 
@@ -46,11 +47,29 @@ pub(crate) struct MonitorStatus {
     pub(crate) enabled: bool,
     pub(crate) active: bool,
     pub(crate) failure_reason: Option<String>,
+    /// Live render-callback telemetry, present only while `active` --
+    /// Block 35.1 "local monitor and render counters" diagnostics.
+    pub(crate) telemetry: Option<MonitorTelemetrySnapshot>,
+}
+
+/// A point-in-time read of one active monitor stream's atomic telemetry
+/// (`audio_device::AudioOutputTelemetry`), safe to surface as-is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MonitorTelemetrySnapshot {
+    pub(crate) callback_count: u64,
+    pub(crate) frames_written: u64,
+    pub(crate) frames_silence_filled: u64,
 }
 
 struct ActiveMonitorStream {
     pump: DesktopMonitorPump,
     output: Box<dyn RunningAudioOutputStream>,
+    /// Retained so `status()` can report live counters -- `start_stream`
+    /// used to create this and hand it only to the render callback, leaving
+    /// no way to ever read it back (a real gap this block closes: without
+    /// this, "local monitor and render counters" diagnostics would be
+    /// permanently unreachable, not merely unbuilt).
+    telemetry: Arc<AudioOutputTelemetry>,
 }
 
 struct MonitorState {
@@ -104,12 +123,24 @@ impl DesktopMonitorControl {
                 enabled: false,
                 active: false,
                 failure_reason: Some("monitor state is unavailable".to_owned()),
+                telemetry: None,
             };
         };
         MonitorStatus {
             enabled: state.enabled,
             active: state.active.is_some(),
             failure_reason: state.failure_reason.clone(),
+            telemetry: state
+                .active
+                .as_ref()
+                .map(|active| MonitorTelemetrySnapshot {
+                    callback_count: active.telemetry.callback_count.load(Ordering::Relaxed),
+                    frames_written: active.telemetry.frames_written.load(Ordering::Relaxed),
+                    frames_silence_filled: active
+                        .telemetry
+                        .frames_silence_filled
+                        .load(Ordering::Relaxed),
+                }),
         }
     }
 
@@ -250,7 +281,7 @@ impl DesktopMonitorControl {
         };
 
         let telemetry = Arc::new(AudioOutputTelemetry::default());
-        let callback = RenderCallback::new(lease, telemetry);
+        let callback = RenderCallback::new(lease, Arc::clone(&telemetry));
         let output = match self.backend.start(
             device_config,
             callback,
@@ -275,7 +306,14 @@ impl DesktopMonitorControl {
             }
         };
 
-        Ok((ActiveMonitorStream { pump, output }, sender))
+        Ok((
+            ActiveMonitorStream {
+                pump,
+                output,
+                telemetry,
+            },
+            sender,
+        ))
     }
 }
 

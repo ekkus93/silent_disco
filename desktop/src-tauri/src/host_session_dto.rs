@@ -142,29 +142,8 @@ impl HostSessionSnapshotDto {
         monitor: MonitorStatusDto,
     ) -> Self {
         let observed_at_ms = active.map_or(0, |value| value.observed_at_ms);
-        let connection = active.map(|value| HostConnectionDto {
-            host_address: value.endpoint.address.to_string(),
-            control_port: value.endpoint.control_port,
-            sync_port: value.endpoint.sync_port,
-            audio_port: value.endpoint.audio_port,
-            session_id: value.advertisement.session_id.as_str().to_owned(),
-            protocol_version: value.advertisement.protocol_version,
-            invite_code_required: value.advertisement.approval_mode
-                == silent_disco_core::domain::ApprovalMode::InviteCode,
-            expires_at_ms: None,
-        });
-        let broadcast = active.map(|value| BroadcastDeliveryDto {
-            frames_attempted: value.broadcast.frames_attempted.to_string(),
-            frames_failed: value.broadcast.frames_failed.to_string(),
-            frames_fully_delivered: value.broadcast.frames_fully_delivered.to_string(),
-            frames_partially_delivered: value.broadcast.frames_partially_delivered.to_string(),
-            frames_without_recipients: value.broadcast.frames_without_recipients.to_string(),
-            recipients_intended: value.broadcast.recipients_intended.to_string(),
-            recipients_delivered: value.broadcast.recipients_delivered.to_string(),
-            queue_depth: value.broadcast.queue_depth.to_string(),
-            queue_peak_depth: value.broadcast.queue_peak_depth.to_string(),
-            queue_overflows: value.broadcast.queue_overflows.to_string(),
-        });
+        let connection = active.map(host_connection_dto);
+        let broadcast = active.map(broadcast_delivery_dto);
         let last_delivery_state = snapshot
             .last_delivery
             .as_ref()
@@ -304,6 +283,41 @@ impl From<DeliveryReport> for DeliveryReportDto {
             failed_peers: value.failed_peers,
             severity: value.severity.wire_name().to_owned(),
         }
+    }
+}
+
+/// Maps an active host session's endpoint/advertisement onto the safe,
+/// public connection payload shape -- shared by [`HostSessionSnapshotDto::from_parts`]
+/// and the Block 35 diagnostics builder so the two never drift apart.
+pub(crate) fn host_connection_dto(active: &ActiveHostSessionSnapshot) -> HostConnectionDto {
+    HostConnectionDto {
+        host_address: active.endpoint.address.to_string(),
+        control_port: active.endpoint.control_port,
+        sync_port: active.endpoint.sync_port,
+        audio_port: active.endpoint.audio_port,
+        session_id: active.advertisement.session_id.as_str().to_owned(),
+        protocol_version: active.advertisement.protocol_version,
+        invite_code_required: active.advertisement.approval_mode
+            == silent_disco_core::domain::ApprovalMode::InviteCode,
+        expires_at_ms: None,
+    }
+}
+
+/// Maps an active host session's broadcast counters onto the safe,
+/// bounded delivery-diagnostics shape -- shared with the Block 35
+/// diagnostics builder, same reasoning as [`host_connection_dto`].
+pub(crate) fn broadcast_delivery_dto(active: &ActiveHostSessionSnapshot) -> BroadcastDeliveryDto {
+    BroadcastDeliveryDto {
+        frames_attempted: active.broadcast.frames_attempted.to_string(),
+        frames_failed: active.broadcast.frames_failed.to_string(),
+        frames_fully_delivered: active.broadcast.frames_fully_delivered.to_string(),
+        frames_partially_delivered: active.broadcast.frames_partially_delivered.to_string(),
+        frames_without_recipients: active.broadcast.frames_without_recipients.to_string(),
+        recipients_intended: active.broadcast.recipients_intended.to_string(),
+        recipients_delivered: active.broadcast.recipients_delivered.to_string(),
+        queue_depth: active.broadcast.queue_depth.to_string(),
+        queue_peak_depth: active.broadcast.queue_peak_depth.to_string(),
+        queue_overflows: active.broadcast.queue_overflows.to_string(),
     }
 }
 

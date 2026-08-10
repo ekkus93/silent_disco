@@ -6,6 +6,7 @@ use serde::Serialize;
 )]
 pub mod app_state;
 pub mod bindings;
+pub mod diagnostics_dto;
 pub mod dto;
 mod host_commands;
 pub mod host_session_dto;
@@ -71,6 +72,8 @@ pub fn run() -> tauri::Result<()> {
             host_commands::resume_host_playback,
             host_commands::stop_host_playback,
             host_commands::set_host_monitor_enabled,
+            host_commands::get_host_diagnostics,
+            host_commands::export_host_diagnostics,
             host_commands::get_host_network_state,
             host_commands::set_host_network_preference,
             host_commands::create_host_invitation,

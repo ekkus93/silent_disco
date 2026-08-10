@@ -1,4 +1,5 @@
 use crate::app_state::DesktopAppState;
+use crate::diagnostics_dto::DesktopDiagnosticsDto;
 use crate::dto::DesktopErrorDto;
 use crate::host_session_dto::{HostInvitationDto, HostSessionSnapshotDto};
 use crate::platform::file_picker::{SelectedSourceRegistry, pick_and_inspect};
@@ -280,6 +281,49 @@ pub fn set_host_monitor_enabled(
     enabled: bool,
 ) -> Result<(), DesktopErrorDto> {
     state.set_monitor_enabled(enabled)
+}
+
+/// Returns the bounded, redacted diagnostics snapshot (Block 35.1/35.2) --
+/// safe to display or copy as-is.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn get_host_diagnostics(
+    state: State<'_, DesktopAppState>,
+) -> Result<DesktopDiagnosticsDto, DesktopErrorDto> {
+    state.host_diagnostics()
+}
+
+/// Opens a native save dialog and writes the current diagnostics snapshot
+/// there (Block 35.3). The snapshot is captured before the dialog opens, so
+/// what gets written reflects the moment the export was requested, not
+/// whatever the state happens to be when the user finishes picking a
+/// destination. Dialog cancellation returns `Cancelled`, not an error --
+/// see [`DiagnosticsExportOutcome`](crate::platform::diagnostics_export::DiagnosticsExportOutcome).
+///
+/// # Errors
+///
+/// Returns a structured error if the current diagnostics cannot be
+/// gathered, the dialog worker fails, or the write/install fails. Never
+/// reports success before the file is actually committed to disk.
+#[tauri::command]
+pub async fn export_host_diagnostics(
+    app: AppHandle,
+) -> Result<crate::platform::diagnostics_export::DiagnosticsExportOutcome, DesktopErrorDto> {
+    let diagnostics = app.state::<DesktopAppState>().host_diagnostics()?;
+    let now_ms = crate::platform::invitation::current_wall_clock_ms();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::diagnostics_export::export_host_diagnostics(app, &diagnostics, now_ms)
+    })
+    .await
+    .map_err(|error| {
+        DesktopErrorDto::new(
+            "desktop.diagnostics.export_worker_failed",
+            "diagnostics",
+            "error",
+            true,
+            &format!("diagnostics export worker failed: {error}"),
+        )
+    })?
 }
 
 /// Builds and signs a fresh QR invitation for the active host session

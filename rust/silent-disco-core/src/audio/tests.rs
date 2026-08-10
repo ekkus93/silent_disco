@@ -142,6 +142,39 @@ fn exposes_bounded_backpressure_and_cancels_while_queue_is_full() {
     assert_eq!(active_worker_count(), 0);
 }
 
+/// Block 35.1 "decoder/source queues" diagnostics: a reader obtained before
+/// the handle is consumed elsewhere must observe the exact same live state
+/// `statistics()` on the original handle would -- it's a view onto the same
+/// atomics, not a snapshot frozen at the moment it was created.
+#[test]
+fn a_statistics_reader_observes_the_same_live_state_as_the_handle_it_was_taken_from() {
+    let _guard = audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let path = write_bytes(&temp, "long.wav", &pcm_wav(44_100, 1, 5));
+    let config = StreamingDecodeConfig {
+        chunk_frames: 64,
+        queue_chunks: 1,
+        ..StreamingDecodeConfig::default()
+    };
+    let handle = StreamingDecodeHandle::open(path, config).expect("open");
+    let reader = handle.statistics_reader();
+    wait_until(TEST_TIMEOUT, || reader.snapshot().backpressure_events > 0);
+
+    let from_reader = reader.snapshot();
+    let from_handle = handle.statistics();
+    assert_eq!(
+        from_reader.queue_capacity_chunks,
+        from_handle.queue_capacity_chunks
+    );
+    assert_eq!(
+        from_reader.backpressure_events,
+        from_handle.backpressure_events
+    );
+    assert!(from_reader.backpressure_events > 0);
+
+    drop(handle.cancel_and_join());
+}
+
 #[test]
 fn a_new_source_starts_a_new_stream_at_sample_zero() {
     let _guard = audio_test_guard();

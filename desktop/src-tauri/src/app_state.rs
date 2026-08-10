@@ -1,3 +1,4 @@
+use crate::diagnostics_dto::{DesktopDiagnosticsDto, StorageDiagnosticsDto};
 use crate::dto::{BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto};
 use crate::host_session_dto::{HostInvitationDto, HostSessionSnapshotDto};
 use crate::notification_buffer::DesktopNotificationBuffer;
@@ -60,7 +61,7 @@ enum DesktopRuntimeState {
 struct ReadyRuntime {
     profile_id: ProfileId,
     sources: PathBuf,
-    _identity: DesktopIdentity,
+    identity: DesktopIdentity,
     signing_identity: DesktopHostSigningIdentity,
     handle: CoreActorHandle,
     notifications: Arc<DesktopNotificationBuffer>,
@@ -223,6 +224,96 @@ impl DesktopAppState {
             &snapshot,
             active.as_ref(),
             network.monitor_status(),
+        ))
+    }
+
+    /// Assembles the bounded, redacted diagnostics snapshot (Block 35.1),
+    /// shared by the live diagnostics screen and the file export.
+    ///
+    /// Holds `self.runtime`'s lock for the whole gather, including the
+    /// database worker's own metadata round trip -- acceptable for a
+    /// deliberate, infrequent diagnostics query, unlike the hot playback-
+    /// control paths that only ever clone cheap `Arc` handles out of this
+    /// same lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error only when no profile is ready or the
+    /// actor's own snapshot cannot be read -- a failure to query storage or
+    /// the notification buffer is folded into the returned DTO's own
+    /// `storage`/`notificationBridge` fields instead, since a diagnostics
+    /// request that only partially succeeds is still far more useful than
+    /// one that fails outright.
+    pub(crate) fn host_diagnostics(&self) -> Result<DesktopDiagnosticsDto, DesktopErrorDto> {
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        let ready = match &*state {
+            DesktopRuntimeState::Ready(ready) => ready,
+            DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+            DesktopRuntimeState::Closed
+            | DesktopRuntimeState::Opening { .. }
+            | DesktopRuntimeState::Closing => {
+                return Err(DesktopErrorDto::new(
+                    "desktop.profile.not_ready",
+                    "runtime",
+                    "error",
+                    true,
+                    "no desktop profile is ready",
+                ));
+            }
+        };
+
+        let core_snapshot = ready
+            .handle
+            .current_snapshot()
+            .map_err(DesktopErrorDto::from)?;
+        let active = ready.network.active_host_session()?;
+        let stream_diagnostics = ready.network.stream_diagnostics_snapshot();
+        let monitor = ready.network.monitor_status_full();
+        let storage = match ready.owned.database.client().metadata() {
+            Ok(metadata) => StorageDiagnosticsDto {
+                available: true,
+                schema_version: Some(metadata.schema_version),
+                journal_mode: Some(metadata.journal_mode),
+                foreign_keys_enabled: Some(metadata.foreign_keys_enabled),
+                integrity_check: Some(metadata.integrity_check),
+                applied_migration_count: Some(
+                    u32::try_from(metadata.applied_migrations.len()).unwrap_or(u32::MAX),
+                ),
+                failure_reason: None,
+            },
+            Err(error) => StorageDiagnosticsDto {
+                available: false,
+                schema_version: None,
+                journal_mode: None,
+                foreign_keys_enabled: None,
+                integrity_check: None,
+                applied_migration_count: None,
+                failure_reason: Some(error.to_string()),
+            },
+        };
+        // A failure to read the notification buffer's own failure state is
+        // itself only a diagnostics-gathering detail, not surfaced as a
+        // distinct error here -- folded to `None`, same severity as "no
+        // failure observed".
+        let notification_failure = ready.notifications.delivery_failure().ok().flatten();
+        let device_identity_present = !ready.identity.device_id().as_str().is_empty();
+        let signing_key_fingerprint = Some(silent_disco_core::p2::public_key_fingerprint(
+            ready.signing_identity.public_key_der(),
+        ));
+
+        Ok(crate::platform::diagnostics::build_diagnostics_snapshot(
+            &core_snapshot,
+            ready.profile_id.as_str(),
+            device_identity_present,
+            true,
+            signing_key_fingerprint,
+            active.as_ref(),
+            stream_diagnostics.as_ref(),
+            &monitor,
+            storage,
+            notification_failure,
+            env!("CARGO_PKG_VERSION"),
+            crate::platform::invitation::current_wall_clock_ms(),
         ))
     }
 
@@ -926,7 +1017,7 @@ fn open_runtime(
         ReadyRuntime {
             profile_id,
             sources: paths.sources().to_path_buf(),
-            _identity: identity,
+            identity,
             signing_identity,
             handle,
             notifications: Arc::clone(&notifications),

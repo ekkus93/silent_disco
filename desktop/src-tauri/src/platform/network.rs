@@ -191,7 +191,29 @@ struct ActiveBinding {
     advertisement: SessionAdvertisement,
     runtime: DesktopHostTransportRuntime,
     playback: Option<DesktopPlaybackStreamer>,
+    /// Live decode/packetizer queue-diagnostics readers for the current
+    /// stream (Block 35.1 "decoder/source queues"/"packetizer"), taken
+    /// before ownership of the underlying handles passes to the packetizer
+    /// worker and the playback pump thread respectively. `None` whenever
+    /// no stream has ever started for this binding.
+    stream_diagnostics: Option<StreamDiagnostics>,
     mdns: MdnsPublicationState,
+}
+
+/// Live queue-diagnostics readers for one active playback stream.
+pub(crate) struct StreamDiagnostics {
+    pub(crate) decode: silent_disco_core::audio::DecodeStatisticsReader,
+    pub(crate) packetize: silent_disco_core::audio::PacketizeStatisticsReader,
+}
+
+/// A point-in-time read of [`StreamDiagnostics`], safe to hand to a DTO
+/// builder without exposing the underlying reader types.
+pub(crate) struct StreamDiagnosticsSnapshot {
+    pub(crate) decode: silent_disco_core::audio::DecodeStatistics,
+    /// `(queued_packets, queue_capacity, backpressure_events, emitted_packets)`,
+    /// matching [`silent_disco_core::audio::StreamingPacketizeHandle::statistics`]'s
+    /// own tuple order.
+    pub(crate) packetize: (usize, usize, u64, u64),
 }
 
 struct NetworkState {
@@ -271,6 +293,30 @@ impl DesktopHostNetworkControl {
     #[must_use]
     pub(crate) fn monitor_status(&self) -> MonitorStatusDto {
         monitor_status_dto(&self.monitor.status())
+    }
+
+    /// Full monitor status including live render-callback telemetry
+    /// (Block 35.1 "local monitor and render counters") -- unlike
+    /// [`Self::monitor_status`], which returns the lean, frequently-polled
+    /// [`MonitorStatusDto`] used by the host-session snapshot.
+    #[must_use]
+    pub(crate) fn monitor_status_full(&self) -> super::monitor::MonitorStatus {
+        self.monitor.status()
+    }
+
+    /// Live decode/packetizer queue diagnostics for the current or most
+    /// recently active stream (Block 35.1 "decoder/source queues"/
+    /// "packetizer") -- `None` if no stream has ever started for this
+    /// binding, or if no host session is currently active at all.
+    #[must_use]
+    pub(crate) fn stream_diagnostics_snapshot(&self) -> Option<StreamDiagnosticsSnapshot> {
+        let state = self.state.lock().ok()?;
+        let active = state.active.as_ref()?;
+        let diagnostics = active.stream_diagnostics.as_ref()?;
+        Some(StreamDiagnosticsSnapshot {
+            decode: diagnostics.decode.snapshot(),
+            packetize: diagnostics.packetize.snapshot(),
+        })
     }
 
     /// Returns a bounded, classified interface snapshot and detects changes to an active bind.
@@ -389,6 +435,7 @@ impl DesktopHostNetworkControl {
             advertisement: advertisement.clone(),
             runtime,
             playback: None,
+            stream_diagnostics: None,
             mdns,
         });
         Ok(endpoint)
@@ -453,6 +500,8 @@ impl DesktopHostNetworkControl {
         session_id: silent_disco_core::domain::SessionId,
         stream_id: silent_disco_core::domain::StreamId,
         handle: CoreActorHandle,
+        decode_diagnostics: silent_disco_core::audio::DecodeStatisticsReader,
+        packetize_diagnostics: silent_disco_core::audio::PacketizeStatisticsReader,
     ) -> Result<(), DesktopErrorDto> {
         {
             let mut state = self
@@ -499,6 +548,10 @@ impl DesktopHostNetworkControl {
             .dto());
         };
         active.playback = Some(streamer);
+        active.stream_diagnostics = Some(StreamDiagnostics {
+            decode: decode_diagnostics,
+            packetize: packetize_diagnostics,
+        });
         Ok(())
     }
 

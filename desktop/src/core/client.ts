@@ -7,15 +7,17 @@ import type {
   CommandReceiptDto,
   CoreNotificationDto,
   CoreSnapshotDto,
+  DesktopDiagnosticsDto,
   DesktopErrorDto,
+  DiagnosticsExportOutcome,
   HostInvitationDto,
   HostSessionSnapshotDto,
   JoinRequestCommandRequest,
   ListenerCommandRequest,
+  NetworkInterfaceSnapshotDto,
   OpenProfileRequest,
   OpenProfileResponse,
   RevisionCommandRequest,
-  NetworkInterfaceSnapshotDto,
   SetNetworkBindPreferenceRequest,
   UpdateHostDraftRequest,
 } from "./generated/desktop-bindings";
@@ -370,6 +372,17 @@ export async function setHostNetworkPreference(
 
 export async function createHostInvitation(): Promise<HostInvitationDto> {
   return invokeDesktop<HostInvitationDto>("create_host_invitation");
+}
+
+export async function getHostDiagnostics(): Promise<DesktopDiagnosticsDto> {
+  return invokeDesktop<DesktopDiagnosticsDto>("get_host_diagnostics");
+}
+
+// Opens a native save dialog on the Rust side and writes the export there.
+// Dialog cancellation resolves to `{ kind: "cancelled" }`, not a rejection --
+// only a rejection means the export genuinely failed (Block 35.3).
+export async function exportHostDiagnostics(): Promise<DiagnosticsExportOutcome> {
+  return invokeDesktop<DiagnosticsExportOutcome>("export_host_diagnostics");
 }
 
 export async function closeProfile(): Promise<BridgeLifecycleDto> {

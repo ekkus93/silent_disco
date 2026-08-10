@@ -18,7 +18,7 @@ pub use concealment::{
     MAX_CONCEALMENT_RAMP_FRAMES, MAX_CONSECUTIVE_CONCEALED_PACKETS_LIMIT,
 };
 pub use debug_recorder::DebugPcmRecorder;
-pub use decoder::StreamingDecodeHandle;
+pub use decoder::{DecodeStatisticsReader, StreamingDecodeHandle};
 pub use jitter_buffer::{
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig,
     JitterBufferConfigError, JitterBufferConfigErrorKind, JitterBufferRejection,
@@ -30,8 +30,8 @@ pub use packetizer::{
     Packetizer, PacketizerError, PacketizerErrorKind,
 };
 pub use packetizer_worker::{
-    DEFAULT_PACKETIZER_QUEUE_CAPACITY, MAX_PACKETIZER_QUEUE_CAPACITY, PacketizerSummary,
-    PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
+    DEFAULT_PACKETIZER_QUEUE_CAPACITY, MAX_PACKETIZER_QUEUE_CAPACITY, PacketizeStatisticsReader,
+    PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
     StreamingPacketizeConfig, StreamingPacketizeHandle,
 };
 pub use playback_pump::{
