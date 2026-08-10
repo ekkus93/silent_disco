@@ -2222,19 +2222,73 @@ identically to this project's other hardware-blocked items.
 
 Before local monitoring, complete the applicable shared render-ring work from Blocks 16 and 17 of the shared migration TODO.
 
+**Investigation, 2026-08-10**: Block 16 (SPSC render ring itself) is fully
+checked in the shared migration TODO -- `silent_disco_core::audio::RenderRing`
+(`rust/silent-disco-core/src/audio/render_ring.rs`) already satisfies every
+bullet below with existing tests (`render_ring_tests.rs`, 12 tests including
+two genuine multithreaded stress tests). Block 17 (C ABI) is checked except
+one unrelated item (17.4's non-real-time fatal notification scheduling,
+mobile-callback-specific, not relevant to desktop's consumer path). Desktop
+already links `silent-disco-core` directly (not `silent-disco-ffi`), so it
+already had ordinary safe access to `RenderRing::new(..).split()` -- the one
+thing genuinely missing was a **controlled acquisition gate** guaranteeing
+only one producer/consumer pair is ever outstanding, mirroring the C ABI
+registry's `Active`/`Released` distinction without needing tokens or FFI.
+That gate (`desktop/src-tauri/src/platform/render_ring.rs`,
+`DesktopRenderRingGate`/`DesktopRenderConsumerLease`) is this block's only
+new code; it does not schedule anything -- production of ring frames stays
+the existing `PlaybackScheduler`/`PlaybackPump`'s job, reused unchanged by a
+future local-monitor feature (Block 33+). Not yet wired into
+`DesktopAppState`/any Tauri command -- out of scope until Block 33 actually
+selects and wires a CPAL (or equivalent) output backend to consume it.
+
 Verify:
 
-- [ ] 48 kHz stereo float32 internal format or intentionally updated approved format;
-- [ ] bounded preallocated ring;
-- [ ] single producer;
-- [ ] single consumer registration;
-- [ ] no unread overwrite;
-- [ ] nonblocking consumer;
-- [ ] telemetry;
-- [ ] stress tests;
-- [ ] controlled consumer acquire/release lifecycle.
+- [x] 48 kHz stereo float32 internal format -- `RENDER_CHANNELS = 2`,
+      `CANONICAL_SAMPLE_RATE_HZ = 48_000`/`CANONICAL_CHANNELS = 2` enforced
+      upstream by the decoder/resampler pipeline (`render_ring.rs`,
+      `audio/types.rs`); already the current format, not merely planned.
+- [x] bounded preallocated ring -- `RenderRing::new` preallocates a fixed
+      `Box<[AtomicU32]>` up front with hard `MIN`/`MAX_RING_CAPACITY_FRAMES`
+      bounds; capacity never grows.
+- [x] single producer -- `RenderRing::split(self)` returns exactly one
+      `RenderRingProducer`, which does not implement `Clone` -- a
+      compile-time, not runtime, guarantee.
+- [x] single consumer registration -- same `split()` guarantee for
+      `RenderRingConsumer` at the ring layer; additionally enforced at the
+      desktop acquisition layer by the new `DesktopRenderRingGate`
+      (`a_second_acquire_while_active_is_rejected`,
+      `concurrent_acquire_attempts_yield_exactly_one_winner`).
+- [x] no unread overwrite -- `push_frames` bounds writes to
+      `free_frames` computed from an `Acquire`-loaded `read_index`; stress
+      tested by `producer_faster_than_consumer_never_corrupts_or_loses_data`.
+- [x] nonblocking consumer -- `read_frames` is pure atomics over a
+      preallocated slice, no locks or allocation.
+- [x] telemetry -- all 8 documented counters present and exercised
+      (`RenderRingTelemetry`/`RenderRingSnapshot`).
+- [x] stress tests -- two genuine multithreaded stress tests at the ring
+      layer (`render_ring_tests.rs`); a third added at the desktop
+      acquisition layer specifically
+      (`concurrent_acquire_attempts_yield_exactly_one_winner`, 16 threads
+      racing `acquire()`, asserting exactly one winner). Literal
+      ThreadSanitizer was not run (stable toolchain has no nightly TSan
+      wired in) -- documented as a known gap in Block 16's own
+      implementation note, not silently skipped.
+- [x] controlled consumer acquire/release lifecycle -- new
+      `DesktopRenderRingGate::acquire`/`DesktopRenderConsumerLease`'s
+      `Drop` (`desktop/src-tauri/src/platform/render_ring.rs`): explicit
+      acquire, release-on-drop, a rejected config never leaves the gate
+      stuck `Active`
+      (`an_invalid_config_is_rejected_without_leaving_the_gate_stuck`), and
+      a released lease permits a fresh acquire
+      (`dropping_the_lease_allows_a_fresh_acquire`).
 
 The desktop may use a safe Rust consumer API rather than the mobile C ABI, but semantics must remain equivalent.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`,
+`cd desktop && npm run check` (bindings-check, biome, tsc, 64/64 Vitest,
+production build) -- `./gradlew test lintDebug` unaffected by this block
+(desktop-only Rust change, no Kotlin touched).
 
 **Acceptance:** A safe desktop render consumer can be acquired without creating a second scheduling path.
 

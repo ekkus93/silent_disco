@@ -29,6 +29,11 @@ pub mod paths;
 mod playback_streamer;
 pub mod profile_lock;
 pub mod profile_metadata;
+#[allow(
+    dead_code,
+    reason = "Desktop Block 33 consumes this render-ring consumer acquisition gate"
+)]
+pub(crate) mod render_ring;
 pub(crate) mod source_staging;
 pub(crate) mod source_staging_control;
 pub(crate) mod start_playback;
