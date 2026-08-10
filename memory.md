@@ -2338,3 +2338,126 @@ Committed and pushed. No open threads from this block. Next session
 should ask the user what to work on (Block 36 — deterministic shutdown
 — is next in the TODO's Phase 10, but per this session's established
 pattern, do not start it unilaterally).
+
+## 2026-08-10T14:21:50Z - Sonnet 5 - Block 36 complete: deterministic application shutdown
+
+Implemented all four sub-blocks (36.1 lifecycle state, 36.2 ordered
+shutdown, 36.3 window close interception, 36.4 tests) from
+`docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`. TODO doc's Block 36
+checkboxes updated with full evidence citations, including two items
+explicitly left unchecked with honest gap explanations (see below) —
+that doc is the source of truth for the full per-item breakdown; this
+entry records the architectural decisions worth remembering.
+
+**Key decisions:**
+- Investigated existing shutdown infrastructure thoroughly first (via a
+  dispatched Explore agent) before designing anything — found that
+  every subsystem's stop/join mechanism already existed
+  (`shutdown_owned_resources` in `shutdown.rs`), but two real gaps were
+  explicitly marked in-code as "Block 36's job": mDNS *daemon*-level
+  `shutdown()` was never called (only the per-publication `withdraw()`
+  was), and there was zero window-close interception anywhere in the
+  Tauri builder.
+- **Two cooperating state machines, not one**: `DesktopRuntimeState`
+  (`app_state.rs`) stays `DesktopAppState`'s own profile open/close/
+  reopen lifecycle, extended with a new `ShutdownFailed(DesktopErrorDto)`
+  variant distinct from `Failed` (open failure). A new, separate
+  `AppShutdownCoordinator`/`AppShutdownPhase` (`app_shutdown.rs`) layers
+  the *whole-application* window-close-triggered concern on top,
+  reaching a `Terminated` phase only right before the process actually
+  exits. Deliberately kept apart: closing one profile to reopen another
+  is a materially different guarantee than "the process is exiting",
+  and conflating them would have made `begin_open`'s reopen-safety
+  logic incoherent.
+- `ShutdownFailed` is deliberately **not** reopen-safe (unlike `Failed`):
+  on a genuine timeout, owned resources may still be alive on a
+  detached background thread, so a fresh `open_profile` could race a
+  still-tearing-down profile. `begin_open` refuses to reopen from
+  `ShutdownFailed`, requiring an application restart — a deliberate,
+  documented safety choice, not an oversight.
+- **Timeout design**: `run_with_timeout` (`app_shutdown.rs`) spawns the
+  real shutdown work on a background thread and does a bounded
+  `recv_timeout` wait. On expiry, the spawned thread is *never* joined,
+  cancelled, or dropped — it's deliberately detached and left running
+  independently (best case: finishes on its own; worst case: hangs
+  forever, which is safe since nothing was force-freed). This directly
+  implements spec section 27's "a timeout does not authorize freeing
+  callback-visible memory" — tested by forcing a real detached-thread
+  race (`run_with_timeout_returns_promptly_and_never_joins_a_slow_worker`),
+  not just asserted in a comment.
+- **Ordering deviation from the spec's literal 13-step list, deliberately
+  chosen and documented, not missed**: `CoreActorRuntime::shutdown()` is
+  still called *after* mDNS/playback/transport teardown in
+  `shutdown_owned_resources`, not before. Reason: those subsystems still
+  submit legitimate final `AudioEvent`/`TransportEvent`s to the live
+  actor while winding down; shutting the actor down first would reject
+  those as spurious failures. Reordering would require splitting
+  `CoreActorRuntime::shutdown`'s signal-and-join into two core-API-level
+  phases — a shared, Android-facing core API change judged out of scope
+  and too risky for this block. The one ordering fix that *was* made:
+  swapped notification-dispatcher-stop to run *after* database close
+  (previously before), matching spec order 10-before-11.
+- **No development forced-exit escape hatch was added**, even though the
+  checklist item allowed for one ("if any"). A bypass-controlled-
+  teardown safety valve is exactly the kind of thing this project's
+  error-handling rules argue against (no fallback that turns a
+  production failure into silent/log-only behavior); a genuinely stuck
+  process can still be killed by the OS, which is safe (atomic reclaim)
+  unlike an in-process forced free.
+- **Progress visibility uses polling, not a push event**: considered
+  Tauri's `.emit()`/frontend `listen()` event mechanism (there's
+  existing precedent in `source_staging_control.rs`, though it turned
+  out to be emitted but never actually consumed by the frontend), but
+  chose a plain polled `get_app_shutdown_state` command + a new
+  `ShutdownOverlay` component polling every 500ms instead — matches
+  this codebase's existing polling idiom (`HostSessionScreen`,
+  `DiagnosticsScreen`) and avoids the added complexity/fragility of a
+  new push-event mechanism. Valid because the webview stays fully alive
+  while a close is pending — only the *native* close is prevented, not
+  the process.
+- **Duplicate-close idempotency fixed at two layers**: (1)
+  `AppShutdownCoordinator::claim()` returns `Perform` exactly once, ever;
+  (2) `DesktopAppState::take_for_close` now returns a new
+  `CloseAction::AlreadyInProgress` (success, not an error) when another
+  close is already tearing the profile down — this replaces the
+  previous `desktop.profile.close_in_progress` *error* response, so the
+  existing `close_profile` command is now also idempotent, not just the
+  new window-close path.
+- Refactored `close_profile`'s body into a shared, `AppHandle`-driven
+  `close_profile_sync` function (`app_state.rs`) so the Tauri command
+  (via `spawn_blocking`) and the window-close-triggered flow (already on
+  its own thread) can never drift apart — one implementation, two
+  callers.
+- Honest test gaps recorded rather than papered over: "shutdown during
+  decode" and "shutdown during database write" have **no new dedicated
+  test** in this block — driving those scenarios through the *whole*
+  close path would need a real `AppHandle`, which requires enabling
+  `tauri`'s `test`/`mock_runtime` feature (not currently enabled in this
+  crate). The underlying mechanisms are unit-tested in isolation
+  elsewhere, but not through this specific path. Left unchecked in the
+  TODO rather than falsely marked done.
+
+**Gates:** `bash scripts/check-rust.sh` green (full workspace).
+`cd desktop && npm run check` green (bindings-check, biome,
+`cargo fmt --check`, tsc, 68/68 Vitest, production build).
+`desktop/src-tauri cargo test`: 191 passed (was 181 at the start of this
+block; +10 new: 2 `network_tests.rs`, 5 `app_shutdown.rs`, 3
+`app_state.rs`). Manually ran
+`cargo clippy --all-targets --all-features -- -D warnings` for
+`desktop/src-tauri` — confirmed via `git stash` that the identical,
+unrelated pre-existing error set from Block 35's own audit is still the
+only thing failing; this block's own code introduced two lints during
+development (missing doc backticks, a `let...else` suggestion) and both
+were fixed before landing. `./gradlew test lintDebug` not re-run
+(desktop-only change, no Kotlin touched).
+
+**Known carried-forward gap, still not this block's to fix:** desktop's
+own clippy remains outside the enforced `npm run check` gate (same
+~8-error pre-existing set noted in the Block 35 memory entry, unchanged
+in count and file list this session).
+
+### Next
+Committed and pushed. No open threads from this block. Block 37 (Lab
+Mode build feature) is next in the TODO's Phase 11, but per this
+session's established pattern, do not start it unilaterally — ask the
+user first.

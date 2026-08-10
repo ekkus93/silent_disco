@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 import type {
   ApproveJoinRequest,
+  AppShutdownPhaseDto,
   AttachNotificationResponse,
   BridgeLifecycleDto,
   CommandReceiptDto,
@@ -387,4 +388,13 @@ export async function exportHostDiagnostics(): Promise<DiagnosticsExportOutcome>
 
 export async function closeProfile(): Promise<BridgeLifecycleDto> {
   return invokeDesktop<BridgeLifecycleDto>("close_profile");
+}
+
+// Block 36.3 "progress is visible": the whole-application shutdown phase,
+// distinct from the profile-focused `BridgeLifecycleDto` above. Polled --
+// the webview stays fully alive while a window close request is pending
+// (only the native close is prevented, not the process), so no push
+// channel is needed.
+export async function getAppShutdownState(): Promise<AppShutdownPhaseDto> {
+  return invokeDesktop<AppShutdownPhaseDto>("get_app_shutdown_state");
 }

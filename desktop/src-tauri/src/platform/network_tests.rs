@@ -606,6 +606,95 @@ fn reserve_udp_port(address: Ipv4Addr) -> u16 {
     socket.local_addr().expect("UDP local address").port()
 }
 
+/// Records whether the daemon-level `shutdown()` was ever invoked --
+/// distinct from a per-publication `withdraw()` -- so Block 36.2's "mDNS
+/// daemon shutdown, even when no binding was ever active" requirement is
+/// directly observable.
+#[derive(Default)]
+struct RecordingMdnsPublisher {
+    shutdown_called: AtomicBool,
+}
+
+impl MdnsPublisher for RecordingMdnsPublisher {
+    fn publish(
+        &self,
+        _advertisement: &SessionAdvertisement,
+        _endpoint: NetworkEndpoint,
+    ) -> Result<Box<dyn MdnsRegistration>, MdnsPublishError> {
+        Ok(Box::new(NoopMdnsRegistration))
+    }
+
+    fn shutdown(&self) -> Result<(), MdnsPublishError> {
+        self.shutdown_called.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct NoopMdnsRegistration;
+
+impl MdnsRegistration for NoopMdnsRegistration {
+    fn withdraw(&self) -> Result<(), MdnsPublishError> {
+        Ok(())
+    }
+}
+
+/// A daemon-level publisher whose `shutdown()` always fails, standing in
+/// for a daemon that could not be cleanly torn down.
+struct FailingShutdownMdnsPublisher;
+
+impl MdnsPublisher for FailingShutdownMdnsPublisher {
+    fn publish(
+        &self,
+        _advertisement: &SessionAdvertisement,
+        _endpoint: NetworkEndpoint,
+    ) -> Result<Box<dyn MdnsRegistration>, MdnsPublishError> {
+        Ok(Box::new(NoopMdnsRegistration))
+    }
+
+    fn shutdown(&self) -> Result<(), MdnsPublishError> {
+        Err(MdnsPublishError::DaemonUnavailable {
+            message: "daemon refused to confirm shutdown".to_owned(),
+        })
+    }
+}
+
+/// Block 36.2 "withdraw mDNS" extends to the daemon itself, not just an
+/// active publication: `shutdown()` must reach the daemon-level publisher
+/// even when this control never bound a host session.
+#[test]
+fn network_control_shutdown_shuts_down_the_mdns_daemon_even_when_never_active() {
+    let mdns = Arc::new(RecordingMdnsPublisher::default());
+    let control = DesktopHostNetworkControl::with_components(
+        Arc::new(SequenceProvider::new([Vec::new()])),
+        Arc::new(production_transport_factory()),
+        TestHostPorts::default(),
+    )
+    .with_mdns_publisher(mdns.clone());
+
+    control.shutdown().expect("inactive shutdown");
+
+    assert!(
+        mdns.shutdown_called.load(Ordering::SeqCst),
+        "the daemon-level publisher must be shut down even without an active binding"
+    );
+}
+
+/// A daemon shutdown failure must be reported, not silently swallowed.
+#[test]
+fn network_control_shutdown_reports_a_failing_mdns_daemon_shutdown() {
+    let control = DesktopHostNetworkControl::with_components(
+        Arc::new(SequenceProvider::new([Vec::new()])),
+        Arc::new(production_transport_factory()),
+        TestHostPorts::default(),
+    )
+    .with_mdns_publisher(Arc::new(FailingShutdownMdnsPublisher));
+
+    let error = control
+        .shutdown()
+        .expect_err("a failing daemon shutdown must be reported");
+    assert!(error.message.contains("mDNS daemon shutdown failed"));
+}
+
 #[test]
 fn network_control_shutdown_is_idempotent_when_inactive() {
     let control = DesktopHostNetworkControl::with_components(

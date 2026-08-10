@@ -52,10 +52,24 @@ pub struct DesktopAppState {
 
 enum DesktopRuntimeState {
     Closed,
-    Opening { profile_id: ProfileId },
+    Opening {
+        profile_id: ProfileId,
+    },
     Ready(Box<ReadyRuntime>),
     Closing,
+    /// A profile failed to open. Retryable per the stored error's own
+    /// `retryable` field -- a new open attempt after `close`/reset is
+    /// generally safe, since nothing was ever fully constructed.
     Failed(DesktopErrorDto),
+    /// A shutdown was attempted and did not complete cleanly (Block 36.1
+    /// "shutdown failed") -- distinct from [`Self::Failed`], which means a
+    /// profile never became ready. Deliberately never treated as
+    /// reopen-safe (see `begin_open`): on a genuine timeout, owned
+    /// resources may still be alive on a detached background thread (Block
+    /// 36.2/36.3 "timeout does not free callback-visible memory unsafely"),
+    /// so a fresh open could race a still-tearing-down profile. Recovery
+    /// requires restarting the application.
+    ShutdownFailed(DesktopErrorDto),
 }
 
 struct ReadyRuntime {
@@ -107,6 +121,13 @@ impl DesktopAppState {
                 "error",
                 error.retryable,
                 "the previous profile open failed; close the failed state before retrying",
+            )),
+            DesktopRuntimeState::ShutdownFailed(_) => Err(DesktopErrorDto::new(
+                "desktop.profile.shutdown_failed_state",
+                "runtime",
+                "fatal",
+                false,
+                "a previous shutdown did not complete cleanly; restart the application before opening a profile",
             )),
         }
     }
@@ -167,7 +188,9 @@ impl DesktopAppState {
                     .map(CoreSnapshotDto::from)
                     .map_err(DesktopErrorDto::from)
             }
-            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                Err(error.clone())
+            }
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
             | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
@@ -184,7 +207,9 @@ impl DesktopAppState {
         let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         match &*state {
             DesktopRuntimeState::Ready(ready) => Ok(ready.sources.clone()),
-            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                Err(error.clone())
+            }
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
             | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
@@ -204,7 +229,9 @@ impl DesktopAppState {
                 DesktopRuntimeState::Ready(ready) => {
                     (ready.handle.clone(), Arc::clone(&ready.network))
                 }
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -248,7 +275,9 @@ impl DesktopAppState {
         let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         let ready = match &*state {
             DesktopRuntimeState::Ready(ready) => ready,
-            DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                return Err(error.clone());
+            }
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
             | DesktopRuntimeState::Closing => {
@@ -324,7 +353,9 @@ impl DesktopAppState {
             let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
             match &*state {
                 DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -364,7 +395,9 @@ impl DesktopAppState {
                     Arc::clone(&ready.network),
                     ready.signing_identity.clone(),
                 ),
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -419,7 +452,9 @@ impl DesktopAppState {
                 ready.network.set_monitor_enabled(enabled);
                 Ok(())
             }
-            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                Err(error.clone())
+            }
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
             | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
@@ -442,7 +477,9 @@ impl DesktopAppState {
                 DesktopRuntimeState::Ready(ready) => {
                     (ready.handle.clone(), Arc::clone(&ready.network))
                 }
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -464,7 +501,9 @@ impl DesktopAppState {
             let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
             match &*state {
                 DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -486,7 +525,9 @@ impl DesktopAppState {
             let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
             match &*state {
                 DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -508,7 +549,9 @@ impl DesktopAppState {
             let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
             match &*state {
                 DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -533,7 +576,9 @@ impl DesktopAppState {
             let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
             match &*state {
                 DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
-                DesktopRuntimeState::Failed(error) => return Err(error.clone()),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
                 DesktopRuntimeState::Closed
                 | DesktopRuntimeState::Opening { .. }
                 | DesktopRuntimeState::Closing => {
@@ -571,7 +616,9 @@ impl DesktopAppState {
                 .submit_command(request)
                 .map(CommandReceiptDto::from)
                 .map_err(DesktopErrorDto::from),
-            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                Err(error.clone())
+            }
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
             | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
@@ -588,7 +635,9 @@ impl DesktopAppState {
         let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         match &*state {
             DesktopRuntimeState::Ready(ready) => Ok(Arc::clone(&ready.notifications)),
-            DesktopRuntimeState::Failed(error) => Err(error.clone()),
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                Err(error.clone())
+            }
             DesktopRuntimeState::Closed
             | DesktopRuntimeState::Opening { .. }
             | DesktopRuntimeState::Closing => Err(DesktopErrorDto::new(
@@ -608,6 +657,14 @@ impl DesktopAppState {
                 *state = DesktopRuntimeState::Closed;
                 Ok(CloseAction::AlreadyClosed)
             }
+            DesktopRuntimeState::ShutdownFailed(error) => {
+                // Deliberately restored as `ShutdownFailed`, not downgraded
+                // to `Closed` -- there is nothing live left to close, but
+                // `begin_open` must keep refusing new opens until the
+                // application restarts (see the variant's own doc comment).
+                *state = DesktopRuntimeState::ShutdownFailed(error);
+                Ok(CloseAction::AlreadyClosed)
+            }
             DesktopRuntimeState::Ready(ready) => Ok(CloseAction::Shutdown(ready)),
             DesktopRuntimeState::Opening { profile_id } => {
                 *state = DesktopRuntimeState::Opening { profile_id };
@@ -620,14 +677,13 @@ impl DesktopAppState {
                 ))
             }
             DesktopRuntimeState::Closing => {
+                // Block 36.3 "duplicate close is idempotent": a second
+                // close request while one is already tearing down is not a
+                // failure -- it never attempts a second teardown and never
+                // reports an error just because the caller asked twice.
+                // The in-flight attempt owns the real outcome.
                 *state = DesktopRuntimeState::Closing;
-                Err(DesktopErrorDto::new(
-                    "desktop.profile.close_in_progress",
-                    "runtime",
-                    "error",
-                    true,
-                    "desktop profile close is already in progress",
-                ))
+                Ok(CloseAction::AlreadyInProgress)
             }
         }
     }
@@ -640,7 +696,7 @@ impl DesktopAppState {
                 Ok(())
             }
             Err(error) => {
-                *state = DesktopRuntimeState::Failed(error.clone());
+                *state = DesktopRuntimeState::ShutdownFailed(error.clone());
                 Err(error)
             }
         }
@@ -679,7 +735,7 @@ impl DesktopAppState {
     #[cfg(test)]
     fn close_sync(&self) -> Result<(), DesktopErrorDto> {
         match self.take_for_close()? {
-            CloseAction::AlreadyClosed => Ok(()),
+            CloseAction::AlreadyClosed | CloseAction::AlreadyInProgress => Ok(()),
             CloseAction::Shutdown(ready) => {
                 self.finish_close(shutdown_owned_resources(ready.owned))
             }
@@ -689,6 +745,10 @@ impl DesktopAppState {
 
 enum CloseAction {
     AlreadyClosed,
+    /// Another close is already tearing this profile down; this caller
+    /// does not own that teardown and must not attempt a second one (Block
+    /// 36.3 "duplicate close is idempotent").
+    AlreadyInProgress,
     Shutdown(Box<ReadyRuntime>),
 }
 
@@ -823,29 +883,54 @@ pub async fn attach_notifications(
 /// Returns a structured error for lifecycle, concurrent open/close, worker, actor, database, or profile-lock cleanup failure.
 #[tauri::command]
 pub async fn close_profile(app: AppHandle) -> Result<BridgeLifecycleDto, DesktopErrorDto> {
-    let action = app.state::<DesktopAppState>().take_for_close()?;
-    let staging_cleanup = app.state::<SourceStagingControl>().cancel_and_wait();
-    let result = match action {
-        CloseAction::AlreadyClosed => Ok(()),
-        CloseAction::Shutdown(ready) => {
-            tauri::async_runtime::spawn_blocking(move || shutdown_owned_resources(ready.owned))
-                .await
-                .map_err(|error| {
-                    DesktopErrorDto::new(
-                        "desktop.profile.close_worker_failed",
-                        "runtime",
-                        "fatal",
-                        false,
-                        &format!("desktop profile close worker failed: {error}"),
-                    )
-                })?
-        }
+    tauri::async_runtime::spawn_blocking(move || close_profile_sync(&app))
+        .await
+        .map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.profile.close_worker_failed",
+                "runtime",
+                "fatal",
+                false,
+                &format!("desktop profile close worker failed: {error}"),
+            )
+        })??;
+    Ok(BridgeLifecycleDto::Closed)
+}
+
+/// Synchronous, `AppHandle`-driven equivalent of [`close_profile`]'s body
+/// -- shared by that command (via `spawn_blocking`, since it must not
+/// block the async runtime) and by the window-close-triggered whole-
+/// application shutdown (`app_shutdown.rs`, Block 36.3), which is already
+/// running on its own dedicated thread and calls this directly. Keeping
+/// one shared function means the two paths can never drift apart.
+///
+/// A duplicate call while another close is already in flight is
+/// idempotent success, not an error (Block 36.3 "duplicate close is
+/// idempotent").
+///
+/// # Errors
+///
+/// Returns a structured error for lifecycle, worker, actor, database, or
+/// profile-lock cleanup failure.
+pub(crate) fn close_profile_sync(app: &AppHandle) -> Result<(), DesktopErrorDto> {
+    let state = app.state::<DesktopAppState>();
+    let action = state.take_for_close()?;
+    let ready = match action {
+        // Nothing new to tear down: either already closed, or another
+        // close already owns the real teardown -- this call must not
+        // attempt a second teardown or touch staging/registry state the
+        // original owns.
+        CloseAction::AlreadyClosed | CloseAction::AlreadyInProgress => None,
+        CloseAction::Shutdown(ready) => Some(ready),
     };
+    let Some(ready) = ready else {
+        return Ok(());
+    };
+    let staging_cleanup = app.state::<SourceStagingControl>().cancel_and_wait();
+    let result = shutdown_owned_resources(ready.owned);
     let registry_cleanup = app.state::<SelectedSourceRegistry>().clear().map(|_| ());
     let result = merge_close_results(result, staging_cleanup);
-    app.state::<DesktopAppState>()
-        .finish_close(merge_close_results(result, registry_cleanup))?;
-    Ok(BridgeLifecycleDto::Closed)
+    state.finish_close(merge_close_results(result, registry_cleanup))
 }
 
 fn merge_close_results(

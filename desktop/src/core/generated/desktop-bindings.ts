@@ -14,6 +14,8 @@ export type TrustedDeviceSummaryDto = { deviceId: string, displayName: string, t
 
 export type BridgeLifecycleDto = { "kind": "closed" } | { "kind": "opening", "details": { profile_id: string, } } | { "kind": "ready", "details": { profile_id: string, } } | { "kind": "failed", "details": { error: DesktopErrorDto, } };
 
+export type AppShutdownPhaseDto = { "kind": "notRequested" } | { "kind": "shuttingDown" } | { "kind": "terminated" } | { "kind": "shutdownFailed", "details": { error: DesktopErrorDto, } };
+
 export type StorageInspectionDto = { sqliteVersion: string, foreignKeysEnabled: boolean, journalMode: string, busyTimeoutMs: number, synchronousPolicy: string, schemaVersion: number, appliedMigrations: Array<MigrationSummaryDto>, integrityCheck: string, settings: StoredSettingsSummaryDto | null, trustedDevices: Array<TrustedDeviceSummaryDto>, };
 
 export type OpenProfileRequest = { profileId: string, };

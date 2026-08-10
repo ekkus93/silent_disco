@@ -19,9 +19,12 @@ pub(crate) struct DesktopOwnedResources {
 /// Shuts down owned resources in dependency-safe order.
 ///
 /// Platform-effect admission stops first while the actor is still available to receive
-/// cancellation failures for queued operations. The actor then performs controlled shutdown,
-/// followed by the notification dispatcher, storage worker, and profile lease. Every cleanup
-/// phase is attempted; a later failure never overwrites an earlier one.
+/// cancellation failures for queued operations. The actor then performs controlled shutdown.
+/// The database worker checkpoints and closes next, then the notification dispatcher stops --
+/// deliberately last among the workers (spec order 10 before 11: a dispatcher stopped before
+/// the database closes could never relay a final database-close-related notification) -- and
+/// finally the profile lease is released. Every cleanup phase is attempted; a later failure
+/// never overwrites an earlier one.
 ///
 /// # Errors
 ///
@@ -33,8 +36,8 @@ pub(crate) fn shutdown_owned_resources(
     let platform_error = resources.platform_runner.shutdown().err();
     let storage_error = resources.storage_runner.shutdown().err();
     let actor_error = resources.actor.shutdown().err();
-    let notification_error = resources.notifications.shutdown().err();
     let database_error = resources.database.stop_and_join().err();
+    let notification_error = resources.notifications.shutdown().err();
     let lease_error = resources.lease.release().err();
 
     if platform_error.is_none()

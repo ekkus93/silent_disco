@@ -9,10 +9,80 @@ import {
 } from "./app/selectors";
 import { useAppDispatch, useAppSelector } from "./app/store";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
-import { toDesktopBridgeError } from "./core/client";
+import { getAppShutdownState, toDesktopBridgeError } from "./core/client";
+import type { AppShutdownPhaseDto } from "./core/generated/desktop-bindings";
 import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
+
+// Block 36.3 "progress is visible" / "timeout becomes visible failure":
+// polled rather than pushed -- the webview stays fully alive while a
+// window close request is pending (only the native close is prevented,
+// not the process), so a lightweight poll is enough, matching every other
+// status screen in this app.
+const SHUTDOWN_POLL_INTERVAL_MS = 500;
+
+function ShutdownOverlay() {
+  const [phase, setPhase] = useState<AppShutdownPhaseDto | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const poll = () => {
+      void getAppShutdownState()
+        .then((next) => {
+          if (active) setPhase(next);
+        })
+        .catch(() => {
+          // A transient poll failure keeps the last-known phase on screen
+          // rather than flashing back to "nothing is happening".
+        });
+    };
+    poll();
+    const interval = window.setInterval(poll, SHUTDOWN_POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  if (!phase || phase.kind === "notRequested") {
+    return null;
+  }
+
+  return (
+    <div
+      role="alert"
+      aria-live="assertive"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-sm"
+    >
+      <div className="max-w-md rounded-2xl border border-violet-300/30 bg-slate-900 p-8 text-center text-violet-50 shadow-2xl">
+        {phase.kind === "shuttingDown" ? (
+          <>
+            <p className="text-lg font-semibold">Shutting down…</p>
+            <p className="mt-2 text-sm text-violet-100/70">
+              Closing the active session and releasing local resources. This window will close
+              automatically once that finishes.
+            </p>
+          </>
+        ) : null}
+        {phase.kind === "shutdownFailed" ? (
+          <>
+            <p className="text-lg font-semibold text-rose-200">Shutdown did not complete cleanly</p>
+            <p className="mt-2 text-sm text-rose-100/80">{phase.details.error.message}</p>
+            <p className="mt-1 font-mono text-xs text-rose-100/60">{phase.details.error.code}</p>
+            <p className="mt-4 text-xs text-violet-100/60">
+              It is not safe to retry automatically -- close this window from your operating system
+              if it does not exit on its own.
+            </p>
+          </>
+        ) : null}
+        {phase.kind === "terminated" ? (
+          <p className="text-lg font-semibold">Shutdown complete.</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 interface ShellConnectionState {
   connectionKind: "opened" | "reattached";
@@ -71,6 +141,7 @@ export function App() {
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#312e81_0%,#171229_42%,#100d1a_100%)] px-6 py-10 text-violet-50">
+      <ShutdownOverlay />
       <section className="mx-auto max-w-6xl rounded-3xl border border-violet-300/20 bg-slate-950/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-violet-200/15 pb-5">
           <div>

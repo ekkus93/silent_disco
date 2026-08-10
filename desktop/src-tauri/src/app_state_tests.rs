@@ -1,4 +1,4 @@
-use super::DesktopAppState;
+use super::{CloseAction, DesktopAppState};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::identity::{DesktopIdentity, DesktopIdentityError, DesktopIdentityProvider};
 use crate::platform::invitation_identity::{
@@ -7,6 +7,7 @@ use crate::platform::invitation_identity::{
 use crate::platform::paths::DesktopProfilePaths;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
 use crate::profile::ProfileId;
+use crate::shutdown::shutdown_owned_resources;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -229,4 +230,97 @@ fn observer_setup_failure_releases_actor_database_and_lock() {
         .expect("lock released after observer failure")
         .release()
         .expect("release verification lease");
+}
+
+/// Block 36.4 "shutdown during open": a close request arriving while a
+/// profile is still opening must be reported, not silently accepted or
+/// allowed to corrupt the in-flight open -- the `Opening` state survives
+/// intact for the original open to finish or fail on its own.
+#[test]
+fn closing_while_still_opening_is_reported_and_leaves_the_opening_state_intact() {
+    let root = TestDirectory::new();
+    let (id, _paths) = profile(&root);
+    let state = DesktopAppState::new();
+    state.begin_open(&id).expect("begin open");
+
+    let Err(error) = state.take_for_close() else {
+        panic!("closing mid-open must be reported, not silently accepted");
+    };
+    assert_eq!(error.code, "desktop.profile.open_in_progress");
+
+    // The Opening state survived the failed close attempt -- a fresh
+    // begin_open is still rejected as already-open-or-changing, which
+    // would not be true had the failed close reset the state to `Closed`.
+    assert!(state.begin_open(&id).is_err());
+}
+
+/// Block 36.3 "duplicate close is idempotent": a second close request
+/// arriving while the first is still tearing down the profile must not
+/// attempt a second teardown and must not fail just because the caller
+/// asked twice -- it is folded into the in-flight attempt's own outcome.
+#[test]
+fn a_duplicate_close_while_one_is_already_in_flight_is_idempotent() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+    state
+        .open_profile_sync(
+            &paths,
+            id,
+            &FixedIdentityProvider([9; 32]),
+            &FixedSigningIdentityProvider(9),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("open profile");
+
+    // The first caller claims the real teardown...
+    let first = state.take_for_close().expect("first close");
+    assert!(matches!(first, CloseAction::Shutdown(_)));
+    // ...and a second caller arriving before the first finishes observes
+    // idempotent success, not an error, and never receives its own
+    // `ReadyRuntime` to tear down again.
+    let second = state.take_for_close().expect("second close");
+    assert!(matches!(second, CloseAction::AlreadyInProgress));
+
+    let CloseAction::Shutdown(ready) = first else {
+        unreachable!("asserted Shutdown above");
+    };
+    state
+        .finish_close(shutdown_owned_resources(ready.owned))
+        .expect("finish what the first caller claimed");
+}
+
+/// Block 36.4 "profile can reopen after clean shutdown": a real, full
+/// open -> close -> open cycle, not just the profile lock's own
+/// acquire/release (already covered by
+/// `second_open_is_rejected_and_profile_lock_is_retained_until_close`).
+#[test]
+fn a_profile_reopens_cleanly_after_a_full_close() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+
+    let first_open = state
+        .open_profile_sync(
+            &paths,
+            id.clone(),
+            &FixedIdentityProvider([10; 32]),
+            &FixedSigningIdentityProvider(10),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("first open");
+    assert_eq!(first_open.snapshot.revision, "1");
+    state.close_sync().expect("close");
+
+    let second_open = state
+        .open_profile_sync(
+            &paths,
+            id,
+            &FixedIdentityProvider([10; 32]),
+            &FixedSigningIdentityProvider(10),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("profile reopens cleanly after a full close");
+    assert_eq!(second_open.snapshot.revision, "1");
+    state.close_sync().expect("close again");
 }

@@ -810,10 +810,21 @@ impl DesktopHostNetworkControl {
             .map_err(|_| DesktopNetworkError::poisoned().core_error(None))?
             .active
             .is_some();
-        if !active {
-            return Ok(());
-        }
-        self.stop_host_inner()
+        let stop_result = if active {
+            self.stop_host_inner()
+        } else {
+            Ok(())
+        };
+        // The daemon-level publisher is shut down unconditionally, even
+        // when no binding was ever active -- distinct from the
+        // per-publication `withdraw()` `stop_host_inner` already covers
+        // above. A clean no-op when the daemon was never lazily created
+        // (Block 36.2 mDNS daemon shutdown).
+        let daemon_result = self.mdns.shutdown().map_err(|error| {
+            DesktopNetworkError::invalid_state(format!("mDNS daemon shutdown failed: {error}"))
+        });
+        stop_result
+            .and(daemon_result)
             .map_err(|error| error.core_error(None))
     }
 }

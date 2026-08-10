@@ -1,5 +1,7 @@
 use serde::Serialize;
+use tauri::Manager;
 
+pub(crate) mod app_shutdown;
 #[allow(
     clippy::too_many_lines,
     reason = "desktop startup keeps rollback ownership in one linear transaction"
@@ -53,6 +55,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(app_state::DesktopAppState::new())
         .manage(platform::file_picker::SelectedSourceRegistry::new())
         .manage(platform::source_staging_control::SourceStagingControl::new())
+        .manage(app_shutdown::AppShutdownCoordinator::new())
         .invoke_handler(tauri::generate_handler![
             get_core_smoke,
             app_state::open_profile,
@@ -78,8 +81,20 @@ pub fn run() -> tauri::Result<()> {
             host_commands::set_host_network_preference,
             host_commands::create_host_invitation,
             app_state::attach_notifications,
-            app_state::close_profile
+            app_state::close_profile,
+            app_shutdown::get_app_shutdown_state
         ])
+        // Block 36.3 "close event initiates controlled shutdown": the
+        // native close is always prevented first (buying time for a
+        // bounded, non-blocking teardown attempt); `handle_close_requested`
+        // then decides whether to actually exit, start that teardown, or
+        // treat this as an idempotent duplicate request.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                app_shutdown::handle_close_requested(window.app_handle());
+            }
+        })
         .run(tauri::generate_context!())
 }
 

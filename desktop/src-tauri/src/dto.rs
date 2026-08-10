@@ -63,6 +63,38 @@ pub enum BridgeLifecycleDto {
     Failed { error: DesktopErrorDto },
 }
 
+/// Whole-application shutdown phase (Block 36.1/36.3), distinct from
+/// [`BridgeLifecycleDto`]'s profile-focused open/reopen lifecycle -- see
+/// `app_shutdown.rs`'s module doc comment for why these are two separate
+/// state machines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    deny_unknown_fields,
+    tag = "kind",
+    content = "details",
+    rename_all = "camelCase"
+)]
+#[ts(tag = "kind", content = "details", rename_all = "camelCase")]
+pub enum AppShutdownPhaseDto {
+    NotRequested,
+    ShuttingDown,
+    Terminated,
+    ShutdownFailed { error: DesktopErrorDto },
+}
+
+impl From<crate::app_shutdown::AppShutdownPhase> for AppShutdownPhaseDto {
+    fn from(value: crate::app_shutdown::AppShutdownPhase) -> Self {
+        match value {
+            crate::app_shutdown::AppShutdownPhase::NotRequested => Self::NotRequested,
+            crate::app_shutdown::AppShutdownPhase::ShuttingDown => Self::ShuttingDown,
+            crate::app_shutdown::AppShutdownPhase::Terminated => Self::Terminated,
+            crate::app_shutdown::AppShutdownPhase::ShutdownFailed(error) => {
+                Self::ShutdownFailed { error }
+            }
+        }
+    }
+}
+
 /// Structured redacted desktop error suitable for IPC.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

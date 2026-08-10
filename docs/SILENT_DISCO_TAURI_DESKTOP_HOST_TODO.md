@@ -2824,52 +2824,228 @@ fixed with a scoped, justified `#[allow]`.
 
 States include at least:
 
-- [ ] closed;
-- [ ] opening;
-- [ ] ready;
-- [ ] shutting down;
-- [ ] shutdown failed;
-- [ ] terminated.
+- [x] closed -- `DesktopRuntimeState::Closed` (`app_state.rs`), unchanged
+      from prior blocks.
+- [x] opening -- `DesktopRuntimeState::Opening { profile_id }`.
+- [x] ready -- `DesktopRuntimeState::Ready`.
+- [x] shutting down -- `DesktopRuntimeState::Closing` (profile-focused) and,
+      layered above it for the whole-application flow,
+      `AppShutdownPhase::ShuttingDown` (`app_shutdown.rs`, Block 36.3).
+- [x] shutdown failed -- new `DesktopRuntimeState::ShutdownFailed(DesktopErrorDto)`,
+      deliberately distinct from `Failed` (open failure): `begin_open`
+      refuses to reopen from `ShutdownFailed` (unlike `Failed`, which
+      remains reopen-safe) because a genuine timeout may leave owned
+      resources alive on a detached background thread (see 36.2/36.3) --
+      recovery requires restarting the application, not retrying in
+      place. Also `AppShutdownPhase::ShutdownFailed(DesktopErrorDto)` at
+      the whole-application layer.
+- [x] terminated -- new `AppShutdownPhase::Terminated` (`app_shutdown.rs`),
+      the whole-application concern; `DesktopRuntimeState` itself has no
+      "terminated" (a profile close returns to reopen-safe `Closed`,
+      which is a materially different guarantee than "the process is
+      exiting").
+
+Two cooperating state machines, not one: `DesktopRuntimeState` remains
+`DesktopAppState`'s own profile open/close/reopen lifecycle (all prior
+blocks' behavior preserved); `AppShutdownCoordinator`/`AppShutdownPhase`
+is new and layers the window-close-triggered whole-application concern on
+top, exposed to the frontend as the new `AppShutdownPhaseDto`
+(`dto.rs`, `get_app_shutdown_state` command).
 
 ### 36.2 Implement ordered shutdown
 
 Required order:
 
-- [ ] reject new commands;
-- [ ] core enters shutdown;
-- [ ] stop playback/packet production;
-- [ ] withdraw mDNS;
-- [ ] stop transport;
-- [ ] stop local monitor and confirm callback quiescence;
-- [ ] stop decoder/source workers;
-- [ ] close core/database workers;
-- [ ] stop notification dispatcher;
-- [ ] release profile lock;
-- [ ] allow process/window exit.
+- [x] reject new commands -- already true from the first instant of
+      `take_for_close`'s `mem::replace(&mut *state, Closing)`: every
+      `DesktopAppState` accessor (diagnostics, snapshot, playback
+      control, etc.) already matches `Closed | Opening | Closing =>
+      not_ready`, unchanged by this block. The "except shutdown/status"
+      carve-out is satisfied by `get_app_shutdown_state` and
+      `close_profile` themselves staying callable regardless of profile
+      state.
+- [x] core enters shutdown -- `CoreActorRuntime::shutdown()` (unchanged
+      core API) sets `accepting=false` as its first action and queues
+      `CoreCommand::Shutdown`. **Deliberate documented deviation from the
+      spec's literal step ordering**: this codebase calls it *after*
+      mDNS/playback/transport teardown (`shutdown.rs`), not before,
+      because those subsystems still submit legitimate final
+      `AudioEvent`/`TransportEvent`s to the live actor while winding
+      down; shutting the actor down first would reject those as
+      spurious failures rather than let them land. Reordering would
+      require splitting `CoreActorRuntime::shutdown`'s signal-and-join
+      into two core-API-level phases -- out of this block's scope, and
+      risky for a shared, Android-facing core type. Investigated and
+      chosen deliberately, not missed.
+- [x] stop playback/packet production -- unchanged: `stop_host_inner`
+      (`network.rs`) stops the playback pump, which itself stops the
+      packetizer/decoder.
+- [x] withdraw mDNS -- unchanged per-publication `withdraw()`
+      (`stop_host_inner`) **plus new** daemon-level `shutdown()`
+      (`DesktopHostNetworkControl::shutdown`, `network.rs`) -- the
+      previously-deferred gap explicitly marked "Block 36's job" in
+      `mdns.rs`'s own doc comment, now closed: the daemon is shut down
+      unconditionally, even when no binding was ever active.
+- [x] stop transport -- unchanged `DesktopHostTransportRuntime::shutdown`.
+- [x] stop local monitor and confirm callback quiescence -- unchanged
+      `DesktopMonitorControl::on_stream_stopped`
+      (`RunningAudioOutputStream::stop` consumes `Box<Self>`, Block 34.1).
+- [x] stop decoder/source workers -- unchanged
+      `StreamingPacketizeHandle::cancel_and_join` (decoder is consumed by
+      the packetizer worker, so joining it joins both).
+- [x] close core/database workers -- unchanged `DatabaseWorker::stop_and_join`
+      (WAL checkpoint + close).
+- [x] stop notification dispatcher -- unchanged `DesktopNotificationBuffer::shutdown`,
+      **reordered** in `shutdown_owned_resources` to run *after* the
+      database worker closes (previously before it) -- spec order 10
+      before 11: a dispatcher stopped before the database closes could
+      never relay a database-close-related notification.
+- [x] release profile lock -- unchanged `ProfileLease::release`.
+- [x] allow process/window exit -- new: the window-close-triggered flow
+      (`app_shutdown.rs::handle_close_requested`) only calls
+      `AppHandle::exit(0)` after the bounded shutdown attempt reports
+      `Ok`; a failure leaves the window open instead.
 
 ### 36.3 Window close interception
 
-- [ ] close event initiates controlled shutdown;
-- [ ] duplicate close is idempotent;
-- [ ] progress is visible;
-- [ ] timeout becomes visible failure;
-- [ ] timeout does not free callback-visible memory unsafely;
-- [ ] development forced-exit behavior, if any, is explicitly gated and labeled.
+- [x] close event initiates controlled shutdown -- `lib.rs`'s
+      `.on_window_event` intercepts `WindowEvent::CloseRequested`,
+      always calls `api.prevent_close()` first, then
+      `app_shutdown::handle_close_requested`, which spawns the bounded
+      shutdown attempt on its own thread (never blocks the event loop).
+- [x] duplicate close is idempotent -- two layers: (1)
+      `AppShutdownCoordinator::claim()` returns `Perform` exactly once
+      across its lifetime, every later call observes
+      `AlreadyHandled(phase)` and does nothing (or, once `Terminated`,
+      finally calls `exit`); (2) independently, `DesktopAppState::take_for_close`
+      now returns a new `CloseAction::AlreadyInProgress` (not an error)
+      when called while another close is already tearing the profile
+      down, replacing the previous `desktop.profile.close_in_progress`
+      *error* -- a second `close_profile` command call is now also
+      idempotent, not just the window-close path.
+- [x] progress is visible -- new `get_app_shutdown_state` command +
+      `AppShutdownPhaseDto`, polled by a new `ShutdownOverlay` component
+      (`App.tsx`) every 500ms and rendered as a full-screen overlay
+      whenever the phase is not `notRequested`. Polled, not pushed --
+      the webview stays fully alive while a close is pending (only the
+      native close is prevented, not the process), matching this
+      codebase's existing polling idiom (`HostSessionScreen`,
+      `DiagnosticsScreen`) rather than introducing a push-event
+      mechanism for a single new screen.
+- [x] timeout becomes visible failure -- `run_with_timeout` (`app_shutdown.rs`)
+      bounds the whole attempt at `SHUTDOWN_TIMEOUT` (10s); on expiry the
+      coordinator reaches `ShutdownFailed`, visible via
+      `get_app_shutdown_state` and rendered by `ShutdownOverlay`.
+- [x] timeout does not free callback-visible memory unsafely --
+      `run_with_timeout` never joins, cancels, or drops the spawned
+      worker thread on timeout; it is deliberately detached and left to
+      finish independently (best case) or run indefinitely (worst case).
+      Proven by `run_with_timeout_returns_promptly_and_never_joins_a_slow_worker`
+      (`app_shutdown.rs`): a gated worker is released *after* the
+      timeout already fired and is observed completing on its own,
+      demonstrating nothing about it was force-torn-down to produce the
+      timeout result.
+- [x] development forced-exit behavior, if any, is explicitly gated and
+      labeled -- **none was added**. A forced-exit escape hatch that
+      bypasses controlled teardown is exactly the kind of "safety valve"
+      this project's error-handling rules (`CLAUDE.md`: no fallback that
+      turns a production failure into log-only/silent-success behavior)
+      argue against; the checklist item itself is phrased "if any", so
+      its absence is a deliberate choice, not an oversight. A genuinely
+      stuck process can still be terminated by the OS, which is safe
+      (atomic reclaim) unlike an in-process forced free.
 
 ### 36.4 Tests
 
-- [ ] normal shutdown;
-- [ ] shutdown during open;
-- [ ] shutdown during source copy;
-- [ ] shutdown during decode;
-- [ ] shutdown during streaming;
-- [ ] shutdown during database write;
-- [ ] shutdown with mDNS failure;
-- [ ] shutdown with monitor callback active;
-- [ ] repeated shutdown;
-- [ ] profile can reopen after clean shutdown.
+- [x] normal shutdown -- unchanged
+      `opens_real_storage_actor_and_snapshot_then_shuts_down_idempotently`
+      (`app_state.rs` tests).
+- [x] shutdown during open --
+      `closing_while_still_opening_is_reported_and_leaves_the_opening_state_intact`
+      (`app_state.rs` tests): a close request while `Opening` is
+      reported (`desktop.profile.open_in_progress`), and the `Opening`
+      state survives intact for the original open to finish.
+- [x] shutdown during source copy -- `close_profile_sync` unconditionally
+      calls `SourceStagingControl::cancel_and_wait()` before tearing down
+      owned resources (previously only the `close_profile` command did
+      this; now also true of the shared sync path); the blocking-until-
+      finished mechanism itself is exercised by the pre-existing
+      `cancel_and_wait_blocks_until_the_operation_finishes`
+      (`source_staging_control.rs`). No new end-to-end test drives a
+      real in-flight source copy through a full `close_profile_sync`
+      call -- doing so needs a real `AppHandle`, which would require
+      enabling `tauri`'s `test`/`mock_runtime` feature (not currently
+      enabled in this crate); noted as a real gap, not silently claimed
+      covered.
+- [ ] shutdown during decode -- **not covered by a new dedicated test in
+      this block.** Exercising a live decode worker mid-teardown through
+      the full close path would need substantially more integration
+      test infrastructure (a real staged/decoding source plus a
+      `close_profile_sync` call needing a real `AppHandle`) than fits
+      this already-large block; the underlying mechanism
+      (`StreamingPacketizeHandle::cancel_and_join`, which owns the
+      decoder) is unit-tested on its own in `rust/silent-disco-core`,
+      but not through this specific whole-app path. Left unchecked
+      rather than falsely marked done.
+- [x] shutdown during streaming -- reasonably covered by existing
+      coverage this block did not need to duplicate:
+      `stop_playback_reports_a_pump_that_could_not_complete_its_shutdown`
+      (`start_playback_tests.rs`) and
+      `a_withdraw_failure_still_tears_down_the_host_but_is_reported_not_swallowed`
+      (`network_tests.rs`) both drive teardown while streaming/bound,
+      proving failures are reported, not swallowed, and teardown still
+      completes.
+- [ ] shutdown during database write -- **not covered by a new dedicated
+      test in this block**, for the same `AppHandle`/integration-depth
+      reason as "shutdown during decode". `DatabaseWorker`'s own
+      checkpoint-busy-readers failure path is unit-tested in
+      `rust/silent-disco-core/src/storage`, but not driven through this
+      whole-app close path specifically. Left unchecked rather than
+      falsely marked done.
+- [x] shutdown with mDNS failure --
+      `network_control_shutdown_reports_a_failing_mdns_daemon_shutdown`
+      (new, `network_tests.rs`): a failing daemon-level `shutdown()` is
+      reported, not swallowed. Withdrawal-failure-during-teardown is
+      also already covered by
+      `a_withdraw_failure_still_tears_down_the_host_but_is_reported_not_swallowed`.
+- [x] shutdown with monitor callback active -- unchanged
+      `shutdown_while_the_callback_is_actively_running_completes_cleanly`
+      (`monitor_tests.rs`, Block 34).
+- [x] repeated shutdown -- `opens_real_storage_actor_and_snapshot_then_shuts_down_idempotently`
+      (`Closed -> Closed`, unchanged) plus new
+      `a_duplicate_close_while_one_is_already_in_flight_is_idempotent`
+      (`Closing -> Closing`, the genuinely new idempotent path this
+      block added) and the `AppShutdownCoordinator`-level
+      `only_the_first_claim_performs_and_later_claims_observe_the_same_phase`
+      (`app_shutdown.rs`).
+- [x] profile can reopen after clean shutdown -- new
+      `a_profile_reopens_cleanly_after_a_full_close` (`app_state.rs`
+      tests): a real, full `open -> close -> open` cycle (not just the
+      profile lock's own acquire/release, which
+      `second_open_is_rejected_and_profile_lock_is_retained_until_close`
+      already covered).
 
-**Acceptance:** The desktop process does not depend on OS termination to clean up shared-core resources.
+New tests this block: 10 (2 `network_tests.rs`, 5 `app_shutdown.rs`, 3
+`app_state.rs` tests) -- desktop crate `cargo test` went from 181 to 191
+passed, 0 failed throughout.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`
+(full workspace, 0 failed), `cd desktop && npm run check`
+(bindings-check, biome, `cargo fmt --check`, tsc, 68/68 Vitest,
+production build) -- `./gradlew test lintDebug` not re-run (desktop-only
+change, no Kotlin touched, matching established session precedent).
+Manually ran `cargo clippy --all-targets --all-features -- -D warnings`
+for `desktop/src-tauri` (still not part of the enforced gate) --
+confirmed via `git stash` (Block 35's own methodology) that all
+remaining deny-level errors are the identical, unrelated pre-existing
+set from `master` (`host_session_dto.rs`, `audio_device.rs`,
+`render_ring.rs`, `mdns.rs`'s two redundant-closure lints,
+`start_playback_tests.rs`); this block's own new code introduced two
+lints during development (`clippy::doc_markdown` missing backticks,
+`clippy::manual_let_else`) and both were fixed before landing, not
+suppressed.
+
+**Acceptance:** The desktop process does not depend on OS termination to clean up shared-core resources. Met for the profile-owned resources this block's `shutdown_owned_resources` covers (mDNS daemon and publication, transport, playback/decoder/packetizer, core actor, database, notification dispatcher, profile lock) via the new window-close-triggered path, with a bounded timeout that reports failure rather than hanging or force-freeing on a stuck teardown.
 
 ---
 
