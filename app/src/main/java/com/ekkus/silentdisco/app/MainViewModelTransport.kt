@@ -126,6 +126,7 @@ import kotlinx.coroutines.launch
         // the native output together. Cancelling the diagnostics job alone
         // leaked all of those on every disconnect and connection failure.
         stopListenerPlayback()
+        closeListenerSyncEstimator()
         diagnosticsStore.updateListener {
             it.copy(
                 playbackState = PlaybackState.ERROR,

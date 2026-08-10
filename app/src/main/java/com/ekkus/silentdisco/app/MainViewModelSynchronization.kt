@@ -1,18 +1,48 @@
 package com.ekkus.silentdisco.app
 
+import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
+import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.protocol.SessionId
+import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
-import com.ekkus.silentdisco.core.sync.ListenerSyncController
-import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
+import com.ekkus.silentdisco.core.rust.RustCoreBridge
+import com.ekkus.silentdisco.core.rust.RustSyncConfidence
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/** Protocol version for the pre-runtime NTP-style sync request/response exchange. */
+private const val LISTENER_SYNC_REQUEST_VERSION = 1
+
+/** Mirrors [MainViewModelRustListener.kt]'s `FfiSyncConfidence.toAppSyncQuality()` for the standalone estimator. */
+internal fun RustSyncConfidence.toAppSyncQuality(): SyncQualityBadge = when (this) {
+    RustSyncConfidence.UNKNOWN -> SyncQualityBadge.UNKNOWN
+    RustSyncConfidence.POOR -> SyncQualityBadge.POOR
+    RustSyncConfidence.FAIR -> SyncQualityBadge.FAIR
+    RustSyncConfidence.GOOD -> SyncQualityBadge.GOOD
+    RustSyncConfidence.EXCELLENT -> SyncQualityBadge.EXCELLENT
+}
+
+/**
+ * Preserves the pre-Rust drift-threshold gate from
+ * `ListenerSyncController.shouldResync`. Its other half (re-probing once
+ * `cadenceMs` has elapsed since the last sample) is dropped deliberately, not
+ * lost: it was only ever evaluated synchronously right after a fresh sample
+ * was recorded, so elapsed time at that call site was always ~0 and the
+ * check was already an inert no-op in production; the periodic probe cadence
+ * itself is owned by [startPeriodicListenerResync], unrelated to this
+ * per-sample gate. Extracted as a pure function so it stays covered by a JVM
+ * unit test even though `RustSyncEstimator` itself cannot load in one (see
+ * `SyncEstimateMappingTest`).
+ */
+internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): Boolean =
+    kotlin.math.abs(offsetMs) > driftThresholdMs
 
     internal fun MainViewModel.requestListenerSyncProbe(source: String) {
         val session = _uiState.value.selectedSession
@@ -33,10 +63,15 @@ import kotlinx.coroutines.launch
             sendRuntimeSyncProbe(runtime, source)
             return
         }
-        val controller = listenerSyncController ?: createSyncController(SessionId(session.id)).also {
-            listenerSyncController = it
-        }
-        val request = controller.newProbe()
+        // Kotlin still owns correlation-id/timestamp generation for this
+        // pre-runtime probe, exactly like sendRuntimeSyncProbe does for the
+        // runtime-owned path -- only the *estimate* computed from the
+        // matching response belongs to Rust (see applySyncResponse). The
+        // Rust-owned RustSyncEstimator has no notion of a wire correlation
+        // id at all (it takes four already-correlated timestamps and
+        // internally tracks its own private probe bookkeeping), so there is
+        // nothing for Kotlin to hand off here.
+        val request = newListenerSyncProbeRequest(SessionId(session.id))
         pendingSyncCorrelationId = request.correlationId
 
         if (wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED) {
@@ -111,21 +146,83 @@ import kotlinx.coroutines.launch
         }
     }
 
+    /**
+     * Builds one pre-runtime sync probe request. Mirrors [sendRuntimeSyncProbe]'s
+     * ownership split: Kotlin generates the correlation id and stamps t1 from
+     * its own monotonic clock (`SystemClock.elapsedRealtime()`, the same
+     * clock [applySyncResponse] stamps t4 from below); the Rust-owned
+     * estimator only ever sees the resulting four-timestamp exchange, never
+     * this id.
+     */
+    private fun MainViewModel.newListenerSyncProbeRequest(sessionId: SessionId): SyncRequestPacket {
+        val correlationId = nextSyncCorrelationId++
+        val sendTimeMs = SystemClock.elapsedRealtime()
+        return SyncRequestPacket(
+            version = LISTENER_SYNC_REQUEST_VERSION,
+            sessionId = sessionId,
+            correlationId = correlationId,
+            t1ListenerSendElapsedMs = sendTimeMs,
+        )
+    }
+
+    /**
+     * Feeds one completed four-timestamp exchange to the Rust-owned
+     * standalone estimator ([RustCoreBridge.openSyncEstimator]) and maps its
+     * result onto the same [SyncState]/diagnostics fields the pre-Rust local
+     * estimator used to populate -- this is the pre-runtime sibling of
+     * [MainViewModelRustListener.applyRuntimeSyncOutcome], which does the
+     * equivalent mapping for the runtime-owned estimator once playback
+     * exists.
+     */
     internal fun MainViewModel.applySyncResponse(response: SyncResponsePacket) {
         if (_uiState.value.selectedSession?.id != response.sessionId.value) return
         val expectedCorrelationId = pendingSyncCorrelationId
         if (expectedCorrelationId != null && response.correlationId != expectedCorrelationId) return
         pendingSyncCorrelationId = null
-        val controller = listenerSyncController ?: ListenerSyncController(response.sessionId).also {
-            listenerSyncController = it
+
+        val localReceiveTimeMs = SystemClock.elapsedRealtime()
+        val observation = runCatching {
+            val estimator = listenerSyncEstimator ?: RustCoreBridge.openSyncEstimator(
+                maxSamples = _uiState.value.tuningSettings.syncSampleWindow,
+            ).also { listenerSyncEstimator = it }
+            estimator.observe(
+                t1LocalSendMs = response.t1ListenerSendElapsedMs,
+                t2HostReceiveMs = response.t2HostReceiveElapsedMs,
+                t3HostSendMs = response.t3HostSendElapsedMs,
+                t4LocalReceiveMs = localReceiveTimeMs,
+            )
+        }.getOrElse { error ->
+            // Unlike a merely-rejected sample (too-high RTT, reported as
+            // observation.accepted == false below, never an exception), a
+            // thrown exception here means the estimator itself could not be
+            // created/used at all (native library unavailable, an
+            // impossible timestamp ordering, a protocol-level bridge
+            // failure) -- a real, reportable failure, not routine noise.
+            handleSyncFailure(error.message ?: "Rust synchronization estimator failed to process the sample")
+            return
         }
-        val syncState = controller.onResponse(response).copy(
+
+        // observation.snapshot is the filtered, multi-sample running
+        // estimate (mirrors what the old ClockSyncEstimator.snapshot()
+        // returned) -- not the single raw sample, which is noisy and, for a
+        // rejected sample, not even folded into the estimate at all.
+        val snapshot = observation.snapshot
+        val syncState = SyncState(
+            offsetMs = snapshot.offsetMs,
+            rttMs = snapshot.roundTripTimeMs,
+            jitterMs = snapshot.jitterMs,
+            skewPpm = snapshot.skewPpm,
+            confidence = snapshot.confidence.toAppSyncQuality(),
             resyncCount = _uiState.value.listenerSyncState.resyncCount + 1,
         )
-        val shouldResync = controller.shouldResync(state = syncState)
+        val shouldResync = shouldResyncForOffset(
+            offsetMs = syncState.offsetMs,
+            driftThresholdMs = _uiState.value.tuningSettings.syncDriftThresholdMs,
+        )
         logger.i(
             "sync.sample",
-            "offset=${"%.2f".format(syncState.offsetMs)} rtt=${"%.2f".format(syncState.rttMs)} jitter=${"%.2f".format(syncState.jitterMs)}",
+            "accepted=${observation.accepted} offset=${"%.2f".format(syncState.offsetMs)} " +
+                "rtt=${"%.2f".format(syncState.rttMs)} jitter=${"%.2f".format(syncState.jitterMs)}",
         )
         if (shouldResync && !_uiState.value.connectionProgress.synced) {
             handleSyncFailure("Unable to establish a stable sync estimate")
@@ -212,15 +309,18 @@ private const val SYNC_ACQUIRE_CADENCE_MS = 250L
         }
     }
 
-    internal fun MainViewModel.createSyncController(sessionId: SessionId): ListenerSyncController {
-        val tuning = _uiState.value.tuningSettings
-        return ListenerSyncController(
-            sessionId = sessionId,
-            estimator = ClockSyncEstimator(maxSamples = tuning.syncSampleWindow),
-            config = SyncMaintenanceConfig(
-                cadenceMs = tuning.syncCadenceMs,
-                driftThresholdMs = tuning.syncDriftThresholdMs,
-                sampleHistorySize = tuning.syncSampleWindow,
-            ),
-        )
+    /**
+     * Closes and clears the Rust-owned pre-runtime sync estimator, if one is
+     * open. `RustSyncEstimator` holds a real native handle (unlike the
+     * pre-Rust `ListenerSyncController` it replaces, which was a plain
+     * Kotlin object the garbage collector could reclaim on its own), so
+     * every place a session ends or the estimator's configuration changes
+     * must release it explicitly rather than just dropping the reference.
+     */
+    internal fun MainViewModel.closeListenerSyncEstimator() {
+        val estimator = listenerSyncEstimator ?: return
+        listenerSyncEstimator = null
+        runCatching { estimator.close() }.onFailure { error ->
+            logger.w("sync.estimator_close_failed", error.message ?: "sync estimator failed to close cleanly")
+        }
     }

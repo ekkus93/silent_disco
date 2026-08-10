@@ -3907,3 +3907,186 @@ vulnerabilities**.
 - The `UpdateHostDraftRequest.session_name`/`SetNetworkBindPreferenceRequest` unbounded-until-core-validation
   strings noted under 43.2 — reviewed and consciously left as a low-severity residual, not silently
   missed.
+
+## 2026-08-10T22:43:30Z - Claude Sonnet 5 - Block 21 follow-up: pre-runtime listener sync rewired onto RustCoreBridge.openSyncEstimator()
+
+**Scope:** Dedicated follow-up to the gap Block 21 explicitly deferred
+(`docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md` Block 21, "sync controller"/
+"periodic domain resync job" bullets). Worked entirely inside `app/` in an
+isolated worktree, parallel to unrelated desktop Tauri-security-audit work on
+the same branch. Touched no file under `rust/` or `desktop/`.
+
+**What was rewired:** `MainViewModelSynchronization.kt`'s pre-runtime path
+(`requestListenerSyncProbe`/`applySyncResponse`) now computes its clock-sync
+estimate through `RustCoreBridge.openSyncEstimator()`/`RustSyncEstimator`
+instead of the local `ListenerSyncController`/`ClockSyncEstimator`, matching
+the architecture already established for the post-runtime path
+(`MainViewModelRustListener.kt`'s `handleTransportSyncResponse`/
+`applyRuntimeSyncOutcome`, which calls the runtime's own embedded estimator).
+
+- `MainViewModel.listenerSyncEstimator: RustSyncEstimator?` replaces
+  `listenerSyncController`, created lazily inside `applySyncResponse`
+  (`RustCoreBridge.openSyncEstimator(maxSamples = tuning.syncSampleWindow)`,
+  matching the old `createSyncController`'s `maxSamples` wiring; `maxAcceptedRttMs`
+  has no tunable Kotlin field so the 200ms default is kept on both sides, same
+  as before). `RustSyncEstimator` holds a real native handle (unlike the
+  Kotlin `ListenerSyncController` object it replaces, which the GC reclaimed
+  on its own), so every place that used to just drop the old reference now
+  calls a new `closeListenerSyncEstimator()` helper: `leaveSession()`,
+  `stopListenerPlaybackForFailure()` (shared by `handleListenerConnectionFailure`/
+  `handleListenerDisconnect`), `onCleared()`, and `adjustTuning()` (which now
+  closes the old estimator and opens a fresh one with the updated
+  `syncSampleWindow`, matching the old unconditional-reassignment behavior but
+  with an explicit native-handle release first).
+- **Deliberately left Kotlin-owned:** wire correlation-id generation and t1
+  timestamping. `RustSyncEstimator.observe(t1, t2, t3, t4)` has no concept of
+  a wire correlation id at all (its internal `FfiSyncEstimator` self-generates
+  a private, sequential correlation id purely for its own `begin_probe`/
+  `observe_response` bookkeeping, invisible to callers -- confirmed by reading
+  `rust/silent-disco-ffi/src/sync.rs`); there is nothing Rust-side to hand
+  this off to. New `newListenerSyncProbeRequest()` generates it via
+  `nextSyncCorrelationId++`/`SystemClock.elapsedRealtime()`, an exact mirror
+  of the already-Rust-authoritative post-runtime path's own
+  `sendRuntimeSyncProbe()`.
+- `applySyncResponse` maps `RustSyncObservation.snapshot` (the filtered,
+  multi-sample running estimate -- not the single raw sample, which for a
+  rejected sample isn't even folded into the estimate) onto the same
+  `SyncState`/diagnostics fields the old code populated. The old
+  `shouldResync`'s cadence-or-drift OR was replaced by drift alone, extracted
+  as a new pure `shouldResyncForOffset(offsetMs, driftThresholdMs)`: the
+  cadence half was proven inert at this call site (it was always evaluated
+  synchronously immediately after `lastSyncAtMs` had just been set to ~now by
+  the same call chain, so elapsed time was always ~0 in production; only the
+  unit test exercised it out-of-band with an artificial future `nowMs`), and
+  the periodic probe cadence itself is owned separately by
+  `startPeriodicListenerResync`. Verified `RustSyncEstimator`'s exception
+  contract before deciding how to handle failures: a merely-rejected sample
+  (too-high RTT) never throws (`RustSyncObservation.accepted == false`,
+  still folds into `.snapshot` as before); an exception means the estimator
+  itself failed (native lib unavailable, impossible timestamp ordering, a
+  bridge protocol error) -- a real, reportable failure, routed to the
+  existing `handleSyncFailure()` (visible in UI/diagnostics + reported to
+  Rust via `listenerCoreController?.transportFailed`), not logged and
+  swallowed.
+- Added `RustSyncConfidence.toAppSyncQuality()` (was missing; only
+  `FfiSyncConfidence.toAppSyncQuality()` existed for the other estimator API).
+- Deleted `ListenerSyncController`/`SyncMaintenanceConfig` from
+  `core/sync/SyncMaintenance.kt` (kept `HostTimingService`, still used by the
+  `BuildConfig.DEBUG`-only demo-session branch) and deleted
+  `core/sync/ClockSync.kt` entirely (`ClockSyncEstimator`/`ClockSyncSample`,
+  its only remaining contents after Block 21 already removed `HostTimeMapper`
+  from it). Removed two now-dead imports of these types from
+  `ManualListenerTransportController.kt` (verified zero real usages first).
+  Deleted `ClockSyncEstimatorTest.kt`/`ListenerSyncControllerTest.kt` (tests
+  of now-deleted classes) and removed
+  `RustMigrationCompatibilityFixtureTest.kt`'s
+  `clockSyncFixturesMatchProductionEstimator` test -- once `ClockSyncEstimator`
+  had no production caller left, that test would have become exactly the
+  "test copied Rust rules in Kotlin" anti-pattern CLAUDE.md warns against;
+  the equivalent fixture-parity check against the real Rust estimator already
+  lives in `RustSyncEstimatorInstrumentedTest`. `PcmPacketizer` and every
+  other fixture test in that file were left untouched (unrelated, still live
+  production logic).
+- Added new coverage for what's left Kotlin-side and JVM-testable:
+  `SyncEstimateMappingTest.kt` (`RustSyncConfidence` <-> `SyncQualityBadge`
+  parity, `shouldResyncForOffset` including the exact-threshold boundary).
+
+**Emulator-feasibility finding (real, not assumed):** An Android emulator
+genuinely works in this sandbox. `/dev/kvm` exists and is group-accessible
+(`phil` in the `kvm` group), the host CPU reports `svm` (AMD virtualization),
+16 cores/27GB RAM available. Booted the project's `silent_disco_listener_api36`
+AVD headless (`-no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+-no-snapshot`) twice this session; both times `sys.boot_completed=1` within
+24 seconds. Per this task's explicit instruction (LG G6 reported temporarily
+unavailable this session, confirmed still attached-but-untouched via
+`adb devices` throughout -- never installed on, never instrumented), only the
+emulator was used; the physical device was left completely alone.
+
+**Real gate results, actually executed:**
+```
+./gradlew test lintDebug --stacktrace --console=plain
+BUILD SUCCESSFUL in 39s (fresh run) / 1s (verification re-run, up-to-date)
+84 actionable tasks: 22 executed, 62 up-to-date
+```
+JVM unit tests: 274/274 passed, 0 failures, 0 errors, 0 skipped (270 retained
++ 4 new `SyncEstimateMappingTest` cases; 275 - 5 removed = 270 checks out
+exactly against Block 21's prior 275/275 baseline). Lint: 0 errors, 15
+warnings, all pre-existing and unrelated (`GradleDependency` version bumps,
+`ModifierParameter`/`UseKtx` in unrelated Compose files, `ChromeOsAbiSupport`)
+-- none touch any file this session changed.
+
+**Real instrumented-test confidence obtained beyond the JVM gate:**
+`app/src/androidTest` currently fails to compile for a reason **unrelated to
+this task** -- `P2UiTest.kt` (last touched in an unrelated earlier commit,
+`f1f4393`) fails with `Unresolved reference 'assertDoesNotExist'`, a
+pre-existing Compose-testing-library issue, not something this session's
+changes touched or caused (confirmed via `git log`/`git diff --stat`). That
+blocks `./gradlew connectedAndroidTest` for the whole module. To still get
+real confidence on the exact estimator this task now wires into production
+without either leaving that pre-existing break unrecorded or fabricating a
+result: temporarily moved `P2UiTest.kt` out of the source tree (to the
+scratchpad, not deleted), built `assembleDebugAndroidTest` (succeeded once
+that file was out of the way), installed the resulting debug + androidTest
+APKs on the emulator only (`adb -s emulator-5554 install`, never the physical
+device), and ran the existing `RustSyncEstimatorInstrumentedTest` directly via
+`adb -s emulator-5554 shell am instrument -w -e class
+com.ekkus.silentdisco.core.rust.RustSyncEstimatorInstrumentedTest
+com.ekkus.silentdisco.test/androidx.test.runner.AndroidJUnitRunner`:
+```
+com.ekkus.silentdisco.core.rust.RustSyncEstimatorInstrumentedTest:..
+Time: 0.04
+OK (2 tests)
+```
+Both `androidFixtureRunsThroughRustOwnedEstimator` and
+`impossibleTimestampOrderingFailsExplicitly` pass for real, on a real booted
+Android runtime (x86_64 API 36 emulator), confirming the exact Rust-owned
+estimator this session wires into production actually works end-to-end
+through the JNI boundary it uses -- not just that it compiles. Uninstalled
+both packages and killed the emulator afterward, then moved `P2UiTest.kt`
+back to its original path and confirmed `git status --short` showed only this
+session's intended changes (`P2UiTest.kt` itself untouched) before proceeding
+to commit. `./gradlew test lintDebug` was re-run once more afterward and
+stayed green, confirming the quarantine/restore round-trip left nothing
+behind.
+
+**Architectural finding, confirmed not just inferred:** JVM unit tests
+(`app/src/test`) genuinely cannot load `RustCoreBridge`'s native library --
+this is why `RustSyncEstimatorInstrumentedTest` lives under `androidTest`
+rather than `test`. Confirmed two ways: (1) `app/build.gradle.kts` only wires
+`jniLibs.srcDir(...)` for the `debug`/`pocDebug`/`release` Android variant
+source sets, never for the JVM `test`/`unitTest` source set; (2) the built
+`.so` artifacts (`readelf -d`) declare `NEEDED` entries for `libdl.so`/
+`libm.so`/`libc.so` resolved against Android's bionic libc via `cargo-ndk`
+Android-target cross-compilation, not the host's glibc -- `System.loadLibrary`
+on a plain host JVM cannot load them regardless of source-set wiring. This is
+a real, structural constraint, not something to route around with a mock
+that would test nothing real.
+
+**Deliberately left unchecked / not attempted:**
+- `RustSyncEstimatorInstrumentedTest` still has not run on a *physical*
+  Android device (only the emulator this session) -- Block 6's
+  physical-device acceptance line is left open exactly as previously written,
+  with an honest addendum recording the new emulator evidence.
+- The pre-existing `P2UiTest.kt` androidTest compile break was not fixed --
+  out of scope for this task, unrelated to sync estimation, and touching an
+  unrelated test file's real logic (not just quarantining it temporarily to
+  get evidence, then restoring it) risked scope creep this task's brief did
+  not authorize. Left as a real, now-recorded gap for whoever next needs
+  `connectedAndroidTest` to run cleanly.
+- Did not add fake-controller test infrastructure for
+  `executeRustPlatformEffect`/`executeRustTransportEffect`/
+  `executeRustStorageEffect` (the other real gap Block 21 recorded) --
+  unrelated to this task's brief.
+
+**Files touched:**
+`app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt`,
+`MainViewModelSynchronization.kt`, `MainViewModelTransport.kt`,
+`core/rust/ManualListenerTransportController.kt`,
+`core/sync/SyncMaintenance.kt`; deleted `core/sync/ClockSync.kt`; added
+`app/src/test/java/com/ekkus/silentdisco/app/SyncEstimateMappingTest.kt`;
+deleted `app/src/test/java/com/ekkus/silentdisco/core/sync/ClockSyncEstimatorTest.kt`
+and `ListenerSyncControllerTest.kt`; edited
+`app/src/test/java/com/ekkus/silentdisco/core/transport/RustMigrationCompatibilityFixtureTest.kt`;
+updated `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md` (Block 21's "sync
+controller"/"periodic domain resync job"/21.3/21.4/Acceptance notes, Block
+6's physical-device-status addendum).

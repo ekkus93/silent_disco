@@ -15,13 +15,10 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.SessionInfo
-import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.sync.ClockSyncEstimator
-import com.ekkus.silentdisco.core.sync.ClockSyncSample
 import com.google.common.truth.Truth.assertThat
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json
@@ -44,43 +41,17 @@ class RustMigrationCompatibilityFixtureTest {
         classDiscriminator = "type"
     }
 
-    @Test
-    fun clockSyncFixturesMatchProductionEstimator() {
-        val fixture = fixture("sync/clock_sync_v1.json")
-        val estimator = ClockSyncEstimator(
-            maxSamples = fixture.int("maxSamples"),
-            maxAcceptedRttMs = fixture.double("maxAcceptedRttMs"),
-        )
-
-        fixture.getValue("samples").jsonArray.forEachIndexed { index, sampleElement ->
-            val sampleFixture = sampleElement.jsonObject
-            val sample = ClockSyncSample(
-                t1 = sampleFixture.long("t1"),
-                t2 = sampleFixture.long("t2"),
-                t3 = sampleFixture.long("t3"),
-                t4 = sampleFixture.long("t4"),
-            )
-            assertThat(sample.rttMs)
-                .isWithin(0.000001)
-                .of(sampleFixture.double("expectedRttMs"))
-            assertThat(sample.offsetMs)
-                .isWithin(0.000001)
-                .of(sampleFixture.double("expectedOffsetMs"))
-
-            val before = estimator.snapshot()
-            val after = estimator.observe(sample)
-            if (!sampleFixture.boolean("accepted")) {
-                assertThat(after).isEqualTo(before)
-            }
-        }
-
-        val expected = fixture.getValue("expectedFinalState").jsonObject
-        val actual = estimator.snapshot()
-        assertThat(actual.offsetMs).isWithin(0.000001).of(expected.double("offsetMs"))
-        assertThat(actual.rttMs).isWithin(0.000001).of(expected.double("rttMs"))
-        assertThat(actual.jitterMs).isWithin(0.000001).of(expected.double("jitterMs"))
-        assertThat(actual.confidence).isEqualTo(SyncQualityBadge.valueOf(expected.string("confidence")))
-    }
+    // clockSyncFixturesMatchProductionEstimator was removed once
+    // MainViewModelSynchronization.kt stopped using the local
+    // ClockSyncEstimator (see docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md
+    // Block 21/6.4) -- the equivalent parity check against this exact
+    // fixture (sync/clock_sync_v1.json) against the real Rust-owned
+    // estimator now lives in
+    // RustSyncEstimatorInstrumentedTest.androidFixtureRunsThroughRustOwnedEstimator,
+    // which is the only estimator left in production. Keeping a Kotlin copy
+    // here after deleting its production caller would be exactly the
+    // "test copied Rust rules in Kotlin" anti-pattern this project's own
+    // rules warn against.
 
     @Test
     fun packetizationFixtureMatchesProductionPacketizerAndBinaryCodec() {

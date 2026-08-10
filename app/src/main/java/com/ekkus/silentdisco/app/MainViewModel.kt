@@ -39,8 +39,9 @@ import com.ekkus.silentdisco.core.rust.UniFfiListenerCoreController
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
+import com.ekkus.silentdisco.core.rust.RustCoreBridge
+import com.ekkus.silentdisco.core.rust.RustSyncEstimator
 import com.ekkus.silentdisco.core.sync.HostTimingService
-import com.ekkus.silentdisco.core.sync.ListenerSyncController
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
@@ -90,7 +91,12 @@ class MainViewModel @JvmOverloads constructor(
 
     internal var currentSessionId: SessionId? = null
     internal var currentStreamId: StreamId? = null
-    internal var listenerSyncController: ListenerSyncController? = null
+    /**
+     * Rust-owned pre-runtime clock-sync estimator (`RustCoreBridge.openSyncEstimator()`).
+     * Holds a real native handle -- every teardown path that used to just drop
+     * `listenerSyncController` now calls `closeListenerSyncEstimator()` instead.
+     */
+    internal var listenerSyncEstimator: RustSyncEstimator? = null
     internal var listenerPlayback: FfiListenerPlaybackHandle? = null
     internal var latestDecodedAudio: AudioDecodeResult? = null
     internal var latestPackets: List<AudioPacket> = emptyList()
@@ -272,8 +278,21 @@ class MainViewModel @JvmOverloads constructor(
             runCatching {
                 domainStore.saveTuning(updated.toRustStoredSettings())
             }.onSuccess {
-                listenerSyncController = _uiState.value.selectedSession
-                    ?.let { createSyncController(SessionId(it.id)) }
+                // A changed sample window invalidates the estimator's current
+                // history, so it is closed and rebuilt rather than mutated in
+                // place -- mirrors the old unconditional
+                // `listenerSyncController = ...` reassignment, but must
+                // explicitly release the native handle first.
+                closeListenerSyncEstimator()
+                _uiState.value.selectedSession?.let {
+                    runCatching {
+                        RustCoreBridge.openSyncEstimator(maxSamples = updated.syncSampleWindow)
+                    }.onSuccess { estimator ->
+                        listenerSyncEstimator = estimator
+                    }.onFailure { error ->
+                        handleSyncFailure(error.message ?: "Failed to rebuild sync estimator for updated tuning")
+                    }
+                }
                 _uiState.value = _uiState.value.copy(
                     tuningSettings = updated,
                     lastMessage = "Updated tuning: ${updated.summary()}",
@@ -296,6 +315,7 @@ class MainViewModel @JvmOverloads constructor(
         stopListenerPlayback()
         resyncJob?.cancel()
         pendingSyncCorrelationId = null
+        closeListenerSyncEstimator()
         pendingEstablishNetworkOperationId = null
         logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(listenerPlaybackState = PlaybackState.STOPPED)
@@ -379,6 +399,7 @@ class MainViewModel @JvmOverloads constructor(
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
         stopListenerPlayback()
+        closeListenerSyncEstimator()
         bleService.stop()
         wifiDirectService.stop()
         manualListenerController.close()

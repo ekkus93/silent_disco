@@ -16,8 +16,6 @@ import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import com.ekkus.silentdisco.core.sync.ListenerSyncController
-import com.ekkus.silentdisco.core.sync.SyncMaintenanceConfig
 import com.ekkus.silentdisco.core.uniffi.FfiAudioPacket
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackConfig
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
