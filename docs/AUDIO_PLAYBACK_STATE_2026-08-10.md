@@ -155,18 +155,19 @@ output device belongs to the connection, not to one track.
    one-time delta (the two clocks have different origins). RTT median fell
    to 11.2ms in the post-fix distribution, close to the 7.7ms physical
    floor.
-3. ~~Pending sync probes never age out~~ **— fixed 2026-08-10.**
-   `begin_probe` now evicts anything older than 5s before checking capacity,
-   so sustained response loss recovers on the next probe attempt instead of
-   permanently bricking probing. Verified with deterministic tests. Still
-   **not** device-confirmed under genuine real sustained loss: item 6's
-   (A6) Wi-Fi disable/restore run turned out not to exercise this hazard at
-   all — disabling Wi-Fi tears the listener's own transport down almost
-   immediately (~7s), so it stops sending probes entirely rather than
-   sending them into a silent void. Exercising this for real needs a
-   scenario where the listener's connection *stays up* while responses
-   stop arriving (e.g. host-side packet loss/black-holing, not the
-   listener's own interface going down) — still open.
+3. ~~Pending sync probes never age out~~ **— fixed 2026-08-10, now
+   device-confirmed under genuine real sustained loss too.** `begin_probe`
+   evicts anything older than 5s before checking capacity, so sustained
+   response loss recovers on the next probe attempt instead of permanently
+   bricking probing. A6's Wi-Fi disable/restore run didn't exercise this
+   (disabling Wi-Fi tears the listener's own transport down, so it stops
+   sending probes rather than sending them into a void) — but the A6
+   follow-up silent-host-partition experiment (item 7 below) did: the
+   listener kept sending probes throughout a ~72s real outage with no
+   error and no brick, and got a real, accepted sample (`confidence=Good`)
+   the moment the host resumed responding. That specific mechanism worked
+   as designed; whether the *overall* session recovered is a separate,
+   worse story — see item 7.
 4. ~~**Residual arrival gaps.**~~ `ringQueued` was seen dropping to 384-720
    frames while emitting at full rate. `STARTUP_BUFFER_MS` was 1000ms when
    this was written, deliberately dominating remaining silence — **lowered
@@ -188,6 +189,54 @@ output device belongs to the connection, not to one track.
    host-side decode has more per-frame timing variance than WAV/FLAC,
    pressuring the listener ring. Not investigated further; lowest priority
    until A6/A7 land.
+7. **The listener has no bounded detection of a silent host, and shows
+   nothing wrong for well over a minute — confirmed on real hardware,
+   2026-08-10 (A6 follow-up).** This is the harder case item 1 and item 3
+   above both flagged as still open: a connection that *stays up* while
+   the other side goes quiet, as opposed to an actual close signal. Tested
+   by `SIGSTOP`-freezing the desktop host's test process mid-stream (no
+   root/`iptables` available in this environment for a true firewall-level
+   packet-drop test, so this freezes the host's own processing too, not
+   only the network path between it and the listener — noted as a
+   methodological caveat, not a reason to discount the result: from the
+   listener's side, "no audio and no sync responses arrive" looks
+   identical either way).
+   - **During the ~72s freeze**: the app UI stayed on "Connected /
+     Playing" the entire time, unchanged at t=0s, t=30s, and t=60s
+     screenshots. The real internal state was completely different from
+     what the UI showed: `phase=BUFFERING` continuously, emitting pure
+     silence every callback (`underruns=+~255 silenceFrames=+~49000` every
+     single second, `ringQueued=0` throughout). A user would hear silence
+     and see "Playing" with zero indication anything was wrong, for as
+     long as the outage lasts — there is no timeout anywhere in this path.
+   - **On the host resuming**: recovery was not reliable. Song-a's
+     remainder got a real, accepted sync sample
+     (`confidence=Good`) almost immediately — A3's probe-eviction fix
+     working correctly (see item 3). But the *host's own* A6 inbound-
+     silence eviction (added earlier this same session) then evicted the
+     listener as stale on its next broadcast attempt: `last_inbound_millis`
+     is wall-clock time, which kept advancing during the host's own freeze,
+     so the real elapsed gap (~72s) was genuinely past the 8s threshold
+     the instant the host's threads resumed and checked it — a race the
+     eviction lost against the also-just-resumed receiver thread's queued
+     backlog of never-processed `SyncRequest`s. The result: the whole
+     second song (`song-b`) broadcast with `without_recipients=8040` out
+     of `attempted=12242` — the listener received essentially nothing, and
+     still showed no error state.
+   - **The only thing that ever surfaced "Host disconnected"** was the
+     test's own final, explicit `network.shutdown()` at natural test end —
+     an actual TCP close, exactly the same mechanism item 1 already
+     confirmed works. Nothing about the ~72s of real silence in between
+     was ever visible to the user.
+   - **Not fixed this session** — this is a real, confirmed violation of
+     this project's "make failures visible in the UI" rule, but building a
+     bounded listener-side "no data for N seconds" watchdog (with UI
+     wiring, and care to distinguish a genuine outage from an ordinary
+     pause) is real feature work, not a small fix, and was out of scope
+     for what this item was asked to do (verify the scenario). Flagged
+     here as a new, concrete, evidenced gap for prioritization — same
+     shape as the host-side blindness gap A6 found and fixed earlier this
+     session, just on the other end of the connection.
 
 ---
 

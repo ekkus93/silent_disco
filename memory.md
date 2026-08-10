@@ -2068,6 +2068,67 @@ down instead). Then move to desktop-app work per the user's explicit
 request — everything else in the "Android tasks that don't need a second
 phone" list is now done.
 
+## 2026-08-10T08:05:26Z - Claude Sonnet 5 - A6 silent-host-partition test: found a real, matching listener-side blindness gap, not fixed
+
+Last of the user's "finish every Android task that doesn't need a second
+phone" list. No root/`iptables` in this environment for a true
+firewall-level packet-drop test, so used `kill -STOP`/`kill -CONT` on the
+desktop host's own test process PID instead — freezes every host thread
+(accept loop, control reader, broadcast pump) without closing any socket,
+so no FIN/RST is ever sent. Caveat recorded honestly: this also freezes
+the host's own processing, not purely the network path, so it's a proxy
+for "silent partition," not an exact match — but from the listener's own
+vantage point (no audio, no sync responses), the two are indistinguishable.
+
+- **During the ~72s freeze**: screenshots at t=0s/30s/60s all showed
+  identical "Connected / Playing", completely unchanged. Real internal
+  state: `phase=BUFFERING` the entire time, `ringQueued=0`,
+  `underruns=+~255 silenceFrames=+~49000` every single second — pure
+  silence, continuously, with zero UI indication. No bounded timeout
+  exists anywhere in this path; the earlier code investigation's
+  prediction (no counter/detection at all beyond the initial 5s
+  sync-acquire window) is now directly confirmed on hardware, not just
+  argued from reading the code.
+- **On resume**: not a clean recovery. Song-a's remainder got a real
+  accepted sync sample almost immediately (`confidence=Good`) — A3's
+  probe-eviction fix worked exactly as designed even under a genuine ~72s
+  real outage (first real-hardware confirmation of that fix specifically,
+  closing the gap A3's own entry flagged as still open). But the *host's*
+  own A6 inbound-silence eviction (from earlier this session) then evicted
+  the listener as stale the moment the host's threads resumed: its
+  `last_inbound_millis` bookkeeping uses wall-clock time, which kept
+  advancing during the host's own freeze, so the real ~72s gap read as
+  genuinely stale against the 8s threshold — a race against the also-just-
+  resumed receiver thread's backlog of queued-but-unprocessed
+  `SyncRequest`s, which it lost. Result: the whole second song broadcast
+  with `without_recipients=8040` of `attempted=12242` — the listener got
+  essentially nothing, still with no visible error.
+- **Only the test's own final, real `network.shutdown()`** (an actual TCP
+  close) ever produced "Host disconnected" on screen — same mechanism A1
+  already confirmed, nothing new. The ~72s of real silence in between was
+  never surfaced to the user at any point.
+- **Not fixed.** This is a real, confirmed violation of "make failures
+  visible in the UI" — the listener-side mirror of the host-blindness gap
+  found and fixed earlier this session — but a bounded listener-side
+  "no data for N seconds" watchdog (with UI wiring, and needing to
+  distinguish a genuine outage from an ordinary pause) is real feature
+  work, comparable in size to D2's three-stack fix, and this task was
+  scoped as "test" not "fix." Recorded as a new, concrete, evidenced item
+  (§5 item 7) in `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md` rather than
+  fixed inline or silently dropped.
+- No code changes this entry — investigation and documentation only.
+
+### Next
+Everything in the user's "Android tasks that don't need a second physical
+phone" list is now done (A4.2, A4.3, A4.4, and this silent-partition
+verification). Two things worth surfacing to the user before moving to
+desktop work: (1) A7 (two physical listeners) and D3 remain blocked on
+hardware; (2) this session found two real, matching UI-visibility gaps —
+host-side (fixed) and listener-side (found today, not fixed) — that
+together mean neither end of a silent partition is currently visible to
+its user. Worth asking whether to fix the listener-side half before
+moving on, matching how the host-side half was handled.
+
 ## 2026-08-10T06:57:56Z - Claude Sonnet 5 - D4 bookkeeping: closed out Block 28.1/28.2 in the desktop TODO, left 28.3 honestly partial
 
 User chose D4 (bookkeeping only, no device needed) over stopping, since
