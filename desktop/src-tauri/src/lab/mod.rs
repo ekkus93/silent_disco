@@ -20,10 +20,16 @@
 //! plus a deterministic virtual clock per node (Block 38, see
 //! [`clock`]); virtual transport/fault-injection wiring (spec section
 //! 29.3, already present in `silent_disco_core::transport`'s
-//! `VirtualTransportFactory`) is a later Lab Mode block's concern.
+//! `VirtualTransportFactory`) remains a later Lab Mode block's concern --
+//! see [`scenario`]'s own module doc comment for exactly what Block 40
+//! (scenario schema/runner/assertions, layered on top of this runtime) does
+//! and does not wire up yet.
 
 mod clock;
 mod fault;
+pub(crate) mod recorder;
+pub(crate) mod replay;
+pub(crate) mod scenario;
 
 use crate::dto::DesktopErrorDto;
 use crate::platform::identity::DesktopIdentity;
@@ -34,7 +40,9 @@ use crate::platform::paths::{
 use clock::{LabClock, LabNodeClock};
 use sha2::{Digest, Sha256};
 use silent_disco_core::domain::MonotonicMillis;
-use silent_disco_core::runtime::{CoreActorConfig, CoreActorHandle, CoreActorRuntime};
+use silent_disco_core::runtime::{
+    CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver,
+};
 use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -221,7 +229,10 @@ impl LabRuntime {
     /// `drift_ppm` relative to the shared scenario timeline (Block 37.2
     /// "isolated databases", "isolated identities", "explicit start";
     /// Block 37.3 "profile roots differ"; Block 38.2 "per-node offset",
-    /// "per-node drift in ppm").
+    /// "per-node drift in ppm"). Its actor has no observer beyond the
+    /// production no-op default -- see [`Self::start_node_with_clock_and_observer`]
+    /// for a node whose notifications a caller (the Block 40 scenario
+    /// runner) needs to observe.
     ///
     /// # Errors
     ///
@@ -233,6 +244,26 @@ impl LabRuntime {
         &self,
         offset_ms: i64,
         drift_ppm: i64,
+    ) -> Result<LabNodeId, DesktopErrorDto> {
+        self.start_node_with_clock_and_observer(offset_ms, drift_ppm, |_notification| Ok(()))
+    }
+
+    /// As [`Self::start_node_with_clock`], but with a caller-supplied
+    /// [`CoreObserver`] instead of the production no-op default -- used by
+    /// the Block 40 scenario runner (`super::scenario::run_scenario`) to
+    /// attach a [`super::recorder::ScenarioRecorder`] to every node it
+    /// starts, since a rejected command or an emitted diagnostic is
+    /// otherwise invisible outside the observer stream (see
+    /// `super::scenario`'s own module doc comment, "Step settlement").
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::start_node_with_clock`].
+    pub(crate) fn start_node_with_clock_and_observer<O: CoreObserver>(
+        &self,
+        offset_ms: i64,
+        drift_ppm: i64,
+        observer: O,
     ) -> Result<LabNodeId, DesktopErrorDto> {
         let mut nodes = self.nodes.lock().map_err(|_| lab_poisoned_error())?;
         if nodes.len() >= MAX_LAB_NODES {
@@ -299,11 +330,7 @@ impl LabRuntime {
 
         let actor = match CoreActorRuntime::start(
             CoreActorConfig::new(identity.device_id().clone()),
-            // Lab Mode has no scenario recorder yet (a later block's
-            // concern) -- every node's own actor still runs the exact
-            // same production state machine, it simply has no observer
-            // side effects to report today.
-            |_notification| Ok(()),
+            observer,
         ) {
             Ok(actor) => actor,
             Err(error) => {

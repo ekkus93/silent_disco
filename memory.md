@@ -2902,3 +2902,168 @@ verification available; (2) add fake-controller test infrastructure to
 cover `executeRust*Effect`. Both were deliberately left for a session with
 more room to verify sync-critical behavior safely, not because they're hard
 to find.
+
+## 2026-08-10T19:39:58Z - Sonnet 5 - Block 40 complete: scenario schema, runner, and assertions
+
+Implemented all four sub-blocks (40.1 format, 40.2 scenario types,
+40.3 assertions, 40.4 tests) from
+`docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`. New files:
+`desktop/src-tauri/src/lab/scenario.rs` (schema + validation + runner +
+assertion evaluation), `desktop/src-tauri/src/lab/recorder.rs` (bounded
+`CoreObserver`-based notification trace), `desktop/src-tauri/src/lab/replay.rs`
+(version/seed-checked re-execution). One necessary extension to
+`lab/mod.rs`: `LabRuntime::start_node_with_clock_and_observer`, a
+generic sibling of Block 37's `start_node_with_clock` that accepts a
+caller-supplied `CoreObserver` instead of the hardcoded no-op closure —
+needed because the scenario runner must attach its own recorder per
+node. TODO doc's Block 40 checkboxes updated with full evidence
+citations, including one item marked `[~]` (fault *changes*,
+distinguished from fault *configuration* — honestly explained, see
+below) rather than overclaiming.
+
+**Key decisions:**
+- **JSON, not YAML** — `serde`/`serde_json` were already exact-pinned
+  dependencies in both crates and every other IPC/DTO boundary in this
+  codebase already uses them; no YAML use existed anywhere in the
+  workspace to justify a new dependency.
+- **Bounds chosen:** `MAX_NODES` reuses Block 37's own `MAX_LAB_NODES`
+  rather than a second independent cap; `MAX_LINKS=64`, `MAX_FIXTURES=32`,
+  `MAX_STEPS=256`, `MAX_ASSERTIONS=128`, `MAX_ID_BYTES=64`,
+  `MAX_SCENARIO_DURATION_MS` = 24 simulated hours (shared by `timeoutMs`,
+  every step's `atMs`, and every assertion's `byMs`), and
+  `MAX_SCENARIO_FILE_BYTES=1 MiB` — checked before any JSON parsing is
+  even attempted, so a malformed/oversized file is always a bounded,
+  reported rejection, never a panic or unbounded allocation.
+- **Unknown schema version is checked before full structural parsing**:
+  `load_scenario_json` parses into a generic `serde_json::Value` first,
+  reads just `schemaVersion`, and only then attempts strict
+  `Scenario` deserialization. This makes "unknown version" its own
+  distinct, prioritized failure mode rather than an incidental generic
+  shape error whenever a future version's fields differ.
+- **Real found-and-fixed serde pitfall**: `#[serde(rename_all =
+  "camelCase")]` on an *enum* only renames variant names, not the
+  fields of its struct-like variants — each variant needs its own
+  `#[serde(rename_all = "camelCase")]`. Discovered because every test
+  scenario's `byMs`/`inviteCode`/`missingFrames`-style fields
+  initially failed with "unknown field, expected `by_ms`" until each
+  `ScenarioAction`/`ScenarioAssertion` variant got its own attribute.
+- **`deserialize_with` does not work on a newtype-variant field of an
+  adjacently tagged enum** (`ScenarioLifecycleTarget`, `tag = "machine",
+  content = "state"`): serde's derive still generates a
+  content-missing fallback path requiring `T: Deserialize<'de>` even
+  though it's never actually taken. Fixed with thin `Wire*` wrapper
+  newtypes (`WireAppRole`, `WireHostLifecycle`, ...) that implement
+  `Deserialize` for real via the domain enums' own `from_wire_name`,
+  rather than fighting the derive further.
+- **Curated a real subset of `CoreCommand`** (18 command variants) plus
+  three directly injected real `AudioEvent`/`TransportEvent` values
+  (`injectUnderrun`/`injectSynchronizationUpdated`/`injectDeliveryCompleted`),
+  all submitted through the exact real `CoreActorHandle::submit_command`/
+  `submit_audio_event`/`submit_transport_event` production entry
+  points — never a synthesized bypass. Investigation found
+  `StartPlayback`/`PausePlayback`/`ResumePlayback`/`StopPlayback`/
+  `SetLocalVolume`/`RequestResync` are *still stubs* in the current
+  core (`apply_command` unconditionally returns "playback requires the
+  shared packetizer and scheduler blocks" for all six) — genuinely
+  useful information for scenario authors, not something this block's
+  own tests could rely on succeeding.
+- **Audio fixtures never carry a filesystem path** — deliberately
+  satisfies "source fixture references restricted to Lab assets" by
+  construction (no path field exists at all) rather than building a
+  new "Lab assets directory" resolution mechanism that no Lab node
+  could use yet anyway (no Lab node has a wired audio pipeline).
+- **`links` captured/bounded/validated but not wired into live
+  transport** — `LabRuntime` has never connected a Lab node to the
+  shared core's virtual transport/fault stack; that wiring (and
+  mid-run fault-*change* steps, which presuppose it) is deliberately
+  left to a future Lab Mode block, consistent with `lab/mod.rs`'s own
+  standing doc comment since Block 37.
+- **Recorder is required, not a nicety**: `ActorState::process` only
+  assigns the mutated candidate snapshot back on the `Ok` branch — a
+  *rejected* command leaves `CoreSnapshot` completely unchanged, and
+  its only trace is a `CoreNotification::Error` delivered
+  asynchronously to the observer. Without `recorder::ScenarioRecorder`
+  attached as every node's `CoreObserver`, the runner would have no
+  way to see a rejection at all, breaking `ErrorCodeObserved` and
+  `NoUnexpectedFatalError` outright.
+- **Step settlement uses a bounded `Condvar` wait, never
+  `Instant::now()`/`SystemTime::now()`** — matches this crate's own
+  established `Receiver::recv_timeout`-based test-helper pattern
+  (`platform/start_playback_tests.rs`'s `wait_snapshot_for`), promoted
+  to production Lab code. This preserves Block 38.3's grep-verified
+  "no wall-clock sleep required for deterministic scenarios" evidence
+  for `desktop/src-tauri/src/lab/`: it's a bounded real-time safety
+  valve against a stuck background actor thread, not a way to make
+  *virtual* scenario time pass (that only ever happens through
+  `LabRuntime::advance`).
+- **A real nondeterminism bug caught by running the full suite under
+  load, not by the fast/isolated `lab::` test run alone**: the
+  original `StepSettlement` had three variants (`Applied`/`Observed`/`TimedOut`),
+  distinguishing *which* of two racing signals (snapshot revision
+  advanced vs. a notification observed) a run happened to notice
+  first. Under real system load, a freshly started node's own
+  asynchronous startup `Snapshot` notification could race with
+  `sequence_before` being captured just before a step's own
+  submission and be misread as that step already settling —
+  `replay::tests::replay_against_the_matching_scenario_reproduces_the_report`
+  failed intermittently with a mismatched `settlement` field until
+  fixed two ways: (1) `wait_for_step_settled` now scans recorded
+  entries for one whose *own* revision has genuinely advanced past
+  `revision_before`, or a real `Error`, instead of trusting "any new
+  notification arrived"; (2) `StepSettlement` was collapsed to two
+  variants (`Settled`/`TimedOut`), since which of two concurrent
+  threads wins a race is real timing information, not
+  scenario-semantic information worth exposing at report-equality
+  granularity — keeping it out is what makes `ScenarioReport` genuinely
+  deterministic (Block 40.4) rather than merely deterministic modulo a
+  thread-scheduling race.
+- **"Impossible assertion" vs. "timeout" are mechanically the same
+  outcome (`TimedOut`) for a genuine reason, not a shortcut**: the
+  runner evaluates every assertion exactly once, after advancing
+  virtual time to `timeoutMs` — there is no continuous re-checking
+  through virtual time, so "never becomes true" and "ran out of
+  budget before becoming true" are the same observable event. The two
+  required 40.4 tests are still meaningfully distinct scenarios: one
+  where nothing could ever satisfy the assertion regardless of budget
+  (`impossible_assertion_times_out`), and one where the step that
+  *would* have satisfied it is scheduled past `timeoutMs` and so never
+  even runs (`a_step_scheduled_past_the_scenario_timeout_never_runs`)
+  — the runner was extended to skip (not merely delay) any step at or
+  beyond `timeoutMs` to make the second case real rather than
+  incidental.
+- Environment note: the shared build machine repeatedly ran the root
+  filesystem down to a few hundred MB free during this block's `cargo
+  test`/`cargo clippy` runs (bus errors / "No space left on device"
+  from the linker), unrelated to this block's own code. Worked around
+  by running `cargo clean -p silent-disco-desktop` (and once `cargo
+  clean` in `rust/`) between passes rather than touching the other
+  concurrently running agent's own worktree or its build artifacts.
+
+**Gates:** `bash scripts/check-rust.sh` green (full workspace, 0
+failed). `cd desktop && npm run check` green (bindings-check, biome,
+`cargo fmt --check`, tsc, 72/72 Vitest, production build — unaffected,
+no frontend touched). `desktop/src-tauri cargo test` (default): 193,
+unchanged, confirmed via `nm` on the default-build `.rlib` showing zero
+`scenario`/`ScenarioRecorder` symbols. `cargo test --features
+lab-mode`: 214 → 237 passed, run repeatedly (including full-suite runs
+under real system load) with 0 failures after the `StepSettlement` fix
+above. Manually ran `cargo clippy --all-targets --all-features -- -D
+warnings` for `desktop/src-tauri` — fixed every new lint this block's
+own code introduced (`doc_markdown`, `too_many_lines` on
+`Scenario::validate` split into five `validate_*` helpers,
+`collapsible_match`, `collapsible_if`, `redundant_closure`, three
+`map_unwrap_or` sites unified into one `current_revision` helper,
+`match_same_arms`, `assign_op_pattern`) before landing; the remaining 8
+deny-level errors are the identical, unrelated pre-existing set noted
+in the Block 35-39 memory entries, confirmed unchanged in count and
+location.
+
+### Next
+Committed and pushed. No open threads from this block that weren't
+already documented above and in the TODO's Block 40 evidence
+(`links`/fault-change wiring into live transport remains deferred to a
+future Lab Mode block). Block 41 (recording and replay — a heavier
+persisted-recording format with protocol/core version stamps, packet
+hashes, and a divergence diff) is next in the TODO's Phase 11. Per
+this session's established pattern, do not start it unilaterally —
+ask the user first.

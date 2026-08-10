@@ -3473,16 +3473,37 @@ the Block 35-38 memory entries.
 
 ### 40.1 Select format
 
-- [ ] choose JSON or YAML with exact pinned parser;
-- [ ] version schema;
-- [ ] bound nodes, links, steps, strings, and duration;
-- [ ] reject unknown versions;
-- [ ] reject unknown commands and assertions;
-- [ ] no arbitrary code execution.
+- [x] choose JSON or YAML with exact pinned parser -- JSON via
+      `serde`/`serde_json` (`=1.0.228`/`=1.0.145`), both already pinned,
+      exact-version dependencies of `desktop/src-tauri` and
+      `rust/silent-disco-core`; no YAML dependency introduced (no existing
+      YAML use anywhere in this workspace) -- see `lab/scenario.rs`'s own
+      module doc comment, "40.1 Format".
+- [x] version schema -- `scenario::SCHEMA_VERSION = 1`; every `Scenario`
+      document carries its own `schemaVersion` field.
+- [x] bound nodes, links, steps, strings, and duration --
+      `scenario::MAX_NODES`/`MAX_LINKS`/`MAX_FIXTURES`/`MAX_STEPS`/`MAX_ASSERTIONS`/`MAX_ID_BYTES`/`MAX_SCENARIO_DURATION_MS`
+      (24 simulated hours)/`MAX_SCENARIO_FILE_BYTES` (1 MiB raw file bound,
+      checked before JSON parsing even starts), enforced by
+      `Scenario::validate` and `load_scenario_json`.
+- [x] reject unknown versions -- `load_scenario_json` checks
+      `schemaVersion` against `SCHEMA_VERSION` *before* attempting full
+      structural parsing, returning a distinct
+      `ScenarioParseError::UnknownSchemaVersion`, never silently
+      reinterpreted; `scenario::tests::unknown_schema_version_is_rejected_distinctly`.
+- [x] reject unknown commands and assertions -- `ScenarioAction`/`ScenarioAssertion`
+      are closed Rust enums decoded through `serde`'s internally tagged
+      (`tag = "kind"`) representation; an unrecognized `"kind"` string is a
+      hard deserialization error, never a silently skipped step;
+      `scenario::tests::unknown_command_kind_is_rejected`,
+      `unknown_assertion_kind_is_rejected`.
+- [x] no arbitrary code execution -- every field is a plain, bounded,
+      statically typed value; nothing resembling a script or expression
+      language exists anywhere in the schema.
 
 ### 40.2 Scenario types
 
-Create:
+Created:
 
 ```text
 desktop/src-tauri/src/lab/scenario.rs
@@ -3492,42 +3513,167 @@ desktop/src-tauri/src/lab/replay.rs
 
 Include:
 
-- [ ] seed;
-- [ ] nodes;
-- [ ] links;
-- [ ] clocks;
-- [ ] source fixture references restricted to Lab assets;
-- [ ] timed commands;
-- [ ] fault changes;
-- [ ] assertions;
-- [ ] timeout and termination policy.
+- [x] seed -- `Scenario::seed: u64`, threaded through `ScenarioReport`/`ScenarioRecording`
+      and checked by replay (see 40.2's "recording/replay" bullet below).
+- [x] nodes -- `Scenario::nodes: Vec<ScenarioNode>`, bounded by `MAX_NODES`
+      (`= super::MAX_LAB_NODES`, Block 37's own node cap, not a second
+      independent bound).
+- [x] links -- `Scenario::links: Vec<ScenarioLink>` (from/to/latencyMs/jitterMs/lossPermille),
+      bounded and validated (`MAX_LINKS`, `MAX_LINK_LATENCY_MS`,
+      `MAX_LINK_JITTER_MS`, `MAX_LOSS_PERMILLE`, node-reference integrity)
+      but **not yet wired into any node's live transport** -- `LabRuntime`
+      has never connected a Lab node to the shared core's virtual
+      transport/fault-injection stack (`super::fault`,
+      `silent_disco_core::transport::virtual_transport`/`virtual_fault`);
+      that wiring, and scenario steps that change a link's fault
+      configuration mid-run, remain a later Lab Mode block's concern, exactly
+      as `lab/mod.rs`'s own doc comment has said since Block 37 and Block 39
+      left true. See `scenario.rs`'s "Deliberate scope boundaries" doc
+      section for the full reasoning.
+- [x] clocks -- `Scenario::clocks: HashMap<String, ScenarioClock>` (offsetMs/driftPpm),
+      applied for real through `LabRuntime::start_node_with_clock_and_observer`
+      (Block 38's own clock machinery, not duplicated).
+- [x] source fixture references restricted to Lab assets --
+      `ScenarioFixture` is purely descriptive metadata (id, display name,
+      optional byte length/duration) with **no filesystem path field at
+      all**; a scenario cannot reference anything on the real filesystem by
+      construction, satisfying this bullet without inventing a "Lab assets
+      directory" mechanism that no Lab node's (audio-pipeline-less) runtime
+      could use yet anyway.
+- [x] timed commands -- `ScenarioStep { at_ms, node, action }`, a
+      deliberately curated, real subset of `CoreCommand` submitted through
+      the exact real `CoreActorHandle::submit_command` production entry
+      point (see `scenario.rs`'s doc comment for the excluded variants and
+      why). Also included: three directly injected real
+      `AudioEvent`/`TransportEvent` actions
+      (`injectUnderrun`/`injectSynchronizationUpdated`/`injectDeliveryCompleted`)
+      through the same real `submit_audio_event`/`submit_transport_event`
+      entry points a platform adapter uses -- the only way to exercise
+      sync/delivery/underrun assertions (40.3) before the transport wiring
+      above exists.
+- [~] fault changes -- **partially represented, not implemented**: each
+      `ScenarioLink`'s own latency/jitter/loss fields are the bounded,
+      validated "fault" half of this bullet, but there is no step kind that
+      *changes* a fault configuration mid-run, since (as above) `links`
+      themselves are not yet wired into any live transport for a change to
+      apply to. Deferred to the same future block as live link wiring.
+- [x] assertions -- `Scenario::assertions: Vec<ScenarioAssertion>`, see 40.3.
+- [x] timeout and termination policy -- `Scenario::timeout_ms: u64` (the
+      run's bounded virtual-time budget; a step scheduled at or beyond it
+      never runs) and `Scenario::termination: TerminationPolicy`
+      (`stop_on_assertion_failure`, default `true`).
+- [x] recorder/replay -- `recorder::ScenarioRecorder` is a bounded
+      (`MAX_RECORDED_NOTIFICATIONS = 4_096`, excess counted as
+      `dropped_count()` rather than silently discarded), `Condvar`-backed
+      `CoreObserver` capturing every notification (snapshots, effects,
+      diagnostics, errors) a Lab node's actor emits -- the only way to see
+      a *rejected* command at all, since `ActorState::process` leaves
+      `CoreSnapshot` completely unchanged on rejection (see `scenario.rs`'s
+      "Step settlement" doc section). `replay::ScenarioRecording`/`replay::replay`
+      re-execute a scenario and refuse (`ReplayError::SchemaVersionMismatch`/`SeedMismatch`)
+      rather than silently reinterpret one captured under a different
+      schema version or seed (spec 29.5) -- persisting a recording to disk,
+      protocol/core version stamping, packet hashes, and a divergence diff
+      against the original run are explicitly Block 41's own scope
+      (already listed there), not duplicated here.
 
 ### 40.3 Assertions
 
-Support typed assertions for:
+Support typed assertions for (`ScenarioAssertion`, `evaluate_assertion`):
 
-- [ ] lifecycle by deadline;
-- [ ] snapshot capability;
-- [ ] listener count;
-- [ ] sync confidence;
-- [ ] bounded offset/RTT;
-- [ ] expected error code;
-- [ ] delivery severity;
-- [ ] underrun/concealment bounds;
-- [ ] clean shutdown;
-- [ ] no unexpected fatal error.
+- [x] lifecycle by deadline -- `LifecycleReached { node, target }`, where
+      `target` is one of `Role`/`Host`/`Listener`/`Playback`, directly
+      reusing the real `AppRole`/`HostLifecycle`/`ListenerLifecycle`/`PlaybackState`
+      domain enums (via their existing `from_wire_name`, no parallel schema
+      enum invented).
+- [x] snapshot capability -- `CapabilityAvailable { capability, available }`,
+      directly reusing `PermissionCapability` against `CapabilitySnapshot`'s
+      six fields.
+- [x] listener count -- `ListenerCountAtLeast { count }` against
+      `snapshot.listeners.len()`.
+- [x] sync confidence -- `SyncConfidenceAtLeast { confidence }` against
+      `snapshot.synchronization`.
+- [x] bounded offset/RTT -- `SynchronizationWithinBounds { max_abs_offset_ms, max_round_trip_ms }`.
+- [x] expected error code -- `ErrorCodeObserved { code }`, reading the
+      recorder's trace (`CoreError::code.stable_name()`) since a rejected
+      command's error is otherwise invisible outside it.
+- [x] delivery severity -- `DeliverySeverityIs { severity }` against
+      `snapshot.last_delivery`.
+- [x] underrun/concealment bounds -- `UnderrunFramesAtMost { max_total_missing_frames }`,
+      summing the real `audio_underrun` diagnostic's `missing_frames`
+      field from the recorder's trace. Covers underrun only: no distinct
+      "concealment" counter exists anywhere in the current runtime record
+      model beyond `AudioEvent::Underrun`'s own field, so this assertion is
+      bounded to the one real, available signal rather than inventing a new
+      production type outside this block's scope.
+- [x] clean shutdown -- `CleanShutdown { node }`; every node `run_scenario`
+      starts is torn down via `LabRuntime::stop_node` regardless of outcome,
+      and a torn-down node with no recorded fatal error satisfies this.
+- [x] no unexpected fatal error -- `NoUnexpectedFatalError { node }`,
+      checking the recorder's trace for any `CoreNotification::Error` whose
+      severity is `Fatal` (`RecordedNotificationKind::is_fatal_error`).
 
 ### 40.4 Tests
 
-- [ ] minimal happy path;
-- [ ] invalid schema;
-- [ ] unknown version;
-- [ ] impossible assertion;
-- [ ] timeout;
-- [ ] deterministic report;
-- [ ] bounded malformed file behavior.
+- [x] minimal happy path -- `scenario::tests::minimal_happy_path_completes_with_every_assertion_held`.
+- [x] invalid schema -- `scenario::tests::invalid_schema_is_rejected`.
+- [x] unknown version -- `scenario::tests::unknown_schema_version_is_rejected_distinctly`
+      (plus `missing_schema_version_is_rejected`).
+- [x] impossible assertion -- `scenario::tests::impossible_assertion_times_out`.
+- [x] timeout -- `scenario::tests::a_step_scheduled_past_the_scenario_timeout_never_runs`
+      (the action that would have satisfied the assertion is scheduled past
+      `timeoutMs` and never runs, distinct from the impossible-assertion
+      case above).
+- [x] deterministic report -- `scenario::tests::identical_scenario_and_seed_produce_a_deterministic_report`
+      (two independent `LabRuntime`s, same scenario/seed, byte-for-byte
+      equal `ScenarioReport`) and `replay::tests::replay_against_the_matching_scenario_reproduces_the_report`.
+      Getting this genuinely deterministic required collapsing
+      `StepSettlement`'s two internal detection paths (revision-advanced vs.
+      notification-observed) into one `Settled` value, once a full-suite
+      run under real system load exposed that *which* of those two racing
+      real threads happened to notice first is not itself deterministic --
+      see `StepSettlement`'s own doc comment.
+- [x] bounded malformed file behavior -- `scenario::tests::oversized_scenario_file_is_rejected_before_parsing`,
+      `truncated_json_is_a_bounded_error_not_a_panic`,
+      `arbitrary_binary_input_is_a_bounded_error_not_a_panic`.
 
-**Acceptance:** Scenarios are executable specifications, not ad hoc UI macros.
+Also added beyond the required list:
+`scenario::tests::unknown_command_kind_is_rejected`,
+`unknown_assertion_kind_is_rejected`, `exceeding_a_declared_bound_is_rejected`,
+`a_step_referencing_an_undeclared_node_is_rejected`,
+`a_command_that_is_illegal_in_the_current_state_is_reported_not_swallowed`
+(proves a real actor-side rejection is observed through the recorder, not
+silently swallowed by the runner); `recorder::tests` (5 tests covering
+ordering, fatal-severity classification, the bounded-drop count, and
+`wait_for_progress`'s wake/timeout behavior); `replay::tests::replay_refuses_a_schema_version_mismatch`,
+`replay_refuses_a_seed_mismatch`.
+
+New tests this block: 26 (17 `lab/scenario/tests.rs`, 5 `lab/recorder/tests.rs`,
+3 `lab/replay/tests.rs`, plus one `lab/tests.rs`-style helper duplicated per
+submodule rather than shared, matching Block 38/39 precedent). `cargo test
+--features lab-mode` (this crate): 214 -> 237 passed, 0 failed, run
+repeatedly (including full-suite runs under real system load, which is what
+originally caught the `StepSettlement` nondeterminism above) with no
+flakes after the fix. Default (no `lab-mode`) build unaffected: 193 passed,
+unchanged, confirmed via `nm` showing zero `scenario`/`ScenarioRecorder`
+symbols in the default-build `.rlib`.
+
+All three quality gates run and green: `bash scripts/check-rust.sh` (full
+workspace, 0 failed), `cd desktop && npm run check` (bindings-check, biome,
+`cargo fmt --check`, tsc, 72/72 Vitest, production build -- unaffected,
+this block touched no frontend code). Manually ran `cargo clippy
+--all-targets --all-features -- -D warnings` for `desktop/src-tauri` --
+confirmed the identical, unrelated pre-existing 8-error baseline from
+Blocks 35-39 (`host_session_dto.rs`, `platform/audio_device.rs` x2,
+`platform/mdns.rs` x2, `platform/render_ring.rs`,
+`platform/start_playback_tests.rs` x2) is still the only thing failing;
+this block's own code introduced zero new lints (several were fixed before
+landing: `doc_markdown`, `too_many_lines` on `Scenario::validate` -- split
+into five focused `validate_*` helpers -- `collapsible_match`,
+`collapsible_if`, `redundant_closure`, three `map_unwrap_or` call sites
+unified into one `current_revision` helper, and `match_same_arms`).
+
+**Acceptance:** Scenarios are executable specifications, not ad hoc UI macros. Met: a scenario document is parsed once into a closed, versioned, bounded schema and then *executed* against real Lab nodes through the exact real `CoreActorHandle` production entry points (`submit_command`/`submit_audio_event`/`submit_transport_event`), producing a deterministic, typed report with typed assertion outcomes -- not a sequence of ad hoc UI clicks replayed blind. Live cross-node transport wiring (`links` actually connecting nodes, mid-run fault changes) remains the next Lab Mode block's work, documented above rather than silently assumed complete.
 
 ---
 

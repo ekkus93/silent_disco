@@ -1,0 +1,358 @@
+use super::{
+    AssertionOutcome, ScenarioOutcome, ScenarioParseError, ScenarioValidationError,
+    load_scenario_json, run_scenario,
+};
+use crate::lab::LabRuntime;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+/// Duplicated from `crate::lab::tests` deliberately -- that helper is
+/// private to its own module, and every other Lab submodule
+/// (`clock::tests`, `fault::tests`) already keeps its own self-contained
+/// test scaffolding rather than threading a shared one across module
+/// boundaries.
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Self {
+        let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "silent-disco-desktop-lab-scenario-{}-{sequence}",
+            std::process::id()
+        ));
+        if path.exists() {
+            fs::remove_dir_all(&path).expect("remove stale test directory");
+        }
+        fs::create_dir_all(&path).expect("create test directory");
+        Self(path)
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Block 40.4 "minimal happy path": a single node selects the host role and
+/// exports diagnostics -- both real, unconditionally successful commands --
+/// and the scenario's one lifecycle assertion holds.
+#[test]
+fn minimal_happy_path_completes_with_every_assertion_held() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1,
+            "seed": 1,
+            "nodes": [{"id": "host1"}],
+            "steps": [
+                {"atMs": 0, "node": "host1", "action": {"kind": "selectRole", "role": "host"}},
+                {"atMs": 10, "node": "host1", "action": {"kind": "exportDiagnostics"}}
+            ],
+            "assertions": [
+                {"kind": "lifecycleReached", "byMs": 50, "node": "host1",
+                 "target": {"machine": "role", "state": "host"}}
+            ],
+            "timeoutMs": 100
+        }"#,
+    )
+    .expect("valid scenario document");
+
+    let report = run_scenario(&lab, &scenario).expect("scenario runs");
+    assert_eq!(report.outcome, ScenarioOutcome::Completed);
+    assert_eq!(report.step_results.len(), 2);
+    for step in &report.step_results {
+        assert!(
+            step.submit_error.is_none(),
+            "unexpected step failure: {step:?}"
+        );
+    }
+    assert_eq!(report.assertion_results.len(), 1);
+    assert_eq!(report.assertion_results[0].outcome, AssertionOutcome::Held);
+}
+
+/// Block 40.1/40.4 "invalid schema": a document missing a required field
+/// (`timeoutMs`) is rejected with a shape error, not silently defaulted.
+#[test]
+fn invalid_schema_is_rejected() {
+    let error = load_scenario_json(
+        br#"{"schemaVersion": 1, "seed": 1, "nodes": [], "steps": [], "assertions": []}"#,
+    )
+    .expect_err("missing timeoutMs must be rejected");
+    assert!(matches!(error, ScenarioParseError::Shape(_)));
+}
+
+/// Block 40.1/40.4 "unknown version": an unsupported `schemaVersion` is
+/// reported as its own distinct failure, not a generic shape error, and
+/// never silently reinterpreted as the current version.
+#[test]
+fn unknown_schema_version_is_rejected_distinctly() {
+    let error = load_scenario_json(
+        br#"{"schemaVersion": 2, "seed": 1, "nodes": [], "steps": [], "assertions": [], "timeoutMs": 1}"#,
+    )
+    .expect_err("unknown schemaVersion must be rejected");
+    assert!(matches!(
+        error,
+        ScenarioParseError::UnknownSchemaVersion { found: 2 }
+    ));
+}
+
+/// A document with no `schemaVersion` field at all is rejected before any
+/// other parsing is attempted.
+#[test]
+fn missing_schema_version_is_rejected() {
+    let error = load_scenario_json(br#"{"seed": 1, "timeoutMs": 1}"#)
+        .expect_err("missing schemaVersion must be rejected");
+    assert!(matches!(error, ScenarioParseError::MissingSchemaVersion));
+}
+
+/// Block 40.1 "reject unknown commands": an action `"kind"` this runner
+/// does not recognize is a hard parse error, never a silently skipped step.
+#[test]
+fn unknown_command_kind_is_rejected() {
+    let error = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 1,
+            "nodes": [{"id": "host1"}],
+            "steps": [{"atMs": 0, "node": "host1", "action": {"kind": "flyToTheMoon"}}],
+            "assertions": [], "timeoutMs": 100
+        }"#,
+    )
+    .expect_err("unknown action kind must be rejected");
+    assert!(matches!(error, ScenarioParseError::Shape(_)));
+}
+
+/// Block 40.1 "reject unknown assertions": same discipline for assertion
+/// kinds.
+#[test]
+fn unknown_assertion_kind_is_rejected() {
+    let error = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 1,
+            "nodes": [{"id": "host1"}],
+            "steps": [],
+            "assertions": [{"kind": "vibesAreGood", "byMs": 1, "node": "host1"}],
+            "timeoutMs": 100
+        }"#,
+    )
+    .expect_err("unknown assertion kind must be rejected");
+    assert!(matches!(error, ScenarioParseError::Shape(_)));
+}
+
+/// Block 40.4 "impossible assertion": a lone node can never have a
+/// listener (no scenario in Block 40's scope wires live transport -- see
+/// `scenario`'s own module doc comment), so this can never hold regardless
+/// of how much virtual time passes.
+#[test]
+fn impossible_assertion_times_out() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 1,
+            "nodes": [{"id": "host1"}],
+            "steps": [],
+            "assertions": [{"kind": "listenerCountAtLeast", "byMs": 50, "node": "host1", "count": 1}],
+            "timeoutMs": 50
+        }"#,
+    )
+    .expect("valid scenario document");
+
+    let report = run_scenario(&lab, &scenario).expect("scenario runs");
+    assert_eq!(report.outcome, ScenarioOutcome::TimedOut);
+    assert_eq!(
+        report.assertion_results[0].outcome,
+        AssertionOutcome::TimedOut
+    );
+}
+
+/// Block 40.4 "timeout": the step that would have satisfied the assertion
+/// is scheduled *after* the scenario's own bounded timeout budget, so it
+/// never runs and the assertion can only time out -- distinct from
+/// [`impossible_assertion_times_out`], where nothing could ever satisfy it
+/// regardless of budget.
+#[test]
+fn a_step_scheduled_past_the_scenario_timeout_never_runs() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 1,
+            "nodes": [{"id": "host1"}],
+            "steps": [
+                {"atMs": 200, "node": "host1", "action": {"kind": "selectRole", "role": "host"}}
+            ],
+            "assertions": [
+                {"kind": "lifecycleReached", "byMs": 50, "node": "host1",
+                 "target": {"machine": "role", "state": "host"}}
+            ],
+            "timeoutMs": 50
+        }"#,
+    )
+    .expect("valid scenario document");
+
+    let report = run_scenario(&lab, &scenario).expect("scenario runs");
+    assert!(
+        report.step_results.is_empty(),
+        "the step past timeoutMs must never run"
+    );
+    assert_eq!(report.outcome, ScenarioOutcome::TimedOut);
+    assert_eq!(report.final_time_ms, 50);
+}
+
+/// Block 40.4 "deterministic report": two independent runs of the same
+/// scenario document and seed produce an equal report.
+#[test]
+fn identical_scenario_and_seed_produce_a_deterministic_report() {
+    let scenario_json = br#"{
+        "schemaVersion": 1, "seed": 42,
+        "nodes": [{"id": "host1"}, {"id": "listener1"}],
+        "clocks": {"listener1": {"offsetMs": 15, "driftPpm": 20}},
+        "steps": [
+            {"atMs": 0, "node": "host1", "action": {"kind": "selectRole", "role": "host"}},
+            {"atMs": 5, "node": "listener1", "action": {"kind": "selectRole", "role": "listener"}},
+            {"atMs": 10, "node": "listener1", "action": {"kind": "startDiscovery"}},
+            {"atMs": 15, "node": "host1", "action": {"kind": "exportDiagnostics"}}
+        ],
+        "assertions": [
+            {"kind": "lifecycleReached", "byMs": 100, "node": "host1",
+             "target": {"machine": "role", "state": "host"}},
+            {"kind": "lifecycleReached", "byMs": 100, "node": "listener1",
+             "target": {"machine": "role", "state": "listener"}}
+        ],
+        "timeoutMs": 100
+    }"#;
+
+    let first_root = TestDirectory::new();
+    let first_lab = LabRuntime::new(&first_root.0, 0).expect("lab runtime");
+    let first_scenario = load_scenario_json(scenario_json).expect("valid scenario document");
+    let first_report = run_scenario(&first_lab, &first_scenario).expect("first run");
+
+    let second_root = TestDirectory::new();
+    let second_lab = LabRuntime::new(&second_root.0, 0).expect("lab runtime");
+    let second_scenario = load_scenario_json(scenario_json).expect("valid scenario document");
+    let second_report = run_scenario(&second_lab, &second_scenario).expect("second run");
+
+    assert_eq!(first_report, second_report);
+    assert_eq!(first_report.outcome, ScenarioOutcome::Completed);
+}
+
+/// Block 40.4 "bounded malformed file behavior": an oversized file is
+/// rejected outright, before any JSON parsing is even attempted.
+#[test]
+fn oversized_scenario_file_is_rejected_before_parsing() {
+    let oversized = vec![b' '; super::MAX_SCENARIO_FILE_BYTES + 1];
+    let error = load_scenario_json(&oversized).expect_err("oversized file must be rejected");
+    assert!(matches!(error, ScenarioParseError::TooLarge { .. }));
+}
+
+/// Truncated/non-UTF8-shaped bytes never panic the parser -- always a
+/// bounded, reported error.
+#[test]
+fn truncated_json_is_a_bounded_error_not_a_panic() {
+    let error = load_scenario_json(b"{\"schemaVersion\": 1, \"seed\":")
+        .expect_err("truncated JSON must be rejected");
+    assert!(matches!(error, ScenarioParseError::NotUtf8OrJson(_)));
+}
+
+/// Bytes that are not JSON at all (arbitrary binary) are rejected the same
+/// bounded way -- never interpreted as anything else, never a panic.
+#[test]
+fn arbitrary_binary_input_is_a_bounded_error_not_a_panic() {
+    let error = load_scenario_json(&[0xFF, 0x00, 0xDE, 0xAD, 0xBE, 0xEF])
+        .expect_err("non-JSON bytes must be rejected");
+    assert!(matches!(error, ScenarioParseError::NotUtf8OrJson(_)));
+}
+
+/// Block 40.1 "bound nodes, links, steps, ... and duration": exceeding a
+/// declared bound is a validation error, not silently truncated.
+#[test]
+fn exceeding_a_declared_bound_is_rejected() {
+    let scenario = load_scenario_json(
+        br#"{"schemaVersion": 1, "seed": 1, "nodes": [], "steps": [], "assertions": [],
+             "timeoutMs": 100000000000}"#,
+    )
+    .expect("shape parses");
+    let error = scenario
+        .validate()
+        .expect_err("oversized timeoutMs must be rejected");
+    assert!(matches!(
+        error,
+        ScenarioValidationError::DurationOutOfBounds {
+            field: "timeoutMs",
+            ..
+        }
+    ));
+}
+
+/// A step naming a node that was never declared is a validation error --
+/// never silently ignored or routed nowhere.
+#[test]
+fn a_step_referencing_an_undeclared_node_is_rejected() {
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 1,
+            "nodes": [{"id": "host1"}],
+            "steps": [{"atMs": 0, "node": "ghost", "action": {"kind": "exportDiagnostics"}}],
+            "assertions": [], "timeoutMs": 100
+        }"#,
+    )
+    .expect("shape parses");
+    let error = scenario
+        .validate()
+        .expect_err("undeclared node reference must be rejected");
+    assert!(matches!(
+        error,
+        ScenarioValidationError::UnknownNode {
+            field: "steps[].node",
+            ..
+        }
+    ));
+}
+
+/// A command whose production preconditions are not met (here: `submitJoin`
+/// with no session ever selected, since Block 40 does not wire live
+/// discovery -- see the module doc comment) fails through the real actor,
+/// visibly, rather than the runner silently treating it as a success. Note
+/// `submit_command`'s own synchronous return (`StepResult::submit_error`)
+/// only ever reports a *queue-admission* failure (bad shape, shutdown,
+/// full queue) -- exactly as its own doc comment says ("the receipt does
+/// not prove command completion"). The actor's own asynchronous rejection
+/// is visible only through the recorded `CoreNotification::Error`, which is
+/// exactly what `errorCodeObserved` reads.
+#[test]
+fn a_command_that_is_illegal_in_the_current_state_is_reported_not_swallowed() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 1,
+            "nodes": [{"id": "listener1"}],
+            "steps": [
+                {"atMs": 0, "node": "listener1", "action": {"kind": "selectRole", "role": "listener"}},
+                {"atMs": 5, "node": "listener1", "action": {"kind": "submitJoin"}}
+            ],
+            "assertions": [
+                {"kind": "errorCodeObserved", "byMs": 50, "node": "listener1", "code": "invalid_state_transition"}
+            ],
+            "timeoutMs": 50
+        }"#,
+    )
+    .expect("valid scenario document");
+
+    let report = run_scenario(&lab, &scenario).expect("scenario runs");
+    assert!(
+        report.step_results[1].submit_error.is_none(),
+        "submitJoin is correctly shaped, so it is admitted to the actor's queue \
+         synchronously -- its rejection happens asynchronously"
+    );
+    assert_eq!(
+        report.assertion_results[0].outcome,
+        AssertionOutcome::Held,
+        "the actor's real asynchronous rejection must still be observed"
+    );
+}
