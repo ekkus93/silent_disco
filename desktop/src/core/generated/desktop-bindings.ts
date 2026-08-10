@@ -143,3 +143,49 @@ generatedAtMs: string, };
 
 export type DiagnosticsExportOutcome = { "kind": "saved" } | { "kind": "cancelled" };
 
+export type LabNodeDto = { nodeId: string, offsetMs: string, driftPpm: string, };
+
+export type LabLinkDto = { from: string, to: string, latencyMs: string, jitterMs: string, lossPermille: number, };
+
+export type LabScenarioSummaryDto = { schemaVersion: number, seed: string, nodeIds: Array<string>, linkCount: number, fixtureCount: number, stepCount: number, assertionCount: number, timeoutMs: string, links: Array<LabLinkDto>, };
+
+export type LabTimelineEntryDto = { node: string, sequence: string, 
+/**
+ * One of `"snapshot" | "effect" | "transportEffect" | "storageEffect"
+ * | "error" | "diagnostic"`.
+ */
+kind: string, summary: string, };
+
+export type LabStepResultDto = { index: number, atMs: string, node: string, submitError: string | null, 
+/**
+ * `"settled" | "timedOut"`.
+ */
+settlement: string, };
+
+export type LabAssertionResultDto = { kind: string, node: string, byMs: string, 
+/**
+ * `"held" | "timedOut"`.
+ */
+outcome: string, };
+
+export type LabRunOutcomeDto = { 
+/**
+ * `"completed" | "timedOut" | "executionError"`.
+ */
+outcome: string, finalTimeMs: string, stepResults: Array<LabStepResultDto>, assertionResults: Array<LabAssertionResultDto>, timeline: Array<LabTimelineEntryDto>, timelineTruncated: boolean, };
+
+export type LabStateDto = { nowMs: string, 
+/**
+ * `true` while `lab_run_loaded_scenario` is executing -- gates
+ * "running-state command disablement" (Block 42's own test list).
+ */
+running: boolean, nodes: Array<LabNodeDto>, loadedScenario: LabScenarioSummaryDto | null, lastRun: LabRunOutcomeDto | null, };
+
+export type LabFileOutcomeDto = { "kind": "saved" } | { "kind": "cancelled" };
+
+export type LabAdvanceTimeRequest = { deltaMs: string, };
+
+export type LabStartNodeRequest = { offsetMs: string, driftPpm: string, };
+
+export type LabStopNodeRequest = { nodeId: string, };
+

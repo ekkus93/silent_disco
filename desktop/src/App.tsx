@@ -16,6 +16,7 @@ import type { AppShutdownPhaseDto } from "./core/generated/desktop-bindings";
 import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
+import { LabScreen } from "./screens/LabScreen";
 
 // Block 36.3 "progress is visible" / "timeout becomes visible failure":
 // polled rather than pushed -- the webview stays fully alive while a
@@ -111,6 +112,7 @@ export function App() {
   const labModeAvailable = useAppSelector(selectLabModeAvailable);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showLab, setShowLab] = useState(false);
 
   useEffect(() => {
     const profileId = "main";
@@ -192,6 +194,16 @@ export function App() {
                 <dd className="font-mono text-right">{staleNotifications.snapshots}</dd>
               </dl>
             ) : null}
+            {labModeAvailable ? (
+              <button
+                type="button"
+                onClick={() => setShowLab((current) => !current)}
+                aria-pressed={showLab}
+                className="rounded-lg border border-amber-400/50 px-4 py-2 text-sm font-semibold text-amber-100 hover:border-amber-300"
+              >
+                {showLab ? "Hide Lab Mode" : "Lab Mode"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setShowDiagnostics((current) => !current)}
@@ -226,6 +238,12 @@ export function App() {
           {/* Available even when the bridge failed to open -- diagnosing a
               startup failure is exactly when this screen matters most. */}
           {showDiagnostics ? <DiagnosticsScreen /> : null}
+          {/* Block 42 "production build absence": gated on the backend's
+              own `labModeAvailable` flag, not merely on local UI state --
+              a production build (where the backend always answers `false`)
+              can never render this screen even if `showLab` were somehow
+              set. */}
+          {showLab && labModeAvailable ? <LabScreen /> : null}
         </div>
       </section>
     </main>

@@ -25,7 +25,7 @@
 //! (scenario schema/runner/assertions, layered on top of this runtime) does
 //! and does not wire up yet.
 
-mod clock;
+pub(crate) mod clock;
 mod fault;
 pub(crate) mod recorder;
 pub(crate) mod recording;
@@ -69,6 +69,25 @@ pub(crate) struct LabNodeId(u32);
 impl LabNodeId {
     fn directory_name(self) -> String {
         format!("lab-node-{:04}", self.0)
+    }
+
+    /// Exposes the node's opaque numeric identity for `crate::lab_commands`
+    /// (Block 42) to encode as an IPC-safe decimal string -- the inverse of
+    /// [`Self::from_u32`]. Never parsed from frontend input directly; a
+    /// command always round-trips a value this module itself produced.
+    #[must_use]
+    pub(crate) fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// The inverse of [`Self::as_u32`], for `crate::lab_commands` to decode
+    /// a node ID a Tauri command received back from the frontend. A
+    /// decoded value that no longer names a live node is reported as
+    /// [`LabRuntime`]'s own `unknown_node_error`, not treated specially
+    /// here.
+    #[must_use]
+    pub(crate) fn from_u32(value: u32) -> Self {
+        Self(value)
     }
 }
 

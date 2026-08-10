@@ -15,10 +15,21 @@ pub mod host_session_dto;
 #[cfg(feature = "lab-mode")]
 #[allow(
     dead_code,
-    reason = "Block 37.2's node-management API is exercised by its own tests; \
-              a later Lab Mode block wires it into a Tauri command surface"
+    reason = "Block 42 wires most of this module (clock advance, node \
+              lifecycle, the scenario runner, the recorder, and recording \
+              capture/save) into lab_commands.rs's real Tauri command \
+              surface, but deliberately leaves replay, recording load, and \
+              the fault-injection transport wrapper unreached from any \
+              command -- see lab_commands.rs's own module doc comment for \
+              exactly what Block 42's UI does and does not expose; a later \
+              Lab Mode block is the natural place to wire the rest"
 )]
 pub(crate) mod lab;
+// Block 42: DTOs are always compiled (see this module's own doc comment
+// for why) -- only `lab` and `lab_commands` stay behind `lab-mode`.
+#[cfg(feature = "lab-mode")]
+mod lab_commands;
+pub mod lab_dto;
 pub mod notification_buffer;
 pub mod notification_channel;
 pub mod platform;
@@ -68,12 +79,16 @@ fn get_lab_mode_available() -> bool {
 /// Returns a Tauri startup or event-loop error instead of converting it into a
 /// successful process exit.
 pub fn run() -> tauri::Result<()> {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state::DesktopAppState::new())
         .manage(platform::file_picker::SelectedSourceRegistry::new())
         .manage(platform::source_staging_control::SourceStagingControl::new())
-        .manage(app_shutdown::AppShutdownCoordinator::new())
+        .manage(app_shutdown::AppShutdownCoordinator::new());
+    #[cfg(feature = "lab-mode")]
+    let builder = builder.manage(lab_commands::LabAppState::new());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             get_core_smoke,
             get_lab_mode_available,
@@ -101,7 +116,25 @@ pub fn run() -> tauri::Result<()> {
             host_commands::create_host_invitation,
             app_state::attach_notifications,
             app_state::close_profile,
-            app_shutdown::get_app_shutdown_state
+            app_shutdown::get_app_shutdown_state,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_get_state,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_open_scenario_file,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_save_scenario_file,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_run_loaded_scenario,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_advance_virtual_time,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_start_node,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_stop_node,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_stop_all_nodes,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_export_recording_file
         ])
         // Block 36.3 "close event initiates controlled shutdown": the
         // native close is always prevented first (buying time for a

@@ -14,6 +14,14 @@ import type {
   HostInvitationDto,
   HostSessionSnapshotDto,
   JoinRequestCommandRequest,
+  LabAdvanceTimeRequest,
+  LabFileOutcomeDto,
+  LabNodeDto,
+  LabRunOutcomeDto,
+  LabScenarioSummaryDto,
+  LabStartNodeRequest,
+  LabStateDto,
+  LabStopNodeRequest,
   ListenerCommandRequest,
   NetworkInterfaceSnapshotDto,
   OpenProfileRequest,
@@ -404,4 +412,48 @@ export async function closeProfile(): Promise<BridgeLifecycleDto> {
 // channel is needed.
 export async function getAppShutdownState(): Promise<AppShutdownPhaseDto> {
   return invokeDesktop<AppShutdownPhaseDto>("get_app_shutdown_state");
+}
+
+// Block 42: Lab Mode command surface. Every function below is a thin,
+// typed wrapper over a Tauri command that only exists in a `lab-mode`
+// build -- callers must gate on `getLabModeAvailable()` first, exactly
+// like the rest of this module's IPC calls never assume a command exists.
+
+export async function getLabState(): Promise<LabStateDto> {
+  return invokeDesktop<LabStateDto>("lab_get_state");
+}
+
+export async function openLabScenarioFile(): Promise<LabScenarioSummaryDto | null> {
+  return invokeDesktop<LabScenarioSummaryDto | null>("lab_open_scenario_file");
+}
+
+export async function saveLabScenarioFile(): Promise<LabFileOutcomeDto> {
+  return invokeDesktop<LabFileOutcomeDto>("lab_save_scenario_file");
+}
+
+export async function runLoadedLabScenario(): Promise<LabRunOutcomeDto> {
+  return invokeDesktop<LabRunOutcomeDto>("lab_run_loaded_scenario");
+}
+
+export async function advanceLabVirtualTime(deltaMs: string): Promise<string> {
+  const request: LabAdvanceTimeRequest = { deltaMs };
+  return invokeDesktop<string>("lab_advance_virtual_time", { request });
+}
+
+export async function startLabNode(offsetMs: string, driftPpm: string): Promise<LabNodeDto> {
+  const request: LabStartNodeRequest = { offsetMs, driftPpm };
+  return invokeDesktop<LabNodeDto>("lab_start_node", { request });
+}
+
+export async function stopLabNode(nodeId: string): Promise<void> {
+  const request: LabStopNodeRequest = { nodeId };
+  return invokeDesktop<void>("lab_stop_node", { request });
+}
+
+export async function stopAllLabNodes(): Promise<void> {
+  return invokeDesktop<void>("lab_stop_all_nodes");
+}
+
+export async function exportLabRecordingFile(): Promise<LabFileOutcomeDto> {
+  return invokeDesktop<LabFileOutcomeDto>("lab_export_recording_file");
 }

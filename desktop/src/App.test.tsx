@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,6 +25,7 @@ const {
   getHostNetworkStateMock,
   setHostNetworkPreferenceMock,
   getLabModeAvailableMock,
+  getLabStateMock,
 } = vi.hoisted(() => ({
   ensureDesktopBridgeMock: vi.fn(),
   subscribeDesktopNotificationsMock: vi.fn(),
@@ -37,6 +38,7 @@ const {
   getHostNetworkStateMock: vi.fn(),
   setHostNetworkPreferenceMock: vi.fn(),
   getLabModeAvailableMock: vi.fn(),
+  getLabStateMock: vi.fn(),
 }));
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
@@ -57,6 +59,7 @@ vi.mock("./core/client", async () => {
     getHostNetworkState: getHostNetworkStateMock,
     setHostNetworkPreference: setHostNetworkPreferenceMock,
     getLabModeAvailable: getLabModeAvailableMock,
+    getLabState: getLabStateMock,
   };
 });
 
@@ -186,6 +189,14 @@ describe("App", () => {
     getHostNetworkStateMock.mockReset();
     setHostNetworkPreferenceMock.mockReset();
     getLabModeAvailableMock.mockReset();
+    getLabStateMock.mockReset();
+    getLabStateMock.mockResolvedValue({
+      nowMs: "0",
+      running: false,
+      nodes: [],
+      loadedScenario: null,
+      lastRun: null,
+    });
     getHostSessionStateMock.mockResolvedValue(hostSessionSnapshot);
     endHostSessionMock.mockResolvedValue({ operationId: "end-1", acceptedAtRevision: "5" });
     getHostNetworkStateMock.mockResolvedValue(networkSnapshot);
@@ -283,5 +294,38 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: "Create a silent disco" });
     expect(screen.queryByText(/lab mode build/i)).not.toBeInTheDocument();
+  });
+
+  // Block 42 test list: "production build absence" -- in the configuration
+  // a real production release ships (`get_lab_mode_available` answering
+  // `false`, exactly as it always does when compiled without `lab-mode`),
+  // there is no way to reach LabScreen at all: no nav control renders it,
+  // and its own "Lab Mode" content never appears anywhere on the page.
+  it("has no Lab Mode entry point at all when the backend reports it unavailable", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(false);
+    renderApp();
+
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    expect(screen.queryByRole("button", { name: /lab mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/developer testing tool/i)).not.toBeInTheDocument();
+    expect(getLabStateMock).not.toHaveBeenCalled();
+  });
+
+  // The mirror image: when the backend reports Lab Mode compiled in, the
+  // nav control exists and actually reveals `LabScreen`'s own content --
+  // proving the gate is a real conditional render, not merely an unused
+  // button.
+  it("reveals LabScreen content only after Lab Mode is available and requested", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(true);
+    renderApp();
+
+    const labButton = await screen.findByRole("button", { name: "Lab Mode" });
+    expect(screen.queryByText(/developer testing tool/i)).not.toBeInTheDocument();
+
+    fireEvent.click(labButton);
+
+    expect(await screen.findByText(/developer testing tool/i)).toBeVisible();
   });
 });

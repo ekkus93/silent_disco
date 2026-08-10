@@ -3880,30 +3880,133 @@ Create:
 desktop/src/screens/LabScreen.tsx
 ```
 
+New backend command surface (not originally named by this block, required
+to give the new UI something real to call): `desktop/src-tauri/src/lab_commands.rs`
+(`#[cfg(feature = "lab-mode")]`, 9 Tauri commands: `lab_get_state`,
+`lab_open_scenario_file`, `lab_save_scenario_file`, `lab_run_loaded_scenario`,
+`lab_advance_virtual_time`, `lab_start_node`, `lab_stop_node`,
+`lab_stop_all_nodes`, `lab_export_recording_file`) and
+`desktop/src-tauri/src/lab_dto.rs` (unconditionally compiled DTOs -- see its
+own module doc comment for why; `bindings.rs`'s generator runs with default
+features, so a `lab-mode`-gated DTO would break every generated-bindings
+build and `LabScreen.tsx`'s own `tsc`). `desktop/src-tauri/src/lab/mod.rs`
+gained two small additive accessors (`LabNodeId::as_u32`/`from_u32`) and
+`clock` was widened from a private to a `pub(crate)` submodule (matching
+`recorder`/`recording`/`replay`/`scenario`'s existing visibility) so
+`lab_commands.rs` can read a node's offset/drift back out; no other
+`silent-disco-core`/`lab/*` domain logic changed.
+
 Provide:
 
-- [ ] node list and state panels;
-- [ ] scenario open/save through restricted dialogs;
-- [ ] start/pause/step/stop controls;
-- [ ] virtual time;
-- [ ] fault configuration;
-- [ ] bounded event timeline;
-- [ ] assertion results;
-- [ ] recording export;
-- [ ] clear Lab Mode labeling.
+- [x] node list and state panels -- `LabScreen.tsx`'s "Nodes" panel, backed
+      by `lab_get_state`/`lab_start_node`/`lab_stop_node`/`lab_stop_all_nodes`;
+- [x] scenario open/save through restricted dialogs -- `lab_open_scenario_file`/
+      `lab_save_scenario_file`, both `tauri_plugin_dialog` file dialogs
+      restricted to `.json` (mirrors `platform/file_picker.rs`'s and
+      `platform/diagnostics_export.rs`'s existing dialog pattern exactly);
+      "save" writes back the exact validated bytes ("save a copy" -- there
+      is no scenario editor in this block, so nothing is silently mutated);
+- [x] start/pause/step/stop controls -- see `lab_commands.rs`'s own module
+      doc comment ("Scope: what start/pause/step/stop honestly maps to")
+      for the precise, deliberate mapping: start = run the loaded scenario
+      to completion (`lab_run_loaded_scenario`), step = the literal
+      `LabRuntime::advance` primitive (`lab_advance_virtual_time`), stop =
+      tear down every active node (`lab_stop_all_nodes`/`lab_stop_node`),
+      pause = a frontend-only gate over stepping. A true interior
+      cancellation of an in-flight scenario run was deliberately not
+      added -- `scenario::run_scenario_with_trace` is Block 40.4's own
+      proven-deterministic atomic unit, and Block 41's replay/divergence
+      detection depends on that; the `running` guard still gives real,
+      backend-enforced disablement (below) without risking that guarantee;
+- [x] virtual time -- `LabStateDto.nowMs`, rendered live and advanced only
+      through `lab_advance_virtual_time` (spec 29.2 "manual advancement");
+- [x] fault configuration -- `LabScenarioSummaryDto.links` (latency/jitter/loss),
+      rendered read-only with an explicit note that it is not yet wired
+      into live transport, honestly matching `lab::scenario`'s own
+      documented "Deliberate scope boundaries" (links captured and bounded,
+      never live) rather than implying a control that does not exist;
+- [x] bounded event timeline -- `lab_commands.rs`'s own
+      `MAX_TIMELINE_ENTRIES_PER_NODE` (50) caps what a `LabRunOutcomeDto`
+      ever carries, independent of and in addition to the backend
+      recorder's own 4096-entry bound; `LabScreen.tsx` renders exactly
+      what it receives, applying no further ad hoc truncation, and marks
+      `timelineTruncated` when the cap was hit;
+- [x] assertion results -- `LabRunOutcomeDto.assertionResults`, rendered
+      pass/fail per assertion;
+- [x] recording export -- `lab_export_recording_file`, capturing a real
+      `recording::ScenarioRecording` (Block 41) from the last completed
+      run and saving it through a restricted `.json` save dialog;
+- [x] clear Lab Mode labeling -- an amber, `role="alert"` banner reading
+      "Lab Mode" / "Developer testing tool..." at the top of `LabScreen.tsx`
+      itself, plus the existing Block 37.1 amber "Lab Mode build" badge in
+      `App.tsx`'s header and a matching amber "Lab Mode" nav button shown
+      only when the backend reports availability.
 
 UI must not mutate node domain state directly. It submits scenario/test commands to `LabRuntime`.
+Verified: `LabScreen.tsx` never imports or references `silent_disco_core`/`lab::*` domain types --
+every action is a typed IPC call through `core/client.ts`'s `lab*` wrappers, and every rendered
+field is data the backend already computed (`LabStateDto`/`LabRunOutcomeDto`), never recomputed
+client-side.
 
-Tests:
+Tests (`desktop/src/screens/LabScreen.test.tsx` unless noted):
 
-- [ ] keyboard control;
-- [ ] invalid scenario display;
-- [ ] running-state command disablement;
-- [ ] deterministic timeline rendering;
-- [ ] bounded history;
-- [ ] production build absence.
+- [x] keyboard control -- `can be operated entirely from the keyboard` (focuses the real `<button>`
+      "Step" and presses Enter via `@testing-library/user-event`, asserting the real command fired);
+- [x] invalid scenario display -- `displays a scenario validation failure instead of swallowing it`
+      (a rejected `openLabScenarioFile` promise is shown as a visible `role="alert"`, not dropped);
+- [x] running-state command disablement -- `disables run and step controls while a scenario is
+      already running` (backend `running: true` disables "Run scenario"/"Step" for real, not only
+      visually);
+- [x] deterministic timeline rendering -- `renders the event timeline in the exact order the
+      backend reported it` (three entries render in exactly the order the DTO carried them);
+- [x] bounded history -- `shows only the most recent run, never accumulating run history`
+      (`labSlice.ts`'s `lastRun` is a single value, not an array -- proven both at the reducer level,
+      `labSlice.test.ts`'s `retains only the single most recent run`, and end-to-end through two
+      real runs in the screen test);
+- [x] production build absence -- `App.test.tsx`'s `has no Lab Mode entry point at all when the
+      backend reports it unavailable` (no nav button, no LabScreen content, `getLabState` never
+      called) plus the mirror-image `reveals LabScreen content only after Lab Mode is available and
+      requested`; on the Rust side, `cargo build`/`cargo test` (default features) exclude
+      `lab_commands.rs` entirely (`#[cfg(feature = "lab-mode")]`), confirmed by `strings` on the
+      compiled default-feature binary showing zero `lab_get_state`/`lab_run_loaded_scenario`/
+      `lab_advance_virtual_time` occurrences versus 40 in the same binary rebuilt with
+      `--features lab-mode`. The frontend bundle itself is not feature-split (Vite has no
+      awareness of Rust `cargo` features, exactly as already true for the Block 37.1
+      `get_lab_mode_available` badge) -- `LabScreen.tsx`'s code ships in every build but is
+      reachable only behind the backend's own runtime-truthful availability flag, the same
+      "ideally" caveat this block's own TODO entry anticipates.
 
-**Acceptance:** Developers can run reproducible multi-node tests without physical devices.
+New tests this block: 6 `LabScreen.test.tsx` (new file), 6 net new `labSlice.test.ts` (2
+pre-existing kept, 8 total), 2 net new `App.test.tsx`, 8 Rust (6 `lab_commands/tests.rs`, a new
+file; 2 `lab_dto.rs`) = 22 net new across both stacks. `cargo test --features lab-mode` (desktop
+crate): 254 → 262 passed, 0 failed -- the +8 delta matches the 8 new Rust test functions exactly.
+Default (no `lab-mode`) build: 193 → 195 passed -- the +2 delta is `lab_dto.rs`'s own 2 tests,
+unconditionally compiled by design (see this block's own module-doc-comment reasoning above);
+`lab_commands/tests.rs`'s 6 tests remain `lab-mode`-only and do not appear in this count. `npm run
+check` (bindings-check, biome, `tsc`, 86/86 Vitest -- up from 72, production build) all green.
+
+All quality gates run and green: `cargo build --lib` / `cargo test` (default features, 195 passed),
+`cargo build --all-targets --features lab-mode` / `cargo test --features lab-mode` (262 passed),
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings` -- confirmed
+the identical, unrelated pre-existing 8-error baseline (`host_session_dto.rs`, `platform/audio_device.rs`
+x2, `platform/mdns.rs` x2, `platform/render_ring.rs`, `platform/start_playback_tests.rs` x2) is still
+the only thing failing; this block's own new code introduced zero new lints after fixing the ones it
+did trigger first (`clippy::needless_pass_by_value` on six Tauri command functions taking `AppHandle`/
+request DTOs by value -- resolved with the same precedented `#[allow]` `host_commands.rs` already
+carries for the identical Tauri-extraction reason; `clippy::format_push_string` in a test helper --
+resolved with `write!` instead of `push_str(&format!(...))`). `cd desktop && npm run check` all green
+(see test counts above).
+
+**Acceptance:** Developers can run reproducible multi-node tests without physical devices. Met:
+`LabScreen.tsx` opens a validated scenario, runs it to completion through the exact production
+`scenario::run_scenario_with_trace` entry point Block 40 already proved deterministic for a given
+scenario and seed, and renders its bounded timeline/assertion results/step results -- all without a
+physical device, entirely against isolated synthetic Lab nodes. Left honestly out of this block's
+literal UI (not required by its own "Provide" checklist, and out of scope by design): replaying a
+previously saved recording and importing/loading a recording file through the UI (Block 41's
+`replay::replay`/`recording::load_recording_from_path` remain real, tested, `lab-mode`-only Rust
+APIs with no Tauri command yet) -- a natural, explicitly flagged extension point for a later Lab
+Mode block, not a gap in this one's acceptance criterion.
 
 ---
 

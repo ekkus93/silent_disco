@@ -12,6 +12,11 @@ use crate::host_session_dto::{
     BroadcastDeliveryDto, ConnectedListenerDto, DeliveryReportDto, HostConnectionDto,
     HostInvitationDto, HostSessionSnapshotDto, PendingJoinRequestDto,
 };
+use crate::lab_dto::{
+    LabAdvanceTimeRequest, LabAssertionResultDto, LabFileOutcomeDto, LabLinkDto, LabNodeDto,
+    LabRunOutcomeDto, LabScenarioSummaryDto, LabStartNodeRequest, LabStateDto, LabStepResultDto,
+    LabStopNodeRequest, LabTimelineEntryDto,
+};
 use crate::platform::diagnostics_export::DiagnosticsExportOutcome;
 use crate::platform::network_dto::{
     MdnsStatusDto, MonitorStatusDto, NetworkAddressCandidateDto, NetworkAddressClassDto,
@@ -99,6 +104,18 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<NotificationBridgeDiagnosticsDto>(&config),
         declaration::<DesktopDiagnosticsDto>(&config),
         declaration::<DiagnosticsExportOutcome>(&config),
+        declaration::<LabNodeDto>(&config),
+        declaration::<LabLinkDto>(&config),
+        declaration::<LabScenarioSummaryDto>(&config),
+        declaration::<LabTimelineEntryDto>(&config),
+        declaration::<LabStepResultDto>(&config),
+        declaration::<LabAssertionResultDto>(&config),
+        declaration::<LabRunOutcomeDto>(&config),
+        declaration::<LabStateDto>(&config),
+        declaration::<LabFileOutcomeDto>(&config),
+        declaration::<LabAdvanceTimeRequest>(&config),
+        declaration::<LabStartNodeRequest>(&config),
+        declaration::<LabStopNodeRequest>(&config),
     ];
 
     let mut output = String::from(GENERATED_HEADER);
@@ -154,6 +171,9 @@ mod tests {
         assert!(first.contains("export type OpenProfileResponse"));
         assert!(first.contains("export type AttachNotificationResponse"));
         assert!(first.contains("export type CoreNotificationDto"));
+        assert!(first.contains("export type LabStateDto"));
+        assert!(first.contains("export type LabRunOutcomeDto"));
+        assert!(first.contains("export type LabScenarioSummaryDto"));
     }
 
     #[test]

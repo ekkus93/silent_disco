@@ -3336,3 +3336,169 @@ evidence citations, including the two honestly-unimplemented 41.1 bullets
 (packet metadata/hashes, faults) explained rather than fabricated. Block
 42 (build Lab Mode UI) is next in the TODO — per this session's
 established pattern, do not start it unilaterally.
+
+## 2026-08-10T21:14:40Z - Claude Sonnet 5 - Block 42: Lab Mode UI (frontend + Tauri command surface)
+
+**What:** Built the full-stack Lab Mode UI block. `LabRuntime`/`scenario`/
+`recorder`/`recording`/`replay` (Blocks 37-41) had zero Tauri IPC surface
+before this block; added one.
+
+**Backend (desktop/src-tauri):**
+- `src/lab_dto.rs` — new, **unconditionally compiled** (no `lab-mode` cfg)
+  DTO module. Why: `bindings.rs`'s generator (`bin/generate_bindings.rs`,
+  driving `npm run bindings:check`/`bindings:generate`) always builds with
+  this crate's *default* features. A `lab-mode`-gated DTO would make the
+  generated `desktop-bindings.ts` file's shape depend on which features
+  happened to be enabled when someone last ran the generator — either
+  breaking `tsc` for `LabScreen.tsx` in a default build, or making CI's
+  bindings-check flap depending on build order. Only `crate::lab` itself
+  and the new `crate::lab_commands` (the command handlers, which really do
+  touch `LabRuntime`/`Scenario`/etc.) stay behind `#[cfg(feature =
+  "lab-mode")]`.
+- `src/lab_commands.rs` — new, `#[cfg(feature = "lab-mode")]`, 9 Tauri
+  commands (`lab_get_state`, `lab_open_scenario_file`,
+  `lab_save_scenario_file`, `lab_run_loaded_scenario`,
+  `lab_advance_virtual_time`, `lab_start_node`, `lab_stop_node`,
+  `lab_stop_all_nodes`, `lab_export_recording_file`) plus a
+  Tauri-`.manage()`d `LabAppState` (lazily constructs the one
+  `LabRuntime` this process uses, mirroring `DesktopAppState`'s lazy-open
+  discipline). Registration in `lib.rs`'s `generate_handler!` uses
+  `#[cfg(feature = "lab-mode")]` on individual entries — confirmed real by
+  reading `tauri-macros-2.6.3`'s own `command::handler.rs` source directly
+  (`CommandDef::attrs` is threaded straight onto each generated match arm),
+  not assumed from documentation.
+- **Deliberate scope decision** (documented in `lab_commands.rs`'s own
+  module doc comment): "start/pause/step/stop" does *not* add interior
+  cancellation to `scenario::run_scenario_with_trace`. That function is
+  Block 40.4's own proven-deterministic atomic unit ("two runs of the same
+  scenario and seed produce an equal report"), and Block 41's
+  replay/divergence detection depends on that guarantee holding. Instead:
+  start = run the loaded scenario to completion; step = the real
+  `LabRuntime::advance` primitive (spec 29.2 "manual advancement"); stop =
+  tear down active nodes (`lab_stop_all_nodes`/`lab_stop_node`); pause = a
+  frontend-only gate over stepping. The `running` guard in `LabAppState`
+  still gives genuine, backend-enforced "running-state command
+  disablement" — a second run is refused, and stepping is refused while
+  a run owns the shared clock — without touching the tested execution
+  engine at all.
+- Two small additive changes to already-existing Lab modules (in scope
+  per this block's own instructions: "you may extend
+  `desktop/src-tauri/src/lab/*` itself"): `LabNodeId::as_u32`/`from_u32`
+  (opaque numeric identity round-trips through IPC as a decimal string);
+  `mod clock;` widened from private to `pub(crate) mod clock;` in
+  `lab/mod.rs` (matching the visibility `recorder`/`recording`/`replay`/
+  `scenario` already had) so `lab_commands.rs` can read a node's
+  offset/drift back out via `LabRuntime::node_clock`. No domain logic in
+  `rust/silent-disco-core` touched, per the assigned scope boundary.
+- Restored (and re-justified) the module-level `#[allow(dead_code, reason
+  = "...")]` on `pub(crate) mod lab;` in `lib.rs`: wiring
+  `lab_commands.rs` made most of `lab::*` genuinely reachable from
+  production code (clock advance, node lifecycle, the scenario runner,
+  the recorder, recording capture/save), but `replay`, recording
+  *load*, and the fault-injection transport wrapper (`fault.rs`) are
+  still unreached by any Tauri command — Block 42's own "Provide"
+  checklist has no "replay" or "recording import" bullet, only "recording
+  export". Updated the reason text to say exactly this rather than
+  leaving the stale Block 37-era wording.
+
+**Frontend (desktop/src):**
+- `screens/LabScreen.tsx` — new. Node list/state panel (start/stop
+  individual nodes, stop-all), virtual-time panel (live `nowMs`, "Step"
+  input+button, a "Pause stepping" toggle that gates the Step button —
+  the only thing "pause" can honestly mean given the backend has no
+  auto-running clock to pause), scenario panel (open/save via restricted
+  `.json` dialogs, validation-error display, declared-but-not-yet-wired
+  fault configuration table), last-run panel (outcome, assertion
+  results, bounded event timeline, recording export). An amber
+  `role="alert"` "Lab Mode" / "Developer testing tool" banner at the top
+  makes mislabeling as production session UI structurally hard to miss.
+  Never imports `silent_disco_core`/`lab::*` — every action goes through
+  `core/client.ts`'s new typed `lab*` wrappers.
+- `app/labSlice.ts` — extended (kept the existing `available` field from
+  Block 37.1) with `nowMs`/`running`/`nodes`/`loadedScenario`/
+  `scenarioError`/`lastRun`/`commandError`/`stepPaused`. `lastRun` is a
+  single optional value, not an array — "bounded history" is satisfied by
+  construction (there is never more than one run's worth of state in
+  Redux at all), not by evicting a longer list down to a cap.
+- `App.tsx` — added a "Lab Mode" nav button (amber, matching the existing
+  Block 37.1 badge convention), rendered *only* when
+  `selectLabModeAvailable` is true, toggling `<LabScreen />` — itself
+  gated a second time on the same `labModeAvailable` flag at the render
+  site (`showLab && labModeAvailable`), so a stray `showLab` state value
+  alone could never reveal it.
+- `core/client.ts` — 9 new thin typed IPC wrappers (`getLabState`,
+  `openLabScenarioFile`, `saveLabScenarioFile`, `runLoadedLabScenario`,
+  `advanceLabVirtualTime`, `startLabNode`, `stopLabNode`,
+  `stopAllLabNodes`, `exportLabRecordingFile`), following the file's own
+  `invokeDesktop<T>` convention exactly.
+- Added `@testing-library/user-event@14` as a new devDependency —
+  genuinely needed for the "keyboard control" test target: jsdom's
+  `fireEvent.keyDown` does not implement the browser's native
+  Enter/Space-activates-a-focused-button translation, but `user-event`
+  does, and there was no way to test real keyboard operability of a
+  `<button>` without it.
+
+**Tests:** 6 new `LabScreen.test.tsx` (keyboard control; invalid scenario
+display; running-state command disablement; deterministic timeline
+rendering; bounded history; labeling), 6 net new `labSlice.test.ts`
+(kept the 2 pre-existing), 2 net new `App.test.tsx` ("production build
+absence" both directions — no entry point when unavailable, real content
+when available and requested), 8 Rust (`lab_commands/tests.rs` 6 new
+file, `lab_dto.rs` 2). All target-hit exactly the six named test
+categories from the TODO's own "Tests" list.
+
+**Gates — all run for real, not fabricated:**
+- `cargo build --lib` / `cargo test` (default features): 195 passed, 0
+  failed (was 193 before this block; +2 is `lab_dto.rs`'s own
+  unconditionally-compiled tests).
+- `cargo build --all-targets --features lab-mode` / `cargo test
+  --features lab-mode`: 262 passed, 0 failed (was 254; +8 matches the 8
+  new Rust test functions exactly).
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --all-targets --all-features -- -D warnings`: confirmed
+  the identical, unrelated pre-existing 8-error baseline (`host_session_dto.rs`,
+  `platform/audio_device.rs` x2, `platform/mdns.rs` x2,
+  `platform/render_ring.rs`, `platform/start_playback_tests.rs` x2) is
+  still the only thing failing. This block's own code triggered 9 new
+  lints before being fixed: 8× `clippy::needless_pass_by_value` on Tauri
+  command functions taking `AppHandle`/request DTOs by value (resolved
+  with the same `#[allow]` `host_commands.rs` already carries for the
+  identical "Tauri command extraction requires ... by value" reason), and
+  1× `clippy::format_push_string` in a test helper (resolved with
+  `write!` instead of `push_str(&format!(...))`).
+- `cd desktop && npm run check` (bindings-check, biome format+lint,
+  `cargo fmt --check`, tsc, 86/86 Vitest — up from 72, production build):
+  all green. Required `npm install` (neither `node_modules/` nor `dist/`
+  existed yet in this worktree) and one bootstrap `npm run build` against
+  the *old* bindings file before the Rust crate could even compile
+  (`tauri::generate_context!()` panics at compile time if
+  `frontendDist` — `../dist` — doesn't exist yet); regenerated bindings
+  afterward once the Rust side compiled cleanly.
+- **Production-build-absence verified two ways, not just asserted:**
+  frontend (`App.test.tsx`, both directions above) and backend — `strings`
+  on the compiled default-feature debug binary shows zero occurrences of
+  `lab_get_state`/`lab_run_loaded_scenario`/`lab_advance_virtual_time`,
+  versus 40 in the same binary rebuilt with `--features lab-mode`. The
+  frontend *bundle* itself is not feature-split (Vite has no notion of
+  Rust `cargo` features, exactly as already true for the Block 37.1
+  `get_lab_mode_available` badge) — `LabScreen.tsx`'s code ships in every
+  build but is only reachable behind the backend's own runtime-truthful
+  availability flag. Documented as the deliberate, spec-anticipated
+  ("ideally") reading rather than silently claimed as full bundle
+  exclusion.
+
+**Left honestly out of scope** (not required by Block 42's own "Provide"
+list): replaying a previously saved recording, and loading/importing a
+recording file, through the UI. Block 41's `replay::replay`/
+`recording::load_recording_from_path` remain real, tested, `lab-mode`-only
+Rust APIs with zero Tauri command wired to them yet — flagged in both
+`lib.rs`'s `#[allow(dead_code, ...)]` reason and the TODO's own Block 42
+acceptance note as the natural extension point for a later Lab Mode
+block, not a gap in this one.
+
+### Next
+Commit and push (rebase against `origin/master` first — a concurrent
+agent is pushing unrelated Rust-core/FFI hardening work to the same
+branch this session). Block 43 (security/Tauri capability audit) is next
+in the TODO; per this session's established pattern, do not start it
+unilaterally.
