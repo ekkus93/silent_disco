@@ -1,3 +1,4 @@
+use super::mdns::{MdnsPublishError, MdnsPublisher, MdnsRegistration};
 use super::network::{
     AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkErrorKind,
     NetworkInterfaceProvider, TestHostPorts,
@@ -199,6 +200,57 @@ impl TransportFactory for FakeTransportFactory {
     }
 }
 
+/// Simulates 30.3's "daemon/multicast unavailable" scenario: the `mdns-sd`
+/// daemon could not be created or reached (e.g. the multicast socket could
+/// not be bound), so every publish attempt fails the same way a real
+/// unavailable daemon would.
+struct DaemonUnavailableMdnsPublisher;
+
+impl MdnsPublisher for DaemonUnavailableMdnsPublisher {
+    fn publish(
+        &self,
+        _advertisement: &SessionAdvertisement,
+        _endpoint: NetworkEndpoint,
+    ) -> Result<Box<dyn MdnsRegistration>, MdnsPublishError> {
+        Err(MdnsPublishError::DaemonUnavailable {
+            message: "multicast socket could not be bound".to_owned(),
+        })
+    }
+
+    fn shutdown(&self) -> Result<(), MdnsPublishError> {
+        Ok(())
+    }
+}
+
+/// A registration whose withdrawal always fails, standing in for 30.3's
+/// "interface disappears" scenario: the bound interface vanished mid-session,
+/// so the daemon can no longer send the withdrawal announcement over it.
+struct VanishedInterfaceRegistration;
+
+impl MdnsRegistration for VanishedInterfaceRegistration {
+    fn withdraw(&self) -> Result<(), MdnsPublishError> {
+        Err(MdnsPublishError::WithdrawFailed {
+            message: "interface vanished before withdrawal could be sent".to_owned(),
+        })
+    }
+}
+
+struct VanishingInterfaceMdnsPublisher;
+
+impl MdnsPublisher for VanishingInterfaceMdnsPublisher {
+    fn publish(
+        &self,
+        _advertisement: &SessionAdvertisement,
+        _endpoint: NetworkEndpoint,
+    ) -> Result<Box<dyn MdnsRegistration>, MdnsPublishError> {
+        Ok(Box::new(VanishedInterfaceRegistration))
+    }
+
+    fn shutdown(&self) -> Result<(), MdnsPublishError> {
+        Ok(())
+    }
+}
+
 fn advertisement() -> SessionAdvertisement {
     SessionAdvertisement::new(
         SessionId::new("session-block21").expect("session ID"),
@@ -284,6 +336,87 @@ fn one_private_lan_address_is_selected_and_bound_through_shared_factory() {
         address.to_string()
     );
     control.stop_host_inner().expect("stop host");
+    assert!(shutdown_called.load(Ordering::Acquire));
+}
+
+/// 30.3 "daemon/multicast unavailable": a publish failure must never fail
+/// the host start itself -- the manual connection payload has to stay fully
+/// usable -- but it must also never be silently swallowed. It has to show
+/// up, honestly, in the snapshot the UI reads.
+#[test]
+fn a_publish_failure_does_not_fail_host_start_but_is_visible_in_the_snapshot() {
+    let address = Ipv4Addr::new(192, 168, 50, 11);
+    let records = vec![interface("enp1s0", 2, IpAddr::V4(address))];
+    let provider = Arc::new(SequenceProvider::new([records.clone(), records]));
+    let factory = Arc::new(FakeTransportFactory::new(Arc::new(AtomicBool::new(false))));
+    let control = DesktopHostNetworkControl::with_components(
+        provider,
+        factory,
+        TestHostPorts::default(),
+    )
+    .with_mdns_publisher(Arc::new(DaemonUnavailableMdnsPublisher));
+
+    control
+        .start_host_inner(&advertisement())
+        .expect("host start succeeds despite the mDNS daemon being unavailable");
+
+    let snapshot = control.snapshot().expect("bound snapshot");
+    let binding = snapshot.active_binding.expect("active binding");
+    assert!(!binding.mdns.active);
+    assert!(
+        binding
+            .mdns
+            .failure_reason
+            .expect("failure reason")
+            .contains("daemon unavailable")
+    );
+
+    control
+        .stop_host_inner()
+        .expect("stop host cleanly despite mDNS never having published");
+}
+
+/// 30.3 "interface disappears": withdrawal can fail if the bound interface
+/// vanished mid-session, so the daemon can no longer send the withdrawal
+/// announcement. `stop_host_inner` must still tear the rest of the host
+/// down (socket, playback, runtime) and must still report the withdrawal
+/// failure rather than claiming a clean stop.
+#[test]
+fn a_withdraw_failure_still_tears_down_the_host_but_is_reported_not_swallowed() {
+    let address = Ipv4Addr::new(192, 168, 50, 12);
+    let records = vec![interface("enp1s0", 2, IpAddr::V4(address))];
+    let provider = Arc::new(SequenceProvider::new([records.clone(), records]));
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let factory = Arc::new(FakeTransportFactory::new(Arc::clone(&shutdown_called)));
+    let control = DesktopHostNetworkControl::with_components(
+        provider,
+        factory,
+        TestHostPorts::default(),
+    )
+    .with_mdns_publisher(Arc::new(VanishingInterfaceMdnsPublisher));
+
+    control
+        .start_host_inner(&advertisement())
+        .expect("bind host endpoint");
+    let snapshot = control.snapshot().expect("bound snapshot");
+    assert!(
+        snapshot
+            .active_binding
+            .expect("active binding")
+            .mdns
+            .active
+    );
+
+    let stop_result = control.stop_host_inner();
+    assert!(
+        stop_result
+            .expect_err("a failed withdrawal must be reported, not swallowed")
+            .to_string()
+            .contains("mDNS withdrawal failed")
+    );
+    // The rest of teardown still happened even though withdrawal failed --
+    // the socket must never be leaked just because mDNS could not be
+    // cleanly withdrawn.
     assert!(shutdown_called.load(Ordering::Acquire));
 }
 

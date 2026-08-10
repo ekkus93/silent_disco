@@ -15,6 +15,7 @@ mod host_pending_handshake;
 pub(crate) mod host_transport;
 mod host_transport_events;
 pub mod identity;
+mod mdns;
 pub mod network;
 pub mod network_dto;
 mod network_error;

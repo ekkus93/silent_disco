@@ -54,7 +54,9 @@ export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, 
  */
 streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, };
 
-export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, };
+export type MdnsStatusDto = { active: boolean, failureReason: string | null, };
+
+export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, mdns: MdnsStatusDto, };
 
 export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null, };
 

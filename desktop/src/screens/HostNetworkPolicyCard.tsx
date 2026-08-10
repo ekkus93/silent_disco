@@ -212,6 +212,23 @@ export function HostNetworkPolicyCard({
             </p>
           ) : null}
 
+          {snapshot.activeBinding !== null ? (
+            <p
+              role={snapshot.activeBinding.mdns.active ? "status" : "alert"}
+              className={
+                snapshot.activeBinding.mdns.active
+                  ? "text-sm text-emerald-200"
+                  : "text-sm text-amber-200"
+              }
+            >
+              {snapshot.activeBinding.mdns.active
+                ? "Auto-discovery (mDNS): advertising this session."
+                : `Auto-discovery (mDNS) unavailable: ${
+                    snapshot.activeBinding.mdns.failureReason ?? "unknown reason"
+                  }. The manual connection details below still work.`}
+            </p>
+          ) : null}
+
           {snapshot.selectionError !== null ? (
             <p role="alert" className="text-sm text-amber-200">
               {snapshot.selectionError}

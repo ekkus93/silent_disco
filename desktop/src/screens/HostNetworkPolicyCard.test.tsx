@@ -137,6 +137,52 @@ describe("HostNetworkPolicyCard", () => {
     expect(rejected.every((option) => option.disabled)).toBe(true);
   });
 
+  it("shows mDNS as advertising once a session is actually bound", async () => {
+    getHostNetworkState.mockResolvedValue(
+      networkSnapshot({
+        activeBinding: {
+          interfaceName: "enp1s0",
+          address: "192.168.1.20",
+          controlPort: 41_100,
+          syncPort: 41_101,
+          audioPort: 41_102,
+          mdns: { active: true, failureReason: null },
+        },
+        activeBindingValid: true,
+      }),
+    );
+
+    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
+    expect(
+      await screen.findByText("Auto-discovery (mDNS): advertising this session."),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces an mDNS publication failure without hiding the manual connection details", async () => {
+    getHostNetworkState.mockResolvedValue(
+      networkSnapshot({
+        activeBinding: {
+          interfaceName: "enp1s0",
+          address: "192.168.1.20",
+          controlPort: 41_100,
+          syncPort: 41_101,
+          audioPort: 41_102,
+          mdns: { active: false, failureReason: "mDNS daemon unavailable: multicast socket busy" },
+        },
+        activeBindingValid: true,
+      }),
+    );
+
+    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
+    const failure = await screen.findByText(/Auto-discovery \(mDNS\) unavailable/);
+    expect(failure).toHaveAttribute("role", "alert");
+    expect(failure).toHaveTextContent("multicast socket busy");
+    expect(failure).toHaveTextContent("manual connection details below still work");
+    // The real binding summary (unrelated to mDNS) must still render too --
+    // a publication failure must never hide it.
+    expect(screen.getByText(/Bound enp1s0 at 192\.168\.1\.20/)).toBeInTheDocument();
+  });
+
   it("keeps a vanished explicit address visible as an error after refresh", async () => {
     getHostNetworkState.mockResolvedValue(
       networkSnapshot({

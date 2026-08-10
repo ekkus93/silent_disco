@@ -8,7 +8,7 @@ use crate::host_session_dto::{
     PendingJoinRequestDto,
 };
 use crate::platform::network_dto::{
-    NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
+    MdnsStatusDto, NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
     NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
 };
 use crate::runtime_dto::{
@@ -61,6 +61,7 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<DeliveryReportDto>(&config),
         declaration::<BroadcastDeliveryDto>(&config),
         declaration::<HostSessionSnapshotDto>(&config),
+        declaration::<MdnsStatusDto>(&config),
         declaration::<NetworkBindingDto>(&config),
         declaration::<NetworkInterfaceSnapshotDto>(&config),
         declaration::<CommandReceiptDto>(&config),

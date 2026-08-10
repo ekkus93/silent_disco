@@ -1,8 +1,9 @@
 use super::failure::DesktopPlatformFailure;
 use super::host_transport::{ActiveHostSessionSnapshot, DesktopHostTransportRuntime};
 use super::host_transport_events::DesktopHostTransportEventSink;
+use super::mdns::{MdnsPublicationState, MdnsPublisher, MdnsSdPublisher, NullMdnsPublisher};
 use super::network_dto::{
-    NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
+    MdnsStatusDto, NetworkAddressCandidateDto, NetworkAddressClassDto, NetworkBindPreferenceDto,
     NetworkBindingDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
 };
 pub(super) use super::network_error::{DesktopNetworkError, NetworkErrorKind};
@@ -187,6 +188,7 @@ struct ActiveBinding {
     advertisement: SessionAdvertisement,
     runtime: DesktopHostTransportRuntime,
     playback: Option<DesktopPlaybackStreamer>,
+    mdns: MdnsPublicationState,
 }
 
 struct NetworkState {
@@ -198,6 +200,7 @@ pub(crate) struct DesktopHostNetworkControl {
     provider: Arc<dyn NetworkInterfaceProvider>,
     transport_factory: Arc<dyn TransportFactory>,
     ports: HostPorts,
+    mdns: Arc<dyn MdnsPublisher>,
     state: Mutex<NetworkState>,
 }
 
@@ -209,6 +212,7 @@ impl DesktopHostNetworkControl {
             Arc::new(production_transport_factory()),
             HostPorts::default(),
         )
+        .with_mdns_publisher(Arc::new(MdnsSdPublisher::new()))
     }
 
     pub(super) fn with_components(
@@ -220,11 +224,22 @@ impl DesktopHostNetworkControl {
             provider,
             transport_factory,
             ports,
+            mdns: Arc::new(NullMdnsPublisher),
             state: Mutex::new(NetworkState {
                 preference: BindPreference::Automatic,
                 active: None,
             }),
         }
+    }
+
+    /// Replaces this control's mDNS publisher. Consuming/returning `Self`
+    /// keeps `production()` a one-expression builder chain rather than a
+    /// mutable local; test callers that want a custom fake use
+    /// [`Self::with_components`] then this, same pattern.
+    #[must_use]
+    pub(super) fn with_mdns_publisher(mut self, mdns: Arc<dyn MdnsPublisher>) -> Self {
+        self.mdns = mdns;
+        self
     }
 
     /// Returns a bounded, classified interface snapshot and detects changes to an active bind.
@@ -327,11 +342,23 @@ impl DesktopHostNetworkControl {
             return Err(DesktopNetworkError::endpoint_mismatch(cleanup.as_ref()));
         }
         let runtime = DesktopHostTransportRuntime::start(node, advertisement.clone(), sink, clock)?;
+        // Publish only now that a real, already-bound endpoint exists
+        // (30.2) -- `endpoint` above is what the transport actually
+        // bound to, not a value computed ahead of the bind succeeding. A
+        // publish failure is recorded, not propagated: the manual
+        // connection payload stays fully functional regardless of mDNS's
+        // fate (30.2 "retain manual endpoint as visibly available
+        // alternative").
+        let mdns = match self.mdns.publish(advertisement, endpoint) {
+            Ok(registration) => MdnsPublicationState::Active(registration),
+            Err(error) => MdnsPublicationState::Failed(error),
+        };
         state.active = Some(ActiveBinding {
             selected,
             advertisement: advertisement.clone(),
             runtime,
             playback: None,
+            mdns,
         });
         Ok(endpoint)
     }
@@ -351,6 +378,14 @@ impl DesktopHostNetworkControl {
                 "desktop host network endpoint is not active",
             ));
         };
+        // Every shutdown step is attempted even when an earlier one
+        // failed, exactly like the playback/runtime steps below -- a
+        // failing withdrawal must not prevent the rest of teardown, and
+        // must not be reported as a clean stop either (30.2 "withdraw on
+        // session end and shutdown").
+        let mdns_result = active.mdns.withdraw().map_err(|error| {
+            DesktopNetworkError::invalid_state(format!("mDNS withdrawal failed: {error}"))
+        });
         // The transport runtime is shut down even when the pump failed to stop
         // cleanly -- leaving it running would leak a bound socket -- but a
         // failing pump must not be reported as a clean host shutdown.
@@ -362,12 +397,14 @@ impl DesktopHostNetworkControl {
             None => Ok(()),
         };
         active.runtime.shutdown()?;
-        playback_result.map_err(|error| {
-            DesktopNetworkError::invalid_state(format!(
-                "host shut down, but its playback pump did not stop cleanly: {}",
-                error.message
-            ))
-        })
+        playback_result
+            .map_err(|error| {
+                DesktopNetworkError::invalid_state(format!(
+                    "host shut down, but its playback pump did not stop cleanly: {}",
+                    error.message
+                ))
+            })
+            .and(mdns_result)
     }
 
     /// Resolves the current staged/decoded/packetized source into an active
@@ -737,6 +774,7 @@ fn snapshot_from(
         control_port: binding.runtime.endpoint().control_port,
         sync_port: binding.runtime.endpoint().sync_port,
         audio_port: binding.runtime.endpoint().audio_port,
+        mdns: mdns_status_dto(&binding.mdns),
     });
     let active_binding_valid =
         active.is_none_or(|binding| validate_selected(interfaces, &binding.selected).is_ok());
@@ -755,6 +793,19 @@ fn snapshot_from(
         active_binding,
         active_binding_valid,
         interface_change,
+    }
+}
+
+fn mdns_status_dto(mdns: &MdnsPublicationState) -> MdnsStatusDto {
+    match mdns {
+        MdnsPublicationState::Active(_) => MdnsStatusDto {
+            active: true,
+            failure_reason: None,
+        },
+        MdnsPublicationState::Failed(error) => MdnsStatusDto {
+            active: false,
+            failure_reason: Some(error.to_string()),
+        },
     }
 }
 

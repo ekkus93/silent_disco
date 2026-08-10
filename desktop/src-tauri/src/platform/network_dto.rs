@@ -48,6 +48,20 @@ pub struct SetNetworkBindPreferenceRequest {
     pub address: Option<String>,
 }
 
+/// Whether this host session's mDNS convenience layer is currently
+/// advertising, and why not if it isn't. A `false` `active` value is never
+/// a session-blocking failure -- the manual connection payload (carried
+/// elsewhere on `NetworkBindingDto`) always remains available regardless
+/// (Block 30's acceptance criterion: "mDNS is a real convenience layer and
+/// not a hidden requirement for transport").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct MdnsStatusDto {
+    pub active: bool,
+    pub failure_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
@@ -57,6 +71,7 @@ pub struct NetworkBindingDto {
     pub control_port: u16,
     pub sync_port: u16,
     pub audio_port: u16,
+    pub mdns: MdnsStatusDto,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]

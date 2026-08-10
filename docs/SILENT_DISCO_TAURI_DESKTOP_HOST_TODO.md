@@ -2023,25 +2023,87 @@ multicast socket, no system daemon dependency at all).
 
 ### 30.2 Implement adapter
 
-- [ ] publish only after real host endpoints exist;
-- [ ] use core-owned semantic advertisement;
-- [ ] validate service and field lengths;
-- [ ] withdraw on session end and shutdown;
-- [ ] update after endpoint/interface change according to explicit policy;
-- [ ] report publication failure;
-- [ ] retain manual endpoint as visibly available alternative;
-- [ ] never claim discovery active after publication failure.
+- [x] publish only after real host endpoints exist -- `network.rs`'s
+      `start_host_with_sink` calls `self.mdns.publish(advertisement,
+      endpoint)` only after `DesktopHostTransportRuntime::start` has
+      already succeeded, using the `endpoint` the transport actually
+      bound to, never a value computed ahead of the bind.
+- [x] use core-owned semantic advertisement -- `mdns.rs`'s
+      `build_txt_properties` derives every TXT field from the same
+      `SessionAdvertisement`/`NetworkEndpoint` the manual connection
+      payload (`HostConnectionDto`) already carries; no separately
+      invented advertisement shape.
+- [x] validate service and field lengths -- `validate_txt_properties`
+      enforces RFC 6763's 255-byte per-field limit
+      (`MAX_TXT_VALUE_BYTES`) and a conservative 1300-byte summed
+      payload bound (`MAX_TOTAL_TXT_BYTES`), covered by
+      `a_field_over_the_255_byte_limit_is_rejected` and
+      `a_payload_over_the_total_budget_is_rejected_even_with_no_single_field_over_limit`.
+- [x] withdraw on session end and shutdown -- `stop_host_inner` calls
+      `active.mdns.withdraw()` as part of teardown (attempted
+      unconditionally alongside the playback/runtime steps, "first
+      failure wins"); `MdnsSdPublisher::shutdown()` additionally tears
+      down the whole daemon, confirmed by
+      `shutdown_confirms_after_a_real_publish_and_withdraw` and
+      `shutdown_is_a_clean_no_op_when_nothing_was_ever_published`.
+- [x] update after endpoint/interface change according to explicit
+      policy -- `mdns.rs`'s module doc comment ("Endpoint-change
+      policy") records the decision not to live-republish on interface
+      change, matching the manual payload's identical limitation;
+      recovery is stop/start a new host session.
+- [x] report publication failure -- `start_host_with_sink` never
+      propagates a publish error into the host-start result; it records
+      `MdnsPublicationState::Failed(error)` instead, surfaced end to end
+      through `mdns_status_dto`/`MdnsStatusDto`/`NetworkBindingDto` to
+      `HostNetworkPolicyCard.tsx`'s amber "Auto-discovery (mDNS)
+      unavailable: ..." alert.
+- [x] retain manual endpoint as visibly available alternative -- the
+      "Bound ..." manual connection-details paragraph in
+      `HostNetworkPolicyCard.tsx` renders unconditionally alongside (not
+      instead of) the mDNS status line; covered by
+      `surfaces an mDNS publication failure without hiding the manual
+      connection details`.
+- [x] never claim discovery active after publication failure --
+      `mdns_status_dto` maps `MdnsPublicationState::Failed` to
+      `{ active: false, failure_reason: Some(..) }`; there is no code
+      path that reports `active: true` without a real
+      `MdnsRegistration` in hand.
 
 ### 30.3 Tests
 
-- [ ] publish;
-- [ ] discover from a test client;
-- [ ] withdraw;
-- [ ] duplicate service name;
-- [ ] interface disappears;
-- [ ] daemon/multicast unavailable;
-- [ ] oversized metadata;
-- [ ] shutdown.
+- [x] publish -- `a_real_publish_is_discoverable_by_a_separate_client_with_the_right_data`.
+- [x] discover from a test client -- same test, via
+      `resolve_from_a_fresh_client` spinning up a genuinely separate
+      `ServiceDaemon` as the discovering client.
+- [x] withdraw -- `withdrawing_removes_it_from_a_fresh_clients_discovery`.
+- [x] duplicate service name -- `republishing_under_the_same_instance_name_is_not_an_error`.
+- [x] interface disappears -- covered at the `network.rs` integration
+      level (real interface loss inside the third-party `mdns-sd`
+      daemon is impractical to trigger portably/reliably in an
+      automated test) via
+      `a_withdraw_failure_still_tears_down_the_host_but_is_reported_not_swallowed`
+      in `network_tests.rs`, using a fake `MdnsRegistration` whose
+      `withdraw()` fails the way a vanished interface would; confirms
+      `stop_host_inner` still tears down the rest of the host and still
+      reports the failure rather than claiming a clean stop.
+- [x] daemon/multicast unavailable -- same rationale, covered via
+      `a_publish_failure_does_not_fail_host_start_but_is_visible_in_the_snapshot`
+      in `network_tests.rs`, using a fake `MdnsPublisher` that always
+      returns `MdnsPublishError::DaemonUnavailable`; confirms host start
+      still succeeds and the failure is visible in the snapshot, not
+      swallowed.
+- [x] oversized metadata -- `a_field_over_the_255_byte_limit_is_rejected`
+      and
+      `a_payload_over_the_total_budget_is_rejected_even_with_no_single_field_over_limit`.
+- [x] shutdown -- `shutdown_confirms_after_a_real_publish_and_withdraw`
+      and `shutdown_is_a_clean_no_op_when_nothing_was_ever_published`.
+
+All ten `platform::mdns::tests` and the two new `platform::network_tests`
+cases pass together with the full existing suite (138 tests total in the
+desktop Rust lib, 0 failed) via `bash scripts/check-rust.sh` (shared
+`rust/` workspace, unaffected) and `cd desktop && npm run check`
+(bindings-check, biome, tsc, 60/60 Vitest, production build) -- both run
+and confirmed green, not assumed.
 
 **Acceptance:** mDNS is a real convenience layer and not a hidden requirement for transport.
 
