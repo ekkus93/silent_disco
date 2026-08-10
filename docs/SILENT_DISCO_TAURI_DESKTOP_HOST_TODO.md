@@ -3290,43 +3290,182 @@ unrelated pre-existing set noted in the Block 35/36/37 memory entries.
 
 Use production serialized frames/datagrams.
 
-- [ ] host encodes through production protocol;
-- [ ] virtual link receives bytes plus metadata;
-- [ ] listener decodes through production protocol;
-- [ ] tests claiming wire coverage do not inject high-level success events.
+- [x] host encodes through production protocol -- already true before
+      this block: `virtual_transport.rs`'s private `round_trip` helper
+      calls the real `encode_frame` on every send. New this block: fixed
+      a real bug found while investigating this boundary -- every
+      host-to-listener event (`FrameReceived`, `PeerDisconnected`) was
+      stamped with the **host's** clock instead of the **receiving
+      listener's own** clock (`connect_listener`'s `clock` parameter was
+      silently discarded, `_clock`). Fixed in `VirtualListenerRegistration`
+      (now carries its own `clock: Arc<dyn TransportClock>`) and the three
+      call sites that stamped `received_at`; proven by
+      `virtual_transport_stamps_delivered_events_with_the_recipients_own_clock`
+      (`transport/tests.rs`) using two genuinely independent clocks. This
+      matters directly for this block: without it, a Lab node's own
+      configured clock offset/drift (Block 38) would never be visible in
+      anything it actually receives.
+- [~] virtual link receives bytes plus metadata -- **partially true, by
+      design, not by accident**: the "wire" is an `mpsc::sync_channel<TransportEvent>`
+      carrying already-decoded `TransportEvent`/`ProtocolFrame` values,
+      not raw bytes (confirmed by reading `virtual_transport.rs` in
+      full). `round_trip` DOES exercise real `encode_frame`/`decode_frame`
+      before a frame is admitted, so byte-level representability is
+      genuinely enforced -- but there is no separate receive-side decode
+      step the way a real socket has one. Restructuring the channel to
+      carry bytes and decode on receipt was judged out of scope for this
+      block (see 39.2 corruption's design note for the concrete
+      consequence and how it was worked around instead of glossed over).
+- [~] listener decodes through production protocol -- same nuance as
+      above: the `ProtocolFrame` a listener's `TransportEvent::FrameReceived`
+      carries is always the product of a real `decode_frame` call, but
+      that call happens at send time (inside `round_trip`), not at the
+      listener's own receive time, because there is no receive-side
+      decode step to run. The decoded value itself is never synthesized
+      or bypassed.
+- [x] tests claiming wire coverage do not inject high-level success
+      events -- every new test in `virtual_fault_tests.rs` and
+      `lab/fault/tests.rs` builds a real `ProtocolFrame`/`ControlMessage`
+      and drives it through the real transport trait methods; none
+      construct a `TransportEvent` directly. `corruption_produces_a_real_diagnosable_protocol_error`
+      specifically forces a genuine `decode_frame` failure on mutated
+      bytes rather than injecting a synthetic error event.
 
 ### 39.2 Fault model
 
-Implement bounded deterministic configuration for:
+Implemented across two layers: everything synchronous and receive-side
+(or connect-side) in the shared core
+(`rust/silent-disco-core/src/transport/virtual_fault.rs`, extending the
+existing `VirtualUdpFaultConfig`/`FaultInjectingVirtualTransportFactory`);
+latency and jitter -- the two that fundamentally need virtual time -- in
+the desktop Lab module (`desktop/src-tauri/src/lab/fault.rs`, new,
+`#[cfg(feature = "lab-mode")]`), built on Block 38's `LabClock`.
 
-- [ ] latency;
-- [ ] jitter;
-- [ ] loss;
-- [ ] duplication;
-- [ ] reordering;
-- [ ] corruption;
-- [ ] bandwidth limit;
-- [ ] queue saturation;
-- [ ] connection refusal;
-- [ ] disconnect;
-- [ ] reconnect delay.
+- [x] latency -- `LabLatencyConfig::fixed_latency_ms` (`lab/fault.rs`).
+      Deliberately scoped to the listener receive path only (see the
+      module's own doc comment for why); a held event's release deadline
+      is anchored to the event's own `received_at` (its real send-time
+      clock reading), not to whenever a caller happens to poll for it --
+      the fix that made `zero_jitter_is_exact_latency_regardless_of_seed`
+      pass instead of flaking on poll timing.
+- [x] jitter -- `LabLatencyConfig::jitter_ms`, a seeded symmetric offset
+      in `[-jitter_ms, +jitter_ms]` added on top of the fixed latency.
+- [x] loss -- extended beyond the pre-existing exact-count
+      `drop_next_sync_events`/`drop_next_audio_events` with new
+      probabilistic, seeded `loss_permille` (`virtual_fault.rs`).
+- [x] duplication -- new `duplicate_permille`.
+- [x] reordering -- extended beyond the pre-existing exact-pair-swap
+      `reorder_next_*_pair` with a new bounded, seeded-shuffle
+      `reorder_window`.
+- [x] corruption -- new `corrupt_next_events`, **audio-channel only** by
+      deliberate design: audio is the one frame kind whose wire format
+      carries a payload checksum (`FLAG_PAYLOAD_INTEGRITY`), so a single
+      corrupted byte is *guaranteed* to trip a real decode failure;
+      control/sync frames carry no such checksum, so the same technique
+      would not reliably fail for them. Implemented send-side (encode,
+      corrupt one byte, attempt decode, fail the send on decode failure)
+      rather than receive-side, since the virtual "wire" carries decoded
+      values -- see 39.1's notes and the module's own "corruption's
+      send-side semantics" doc section for the full reasoning. This does
+      not model UDP's fire-and-forget semantics (a real corrupted UDP
+      payload would typically fail at the *receiver*, with the sender
+      seeing apparent success); it does exercise the real production
+      decoder on genuinely mutated bytes, which is what 39.1 requires.
+- [x] bandwidth limit -- new `bandwidth_limit_bytes`, a cumulative
+      per-channel encoded-byte budget rather than a literal
+      bytes-per-second rate (documented as a deliberate simplification
+      in the config field's own doc comment -- a true rate limiter would
+      need the same virtual-clock dependency latency/jitter have).
+- [x] queue saturation -- already existed incidentally
+      (`event_queue_capacity` + `try_event`'s `QueueFull`); newly given a
+      dedicated test through the fault-injecting factory specifically
+      (`a_saturated_queue_is_reported_not_swallowed_by_fault_processing`),
+      proving fault processing never swallows it.
+- [x] connection refusal -- new `FaultInjectingVirtualTransportFactory::with_connection_refusals(count)`,
+      a factory-level shared counter (distinct from the per-node `VirtualUdpFaultConfig`
+      fields, since a refusal happens before any per-node fault state
+      could exist).
+- [x] disconnect -- new `disconnect_after_events`: once a channel has
+      processed that many events, every later one is replaced by a
+      synthesized `PeerDisconnected`.
+- [ ] reconnect delay -- **not implemented; deliberately deferred with a
+      documented reason.** Every other timing fault (latency/jitter)
+      works by holding an already-received event until a virtual
+      deadline passes, checked the next time `recv_event` is polled --
+      but `connect_listener` is a single, synchronous, blocking call
+      that must return `Result<Box<dyn ListenerTransportNode>, TransportError>`
+      immediately; there is no "poll again later" point to hook a
+      virtual-clock check into without either (a) a real wall-clock
+      sleep inside the call (violating Block 38's own "no wall-clock
+      sleep required for deterministic scenarios" principle) or (b) a
+      background-thread/async redesign of the connect path, which is
+      disproportionate to this block's scope. Left unchecked rather than
+      forced through with a wall-clock sleep or a fake non-blocking stub.
 
-Use a seeded deterministic PRNG where randomness is required.
+Seeded deterministic PRNG: new `silent_disco_core::transport::DeterministicPrng`
+(hand-rolled `SplitMix64` -- confirmed via investigation that no PRNG
+dependency, seedable or otherwise, existed anywhere in this workspace
+before this block), re-exported from the shared core so both the core's
+own fault model and the desktop Lab latency wrapper draw from the exact
+same implementation rather than two.
 
 ### 39.3 Tests
 
-- [ ] zero-fault parity;
-- [ ] exact fixed latency;
-- [ ] deterministic loss sequence;
-- [ ] duplicate detection;
-- [ ] reorder window;
-- [ ] malformed/corrupt packet diagnostics;
-- [ ] backpressure;
-- [ ] disconnect/reconnect;
-- [ ] identical seed produces identical trace;
-- [ ] different seed changes trace where expected.
+All in `rust/silent-disco-core/src/transport/virtual_fault_tests.rs`
+unless noted:
 
-**Acceptance:** Lab Mode tests the real codec and state machines under reproducible transport faults.
+- [x] zero-fault parity -- `zero_fault_parity_behaves_like_the_unfaulted_virtual_transport`.
+- [x] exact fixed latency -- `exact_fixed_latency_holds_until_the_precise_deadline`
+      (`desktop/src-tauri/src/lab/fault/tests.rs`): held one millisecond
+      short of its deadline, then released at the exact millisecond.
+- [x] deterministic loss sequence -- `identical_seed_produces_an_identical_loss_sequence`.
+- [x] duplicate detection -- `duplication_delivers_the_same_send_twice`.
+- [x] reorder window -- `reorder_window_releases_events_out_of_fifo_order_deterministically`.
+- [x] malformed/corrupt packet diagnostics -- `corruption_produces_a_real_diagnosable_protocol_error`,
+      complementing the already-substantial existing protocol-level
+      coverage found during investigation
+      (`protocol::codec::tests::rejects_truncation_trailing_bytes_and_integrity_failure`,
+      `protocol::vector_tests::malformed_vectors_fail_with_the_declared_stable_category`,
+      `...::diagnostic_counters_distinguish_every_required_failure_class`)
+      -- this block's own test proves the fault-injection plumbing
+      itself correctly reaches that same real decoder, not just that the
+      decoder works in isolation.
+- [x] backpressure -- `a_saturated_queue_is_reported_not_swallowed_by_fault_processing`.
+- [x] disconnect/reconnect -- disconnect covered by
+      `disconnect_after_events_replaces_later_events_with_a_synthesized_disconnect`;
+      reconnect explicitly deferred, see 39.2.
+- [x] identical seed produces identical trace -- `identical_seed_produces_an_identical_loss_sequence`.
+- [x] different seed changes trace where expected -- `a_different_seed_changes_the_loss_trace`.
+
+Also added beyond the required list: `scripted_connection_refusal_rejects_exactly_the_configured_count`,
+`bandwidth_limit_drops_sends_once_the_byte_budget_is_exceeded`,
+`zero_jitter_is_exact_latency_regardless_of_seed`,
+`jitter_keeps_the_deadline_within_its_configured_bound`,
+`control_channel_events_are_never_delayed` (`lab/fault/tests.rs`).
+
+New tests this block: 21 (11 `virtual_fault_tests.rs`, 1 `transport/tests.rs`
+listener-clock fix, 4 `lab/fault/tests.rs`, plus the pre-existing
+`virtual_udp_faults_drop_sync_and_reorder_audio_without_changing_send_reports`
+re-verified unchanged). `cargo test -p silent-disco-core`: 276 -> 286
+passed. `desktop/src-tauri cargo test` (default): 193, unchanged
+(everything new lives inside `#[cfg(feature = "lab-mode")]` except the
+core-level listener-clock fix and fault-model extension, which are
+covered by the core crate's own count). `cargo test --features lab-mode`:
+210 -> 214. 0 failed throughout, in every configuration.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`
+(full workspace, 0 failed), `cd desktop && npm run check`
+(bindings-check, biome, `cargo fmt --check`, tsc, 72/72 Vitest --
+unaffected, this block touched no frontend code -- production build) --
+`./gradlew test lintDebug` not re-run (no Kotlin touched). Manually ran
+`cargo clippy --all-targets --all-features -- -D warnings` for
+`desktop/src-tauri` (`--all-features` includes `lab-mode`) -- fixed one
+new lint this block's own code introduced (`clippy::doc_markdown`,
+"WiFi" needing backticks or a hyphen) before landing; the remaining 8
+deny-level errors are the identical, unrelated pre-existing set noted in
+the Block 35-38 memory entries.
+
+**Acceptance:** Lab Mode tests the real codec and state machines under reproducible transport faults. Met for every implemented fault: each one drives real `ProtocolFrame`/`ControlMessage` values through the real `encode_frame`/`decode_frame` and the real `TransportFactory` trait surface, with a seeded PRNG making every probabilistic decision reproducible. Reconnect delay remains unimplemented, with the architectural reason documented above rather than forced through with a wall-clock sleep.
 
 ---
 

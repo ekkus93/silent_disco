@@ -2657,3 +2657,118 @@ Committed and pushed. No open threads from this block. Block 39
 per-node clock a virtual transport binding would need to time-stamp
 events with. Per this session's established pattern, do not start it
 unilaterally — ask the user first.
+
+## 2026-08-10T18:40:47Z - Sonnet 5 - Block 39 complete: virtual transport and fault injection
+
+Implemented all three sub-blocks (39.1 transport boundary, 39.2 fault
+model, 39.3 tests) from `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`.
+TODO doc's Block 39 checkboxes updated with full evidence citations,
+including two items marked `[~]` (partially met, honestly explained)
+and one `[ ]` (reconnect delay, deliberately deferred with a real
+architectural reason) rather than overclaiming. This entry records the
+architectural decisions worth remembering.
+
+**Key decisions:**
+- Investigated thoroughly before writing any code (dispatched an
+  Explore agent over the full `virtual_transport.rs`/`virtual_fault.rs`/
+  `virtual_fault_tests.rs`, protocol codec malformed-frame tests,
+  PRNG availability, and clock-stamping behavior) rather than guessing
+  at what already existed. This surfaced a real, independent bug worth
+  fixing on its own merits: `connect_listener`'s `clock` parameter was
+  discarded (`_clock`) and every host-to-listener event was stamped
+  with the **host's** clock instead of the **receiving listener's**.
+  Fixed by giving `VirtualListenerRegistration` its own stored clock
+  and correcting the three call sites that stamped `received_at`
+  wrongly (`deliver_control`, `deliver_datagram`, `disconnect_peer`).
+  This directly serves Block 39 (and retroactively Block 38): without
+  it, a Lab node's configured clock offset/drift could never show up
+  in anything it actually received.
+- Investigation found the virtual transport's "wire" is an
+  `mpsc::sync_channel<TransportEvent>` carrying already-*decoded*
+  values, not raw bytes — `round_trip` (encode then decode) validates
+  representability before admission, but there's no receive-side
+  decode step to make fail. This is a genuine architectural constraint
+  on 39.1's "virtual link receives bytes plus metadata" / "listener
+  decodes through production protocol" — marked `[~]` (partial) in the
+  TODO with the real reason, rather than either overclaiming or
+  undertaking a disproportionate wire-architecture rewrite (channel
+  carries bytes, receiver decodes) to fully close it.
+- That same constraint shaped corruption's design: rather than
+  restructure the wire, corruption is injected **send-side** — encode
+  the real frame, flip one byte, attempt a real `decode_frame`, fail
+  the *send* if it fails. Scoped to the **audio channel only**,
+  discovered by checking the codec directly: audio is the one frame
+  kind with a payload checksum (`FLAG_PAYLOAD_INTEGRITY`), so a single
+  corrupted byte is *guaranteed* to trip a real decode failure; control/
+  sync frames have no such checksum, so the same technique wouldn't
+  reliably fail for them. Documented as not modeling UDP's real
+  fire-and-forget semantics (sender would normally see apparent
+  success) but as genuinely exercising the real decoder on real
+  mutated bytes, which is what the acceptance criterion needs.
+- Split the fault model across two layers by necessity, not
+  preference: everything synchronous/receive-side (loss, duplication,
+  reorder window, corruption, bandwidth limit, disconnect,
+  connection refusal) extends the shared core's existing
+  `VirtualUdpFaultConfig`/`FaultInjectingVirtualTransportFactory`
+  (`rust/silent-disco-core/src/transport/virtual_fault.rs`) since it
+  needs no virtual-time concept the core lacks. Latency and jitter
+  fundamentally need a scheduler with a virtual deadline, so they live
+  in a new `desktop/src-tauri/src/lab/fault.rs` (feature-gated),
+  built on Block 38's `LabClock` — the two blocks' design decisions
+  connected exactly as anticipated in Block 38's own memory entry.
+- Latency/jitter's held-event deadline is anchored to the event's own
+  `received_at` (its real send-time clock reading) rather than to
+  whenever a caller happens to poll `recv_event` — this was a real bug
+  caught by the test suite itself (`zero_jitter_is_exact_latency_regardless_of_seed`
+  failed until fixed): anchoring to poll time made the effective delay
+  depend on how promptly a scenario called `recv_event`, exactly the
+  kind of accidental nondeterminism Block 38's virtual clock exists to
+  eliminate.
+- Latency/jitter deliberately scoped to the **listener receive path
+  only** (not host); `bind_host` passes straight through, unwrapped.
+  Matches the more common real-world asymmetry this project cares
+  about (a listener's own bad Wi-Fi), and halves the wrapper's trait
+  surface (one of `HostTransportNode`/`ListenerTransportNode`, not
+  both).
+- Hand-rolled a `DeterministicPrng` (`SplitMix64`) in the shared core
+  and re-exported it, rather than duplicating one in the desktop
+  crate or adding a new dependency — investigation confirmed zero
+  PRNG (seedable or otherwise) existed anywhere in the workspace
+  before this block; the codebase's `=x.y.z`-pinned, minimal-dependency
+  style made hand-rolling the more consistent choice.
+- **Reconnect delay explicitly deferred, not implemented.** Every other
+  timing fault works by holding an already-*received* event until a
+  virtual deadline passes on the next poll — but `connect_listener` is
+  a single synchronous blocking call that must return immediately;
+  there's no "poll again later" point to hook a virtual-clock check
+  into without either a real wall-clock sleep (violating Block 38's
+  own "no wall-clock sleep required for deterministic scenarios") or
+  an async/background-thread redesign of the connect path,
+  disproportionate to this block's scope. Left unchecked in the TODO
+  with this reasoning rather than faked.
+
+**Gates:** `bash scripts/check-rust.sh` green (full workspace).
+`cd desktop && npm run check` green (72/72 Vitest, unaffected — no
+frontend touched). `cargo test -p silent-disco-core`: 276 → 286.
+`desktop/src-tauri cargo test` (default): 193, unchanged. `cargo test
+--features lab-mode`: 210 → 214. 0 failed throughout every
+configuration. Manually ran `cargo clippy --all-targets --all-features
+-- -D warnings` — fixed one new lint (`clippy::doc_markdown` on
+"WiFi") before landing; the remaining 8 deny-level errors are the
+identical pre-existing set from the Block 35-38 audits.
+
+**Known carried-forward gap, still not this block's to fix:** desktop's
+own clippy remains outside the enforced `npm run check` gate (same
+~8-error pre-existing set, unchanged in count and file list across
+Blocks 35-39).
+
+### Next
+Committed and pushed. No open threads from this block. Block 40
+(scenario schema, runner, and assertions) is next in the TODO's Phase
+11 — it will need to actually wire `LabRuntime` (Block 37) + `LabClock`
+(Block 38) + the virtual transport/fault layers (Block 39) together
+into runnable, recorded scenarios; nothing in this block wired fault
+injection or latency into `LabRuntime`'s own node-management API yet
+(both remain standalone, tested primitives). Per this session's
+established pattern, do not start it unilaterally — ask the user
+first.

@@ -23,7 +23,9 @@ pub use types::{
     MAX_TRANSPORT_PEERS, MAX_TRANSPORT_QUEUE_CAPACITY, TransportChannel, TransportCounters,
     TransportDelivery, TransportError, TransportErrorKind, TransportEvent, TransportPeer,
 };
-pub use virtual_fault::{FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig};
+pub use virtual_fault::{
+    DeterministicPrng, FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig,
+};
 pub use virtual_transport::{VirtualTransportFactory, VirtualTransportNetwork};
 
 /// Returns the production standard-IP transport factory.

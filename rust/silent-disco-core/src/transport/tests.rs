@@ -618,6 +618,79 @@ fn virtual_transport_is_explicit_isolated_and_uses_injected_clock() {
     host_b.shutdown().expect("second virtual host should stop");
 }
 
+/// `received_at` records when the *recipient* observed an event, not when
+/// the sender produced it -- a host-broadcast frame delivered to a
+/// listener must be stamped with the listener's own clock, and a
+/// host-initiated disconnect delivered to a listener likewise. Proven by
+/// giving the host and listener genuinely independent clocks and moving
+/// only the listener's forward: the stamped time must track it exactly,
+/// even though the host's own clock never advances.
+#[test]
+fn virtual_transport_stamps_delivered_events_with_the_recipients_own_clock() {
+    let network = VirtualTransportNetwork::default();
+    let factory = VirtualTransportFactory::new(network);
+    let session_id = id_session("virtual-recipient-clock");
+    let host_clock = Arc::new(ManualTransportClock::new(1_000));
+    let listener_clock = Arc::new(ManualTransportClock::new(50_000));
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            host_clock,
+        )
+        .expect("virtual host should bind");
+
+    let device_id = id_device("virtual-recipient-clock-listener");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            listener_clock.clone(),
+        )
+        .expect("virtual listener should connect with its own clock");
+
+    listener
+        .send_control(&join_request(
+            &session_id,
+            &device_id,
+            "Recipient Clock Listener",
+        ))
+        .expect("join request should send");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("virtual peer should authorize");
+    wait_for_authorized(&mut *host, &device_id);
+
+    listener_clock.advance(2_500);
+
+    host.broadcast_audio(&audio_frame(&session_id, 1))
+        .expect("broadcast audio to the authorized listener");
+    let event = wait_for_frame(&mut *listener, TransportChannel::Audio, |_| true);
+    assert!(matches!(
+        event,
+        TransportEvent::FrameReceived { received_at, .. }
+            if received_at == MonotonicMillis::new(52_500)
+    ));
+
+    host.disconnect_peer(&device_id)
+        .expect("host should be able to disconnect the listener");
+    let disconnect_event = wait_for_listener_event(&mut *listener, |event| {
+        matches!(event, TransportEvent::PeerDisconnected { .. })
+    });
+    assert!(matches!(
+        disconnect_event,
+        TransportEvent::PeerDisconnected { received_at, .. }
+            if received_at == MonotonicMillis::new(52_500)
+    ));
+
+    listener.shutdown().expect("virtual listener should stop");
+    host.shutdown().expect("virtual host should stop");
+}
+
 fn join_request(
     session_id: &SessionId,
     device_id: &DeviceId,

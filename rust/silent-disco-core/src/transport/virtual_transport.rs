@@ -39,6 +39,13 @@ struct VirtualListenerRegistration {
     control_address: SocketAddr,
     routes: ListenerDatagramRoutes,
     authorized: bool,
+    /// This listener's own clock -- every event pushed into its
+    /// `event_sender` is stamped with this, not the host's clock,
+    /// because `received_at` records when the *recipient* observed the
+    /// event. Distinct from the host's clock so a Lab node with its own
+    /// configured offset/drift is actually visible in the events it
+    /// receives.
+    clock: Arc<dyn TransportClock>,
 }
 
 #[derive(Clone, Default)]
@@ -74,7 +81,7 @@ impl TransportFactory for VirtualTransportFactory {
             VirtualHostRegistration {
                 session_id: config.session_id.clone(),
                 event_sender,
-                clock: clock.clone(),
+                clock,
                 counters: counters.clone(),
                 listeners: HashMap::new(),
             },
@@ -85,7 +92,6 @@ impl TransportFactory for VirtualTransportFactory {
             session_id: config.session_id,
             event_receiver,
             counters,
-            clock,
             shutdown_complete: false,
         }))
     }
@@ -93,7 +99,7 @@ impl TransportFactory for VirtualTransportFactory {
     fn connect_listener(
         &self,
         config: ListenerTransportConfig,
-        _clock: Arc<dyn TransportClock>,
+        clock: Arc<dyn TransportClock>,
     ) -> Result<Box<dyn ListenerTransportNode>, TransportError> {
         config.validate()?;
         let (event_sender, event_receiver) = sync_channel(config.event_queue_capacity);
@@ -134,6 +140,7 @@ impl TransportFactory for VirtualTransportFactory {
                 control_address,
                 routes,
                 authorized: false,
+                clock,
             },
         );
         try_event(
@@ -166,7 +173,6 @@ struct VirtualHostTransport {
     session_id: crate::domain::SessionId,
     event_receiver: Receiver<TransportEvent>,
     counters: Arc<Mutex<TransportCounters>>,
-    clock: Arc<dyn TransportClock>,
     shutdown_complete: bool,
 }
 
@@ -223,7 +229,9 @@ impl VirtualHostTransport {
                     ),
                 },
                 frame: frame.clone(),
-                received_at: self.clock.now(),
+                // The listener is the recipient, not the host -- stamped
+                // with the listener's own clock.
+                received_at: listener.clock.now(),
             };
             if try_event(&listener.event_sender, event).is_ok() {
                 successful = successful.saturating_add(1);
@@ -292,7 +300,9 @@ impl VirtualHostTransport {
                     ),
                 },
                 frame: frame.clone(),
-                received_at: self.clock.now(),
+                // The listener is the recipient, not the host -- stamped
+                // with the listener's own clock.
+                received_at: listener.clock.now(),
             };
             if try_event(&listener.event_sender, event).is_ok() {
                 successful = successful.saturating_add(1);
@@ -425,7 +435,9 @@ impl HostTransportNode for VirtualHostTransport {
                     ),
                 },
                 error: None,
-                received_at: self.clock.now(),
+                // The listener is the recipient of this event, not the
+                // host -- stamped with the listener's own clock.
+                received_at: listener.clock.now(),
             },
         )
     }

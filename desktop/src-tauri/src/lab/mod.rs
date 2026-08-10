@@ -23,6 +23,7 @@
 //! `VirtualTransportFactory`) is a later Lab Mode block's concern.
 
 mod clock;
+mod fault;
 
 use crate::dto::DesktopErrorDto;
 use crate::platform::identity::DesktopIdentity;
