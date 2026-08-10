@@ -208,6 +208,13 @@ async function invokeDesktop<T>(command: string, args?: Record<string, unknown>)
   }
 }
 
+// Block 37.1 "add frontend build flag derived from backend capability":
+// the only legitimate source of truth for whether Lab Mode is compiled
+// in -- never a JS-only env flag.
+export async function getLabModeAvailable(): Promise<boolean> {
+  return invokeDesktop<boolean>("get_lab_mode_available");
+}
+
 export async function getCoreSmoke(input: number): Promise<CoreSmokeDto> {
   if (!Number.isSafeInteger(input) || input < 0) {
     throw new Error("Core smoke input must be a non-negative safe integer.");

@@ -12,6 +12,13 @@ pub mod diagnostics_dto;
 pub mod dto;
 mod host_commands;
 pub mod host_session_dto;
+#[cfg(feature = "lab-mode")]
+#[allow(
+    dead_code,
+    reason = "Block 37.2's node-management API is exercised by its own tests; \
+              a later Lab Mode block wires it into a Tauri command surface"
+)]
+pub(crate) mod lab;
 pub mod notification_buffer;
 pub mod notification_channel;
 pub mod platform;
@@ -43,6 +50,17 @@ fn get_core_smoke(input: u64) -> CoreSmokeDto {
     core_smoke(input)
 }
 
+/// Reports whether this build was compiled with the `lab-mode` feature
+/// (Block 37.1 "add frontend build flag derived from backend capability,
+/// not only JavaScript environment"). Always compiled and always
+/// registered, in every build -- a production release therefore always
+/// answers `false`, verifiably, rather than merely omitting a frontend
+/// dev-only code path a build misconfiguration could still enable.
+#[tauri::command]
+fn get_lab_mode_available() -> bool {
+    cfg!(feature = "lab-mode")
+}
+
 /// Runs the Silent Disco desktop shell.
 ///
 /// # Errors
@@ -58,6 +76,7 @@ pub fn run() -> tauri::Result<()> {
         .manage(app_shutdown::AppShutdownCoordinator::new())
         .invoke_handler(tauri::generate_handler![
             get_core_smoke,
+            get_lab_mode_available,
             app_state::open_profile,
             app_state::get_current_snapshot,
             host_commands::select_host_role,
@@ -100,7 +119,7 @@ pub fn run() -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::core_smoke;
+    use super::{core_smoke, get_lab_mode_available};
 
     #[test]
     fn smoke_dto_uses_real_shared_core() {
@@ -114,5 +133,26 @@ mod tests {
             value.smoke,
             silent_disco_core::deterministic_smoke(42).to_string()
         );
+    }
+
+    /// Block 37.3 "production build has no Lab entry": run without
+    /// `--features lab-mode` (this crate's default, and the configuration
+    /// used to build a real production release), the always-compiled
+    /// availability command must answer `false` -- verifiable by any
+    /// caller, not merely true because nothing links `lab.rs`.
+    #[cfg(not(feature = "lab-mode"))]
+    #[test]
+    fn lab_mode_is_unavailable_in_a_production_build() {
+        assert!(!get_lab_mode_available());
+    }
+
+    /// Block 37.3 "Lab build is labeled": the same command answers `true`
+    /// only when this crate was actually compiled with `--features
+    /// lab-mode` -- run explicitly (`cargo test --features lab-mode`) to
+    /// exercise this branch, since it is never part of the default build.
+    #[cfg(feature = "lab-mode")]
+    #[test]
+    fn lab_mode_is_available_in_a_lab_build() {
+        assert!(get_lab_mode_available());
     }
 }

@@ -324,3 +324,51 @@ fn a_profile_reopens_cleanly_after_a_full_close() {
     assert_eq!(second_open.snapshot.revision, "1");
     state.close_sync().expect("close again");
 }
+
+/// Always fails, standing in for a genuinely unavailable OS credential
+/// store -- distinct from `FixedIdentityProvider`, which always succeeds.
+struct FailingIdentityProvider;
+
+impl DesktopIdentityProvider for FailingIdentityProvider {
+    fn load_or_create(
+        &self,
+        _profile_id: &ProfileId,
+    ) -> Result<DesktopIdentity, DesktopIdentityError> {
+        Err(DesktopIdentityError::InvalidStoredSecretLength {
+            found: 0,
+            expected: 32,
+        })
+    }
+}
+
+/// Block 37.3 "production secure-store failure cannot select Lab identity
+/// automatically": when the real identity provider fails, `open_profile_sync`
+/// must return a hard error -- never silently substitute any other
+/// identity source. There is no code path here to substitute one even by
+/// accident: `app_state.rs` never references `crate::lab` at all (the
+/// module doesn't even exist in this default, non-`lab-mode` build), and
+/// `open_runtime` only ever calls the one `&dyn DesktopIdentityProvider`
+/// it was explicitly given.
+#[test]
+fn a_production_identity_failure_is_a_hard_error_with_no_fallback() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+
+    let error = state
+        .open_profile_sync(
+            &paths,
+            id.clone(),
+            &FailingIdentityProvider,
+            &FixedSigningIdentityProvider(11),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect_err("a failed identity provider must not be silently worked around");
+    assert_eq!(error.code, "desktop.identity.unavailable");
+
+    state.close_sync().expect("clear failed state");
+    ProfileLease::acquire(&paths, &id)
+        .expect("lock released after identity failure")
+        .release()
+        .expect("release verification lease");
+}

@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { useDispatch, useSelector } from "react-redux";
 
 import coreReducer from "./coreSlice";
+import labReducer from "./labSlice";
 import uiReducer from "./uiSlice";
 
 export function createAppStore() {
@@ -9,6 +10,7 @@ export function createAppStore() {
     reducer: {
       core: coreReducer,
       ui: uiReducer,
+      lab: labReducer,
     },
   });
 }

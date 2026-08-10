@@ -3055,39 +3055,113 @@ suppressed.
 
 ### 37.1 Feature gates
 
-- [ ] add Rust feature such as `lab-mode`;
-- [ ] add frontend build flag derived from backend capability, not only JavaScript environment;
-- [ ] production release defaults Lab Mode off unless intentionally selected;
-- [ ] UI is visibly labeled;
-- [ ] Lab profiles use separate roots;
-- [ ] production profile cannot be opened in Lab runtime;
-- [ ] synthetic identity and virtual adapters compile only where intended.
+- [x] add Rust feature such as `lab-mode` -- `desktop/src-tauri/Cargo.toml`
+      (`lab-mode = []`), not in `default`.
+- [x] add frontend build flag derived from backend capability, not only
+      JavaScript environment -- new always-compiled, always-registered
+      `get_lab_mode_available` command (`lib.rs`) returns `cfg!(feature =
+      "lab-mode")`; new `getLabModeAvailable()` client call and `lab`
+      Redux slice (`labSlice.ts`, spec section 12's item 3) store only
+      that backend answer, never `import.meta.env`/`process.env`.
+- [x] production release defaults Lab Mode off unless intentionally
+      selected -- `lab-mode` absent from `default`; confirmed the
+      default `cargo build`/`cargo test` (no `--features`) compiles and
+      passes with the `lab` module entirely absent.
+- [x] UI is visibly labeled -- `App.tsx`'s header renders an amber "Lab
+      Mode build" badge (with an explanatory `title`) only when
+      `getLabModeAvailable()` answered `true`; covered by
+      `App.test.tsx`'s two new badge-visibility tests.
+- [x] Lab profiles use separate roots -- `LabRuntime` roots every node
+      under `<app_local_data_root>/lab/`, structurally disjoint from
+      `DesktopProfilePaths`'s `<app_local_data_root>/profiles/`.
+- [x] production profile cannot be opened in Lab runtime -- true by
+      construction (`LabRuntime` has no function that accepts a
+      `ProfileId` or touches the `profiles/` subtree at all) and proven
+      by `lab_root_is_disjoint_from_the_production_profiles_root`
+      (`lab/tests.rs`).
+- [x] synthetic identity and virtual adapters compile only where
+      intended -- the entire `lab` module is `#[cfg(feature =
+      "lab-mode")]`; its synthetic identity derivation
+      (`synthetic_identity`, reusing `DesktopIdentity::from_secret`,
+      which never touches the OS keyring) exists only inside it.
 
 ### 37.2 Lab runtime
 
-Create:
+Created:
 
 ```text
 desktop/src-tauri/src/lab/mod.rs
 ```
 
-- [ ] owns multiple core handles;
-- [ ] unique node IDs;
-- [ ] isolated databases;
-- [ ] isolated identities;
-- [ ] explicit start/stop/join;
-- [ ] no global production singleton reuse;
-- [ ] bounded node count.
+- [x] owns multiple core handles -- `LabRuntime.nodes: Mutex<HashMap<LabNodeId, LabNodeHandle>>`,
+      each wrapping its own real `CoreActorRuntime`.
+- [x] unique node IDs -- `LabNodeId(u32)`, monotonically allocated by an
+      internal `AtomicU32` counter, never reused.
+- [x] isolated databases -- each node gets its own `lab.sqlite3` under
+      its own `lab/lab-node-NNNN/` directory, opened through a real
+      `DatabaseWorker`.
+- [x] isolated identities -- each node's `CoreActorConfig` uses a
+      `DeviceId` from a deterministic, per-node synthetic
+      `DesktopIdentity` (`synthetic_identity`), never the OS keyring.
+- [x] explicit start/stop/join -- `LabRuntime::start_node`/`stop_node`/`shutdown`,
+      each a real, blocking, reported-outcome operation (no fire-and-forget).
+- [x] no global production singleton reuse -- `lab/mod.rs` never
+      imports `crate::app_state` or any other production-owned type;
+      confirmed via `grep -rln "crate::lab" desktop/src-tauri/src/`
+      returning only this doc-comment's own backtick-quoted mention of
+      the fact, never an actual `use` from the production side.
+- [x] bounded node count -- `MAX_LAB_NODES = 16`; exceeding it is a
+      reported `desktop.lab.node_limit_reached` error, never a silently
+      dropped or substituted node.
 
 ### 37.3 Tests
 
-- [ ] production build has no Lab entry;
-- [ ] Lab build is labeled;
-- [ ] profile roots differ;
-- [ ] production secure-store failure cannot select Lab identity automatically;
-- [ ] Lab shutdown releases every node.
+- [x] production build has no Lab entry -- default `cargo build`/`cargo test`
+      (this crate's actual default, no `--features` flag) compiles and
+      passes with the `lab` module entirely absent; new
+      `lab_mode_is_unavailable_in_a_production_build` (`lib.rs`) asserts
+      the always-compiled availability command answers `false` in that
+      exact configuration.
+- [x] Lab build is labeled -- new `lab_mode_is_available_in_a_lab_build`
+      (`lib.rs`, `#[cfg(feature = "lab-mode")]`), run explicitly via
+      `cargo test --features lab-mode`, asserts the same command answers
+      `true`; frontend side covered by `App.test.tsx`'s "shows the Lab
+      Mode badge only when the backend reports it available" /
+      "shows no Lab Mode badge when ... unavailable".
+- [x] profile roots differ -- `lab_root_is_disjoint_from_the_production_profiles_root`
+      (`lab/tests.rs`).
+- [x] production secure-store failure cannot select Lab identity
+      automatically -- new `a_production_identity_failure_is_a_hard_error_with_no_fallback`
+      (`app_state_tests.rs`): a failing identity provider makes
+      `open_profile_sync` return a hard `desktop.identity.unavailable`
+      error, never a silent substitute; backed architecturally by
+      `app_state.rs` never referencing `crate::lab` (see 37.2).
+- [x] Lab shutdown releases every node --
+      `shutdown_releases_every_node_and_is_idempotent_when_empty`
+      (`lab/tests.rs`): every started node is gone after `shutdown()`,
+      and a second call on an already-empty runtime is a clean no-op,
+      not an error.
 
-**Acceptance:** Lab facilities cannot become a silent production fallback.
+New tests this block: 11 (7 `lab/tests.rs`, 2 `lib.rs`, 1
+`app_state_tests.rs`, plus 2 `App.test.tsx` + 2 `labSlice.test.ts` on the
+frontend) -- desktop crate `cargo test` (default, no `lab-mode`) went
+from 191 to 193 passed; `cargo test --features lab-mode` reaches 200
+passed; 0 failed in both configurations throughout. Frontend Vitest went
+from 68 to 72 passed.
+
+All three quality gates run and green: `bash scripts/check-rust.sh`
+(full workspace, 0 failed), `cd desktop && npm run check`
+(bindings-check, biome, `cargo fmt --check`, tsc, 72/72 Vitest,
+production build) -- `./gradlew test lintDebug` not re-run (desktop-only
+change, no Kotlin touched, matching established session precedent).
+Manually ran `cargo clippy --all-targets --all-features -- -D warnings`
+for `desktop/src-tauri` (`--all-features` includes `lab-mode`, still not
+part of the enforced gate) -- confirmed the identical, unrelated
+pre-existing error set noted in the Block 35/36 memory entries is still
+the only thing failing; this block's own new code (default and
+`lab-mode` builds alike) introduced zero new lints.
+
+**Acceptance:** Lab facilities cannot become a silent production fallback. `LabRuntime` is fully isolated by construction (separate root, separate identities, separate `Mutex`-owned node registry, zero references from any production code path) and absent entirely from a default build; virtual transport/clock wiring and any node-management UI/command surface remain a later Lab Mode block's scope.
 
 ---
 

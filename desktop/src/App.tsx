@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 
 import { coreActions } from "./app/coreSlice";
+import { labActions } from "./app/labSlice";
 import {
   selectBridgeLifecycle,
   selectCoreSnapshot,
+  selectLabModeAvailable,
   selectLatestCoreError,
   selectStaleNotificationCounters,
 } from "./app/selectors";
 import { useAppDispatch, useAppSelector } from "./app/store";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
-import { getAppShutdownState, toDesktopBridgeError } from "./core/client";
+import { getAppShutdownState, getLabModeAvailable, toDesktopBridgeError } from "./core/client";
 import type { AppShutdownPhaseDto } from "./core/generated/desktop-bindings";
 import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
@@ -106,6 +108,7 @@ export function App() {
   const lifecycle = useAppSelector(selectBridgeLifecycle);
   const latestError = useAppSelector(selectLatestCoreError);
   const staleNotifications = useAppSelector(selectStaleNotificationCounters);
+  const labModeAvailable = useAppSelector(selectLabModeAvailable);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
@@ -136,6 +139,23 @@ export function App() {
     };
   }, [dispatch]);
 
+  // Block 37.1 "UI is visibly labeled": asked once per session, straight
+  // from the backend -- never assumed from a JS-only dev/prod distinction.
+  // A transport failure here leaves `available` at its initial `null`
+  // (not shown as available), the same fail-closed default as never
+  // having asked at all.
+  useEffect(() => {
+    let active = true;
+    getLabModeAvailable()
+      .then((available) => {
+        if (active) dispatch(labActions.labModeAvailabilityReceived(available));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [dispatch]);
+
   const ready = lifecycle.kind === "ready" && snapshot !== null && connection !== null;
   const failed = lifecycle.kind === "failed";
 
@@ -145,9 +165,20 @@ export function App() {
       <section className="mx-auto max-w-6xl rounded-3xl border border-violet-300/20 bg-slate-950/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-violet-200/15 pb-5">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
-              Silent Disco desktop host
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
+                Silent Disco desktop host
+              </p>
+              {labModeAvailable ? (
+                <span
+                  role="status"
+                  title="This build was compiled with the lab-mode feature and must never be used for a real listening session."
+                  className="rounded-full border border-amber-400/60 bg-amber-950/40 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-amber-200"
+                >
+                  Lab Mode build
+                </span>
+              ) : null}
+            </div>
             <h1 className="mt-2 text-4xl font-bold tracking-tight">Host control</h1>
           </div>
           <div className="flex items-center gap-4">

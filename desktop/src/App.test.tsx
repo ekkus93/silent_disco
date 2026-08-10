@@ -24,6 +24,7 @@ const {
   endHostSessionMock,
   getHostNetworkStateMock,
   setHostNetworkPreferenceMock,
+  getLabModeAvailableMock,
 } = vi.hoisted(() => ({
   ensureDesktopBridgeMock: vi.fn(),
   subscribeDesktopNotificationsMock: vi.fn(),
@@ -35,6 +36,7 @@ const {
   endHostSessionMock: vi.fn(),
   getHostNetworkStateMock: vi.fn(),
   setHostNetworkPreferenceMock: vi.fn(),
+  getLabModeAvailableMock: vi.fn(),
 }));
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
@@ -54,6 +56,7 @@ vi.mock("./core/client", async () => {
     endHostSession: endHostSessionMock,
     getHostNetworkState: getHostNetworkStateMock,
     setHostNetworkPreference: setHostNetworkPreferenceMock,
+    getLabModeAvailable: getLabModeAvailableMock,
   };
 });
 
@@ -182,10 +185,12 @@ describe("App", () => {
     endHostSessionMock.mockReset();
     getHostNetworkStateMock.mockReset();
     setHostNetworkPreferenceMock.mockReset();
+    getLabModeAvailableMock.mockReset();
     getHostSessionStateMock.mockResolvedValue(hostSessionSnapshot);
     endHostSessionMock.mockResolvedValue({ operationId: "end-1", acceptedAtRevision: "5" });
     getHostNetworkStateMock.mockResolvedValue(networkSnapshot);
     setHostNetworkPreferenceMock.mockResolvedValue(networkSnapshot);
+    getLabModeAvailableMock.mockResolvedValue(false);
     subscribeDesktopNotificationsMock.mockImplementation(
       (listener: (notification: CoreNotificationDto) => void) => {
         notificationListener = listener;
@@ -258,5 +263,25 @@ describe("App", () => {
     const { view } = renderApp();
     view.unmount();
     expect(unsubscribeMock).toHaveBeenCalledOnce();
+  });
+
+  // Block 37.1 "UI is visibly labeled": the badge appears only when the
+  // *backend* reports Lab Mode compiled in -- never inferred from a
+  // JS-only dev/test environment flag.
+  it("shows the Lab Mode badge only when the backend reports it available", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(true);
+    renderApp();
+
+    expect(await screen.findByText(/lab mode build/i)).toBeVisible();
+  });
+
+  it("shows no Lab Mode badge when the backend reports it unavailable", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(false);
+    renderApp();
+
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    expect(screen.queryByText(/lab mode build/i)).not.toBeInTheDocument();
   });
 });

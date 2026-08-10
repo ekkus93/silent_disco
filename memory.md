@@ -2461,3 +2461,99 @@ Committed and pushed. No open threads from this block. Block 37 (Lab
 Mode build feature) is next in the TODO's Phase 11, but per this
 session's established pattern, do not start it unilaterally — ask the
 user first.
+
+## 2026-08-10T14:58:16Z - Sonnet 5 - Block 37 complete: Lab Mode build feature and isolation
+
+Implemented all three sub-blocks (37.1 feature gates, 37.2 Lab runtime,
+37.3 tests) from `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`. This is
+a from-scratch subsystem — confirmed via grep before starting that zero
+Lab Mode code existed anywhere in the repo. TODO doc's Block 37
+checkboxes updated with full evidence citations; this entry records the
+architectural decisions worth remembering.
+
+**Key decisions:**
+- Discovered mid-investigation that `silent-disco-core`'s
+  `transport` module *already* has `VirtualTransportFactory`,
+  `VirtualTransportNetwork`, `VirtualUdpFaultConfig`, and
+  `ManualTransportClock` (used today only by `virtual_fault_tests.rs`).
+  These are exactly what Block 38 (virtual clocks) and later fault-
+  injection blocks will need — they don't need inventing, just wiring
+  into `LabRuntime`. Confirms Block 37's own scope is correctly narrow:
+  just the isolated core+storage+identity scaffolding, no transport/
+  clock wiring yet.
+- `LabRuntime` (`desktop/src-tauri/src/lab/mod.rs`) is a from-scratch
+  multi-node registry: each node is a real, independent
+  `(CoreActorRuntime, DatabaseWorker)` pair with its own synthetic
+  identity, isolated under `<app_local_data_root>/lab/lab-node-NNNN/` —
+  structurally disjoint from production's `.../profiles/<id>/` root.
+  The whole module is `#[cfg(feature = "lab-mode")]`; a default build
+  (no `--features` flag, this crate's actual default) doesn't link it
+  at all.
+- Reused rather than duplicated: promoted four private path-validation
+  helpers (`validate_trusted_root`, `ensure_owned_directory`,
+  `reject_symlink_or_non_directory`, `canonicalize`) in
+  `platform/paths.rs` to `pub(crate)` so `LabRuntime`'s own directory
+  preparation shares the exact same hardening production profile paths
+  already have, rather than a second, drifting implementation.
+- Synthetic per-node identity reuses `DesktopIdentity::from_secret`
+  (the same type production identity uses) with a SHA-256-derived,
+  deterministic, reproducible secret — never touches the OS keyring,
+  and is fully separate from `SystemDesktopIdentityProvider`. Chose
+  determinism deliberately, consistent with Lab Mode's general
+  determinism ethos (spec section 29.2), even though clock determinism
+  itself is Block 38's concern.
+- "Production secure-store failure cannot select Lab identity
+  automatically" is true architecturally by construction, not just by
+  a runtime check: `app_state.rs`/`open_runtime` never imports
+  `crate::lab` at all — confirmed via
+  `grep -rln "crate::lab" desktop/src-tauri/src/` returning only a
+  doc-comment's own backtick-quoted mention of that fact. Backed by a
+  concrete test (`a_production_identity_failure_is_a_hard_error_with_no_fallback`)
+  proving a failing identity provider is a hard error, not silently
+  worked around by *any* substitute.
+- Frontend build flag is backend-verified, not JS-only: a new
+  always-compiled, always-registered `get_lab_mode_available` Tauri
+  command returns `cfg!(feature = "lab-mode")` directly — the frontend
+  can never show Lab UI a production Rust binary didn't actually
+  compile in, regardless of any dev-mode/env-var frontend
+  misconfiguration. Added the `lab` Redux slice spec section 12
+  explicitly anticipates ("scenario editor and run presentation state
+  when Lab Mode is compiled in") — Block 37 only needed the
+  availability flag + a visible badge, not the scenario editor itself.
+- `LabRuntime`'s node-management API (`start_node`/`stop_node`/
+  `shutdown`/`node_handle`/`node_identity`) is fully built and tested
+  but not yet wired into any Tauri command — deliberately deferred to
+  whichever later Lab Mode block adds the actual scenario/node-
+  management UI. Used the same `#[allow(dead_code, reason = "...")]`
+  module-level pattern already established for `platform::audio_decode`
+  (Block 25) rather than inventing a new convention.
+- Bounded node count (`MAX_LAB_NODES = 16`) chosen generously for local
+  desktop testing; exceeding it is a loud `desktop.lab.node_limit_reached`
+  error, proven by a test that also confirms every already-started node
+  survives the rejected attempt untouched.
+
+**Gates:** `bash scripts/check-rust.sh` green (full workspace).
+`cd desktop && npm run check` green (bindings-check, biome,
+`cargo fmt --check`, tsc, 72/72 Vitest — up from 68, production build).
+`desktop/src-tauri cargo test` (default, no `lab-mode`): 193 passed (was
+191 before this block). `cargo test --features lab-mode`: 200 passed.
+Both 0 failed. Manually ran
+`cargo clippy --all-targets --all-features -- -D warnings` (covers
+`lab-mode` since `--all-features` enables it) — confirmed the identical
+pre-existing error set from Block 35/36's own audits is still the only
+thing failing; this block's new code introduced zero new lints in
+either build configuration. `./gradlew test lintDebug` not re-run
+(desktop-only change, no Kotlin touched).
+
+**Known carried-forward gap, still not this block's to fix:** desktop's
+own clippy remains outside the enforced `npm run check` gate (same
+~8-error pre-existing set noted in Blocks 35/36's memory entries,
+unchanged in count and file list this session).
+
+### Next
+Committed and pushed. No open threads from this block. Block 38
+(deterministic virtual clocks) is next in the TODO's Phase 11 — the
+shared core's clock/transport virtualization primitives already exist
+(`ManualTransportClock`, `VirtualTransportFactory`) and just need
+wiring into `LabRuntime`. Per this session's established pattern, do
+not start it unilaterally — ask the user first.

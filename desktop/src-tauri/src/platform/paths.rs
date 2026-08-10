@@ -146,7 +146,7 @@ pub fn resolve_profile_paths<R: Runtime>(
     DesktopProfilePaths::from_trusted_app_local_data_root(&app_local_data_root, profile_id)
 }
 
-fn validate_trusted_root(root: &Path) -> Result<(), ProfilePathError> {
+pub(crate) fn validate_trusted_root(root: &Path) -> Result<(), ProfilePathError> {
     if !root.is_absolute() {
         return Err(ProfilePathError::TrustedRootNotAbsolute);
     }
@@ -159,7 +159,7 @@ fn validate_trusted_root(root: &Path) -> Result<(), ProfilePathError> {
     Ok(())
 }
 
-fn ensure_owned_directory(
+pub(crate) fn ensure_owned_directory(
     label: &'static str,
     path: &Path,
     canonical_parent: Option<&Path>,
@@ -190,7 +190,7 @@ fn ensure_owned_directory(
     Ok(())
 }
 
-fn reject_symlink_or_non_directory(
+pub(crate) fn reject_symlink_or_non_directory(
     label: &'static str,
     path: &Path,
 ) -> Result<(), ProfilePathError> {
@@ -207,7 +207,7 @@ fn reject_symlink_or_non_directory(
     Ok(())
 }
 
-fn canonicalize(label: &'static str, path: &Path) -> Result<PathBuf, ProfilePathError> {
+pub(crate) fn canonicalize(label: &'static str, path: &Path) -> Result<PathBuf, ProfilePathError> {
     fs::canonicalize(path).map_err(|source| ProfilePathError::CanonicalizePath {
         operation: label,
         source,

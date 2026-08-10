@@ -33,6 +33,12 @@ mdns-sd = "=0.20.3"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Block 37.1: compiles in the Lab Mode multi-node runtime (desktop-side
+# only; the shared Rust core's virtual transport/clock primitives are
+# always compiled, since they are also used by production-facing tests).
+# Never enabled by default -- a production release build must not link
+# lab.rs, its synthetic identities, or its node-management commands.
+lab-mode = []
 
 [lints.rust]
 unsafe_code = "deny"
