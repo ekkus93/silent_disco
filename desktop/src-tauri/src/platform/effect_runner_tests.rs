@@ -5,12 +5,12 @@ use super::effect_runner::{
 use super::failure::{DesktopPlatformFailure, core_error};
 use super::paths::DesktopProfilePaths;
 use crate::profile::ProfileId;
-use silent_disco_core::domain::{DeviceId, OperationId};
+use silent_disco_core::domain::{AppRole, DeviceId, OperationId};
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
-    CapabilitySnapshot, CoreActorConfig, CoreActorRuntime, CoreNotification, CoreSnapshot,
-    DiscoveryRequest, PermissionCapability, PlatformEffect, PlatformEffectRequest, PlatformEvent,
-    PlatformOperationCompletion,
+    CapabilitySnapshot, CoreActorConfig, CoreActorRuntime, CoreCommand, CoreCommandRequest,
+    CoreNotification, CoreSnapshot, DiscoveryRequest, PermissionCapability, PlatformEffect,
+    PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion, SnapshotRevision,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -440,6 +440,101 @@ fn stale_completion_is_rejected_by_authoritative_core() {
         error.operation_id.as_ref().map(OperationId::as_str),
         Some("stale-completion")
     );
+    actor.shutdown().expect("shutdown actor");
+}
+
+/// Block 43.2 "stale revision policy tested": every Tauri command in
+/// `host_commands.rs`/`app_state.rs` carries an `expected_revision` that
+/// must match the authoritative actor's current snapshot revision before a
+/// command is applied (`silent_disco_core`'s
+/// `actor_runtime::state::CoreActorState::apply`). Queue admission
+/// (`CoreActorHandle::submit_command`) does not itself check this -- the
+/// rejection only happens once the actor thread actually applies the
+/// command -- so this proves the policy the same way
+/// `stale_completion_is_rejected_by_authoritative_core` above proves the
+/// platform-completion equivalent: drive the real actor, not a mock.
+#[test]
+fn stale_expected_revision_command_is_rejected_by_authoritative_core() {
+    let (notification_sender, notification_receiver) = mpsc::channel();
+    let observer = move |notification: CoreNotification| {
+        notification_sender.send(notification).map_err(|_| {
+            test_core_error(
+                CoreErrorCode::WorkerStopped,
+                "test core notification receiver was dropped",
+                None,
+            )
+        })
+    };
+    let actor = CoreActorRuntime::start(
+        CoreActorConfig::new(DeviceId::new("desktop-test-device").expect("valid device ID")),
+        observer,
+    )
+    .expect("start actor");
+    let handle = actor.handle();
+    assert!(matches!(
+        notification_receiver
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("initial snapshot"),
+        CoreNotification::Snapshot(_)
+    ));
+
+    // Legitimately advances the actor from revision 0 to revision 1.
+    handle
+        .submit_command(
+            CoreCommandRequest::new(
+                SnapshotRevision::new(0),
+                CoreCommand::SelectRole {
+                    role: AppRole::Host,
+                },
+            )
+            .expect("valid first command"),
+        )
+        .expect("first command admitted");
+    assert!(matches!(
+        notification_receiver
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("first command snapshot"),
+        CoreNotification::Snapshot(_)
+    ));
+
+    // Reusing the now-stale revision 0 must be rejected, not silently
+    // applied and not silently dropped -- this is the exact IPC-layer
+    // optimistic-concurrency guard every desktop command
+    // (`host_commands::parse_snapshot_revision` and its callers) depends on
+    // to stop a stale frontend view from clobbering newer authoritative
+    // state.
+    handle
+        .submit_command(
+            CoreCommandRequest::new(
+                SnapshotRevision::new(0),
+                CoreCommand::SelectRole {
+                    role: AppRole::Listener,
+                },
+            )
+            .expect("valid stale-revision command shape"),
+        )
+        .expect("stale command is still admitted to the queue -- rejection happens on apply");
+
+    let error = loop {
+        match notification_receiver
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("stale revision result")
+        {
+            CoreNotification::Error(error) => break error,
+            CoreNotification::Snapshot(_)
+            | CoreNotification::Effect(_)
+            | CoreNotification::TransportEffect(_)
+            | CoreNotification::StorageEffect(_)
+            | CoreNotification::Diagnostic(_) => {}
+        }
+    };
+    assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+    assert!(
+        error.message.contains("revision"),
+        "expected a revision-mismatch message, got: {}",
+        error.message
+    );
+
     actor.shutdown().expect("shutdown actor");
 }
 

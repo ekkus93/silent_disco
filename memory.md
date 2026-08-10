@@ -3612,3 +3612,298 @@ declined tooling. The `final_diagnostics_survive_the_teardown_that_produced_them
 release-mode flake is recorded above as a real, pre-existing, unrelated
 follow-up for whoever next touches the playback scheduler/pump (Blocks
 15/17 territory) — do not attribute it to Block 24.
+
+## 2026-08-10T22:40:05Z - Sonnet 5 - Block 43 complete: full security and Tauri capability audit
+
+**Scope**: worktree-isolated to `desktop/` only, per this session's dispatch — did not touch `app/`
+or `rust/silent-disco-core`/`rust/silent-disco-ffi`. Read `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md`
+section 33 ("Security requirements") and 34 ("Dependency selection and version policy") in full,
+plus the current `desktop/src-tauri/tauri.conf.json`, every file under
+`desktop/src-tauri/capabilities/`, `desktop/src-tauri/Cargo.toml`, `desktop/package.json`, and every
+`#[tauri::command]` (36 total, enumerated by grep and read line-by-line, not sampled).
+
+### 43.1 Capability review — full enumeration and justification
+
+Exactly one capability file, `desktop/src-tauri/capabilities/default.json`:
+```json
+{
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
+```
+`core:default`'s own grant set (read directly from the generated
+`desktop/src-tauri/gen/schemas/acl-manifests.json`, not assumed from memory) is exactly:
+`core:path:default`, `core:event:default`, `core:window:default`, `core:webview:default`,
+`core:app:default`, `core:image:default`, `core:resources:default`, `core:menu:default`,
+`core:tray:default`. Per-permission justification:
+
+- **`core:path:default`** — needed so the Rust backend can resolve `app_local_data_dir()`
+  (`platform/paths.rs::resolve_profile_paths`) to construct every profile/database/staged-source/
+  diagnostics path itself; the frontend never calls a path API directly.
+- **`core:event:default`** — Tauri's own internal event plumbing that `Channel<T>`-based
+  notifications (`attach_notifications` command, `app_state.rs`) and window-close events
+  (`lib.rs::on_window_event`) are built on.
+- **`core:window:default`** — the single `main` window's lifecycle (title, close handling via
+  `app_shutdown.rs`); no multi-window spawning capability is used or needed.
+- **`core:webview:default`** — required for the webview itself to load `frontendDist` and receive
+  IPC; not a filesystem or process capability.
+- **`core:app:default`** — app metadata (name/version) used by diagnostics (`diagnostics_dto.rs`)
+  and the native window title.
+- **`core:image:default`** — the bundled window/app icon (`icons/icon.png` in `tauri.conf.json`).
+- **`core:resources:default`** — Tauri's internal resource-table bookkeeping for the `Channel`
+  handles `attach_notifications` returns; not a file-resource capability.
+- **`core:menu:default`** / **`core:tray:default`** — Tauri's default core permission set bundles
+  these; this app defines no custom menu or tray icon (no `app.tray`/menu config in
+  `tauri.conf.json`), so they are inert here, not a filesystem/shell escalation. Left as part of
+  `core:default` rather than hand-picking a narrower subset, since Tauri does not offer a granular
+  per-permission opt-out within `core:default` short of listing each `core:*:default` individually,
+  and none of these nine grants filesystem, shell, network, or dialog access.
+
+No `fs:*`, `shell:*`, `http:*`, `dialog:*`, `os:*`, `process:*`, or `clipboard:*` permission is
+granted anywhere. Confirmed:
+- **No shell plugin**: `tauri-plugin-shell` is not a dependency in `desktop/src-tauri/Cargo.toml`;
+  no `shell:*` permission string exists anywhere in the repo. No documented exception exists and
+  none is needed — this app spawns no child processes.
+- **No fs plugin permission granted to the frontend**: `tauri-plugin-fs` *is* compiled in
+  transitively (confirmed via `cargo clippy` build output: `Compiling tauri-plugin-fs v2.5.1`) —
+  it's a transitive dependency of `tauri-plugin-dialog`'s `FilePath` type, not something this crate
+  registers via `.plugin(tauri_plugin_fs::init())` (`lib.rs`'s builder only registers
+  `tauri_plugin_dialog::init()`) and no `fs:*` permission is granted in `capabilities/default.json`,
+  so its commands are unreachable from the frontend regardless.
+- **No remote URL loading**: `tauri.conf.json`'s `build.devUrl` is the local dev server
+  (`http://127.0.0.1:1420`, dev builds only); `build.frontendDist` is the bundled `../dist`
+  directory for production. No window config points at a remote origin. `desktop/src` has no
+  `fetch`/`XMLHttpRequest`/remote-navigation code (only `invoke()` over Tauri IPC).
+- **Restrictive CSP**: `"csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src
+  'self' data:; style-src 'self'"` — not null, no wildcard, no `unsafe-inline`/`unsafe-eval`, no
+  overridden `script-src` (inherits `default-src 'self'`).
+- **No `eval`**: `grep -rn "eval(\|new Function(\|dangerouslySetInnerHTML" desktop/src` → no matches.
+- **Production devtools policy is explicit, not incidental**: `desktop/src-tauri/Cargo.toml`'s
+  `tauri` dependency declares `features = []` — the `devtools` Cargo feature (which compiles the
+  webview inspector) is never enabled. Verified in the actual resolved dependency graph, not just
+  the manifest: `grep devtools desktop/src-tauri/Cargo.lock` returns nothing — the devtools crate
+  code isn't even present to link into a `cargo build --release` binary.
+- **Dialog access scoped**: every dialog invocation is backend-only via
+  `tauri_plugin_dialog::DialogExt` (never the frontend `@tauri-apps/plugin-dialog` package, which
+  was an unused dependency — removed, see 43.3) and every one sets an explicit extension filter:
+  `platform/file_picker.rs:162` (`["wav","flac","mp3"]`), `platform/diagnostics_export.rs:270`
+  (`["json"]`), `lab_commands.rs`'s scenario-open/save and recording-export dialogs (`["json"]`).
+  No unrestricted "pick any file"/"pick a directory" dialog exists.
+- **Path access constructed in backend**: `platform/paths.rs::resolve_profile_paths` builds every
+  profile-owned path from `app.path().app_local_data_dir()` joined with a charset-restricted
+  `ProfileId` (`profile.rs::ProfileId::parse`: must start/end ASCII alphanumeric, only
+  lowercase-ASCII/digit/`-`/`_` bytes, ≤64 bytes — no `.`/`/`/whitespace); `validate_trusted_root`
+  additionally rejects any root containing a `ParentDir` (`..`) component. File-dialog *results*
+  (spec 13.3's "untrusted external paths") are read directly by the backend
+  (`platform/file_picker.rs::inspect_source`, `lab_commands.rs`'s scenario open/save) but are never
+  accepted as a raw path *string over IPC* — they only ever originate from the OS's own native
+  dialog selection, never a JSON command argument a frontend bug or compromise could forge.
+
+### 43.2 IPC review — full command enumeration
+
+All 36 `#[tauri::command]`s found via `grep -rn "#\[tauri::command\]" desktop/src-tauri/src` and read
+in full: `lib.rs` (`get_core_smoke`, `get_lab_mode_available`), `host_commands.rs` (19: role/audio
+source/draft/session lifecycle, join approval/rejection, listener removal, playback
+start/pause/resume/stop, monitor toggle, diagnostics get/export, invitation creation, network
+state get/set), `app_state.rs` (4: `open_profile`, `get_current_snapshot`, `attach_notifications`,
+`close_profile`), `app_shutdown.rs` (1: `get_app_shutdown_state`), `lab_commands.rs` (9, all
+`lab-mode`-feature-gated: state, scenario open/save/run, virtual-time advance, node start/stop/
+stop-all, recording export).
+
+- **Input validation**: every non-trivial argument is parsed/validated before use —
+  `parse_snapshot_revision` (canonical unsigned-decimal string only, rejects leading zeros/signs/
+  non-digits), `parse_request_id`/`parse_device_id` (delegate to domain `RequestId`/`DeviceId`
+  validation), `ApprovalMode::from_wire_name`, `ProfileId::parse`, and in `lab_commands.rs` the
+  `delta_ms`/`offset_ms`/`drift_ppm` decimal-string parses plus `LabNodeId::from_u32` parse-and-check.
+  Nothing passes a raw frontend value into a filesystem/process/SQL operation unchecked.
+- **Bounded payload — one real gap found and fixed**: `lab_commands.rs::lab_open_scenario_file`
+  previously called `std::fs::read(&path)` on a user-dialog-selected file *before*
+  `load_scenario_json`'s own `MAX_SCENARIO_FILE_BYTES` (1 MiB) check — meaning an oversized file
+  would be fully read into memory before rejection, unlike the established project pattern
+  (`platform/file_picker.rs`'s `MAX_AUDIO_SOURCE_BYTES` check from `fs::metadata`/`File::metadata`
+  *before* any content read). Fixed by extracting `read_bounded_scenario_file` (checks
+  `fs::metadata(path).len()` against `MAX_SCENARIO_FILE_BYTES` first, only then reads), with new
+  tests `lab_commands/tests.rs::oversized_scenario_file_is_rejected_before_being_read` and
+  `::scenario_file_within_the_limit_is_read_verbatim`. Reviewed-and-accepted residual (not fixed):
+  a few request strings (`UpdateHostDraftRequest.session_name`, `SetNetworkBindPreferenceRequest.address`/
+  `.interface_name`) have no explicit length cap at the DTO layer itself before the shared core's
+  own `MAX_*_BYTES` constants reject an oversized value once the `CoreCommand` is applied — nothing
+  oversized is ever accepted, persisted, or acted on, and the only caller is this app's own bundled,
+  non-remote, no-`eval` webview (not external/network input), so the realistic risk is a
+  transient allocation from a *bug* in this app's own code, not an attacker. Judged low-severity and
+  left as a documented residual rather than adding speculative caps with no live threat behind them.
+- **No private keys cross IPC**: `dto.rs` exposes `has_private_key_reference: bool` plus an opaque
+  `private_key_ref` string identifier, never the key; `bindings.rs::output_does_not_include_secret_key_fields`
+  asserts the generated TS bindings contain no `private_key_ref`/`identitySecret` field. Signing
+  key material lives only behind the OS keyring (`platform/invitation_identity.rs`) and no command
+  returns it.
+- **No PCM/datagrams cross IPC**: the only `Vec<u8>` in any command-reachable state is
+  `lab_commands.rs::LoadedScenario.raw_bytes` — a scenario *JSON* document's own bytes, held
+  process-locally in `LabAppState`, never returned by any command (commands return
+  `LabScenarioSummaryDto`/`LabFileOutcomeDto` only). No audio sample buffer crosses IPC anywhere in
+  this codebase, matching the "real-time path stays in Rust" architecture rule.
+- **No native pointers**: `grep -rn "ptr\b\|pointer\|as \*const\|as \*mut\|native_handle\|raw_handle"
+  desktop/src-tauri/src` → no matches.
+- **No raw SQL crosses this boundary**: `grep -rniE "SELECT .* FROM|INSERT INTO|UPDATE .* SET|DELETE
+  FROM" desktop/src-tauri/src` → no matches; all domain SQL lives in `rust/silent-disco-core`, never
+  bypassed here.
+- **No arbitrary absolute path operation**: covered by 43.1's "path access constructed in backend"
+  finding — every command-reachable filesystem target is either backend-constructed from a trusted
+  root or sourced from a native dialog selection, never accepted as a raw path argument.
+- **Stale revision policy — a real, previously-untested gap, closed this block.** The authoritative
+  rejection is `rust/silent-disco-core/src/runtime/actor_runtime/state/mod.rs:188`
+  (`request.expected_revision != self.snapshot.revision` → `CoreErrorCode::InvalidStateTransition`,
+  message `"expected snapshot revision {X}, but current revision is {Y}"`). Before this block, that
+  exact branch/message had **zero** references from any test anywhere in the repository —
+  `grep -rln "expected snapshot revision" rust desktop` matched only the one production call site
+  that raises it, and neither `rust/silent-disco-core/tests/*.rs` nor any desktop test drove a
+  genuinely stale (already-superseded) `expected_revision` through a real actor. Added
+  `desktop/src-tauri/src/platform/effect_runner_tests.rs::stale_expected_revision_command_is_rejected_by_authoritative_core`,
+  matching the file's existing `stale_completion_is_rejected_by_authoritative_core` idiom (drives a
+  real `CoreActorRuntime`, not a mock): submits `SelectRole{Host}` at revision 0 (which legitimately
+  advances the actor to revision 1), then resubmits `SelectRole{Listener}` still declaring revision
+  0, and asserts the resulting `CoreNotification::Error` is `InvalidStateTransition` with a message
+  containing `"revision"`. This is exactly the guard every desktop `expected_revision` argument
+  (`host_commands.rs::parse_snapshot_revision` and its ~13 callers) relies on to stop a stale
+  frontend view from clobbering newer state. Confirmed `submit_command`'s own doc comment/behavior
+  first (`actor_runtime/mod.rs:319`): queue admission does *not* itself check `expected_revision` —
+  only `apply()` on the actor thread does, asynchronously — so a synchronous `Err` from
+  `submit_core_command` was never going to prove this; only an async notification could.
+- **Non-idempotent commands are not auto-retried**: every `invoke()` call site in
+  `desktop/src/core/client.ts` funnels through one wrapper, `invokeDesktop<T>` (`client.ts:211`) —
+  a bare `try { return await invoke(...) } catch { throw DesktopBridgeInvocationError }`, no loop,
+  no retry, no backoff. `DesktopErrorDto.retryable` is plumbed into Redux (`app/coreSlice.ts`,
+  `screens/HostSessionScreen.tsx`, `screens/LabScreen.tsx`) purely as UI metadata for an
+  operator-triggered manual retry button. `grep -rn "retryable" desktop/src` confirms no code path
+  re-invokes a command automatically based on it.
+
+### 43.3 Dependency review — full table
+
+**`desktop/src-tauri/Cargo.toml` (15 direct dependencies, all exact-pinned with `=`):**
+
+| Crate | Version | License | Non-default features | Reason | Native/platform notes |
+|---|---|---|---|---|---|
+| `base64` | 0.22.1 | MIT OR Apache-2.0 | (default) | invitation QR payload encoding | pure Rust |
+| `cpal` | 0.18.1 | Apache-2.0 | (default `= []`; no jack/pipewire/pulseaudio/asio) | local-monitor/host audio output (Block 33/34) | Linux: ALSA (`libasound`) via `alsa` crate; macOS: CoreAudio; Windows: WASAPI |
+| `getrandom` | 0.3.4 | MIT OR Apache-2.0 | (default) | CSPRNG bytes for signing-identity generation | pure Rust, OS RNG syscall |
+| `keyring` | 4.1.5 | MIT OR Apache-2.0 | (default `= ["v1"]`) | OS-native secure storage for the host signing key | Linux: Secret Service over D-Bus (`zbus`, pure Rust, needs a running provider e.g. `gnome-keyring-daemon`); macOS: Keychain; Windows: Credential Manager |
+| `netdev` | 0.45.0 | MIT | (default: `gateway`, `apple-system-configuration-extra`, `android-extra`) | LAN interface enumeration for host bind-address selection | Linux: netlink (`netlink-sys`/`netlink-packet-route`, pure Rust); the Android/Apple-extra default features are inert (target-`cfg`-gated upstream) on desktop Linux/macOS/Windows |
+| `p256` | 0.13.2 | Apache-2.0 OR MIT | `["ecdsa","pkcs8"]` | ECDSA signing/verification for QR invitations | pure Rust |
+| `serde` | 1.0.228 | MIT OR Apache-2.0 | `["derive"]` | DTO (de)serialization | pure Rust |
+| `serde_json` | 1.0.145 | MIT OR Apache-2.0 | (default) | JSON DTO wire format, scenario file parsing | pure Rust |
+| `sha2` | 0.11.0 | MIT OR Apache-2.0 | (default) | content hashing (staged audio-source verification) | pure Rust |
+| `tempfile` | 3.27.0 | MIT OR Apache-2.0 | (default) | atomic staged-file writes | pure Rust, uses OS temp-file syscalls |
+| `tauri` (+`tauri-build`) | 2.11.2 / 2.6.2 | Apache-2.0 OR MIT | `features = []` (no `devtools`) | application framework/IPC/webview | Linux: GTK3 + WebKit2GTK (`libgtk-3`, `libwebkit2gtk-4.1`) via `tauri-runtime-wry`, confirmed compiling in `cargo clippy`/`cargo test` output (`atk`/`gdk`/`gtk`/`webkit2gtk`/`soup3`/`javascriptcore-rs`) |
+| `tauri-plugin-dialog` | 2.7.2 | Apache-2.0 OR MIT | (default) | native, backend-driven, extension-filtered file dialogs | pulls in `tauri-plugin-fs` transitively for `FilePath`, but that plugin is never `.plugin()`-registered nor permission-granted |
+| `ts-rs` | 12.0.1 | MIT | `["serde-compat","no-serde-warnings"]` | generates TypeScript bindings from Rust DTOs (keeps IPC contract Rust-authoritative) | pure Rust, build-time only |
+| `mdns-sd` | 0.20.3 | Apache-2.0 OR MIT | (default: `async`, `logging`) | LAN session discovery/advertising convenience layer (not primary transport) | pure Rust |
+
+**`desktop/package.json` (7 direct runtime + 16 direct dev, all now exact-pinned):**
+
+All MIT, Apache-2.0, or dual MIT/Apache-2.0 (`typescript` is Apache-2.0-only) — no copyleft
+dependency. Runtime: `@reduxjs/toolkit` 2.12.0 (state management), `@tauri-apps/api` 2.11.1 (IPC/
+`invoke`/`Channel`), `qrcode` 1.5.4 (invitation QR rendering), `react`/`react-dom` 19.2.7, `react-redux`
+9.3.0. Dev: `@biomejs/biome` 2.5.5, `@tailwindcss/vite` 4.3.3, `@tauri-apps/cli` 2.11.4,
+`@testing-library/{dom,jest-dom,react,user-event}`, `@types/*`, `@vitejs/plugin-react` 6.0.4,
+`jsdom` 29.1.1, `tailwindcss` 4.3.3, `typescript` 7.0.2, `vite` 8.1.5, `vitest` 4.1.10.
+
+**Real finding, fixed**: `@tauri-apps/plugin-dialog` (npm, was pinned `2.7.2`) was present since the
+initial Tauri scaffold commit (`722dcb1`) but never imported anywhere in `desktop/src`
+(`grep -rln "plugin-dialog" desktop/src` was empty) — every dialog interaction is correctly
+backend-driven per spec 13.3, so this frontend package was pure dead weight, not a live capability
+(it would have failed at runtime anyway with no `dialog:*` permission granted). Removed from
+`package.json`; `npm run build`/`npm run check` both pass without it.
+
+**Real finding, fixed**: `@testing-library/user-event` was pinned `"^14.6.3"` (added in Block 42),
+the only non-exact version range in either manifest against this project's own "pin an exact
+version" convention (every other entry in both `Cargo.toml` and `package.json` is exact). Pinned to
+`"14.6.3"` (the version already resolved in `package-lock.json`, so this is a no-op for the
+installed tree, just a manifest-honesty fix).
+
+**Security advisory checks — run for real:**
+
+`cargo audit` was not installed; installed it this block (`cargo install cargo-audit --locked` →
+`cargo-audit v0.22.2`, ~93s build, network-dependent — noted as unavailable-until-installed the same
+way prior blocks noted `cargo-fuzz`/nightly toolchain availability). Ran against the real, pinned
+`Cargo.lock` (572 crates):
+
+```
+Loaded 1207 security advisories (from /home/phil/.cargo/advisory-db)
+Scanning Cargo.lock for vulnerabilities (572 crate dependencies)
+[... 18 "unmaintained"/"unsound" warnings on atk/atk-sys/gdk/gdk-sys/gdkwayland-sys/gdkx11/
+gdkx11-sys/gtk/gtk-sys/gtk3-macros (all RUSTSEC 2024-041{1..9}, "gtk-rs GTK3 bindings - no
+longer maintained", transitive via tauri's Linux wry runtime), paste (RUSTSEC-2024-0436),
+proc-macro-error (RUSTSEC-2024-0370), unic-char-property/unic-char-range/unic-common/
+unic-ucd-ident/unic-ucd-version (RUSTSEC-2025-0081/0075/0080/0100/0098, transitive), and glib
+0.18.5 (RUSTSEC-2024-0429, "unsound" Iterator impl, transitive) ...]
+warning: 18 allowed warnings found
+```
+Exit code 0. **0 vulnerabilities** (errors); all 18 warnings are on transitive dependencies pulled
+in by `tauri`'s Linux GTK3 webview backend or its own transitive tree, none a direct dependency of
+this crate, none an actual advisory (CVE-level vulnerability) — only "unmaintained crate" or
+"unsound API surface not used by this codebase" warnings.
+
+`npm audit` (real, before any fix):
+```
+nanoid  <3.3.17
+Severity: high
+nanoid: custom generators can loop indefinitely when size is zero -
+  https://github.com/advisories/GHSA-2v37-7h3g-55p8
+node_modules/nanoid
+1 high severity vulnerability
+```
+Traced: `nanoid` is a transitive dependency of `postcss` (`package-lock.json`: `"dev": true`,
+build-time-only, never shipped in `dist/` nor reachable from the running app), and this codebase
+never calls `nanoid`'s custom generator with `size: 0` — low realistic risk either way. Fixed
+anyway (semver-patch, no breaking change) via `npm audit fix`. Re-ran `npm audit` after: **found 0
+vulnerabilities**.
+
+### Real fixes made this block (all in `desktop/`)
+
+1. `desktop/src-tauri/src/lab_commands.rs` — extracted `read_bounded_scenario_file`, checking
+   `fs::metadata(path).len()` against `MAX_SCENARIO_FILE_BYTES` *before* `std::fs::read`, closing
+   the "read-before-size-check" gap in `lab_open_scenario_file`.
+2. `desktop/src-tauri/src/platform/effect_runner_tests.rs` — added
+   `stale_expected_revision_command_is_rejected_by_authoritative_core`, closing the "stale revision
+   policy tested" gap (previously zero test coverage anywhere in the repo).
+3. `desktop/src-tauri/src/lab_commands/tests.rs` — added
+   `oversized_scenario_file_is_rejected_before_being_read` and
+   `scenario_file_within_the_limit_is_read_verbatim` for fix (1).
+4. `desktop/package.json` (+ `desktop/package-lock.json` via `npm install`/`npm audit fix`) —
+   removed unused `@tauri-apps/plugin-dialog`; pinned `@testing-library/user-event` to exact
+   `14.6.3`; picked up the `nanoid` patch bump that resolves the one real `npm audit` finding.
+
+### Gates — run for real
+
+- `cd desktop/src-tauri && cargo fmt -- --check` → clean.
+- `cd desktop && npm run check` (bindings-check, Biome format+lint, `cargo fmt --check`, `tsc`,
+  Vitest, production build) → all green: bindings verified, Biome "Checked 38 files... Found 1
+  info" (a pre-existing `biome.json` deprecation notice unrelated to this block, not an error),
+  `tsc -b` clean, **86 Vitest tests passed (10 files)**, production `vite build` succeeded
+  (`dist/index.html` + JS/CSS chunks).
+- `cargo test --lib` (default features, no `lab-mode`) → **196 passed, 0 failed, 4 ignored**.
+- `cargo test --lib --features lab-mode` → **265 passed, 0 failed, 4 ignored** (includes both new
+  Lab-mode-gated tests).
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` on `desktop/src-tauri`:
+  ran (per this block's own instruction — not part of `npm run check`, and `CLAUDE.md` says to run
+  it manually when touching this crate) and found **8 pre-existing errors, none in any file this
+  block touched** (`host_session_dto.rs:350` too-many-lines, `platform/audio_device.rs:321,342` and
+  `platform/render_ring.rs:185` float-array `assert_eq!`, `platform/mdns.rs:608,612`
+  redundant-closure, `platform/start_playback_tests.rs:1878,1879` items-after-statements). Verified
+  via `git status --short desktop/` that none of those five files appear in this block's diff.
+  Left unfixed as genuinely out of scope for an audit-and-document block whose brief is "real fixes
+  only where you find a genuine [security] problem" — these are pre-existing style/complexity lints
+  unrelated to Block 43's security scope, and fixing five unrelated files' worth of lints would be
+  exactly the kind of unrequested scope creep this block was told to avoid. Recorded here so the
+  next session that touches `desktop/src-tauri` doesn't mistake this for new breakage.
+
+### Deliberately left unchecked / out of scope
+
+- The 8 pre-existing `cargo clippy` findings above (not a Block 43 security matter; a `desktop/`
+  code-quality item for whoever next touches those five files).
+- `desktop/biome.json`'s "recommended field deprecated, use preset instead" info notice — a Biome
+  2.x migration item (`biome migrate`), not a security finding, pre-existing, zero errors.
+- The `UpdateHostDraftRequest.session_name`/`SetNetworkBindPreferenceRequest` unbounded-until-core-validation
+  strings noted under 43.2 — reviewed and consciously left as a low-severity residual, not silently
+  missed.

@@ -1,9 +1,9 @@
 use super::{
     LabSessionState, MAX_SUMMARY_CHARS, MAX_TIMELINE_ENTRIES_PER_NODE, bounded_summary_text,
-    node_dto, run_outcome_dto, scenario_summary_dto, state_dto,
+    node_dto, read_bounded_scenario_file, run_outcome_dto, scenario_summary_dto, state_dto,
 };
 use crate::lab::LabRuntime;
-use crate::lab::scenario::{load_scenario_json, run_scenario_with_trace};
+use crate::lab::scenario::{MAX_SCENARIO_FILE_BYTES, load_scenario_json, run_scenario_with_trace};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
@@ -176,6 +176,34 @@ fn state_dto_reports_nodes_and_session_fields() {
     assert!(dto.last_run.is_none());
 
     lab.shutdown().expect("teardown");
+}
+
+/// Block 43.1/43.2 "bounded payload": an oversized scenario file is rejected
+/// from filesystem metadata alone, before any of its bytes are read into
+/// memory -- proven here by checking the returned error code, since a
+/// successful read would return the file's own bytes instead.
+#[test]
+fn oversized_scenario_file_is_rejected_before_being_read() {
+    let root = TestDirectory::new();
+    let path = root.0.join("huge-scenario.json");
+    let oversized = vec![b'a'; MAX_SCENARIO_FILE_BYTES + 1];
+    fs::write(&path, &oversized).expect("write oversized fixture file");
+
+    let error =
+        read_bounded_scenario_file(&path).expect_err("oversized scenario file must be rejected");
+    assert_eq!(error.code, "desktop.lab.scenario_too_large");
+}
+
+/// The same helper accepts a file at or under the limit and returns its
+/// exact bytes, unmodified.
+#[test]
+fn scenario_file_within_the_limit_is_read_verbatim() {
+    let root = TestDirectory::new();
+    let path = root.0.join("scenario.json");
+    fs::write(&path, SCENARIO_JSON).expect("write scenario fixture file");
+
+    let bytes = read_bounded_scenario_file(&path).expect("scenario file within the limit reads");
+    assert_eq!(bytes, SCENARIO_JSON);
 }
 
 /// A summary well within the bound is untouched; an oversized one is

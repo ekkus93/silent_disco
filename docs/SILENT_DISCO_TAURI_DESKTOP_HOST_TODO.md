@@ -4014,44 +4014,183 @@ Mode block, not a gap in this one's acceptance criterion.
 
 ## Block 43 — Security and Tauri capability audit
 
+Full audit performed 2026-08-10 (Sonnet 5). Complete enumeration and per-item
+justification recorded in `memory.md`'s `2026-08-10T22:40:05Z` entry. Summary
+citations below; see `memory.md` for the full text.
+
 ### 43.1 Capability review
 
-- [ ] list every Tauri permission/capability;
-- [ ] justify each in `memory.md`;
-- [ ] remove unused filesystem access;
-- [ ] no shell plugin unless separately approved;
-- [ ] no remote URL loading;
-- [ ] restrictive CSP;
-- [ ] no `eval`;
-- [ ] production devtools policy explicit;
-- [ ] dialog access scoped;
-- [ ] path access constructed in backend.
+- [x] list every Tauri permission/capability — enumerated: `desktop/src-tauri/capabilities/default.json`
+      grants exactly one permission, `core:default`, to window `main`; `app.security` in
+      `desktop/src-tauri/tauri.conf.json` sets `csp`. `core:default`'s own grant set
+      (`desktop/src-tauri/gen/schemas/acl-manifests.json`'s `core.default_permission.permissions`)
+      is `core:path:default`, `core:event:default`, `core:window:default`, `core:webview:default`,
+      `core:app:default`, `core:image:default`, `core:resources:default`, `core:menu:default`,
+      `core:tray:default` — no fs/shell/http/dialog/os plugin permission is granted anywhere;
+- [x] justify each in `memory.md` — full text in the memory entry cited above;
+- [x] remove unused filesystem access — none was granted (see above); no fix needed;
+- [x] no shell plugin unless separately approved — `tauri-plugin-shell` is not a dependency in
+      `desktop/src-tauri/Cargo.toml` and no `shell:*` permission exists anywhere; confirmed absent,
+      no approval on file, none needed;
+- [x] no remote URL loading — `tauri.conf.json`'s `build.devUrl` is `http://127.0.0.1:1420` (dev-only
+      local Vite server) and `build.frontendDist` is the bundled `../dist` directory; no
+      `app.windows[].url` points at a remote origin; `desktop/src/core/client.ts` and the rest of
+      `desktop/src` contain no `fetch`/`XMLHttpRequest`/remote navigation;
+- [x] restrictive CSP — `tauri.conf.json`: `"csp": "default-src 'self'; connect-src ipc:
+      http://ipc.localhost; img-src 'self' data:; style-src 'self'"`; not null, no wildcard, no
+      `unsafe-inline`/`unsafe-eval`, no `script-src` override (falls back to `default-src 'self'`);
+- [x] no `eval` — `grep -rn "eval(\|new Function(\|dangerouslySetInnerHTML" desktop/src` returns no
+      matches;
+- [x] production devtools policy explicit — `desktop/src-tauri/Cargo.toml`'s `tauri` dependency uses
+      `features = []` (the `devtools` Cargo feature is not enabled), and `grep devtools
+      desktop/src-tauri/Cargo.lock` returns nothing anywhere in the resolved dependency tree — the
+      webview-inspector code is not compiled into the binary at all in a `cargo build --release`
+      production build, not merely "off by default in dev";
+- [x] dialog access scoped — every dialog call is backend-only (`tauri_plugin_dialog::DialogExt`,
+      never `@tauri-apps/plugin-dialog` from the frontend — that npm package was an unused dependency
+      and has been removed, see 43.3) and every call sets `.add_filter(...)` to a specific extension
+      list: `platform/file_picker.rs:162` (`["wav","flac","mp3"]`), `platform/diagnostics_export.rs:270`
+      (`["json"]`), `lab_commands.rs` scenario open/save and recording export (`["json"]`); no
+      unrestricted/whole-filesystem dialog exists;
+- [x] path access constructed in backend — `platform/paths.rs::resolve_profile_paths` builds every
+      profile path from `app.path().app_local_data_dir()` (Tauri-owned) joined with a
+      charset-restricted `ProfileId` (`profile.rs::ProfileId::parse`: ASCII lowercase/digits/`-`/`_`
+      only, 64-byte max, no `.`/`/`); `validate_trusted_root` rejects any root containing a
+      `ParentDir` component. File-dialog *results* (untrusted external paths, per spec 13.3) are
+      read directly (`lab_commands.rs::lab_open_scenario_file`/`lab_save_scenario_file`,
+      `platform/file_picker.rs::inspect_source`) but never accepted as raw strings over IPC — they
+      only ever originate from a user's own native OS dialog selection, never from a JSON command
+      argument.
 
 ### 43.2 IPC review
 
-- [ ] every command validates input;
-- [ ] every command has bounded payload;
-- [ ] no private keys;
-- [ ] no PCM/datagrams;
-- [ ] no native pointers;
-- [ ] no raw SQL;
-- [ ] no arbitrary absolute path operation;
-- [ ] stale revision policy tested;
-- [ ] non-idempotent commands not automatically retried.
+All 36 `#[tauri::command]` handlers enumerated via `grep -rn "#\[tauri::command\]"
+desktop/src-tauri/src` (`lib.rs`×2, `host_commands.rs`×19, `lab_commands.rs`×9, `app_shutdown.rs`×1,
+`app_state.rs`×4) and read in full.
+
+- [x] every command validates input — every non-trivial argument goes through a typed
+      parse/validate step before use: `host_commands.rs::parse_snapshot_revision` (canonical decimal
+      only), `parse_request_id`/`parse_device_id` (delegate to domain `RequestId`/`DeviceId`
+      validation), `ApprovalMode::from_wire_name`, `ProfileId::parse` (`app_state.rs::open_profile`),
+      `lab_commands.rs`'s `delta_ms`/`offset_ms`/`drift_ppm` string-to-integer parses and
+      `LabNodeId` parse-from-`u32`. No command passes a raw frontend string into a filesystem,
+      process, or SQL operation unchecked;
+- [x] every command has bounded payload — DTOs use fixed-shape structs
+      (`#[serde(deny_unknown_fields)]` throughout `lab_dto.rs`/`runtime_dto.rs`/etc.), and every
+      *file* read/write a command triggers is size-checked from filesystem metadata before the
+      content is read: `platform/file_picker.rs` (`MAX_AUDIO_SOURCE_BYTES` = 8 GiB, checked via
+      `opened.byte_length` from `fs::metadata`/`File::metadata` before decode), and — a real gap
+      found and fixed this block — `lab_commands.rs::lab_open_scenario_file` previously read the
+      whole file via `std::fs::read` *before* `load_scenario_json`'s `MAX_SCENARIO_FILE_BYTES` (1
+      MiB) check; extracted into `read_bounded_scenario_file`, which now checks `fs::metadata(path).len()`
+      first (tests: `lab_commands/tests.rs::oversized_scenario_file_is_rejected_before_being_read`,
+      `::scenario_file_within_the_limit_is_read_verbatim`). Reviewed-and-accepted residual: a few
+      request strings (e.g. `UpdateHostDraftRequest.session_name`, `SetNetworkBindPreferenceRequest.address`)
+      are not size-capped at the DTO layer itself before the shared core's own `MAX_*_BYTES`
+      constants (`rust/silent-disco-core/src/{protocol,runtime/types}.rs`) reject an oversized value
+      inside `CoreCommand` application — nothing oversized is ever accepted, persisted, or acted on,
+      and the only caller is this app's own bundled (non-remote, no-`eval`) webview, not external
+      input, so this is accepted as a low-severity residual rather than fixed;
+- [x] no private keys — `dto.rs` carries `has_private_key_reference: bool` and an opaque
+      `private_key_ref` string identifier, never the key itself; `bindings.rs::output_does_not_include_secret_key_fields`
+      asserts the generated TS bindings contain no `private_key_ref`/`identitySecret` field. Signing
+      material lives only in `platform/invitation_identity.rs` behind the OS keyring
+      (`keyring`/zbus secret-service on Linux) and is never returned from a command;
+- [x] no PCM/datagrams — `grep -rniE "Vec<u8>|Vec<i16>|Vec<f32>|pcm|datagram"
+      desktop/src-tauri/src/**/*.rs` matches only `lab_commands.rs`'s internal
+      `LoadedScenario.raw_bytes: Vec<u8>` (a scenario *JSON* document's own bytes, held in
+      process-local `LabAppState`, never returned by any command — commands return only
+      `LabScenarioSummaryDto`/`LabFileOutcomeDto`); no audio sample buffer crosses IPC anywhere;
+- [x] no native pointers — `grep -rn "ptr\b\|pointer\|as \*const\|as \*mut\|native_handle\|raw_handle"
+      desktop/src-tauri/src` returns nothing; no command DTO carries a raw pointer/handle integer;
+- [x] no raw SQL — `grep -rniE "SELECT .* FROM|INSERT INTO|UPDATE .* SET|DELETE FROM"
+      desktop/src-tauri/src` returns nothing; all domain SQL lives in `rust/silent-disco-core`,
+      which this crate never bypasses (matches the project's "Rust core is sole SQLite owner" rule);
+- [x] no arbitrary absolute path operation — see 43.1's "path access constructed in backend" citation;
+      every command-reachable filesystem write/read target is either backend-constructed from a
+      trusted root (`ProfileId` + `app_local_data_dir()`) or comes from a user's own native-dialog
+      selection, never a raw path string accepted as a command argument;
+- [x] stale revision policy tested — **a real, previously-untested gap, closed this block.** The
+      authoritative rejection lives at `rust/silent-disco-core/src/runtime/actor_runtime/state/mod.rs:188`
+      (`request.expected_revision != self.snapshot.revision` → `CoreErrorCode::InvalidStateTransition`,
+      message `"expected snapshot revision ..., but current revision is ..."`), and — before this
+      block — that exact message/branch had zero references from any test in the whole repository
+      (`grep -rln "expected snapshot revision" rust desktop` found only the one production call
+      site). Added `desktop/src-tauri/src/platform/effect_runner_tests.rs::stale_expected_revision_command_is_rejected_by_authoritative_core`,
+      driving a real `CoreActorRuntime` the same way the file's existing
+      `stale_completion_is_rejected_by_authoritative_core` test does: submits a valid `SelectRole`
+      command at revision 0 (advancing the actor to revision 1), then resubmits a second `SelectRole`
+      still declaring revision 0, and asserts the resulting `CoreNotification::Error` carries
+      `CoreErrorCode::InvalidStateTransition` and a message containing `"revision"`. This is also
+      exactly the guard every desktop `expected_revision` IPC argument
+      (`host_commands.rs::parse_snapshot_revision` and its callers) depends on;
+- [x] non-idempotent commands not automatically retried — every frontend `invoke()` call in
+      `desktop/src/core/client.ts` funnels through the single `invokeDesktop<T>` wrapper
+      (`client.ts:211`), which is a plain `try { return await invoke(...) } catch { throw
+      DesktopBridgeInvocationError }` — no loop, no retry, no backoff. `retryable: boolean` on
+      `DesktopErrorDto` is surfaced to Redux state (`app/coreSlice.ts`, `screens/HostSessionScreen.tsx`,
+      `screens/LabScreen.tsx`) purely as UI metadata for an operator-triggered manual retry button;
+      `grep -rn "retryable" desktop/src` confirms no code path re-invokes a command based on it.
 
 ### 43.3 Dependency review
 
-For every desktop dependency:
+Full per-dependency table (exact version, license, features, reason, platform behavior, transitive
+native requirement) recorded in `memory.md`'s `2026-08-10T22:40:05Z` entry — 15 direct
+`desktop/src-tauri/Cargo.toml` crates and 23 direct `desktop/package.json` entries (7 runtime + 16
+dev), all reviewed.
 
-- [ ] exact version;
-- [ ] license;
-- [ ] features;
-- [ ] security advisory check;
-- [ ] reason required;
-- [ ] platform behavior;
-- [ ] transitive native requirements.
+- [x] exact version — `desktop/src-tauri/Cargo.toml` pins every direct dependency with `=`; every
+      `desktop/package.json` entry is now an exact version (the one non-exact pin,
+      `@testing-library/user-event: "^14.6.3"` from Block 42, is fixed to `"14.6.3"` this block);
+- [x] license — all 15 Rust direct deps and all 23 npm direct deps are MIT, Apache-2.0, or
+      dual MIT/Apache-2.0 (`ts-rs` and `netdev` are MIT-only; `cpal` is Apache-2.0-only); no
+      copyleft/GPL dependency found;
+- [x] features — recorded per-crate in `memory.md`; notable non-defaults: `p256` = `["ecdsa",
+      "pkcs8"]` (invitation signing only, no TLS/curve bloat), `serde` = `["derive"]`, `ts-rs` =
+      `["serde-compat", "no-serde-warnings"]`; `cpal`'s own `default = []` means no `jack`/
+      `pipewire`/`pulseaudio`/`asio` backend is compiled in, only the platform-default backend
+      (ALSA on Linux); `keyring`'s `default = ["v1"]` enables exactly the OS-native backends
+      (Secret Service on Linux via `zbus`, Keychain on macOS, Credential Manager on Windows), no
+      `db-keystore` fallback;
+- [x] security advisory check — **run for real, not skipped.** `cargo audit` (v0.22.2, installed
+      this block; not present beforehand) against the pinned `Cargo.lock`: **0 vulnerabilities**, 18
+      allowed warnings, all "unmaintained"/"unsound" advisories on *transitive* Linux GTK3 webview
+      bindings (`atk`/`gdk`/`gtk`/`glib` 0.18.x, pulled in by `tauri`'s Linux `wry` runtime, not a
+      direct dependency choice) plus `paste`, `proc-macro-error`, and four `unic-*` crates (also
+      transitive). No advisory names a direct dependency of this crate. `npm audit`: found one
+      **high** transitive advisory (`nanoid < 3.3.17`, GHSA-2v37-7h3g-55p8, `zero-size custom
+      generator` denial-of-service), reachable only through `postcss` (a `devDependency`-only,
+      build-time-only chain — `"dev": true` in `package-lock.json`, never shipped in the production
+      `dist/` bundle nor callable from the running app); fixed with `npm audit fix` → `npm audit`
+      now reports **0 vulnerabilities**;
+- [x] reason required — recorded per-crate in `memory.md`; every dependency maps to one real
+      feature (audio playback, invitation signing, OS credential storage, LAN interface enumeration,
+      mDNS discovery, native file dialogs, IPC/DTO codegen, staged-file writes, etc.) — none is
+      speculative. One genuinely unused dependency was found and removed:
+      `@tauri-apps/plugin-dialog` (npm) — added at initial scaffold, but every dialog interaction in
+      this codebase is backend-driven (`tauri_plugin_dialog::DialogExt` from Rust, per spec 13.3),
+      so the frontend package was never imported anywhere (`grep -rln "plugin-dialog"
+      desktop/src` was empty before removal);
+- [x] platform behavior — recorded per-crate in `memory.md`; e.g. `cpal` uses ALSA on Linux,
+      CoreAudio on macOS, WASAPI on Windows; `keyring` uses Secret Service (D-Bus) on Linux,
+      Keychain on macOS, Credential Manager on Windows; `netdev` has separate Android/Apple
+      System-Configuration feature branches (both compiled in by its own `default` feature set,
+      inert on desktop Linux/macOS/Windows targets since they're behind target `cfg`s upstream);
+- [x] transitive native requirement — `cpal` → system ALSA (`libasound`) on Linux via the `alsa`
+      crate; `keyring`'s Linux backend (`zbus-secret-service-keyring-store`) is pure-Rust D-Bus, no
+      C library, but needs a running Secret Service provider (e.g. `gnome-keyring-daemon`) at
+      runtime; `tauri` (via `tauri-runtime-wry`) requires system GTK3 + WebKit2GTK
+      (`libgtk-3`, `libwebkit2gtk-4.1`) on Linux, confirmed by the `atk`/`gdk`/`gtk`/`webkit2gtk`/
+      `soup3`/`javascriptcore-rs` crates actually compiling during `cargo clippy`/`cargo test`;
+      `netdev` uses Linux netlink (`netlink-sys`/`netlink-packet-route`), no C library.
 
-**Acceptance:** Desktop privileges and dependencies are intentional and minimal.
+**Acceptance:** Desktop privileges and dependencies are intentional and minimal. Met: least-privilege
+capability confirmed by direct read of the ACL manifest (only 9 harmless core sub-permissions, no
+fs/shell/http/dialog grant), every command's input/bound/path handling verified by reading its full
+body (not sampled), one real bounded-payload gap and one real untested-policy gap found and fixed
+with production-facing tests, one genuinely unused dependency removed, and both `cargo audit` and
+`npm audit` actually executed with real (not paraphrased) output — 0 vulnerabilities in both after
+the `npm audit fix`.
 
 ---
 
