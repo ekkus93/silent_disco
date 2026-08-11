@@ -93,7 +93,14 @@ impl super::LiveTransportDriver {
             .any(|link| &link.from == from && &link.to == to)
     }
 
-    pub(super) fn shutdown(&mut self) -> Result<(), DesktopErrorDto> {
+    /// Shuts down every live listener and host transport in deterministic
+    /// node order, preserving all cleanup failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an aggregated transport error if any listener or host fails to
+    /// shut down or disappears unexpectedly during cleanup.
+    pub(in crate::lab::scenario) fn shutdown(&mut self) -> Result<(), DesktopErrorDto> {
         let mut failure = None;
         let mut listener_ids: Vec<NodeId> = self.listeners.keys().cloned().collect();
         listener_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
