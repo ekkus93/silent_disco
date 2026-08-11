@@ -14,7 +14,7 @@ pub mod file_picker;
 mod host_join_projection;
 mod host_pending_handshake;
 pub(crate) mod host_transport;
-mod host_transport_events;
+pub(crate) mod host_transport_events;
 pub mod identity;
 pub(crate) mod invitation;
 pub mod invitation_identity;
