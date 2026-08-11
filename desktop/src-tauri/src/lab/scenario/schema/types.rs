@@ -141,7 +141,10 @@ impl fmt::Display for ScenarioValidationError {
                 write!(formatter, "{field} references undeclared node '{node}'")
             }
             Self::UnknownFixture { field, fixture } => {
-                write!(formatter, "{field} references undeclared fixture '{fixture}'")
+                write!(
+                    formatter,
+                    "{field} references undeclared fixture '{fixture}'"
+                )
             }
             Self::LinkOutOfBounds { field, limit } => {
                 write!(formatter, "link {field} exceeds the bound of {limit}")

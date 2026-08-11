@@ -1,7 +1,7 @@
 use super::types::{
-    MAX_ASSERTIONS, MAX_ERROR_CODE_BYTES, MAX_FIXTURES, MAX_LINKS, MAX_LINK_JITTER_MS,
-    MAX_LINK_LATENCY_MS, MAX_LOSS_PERMILLE, MAX_NODES, MAX_SCENARIO_DURATION_MS, MAX_STEPS,
-    Scenario, ScenarioAction, ScenarioAssertion, ScenarioValidationError,
+    MAX_ASSERTIONS, MAX_ERROR_CODE_BYTES, MAX_FIXTURES, MAX_LINK_JITTER_MS, MAX_LINK_LATENCY_MS,
+    MAX_LINKS, MAX_LOSS_PERMILLE, MAX_NODES, MAX_SCENARIO_DURATION_MS, MAX_STEPS, Scenario,
+    ScenarioAction, ScenarioAssertion, ScenarioValidationError,
 };
 use std::collections::{HashMap, HashSet};
 
