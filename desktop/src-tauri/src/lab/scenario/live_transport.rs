@@ -1,10 +1,4 @@
-//! Live virtual-transport adapter for Lab scenarios.
-//!
-//! This bridge executes actor-emitted platform/transport effects against one
-//! shared [`VirtualTransportNetwork`]. Control frames travel through the real
-//! codec/transport implementation, and an approved listener immediately runs
-//! one production-shaped synchronization exchange so a scenario's
-//! `latencyMs`/`jitterMs`/`lossPermille` values affect actual live traffic.
+//! Production-shaped live virtual-transport adapter for deterministic Lab scenarios.
 
 mod observer;
 mod support;
