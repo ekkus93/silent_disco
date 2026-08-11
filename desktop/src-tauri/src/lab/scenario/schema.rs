@@ -1,18 +1,230 @@
-use super::legacy;
+use crate::lab::MAX_LAB_NODES;
 use serde::de::Error as _;
-use serde::{Deserialize, Deserializer};
-use silent_disco_core::domain::{AppRole, EnumDecodeError, SyncConfidence};
-use std::collections::{HashMap, HashSet};
-
-pub(crate) use legacy::{
-    FixtureId, NodeId, ScenarioAssertion, ScenarioClock, ScenarioFixture, ScenarioLink,
-    ScenarioLifecycleTarget, ScenarioParseError, ScenarioValidationError, TerminationPolicy,
-    MAX_ASSERTIONS, MAX_DISPLAY_NAME_BYTES, MAX_FIXTURES, MAX_ID_BYTES, MAX_LINKS,
-    MAX_LINK_JITTER_MS, MAX_LINK_LATENCY_MS, MAX_LOSS_PERMILLE, MAX_NODES,
-    MAX_SCENARIO_DURATION_MS, MAX_SCENARIO_FILE_BYTES, MAX_STEPS,
+use serde::{Deserialize, Deserializer, Serialize};
+use silent_disco_core::domain::{
+    AppRole, DeliverySeverity, EnumDecodeError, HostLifecycle, ListenerLifecycle, PlaybackState,
+    SyncConfidence,
 };
+use silent_disco_core::runtime::PermissionCapability;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 
-pub(crate) const SCHEMA_VERSION: u32 = legacy::SCHEMA_VERSION;
+pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const MAX_NODES: usize = MAX_LAB_NODES;
+pub(crate) const MAX_LINKS: usize = 64;
+pub(crate) const MAX_FIXTURES: usize = 32;
+pub(crate) const MAX_STEPS: usize = 256;
+pub(crate) const MAX_ASSERTIONS: usize = 128;
+pub(crate) const MAX_ID_BYTES: usize = 64;
+pub(crate) const MAX_DISPLAY_NAME_BYTES: usize = 256;
+const MAX_TOKEN_BYTES: usize = 256;
+const MAX_ERROR_CODE_BYTES: usize = 128;
+pub(crate) const MAX_SCENARIO_DURATION_MS: u64 = 24 * 60 * 60 * 1_000;
+pub(crate) const MAX_LINK_LATENCY_MS: u64 = 60_000;
+pub(crate) const MAX_LINK_JITTER_MS: u64 = 60_000;
+pub(crate) const MAX_LOSS_PERMILLE: u16 = 1_000;
+pub(crate) const MAX_SCENARIO_FILE_BYTES: usize = 1024 * 1024;
+
+fn parse_bounded_token(kind: &'static str, value: &str) -> Result<String, ScenarioValidationError> {
+    if value.is_empty() || value.len() > MAX_ID_BYTES {
+        return Err(ScenarioValidationError::InvalidToken {
+            kind,
+            reason: "blank or oversized",
+        });
+    }
+    let first_last_ok = value
+        .as_bytes()
+        .first()
+        .zip(value.as_bytes().last())
+        .is_some_and(|(first, last)| first.is_ascii_alphanumeric() && last.is_ascii_alphanumeric());
+    if !first_last_ok {
+        return Err(ScenarioValidationError::InvalidToken {
+            kind,
+            reason: "must start and end with an ASCII letter or digit",
+        });
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(ScenarioValidationError::InvalidToken {
+            kind,
+            reason: "may contain only ASCII letters, digits, '-' and '_'",
+        });
+    }
+    Ok(value.to_owned())
+}
+
+macro_rules! define_scenario_token {
+    ($name:ident, $kind:literal) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+        #[serde(transparent)]
+        pub(crate) struct $name(String);
+
+        impl $name {
+            #[must_use]
+            pub(crate) fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let value = String::deserialize(deserializer)?;
+                parse_bounded_token($kind, &value)
+                    .map(Self)
+                    .map_err(D::Error::custom)
+            }
+        }
+    };
+}
+
+define_scenario_token!(NodeId, "node id");
+define_scenario_token!(FixtureId, "fixture id");
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ScenarioValidationError {
+    InvalidToken {
+        kind: &'static str,
+        reason: &'static str,
+    },
+    TooMany {
+        field: &'static str,
+        limit: usize,
+    },
+    DurationOutOfBounds {
+        field: &'static str,
+        limit: u64,
+    },
+    DuplicateNodeId(String),
+    UnknownNode {
+        field: &'static str,
+        node: String,
+    },
+    UnknownFixture {
+        field: &'static str,
+        fixture: String,
+    },
+    LinkOutOfBounds {
+        field: &'static str,
+        limit: u64,
+    },
+    AmbiguousInboundLinkFaults {
+        node: String,
+    },
+    StepsNotTimeOrdered {
+        index: usize,
+    },
+}
+
+impl fmt::Display for ScenarioValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidToken { kind, reason } => write!(formatter, "invalid {kind}: {reason}"),
+            Self::TooMany { field, limit } => write!(formatter, "{field} exceeds the bound of {limit}"),
+            Self::DurationOutOfBounds { field, limit } => {
+                write!(formatter, "{field} exceeds the bound of {limit} ms")
+            }
+            Self::DuplicateNodeId(id) => write!(formatter, "duplicate node id '{id}'"),
+            Self::UnknownNode { field, node } => {
+                write!(formatter, "{field} references undeclared node '{node}'")
+            }
+            Self::UnknownFixture { field, fixture } => {
+                write!(formatter, "{field} references undeclared fixture '{fixture}'")
+            }
+            Self::LinkOutOfBounds { field, limit } => {
+                write!(formatter, "link {field} exceeds the bound of {limit}")
+            }
+            Self::AmbiguousInboundLinkFaults { node } => write!(
+                formatter,
+                "node '{node}' has conflicting inbound receive-fault profiles; the current virtual transport applies latency/jitter/loss per receiving node, not per peer"
+            ),
+            Self::StepsNotTimeOrdered { index } => write!(
+                formatter,
+                "step {index} has an earlier atMs than the step before it"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ScenarioValidationError {}
+
+#[derive(Debug)]
+pub(crate) enum ScenarioParseError {
+    TooLarge { limit: usize },
+    NotUtf8OrJson(serde_json::Error),
+    MissingSchemaVersion,
+    UnknownSchemaVersion { found: u64 },
+    Shape(serde_json::Error),
+}
+
+impl fmt::Display for ScenarioParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge { limit } => {
+                write!(formatter, "scenario file exceeds the bound of {limit} bytes")
+            }
+            Self::NotUtf8OrJson(error) => write!(formatter, "scenario file is not valid JSON: {error}"),
+            Self::MissingSchemaVersion => formatter.write_str("scenario file has no schemaVersion field"),
+            Self::UnknownSchemaVersion { found } => write!(
+                formatter,
+                "unsupported schemaVersion {found}, expected {SCHEMA_VERSION}"
+            ),
+            Self::Shape(error) => write!(formatter, "scenario file does not match the schema: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ScenarioParseError {}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ScenarioNode {
+    pub(crate) id: NodeId,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ScenarioClock {
+    #[serde(default)]
+    pub(crate) offset_ms: i64,
+    #[serde(default)]
+    pub(crate) drift_ppm: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ScenarioLink {
+    pub(crate) from: NodeId,
+    pub(crate) to: NodeId,
+    #[serde(default)]
+    pub(crate) latency_ms: u64,
+    #[serde(default)]
+    pub(crate) jitter_ms: u64,
+    #[serde(default)]
+    pub(crate) loss_permille: u16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ScenarioFixture {
+    pub(crate) id: FixtureId,
+    #[serde(deserialize_with = "deserialize_display_name")]
+    pub(crate) display_name: String,
+    #[serde(default)]
+    pub(crate) byte_length: Option<u64>,
+    #[serde(default)]
+    pub(crate) duration_ms: Option<u64>,
+}
 
 fn decode_wire_name<'de, D, T>(
     deserializer: D,
@@ -39,7 +251,30 @@ where
     decode_wire_name(deserializer, SyncConfidence::from_wire_name)
 }
 
-fn deserialize_session_name<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_delivery_severity<'de, D>(deserializer: D) -> Result<DeliverySeverity, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    decode_wire_name(deserializer, DeliverySeverity::from_wire_name)
+}
+
+fn deserialize_permission_capability<'de, D>(deserializer: D) -> Result<PermissionCapability, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    match value.as_str() {
+        "nearbyDiscovery" => Ok(PermissionCapability::NearbyDiscovery),
+        "nearbyAdvertising" => Ok(PermissionCapability::NearbyAdvertising),
+        "localNetwork" => Ok(PermissionCapability::LocalNetwork),
+        "audioSourceSelection" => Ok(PermissionCapability::AudioSourceSelection),
+        "audioOutput" => Ok(PermissionCapability::AudioOutput),
+        "secureStore" => Ok(PermissionCapability::SecureStore),
+        other => Err(D::Error::custom(format!("unknown capability '{other}'"))),
+    }
+}
+
+fn deserialize_display_name<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -49,7 +284,9 @@ where
         || value.len() > MAX_DISPLAY_NAME_BYTES
         || value.chars().any(char::is_control)
     {
-        return Err(D::Error::custom("sessionName is blank, oversized, whitespace-surrounded, or contains control characters"));
+        return Err(D::Error::custom(
+            "display name is blank, oversized, whitespace-surrounded, or contains control characters",
+        ));
     }
     Ok(value)
 }
@@ -59,19 +296,23 @@ where
     D: Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
-    if value.is_empty() || value.len() > legacy::MAX_TOKEN_BYTES {
+    if value.is_empty() || value.len() > MAX_TOKEN_BYTES {
         return Err(D::Error::custom("sessionId is blank or oversized"));
     }
     Ok(value)
 }
 
-/// A timed Lab action. Every domain operation still maps to the real
-/// `CoreCommand`/event surface; the two additions here are the minimum needed
-/// to make a complete live host/listener flow expressible now that discovery
-/// and transport are real:
-///
-/// - `configureHost` maps to `CoreCommand::UpdateHostDraft`;
-/// - `selectSession` maps to `CoreCommand::SelectSession`.
+fn deserialize_bounded_optional_token<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    if value.as_ref().is_some_and(|token| token.len() > MAX_TOKEN_BYTES) {
+        return Err(D::Error::custom("token is oversized"));
+    }
+    Ok(value)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum ScenarioAction {
@@ -81,7 +322,7 @@ pub(crate) enum ScenarioAction {
     },
     #[serde(rename_all = "camelCase")]
     ConfigureHost {
-        #[serde(deserialize_with = "deserialize_session_name")]
+        #[serde(deserialize_with = "deserialize_display_name")]
         session_name: String,
         fixture: FixtureId,
     },
@@ -96,7 +337,7 @@ pub(crate) enum ScenarioAction {
     },
     #[serde(rename_all = "camelCase")]
     SubmitJoin {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_bounded_optional_token")]
         invite_code: Option<String>,
     },
     CancelJoin,
@@ -107,31 +348,21 @@ pub(crate) enum ScenarioAction {
         remember_for_future: bool,
     },
     #[serde(rename_all = "camelCase")]
-    RejectJoin {
-        request_id: String,
-    },
+    RejectJoin { request_id: String },
     #[serde(rename_all = "camelCase")]
-    RemoveListener {
-        listener_node: NodeId,
-    },
-    StartPlayback {
-        fixture: FixtureId,
-    },
+    RemoveListener { listener_node: NodeId },
+    StartPlayback { fixture: FixtureId },
     PausePlayback,
     ResumePlayback,
     StopPlayback,
     #[serde(rename_all = "camelCase")]
-    SetLocalVolume {
-        linear_gain: f32,
-    },
+    SetLocalVolume { linear_gain: f32 },
     RequestResync,
     RetryRecoverableFailure,
     ExportDiagnostics,
     Shutdown,
     #[serde(rename_all = "camelCase")]
-    InjectUnderrun {
-        missing_frames: u32,
-    },
+    InjectUnderrun { missing_frames: u32 },
     #[serde(rename_all = "camelCase")]
     InjectSynchronizationUpdated {
         #[serde(deserialize_with = "deserialize_sync_confidence")]
@@ -150,83 +381,158 @@ pub(crate) enum ScenarioAction {
     },
 }
 
-impl ScenarioAction {
-    pub(super) fn requires_live_runner(&self) -> bool {
-        matches!(self, Self::ConfigureHost { .. } | Self::SelectSession { .. })
+macro_rules! define_wire_enum_field {
+    ($wrapper:ident, $inner:ty, $decode:path) => {
+        #[derive(Debug, Clone, Copy)]
+        pub(crate) struct $wrapper(pub(crate) $inner);
+
+        impl<'de> Deserialize<'de> for $wrapper {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                decode_wire_name(deserializer, $decode).map(Self)
+            }
+        }
+    };
+}
+
+define_wire_enum_field!(WireAppRole, AppRole, AppRole::from_wire_name);
+define_wire_enum_field!(WireHostLifecycle, HostLifecycle, HostLifecycle::from_wire_name);
+define_wire_enum_field!(
+    WireListenerLifecycle,
+    ListenerLifecycle,
+    ListenerLifecycle::from_wire_name
+);
+define_wire_enum_field!(WirePlaybackState, PlaybackState, PlaybackState::from_wire_name);
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "machine", content = "state", rename_all = "camelCase")]
+pub(crate) enum ScenarioLifecycleTarget {
+    Role(WireAppRole),
+    Host(WireHostLifecycle),
+    Listener(WireListenerLifecycle),
+    Playback(WirePlaybackState),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) enum ScenarioAssertion {
+    #[serde(rename_all = "camelCase")]
+    LifecycleReached {
+        by_ms: u64,
+        node: NodeId,
+        target: ScenarioLifecycleTarget,
+    },
+    #[serde(rename_all = "camelCase")]
+    CapabilityAvailable {
+        by_ms: u64,
+        node: NodeId,
+        #[serde(deserialize_with = "deserialize_permission_capability")]
+        capability: PermissionCapability,
+        available: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    ListenerCountAtLeast { by_ms: u64, node: NodeId, count: u32 },
+    #[serde(rename_all = "camelCase")]
+    SyncConfidenceAtLeast {
+        by_ms: u64,
+        node: NodeId,
+        #[serde(deserialize_with = "deserialize_sync_confidence")]
+        confidence: SyncConfidence,
+    },
+    #[serde(rename_all = "camelCase")]
+    SynchronizationWithinBounds {
+        by_ms: u64,
+        node: NodeId,
+        #[serde(default)]
+        max_abs_offset_ms: Option<f64>,
+        #[serde(default)]
+        max_round_trip_ms: Option<f64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ErrorCodeObserved { by_ms: u64, node: NodeId, code: String },
+    #[serde(rename_all = "camelCase")]
+    DeliverySeverityIs {
+        by_ms: u64,
+        node: NodeId,
+        #[serde(deserialize_with = "deserialize_delivery_severity")]
+        severity: DeliverySeverity,
+    },
+    #[serde(rename_all = "camelCase")]
+    UnderrunFramesAtMost {
+        by_ms: u64,
+        node: NodeId,
+        max_total_missing_frames: u32,
+    },
+    #[serde(rename_all = "camelCase")]
+    CleanShutdown { by_ms: u64, node: NodeId },
+    #[serde(rename_all = "camelCase")]
+    NoUnexpectedFatalError { by_ms: u64, node: NodeId },
+}
+
+impl ScenarioAssertion {
+    pub(super) fn by_ms(&self) -> u64 {
+        match self {
+            Self::LifecycleReached { by_ms, .. }
+            | Self::CapabilityAvailable { by_ms, .. }
+            | Self::ListenerCountAtLeast { by_ms, .. }
+            | Self::SyncConfidenceAtLeast { by_ms, .. }
+            | Self::SynchronizationWithinBounds { by_ms, .. }
+            | Self::ErrorCodeObserved { by_ms, .. }
+            | Self::DeliverySeverityIs { by_ms, .. }
+            | Self::UnderrunFramesAtMost { by_ms, .. }
+            | Self::CleanShutdown { by_ms, .. }
+            | Self::NoUnexpectedFatalError { by_ms, .. } => *by_ms,
+        }
     }
 
-    fn validation_surrogate(&self) -> legacy::ScenarioAction {
+    pub(super) fn node(&self) -> &NodeId {
         match self {
-            Self::SelectRole { role } => legacy::ScenarioAction::SelectRole { role: *role },
-            // The legacy validator only needs a fixture-bearing action here;
-            // StartPlayback applies the same declared-fixture cross-reference
-            // check that configureHost needs.
-            Self::ConfigureHost { fixture, .. } => legacy::ScenarioAction::StartPlayback {
-                fixture: fixture.clone(),
-            },
-            Self::CreateHostSession => legacy::ScenarioAction::CreateHostSession,
-            Self::EndHostSession => legacy::ScenarioAction::EndHostSession,
-            Self::StartDiscovery => legacy::ScenarioAction::StartDiscovery,
-            Self::StopDiscovery => legacy::ScenarioAction::StopDiscovery,
-            // Session ID shape is bounded by this module's deserializer and
-            // the real SessionId constructor during command creation. There
-            // is no additional cross-reference the legacy validator can add.
-            Self::SelectSession { .. } => legacy::ScenarioAction::ExportDiagnostics,
-            Self::SubmitJoin { invite_code } => legacy::ScenarioAction::SubmitJoin {
-                invite_code: invite_code.clone(),
-            },
-            Self::CancelJoin => legacy::ScenarioAction::CancelJoin,
-            Self::ApproveJoin {
-                request_id,
-                remember_for_future,
-            } => legacy::ScenarioAction::ApproveJoin {
-                request_id: request_id.clone(),
-                remember_for_future: *remember_for_future,
-            },
-            Self::RejectJoin { request_id } => legacy::ScenarioAction::RejectJoin {
-                request_id: request_id.clone(),
-            },
-            Self::RemoveListener { listener_node } => legacy::ScenarioAction::RemoveListener {
-                listener_node: listener_node.clone(),
-            },
-            Self::StartPlayback { fixture } => legacy::ScenarioAction::StartPlayback {
-                fixture: fixture.clone(),
-            },
-            Self::PausePlayback => legacy::ScenarioAction::PausePlayback,
-            Self::ResumePlayback => legacy::ScenarioAction::ResumePlayback,
-            Self::StopPlayback => legacy::ScenarioAction::StopPlayback,
-            Self::SetLocalVolume { linear_gain } => legacy::ScenarioAction::SetLocalVolume {
-                linear_gain: *linear_gain,
-            },
-            Self::RequestResync => legacy::ScenarioAction::RequestResync,
-            Self::RetryRecoverableFailure => legacy::ScenarioAction::RetryRecoverableFailure,
-            Self::ExportDiagnostics => legacy::ScenarioAction::ExportDiagnostics,
-            Self::Shutdown => legacy::ScenarioAction::Shutdown,
-            Self::InjectUnderrun { missing_frames } => legacy::ScenarioAction::InjectUnderrun {
-                missing_frames: *missing_frames,
-            },
-            Self::InjectSynchronizationUpdated {
-                confidence,
-                offset_ms,
-                round_trip_ms,
-                drift_ppm,
-            } => legacy::ScenarioAction::InjectSynchronizationUpdated {
-                confidence: *confidence,
-                offset_ms: *offset_ms,
-                round_trip_ms: *round_trip_ms,
-                drift_ppm: *drift_ppm,
-            },
-            Self::InjectDeliveryCompleted {
-                operation_id,
-                intended_peers,
-                successful_peers,
-                failed_peers,
-            } => legacy::ScenarioAction::InjectDeliveryCompleted {
-                operation_id: operation_id.clone(),
-                intended_peers: *intended_peers,
-                successful_peers: *successful_peers,
-                failed_peers: *failed_peers,
-            },
+            Self::LifecycleReached { node, .. }
+            | Self::CapabilityAvailable { node, .. }
+            | Self::ListenerCountAtLeast { node, .. }
+            | Self::SyncConfidenceAtLeast { node, .. }
+            | Self::SynchronizationWithinBounds { node, .. }
+            | Self::ErrorCodeObserved { node, .. }
+            | Self::DeliverySeverityIs { node, .. }
+            | Self::UnderrunFramesAtMost { node, .. }
+            | Self::CleanShutdown { node, .. }
+            | Self::NoUnexpectedFatalError { node, .. } => node,
+        }
+    }
+
+    pub(super) fn kind_name(&self) -> &'static str {
+        match self {
+            Self::LifecycleReached { .. } => "lifecycleReached",
+            Self::CapabilityAvailable { .. } => "capabilityAvailable",
+            Self::ListenerCountAtLeast { .. } => "listenerCountAtLeast",
+            Self::SyncConfidenceAtLeast { .. } => "syncConfidenceAtLeast",
+            Self::SynchronizationWithinBounds { .. } => "synchronizationWithinBounds",
+            Self::ErrorCodeObserved { .. } => "errorCodeObserved",
+            Self::DeliverySeverityIs { .. } => "deliverySeverityIs",
+            Self::UnderrunFramesAtMost { .. } => "underrunFramesAtMost",
+            Self::CleanShutdown { .. } => "cleanShutdown",
+            Self::NoUnexpectedFatalError { .. } => "noUnexpectedFatalError",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TerminationPolicy {
+    #[serde(default = "default_true")]
+    pub(crate) stop_on_assertion_failure: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for TerminationPolicy {
+    fn default() -> Self {
+        Self {
+            stop_on_assertion_failure: true,
         }
     }
 }
@@ -245,7 +551,7 @@ pub(crate) struct Scenario {
     pub(crate) schema_version: u32,
     pub(crate) seed: u64,
     #[serde(default)]
-    pub(crate) nodes: Vec<legacy::ScenarioNode>,
+    pub(crate) nodes: Vec<ScenarioNode>,
     #[serde(default)]
     pub(crate) links: Vec<ScenarioLink>,
     #[serde(default)]
@@ -257,80 +563,170 @@ pub(crate) struct Scenario {
     #[serde(default)]
     pub(crate) assertions: Vec<ScenarioAssertion>,
     pub(crate) timeout_ms: u64,
-    #[serde(default = "default_termination_policy")]
+    #[serde(default)]
     pub(crate) termination: TerminationPolicy,
-}
-
-fn default_termination_policy() -> TerminationPolicy {
-    TerminationPolicy {
-        stop_on_assertion_failure: true,
-    }
 }
 
 impl Scenario {
     pub(crate) fn validate(&self) -> Result<(), ScenarioValidationError> {
-        // Preserve Block 40's exact bounds/reference validation by converting
-        // to a validation-only legacy shape. The two new actions use
-        // semantically equivalent surrogates only for validation; execution
-        // never goes through those surrogates.
-        self.as_legacy_validation_scenario().validate()?;
+        self.validate_bounds()?;
+        let known_nodes = self.known_node_ids()?;
+        let known_fixtures: HashSet<&str> = self
+            .fixtures
+            .iter()
+            .map(|fixture| fixture.id.as_str())
+            .collect();
+        self.validate_links(&known_nodes)?;
+        self.validate_clocks(&known_nodes)?;
+        self.validate_steps(&known_nodes, &known_fixtures)?;
+        self.validate_assertions(&known_nodes)
+    }
 
-        // A node-targeted receive fault is one real transport-node wrapper.
-        // The current shared virtual transport cannot represent two different
-        // receive profiles for the same target node. Reject that topology
-        // explicitly rather than silently selecting one link's values.
+    fn validate_bounds(&self) -> Result<(), ScenarioValidationError> {
+        for (field, actual, limit) in [
+            ("nodes", self.nodes.len(), MAX_NODES),
+            ("links", self.links.len(), MAX_LINKS),
+            ("fixtures", self.fixtures.len(), MAX_FIXTURES),
+            ("steps", self.steps.len(), MAX_STEPS),
+            ("assertions", self.assertions.len(), MAX_ASSERTIONS),
+        ] {
+            if actual > limit {
+                return Err(ScenarioValidationError::TooMany { field, limit });
+            }
+        }
+        if self.timeout_ms > MAX_SCENARIO_DURATION_MS {
+            return Err(ScenarioValidationError::DurationOutOfBounds {
+                field: "timeoutMs",
+                limit: MAX_SCENARIO_DURATION_MS,
+            });
+        }
+        Ok(())
+    }
+
+    fn known_node_ids(&self) -> Result<HashSet<&str>, ScenarioValidationError> {
+        let mut known_nodes = HashSet::new();
+        for node in &self.nodes {
+            if !known_nodes.insert(node.id.as_str()) {
+                return Err(ScenarioValidationError::DuplicateNodeId(node.id.to_string()));
+            }
+        }
+        Ok(known_nodes)
+    }
+
+    fn validate_links(&self, known_nodes: &HashSet<&str>) -> Result<(), ScenarioValidationError> {
         let mut incoming: HashMap<&str, (u64, u64, u16)> = HashMap::new();
         for link in &self.links {
+            for (field, node) in [("links[].from", &link.from), ("links[].to", &link.to)] {
+                if !known_nodes.contains(node.as_str()) {
+                    return Err(ScenarioValidationError::UnknownNode {
+                        field,
+                        node: node.to_string(),
+                    });
+                }
+            }
+            for (field, actual, limit) in [
+                ("latencyMs", link.latency_ms, MAX_LINK_LATENCY_MS),
+                ("jitterMs", link.jitter_ms, MAX_LINK_JITTER_MS),
+                ("lossPermille", u64::from(link.loss_permille), u64::from(MAX_LOSS_PERMILLE)),
+            ] {
+                if actual > limit {
+                    return Err(ScenarioValidationError::LinkOutOfBounds { field, limit });
+                }
+            }
             let profile = (link.latency_ms, link.jitter_ms, link.loss_permille);
             if let Some(existing) = incoming.insert(link.to.as_str(), profile)
                 && existing != profile
             {
-                return Err(ScenarioValidationError::LinkOutOfBounds {
-                    field: "multiple inbound links require one receive fault profile per target node",
-                    limit: 0,
-                });
-            }
-        }
-
-        let fixtures: HashSet<&str> = self.fixtures.iter().map(|fixture| fixture.id.as_str()).collect();
-        for step in &self.steps {
-            if let ScenarioAction::ConfigureHost { fixture, .. } = &step.action
-                && !fixtures.contains(fixture.as_str())
-            {
-                return Err(ScenarioValidationError::UnknownFixture {
-                    field: "steps[].action.fixture",
-                    fixture: fixture.to_string(),
+                return Err(ScenarioValidationError::AmbiguousInboundLinkFaults {
+                    node: link.to.to_string(),
                 });
             }
         }
         Ok(())
     }
 
-    pub(super) fn requires_live_runner(&self) -> bool {
-        !self.links.is_empty() || self.steps.iter().any(|step| step.action.requires_live_runner())
+    fn validate_clocks(&self, known_nodes: &HashSet<&str>) -> Result<(), ScenarioValidationError> {
+        for node in self.clocks.keys() {
+            if !known_nodes.contains(node.as_str()) {
+                return Err(ScenarioValidationError::UnknownNode {
+                    field: "clocks",
+                    node: node.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 
-    pub(super) fn as_legacy_validation_scenario(&self) -> legacy::Scenario {
-        legacy::Scenario {
-            schema_version: self.schema_version,
-            seed: self.seed,
-            nodes: self.nodes.clone(),
-            links: self.links.clone(),
-            clocks: self.clocks.clone(),
-            fixtures: self.fixtures.clone(),
-            steps: self
-                .steps
-                .iter()
-                .map(|step| legacy::ScenarioStep {
-                    at_ms: step.at_ms,
-                    node: step.node.clone(),
-                    action: step.action.validation_surrogate(),
-                })
-                .collect(),
-            assertions: self.assertions.clone(),
-            timeout_ms: self.timeout_ms,
-            termination: self.termination,
+    fn validate_steps(
+        &self,
+        known_nodes: &HashSet<&str>,
+        known_fixtures: &HashSet<&str>,
+    ) -> Result<(), ScenarioValidationError> {
+        let mut last_at_ms = 0;
+        for (index, step) in self.steps.iter().enumerate() {
+            if step.at_ms > MAX_SCENARIO_DURATION_MS {
+                return Err(ScenarioValidationError::DurationOutOfBounds {
+                    field: "steps[].atMs",
+                    limit: MAX_SCENARIO_DURATION_MS,
+                });
+            }
+            if index > 0 && step.at_ms < last_at_ms {
+                return Err(ScenarioValidationError::StepsNotTimeOrdered { index });
+            }
+            last_at_ms = step.at_ms;
+            if !known_nodes.contains(step.node.as_str()) {
+                return Err(ScenarioValidationError::UnknownNode {
+                    field: "steps[].node",
+                    node: step.node.to_string(),
+                });
+            }
+            let fixture = match &step.action {
+                ScenarioAction::ConfigureHost { fixture, .. }
+                | ScenarioAction::StartPlayback { fixture } => Some(fixture),
+                _ => None,
+            };
+            if fixture.is_some_and(|value| !known_fixtures.contains(value.as_str())) {
+                return Err(ScenarioValidationError::UnknownFixture {
+                    field: "steps[].action.fixture",
+                    fixture: fixture.expect("fixture is known Some").to_string(),
+                });
+            }
+            if let ScenarioAction::RemoveListener { listener_node } = &step.action
+                && !known_nodes.contains(listener_node.as_str())
+            {
+                return Err(ScenarioValidationError::UnknownNode {
+                    field: "steps[].action.listenerNode",
+                    node: listener_node.to_string(),
+                });
+            }
         }
+        Ok(())
+    }
+
+    fn validate_assertions(&self, known_nodes: &HashSet<&str>) -> Result<(), ScenarioValidationError> {
+        for assertion in &self.assertions {
+            if assertion.by_ms() > MAX_SCENARIO_DURATION_MS {
+                return Err(ScenarioValidationError::DurationOutOfBounds {
+                    field: "assertions[].byMs",
+                    limit: MAX_SCENARIO_DURATION_MS,
+                });
+            }
+            if !known_nodes.contains(assertion.node().as_str()) {
+                return Err(ScenarioValidationError::UnknownNode {
+                    field: "assertions[].node",
+                    node: assertion.node().to_string(),
+                });
+            }
+            if let ScenarioAssertion::ErrorCodeObserved { code, .. } = assertion
+                && (code.is_empty() || code.len() > MAX_ERROR_CODE_BYTES)
+            {
+                return Err(ScenarioValidationError::InvalidToken {
+                    kind: "error code",
+                    reason: "blank or oversized",
+                });
+            }
+        }
+        Ok(())
     }
 }
 
