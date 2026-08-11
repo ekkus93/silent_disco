@@ -15,6 +15,10 @@ pub(crate) enum ScenarioExecutionError {
     Descriptor(RuntimeRecordValidationError),
     IdentifierInvalid(String),
     UnknownNode(NodeId),
+    Teardown {
+        primary: Box<ScenarioExecutionError>,
+        cleanup: DesktopErrorDto,
+    },
 }
 
 impl fmt::Display for ScenarioExecutionError {
@@ -31,6 +35,11 @@ impl fmt::Display for ScenarioExecutionError {
             Self::UnknownNode(node) => {
                 write!(formatter, "unknown node '{node}' referenced at runtime")
             }
+            Self::Teardown { primary, cleanup } => write!(
+                formatter,
+                "{primary}; scenario teardown also failed: {}",
+                cleanup.message
+            ),
         }
     }
 }
