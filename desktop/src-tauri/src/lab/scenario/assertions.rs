@@ -100,29 +100,30 @@ pub(crate) fn evaluate_assertion(
         ScenarioAssertion::UnderrunFramesAtMost {
             max_total_missing_frames,
             ..
-        } => {
-            let mut total = 0_u64;
-            for entry in entries {
-                let RecordedNotificationKind::Diagnostic { name, fields } = &entry.kind else {
-                    continue;
-                };
-                if name != "audio_underrun" {
-                    continue;
-                }
-                let Some((_, value)) = fields.iter().find(|(key, _)| key == "missing_frames")
-                else {
-                    continue;
-                };
-                let Ok(missing) = value.parse::<u64>() else {
-                    return false;
-                };
-                total = total.saturating_add(missing);
-            }
-            total <= u64::from(*max_total_missing_frames)
-        }
+        } => underrun_frames_within_limit(entries, *max_total_missing_frames),
         ScenarioAssertion::CleanShutdown { .. }
         | ScenarioAssertion::NoUnexpectedFatalError { .. } => {
             !entries.iter().any(|entry| entry.kind.is_fatal_error())
         }
     }
+}
+
+fn underrun_frames_within_limit(entries: &[RecordedNotification], maximum_frames: u32) -> bool {
+    let mut total = 0_u64;
+    for entry in entries {
+        let RecordedNotificationKind::Diagnostic { name, fields } = &entry.kind else {
+            continue;
+        };
+        if name != "audio_underrun" {
+            continue;
+        }
+        let Some((_, value)) = fields.iter().find(|(key, _)| key == "missing_frames") else {
+            continue;
+        };
+        let Ok(missing) = value.parse::<u64>() else {
+            return false;
+        };
+        total = total.saturating_add(missing);
+    }
+    total <= u64::from(maximum_frames)
 }
