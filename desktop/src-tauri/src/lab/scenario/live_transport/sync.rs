@@ -63,7 +63,9 @@ impl LiveSyncState {
             t3_host_send_elapsed_ms,
         } = response;
         if session_id != self.session_id {
-            return Err("sync response session does not match the live Lab listener session".to_owned());
+            return Err(
+                "sync response session does not match the live Lab listener session".to_owned(),
+            );
         }
         let observation = self
             .estimator
