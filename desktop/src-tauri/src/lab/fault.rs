@@ -37,7 +37,8 @@ use silent_disco_core::protocol::{ControlMessage, SyncRequest};
 use silent_disco_core::transport::{
     DeterministicPrng, HostTransportConfig, HostTransportNode, ListenerDatagramRoutes,
     ListenerTransportConfig, ListenerTransportNode, TransportChannel, TransportClock,
-    TransportCounters, TransportDelivery, TransportError, TransportEvent, TransportFactory,
+    TransportCounters, TransportDelivery, TransportError, TransportErrorKind, TransportEvent,
+    TransportFactory,
 };
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -185,10 +186,11 @@ impl ListenerTransportNode for LabLatencyListenerTransport {
     }
 
     fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError> {
-        let mut held = self
-            .held
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut held = self.held.lock().map_err(|_| TransportError {
+            kind: TransportErrorKind::WorkerPanicked,
+            channel: TransportChannel::Runtime,
+            message: "Lab Mode latency fault state mutex was poisoned".to_owned(),
+        })?;
 
         // Anything already due is released before touching the underlying
         // transport. `received_at` is stamped only when the event crosses
