@@ -4989,3 +4989,111 @@ with final line counts/file list and per-invariant test evidence), `memory.md` (
 instructions.
 
 Not started: Task 7 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T21:33:23Z - Claude Sonnet 5 - Task 7: split transport/socket/host.rs into host/ module
+
+Split `rust/silent-disco-core/src/transport/socket/host.rs` (887 lines) into a directory module per
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 7, following its proposed responsibility
+boundaries with no changes needed. `socket/mod.rs`'s `mod host;` resolved onto `host/mod.rs`
+automatically, so `socket/mod.rs` needed zero edits.
+
+Final file list and line counts (`rust/silent-disco-core/src/transport/socket/host/`):
+
+- `mod.rs` -- **49 lines**: `#![allow(...)]` (unchanged 3-lint list, cascades to the whole subtree),
+  `mod` decls, the `SocketHostTransport` struct definition, `impl Drop`, and
+  `pub(super) use peer::{PeerRoute, PeerState};` (the re-export `host_workers.rs`'s existing
+  `use super::host::{PeerRoute, PeerState};` resolves through unchanged).
+- `peer.rs` -- **80 lines**: `PeerState` (struct + `impl`: `transport_peer`, `device_id`, `close`,
+  `mark_inbound_activity`, `is_inbound_silent`) and `PeerRoute`, moved verbatim.
+- `bind.rs` -- **241 lines**: `DATAGRAM_SEND_TIMEOUT` (with its full doc invariant) + `bind()`, moved
+  verbatim.
+- `lookup.rs` -- **113 lines**: `pending_peer_for_device`, `peer_for_device`, `authorized_routes`,
+  `record_peer_result`, all `pub(super)`, moved verbatim.
+- `broadcast.rs` -- **166 lines**: `broadcast_datagram` (`pub(super)`), `is_datagram_send_timeout`
+  (private, pure), and its existing `#[cfg(test)] mod send_timeout_classification_tests` kept nested
+  inline, moved verbatim.
+- `authorization.rs` -- **87 lines**: `authorize_peer_with_routes` (`pub(super)`), moved verbatim.
+- `node.rs` -- **237 lines**: `impl HostTransportNode for SocketHostTransport` (all 12 trait methods,
+  the one unsplittable-across-files trait impl block), moved verbatim, delegating into the above via
+  ordinary `self.method(...)` inherent-method calls (no imports needed for those since they're
+  inherent, not trait-provided).
+
+Total: **973 lines across 7 files**, replacing the original 887-line flat `host.rs` (removed).
+
+**The one real visibility design question this task raised, resolved:** `host_workers.rs` (a sibling
+of the new `host/` directory under `socket`) doesn't just import the `PeerState`/`PeerRoute` *type
+names* -- it directly constructs a full `PeerState { ... }` struct literal covering all 10 fields, and
+directly reads/writes essentially every field (`.authorized`, `.active`, `.stop`, `.remote`,
+`.identity`, `.number`, `.shutdown_stream`, plus `route.routes.synchronization`/`.audio` on
+`PeerRoute`) and calls `.transport_peer()`/`.device_id()`/`.mark_inbound_activity()`/`.close()`
+directly on `Arc<PeerState>` values. Since `PeerState`/`PeerRoute` now live one level deeper
+(`host::peer`, was `host` itself when `host.rs` was flat and sat directly under `socket`), a bare
+`pub(super)` at the new definition site would only reach the `host` subtree, not `host_workers.rs` at
+the `socket` level -- so both types, every one of their fields, and the four methods `host_workers.rs`
+calls needed `pub(in crate::transport::socket)` instead, mirroring the exact `pub(in crate::platform)`
+precedent recorded in the Task 3 entry above for the identical "definition moved deeper than its
+external consumers" situation. `PeerState::is_inbound_silent` is the one exception -- only consumed
+within the `host` subtree (`lookup.rs`'s `authorized_routes`), so it stayed at the narrower
+`pub(super)`. `SocketHostTransport`'s own struct fields (including `stop`, which was `pub(super)` in
+the original flat file even though nothing outside `host.rs` itself ever used it -- confirmed by grep)
+needed no visibility modifier at all and were narrowed to fully private: Rust's private-item rule
+already makes them visible to the defining module's descendants, and every new `host/*.rs` submodule
+is a descendant of `host` (where the struct is now defined in `mod.rs`), so `bind.rs`/`lookup.rs`/
+`broadcast.rs`/`authorization.rs`/`node.rs` all see them automatically with zero extra annotations.
+`DATAGRAM_SEND_TIMEOUT` turned out to need no visibility change at all -- every use site (both
+`set_write_timeout` calls) lives in the same file (`bind.rs`) as the const itself, so it stayed a
+plain private `const`, narrower than the original flat file's had to be.
+
+One real compile error caught by the first `cargo build` (not fabricated): `bind.rs` had an unused
+`use std::thread;` -- `thread::JoinHandle` is never named explicitly in `bind()` (the `workers` local
+is built via `Vec::new()` with the element type inferred from `spawn_accept_loop`'s return type), so
+the import was dead. Removed; `cargo fmt --all` then fixed four files' import ordering (alphabetical
+sort put `super::peer::...` after `super::SocketHostTransport` in `authorization.rs`/`lookup.rs`/
+`node.rs`) and one line-wrap (`record_peer_result`'s signature in `lookup.rs`) with no further manual
+intervention needed.
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-a60cfd26ea2314bc4`:**
+- Pre-edit baseline: `cd rust && cargo fmt --all -- --check` clean; `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings` (via `CARGO_TARGET_DIR=/dev/shm/silent-disco-target-t7`)
+  clean; `cargo test --workspace --all-features` (same target dir) -- **298 passed, 0 failed, 1
+  ignored** in `silent-disco-core`'s lib tests plus every integration-test binary green (matches every
+  prior session's baseline). `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` --
+  **BUILD SUCCESSFUL in 3m 26s**, 112 actionable tasks (run in the background per the harness's 120s
+  foreground-command auto-backgrounding, polled via plain file reads on its output, not any
+  Monitor/async-wait mechanism).
+- Post-split: `cargo build --workspace --all-targets --all-features` -- caught the one unused-import
+  warning above, fixed, then clean. `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings` (same `/dev/shm` target dir) -- clean, zero warnings. `cargo fmt --all -- --check` -- 4
+  files needed one `cargo fmt --all` pass (import-ordering/line-wrap only, described above); clean
+  after. `cargo test --workspace --all-features` -- **298 passed, 0 failed, 1 ignored** in
+  `silent-disco-core`'s lib tests (exact parity with baseline, including both
+  `transport::socket::host::broadcast::send_timeout_classification_tests::*` tests at their new path)
+  plus every integration-test binary green, including all three `host_transport_*` tests in
+  `transport/tests.rs` (via `tests/host_transport.rs`) and
+  `host_transport::handle::tests::shutdown_races_with_concurrent_broadcasts_and_never_panics_or_hangs`.
+- `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` re-run against the final split
+  code -- **BUILD SUCCESSFUL in 31s** (mostly Gradle-cached from the baseline run, but
+  `mergeDebugNativeLibs`/`stripDebugDebugSymbols`/`packageDebug`/`assembleDebug` all re-executed
+  rather than reporting `UP-TO-DATE`, confirming the `cargo-ndk` cross-compiled `.so` actually
+  rebuilt against the new module layout and re-linked).
+- `cd desktop && npm install` (fresh worktree had no `node_modules`) then `npm run build` (fresh
+  worktree had no `dist/`, needed by `bindings:check`'s `tauri::generate_context!()`) then
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t7 npm run check` -- all green: UniFFI
+  bindings verified, Biome format+lint clean (the same pre-existing `biome.json` "recommended
+  deprecated" info notice as every prior Task 2-6 session, unrelated), `tsc -b` clean, **86 Vitest
+  tests passed (10 files)**, production `vite build` succeeded. Same pre-existing `process_for_lab`
+  never-used warning surfaced during the bindings-check compile as every prior Task 2-6 session noted
+  (`platform/host_transport_events.rs`, untouched by this session) -- not fixed, out of scope.
+- `cd desktop/src-tauri && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t7 cargo clippy
+  --all-targets --all-features -- -D warnings` -- clean, zero warnings/errors.
+- Cleaned up all three `/dev/shm` scratch build directories after validation.
+
+**Files touched:** `rust/silent-disco-core/src/transport/socket/host/{mod,peer,bind,lookup,broadcast,
+authorization,node}.rs` (new), `rust/silent-disco-core/src/transport/socket/host.rs` (removed),
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 7 checkboxes 7.1-7.4 marked complete with
+final line counts/file list and per-invariant preservation evidence), `memory.md` (this entry).
+`host_workers.rs`, `listener.rs`, `shared.rs`, and `socket/mod.rs` were read for context but **not
+edited** -- confirmed zero changes needed to any of them.
+
+Not started: Task 8 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
