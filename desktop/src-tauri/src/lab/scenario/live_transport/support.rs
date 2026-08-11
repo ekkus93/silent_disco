@@ -60,7 +60,9 @@ pub(super) const fn failed_delivery_report() -> DeliveryReport {
 }
 
 pub(super) fn core_error(error_value: CoreError) -> DesktopErrorDto {
-    live_error("core_rejected_fact", &error_value.to_string())
+    let code = error_value.code.stable_name();
+    let message = error_value.message;
+    live_error("core_rejected_fact", &format!("{code}: {message}"))
 }
 
 pub(super) fn transport_error(
