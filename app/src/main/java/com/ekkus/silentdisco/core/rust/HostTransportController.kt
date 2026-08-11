@@ -25,6 +25,10 @@ private const val POLL_TIMEOUT_MS: ULong = 500uL
  * bridges those events into the existing `HostCoreController`/`FfiCoreHandle`
  * actor, mirroring how `MainViewModelRustListener` bridges
  * `FfiListenerTransportEvent` into `ListenerCoreController`.
+ *
+ * The controller itself is reusable across sequential hosted sessions. [close]
+ * releases the current native session and poll job but intentionally keeps the
+ * event stream open; `MainViewModel` installs one collector for its lifetime.
  */
 class HostTransportController : AutoCloseable {
     private val handleRef = AtomicReference<FfiHostTransportHandle?>(null)
@@ -124,7 +128,6 @@ class HostTransportController : AutoCloseable {
         eventLoop?.cancel()
         eventLoop = null
         closeExistingHandle()
-        eventChannel.close()
     }
 
     private fun startEventLoop(scope: CoroutineScope, handle: FfiHostTransportHandle) {
