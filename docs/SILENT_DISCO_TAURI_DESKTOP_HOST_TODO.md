@@ -4211,22 +4211,306 @@ grep -R "sql\|sqlite" desktop/src desktop/src-tauri/src -n
 
 For every match:
 
-- [ ] remove it;
-- [ ] prove it is test-only;
-- [ ] prove the ignored result is intentionally non-material;
-- [ ] or document and test the explicit visible policy.
+- [x] remove it;
+- [x] prove it is test-only;
+- [x] prove the ignored result is intentionally non-material;
+- [x] or document and test the explicit visible policy.
 
-Specifically verify:
+Ran all six suggested greps for real against the current tree (Blocks 33-43 added substantial
+new code, including the entire `lab` module, since this block was drafted; re-ran with that in
+mind rather than assuming the original scope). `unwrap()|expect()` had 1741 raw matches;
+`let _ =|.ok()` had 86; a Python pass classified each by whether it falls inside a
+`#[cfg(test)]`-marked region or a `_tests.rs`/`tests.rs` file, then every remaining "production"
+hit (5 for `unwrap`/`expect`, dozens for `let _`/`.ok()`) and every non-test hit from the other
+four greps was read in full context by hand -- not rubber-stamped. The classifier's own blind
+spot (a file with more than one `#[cfg(test)]` marker, e.g. a per-item test-only constructor
+followed by real production code) was separately checked for every multi-marker file; one real
+instance of exactly that risk was found and hand-verified (`notification_buffer.rs`, see below).
 
-- [ ] no in-memory database fallback;
-- [ ] no plaintext identity fallback;
-- [ ] no synthetic production identity;
-- [ ] no virtual transport production fallback;
-- [ ] no fake decoder/audio fallback;
-- [ ] no log-only operational failure;
-- [ ] no optimistic success;
-- [ ] no automatic destructive database reset;
-- [ ] no detached worker hiding shutdown failure.
+**Real bugs found and fixed (with file/line):**
+
+1. `desktop/src-tauri/src/platform/network_error.rs:142-155` -- `DesktopNetworkError::core_error()`
+   built its message via `bounded_error_message()` (bounds length, substitutes for emptiness, but
+   does **not** strip control characters) and then did
+   `CoreError::new(...).expect("bounded desktop network error")`. `CoreError::new` independently
+   rejects messages containing a control character (`error.rs::validate_error_message`), and
+   `self.message` can come from `TransportError`/`std::io::Error` `Display` output (`transport()`,
+   `endpoint_mismatch()`), which is not proven free of control characters -- so this `.expect()`
+   could panic on the one path whose entire job is reporting a failure safely. Fixed by delegating
+   to the sibling `failure::core_error()` free function, which already has a tested,
+   non-panicking fallback for exactly this case (used 10+ other places in this same file for the
+   same underlying mutex). Added `platform::network_error::tests::
+   a_message_with_a_control_character_does_not_panic_and_falls_back_safely` (constructs a message
+   with `\u{0007}`, confirms no panic and a safe `PlatformOperationFailed` fallback) and
+   `an_ordinary_message_preserves_the_original_code_and_text` (regression guard that the fallback
+   isn't taken unconditionally).
+2. `desktop/src-tauri/src/platform/invitation.rs:110-123` -- `generate_nonce()` did
+   `getrandom::fill(&mut bytes).expect("system CSPRNG must be available for QR nonce generation")`.
+   Its own comment claimed this matched `identity.rs`/`invitation_identity.rs`'s handling of the
+   same `getrandom` failure, but those two files actually propagate it as a typed `Result` via
+   `?` -- this file was the one inconsistent, panicking outlier. Fixed: `generate_nonce()` now
+   returns `Result<String, getrandom::Error>`; added a new `pub(crate) enum InvitationError {
+   Nonce(getrandom::Error), Invitation(P2Error) }` with `Display`/`Error`/`From<P2Error>`;
+   `build_signed_invitation()` now returns `Result<HostInvitationDto, InvitationError>`. The
+   caller (`app_state.rs::create_host_invitation`) now routes through a new
+   `invitation_error_dto()` that gives a CSPRNG failure its own `"platform"`/retryable category
+   (`desktop.invitation.nonce_unavailable`) distinct from a shared-validator rejection
+   (`"validation"`/non-retryable `desktop.invitation.build_failed`), rather than collapsing both
+   into one category the way a single `.to_string()` mapping would. Added
+   `a_csprng_failure_building_an_invitation_is_a_visible_retryable_platform_error` and
+   `a_rejected_invitation_shape_is_a_non_retryable_validation_error` in `app_state_tests.rs`.
+3. `desktop/src-tauri/src/app_state.rs:327` (pre-fix line) -- `host_diagnostics()` computed
+   `ready.notifications.delivery_failure().ok().flatten()`. `delivery_failure()` returns
+   `Err(state_poisoned_error())` when its internal mutex is poisoned (something already panicked
+   holding it) -- `.ok().flatten()` folded that `Err` to the exact same `None` as "no failure
+   observed", i.e. a real, severe failure was indistinguishable from healthy in the diagnostics
+   DTO this project requires for exactly this kind of visibility. Fixed to
+   `.unwrap_or_else(Some)` (keeps `Ok(existing)` as-is, turns `Err(poisoned)` into
+   `Some(poisoned)`), matching the storage branch six lines above it in the same function, which
+   already surfaces its own read failure via `failure_reason` instead of reporting "available".
+   To prove this for real (not simulate it), added `DesktopNotificationBuffer::
+   poison_state_for_test()` (test-only, spawns a thread that locks the real state mutex and
+   panics, joins it, leaving the mutex genuinely poisoned) and
+   `app_state_tests.rs::a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy`,
+   which opens a real profile, genuinely poisons its notification buffer, and asserts
+   `host_diagnostics()` now reports the poisoning (`core.ffi_callback_failed`, "desktop
+   notification state was poisoned") instead of `None`. The same test also confirms
+   `close_sync()` correctly *fails* afterward (a permanently poisoned mutex cannot close cleanly)
+   rather than falsely claiming success, while still releasing the profile lock (every shutdown
+   phase is attempted independently in `shutdown_owned_resources`).
+4. `desktop/src-tauri/src/notification_buffer.rs:398-436` (pre-fix lines) --
+   `record_delivery_failure`/`record_worker_failure` (called from the background subscription
+   worker thread, `run_subscription_worker`) did
+   `shared.state.lock().expect("... state was poisoned")`, unlike every other lock of the exact
+   same mutex in this file (`wait_for_next`, `clear_active_subscription`, `subscribe`, ...), which
+   all use `.map_err(|_| state_poisoned_error())?`. If the mutex was already poisoned by an
+   earlier panic elsewhere, these two functions' own `.expect()` would panic *this* worker thread
+   a second time, on top of poisoning that is already independently visible to every other caller
+   -- and this second panic added no new information, just a redundant background-thread death.
+   Fixed both to `let Ok(mut state) = shared.state.lock() else { return; };` (return instead of
+   panicking; the poisoning remains visible everywhere else). Found via the "multiple
+   `#[cfg(test)]` markers" audit of my own classifier's blind spot: this file has
+   `#[cfg(test)]`-gated *fields/constructors* (lines 101/111) well before its real `mod tests`
+   (line 538+), so a naive "everything after the first `#[cfg(test)]` is a test" filter would have
+   missed these two production `.expect()`s entirely. Added
+   `notification_buffer_tests.rs::record_delivery_failure_does_not_panic_on_an_already_poisoned_state`
+   and `record_worker_failure_does_not_panic_on_an_already_poisoned_state` (both genuinely poison
+   a real `NotificationShared` via a spawned-and-joined panicking thread, then call the two
+   functions directly and assert no panic).
+5. `desktop/src-tauri/src/lab/mod.rs:351-363` (pre-fix lines) --
+   `start_node_with_clock_and_observer`'s double-fault path (the database opened fine, then
+   `CoreActorRuntime::start` failed) did `let _ = database.stop_and_join();` before returning the
+   primary error, discarding whether the database's own teardown also failed. This project's own
+   established pattern for exactly this shape of problem
+   (`app_state.rs`'s `open_runtime`/`install_ready` double-fault paths) instead appends the
+   cleanup failure's message to the primary error rather than dropping it. Extracted that pattern
+   as a new shared, testable `DesktopErrorDto::with_appended_cleanup(self, Option<Self>) -> Self`
+   method in `dto.rs` (used by both `app_state.rs`, replacing its former private
+   `fn append_cleanup` free function at all 5 call sites, and `lab/mod.rs`, without giving `lab/`
+   a new dependency on `app_state` -- `LabRuntime`'s own module doc comment explicitly requires
+   "no global production singleton reuse"). Added
+   `dto::tests::appended_cleanup_failure_is_folded_into_the_message_and_keeps_primary_classification`
+   and `no_cleanup_failure_leaves_the_primary_error_unchanged`.
+6. `desktop/src-tauri/src/lab/scenario.rs:1627-1641` (pre-fix lines) -- the
+   `UnderrunFramesAtMost` scenario assertion summed `missing_frames` diagnostic field values via
+   `.and_then(|(_, value)| value.parse::<u64>().ok())` inside a `filter_map` -- a
+   present-but-unparseable value was silently excluded from the sum rather than failing the
+   assertion, understating a real underrun count and potentially letting a genuine regression
+   read as "passed". This matters beyond Lab Mode's own scope: Block 45 (performance/soak testing,
+   next in this TODO) explicitly depends on this exact assertion as evidence for release
+   decisions. Rewrote to fail the assertion outright (`return false`) the moment a present
+   `missing_frames` field fails to parse, rather than silently treating it as zero. Added
+   `lab/scenario/tests.rs::underrun_frames_at_most_sums_valid_missing_frames_values` (regression
+   guard for the ordinary path) and
+   `underrun_frames_at_most_fails_closed_on_an_unparseable_missing_frames_value` (a malformed
+   entry now fails the assertion even against an unbounded `u32::MAX` threshold, proving it can no
+   longer silently pass).
+7. `rust/silent-disco-core/src/audio/decoder.rs:243-249` (pre-fix lines) --
+   `StreamingDecodeHandle`'s `Drop` impl did `let _ = join.join();`. The ordinary
+   drop-without-explicit-join path (cancellation requested, worker cooperatively stops) already
+   self-reports its final state (`Cancelled`/`Completed`/a logical `Failed`) from *inside*
+   `run_decoder_worker` before it returns; the one outcome that cannot self-report that way is a
+   genuine Rust panic, which unwinds past that bookkeeping -- visible only via `join()`'s own
+   `Err`, which `Drop` was discarding. This project's diagnostics requirements explicitly list
+   "contained panics" as mandatory; a panicked decode worker torn down via implicit `Drop` (rather
+   than the explicit `cancel_and_join()`, which already handles this via `join_worker()`) would
+   leave `DecodeStatistics.state` at its last pre-panic value (typically `Running`) -- a false
+   impression of health for any diagnostics reader holding the shared `Arc<SharedStatistics>`
+   after the handle itself is gone. Extracted `record_join_outcome()` (marks `Failed` on a `join()`
+   `Err`, no-ops otherwise) and call it from `Drop`. Added an inline `#[cfg(test)] mod tests`
+   (this file previously had none) with
+   `a_panicked_worker_marks_shared_statistics_failed` (spawns a thread that genuinely panics,
+   joins it the same way `Drop` does, confirms `Failed` is recorded) and
+   `a_clean_join_does_not_alter_the_recorded_state` (a normal `Err(Cancelled)` return, no panic,
+   must not clobber an already-recorded state).
+
+**Deliberately left as-is, with reasoning (not a blanket "reviewed, fine"):**
+
+- `desktop/src-tauri/src/platform/failure.rs:66` -- `.expect("static fallback desktop platform
+  error is valid")` on a `CoreError::new(...)` built entirely from hardcoded, compile-time-constant
+  arguments (`CoreErrorCode::PlatformOperationFailed`, a short literal string, `ErrorSeverity::Error`,
+  `false`, `None`) -- provably always passes `validate_error_message` (non-empty, short, no control
+  characters). This is the *good* pattern network_error.rs's bug (finding 1) should have used.
+- `desktop/src-tauri/src/platform/render_ring.rs:108` -- `.expect("consumer is only ever taken by
+  Drop, never observably absent")`. `consumer: Option<RenderRingConsumer>` is set to `None` only in
+  `Drop::drop`, which takes `&mut self`; no other method can run concurrently with or after `Drop`
+  begins, so `consumer_mut()` can never observe `None`. Proven by local control-flow inspection, not
+  assumed.
+- `rust/silent-disco-core/src/audio/packetizer_worker.rs:427` --
+  `pending.take().expect("frame present until sent")` inside `send_with_backpressure`'s loop.
+  Traced every branch: `pending` starts `Some`; the only place it becomes `None` is this exact
+  `.take()` call (immediately consumed); the `Full` branch reassigns `Some(returned)` before
+  looping; the backpressure-limit `continue` branch never touches `pending`. No path reaches this
+  line with `pending == None`. Proven, not assumed.
+- `rust/silent-disco-core/src/audio/packetizer_worker.rs:320-327` (`StreamingPacketizeHandle::Drop`)
+  -- also has `let _ = join.join();`, structurally identical to decoder.rs's bug (finding 7) at
+  first glance, but *not* fixed the same way: this worker's `SharedStatistics` has no live
+  observable `state` field at all (only `queued_packets`/`backpressure_events`/`emitted_packets`
+  counters) -- `PacketizerWorkerState` only ever exists once, embedded in the `PacketizerSummary`
+  returned by an explicit `join()`/`cancel_and_join()`. Unlike decoder.rs, there is no existing
+  diagnostic surface whose accuracy this discard compromises, so there is nothing for `Drop` to
+  correct-into. Recorded here as a real, honest asymmetry (not silently treated as equivalent to
+  the decoder.rs fix) and a candidate for a future block if packetizer-worker panic visibility
+  becomes a real gap -- adding a live state field is a larger design change than this audit's
+  charter, not a one-line silent-failure fix.
+- `desktop/src-tauri/src/platform/host_transport.rs:161-169` -- `let _ =` on a
+  `fetch_update(...) |depth| Some(depth.saturating_sub(1))` -- the closure always returns `Some`,
+  so `fetch_update` can never return `Err` here; nothing is discarded that could ever exist.
+- `desktop/src-tauri/src/platform/monitor_pump.rs:100` -- `let _ = pump.apply_sync_offset(0.0);`.
+  `apply_sync_offset` returns `SyncApplyOutcome`, not a `Result` -- there is no error channel here
+  at all, only an informational enum describing what happened (deterministically `Locked` on a
+  freshly constructed pump).
+- `desktop/src-tauri/src/platform/monitor.rs:165` (`on_stream_started`'s `self.state.lock().ok()?`)
+  and `desktop/src-tauri/src/platform/network.rs:313` (`stream_diagnostics_snapshot`'s
+  `self.state.lock().ok()?`) -- both fold poisoning into the same `Option::None` their doc
+  comments already document as a legitimate, common outcome ("no stream has started"/"no monitor
+  running"). Verified the mutating operations on the *same* mutex in the *same* file
+  (`DesktopMonitorControl::status()`, `DesktopNetworkHandle::set_preference()`/`snapshot()`, 10+
+  sites) already surface poisoning explicitly and visibly -- so poisoning is not silently lost
+  system-wide, only under-attributed by these two specific read-only diagnostics accessors in the
+  rare case it occurs. `monitor.rs`'s own module doc additionally states this policy explicitly:
+  monitor failures never propagate to the caller, only via `status()`, which is verified correct.
+- `desktop/src-tauri/src/lab/mod.rs:192-232` (`node_ids`/`node_handle`/`node_identity`/
+  `node_clock`) -- same shape as the monitor/network case above: poisoning of `self.nodes` folds
+  into the same `None`/empty already documented as legitimate ("stopped or never existed").
+  Verified the mutating operations on the same mutex (`start_node_with_clock_and_observer`,
+  `stop_node`, `shutdown`) already propagate poisoning explicitly via `lab_poisoned_error()`, so
+  the very next node-lifecycle action after any real poisoning surfaces it; these read-only
+  getters would only under-attribute a "why is this None" reason in a case already caught
+  elsewhere. Lab Mode is a `lab-mode`-feature-gated engineering test harness, not a listener-facing
+  production path.
+- `desktop/src-tauri/src/lab/scenario.rs:1304` (`handle.current_snapshot().ok()`) -- feeds
+  `evaluate_assertion(assertion, snapshot.as_ref(), ...)`; verified every assertion arm that
+  touches `snapshot` does `let Some(snapshot) = snapshot else { return false };` -- a failed
+  snapshot fetch (for any reason, including poisoning) fails the assertion, never falsely passes
+  it. Fails closed by construction.
+- `rust/silent-disco-core/src/storage/migrations.rs:206-209` -- `u32::try_from(index).ok()
+  .and_then(...).ok_or_else(|| migration_failure(...))?` -- this is `Option`-chaining syntax to
+  combine a `Result` and a bound-check into one typed `Err` with a clearer message, not error
+  swallowing: the ultimate failure is still returned via `?` regardless of which step produced
+  `None`.
+- `rust/silent-disco-core/src/storage/worker/lifecycle.rs:99,110,140` (`join`/`stop_and_join`/
+  `Drop`, `let _ = self.stop();`) -- traced `stop()`'s body: it stores its own return value into
+  `self.stop_result` as a side effect *before* returning it, and every one of these three callers
+  immediately calls `finish_join()`, which reads `self.stop_result` (not the discarded return
+  value). No information is actually lost -- confirmed by reading the full call chain, not assumed
+  from the discard alone.
+- `rust/silent-disco-core/src/storage/worker/lifecycle.rs:53` (`DatabaseWorker::start`'s
+  `Ok(Err(error)) => { let _ = join_handle.join(); Err(error) }`) -- the worker already reported a
+  complete, well-formed startup error over the startup channel; joining afterward is pure cleanup
+  reaping an already-finishing thread, and the definitive error being returned is the one already
+  received, not the (structurally near-impossible, and strictly less informative even if it did
+  happen) join-time panic signal.
+- `rust/silent-disco-core/src/storage/worker/mod.rs:142` (`let _ =
+  startup_sender.send(Err(error.clone()));`) -- if the send fails because the receiver was already
+  dropped, the same `error` is still returned as this worker thread's own function return value
+  (`return Err(error);`, the very next line), which remains reachable via `join_handle.join()`.
+  Nothing is lost regardless of whether the channel send succeeds.
+- `rust/silent-disco-core/src/transport/socket/host.rs:73-90` (`PeerState::transport_peer`/
+  `device_id`, `self.identity.lock().ok().and_then(...)`) -- same shape as the monitor/network/lab
+  cases: `Option<DeviceId>::None` is already the expected value before a peer identifies itself.
+  Verified the one write path for this exact mutex (`validate_host_frame` in `host_workers.rs`)
+  correctly propagates poisoning as `TransportErrorKind::WorkerPanicked`.
+- `rust/silent-disco-core/src/transport/socket/host_workers.rs:266,273` (best-effort peer/route
+  deregistration during connection teardown) and `:412` (`routes.lock().ok().and_then(...)` when
+  matching an inbound datagram to an authorized route) -- teardown cleanup where the peer is
+  already being closed regardless, and (for `:412`) a poisoned-or-missing route both correctly
+  fall through to the same fail-closed `TransportEvent::Rejected { ..Unauthorized.. }` path an
+  unrecognized/spoofed datagram source would also hit -- the safe direction, not a false accept.
+- `rust/silent-disco-core/src/transport/socket/shared.rs` (10 `let _ = on_outcome(...)` sites in
+  `read_control_loop`) -- `on_outcome: FnMut(ReadControlOutcome) -> bool` is a continue/stop
+  signal, not an error channel. Verified every single call site in this function is immediately
+  followed by an unconditional `return`/`break` regardless of the returned `bool` (including the
+  one site that captures it into `keep_running` before also unconditionally returning) -- the
+  loop was ending at every one of these sites either way, so the discarded value provably can
+  never change behavior here. The `bool` genuinely matters elsewhere in this same function (the
+  `Frame` success case, which does branch on it) -- just not at any of the discard sites.
+- `rust/silent-disco-core/src/runtime/actor_runtime/mod.rs:247-259` (`shutdown()`'s
+  `observer_error` computation calls `read_failure(...)` twice, using `.err()` from the first call
+  and `.ok().flatten()` from a second, identical call inside `.or_else`) -- logically sound (the
+  second call's `.ok()` can only run when the first call already proved the lock was not
+  poisoned, so it cannot silently discard a poisoning error) but wastefully locks the mutex twice
+  for one combined value. Not a silent-failure bug -- a minor, out-of-scope "simplify" observation,
+  left unchanged since this audit's charter is failure visibility, not code golf.
+- `desktop/src-tauri/src/platform/effect_runner.rs:436-459` (`combine_shutdown_errors`'s
+  `CoreError::new(...).unwrap_or(fallback)`) -- `fallback = primary.clone()`, the original,
+  already-valid primary error, not a generic placeholder. If the *combined* (primary + cleanup)
+  message happens to fail `CoreError::new`'s validation (e.g. a control character neither half's
+  own bounding strips), this degrades to the still-fully-informative original primary error rather
+  than panicking or reporting a phony message -- the correct pattern, verified safe, not the
+  network_error.rs bug's shape.
+- `desktop/src-tauri/src/platform/profile_lock.rs:118-133` (`ProfileLease::Drop`'s "fallback
+  unlock result" in an `assert!` message) -- a fail-loud safety net (`assert!` panics if a lease
+  was dropped without going through explicit `release()`), not a silent fallback; "fallback" here
+  is just the debug-message wording for the best-effort unlock attempted right before the assert.
+- Every other `let _ =`/`.ok()` match not listed above was inside a `#[cfg(test)]`-gated region
+  or `_tests.rs`/`tests.rs` file (test cleanup helpers, `Drop for TestDirectory`, fixture
+  construction) -- confirmed individually, not assumed from filename alone (see finding 4's note
+  on why filename-based classification alone is not trusted).
+
+Specifically verified (all clean, no findings beyond the fixes above):
+
+- [x] no in-memory database fallback -- `storage/database.rs`'s own test
+  (`rejects_invalid_configuration_and_non_wal_database`) proves `:memory:` is explicitly rejected,
+  not silently accepted; `storage_inspection.rs`'s
+  `failed_database_open_releases_profile_lock_without_fallback` asserts no `fallback.sqlite3` is
+  ever created; every `DatabaseConfig::new(...)` call site (production and `lab/mod.rs`) takes a
+  real file path.
+- [x] no plaintext identity fallback -- `identity.rs`/`invitation_identity.rs` only ever touch
+  secret material through `keyring::Entry`; grepped both files for `fs::write`/`write_all` against
+  secret bytes -- zero matches.
+- [x] no synthetic production identity -- `lab/mod.rs`'s own module doc comment states synthetic
+  identity/roots are structurally disjoint from `DesktopProfilePaths`'s production `profiles/`
+  root (Block 37.1); the entire `lab/` module tree, including its synthetic-identity code, is
+  compiled only under the `lab-mode` Cargo feature (`desktop/src-tauri/Cargo.toml`:
+  `lab-mode = []`, not a default feature).
+- [x] no virtual transport production fallback -- `grep -rln VirtualTransportFactory|virtual_transport`
+  across `desktop/src-tauri/src` matches only files under `lab/`; zero matches anywhere under
+  `desktop/src-tauri/src/platform/` (the real network/transport code).
+- [x] no fake decoder/audio fallback -- `rust/silent-disco-core/src/audio/decoder.rs` is the one
+  real `symphonia`-backed streaming decoder used by every platform; `grep -Rn
+  "Audio|createMediaElement|WebAudio|AudioContext" desktop/src` returns zero `AudioContext`/
+  `createMediaElement`/Web Audio references -- every "Audio" match is a DTO/function name
+  (`AudioSourceSummaryDto`, `selectAudioSource`, an "Audio port" diagnostics label) for
+  backend-driven source *selection*, never browser-native decode/playback.
+- [x] no log-only operational failure -- fixed the four real instances found (network_error.rs
+  panic-on-report, invitation.rs CSPRNG panic, app_state.rs notification-poisoning-to-`None`,
+  notification_buffer.rs worker-thread double-panic); every other candidate traced to either an
+  explicit typed-error propagation path or a proven-non-material discard.
+- [x] no optimistic success -- `create_host_invitation`, `submit_core_command`,
+  `shutdown_owned_resources`, `stop_node`/`shutdown` (Lab), `finish_join` all propagate real
+  failures; the one place that *was* reporting false health (`host_diagnostics`'s
+  `notification_failure`) is fixed (finding 3).
+- [x] no automatic destructive database reset -- `storage/database.rs::corrupt_file_fails_without_recreation`
+  and `storage_inspection.rs::corrupt_database_failure_preserves_file_and_releases_profile_lock`
+  both assert the on-disk file is byte-identical after a failed open; migration/integrity failures
+  return typed errors (`StorageErrorKind::Corruption`/`Migration`), never delete-and-recreate.
+- [x] no detached worker hiding shutdown failure -- `DatabaseWorker::Drop` panics (or aborts, if
+  already unwinding) on an unclean shutdown rather than detaching silently;
+  `AppShutdownCoordinator`/`get_app_shutdown_state` make a timed-out or failed shutdown visible to
+  the UI without forcibly freeing still-live resources; `notification_buffer.rs::stop_and_join`
+  surfaces a panicked subscription worker via `worker.join.join().map_err(...)` rather than
+  detaching it.
 
 **Acceptance:** Every production failure has an observable result and controlled state consequence.
 

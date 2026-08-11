@@ -1,6 +1,7 @@
 use super::{
     DESKTOP_PENDING_NOTIFICATION_CAPACITY, DesktopNotificationBuffer, DesktopNotificationSendError,
-    DesktopNotificationSink,
+    DesktopNotificationSink, DesktopNotificationSubscriptionId, NotificationShared,
+    record_delivery_failure, record_worker_failure,
 };
 use silent_disco_core::domain::OperationId;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
@@ -461,4 +462,54 @@ fn shutdown_rejects_later_notifications_and_attachments() {
             .attach_sink(Arc::new(RecordingSink::default()))
             .is_err()
     );
+}
+
+/// Poisons `shared.state` the same way a real panic-while-holding-the-lock
+/// would: locks it on a spawned thread and panics before unlocking.
+fn poison_state(shared: &Arc<NotificationShared>) {
+    let poisoning = Arc::clone(shared);
+    let handle = thread::spawn(move || {
+        let _guard = poisoning.state.lock().expect("acquire lock to poison it");
+        panic!("deliberately poisoning the notification state mutex for a test");
+    });
+    assert!(handle.join().is_err(), "poisoning thread must panic");
+}
+
+/// Block 44 audit fix: `record_delivery_failure` used to `.expect()` the
+/// state lock and panic a background subscription-worker thread if it was
+/// already poisoned by an earlier, unrelated panic. That added a second,
+/// redundant failure on top of one already independently visible to every
+/// other caller through `state_poisoned_error()` -- confirms it now simply
+/// returns instead of panicking.
+#[test]
+fn record_delivery_failure_does_not_panic_on_an_already_poisoned_state() {
+    let shared = Arc::new(NotificationShared::default());
+    poison_state(&shared);
+
+    let error = DesktopNotificationSendError::new("channel closed").expect("valid message");
+    record_delivery_failure(
+        &shared,
+        DesktopNotificationSubscriptionId(1),
+        snapshot(1),
+        &error,
+    );
+    // Reaching this line at all is the assertion: the call above must not
+    // have panicked despite the already-poisoned lock.
+}
+
+/// Same guarantee as the above, for `record_worker_failure`'s own lock use.
+#[test]
+fn record_worker_failure_does_not_panic_on_an_already_poisoned_state() {
+    let shared = Arc::new(NotificationShared::default());
+    poison_state(&shared);
+
+    let error = CoreError::new(
+        CoreErrorCode::FfiCallbackFailed,
+        "worker failed",
+        ErrorSeverity::Fatal,
+        false,
+        None,
+    )
+    .expect("valid test error");
+    record_worker_failure(&shared, DesktopNotificationSubscriptionId(1), error);
 }

@@ -244,8 +244,29 @@ impl Drop for StreamingDecodeHandle {
     fn drop(&mut self) {
         self.cancellation.store(true, Ordering::Release);
         if let Some(join) = self.join.take() {
-            let _ = join.join();
+            record_join_outcome(&self.statistics, &join.join());
         }
+    }
+}
+
+/// The ordinary Drop-without-explicit-join path (cancellation requested,
+/// worker cooperatively stops) already has its final state
+/// (`Cancelled`/`Completed`/a logical `Failed`) recorded from *inside*
+/// `run_decoder_worker` before it returns, whether or not anyone ever calls
+/// `join()`. The one outcome that cannot self-report that way is a genuine
+/// Rust panic, which unwinds past that bookkeeping entirely -- only visible
+/// here, via `join()`'s own `Err`. Diagnostics are mandatory even for
+/// "contained panics" (this project's own diagnostics requirement), so a
+/// panicked worker must still leave the shared statistics in `Failed`,
+/// matching what `join_worker()`'s explicit path already records for the
+/// same condition -- not silently leave the last pre-panic state (typically
+/// still `Running`) as a false impression that nothing went wrong.
+fn record_join_outcome(
+    statistics: &SharedStatistics,
+    joined: &thread::Result<Result<DecodeSummary, DecodeError>>,
+) {
+    if joined.is_err() {
+        statistics.set_state(DecodeWorkerState::Failed);
     }
 }
 
@@ -621,4 +642,62 @@ const fn usize_to_state(value: usize) -> DecodeWorkerState {
 #[cfg(test)]
 pub(super) fn active_worker_count() -> usize {
     ACTIVE_DECODE_WORKERS.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DecodeError, DecodeSummary, DecodeWorkerState, SharedStatistics, StreamingDecodeConfig,
+        record_join_outcome,
+    };
+    use std::thread;
+
+    /// Block 44 audit fix: `StreamingDecodeHandle::drop` used to discard the
+    /// `join()` outcome entirely (`let _ = join.join();`), so a genuine
+    /// worker panic left the shared diagnostics statistics at whatever
+    /// state they were in before the panic (typically `Running`) --
+    /// looking healthy when the worker had actually died. Confirms a real
+    /// thread panic, joined the same way `Drop` joins it, now marks the
+    /// shared statistics `Failed`.
+    #[test]
+    fn a_panicked_worker_marks_shared_statistics_failed() {
+        let statistics = SharedStatistics::default();
+        let handle = thread::spawn(|| -> Result<DecodeSummary, DecodeError> {
+            panic!("simulated decode worker panic for a Block 44 audit test");
+        });
+        let joined = handle.join();
+        assert!(joined.is_err(), "the worker must have actually panicked");
+
+        record_join_outcome(&statistics, &joined);
+
+        assert_eq!(
+            statistics.snapshot(StreamingDecodeConfig::default()).state,
+            DecodeWorkerState::Failed
+        );
+    }
+
+    /// A worker that exits normally (no panic) must not have its state
+    /// clobbered by `record_join_outcome` -- only a real panic marks it
+    /// `Failed` here; the worker's own successful/cancelled/logically-failed
+    /// state (set from inside `run_decoder_worker`) is left untouched.
+    #[test]
+    fn a_clean_join_does_not_alter_the_recorded_state() {
+        let statistics = SharedStatistics::default();
+        statistics.set_state(DecodeWorkerState::Completed);
+        let handle = thread::spawn(|| -> Result<DecodeSummary, DecodeError> {
+            Err(DecodeError::new(
+                super::DecodeErrorKind::Cancelled,
+                "worker cancelled cleanly",
+            ))
+        });
+        let joined = handle.join();
+        assert!(joined.is_ok(), "no panic occurred, only a returned Err");
+
+        record_join_outcome(&statistics, &joined);
+
+        assert_eq!(
+            statistics.snapshot(StreamingDecodeConfig::default()).state,
+            DecodeWorkerState::Completed
+        );
+    }
 }

@@ -10,7 +10,9 @@ use crate::platform::file_picker::SelectedSourceRegistry;
 use crate::platform::identity::{
     DesktopIdentity, DesktopIdentityProvider, SystemDesktopIdentityProvider,
 };
-use crate::platform::invitation::{build_signed_invitation, current_wall_clock_ms};
+use crate::platform::invitation::{
+    InvitationError, build_signed_invitation, current_wall_clock_ms,
+};
 use crate::platform::invitation_identity::{
     DesktopHostSigningIdentity, DesktopHostSigningIdentityProvider,
     SystemDesktopHostSigningIdentityProvider,
@@ -320,11 +322,16 @@ impl DesktopAppState {
                 failure_reason: Some(error.to_string()),
             },
         };
-        // A failure to read the notification buffer's own failure state is
-        // itself only a diagnostics-gathering detail, not surfaced as a
-        // distinct error here -- folded to `None`, same severity as "no
-        // failure observed".
-        let notification_failure = ready.notifications.delivery_failure().ok().flatten();
+        // Block 44 audit fix: a poisoned notification state mutex is itself
+        // a real delivery failure (something already panicked while holding
+        // the lock this diagnostics call needs), not "no failure observed"
+        // -- collapsing `Err(poisoned)` and `Ok(None)` to the same `None`
+        // would hide exactly the failure this diagnostics field exists to
+        // surface. `unwrap_or_else(Some)` keeps `Ok(existing)` as-is and
+        // turns a read failure into a visible one, mirroring how the
+        // storage branch just above surfaces its own read failure via
+        // `failure_reason` rather than silently reporting "available".
+        let notification_failure = ready.notifications.delivery_failure().unwrap_or_else(Some);
         let device_identity_present = !ready.identity.device_id().as_str().is_empty();
         let signing_key_fingerprint = Some(silent_disco_core::p2::public_key_fingerprint(
             ready.signing_identity.public_key_der(),
@@ -428,15 +435,7 @@ impl DesktopAppState {
             &signing_identity,
             current_wall_clock_ms(),
         )
-        .map_err(|error| {
-            DesktopErrorDto::new(
-                "desktop.invitation.build_failed",
-                "validation",
-                "error",
-                false,
-                &error.to_string(),
-            )
-        })
+        .map_err(|error| invitation_error_dto(&error))
     }
 
     /// Sets the desktop host's local-monitor preference (Block 34.2
@@ -718,9 +717,9 @@ impl DesktopAppState {
                 Err(boxed) => {
                     let (primary, ready) = *boxed;
                     let cleanup = shutdown_owned_resources(ready.owned);
-                    let error = append_cleanup(primary, cleanup.err());
+                    let error = primary.with_appended_cleanup(cleanup.err());
                     if let Err(state_error) = self.fail_open(error.clone()) {
-                        return Err(append_cleanup(error, Some(state_error)));
+                        return Err(error.with_appended_cleanup(Some(state_error)));
                     }
                     Err(error)
                 }
@@ -818,9 +817,9 @@ pub async fn open_profile(
             Err(boxed) => {
                 let (primary, ready) = *boxed;
                 let cleanup = shutdown_owned_resources(ready.owned);
-                let error = append_cleanup(primary, cleanup.err());
+                let error = primary.with_appended_cleanup(cleanup.err());
                 if let Err(state_error) = state.fail_open(error.clone()) {
-                    return Err(append_cleanup(error, Some(state_error)));
+                    return Err(error.with_appended_cleanup(Some(state_error)));
                 }
                 Err(error)
             }
@@ -941,7 +940,7 @@ fn merge_close_results(
         (Ok(()), Ok(())) => Ok(()),
         (Err(primary), Ok(())) => Err(primary),
         (Ok(()), Err(cleanup)) => Err(cleanup),
-        (Err(primary), Err(cleanup)) => Err(append_cleanup(primary, Some(cleanup))),
+        (Err(primary), Err(cleanup)) => Err(primary.with_appended_cleanup(Some(cleanup))),
     }
 }
 
@@ -1091,7 +1090,7 @@ fn open_runtime(
         Err(error) => {
             let mut primary = DesktopErrorDto::from(error);
             if let Err(storage_error) = storage_runner.shutdown() {
-                primary = append_cleanup(primary, Some(DesktopErrorDto::from(storage_error)));
+                primary = primary.with_appended_cleanup(Some(DesktopErrorDto::from(storage_error)));
             }
             return Err(cleanup_with_actor(actor, database, lease, primary));
         }
@@ -1120,20 +1119,6 @@ fn open_runtime(
     ))
 }
 
-fn append_cleanup(primary: DesktopErrorDto, cleanup: Option<DesktopErrorDto>) -> DesktopErrorDto {
-    let Some(cleanup) = cleanup else {
-        return primary;
-    };
-    let cleanup_message = cleanup.message;
-    DesktopErrorDto::new(
-        &primary.code,
-        &primary.subsystem,
-        &primary.severity,
-        primary.retryable,
-        &format!("{}; {cleanup_message}", primary.message),
-    )
-}
-
 fn poisoned_state_error() -> DesktopErrorDto {
     DesktopErrorDto::new(
         "desktop.bridge.state_poisoned",
@@ -1142,6 +1127,31 @@ fn poisoned_state_error() -> DesktopErrorDto {
         false,
         "desktop application state mutex was poisoned",
     )
+}
+
+/// Maps a QR invitation build failure onto a diagnostic-visible DTO,
+/// distinguishing a platform CSPRNG failure (`InvitationError::Nonce`) from
+/// a shared-validator rejection (`InvitationError::Invitation`) rather than
+/// collapsing both into one generic "validation" category -- a CSPRNG
+/// outage is a platform failure the user did not cause and may be able to
+/// retry, not a data-shape mistake.
+fn invitation_error_dto(error: &InvitationError) -> DesktopErrorDto {
+    match error {
+        InvitationError::Nonce(_) => DesktopErrorDto::new(
+            "desktop.invitation.nonce_unavailable",
+            "platform",
+            "error",
+            true,
+            &error.to_string(),
+        ),
+        InvitationError::Invitation(_) => DesktopErrorDto::new(
+            "desktop.invitation.build_failed",
+            "validation",
+            "error",
+            false,
+            &error.to_string(),
+        ),
+    }
 }
 
 #[cfg(test)]

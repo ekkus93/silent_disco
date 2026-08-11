@@ -116,6 +116,26 @@ impl DesktopNotificationBuffer {
         buffer
     }
 
+    /// Test-only: poisons the internal state mutex exactly the way a real
+    /// panic-while-holding-the-lock would, so callers elsewhere in the
+    /// crate (e.g. `app_state`) can exercise their real poisoned-state
+    /// handling rather than a mock.
+    ///
+    /// # Panics
+    ///
+    /// Never panics on the calling thread -- the deliberate panic happens
+    /// on a spawned thread this function joins internally, purely to
+    /// poison the shared mutex before returning.
+    #[cfg(test)]
+    pub fn poison_state_for_test(&self) {
+        let shared = Arc::clone(&self.shared);
+        let _ = thread::spawn(move || {
+            let _guard = shared.state.lock().expect("acquire lock to poison it");
+            panic!("deliberately poisoning notification state for a test");
+        })
+        .join();
+    }
+
     /// Waits for the actor's first delivered snapshot.
     ///
     /// # Errors
@@ -401,10 +421,16 @@ fn record_delivery_failure(
     notification: CoreNotification,
     error: &DesktopNotificationSendError,
 ) {
-    let mut state = shared
-        .state
-        .lock()
-        .expect("desktop notification delivery failure state was poisoned");
+    // If the state mutex is already poisoned by an earlier panic elsewhere,
+    // that poisoning is independently visible to every other caller
+    // (`wait_for_next`, `clear_active_subscription`, `subscribe`, ...) via
+    // `state_poisoned_error()`. This function's whole job is to *record* a
+    // failure into that state; with the state unreachable there is nothing
+    // safe left to record into, so it returns rather than panicking this
+    // worker thread on top of an already-surfaced failure.
+    let Ok(mut state) = shared.state.lock() else {
+        return;
+    };
     if state.active_subscription != Some(id) {
         return;
     }
@@ -424,10 +450,11 @@ fn record_worker_failure(
     id: DesktopNotificationSubscriptionId,
     error: CoreError,
 ) {
-    let mut state = shared
-        .state
-        .lock()
-        .expect("desktop notification worker failure state was poisoned");
+    // Same reasoning as `record_delivery_failure`: a poisoned state mutex is
+    // already visible elsewhere, so this returns instead of panicking.
+    let Ok(mut state) = shared.state.lock() else {
+        return;
+    };
     if state.active_subscription == Some(id) {
         state.delivery_failure = Some(error);
         state.active_subscription = None;

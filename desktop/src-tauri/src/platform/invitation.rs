@@ -34,17 +34,22 @@ const HOST_DISPLAY_NAME: &str = "This Desktop Host";
 ///
 /// # Errors
 ///
-/// Returns [`P2Error`] when the session data does not fit the shared core's
-/// invitation bounds (session/host name length, invite code shape, embedded
-/// connection payload size/shape) -- never silently drops a field or signs
-/// a payload the shared validator would reject.
+/// Returns [`InvitationError::Invitation`] when the session data does not fit
+/// the shared core's invitation bounds (session/host name length, invite code
+/// shape, embedded connection payload size/shape) -- never silently drops a
+/// field or signs a payload the shared validator would reject. Returns
+/// [`InvitationError::Nonce`] when the platform CSPRNG used for the QR nonce
+/// is unavailable, matching how every other identity/session-key path in
+/// this codebase (`invitation_identity.rs`, `identity.rs`) surfaces the same
+/// underlying `getrandom` failure as a typed, propagated error rather than a
+/// panic.
 pub(crate) fn build_signed_invitation(
     advertisement: &SessionAdvertisement,
     endpoint: NetworkEndpoint,
     host_draft: &HostDraft,
     identity: &DesktopHostSigningIdentity,
     issued_at_ms: u64,
-) -> Result<HostInvitationDto, P2Error> {
+) -> Result<HostInvitationDto, InvitationError> {
     let expires_at_ms = issued_at_ms.saturating_add(INVITATION_LIFETIME_MS);
     let connection_payload_json = connection_payload_json(advertisement, endpoint);
     let input = QrInvitationInput {
@@ -60,7 +65,7 @@ pub(crate) fn build_signed_invitation(
         },
         issued_at_ms,
         expires_at_ms,
-        nonce: generate_nonce(),
+        nonce: generate_nonce().map_err(InvitationError::Nonce)?,
         connection_payload_json: Some(connection_payload_json),
     };
     let unsigned = prepare_unsigned_qr(&input)?;
@@ -70,6 +75,34 @@ pub(crate) fn build_signed_invitation(
         payload,
         expires_at_ms: expires_at_ms.to_string(),
     })
+}
+
+/// Failure while building a signed QR invitation.
+#[derive(Debug)]
+pub(crate) enum InvitationError {
+    /// The platform CSPRNG used to generate the QR nonce was unavailable.
+    Nonce(getrandom::Error),
+    /// The shared `p2` validator rejected the assembled invitation.
+    Invitation(P2Error),
+}
+
+impl fmt::Display for InvitationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nonce(error) => {
+                write!(formatter, "could not generate a secure QR nonce: {error}")
+            }
+            Self::Invitation(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for InvitationError {}
+
+impl From<P2Error> for InvitationError {
+    fn from(error: P2Error) -> Self {
+        Self::Invitation(error)
+    }
 }
 
 /// Builds the exact same manual-endpoint JSON shape the "Manual connection
@@ -107,19 +140,21 @@ fn p2_wire_name(mode: ApprovalMode) -> &'static str {
 
 /// 32 random bytes, hex-encoded to 64 characters -- comfortably inside the
 /// shared core's 16-80 character nonce bound.
-fn generate_nonce() -> String {
+///
+/// # Errors
+///
+/// Returns the underlying `getrandom` error when the platform CSPRNG is
+/// unavailable, so the caller can surface a typed, visible failure instead
+/// of silently falling back to a weaker source or crashing the process.
+fn generate_nonce() -> Result<String, getrandom::Error> {
     let mut bytes = [0_u8; 32];
-    // A `getrandom` failure here would mean the platform's CSPRNG is
-    // unavailable, which every other identity/session-key path in this
-    // codebase already treats as fatal (see `invitation_identity.rs`,
-    // `identity.rs`) rather than falling back to a weaker source.
-    getrandom::fill(&mut bytes).expect("system CSPRNG must be available for QR nonce generation");
+    getrandom::fill(&mut bytes)?;
     let mut nonce = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         use fmt::Write as _;
         let _ = write!(&mut nonce, "{byte:02x}");
     }
-    nonce
+    Ok(nonce)
 }
 
 /// Current wall-clock time in milliseconds, used only to stamp when an
@@ -136,10 +171,9 @@ pub(crate) fn current_wall_clock_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_signed_invitation, p2_wire_name};
+    use super::{InvitationError, build_signed_invitation, p2_wire_name};
     use crate::platform::invitation_identity::DesktopHostSigningIdentity;
     use silent_disco_core::domain::{ApprovalMode, DeviceId};
-    use silent_disco_core::p2::P2Error;
     use silent_disco_core::runtime::{HostDraft, NetworkEndpoint, SessionAdvertisement};
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -236,7 +270,7 @@ mod tests {
     #[test]
     fn a_structurally_sound_connection_payload_survives_shared_core_validation() {
         let draft = HostDraft::default();
-        let result: Result<_, P2Error> = build_signed_invitation(
+        let result: Result<_, InvitationError> = build_signed_invitation(
             &advertisement(ApprovalMode::Manual),
             endpoint(),
             &draft,

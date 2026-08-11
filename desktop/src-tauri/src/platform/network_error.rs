@@ -1,4 +1,4 @@
-use super::failure::DesktopPlatformFailure;
+use super::failure::{DesktopPlatformFailure, core_error as platform_core_error};
 use crate::dto::DesktopErrorDto;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::transport::{TransportError, TransportErrorKind};
@@ -143,15 +143,24 @@ impl DesktopNetworkError {
         self,
         operation_id: Option<silent_disco_core::domain::OperationId>,
     ) -> CoreError {
+        // Delegates to `failure::core_error`, which already has a proven,
+        // tested fallback for the case `bounded_error_message` cannot rule
+        // out on its own: it truncates length and substitutes for an empty
+        // result, but (like `failure::bounded_message`) does not strip
+        // control characters, so a message built from an underlying
+        // `TransportError`/`std::io::Error` `Display` impl containing one
+        // (e.g. a raw OS error string) is not proven infallible. This used
+        // to be `CoreError::new(...).expect(...)`, which could panic on an
+        // error-reporting path -- exactly backwards for a function whose
+        // whole job is to report a failure visibly and safely.
         let message = bounded_error_message(&self.message);
-        CoreError::new(
+        platform_core_error(
             self.code,
             message,
             ErrorSeverity::Error,
             self.retryable,
             operation_id,
         )
-        .expect("bounded desktop network error")
     }
 }
 
@@ -178,3 +187,44 @@ impl fmt::Display for DesktopNetworkError {
 }
 
 impl std::error::Error for DesktopNetworkError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{DesktopNetworkError, NetworkErrorKind};
+    use silent_disco_core::error::CoreErrorCode;
+
+    /// Block 44 audit fix: `bounded_error_message` only bounds length and
+    /// substitutes for emptiness, it does not strip control characters, so
+    /// `CoreError::new`'s own control-character validation can still reject
+    /// the message `core_error()` builds. Before this fix that rejection hit
+    /// an `.expect(...)` and panicked on this error-*reporting* path -- the
+    /// one path that must never itself fail unsafely. Confirms it now
+    /// degrades to the shared, tested `failure::core_error` fallback instead.
+    #[test]
+    fn a_message_with_a_control_character_does_not_panic_and_falls_back_safely() {
+        let error = DesktopNetworkError::new(
+            NetworkErrorKind::Transport,
+            CoreErrorCode::TransportConnectionFailed,
+            "connection reset\u{0007}by peer",
+            true,
+        );
+        let core_error = error.core_error(None);
+        assert_eq!(core_error.code, CoreErrorCode::PlatformOperationFailed);
+        assert!(!core_error.message.is_empty());
+    }
+
+    /// The ordinary, control-character-free path still preserves the
+    /// original code and message rather than always taking the fallback.
+    #[test]
+    fn an_ordinary_message_preserves_the_original_code_and_text() {
+        let error = DesktopNetworkError::new(
+            NetworkErrorKind::Unavailable,
+            CoreErrorCode::TransportUnavailable,
+            "no route to host",
+            true,
+        );
+        let core_error = error.core_error(None);
+        assert_eq!(core_error.code, CoreErrorCode::TransportUnavailable);
+        assert_eq!(core_error.message, "no route to host");
+    }
+}

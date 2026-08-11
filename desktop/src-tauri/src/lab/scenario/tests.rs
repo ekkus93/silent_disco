@@ -1,8 +1,9 @@
 use super::{
-    AssertionOutcome, ScenarioOutcome, ScenarioParseError, ScenarioValidationError,
-    load_scenario_json, run_scenario,
+    AssertionOutcome, NodeId, ScenarioAssertion, ScenarioOutcome, ScenarioParseError,
+    ScenarioValidationError, evaluate_assertion, load_scenario_json, run_scenario,
 };
 use crate::lab::LabRuntime;
+use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -355,4 +356,56 @@ fn a_command_that_is_illegal_in_the_current_state_is_reported_not_swallowed() {
         AssertionOutcome::Held,
         "the actor's real asynchronous rejection must still be observed"
     );
+}
+
+fn underrun_frames_at_most(max_total_missing_frames: u32) -> ScenarioAssertion {
+    ScenarioAssertion::UnderrunFramesAtMost {
+        by_ms: 1_000,
+        node: NodeId("n1".to_owned()),
+        max_total_missing_frames,
+    }
+}
+
+fn underrun_entry(sequence: u64, missing_frames: &str) -> RecordedNotification {
+    RecordedNotification {
+        sequence,
+        kind: RecordedNotificationKind::Diagnostic {
+            name: "audio_underrun".to_owned(),
+            fields: vec![("missing_frames".to_owned(), missing_frames.to_owned())],
+        },
+    }
+}
+
+/// The ordinary, well-formed path: valid `missing_frames` values are summed
+/// and compared against the bound as before.
+#[test]
+fn underrun_frames_at_most_sums_valid_missing_frames_values() {
+    let entries = vec![underrun_entry(0, "3"), underrun_entry(1, "4")];
+    assert!(evaluate_assertion(
+        &underrun_frames_at_most(7),
+        None,
+        &entries
+    ));
+    assert!(!evaluate_assertion(
+        &underrun_frames_at_most(6),
+        None,
+        &entries
+    ));
+}
+
+/// Block 44 audit fix: a present-but-unparseable `missing_frames` value
+/// used to be silently excluded from the sum (`.ok()` on the failed
+/// `parse::<u64>()`), understating a real underrun count and letting a
+/// regression pass. Confirms it now fails the assertion outright instead of
+/// silently treating the malformed entry as zero missing frames.
+#[test]
+fn underrun_frames_at_most_fails_closed_on_an_unparseable_missing_frames_value() {
+    let entries = vec![underrun_entry(0, "3"), underrun_entry(1, "not-a-number")];
+    // Even an unbounded threshold must not let a malformed entry pass --
+    // the assertion cannot be verified at all, not "verified as fine".
+    assert!(!evaluate_assertion(
+        &underrun_frames_at_most(u32::MAX),
+        None,
+        &entries
+    ));
 }

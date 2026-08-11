@@ -354,11 +354,23 @@ impl LabRuntime {
         ) {
             Ok(actor) => actor,
             Err(error) => {
-                // The database was already opened -- attempted even
-                // though this node never gets inserted, so nothing is
-                // leaked on a failed start.
-                let _ = database.stop_and_join();
-                return Err(DesktopErrorDto::from(error));
+                // The database was already opened -- stopped and joined
+                // even though this node never gets inserted, so nothing is
+                // leaked on a failed start. A failure of that cleanup is
+                // appended to the primary error rather than discarded,
+                // matching `app_state::append_cleanup`'s established
+                // double-fault handling for the same shape of problem.
+                let primary = DesktopErrorDto::from(error);
+                let cleanup = database.stop_and_join().err().map(|cleanup_error| {
+                    DesktopErrorDto::new(
+                        "desktop.lab.storage_close_failed",
+                        "storage",
+                        "error",
+                        false,
+                        &cleanup_error.to_string(),
+                    )
+                });
+                return Err(primary.with_appended_cleanup(cleanup));
             }
         };
 

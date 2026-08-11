@@ -1625,18 +1625,31 @@ fn evaluate_assertion(
             snapshot.last_delivery.is_some_and(|report| report.severity.stable_code() == severity.stable_code())
         }
         ScenarioAssertion::UnderrunFramesAtMost { max_total_missing_frames, .. } => {
-            let total: u64 = entries
-                .iter()
-                .filter_map(|entry| match &entry.kind {
-                    RecordedNotificationKind::Diagnostic { name, fields } if name == "audio_underrun" => {
-                        fields
-                            .iter()
-                            .find(|(key, _)| key == "missing_frames")
-                            .and_then(|(_, value)| value.parse::<u64>().ok())
-                    }
-                    _ => None,
-                })
-                .sum();
+            let mut total: u64 = 0;
+            for entry in entries {
+                let RecordedNotificationKind::Diagnostic { name, fields } = &entry.kind else {
+                    continue;
+                };
+                if name != "audio_underrun" {
+                    continue;
+                }
+                let Some((_, value)) = fields.iter().find(|(key, _)| key == "missing_frames")
+                else {
+                    continue;
+                };
+                // A present-but-unparseable `missing_frames` value means
+                // this diagnostic's shape does not match what this
+                // assertion expects. Silently excluding it from the sum
+                // (the prior behavior) would understate a real underrun
+                // count and could let an actual regression pass --
+                // Block 45's soak/perf testing depends on this assertion
+                // being trustworthy evidence, so this fails the assertion
+                // outright instead.
+                let Ok(missing) = value.parse::<u64>() else {
+                    return false;
+                };
+                total = total.saturating_add(missing);
+            }
             total <= u64::from(*max_total_missing_frames)
         }
         ScenarioAssertion::CleanShutdown { .. } => {

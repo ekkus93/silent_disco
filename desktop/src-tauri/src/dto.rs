@@ -124,6 +124,27 @@ impl DesktopErrorDto {
             message: bounded_message(message),
         }
     }
+
+    /// Folds an optional cleanup/teardown failure into this (primary)
+    /// error's message rather than discarding it -- the shared double-fault
+    /// shape used whenever a failure is already being reported and a
+    /// best-effort cleanup attempted on the way out also fails. Keeps the
+    /// primary error's code/subsystem/severity/retryable classification,
+    /// since the cleanup failure is a detail of *how* recovery went, not a
+    /// reclassification of the original failure.
+    #[must_use]
+    pub fn with_appended_cleanup(self, cleanup: Option<Self>) -> Self {
+        let Some(cleanup) = cleanup else {
+            return self;
+        };
+        Self::new(
+            &self.code,
+            &self.subsystem,
+            &self.severity,
+            self.retryable,
+            &format!("{}; {}", self.message, cleanup.message),
+        )
+    }
 }
 
 /// One applied database migration. Timestamps are strings to preserve u64 precision.
@@ -288,6 +309,52 @@ mod tests {
     use silent_disco_core::storage::{
         DatabaseMetadata, MigrationRecord, StoredSettings, SynchronousPolicy, TrustedDevice,
     };
+
+    /// Block 44 audit fix: a secondary cleanup failure alongside a primary
+    /// failure must remain visible, not silently discarded (this is the
+    /// shared helper both `app_state::open_runtime`'s double-fault paths
+    /// and `lab::LabRuntime::start_node_with_clock_and_observer`'s use).
+    #[test]
+    fn appended_cleanup_failure_is_folded_into_the_message_and_keeps_primary_classification() {
+        let primary = DesktopErrorDto::new(
+            "desktop.lab.core_actor_start_failed",
+            "runtime",
+            "fatal",
+            false,
+            "core actor failed to start",
+        );
+        let cleanup = DesktopErrorDto::new(
+            "desktop.lab.storage_close_failed",
+            "storage",
+            "error",
+            false,
+            "database worker did not stop cleanly",
+        );
+        let combined = primary.with_appended_cleanup(Some(cleanup));
+        assert_eq!(combined.code, "desktop.lab.core_actor_start_failed");
+        assert_eq!(combined.subsystem, "runtime");
+        assert_eq!(combined.severity, "fatal");
+        assert!(!combined.retryable);
+        assert_eq!(
+            combined.message,
+            "core actor failed to start; database worker did not stop cleanly"
+        );
+    }
+
+    /// No cleanup failure occurred: the primary error passes through
+    /// unchanged rather than gaining a spurious "; " suffix.
+    #[test]
+    fn no_cleanup_failure_leaves_the_primary_error_unchanged() {
+        let primary = DesktopErrorDto::new(
+            "desktop.lab.core_actor_start_failed",
+            "runtime",
+            "fatal",
+            false,
+            "core actor failed to start",
+        );
+        let unchanged = primary.clone().with_appended_cleanup(None);
+        assert_eq!(unchanged, primary);
+    }
 
     #[test]
     fn tagged_lifecycle_round_trip_preserves_kind() {

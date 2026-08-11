@@ -4269,3 +4269,115 @@ cases in the `debug` variant alone, up from the 275 recorded in the prior
 Block 21 session). `./gradlew :app:compileDebugAndroidTestKotlin` still
 fails on the pre-existing, already-recorded `P2UiTest.kt` break (unrelated
 file, not touched this session, not part of the required gate).
+
+## 2026-08-11T00:38:14Z - Claude Sonnet 5 - Block 44: silent-failure/fallback audit across desktop + shared core, 7 real bugs found and fixed
+
+**Scope:** `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` Block 44. Ran all six suggested greps
+for real against `desktop/src-tauri/src` and `rust/silent-disco-core/src` (1741 raw
+`unwrap()`/`expect()` matches, 86 `let _ =`/`.ok()` matches, plus the fallback/mock/demo, Audio/
+WebAudio, and sql/sqlite greps), wrote a small classifier to separate test-file/`#[cfg(test)]`
+noise from real production hits, then read every remaining hit in full context by hand. Touched
+only `desktop/src-tauri/src` and `rust/silent-disco-core/src`, per this session's isolation
+boundary (never `app/` or `rust/silent-disco-ffi`).
+
+**Why this mattered:** the classifier's own blind spot -- a file can have an early
+`#[cfg(test)]`-gated field/constructor well before its real `mod tests`, which a naive
+"first `#[cfg(test)]` marker cuts off everything after" filter would wrongly treat as all-test --
+was checked explicitly for every file with more than one `#[cfg(test)]` marker, and found one
+real instance (`notification_buffer.rs`) hiding two genuine production `.expect()`s this way.
+
+**Seven real bugs found and fixed (full per-site reasoning, before/after code, and every
+deliberately-left match's proof is recorded in the Block 44 TODO section itself, not
+duplicated here in full):**
+
+1. `platform/network_error.rs::DesktopNetworkError::core_error()` -- `.expect(...)` could panic
+   on the error-*reporting* path itself, because `bounded_error_message()` doesn't strip control
+   characters and `CoreError::new` rejects them. Fixed by delegating to the sibling
+   `failure::core_error()`, which already has this exact tested fallback.
+2. `platform/invitation.rs::generate_nonce()` -- `.expect()` on a `getrandom` failure, despite its
+   own comment claiming to match `identity.rs`/`invitation_identity.rs`'s handling, which actually
+   propagate the same failure as a typed `Result`. Introduced `InvitationError { Nonce, Invitation }`;
+   `build_signed_invitation()` now returns `Result<_, InvitationError>`; `app_state.rs` gives the
+   CSPRNG case its own retryable "platform" diagnostic category, distinct from a validation
+   rejection.
+3. `app_state.rs::host_diagnostics()` -- `notification_failure().ok().flatten()` folded a
+   **poisoned notification mutex** (a real, severe failure) into the exact same `None` as "no
+   failure observed" -- a false-healthy diagnostics signal. Fixed to `.unwrap_or_else(Some)`.
+   Proved with a genuine poisoning test (`DesktopNotificationBuffer::poison_state_for_test()`,
+   test-only, spawns-and-joins a real panicking thread against the real mutex), which also
+   confirmed `close_sync()` now correctly *fails* afterward instead of claiming a clean close.
+4. `notification_buffer.rs::record_delivery_failure`/`record_worker_failure` -- `.expect()` on
+   the *same* mutex every other accessor in this file already handles via `.map_err(|_|
+   state_poisoned_error())?`; a poisoned mutex would panic the background subscription-worker
+   thread a second time, redundantly, on top of poisoning already visible elsewhere. Fixed to
+   `let Ok(mut state) = ... else { return; }`.
+5. `lab/mod.rs::start_node_with_clock_and_observer`'s double-fault path -- `let _ =
+   database.stop_and_join();` silently discarded a *second* failure (DB cleanup) on top of a
+   primary one (actor start), unlike this project's own established double-fault pattern already
+   used in `app_state.rs`. Extracted that pattern into a new shared, tested
+   `DesktopErrorDto::with_appended_cleanup()` in `dto.rs` (removing the private
+   `app_state::append_cleanup` duplicate), used by both files without giving `lab/` a new
+   dependency on `app_state` (its own module doc explicitly forbids that).
+6. `lab/scenario.rs`'s `UnderrunFramesAtMost` assertion -- a present-but-unparseable
+   `missing_frames` diagnostic value was silently excluded from the sum (`.ok()` on a failed
+   `parse::<u64>()`), understating a real underrun count and potentially letting a genuine
+   regression read as "passed". This is the exact assertion Block 45 (next in the TODO) depends on
+   for soak/perf evidence. Fixed to fail the assertion outright on a malformed value.
+7. `rust/silent-disco-core/src/audio/decoder.rs::StreamingDecodeHandle::Drop` -- discarded
+   `join()`'s result entirely; a genuine worker panic (the one outcome that can't self-report its
+   own `DecodeWorkerState::Failed` from inside the worker, since a panic unwinds past that
+   bookkeeping) left `DecodeStatistics.state` at its last pre-panic value -- misrepresenting a
+   dead decoder as still `Running` to any diagnostics reader. Extracted `record_join_outcome()`
+   and call it from `Drop`; added this file's first-ever inline `#[cfg(test)] mod tests` with a
+   real thread-panic test.
+
+**Explicitly verified clean (no findings), per the TODO's "specifically verify" checklist:** no
+in-memory database fallback, no plaintext identity fallback (keyring-only), no synthetic
+production identity (lab-mode-feature-gated, disjoint roots), no virtual transport production
+fallback (`VirtualTransportFactory` only referenced under `lab/`), no fake decoder/audio fallback
+(zero `AudioContext`/`WebAudio`/`createMediaElement` in `desktop/src`), no automatic destructive
+database reset (`corrupt_file_fails_without_recreation` et al.), no detached worker hiding
+shutdown failure (`DatabaseWorker::Drop` panics/aborts on unclean shutdown; `AppShutdownCoordinator`
+surfaces timeout/failure to the UI without forcibly freeing live resources).
+
+**Real gates run (not fabricated):**
+- `bash scripts/check-rust.sh` -- clean (`cargo fmt --check`, `cargo clippy -D warnings`,
+  `cargo test --workspace --all-features`, 20 test-result blocks all `ok`, exit 0). Includes the
+  new `decoder.rs` tests (`a_panicked_worker_marks_shared_statistics_failed`,
+  `a_clean_join_does_not_alter_the_recorded_state`), both passing.
+- `cd desktop && npm install` (fresh worktree had no `node_modules`) then `npm run build` (fresh
+  worktree had no `dist/`, which `bindings:check` needs to compile `tauri::generate_context!()`)
+  then `npm run check` -- all green: bindings verified, Biome format+lint clean (one pre-existing
+  `biome.json` "recommended deprecated" info notice, unrelated), `tsc -b` clean, **86 Vitest tests
+  passed (10 files)**, production `vite build` succeeded.
+- `cd desktop/src-tauri && cargo test --features lab-mode` -- **276 passed, 0 failed, 4 ignored**
+  (up from the prior 265; +2 decoder tests are in `rust/silent-disco-core`'s own gate above, the
+  desktop-side net addition here is the network_error.rs/dto.rs/scenario.rs/notification_buffer.rs/
+  app_state_tests.rs new tests). First run of the new
+  `a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy` test failed
+  because its own cleanup (`state.close_sync().expect("clear state")`) assumed a clean shutdown
+  after *deliberately, permanently* poisoning the notification mutex -- corrected the test itself
+  to assert `close_sync()` fails (the true, correct behavior with no "un-poison" available) while
+  still verifying the profile lock was released regardless.
+- `cd desktop/src-tauri && cargo clippy --all-targets --all-features -- -D warnings` -- **exactly
+  the same pre-existing 8 deny-level errors as the documented baseline** (`host_session_dto.rs:350`,
+  `platform/audio_device.rs:321,342`, `platform/mdns.rs:608,612`, `platform/render_ring.rs:185`,
+  `platform/start_playback_tests.rs:1878,1879`), confirmed unchanged file/line-for-line. My own
+  changes introduced 3 new clippy errors on the first pass (`needless_pass_by_value` on
+  `invitation_error_dto`/`record_join_outcome`, `missing_panics_doc` on the new
+  `poison_state_for_test`, `items_after_test_module` from placing a new `mod tests` before an
+  existing `impl Error` block in `network_error.rs`) -- all fixed before this final clean run, not
+  left as new baseline drift.
+
+**Files touched:** `desktop/src-tauri/src/platform/network_error.rs`,
+`desktop/src-tauri/src/platform/invitation.rs`, `desktop/src-tauri/src/app_state.rs`,
+`desktop/src-tauri/src/app_state_tests.rs`, `desktop/src-tauri/src/dto.rs`,
+`desktop/src-tauri/src/notification_buffer.rs`, `desktop/src-tauri/src/notification_buffer_tests.rs`,
+`desktop/src-tauri/src/lab/mod.rs`, `desktop/src-tauri/src/lab/scenario.rs`,
+`desktop/src-tauri/src/lab/scenario/tests.rs`, `rust/silent-disco-core/src/audio/decoder.rs`,
+`docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` (Block 44 checkboxes with full per-site evidence).
+
+**Deliberately left unchecked:** none within Block 44's own scope -- every suggested grep and
+every "specifically verify" bullet was run and resolved (fixed or proven non-material with cited
+reasoning, recorded in the TODO doc itself). Not started: Block 45 (performance/soak testing),
+per this task's explicit instruction to stop after Block 44.

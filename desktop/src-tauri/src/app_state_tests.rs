@@ -1,6 +1,7 @@
-use super::{CloseAction, DesktopAppState};
+use super::{CloseAction, DesktopAppState, invitation_error_dto};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::identity::{DesktopIdentity, DesktopIdentityError, DesktopIdentityProvider};
+use crate::platform::invitation::InvitationError;
 use crate::platform::invitation_identity::{
     DesktopHostSigningIdentity, DesktopHostSigningIdentityError, DesktopHostSigningIdentityProvider,
 };
@@ -369,6 +370,89 @@ fn a_production_identity_failure_is_a_hard_error_with_no_fallback() {
     state.close_sync().expect("clear failed state");
     ProfileLease::acquire(&paths, &id)
         .expect("lock released after identity failure")
+        .release()
+        .expect("release verification lease");
+}
+
+/// Block 44 audit fix: a platform CSPRNG failure while building a QR
+/// invitation must surface as a distinct, visible, non-panicking "platform"
+/// failure the caller can retry -- not a generic "validation" failure (which
+/// would wrongly imply the session data itself was malformed) and never a
+/// process panic (the pre-fix behavior, an `expect()` on `getrandom::fill`).
+#[test]
+fn a_csprng_failure_building_an_invitation_is_a_visible_retryable_platform_error() {
+    let dto = invitation_error_dto(&InvitationError::Nonce(getrandom::Error::UNSUPPORTED));
+    assert_eq!(dto.code, "desktop.invitation.nonce_unavailable");
+    assert_eq!(dto.subsystem, "platform");
+    assert!(dto.retryable);
+    assert!(dto.message.contains("QR nonce"));
+}
+
+/// The shared `p2` validator rejecting invitation data remains a distinct,
+/// non-retryable "validation" failure -- confirms the two `InvitationError`
+/// variants are not collapsed back into one generic category.
+#[test]
+fn a_rejected_invitation_shape_is_a_non_retryable_validation_error() {
+    let dto = invitation_error_dto(&InvitationError::Invitation(
+        silent_disco_core::p2::P2Error::ExpiredQr,
+    ));
+    assert_eq!(dto.code, "desktop.invitation.build_failed");
+    assert_eq!(dto.subsystem, "validation");
+    assert!(!dto.retryable);
+}
+
+/// Block 44 audit fix: `host_diagnostics()` used to fold a poisoned
+/// notification state (`delivery_failure() == Err(..)`) to the same `None`
+/// as "no failure observed" (`.ok().flatten()`), hiding a real, severe
+/// failure -- something already panicked while holding that lock -- behind
+/// an falsely-healthy diagnostics snapshot. Confirms the poisoning is now
+/// surfaced as a real `delivery_failure` entry instead.
+#[test]
+fn a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+    let notifications = Arc::new(DesktopNotificationBuffer::new());
+
+    state
+        .open_profile_sync(
+            &paths,
+            id.clone(),
+            &FixedIdentityProvider([12; 32]),
+            &FixedSigningIdentityProvider(12),
+            Arc::clone(&notifications),
+        )
+        .expect("open profile");
+
+    notifications.poison_state_for_test();
+
+    let diagnostics = state
+        .host_diagnostics()
+        .expect("a poisoned notification buffer must not fail the whole diagnostics call");
+    let delivery_failure = diagnostics
+        .notification_bridge
+        .delivery_failure
+        .expect("poisoning must be surfaced, not folded away as healthy");
+    assert_eq!(delivery_failure.code, "core.ffi_callback_failed");
+    assert_eq!(
+        delivery_failure.message,
+        "desktop notification state was poisoned"
+    );
+
+    // The notification mutex is permanently poisoned now (there is no
+    // "un-poison" operation), so shutdown genuinely cannot close that one
+    // subsystem cleanly -- it must report that failure rather than a false
+    // success. `shutdown_owned_resources` still attempts (and, per its own
+    // unconditional-attempt design, still completes) every other phase,
+    // including releasing the profile lock, regardless of this one
+    // subsystem's failure.
+    let close_result = state.close_sync();
+    assert!(
+        close_result.is_err(),
+        "shutdown must surface the poisoned notification pipeline's failure, not claim a clean close"
+    );
+    ProfileLease::acquire(&paths, &id)
+        .expect("the profile lock is still released despite the notification failure")
         .release()
         .expect("release verification lease");
 }
