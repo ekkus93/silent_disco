@@ -7,12 +7,15 @@
 //! complete host/discover/join/approve path is expressible without synthetic
 //! transport-success events.
 
+mod assertions;
+mod commands;
 mod live_runner;
 mod live_transport;
 mod report;
 mod schema;
 
-pub(crate) use live_runner::{evaluate_assertion, run_scenario, run_scenario_with_trace};
+pub(crate) use assertions::evaluate_assertion;
+pub(crate) use live_runner::{run_scenario, run_scenario_with_trace};
 pub(crate) use report::{
     AssertionOutcome, AssertionResult, ClockAdvance, ScenarioExecutionError, ScenarioOutcome,
     ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
