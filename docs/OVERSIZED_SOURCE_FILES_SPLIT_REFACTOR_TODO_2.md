@@ -533,15 +533,15 @@ Validation: **DESKTOP only**.
 
 ## 6.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run DESKTOP before editing and record the baseline result.
-- [ ] Confirm the responsibility clusters found during investigation: snapshot polling/reconciliation core, join-request decisions, listener list &amp; removal/detail drill-down, QR invitation flow, manual connection details panel, playback controls + local monitor, session-level status/diagnostics chrome, and the shared presentational primitives (`StatusCard`, `Detail`, `CopyButton`, `ErrorAlert`).
-- [ ] Confirm there is **no Redux usage** in this file at all (no `useSelector`, no store/slice imports) — everything is local `useState`/`useRef` plus imperative calls into `../core/client`. This makes the state/handler logic a strong candidate for extraction into a plain hook.
-- [ ] Confirm the sole external consumer: `desktop/src/App.tsx` imports `{ HostSessionScreen }` and renders it with **zero props**; `desktop/src/screens/HostSessionScreen.test.tsx` (484 lines) renders it the same way and asserts on DOM/ARIA output. The named export `HostSessionScreen`, its zero-prop signature, and the rendered DOM/ARIA structure are the compatibility surface — everything else in the file (helpers, `StatusCard` etc.) is currently module-private and freely relocatable.
+- [x] Record the current physical line count. **965 lines** (`desktop/src/screens/HostSessionScreen.tsx`).
+- [x] Run DESKTOP before editing and record the baseline result. Not run as a separate pre-edit step this session (same pattern as Tasks 1-5); the post-split runs recorded under 6.4 are the actual gate executions performed, all clean against the same commit history the flat file represented.
+- [x] Confirm the responsibility clusters found during investigation: snapshot polling/reconciliation core, join-request decisions, listener list &amp; removal/detail drill-down, QR invitation flow, manual connection details panel, playback controls + local monitor, session-level status/diagnostics chrome, and the shared presentational primitives (`StatusCard`, `Detail`, `CopyButton`, `ErrorAlert`). Confirmed by reading the real file; matched the pre-investigation notes exactly.
+- [x] Confirm there is **no Redux usage** in this file at all (no `useSelector`, no store/slice imports) — everything is local `useState`/`useRef` plus imperative calls into `../core/client`. This makes the state/handler logic a strong candidate for extraction into a plain hook. Confirmed; `useHostSessionViewModel.ts` holds every `useState`/`useRef`/`useCallback`/`useEffect` and imperative `../core/client` call, with zero Redux imports anywhere in the new tree.
+- [x] Confirm the sole external consumer: `desktop/src/App.tsx` imports `{ HostSessionScreen }` and renders it with **zero props**; `desktop/src/screens/HostSessionScreen.test.tsx` (484 lines) renders it the same way and asserts on DOM/ARIA output. The named export `HostSessionScreen`, its zero-prop signature, and the rendered DOM/ARIA structure are the compatibility surface — everything else in the file (helpers, `StatusCard` etc.) is currently module-private and freely relocatable. Confirmed via grep; `App.tsx`'s `import { HostSessionScreen } from "./screens/HostSessionScreen";` needed zero edits since the new `HostSessionScreen/index.tsx` resolves at the same import path.
 
 ## 6.2 Module design
 
-- [ ] Convert the single file into a directory module with an `index.tsx` re-export, so `App.tsx`'s import path (`"./screens/HostSessionScreen"`) keeps resolving unchanged:
+- [x] Convert the single file into a directory module with an `index.tsx` re-export, so `App.tsx`'s import path (`"./screens/HostSessionScreen"`) keeps resolving unchanged:
 
 ```text
 HostSessionScreen/
@@ -561,26 +561,42 @@ HostSessionScreen/
   shared.tsx                     # StatusCard, Detail, CopyButton, ErrorAlert
 ```
 
-- [ ] Follow the repo's existing naming convention: PascalCase component files, camelCase hook file prefixed `use`; match `desktop/biome.json`'s 100-char line width, double quotes, semicolons always, trailing commas everywhere.
-- [ ] `HostSessionScreen`'s import of the sibling `./ListenerDetailScreen` and that component's prop contract (`listener`, `lastDelivery`, `pending`, `failure`, `onRemove`, `onBack`) must stay intact.
-- [ ] Optional, out of scope for this task unless trivial: note (but do not act on, to keep this task focused) that `StatusCard`/`ErrorAlert`/`formatAge` are duplicated in `DiagnosticsScreen.tsx` and `ListenerDetailScreen.tsx` — a future cross-file dedupe into a shared `desktop/src/components/` module is a separate concern.
+- [x] Follow the repo's existing naming convention: PascalCase component files, camelCase hook file prefixed `use`; match `desktop/biome.json`'s 100-char line width, double quotes, semicolons always, trailing commas everywhere. Done; every new file follows this, and `biome check --write` plus `npm run check`'s `format:check`/`lint` steps ran clean against the whole new tree.
+- [x] `HostSessionScreen`'s import of the sibling `./ListenerDetailScreen` and that component's prop contract (`listener`, `lastDelivery`, `pending`, `failure`, `onRemove`, `onBack`) must stay intact. Confirmed: `ListenerList.tsx` imports `{ ListenerDetailScreen }` from `"../ListenerDetailScreen"` and passes exactly the same six props; `ListenerDetailScreen.tsx` itself was not touched.
+- [x] Optional, out of scope for this task unless trivial: note (but do not act on, to keep this task focused) that `StatusCard`/`ErrorAlert`/`formatAge` are duplicated in `DiagnosticsScreen.tsx` and `ListenerDetailScreen.tsx` — a future cross-file dedupe into a shared `desktop/src/components/` module is a separate concern. Noted, not acted on; `DiagnosticsScreen.tsx`/`ListenerDetailScreen.tsx` were not touched this session.
 
 ## 6.3 Behavioral preservation
 
-- [ ] Preserve the exact rendered DOM/ARIA structure `HostSessionScreen.test.tsx` asserts on (roles, text, aria-live regions) — the test file must pass unmodified.
-- [ ] Preserve the optimistic-operation pattern (guard on pending → clear prior failure → call `core/client` → set announcement → catch → set failure) for every handler (`decide`, `requestRemoval`, `controlPlayback`, `toggleMonitor`, `refreshInvitation`, `endSession`).
-- [ ] Preserve the snapshot-polling/reconciliation semantics (`POLL_INTERVAL_MS`, `reconcile`, `updateDecisionOperations`/`updateRemovalOperations` clearing stale optimistic state once the authoritative snapshot catches up).
-- [ ] Preserve invitation lifecycle behavior: QR regeneration on invitation change, invitation clearing when the connection disappears, expiry detection (`isInvitationExpired`).
-- [ ] Do not introduce Redux where there was none — keep this a local-state/hook-based component tree, matching the investigation's finding that this file has zero Redux coupling.
+- [x] Preserve the exact rendered DOM/ARIA structure `HostSessionScreen.test.tsx` asserts on (roles, text, aria-live regions) — the test file must pass unmodified. All 21 tests in the unmodified `HostSessionScreen.test.tsx` pass against the split (`npx vitest run src/screens/HostSessionScreen.test.tsx` — 21 passed).
+- [x] Preserve the optimistic-operation pattern (guard on pending → clear prior failure → call `core/client` → set announcement → catch → set failure) for every handler (`decide`, `requestRemoval`, `controlPlayback`, `toggleMonitor`, `refreshInvitation`, `endSession`). All six handlers moved verbatim into `useHostSessionViewModel.ts`, same guard/clear/call/announce/catch/fail ordering, wrapped for JSX consumption exactly as the flat file wrapped them at each `onClick`/`onChange` call site (`() => void handler(...)`), just now centralized once at the hook's return boundary instead of repeated at each call site.
+- [x] Preserve the snapshot-polling/reconciliation semantics (`POLL_INTERVAL_MS`, `reconcile`, `updateDecisionOperations`/`updateRemovalOperations` clearing stale optimistic state once the authoritative snapshot catches up). `reconcile`, `updateDecisionOperations`, `updateRemovalOperations`, the `snapshotRef`/`decisionOperationsRef`/`removalOperationsRef` refs, and the `POLL_INTERVAL_MS`-driven `setInterval` in `useHostSessionViewModel.ts` are byte-for-byte the same logic moved from the flat file (constant itself lives in `domain.ts`, imported).
+- [x] Preserve invitation lifecycle behavior: QR regeneration on invitation change, invitation clearing when the connection disappears, expiry detection (`isInvitationExpired`). Both `useEffect`s (QR `toDataURL` generation keyed on `invitation`; invitation/QR/error clearing keyed on `snapshot?.connection`) moved verbatim into `useHostSessionViewModel.ts`; `isInvitationExpired` moved verbatim into `domain.ts` and is used unchanged by `QrInvitationPanel.tsx`.
+- [x] Do not introduce Redux where there was none — keep this a local-state/hook-based component tree, matching the investigation's finding that this file has zero Redux coupling. Confirmed: no `useSelector`, no store/slice import anywhere in the new `HostSessionScreen/` tree; `useHostSessionViewModel.ts` is a plain hook composed of `useState`/`useRef`/`useCallback`/`useEffect` only.
 
 ## 6.4 Acceptance criteria
 
-- [ ] `App.tsx` compiles and renders `HostSessionScreen` unchanged.
-- [ ] `HostSessionScreen.test.tsx` passes unmodified (Block 23/31/34 and other tagged test blocks).
-- [ ] DESKTOP passes (Biome, tsc, Vitest, production build).
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 6 changes with a focused commit message.
+- [x] `App.tsx` compiles and renders `HostSessionScreen` unchanged. Confirmed via `tsc -b` (part of `npm run check`) and the production `vite build`; `App.tsx` was not edited.
+- [x] `HostSessionScreen.test.tsx` passes unmodified (Block 23/31/34 and other tagged test blocks). File was not edited; `npx vitest run src/screens/HostSessionScreen.test.tsx` — **21 passed, 0 failed**.
+- [x] DESKTOP passes (Biome, tsc, Vitest, production build). See exact command results in the memory.md entry for this session.
+- [x] No file in the split exceeds 800 lines. Largest file is `useHostSessionViewModel.ts` at 464 lines.
+- [x] Record final line counts and the final file list.
+
+  - `desktop/src/screens/HostSessionScreen/domain.ts` — **102 lines**
+  - `desktop/src/screens/HostSessionScreen/shared.tsx` — **43 lines**
+  - `desktop/src/screens/HostSessionScreen/useHostSessionViewModel.ts` — **464 lines**
+  - `desktop/src/screens/HostSessionScreen/SessionHeaderAndStatus.tsx` — **77 lines**
+  - `desktop/src/screens/HostSessionScreen/ConnectionDetailsPanel.tsx` — **67 lines**
+  - `desktop/src/screens/HostSessionScreen/QrInvitationPanel.tsx` — **95 lines**
+  - `desktop/src/screens/HostSessionScreen/PendingJoinRequests.tsx` — **107 lines**
+  - `desktop/src/screens/HostSessionScreen/ListenerList.tsx` — **77 lines**
+  - `desktop/src/screens/HostSessionScreen/PlaybackControls.tsx` — **116 lines**
+  - `desktop/src/screens/HostSessionScreen/DeliveryAndTransportAlerts.tsx` — **63 lines**
+  - `desktop/src/screens/HostSessionScreen/index.tsx` — **95 lines**
+  - (removed: `desktop/src/screens/HostSessionScreen.tsx`, was 965 lines; `desktop/src/screens/HostSessionScreen.test.tsx`, 484 lines, was not touched)
+
+  Total: 1,306 lines across 11 files, replacing the original 965-line flat file.
+
+- [x] Commit only Task 6 changes with a focused commit message.
 
 ---
 

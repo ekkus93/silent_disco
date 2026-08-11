@@ -4892,3 +4892,100 @@ checkboxes 5.1-5.4 marked complete with final line counts/file list and per-inva
 `memory.md` (this entry).
 
 Not started: Task 6 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T21:06:45Z - Claude Sonnet 5 - Task 6: split HostSessionScreen.tsx into HostSessionScreen/ module
+
+Split `desktop/src/screens/HostSessionScreen.tsx` (965 lines) into a directory module,
+per `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 6. `App.tsx`'s
+`import { HostSessionScreen } from "./screens/HostSessionScreen";` needed zero edits since
+`HostSessionScreen/index.tsx` resolves at the same path. This file has zero Redux usage (no
+`useSelector`/store imports) -- all state/hooks/handlers were extracted into a plain
+`useHostSessionViewModel()` hook, matching the TODO's proposed design closely.
+
+Final file list and line counts (`desktop/src/screens/HostSessionScreen/`):
+
+- `domain.ts` -- 102 lines: pure helpers/types (`errorKey`, `deliveryKey`, `revisionIsNewer`,
+  `operationFailure`, `formatAge`, `formatTimestamp`, `formatWallClock`, `isInvitationExpired`,
+  `PendingOperation`, `DecisionKind`, `POLL_INTERVAL_MS`), moved verbatim.
+- `shared.tsx` -- 43 lines: `StatusCard`, `Detail`, `CopyButton`, `ErrorAlert`, moved verbatim.
+- `useHostSessionViewModel.ts` -- 464 lines: every `useState`/`useRef`/`useCallback`/`useEffect`
+  and every imperative `../core/client` call, moved verbatim (largest file in the split, still
+  well under the 800-line ceiling). Returns a `HostSessionViewModel` object; every async handler
+  (`decide`, `requestRemoval`, `controlPlayback`, `toggleMonitor`, `refreshInvitation`,
+  `endSession`, `copyValue`, `refresh`) is exposed pre-wrapped as a plain `() => void` function
+  (moving the void-wrapping that used to sit at each JSX call site in the flat file to one place,
+  the hook's return boundary) so consuming components' prop types stay simple synchronous
+  callbacks.
+- `SessionHeaderAndStatus.tsx` -- 77 lines: header, aria-live announcement region, `StatusCard`
+  grid.
+- `ConnectionDetailsPanel.tsx` -- 67 lines: "Manual connection details" section; computes
+  `connectionPayload` internally from its `connection` prop (equivalent to the flat file's
+  module-level derivation, since this component early-returns when `connection` is null).
+- `QrInvitationPanel.tsx` -- 95 lines: "QR invitation" section (rendered by `index.tsx` only when
+  `snapshot.connection` is present, matching the original's outer conditional).
+- `PendingJoinRequests.tsx` -- 107 lines: "Pending join requests" section.
+- `ListenerList.tsx` -- 77 lines: "Connected listeners" section, including the drill-down into
+  the untouched sibling `ListenerDetailScreen` (same six props: `listener`, `lastDelivery`,
+  `pending`, `failure`, `onRemove`, `onBack`).
+- `PlaybackControls.tsx` -- 116 lines: "Playback controls" section incl. local monitor toggle;
+  uses the generated `MonitorStatusDto` type directly for the `monitor` prop rather than a
+  hand-rolled duplicate shape.
+- `DeliveryAndTransportAlerts.tsx` -- 63 lines: trailing delivery/broadcast-queue/transport-error/
+  last-error alerts.
+- `index.tsx` -- 95 lines: top-level shell; calls `useHostSessionViewModel()`, handles the
+  "no snapshot yet" loading branch, composes all section components, and is the sole named
+  export `HostSessionScreen` (zero-prop signature unchanged).
+
+Total: 1,306 lines across 11 files, replacing the original 965-line flat file. Removed:
+`desktop/src/screens/HostSessionScreen.tsx`. `desktop/src/screens/HostSessionScreen.test.tsx`
+(484 lines) was **not edited** and passes unmodified.
+
+**One near-miss caught before landing:** while manually retyping `errorKey`'s original
+code/message separator into `domain.ts`, a Unicode escape sequence typed directly into a JSON
+tool-call parameter got interpreted as a literal raw NUL byte in the written file instead of the
+six literal source characters that make up the escape sequence in the original `.tsx` (backslash,
+`u`, and four zero digits). Caught by grep unexpectedly returning zero matches for `errorKey` in
+the new file (grep silently treats a file containing a raw NUL byte as binary) before running any
+gates; fixed with a byte-level Python rewrite restoring the literal six-character escape sequence.
+Flagged here since a raw NUL byte quietly changes the runtime *value* `errorKey` produces (still
+unique-enough for its purpose, but not textually identical to the original file) and would have
+been very easy to miss without the grep anomaly prompting a closer look.
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-a84c74b4765c794da`:**
+- Fresh worktree had no `node_modules`; ran `npm install` (some `EBADENGINE` warnings for
+  Node 22.12.0 vs the package's preferred `>=22.13.0 <23` / jsdom's `^22.13.0`, pre-existing
+  environment mismatch, not caused by this change -- install still succeeded, 0 vulnerabilities).
+- `npx biome check --write src/screens/HostSessionScreen src/screens/HostSessionScreen.test.tsx`
+  -- clean, no fixes needed beyond what was already correctly formatted; confirmed
+  `HostSessionScreen.test.tsx` was not modified (`git status` shows it untouched).
+- `npm run typecheck` (`tsc -b --pretty false`) -- clean, 0 errors.
+- `npx vitest run src/screens/HostSessionScreen.test.tsx` -- **21 passed, 0 failed** (this is the
+  primary behavioral regression gate for this task).
+- Fresh worktree had no `dist/`, needed by `bindings:check`'s `tauri::generate_context!()`; ran
+  `npm run build` once first (`tsc -b && vite build`, succeeded) to produce it, matching the
+  pattern noted in the Task 5 memory entry for a fresh worktree.
+- `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t6 npm run check` -- all green:
+  `bindings:check` verified `desktop-bindings.ts` against the Rust DTOs (untouched by this Rust-
+  free task), `format:check` clean (same pre-existing `biome.json` "recommended deprecated" info
+  notice as every prior Task 2-5 session, unrelated), `lint` clean, `typecheck` clean, **86
+  Vitest tests passed (10 files)** (includes the 21 in `HostSessionScreen.test.tsx`), production
+  `vite build` succeeded. Same pre-existing `process_for_lab` never-used warning surfaced during
+  the bindings-check compile as every prior Task 2-5 session noted
+  (`platform/host_transport_events.rs`, untouched by this session) -- not fixed, out of scope.
+- `cd desktop/src-tauri && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t6 cargo clippy
+  --all-targets --all-features -- -D warnings` -- clean, exit 0, zero warnings/errors (this task
+  touched no Rust file at all, so this is confirming no incidental regression).
+- Cleaned up the `/dev/shm` scratch build directory after validation.
+
+**Files touched:** `desktop/src/screens/HostSessionScreen/` (11 new files: `domain.ts`,
+`shared.tsx`, `useHostSessionViewModel.ts`, `SessionHeaderAndStatus.tsx`,
+`ConnectionDetailsPanel.tsx`, `QrInvitationPanel.tsx`, `PendingJoinRequests.tsx`,
+`ListenerList.tsx`, `PlaybackControls.tsx`, `DeliveryAndTransportAlerts.tsx`, `index.tsx`),
+`desktop/src/screens/HostSessionScreen.tsx` (removed),
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 6 checkboxes 6.1-6.4 marked complete
+with final line counts/file list and per-invariant test evidence), `memory.md` (this entry).
+`desktop/src/screens/HostSessionScreen.test.tsx` was explicitly **not** touched, per the task
+instructions.
+
+Not started: Task 7 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
