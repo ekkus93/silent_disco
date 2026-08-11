@@ -1,3 +1,5 @@
+use super::support::live_error;
+use crate::dto::DesktopErrorDto;
 use crate::lab::recorder::{RecordingObserver, ScenarioRecorder};
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{CoreNotification, CoreObserver};
@@ -12,20 +14,26 @@ const EFFECT_QUEUE_CAPACITY: usize = 128;
 pub(in crate::lab::scenario) struct LiveScenarioObserver {
     recorder: RecordingObserver,
     effects: SyncSender<CoreNotification>,
+    queue_full_error: CoreError,
+    queue_disconnected_error: CoreError,
 }
 
 impl LiveScenarioObserver {
     pub(in crate::lab::scenario) fn new(
         recorder: Arc<ScenarioRecorder>,
-    ) -> (Self, Receiver<CoreNotification>) {
+    ) -> Result<(Self, Receiver<CoreNotification>), DesktopErrorDto> {
+        let queue_full_error = queue_error("Lab live-effect queue reached its bounded capacity")?;
+        let queue_disconnected_error = queue_error("Lab live-effect consumer disconnected")?;
         let (effects, receiver) = mpsc::sync_channel(EFFECT_QUEUE_CAPACITY);
-        (
+        Ok((
             Self {
                 recorder: RecordingObserver(recorder),
                 effects,
+                queue_full_error,
+                queue_disconnected_error,
             },
             receiver,
-        )
+        ))
     }
 }
 
@@ -40,19 +48,22 @@ impl CoreObserver for LiveScenarioObserver {
         ) {
             return Ok(());
         }
-        self.effects.try_send(notification).map_err(|queue_error| {
-            let message = match queue_error {
-                TrySendError::Full(_) => "Lab live-effect queue reached its bounded capacity",
-                TrySendError::Disconnected(_) => "Lab live-effect consumer disconnected",
-            };
-            CoreError::new(
-                CoreErrorCode::QueueOverflow,
-                message,
-                ErrorSeverity::Error,
-                true,
-                None,
-            )
-            .expect("static Lab effect-queue error text satisfies the core error contract")
-        })
+        self.effects
+            .try_send(notification)
+            .map_err(|queue_error| match queue_error {
+                TrySendError::Full(_) => self.queue_full_error.clone(),
+                TrySendError::Disconnected(_) => self.queue_disconnected_error.clone(),
+            })
     }
+}
+
+fn queue_error(message: &'static str) -> Result<CoreError, DesktopErrorDto> {
+    CoreError::new(
+        CoreErrorCode::QueueOverflow,
+        message,
+        ErrorSeverity::Error,
+        true,
+        None,
+    )
+    .map_err(|error| live_error("observer_error_shape_invalid", &error.to_string()))
 }
