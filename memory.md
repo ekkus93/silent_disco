@@ -5282,3 +5282,83 @@ deviation documented inline, and validation evidence), `memory.md` (this entry).
 This was Task 9, the last of the 9 top-level tasks in round 2. Final validation/closure ("Final
 validation and closure" section of the TODO) not yet run as of this entry -- that happens after
 this task's commit is pushed, per the round's explicit one-task-at-a-time rule.
+
+## 2026-08-11T22:16:51Z - Claude Sonnet 5 - Round-2 oversized-file split refactor CLOSED OUT (all 9 tasks + final validation)
+
+Closed out `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` after Task 9 (final task) was
+committed and pushed. Ran the "Final validation and closure" section for real, on
+`origin/master` after `git fetch && git rebase origin/master` confirmed all 9 task commits present.
+
+**All nine implementation commit SHAs** (on `origin/master`, in task order):
+
+1. `818269c` — split `listener_playback.rs` into `listener_playback/`
+2. `5bf4cec` — split `playback_pump.rs` into `playback_pump/`
+3. `4ce4b7b` — split `platform/network.rs` into `network.rs` (thin root) + `network/`
+4. `12100d3` — split `app_state.rs` into `app_state/`
+5. `e02955b` — merge `scheduler.rs` + `scheduler_tests.rs` into `scheduler/`
+6. `bea8b34` — split `HostSessionScreen.tsx` into `HostSessionScreen/`
+7. `bffa14c` — split `transport/socket/host.rs` into `host/`
+8. `37228c5` — split `transport/tests.rs` into theme-based test files
+9. `7e2955f` — split `lab_commands.rs` into `lab_commands/`
+
+**Original-path confirmation:** all 10 original oversized paths from the TODO's "Purpose" section
+are gone from disk except `desktop/src-tauri/src/platform/network.rs`, which by Task 3's own design
+became a 39-line thin root re-export file (not the original 1194-line file) -- confirmed via direct
+`ls`/`wc -l` after the rebase, not assumed from memory.
+
+**Fresh line-count scan** (the `/top-large-files` skill's exact script, run against
+`git ls-files`): none of the original 10 files/paths appear anymore. No file created or modified by
+any of the 9 round-2 tasks exceeds 800 lines (largest: `scheduler/engine.rs` at 589,
+`lab_commands/mod.rs` at 534). The scan's own top-10 does surface three files over 800 lines --
+`app/.../ManualListenerTransportController.kt` (832), `rust/.../runtime/records.rs` (814), and
+`rust/.../transport/virtual_transport.rs` (803) -- but `git log` on each confirms none were touched
+by any of this round's 9 commits (last-modified commits all predate `2d00b9f`, the round-2 TODO's
+own initial commit). These are pre-existing, out-of-scope files, reported here for honesty per the
+task's own instruction, **not** fixed as part of this round (out of scope; not on the original
+10-file list).
+
+**Final combined validation matrix, run once on the fully-merged `origin/master` result, worktree
+`.claude/worktrees/agent-a56a4414b9f3a9e9e`** (fresh worktree; `desktop && npm install && npm run
+build` run first to populate `dist/` for `tauri::generate_context!()`):
+
+- RUST-CORE: `cd rust && cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings` clean; `cargo test --workspace --all-features` -- **298 passed** in
+  `silent-disco-core` lib tests, 0 failed, 1 ignored, plus every integration-test binary green (54 in
+  `silent-disco-ffi` lib tests, 3 `host_transport.rs`, 7 `listener_transport.rs`, 3
+  `listener_control.rs`, 1 `host_admission.rs`, 1 `host_control.rs`, 3 `silent-disco-test-support`
+  lib tests).
+- ANDROID: `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` -- **BUILD
+  SUCCESSFUL in 3m 19s, 112 actionable tasks: 112 executed** (this ran as a genuinely
+  background-completing command per the harness's own 120s auto-background threshold, not via any
+  Monitor/async-wait tool call; polled synchronously via plain `ps`/`tail` Bash calls until the
+  harness's own completion notification arrived).
+- DESKTOP: `cd desktop && npm run check` -- all green (bindings-check with the same pre-existing
+  `process_for_lab never used` warning noted every session this round, Biome format/lint clean,
+  `tsc -b` clean, **86 Vitest tests passed (10 files)**, production `vite build` succeeded);
+  `cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings` -- clean.
+- DESKTOP-LAB-MODE: `cd desktop/src-tauri && cargo fmt --check` clean; `cargo clippy --all-targets
+  --features lab-mode -- -D warnings` clean; `cargo test --features lab-mode` -- **282 passed, 0
+  failed, 4 ignored** (the same pre-existing manual/device-only ignored set as every prior session).
+
+**Closure-checklist confirmations, verified against the real diff (`git diff 2d00b9f..7e2955f`),
+not assumed:**
+- Zero wildcard imports added anywhere in the round (`grep -E "^\+use.*\*;"` against the full round
+  diff: no matches).
+- Exactly 4 `#[allow(...)]`/`#![allow(...)]` lines were added across the whole round's diff; all 4
+  verified to be pre-existing attributes carried over verbatim with the code being moved (two
+  `clippy::needless_pass_by_value` on Tauri/UniFFI boundary fns -- an established pre-round pattern;
+  one `clippy::struct_excessive_bools` on `InterfaceRecord`, moved as-is from the original
+  `network.rs`; one `#![allow(clippy::too_many_lines)]` on `transport/handshake_tests.rs`, moved
+  as-is from the original `transport/tests.rs` because it holds one genuinely ~160-line multi-
+  listener integration test). None were newly introduced to silence a warning the split itself
+  caused.
+- No dependency/lockfile changes were included in any of the nine refactor commits.
+
+Both the TODO doc's "Final validation and closure" checkboxes and its new "Ralph Loop completion
+record" section (matching the style of the sibling `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO.md`'s
+own completion record: a `Status:` line, per-task "Final line counts" with each implementation
+commit SHA and file list, and a "Verified acceptance summary" checklist) are now filled in with real
+evidence, not fabricated.
+
+**Round 2 is genuinely closed out clean.** No open items remain in
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md`.

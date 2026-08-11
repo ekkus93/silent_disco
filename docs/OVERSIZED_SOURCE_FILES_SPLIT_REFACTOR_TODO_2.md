@@ -809,14 +809,188 @@ lab_commands/
 
 Complete this section only after Tasks 1 through 9 have each been implemented and committed separately.
 
-- [ ] Confirm all 10 original oversized paths were replaced or reduced according to their task design.
-- [ ] Confirm every new module has a clear single responsibility.
-- [ ] Confirm there are no wildcard imports added by the refactors.
-- [ ] Confirm no `allow` attributes were added merely to suppress size, visibility, import, dead-code, or complexity warnings.
-- [ ] Confirm no silent fallback, ignored error, or permissive compatibility path was introduced.
-- [ ] Confirm no real-time-audio-path file gained allocation, I/O, blocking, JNI, UniFFI, or logging calls as a side effect of the split.
-- [ ] Confirm public Rust APIs, UniFFI-exported types/methods, JNI-reachable symbols, Tauri IPC command names, TypeScript component exports/props, protocol bytes, database schema/behavior, actor semantics, and Android/desktop UI behavior all remain compatible.
-- [ ] Run the complete RUST-CORE, ANDROID, DESKTOP, and DESKTOP-LAB-MODE validation matrices one final time, together, on the combined result.
-- [ ] Confirm a fresh `/top-large-files` run no longer lists any of the original 10 files, and no newly-created file from this round exceeds 800 lines.
-- [ ] Record the nine implementation commit SHAs and final validation evidence in `memory.md`.
-- [ ] Mark this TODO complete only after the final validation evidence is available.
+- [x] Confirm all 10 original oversized paths were replaced or reduced according to their task design. Verified on disk after `git fetch origin && git rebase origin/master`: all 10 original file paths are absent (`ls` reports "No such file or directory" for all of them except `desktop/src-tauri/src/platform/network.rs`, which by Task 3's own design became a 39-line thin root re-export file, not the original 1194-line file — confirmed via `wc -l`).
+- [x] Confirm every new module has a clear single responsibility. Verified per-task in each task's own 9.2/acceptance-criteria section above and in the sibling Tasks 1-8 sections.
+- [x] Confirm there are no wildcard imports added by the refactors. `git diff 2d00b9f..7e2955f -- '*.rs' | grep -E "^\+use.*\*;"` — zero matches across the whole round.
+- [x] Confirm no `allow` attributes were added merely to suppress size, visibility, import, dead-code, or complexity warnings. `git diff 2d00b9f..7e2955f -- '*.rs' | grep -E "^\+.*allow\("` found 4 added `#[allow(...)]`/`#![allow(...)]` lines total; all 4 were verified to be pre-existing attributes carried over verbatim from the original files being split (two `clippy::needless_pass_by_value` on Tauri/UniFFI boundary fns — a pattern already used throughout the codebase before this round; one `clippy::struct_excessive_bools` on `InterfaceRecord`, moved as-is from the original `network.rs`; one `#![allow(clippy::too_many_lines)]` on `transport/handshake_tests.rs`, moved as-is from the original `transport/tests.rs`, still needed because it contains one genuinely ~160-line multi-listener integration test). None were newly introduced to hide a warning caused by the split itself.
+- [x] Confirm no silent fallback, ignored error, or permissive compatibility path was introduced. Every task's behavioral-preservation section above was checked against the real diff; no `unwrap`/`expect`/broad `try/catch` was added, no error was newly swallowed.
+- [x] Confirm no real-time-audio-path file gained allocation, I/O, blocking, JNI, UniFFI, or logging calls as a side effect of the split. `playback_pump/` (Task 2) and `scheduler/` (Task 5) are the only real-time-adjacent splits in this round; both preserved their pre-split real-time-safety boundaries exactly (verified in Tasks 2 and 5's own behavioral-preservation sections).
+- [x] Confirm public Rust APIs, UniFFI-exported types/methods, JNI-reachable symbols, Tauri IPC command names, TypeScript component exports/props, protocol bytes, database schema/behavior, actor semantics, and Android/desktop UI behavior all remain compatible. Confirmed via the full green RUST-CORE/ANDROID/DESKTOP/DESKTOP-LAB-MODE run below, which exercises all of these surfaces (UniFFI bindings-check, Android instrumented unit tests/lint, Tauri command registration compiling unchanged, desktop Vitest/production build).
+- [x] Run the complete RUST-CORE, ANDROID, DESKTOP, and DESKTOP-LAB-MODE validation matrices one final time, together, on the combined result. Done — see "Final line counts" / validation evidence below and the closing `memory.md` entry.
+- [x] Confirm a fresh `/top-large-files`-equivalent run no longer lists any of the original 10 files, and no newly-created file from this round exceeds 800 lines. Confirmed: none of the 10 original files/paths appear in a fresh repo-wide line-count scan, and every file created or modified by this round's 9 tasks is under 800 lines (largest: `rust/silent-disco-core/src/audio/scheduler/engine.rs` at 589, `desktop/src-tauri/src/lab_commands/mod.rs` at 534). Three **pre-existing, out-of-scope** files exceed 800 lines in the same scan (`app/src/main/java/com/ekkus/silentdisco/core/rust/ManualListenerTransportController.kt` at 832, `rust/silent-disco-core/src/runtime/records.rs` at 814, `rust/silent-disco-core/src/transport/virtual_transport.rs` at 803) — confirmed via `git log` that none of these three were touched by any of this round's 9 commits (their most recent commits all predate `2d00b9f`, the round-2 TODO's own initial commit); they are not part of this TODO's scope and were not modified, so they are reported here rather than silently ignored, per the task's own instruction, but were not "fixed" as part of this round.
+- [x] Record the nine implementation commit SHAs and final validation evidence in `memory.md`. Done — see the closing `memory.md` entry.
+- [x] Mark this TODO complete only after the final validation evidence is available. All checkboxes above reflect real, executed validation; see the "Ralph Loop completion record" section below.
+
+---
+
+# Ralph Loop completion record
+
+Status: **Implementation complete and fully validated.**
+
+The nine oversized source-file refactors were implemented as nine separate commits on `master`,
+one task at a time per this round's own "Global execution rules". Before each implementation
+commit, the task's own required validation matrix (RUST-CORE, ANDROID, DESKTOP, and/or
+DESKTOP-LAB-MODE, as named by that task) passed. The complete combined RUST-CORE, ANDROID, DESKTOP,
+and DESKTOP-LAB-MODE validation matrix passed once more after all nine commits were combined on
+`origin/master`.
+
+## Final line counts
+
+### Task 1 — `listener_playback.rs`
+
+Implementation commit: `818269c`
+
+- `rust/silent-disco-ffi/src/listener_playback/error.rs` — **41 lines**
+- `rust/silent-disco-ffi/src/listener_playback/ffi_convert.rs` — **108 lines**
+- `rust/silent-disco-ffi/src/listener_playback/ffi_handle.rs` — **240 lines**
+- `rust/silent-disco-ffi/src/listener_playback/ffi_types.rs` — **189 lines**
+- `rust/silent-disco-ffi/src/listener_playback/mod.rs` — **34 lines**
+- `rust/silent-disco-ffi/src/listener_playback/pump.rs` — **124 lines**
+- `rust/silent-disco-ffi/src/listener_playback/runtime.rs` — **429 lines**
+- `rust/silent-disco-ffi/src/listener_playback/tests.rs` — **686 lines**
+
+### Task 2 — `playback_pump.rs`
+
+Implementation commit: `5bf4cec`
+
+- `rust/silent-disco-core/src/audio/playback_pump/config.rs` — **79 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/conversion.rs` — **26 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/diagnostics.rs` — **102 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/mod.rs` — **45 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/pump.rs` — **144 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/recording.rs` — **46 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/scheduling.rs` — **185 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/sync.rs` — **89 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/config.rs` — **99 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/conversion.rs` — **76 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/diagnostics.rs` — **190 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/mod.rs` — **133 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/recording.rs` — **133 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/scheduling.rs` — **359 lines**
+- `rust/silent-disco-core/src/audio/playback_pump/tests/sync.rs` — **128 lines**
+
+### Task 3 — `platform/network.rs`
+
+Implementation commit: `4ce4b7b`
+
+- `desktop/src-tauri/src/platform/network.rs` — **39 lines** (thin root re-export file)
+- `desktop/src-tauri/src/platform/network/bind_selection.rs` — **280 lines**
+- `desktop/src-tauri/src/platform/network/classification.rs` — **88 lines**
+- `desktop/src-tauri/src/platform/network/dto_bridge.rs` — **87 lines**
+- `desktop/src-tauri/src/platform/network/host_control.rs` — **386 lines**
+- `desktop/src-tauri/src/platform/network/interfaces.rs` — **106 lines**
+- `desktop/src-tauri/src/platform/network/playback_control.rs` — **326 lines**
+
+### Task 4 — `app_state.rs`
+
+Implementation commit: `12100d3`
+
+- `desktop/src-tauri/src/app_state/commands.rs` — **72 lines**
+- `desktop/src-tauri/src/app_state/construct.rs` — **212 lines**
+- `desktop/src-tauri/src/app_state/errors.rs` — **39 lines**
+- `desktop/src-tauri/src/app_state/host_ops.rs` — **498 lines**
+- `desktop/src-tauri/src/app_state/lifecycle.rs` — **198 lines**
+- `desktop/src-tauri/src/app_state/mod.rs` — **231 lines**
+- `desktop/src-tauri/src/app_state/state.rs` — **60 lines**
+
+### Task 5 — `scheduler.rs` + `scheduler_tests.rs`
+
+Implementation commit: `e02955b`
+
+- `rust/silent-disco-core/src/audio/scheduler/buffering_tests.rs` — **222 lines**
+- `rust/silent-disco-core/src/audio/scheduler/concealment_tests.rs` — **388 lines**
+- `rust/silent-disco-core/src/audio/scheduler/config.rs` — **149 lines**
+- `rust/silent-disco-core/src/audio/scheduler/config_tests.rs` — **98 lines**
+- `rust/silent-disco-core/src/audio/scheduler/engine.rs` — **589 lines**
+- `rust/silent-disco-core/src/audio/scheduler/errors.rs` — **48 lines**
+- `rust/silent-disco-core/src/audio/scheduler/mod.rs` — **53 lines**
+- `rust/silent-disco-core/src/audio/scheduler/resync_tests.rs` — **295 lines**
+- `rust/silent-disco-core/src/audio/scheduler/test_support.rs` — **81 lines**
+- `rust/silent-disco-core/src/audio/scheduler/types.rs` — **99 lines**
+
+### Task 6 — `HostSessionScreen.tsx`
+
+Implementation commit: `bea8b34`
+
+- `desktop/src/screens/HostSessionScreen/ConnectionDetailsPanel.tsx` — **67 lines**
+- `desktop/src/screens/HostSessionScreen/DeliveryAndTransportAlerts.tsx` — **63 lines**
+- `desktop/src/screens/HostSessionScreen/ListenerList.tsx` — **77 lines**
+- `desktop/src/screens/HostSessionScreen/PendingJoinRequests.tsx` — **107 lines**
+- `desktop/src/screens/HostSessionScreen/PlaybackControls.tsx` — **116 lines**
+- `desktop/src/screens/HostSessionScreen/QrInvitationPanel.tsx` — **95 lines**
+- `desktop/src/screens/HostSessionScreen/SessionHeaderAndStatus.tsx` — **77 lines**
+- `desktop/src/screens/HostSessionScreen/domain.ts` — **102 lines**
+- `desktop/src/screens/HostSessionScreen/index.tsx` — **95 lines**
+- `desktop/src/screens/HostSessionScreen/shared.tsx` — **43 lines**
+- `desktop/src/screens/HostSessionScreen/useHostSessionViewModel.ts` — **464 lines**
+
+### Task 7 — `transport/socket/host.rs`
+
+Implementation commit: `bffa14c`
+
+- `rust/silent-disco-core/src/transport/socket/host/authorization.rs` — **87 lines**
+- `rust/silent-disco-core/src/transport/socket/host/bind.rs` — **241 lines**
+- `rust/silent-disco-core/src/transport/socket/host/broadcast.rs` — **166 lines**
+- `rust/silent-disco-core/src/transport/socket/host/lookup.rs` — **113 lines**
+- `rust/silent-disco-core/src/transport/socket/host/mod.rs` — **49 lines**
+- `rust/silent-disco-core/src/transport/socket/host/node.rs` — **237 lines**
+- `rust/silent-disco-core/src/transport/socket/host/peer.rs` — **80 lines**
+
+### Task 8 — `transport/tests.rs`
+
+Implementation commit: `37228c5`
+
+- `rust/silent-disco-core/src/transport/test_support.rs` — **190 lines**
+- `rust/silent-disco-core/src/transport/handshake_tests.rs` — **240 lines**
+- `rust/silent-disco-core/src/transport/liveness_tests.rs` — **188 lines**
+- `rust/silent-disco-core/src/transport/authorization_tests.rs` — **144 lines**
+- `rust/silent-disco-core/src/transport/virtual_tests.rs` — **173 lines**
+
+### Task 9 — `lab_commands.rs`
+
+Implementation commit: `7e2955f`
+
+- `desktop/src-tauri/src/lab_commands/mod.rs` — **534 lines**
+- `desktop/src-tauri/src/lab_commands/dto_convert.rs` — **175 lines**
+- `desktop/src-tauri/src/lab_commands/errors.rs` — **110 lines**
+- `desktop/src-tauri/src/lab_commands/scenario_io.rs` — **59 lines**
+- `desktop/src-tauri/src/lab_commands/session.rs` — **40 lines**
+- `desktop/src-tauri/src/lab_commands/tests.rs` — **221 lines**
+
+## Final combined validation (run once more after all nine commits, on `origin/master`)
+
+- **RUST-CORE** (`cd rust`): `cargo fmt --all -- --check` clean; `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings` clean; `cargo test --workspace --all-features` —
+  **298 passed** in `silent-disco-core`'s lib tests plus every integration-test binary green (54 in
+  `silent-disco-ffi`'s lib tests, 3 `host_transport.rs`, 7 `listener_transport.rs`, and the rest),
+  **0 failed**, 1 ignored.
+- **ANDROID**: `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` — **BUILD
+  SUCCESSFUL in 3m 19s, 112 actionable tasks: 112 executed**.
+- **DESKTOP**: `cd desktop && npm run check` — all green (UniFFI bindings-check, Biome format/lint,
+  `cargo fmt --check`, `tsc -b`, **86 Vitest tests passed (10 files)**, production `vite build`);
+  `cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings` — clean.
+- **DESKTOP-LAB-MODE**: `cd desktop/src-tauri && cargo fmt --check` clean; `cargo clippy
+  --all-targets --features lab-mode -- -D warnings` clean; `cargo test --features lab-mode` —
+  **282 passed, 0 failed, 4 ignored** (pre-existing manual/device-only tests).
+
+One pre-existing, unrelated warning was observed and left untouched, exactly as in every prior
+session this round: `process_for_lab` (in `desktop/src-tauri/src/platform/host_transport_events.rs`)
+is reported as never used by the bindings-check compile; not part of this round's scope.
+
+## Verified acceptance summary
+
+- [x] All source files created or modified by this round's 9 tasks are below 800 physical lines.
+- [x] Each original oversized file was handled as its own independently validated task and implementation commit, one at a time.
+- [x] `listener_playback.rs`'s UniFFI-exported surface, JNI-reachable behavior, and all downstream Android call sites remain compatible (Task 1; ANDROID gate green).
+- [x] `playback_pump.rs`'s real-time-safety boundary (no allocation/blocking/I/O in the render-ring-adjacent path) is unchanged (Task 2).
+- [x] `platform/network.rs`'s bind-selection, interface classification, host/playback control, and DTO-bridging behavior remain covered by the Rust test suite (Task 3).
+- [x] `app_state.rs`'s profile lifecycle state machine and all four Tauri commands compile and behave unchanged (Task 4).
+- [x] `scheduler.rs`/`scheduler_tests.rs`'s buffering, concealment, resync, and config behavior remain covered by the merged `scheduler/` module's test suite (Task 5).
+- [x] `HostSessionScreen.tsx`'s component exports/props and view-model behavior remain covered by the desktop Vitest suite (Task 6).
+- [x] `transport/socket/host.rs`'s authorization, bind, broadcast, lookup, and node/peer lifecycle behavior remain covered by the Rust test suite (Task 7).
+- [x] `transport/tests.rs`'s 9 tests all still pass at their new theme-based module paths, with zero behavior change (Task 8).
+- [x] `lab_commands.rs`'s 9 Tauri IPC command names and all 8 existing tests remain unchanged; `LabAppState` stays independent of `DesktopAppState` (Task 9).
+- [x] No wildcard-import was added by any of the nine refactors; strict Clippy passed with warnings denied on every applicable gate.
+- [x] No `allow` attribute was added merely to suppress a warning caused by the split itself (all 4 `allow` attributes touched by the round's diff were pre-existing, moved verbatim with their code).
+- [x] No dependency change or generated `Cargo.lock`/lockfile change was included in any of the nine refactor commits.
+- [x] Temporary workflows, transformers, and failure reports were not introduced; only the target source files, this TODO doc, and `memory.md` were touched by each task's commit.
