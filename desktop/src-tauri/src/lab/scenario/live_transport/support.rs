@@ -81,3 +81,39 @@ pub(super) fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
         message,
     )
 }
+
+impl super::LiveTransportDriver {
+    pub(super) fn shutdown(&mut self) -> Result<(), DesktopErrorDto> {
+        let mut failure = None;
+
+        for (node_id, mut listener) in self.listeners.drain() {
+            if let Err(error) = listener.transport.shutdown() {
+                append_failure(
+                    &mut failure,
+                    transport_error(
+                        &format!("shutdown Lab listener '{node_id}'"),
+                        &error,
+                    ),
+                );
+            }
+        }
+
+        for (node_id, mut host) in self.hosts.drain() {
+            if let Err(error) = host.transport.shutdown() {
+                append_failure(
+                    &mut failure,
+                    transport_error(&format!("shutdown Lab host '{node_id}'"), &error),
+                );
+            }
+        }
+
+        failure.map_or(Ok(()), Err)
+    }
+}
+
+fn append_failure(primary: &mut Option<DesktopErrorDto>, next: DesktopErrorDto) {
+    *primary = Some(match primary.take() {
+        Some(previous) => previous.with_appended_cleanup(Some(next)),
+        None => next,
+    });
+}
