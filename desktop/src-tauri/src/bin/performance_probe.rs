@@ -588,7 +588,8 @@ fn connect_and_authorize_listeners<F: TransportFactory + ?Sized>(
             host.endpoint(),
         );
         config.event_queue_capacity = event_queue_capacity.clamp(64, 8_192);
-        let listener = factory.connect_listener(config, Arc::clone(clock))?;
+        let listener_clock = Arc::clone(clock);
+        let listener = factory.connect_listener(config, listener_clock)?;
         host.authorize_peer(&device_id, listener.local_routes())?;
         listeners.push((device_id, listener));
     }

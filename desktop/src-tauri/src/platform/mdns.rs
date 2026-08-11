@@ -605,11 +605,15 @@ mod tests {
         );
         let properties = resolved.get_properties();
         assert_eq!(
-            properties.get("sessionId").map(mdns_sd::TxtProperty::val_str),
+            properties
+                .get("sessionId")
+                .map(mdns_sd::TxtProperty::val_str),
             Some("session-mdns-e2e-publish")
         );
         assert_eq!(
-            properties.get("syncPort").map(mdns_sd::TxtProperty::val_str),
+            properties
+                .get("syncPort")
+                .map(mdns_sd::TxtProperty::val_str),
             Some(endpoint.sync_port.to_string().as_str())
         );
 
