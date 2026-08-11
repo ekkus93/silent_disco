@@ -203,7 +203,7 @@ fn first_poll_at_deadline_uses_the_faulted_delivery_timestamp() {
 /// Listener-local clock skew must change only the externally visible
 /// `received_at` timestamp. The 100 ms network-delay deadline itself
 /// remains on the shared Lab timeline and therefore still releases at
-/// base time 1_100 even with both offset and drift configured.
+/// base time `1_100` even with both offset and drift configured.
 #[test]
 fn listener_clock_offset_and_drift_do_not_distort_latency_deadline() {
     let (clock, mut host, mut listener, session_id) = bind_and_connect_with_listener_clock(
