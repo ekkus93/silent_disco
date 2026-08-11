@@ -59,9 +59,6 @@ struct LiveListener {
     sync: LiveSyncState,
 }
 
-/// Synchronous Lab platform/transport adapter. It owns no detached worker:
-/// scenario execution explicitly calls [`Self::pump`] after commands and
-/// virtual-clock advances.
 pub(super) struct LiveTransportDriver {
     network: VirtualTransportNetwork,
     shared_clock: Arc<LabClock>,
@@ -237,6 +234,15 @@ impl LiveTransportDriver {
                 node_id,
                 operation_id,
                 "host-side Lab latency/jitter is unsupported by the listener-receive latency adapter",
+            );
+        }
+        if self.hosts.iter().any(|(host_id, host)| {
+            host_id != node_id && host.advertisement.session_id == advertisement.session_id
+        }) {
+            return self.fail_platform(
+                node_id,
+                operation_id,
+                "multiple Lab hosts produced the same core session ID; refusing ambiguous live routing",
             );
         }
         let (handle, _device_id, node_clock) = self.actor_parts(node_id)?;
