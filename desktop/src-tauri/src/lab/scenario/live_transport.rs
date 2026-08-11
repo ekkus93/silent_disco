@@ -633,8 +633,11 @@ impl LiveTransportDriver {
             RuntimeTransportEvent::PeerDisconnected {
                 error: Some(error), ..
             } => Err(transport_error("listener peer disconnected", &error)),
-            RuntimeTransportEvent::PeerDisconnected { error: None, .. }
-            | RuntimeTransportEvent::PeerAccepted { .. }
+            RuntimeTransportEvent::PeerDisconnected { error: None, .. } => Err(live_error(
+                "listener_peer_disconnected",
+                "listener connection closed without a transport error",
+            )),
+            RuntimeTransportEvent::PeerAccepted { .. }
             | RuntimeTransportEvent::PeerAuthorized { .. }
             | RuntimeTransportEvent::FrameReceived { .. } => Ok(()),
         }
@@ -783,15 +786,5 @@ impl LiveTransportDriver {
             actor.device_id.clone(),
             Arc::clone(&actor.clock),
         ))
-    }
-
-    fn profile(&self, node_id: &NodeId) -> ReceiveFaultProfile {
-        self.profiles.get(node_id).copied().unwrap_or_default()
-    }
-
-    fn has_link(&self, from: &NodeId, to: &NodeId) -> bool {
-        self.links
-            .iter()
-            .any(|link| &link.from == from && &link.to == to)
     }
 }
