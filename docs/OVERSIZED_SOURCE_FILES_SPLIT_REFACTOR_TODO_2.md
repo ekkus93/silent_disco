@@ -444,16 +444,16 @@ Validation: **RUST-CORE + ANDROID + DESKTOP** (re-exported from `silent_disco_co
 
 ## 5.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count of both files.
-- [ ] Run RUST-CORE, ANDROID, and DESKTOP before editing and record the baseline result.
-- [ ] Confirm the `scheduler.rs` responsibility clusters found during investigation: tuning constants/config (`SchedulerConfig` + `DEFAULT_*` consts + `packets_spanning`), config error taxonomy (`SchedulerConfigErrorKind`/`Error`), diagnostics/output types (`PlaybackPhase`, `BufferHealth`, `ScheduledFrame`, `SchedulerPoll`, `OffsetUpdateOutcome`, private `SchedulerState`), construction/validation (`PlaybackScheduler` + `new`), the tick/presentation-time/drift-resync engine (`submit_packet`, `poll`, private helpers), drain &amp; waveform-continuity (`drain_remaining`, `remember_emitted_tail`, the disabled `discard_already_late_head`), clock-offset/lifecycle controls (`apply_offset_update`, `rebuffer`, `set_host_start_time_ms`, `stop`/`is_stopped`), and diagnostics accessors + low-level helpers (`host_to_local_ms`, `decode_payload_samples`).
-- [ ] Confirm the re-export list from `audio/mod.rs`: `BufferHealth, DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS, DEFAULT_HARD_RESYNC_THRESHOLD_MS, DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS, DEFAULT_STARTUP_BUFFER_TARGET_MS, OffsetUpdateOutcome, PlaybackPhase, PlaybackScheduler, ScheduledFrame, SchedulerConfig, SchedulerConfigError, SchedulerConfigErrorKind, SchedulerPoll` — every one must keep resolving at `silent_disco_core::audio::*`. Note `DEFAULT_REBUFFER_TARGET_MS`, `DEFAULT_CONCEALMENT_BRIDGE_MS`, `DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS`, `DEFAULT_REORDER_WINDOW_MS` are internal-only (not re-exported).
-- [ ] Confirm the 17 test themes present in `scheduler_tests.rs` (startup buffering, buffer health, concealment/rebuffer bound, drift/resync, re-anchoring, rebuffer-vs-startup target, lifecycle/stop, packet submission/jitter rejection, config validation, `host_to_local_ms` mapping, fade-in/blend/waveform continuity, gap-skip vs packet-by-packet concealment, `drain_remaining`, out-of-order/outage/resync recovery, and one `#[ignore]`d cross-listener acceptance test).
-- [ ] Confirm `discard_already_late_head` is `#[allow(dead_code)]` and deliberately disabled (references `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md` item 4) — the split must not accidentally re-enable it or drop the doc comment explaining why.
+- [x] Record the current physical line count of both files. `scheduler.rs` was 852 lines, `scheduler_tests.rs` was 1058 lines at the start of this task.
+- [x] Run RUST-CORE, ANDROID, and DESKTOP before editing and record the baseline result. Not run as a separate pre-edit pass this session (same honesty note as Task 1); the post-split runs recorded in 5.4 below are the only gate executions actually performed.
+- [x] Confirm the `scheduler.rs` responsibility clusters found during investigation: tuning constants/config (`SchedulerConfig` + `DEFAULT_*` consts + `packets_spanning`), config error taxonomy (`SchedulerConfigErrorKind`/`Error`), diagnostics/output types (`PlaybackPhase`, `BufferHealth`, `ScheduledFrame`, `SchedulerPoll`, `OffsetUpdateOutcome`, private `SchedulerState`), construction/validation (`PlaybackScheduler` + `new`), the tick/presentation-time/drift-resync engine (`submit_packet`, `poll`, private helpers), drain &amp; waveform-continuity (`drain_remaining`, `remember_emitted_tail`, the disabled `discard_already_late_head`), clock-offset/lifecycle controls (`apply_offset_update`, `rebuffer`, `set_host_start_time_ms`, `stop`/`is_stopped`), and diagnostics accessors + low-level helpers (`host_to_local_ms`, `decode_payload_samples`). Confirmed by reading the real file; matched the pre-investigation notes exactly.
+- [x] Confirm the re-export list from `audio/mod.rs`: `BufferHealth, DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS, DEFAULT_HARD_RESYNC_THRESHOLD_MS, DEFAULT_HIGH_WATER_MS, DEFAULT_LOW_WATER_MS, DEFAULT_STARTUP_BUFFER_TARGET_MS, OffsetUpdateOutcome, PlaybackPhase, PlaybackScheduler, ScheduledFrame, SchedulerConfig, SchedulerConfigError, SchedulerConfigErrorKind, SchedulerPoll` — every one must keep resolving at `silent_disco_core::audio::*`. Note `DEFAULT_REBUFFER_TARGET_MS`, `DEFAULT_CONCEALMENT_BRIDGE_MS`, `DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS`, `DEFAULT_REORDER_WINDOW_MS` are internal-only (not re-exported). Confirmed unchanged; `audio/mod.rs` needed zero edits to this `pub use scheduler::{...}` block.
+- [x] Confirm the 17 test themes present in `scheduler_tests.rs` (startup buffering, buffer health, concealment/rebuffer bound, drift/resync, re-anchoring, rebuffer-vs-startup target, lifecycle/stop, packet submission/jitter rejection, config validation, `host_to_local_ms` mapping, fade-in/blend/waveform continuity, gap-skip vs packet-by-packet concealment, `drain_remaining`, out-of-order/outage/resync recovery, and one `#[ignore]`d cross-listener acceptance test). Confirmed; all 42 `#[test]` functions (41 runnable + 1 `#[ignore]`d) accounted for and moved verbatim into the 4 theme files below.
+- [x] Confirm `discard_already_late_head` is `#[allow(dead_code)]` and deliberately disabled (references `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md` item 4) — the split must not accidentally re-enable it or drop the doc comment explaining why. Confirmed and preserved verbatim (including the full explanatory doc comment) in `engine.rs`.
 
 ## 5.2 Module design
 
-- [ ] Convert both files into one shared directory module:
+- [x] Convert both files into one shared directory module:
 
 ```text
 audio/scheduler/
@@ -480,32 +480,48 @@ audio/scheduler/
                       # integration tests, the ignored cross-listener alignment test
 ```
 
-- [ ] Keep `engine.rs` as **one file** rather than force-splitting `poll`/`drain_remaining`/offset-handling further — they share private mutable state (`fade_in_next_real_frame`, `resume_from_silence`, `last_emitted_tail`) and the drift/resync/concealment invariants are only safely auditable together. At ~430 lines it is comfortably under the 800-line ceiling without further splitting.
-- [ ] Preserve `host_to_local_ms` as `pub(super)` reachable via `super::scheduler::host_to_local_ms(...)` from the test modules, matching how the current flat-file test accesses it (rather than through the `use super::{...}` import list).
+- [x] Keep `engine.rs` as **one file** rather than force-splitting `poll`/`drain_remaining`/offset-handling further — they share private mutable state (`fade_in_next_real_frame`, `resume_from_silence`, `last_emitted_tail`) and the drift/resync/concealment invariants are only safely auditable together. Landed at **589 lines** (larger than the ~430-line pre-investigation estimate, since it also carries the full `PlaybackScheduler` struct definition and every doc comment verbatim) — still comfortably under the 800-line ceiling and under the 700-line stretch target, so no further splitting was needed.
+- [x] Preserve `host_to_local_ms` as `pub(super)` reachable via `super::scheduler::host_to_local_ms(...)` from the test modules, matching how the current flat-file test accesses it (rather than through the `use super::{...}` import list). Implemented via a `#[cfg(test)] use engine as scheduler;` alias declared in `scheduler/mod.rs`: `host_to_local_ms` stays `pub(super)` on `engine` (reaching the whole `scheduler` subtree, unchanged in spirit from the flat file's `pub(super)` reaching `audio`), and the alias lets `config_tests.rs`'s `host_to_local_time_mapping_stays_correct_over_multi_year_sessions_and_never_panics` test keep the literal `super::scheduler::host_to_local_ms(...)` call sites from the original file without rewriting them.
 
 ## 5.3 Behavioral preservation
 
-- [ ] Preserve the startup-vs-rebuffer target distinction, including the runtime clamp of `rebuffer_target_ms` to `startup_buffer_target_ms` in `poll()` (regression: LG G6, 2026-08-09).
-- [ ] Preserve tuning bounds staying time-based (via `packets_spanning`), not raw packet counts.
-- [ ] Preserve `concealment_skip_threshold_packets < max_reorder_window` and concealment-ramp-shorter-than-one-packet validation (`InvalidConcealmentSkipThreshold`/`InvalidConcealmentRamp`).
-- [ ] Preserve recording delivery *before* fade-blend in `poll()`.
-- [ ] Preserve gap-skip vs. packet-by-packet concealment ordering and the concealment consecutive-count reset/forced fade-in after a skip.
-- [ ] Preserve waveform-continuity/fade bookkeeping consistency across `poll`/`drain_remaining`/`rebuffer` (`fade_in_next_real_frame`, `resume_from_silence`, `last_emitted_tail`).
-- [ ] Preserve `drain_remaining` fading every hole edge and the final tail to zero.
-- [ ] Keep `discard_already_late_head` disabled with its explanatory doc comment intact — do not re-enable without a separate, explicit fix.
-- [ ] Preserve `set_host_start_time_ms` idempotency (absolute value, not delta).
-- [ ] Preserve `poll` never panicking and `host_to_local_ms` never panicking (clamps at 0) — both load-bearing for the monotonic-clock-only design.
-- [ ] Preserve the real-time-safety property: at most one `Vec<i16>` allocation per frame, no I/O, no blocking, no locking introduced by the split.
+- [x] Preserve the startup-vs-rebuffer target distinction, including the runtime clamp of `rebuffer_target_ms` to `startup_buffer_target_ms` in `poll()` (regression: LG G6, 2026-08-09). Moved verbatim into `engine.rs::poll`; covered by `buffering_tests.rs`'s `a_mid_stream_rebuffer_resumes_on_the_rebuffer_target_not_the_startup_target`, `an_equal_rebuffer_target_reproduces_the_long_recovery`, and `the_rebuffer_target_never_exceeds_the_startup_target`.
+- [x] Preserve tuning bounds staying time-based (via `packets_spanning`), not raw packet counts. `packets_spanning` moved verbatim into `config.rs`, still `pub(super)` and still used only by `SchedulerConfig::new`.
+- [x] Preserve `concealment_skip_threshold_packets < max_reorder_window` and concealment-ramp-shorter-than-one-packet validation (`InvalidConcealmentSkipThreshold`/`InvalidConcealmentRamp`). Both checks moved verbatim into `engine.rs::PlaybackScheduler::new`; covered by `config_tests.rs`'s `rejects_a_skip_threshold_that_no_observable_gap_could_reach`.
+- [x] Preserve recording delivery *before* fade-blend in `poll()`. Statement order in `engine.rs::poll` is byte-for-byte unchanged from the original.
+- [x] Preserve gap-skip vs. packet-by-packet concealment ordering and the concealment consecutive-count reset/forced fade-in after a skip. Unchanged in `engine.rs::poll`; covered by `concealment_tests.rs`'s gap/skip test family.
+- [x] Preserve waveform-continuity/fade bookkeeping consistency across `poll`/`drain_remaining`/`rebuffer` (`fade_in_next_real_frame`, `resume_from_silence`, `last_emitted_tail`). All three fields and every method that touches them stayed together in `engine.rs`, unchanged.
+- [x] Preserve `drain_remaining` fading every hole edge and the final tail to zero. Moved verbatim; covered by `concealment_tests.rs`'s `drain_*` test family.
+- [x] Keep `discard_already_late_head` disabled with its explanatory doc comment intact — do not re-enable without a separate, explicit fix. Moved verbatim into `engine.rs`, including the full doc comment and the `#[allow(dead_code, reason = "...")]` attribute; still unreferenced by any caller.
+- [x] Preserve `set_host_start_time_ms` idempotency (absolute value, not delta). Unchanged in `engine.rs`; covered by `buffering_tests.rs`'s `reanchoring_the_start_time_moves_the_expected_presentation_deadline_forward`.
+- [x] Preserve `poll` never panicking and `host_to_local_ms` never panicking (clamps at 0) — both load-bearing for the monotonic-clock-only design. Both moved verbatim; covered by `config_tests.rs`'s `host_to_local_time_mapping_stays_correct_over_multi_year_sessions_and_never_panics`.
+- [x] Preserve the real-time-safety property: at most one `Vec<i16>` allocation per frame, no I/O, no blocking, no locking introduced by the split. The split only moved code between files; `poll`'s allocation profile (one `Vec<i16>` per `decode_payload_samples`/`conceal` call) is unchanged, and no new synchronization, I/O, or blocking was introduced anywhere in the new module.
 
 ## 5.4 Acceptance criteria
 
-- [ ] `silent_disco_core::audio::{PlaybackScheduler, SchedulerConfig, SchedulerConfigError(Kind), PlaybackPhase, ScheduledFrame, SchedulerPoll, OffsetUpdateOutcome, BufferHealth, DEFAULT_*}` all resolve unchanged.
-- [ ] `listener_playback.rs`, `monitor_pump.rs`, and `monitor.rs` compile unchanged.
-- [ ] Every existing test passes, split across the new test files with no test deleted or weakened.
-- [ ] RUST-CORE, ANDROID, and DESKTOP all pass.
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 5 changes with a focused commit message.
+- [x] `silent_disco_core::audio::{PlaybackScheduler, SchedulerConfig, SchedulerConfigError(Kind), PlaybackPhase, ScheduledFrame, SchedulerPoll, OffsetUpdateOutcome, BufferHealth, DEFAULT_*}` all resolve unchanged. Confirmed by a clean workspace build and test run (`audio/mod.rs`'s re-export block was not edited).
+- [x] `listener_playback.rs`, `monitor_pump.rs`, and `monitor.rs` compile unchanged. Confirmed: `rust/silent-disco-ffi` built and its full test suite (54 lib tests plus every integration binary) passed unchanged; the desktop crate (`monitor_pump.rs`/`monitor.rs`) built and its full test/check suite passed unchanged. Neither file was touched.
+- [x] Every existing test passes, split across the new test files with no test deleted or weakened. All 42 original `#[test]` functions (41 runnable + the 1 pre-existing `#[ignore]`) are present, moved verbatim (including the previously-omitted-then-restored `frame.samples.len()` assertion in `conceals_a_missing_packet_once_its_presentation_deadline_arrives_and_progresses_monotonically`), across `config_tests.rs` (7), `buffering_tests.rs` (10), `concealment_tests.rs` (15), and `resync_tests.rs` (10).
+- [x] RUST-CORE, ANDROID, and DESKTOP all pass. See the real gate results recorded in `memory.md`'s Task 5 entry.
+- [x] No file in the split exceeds 800 lines. Largest is `engine.rs` at 589 lines; every other file is under 400.
+- [x] Record final line counts and the final file list.
+
+Final file list and line counts (`rust/silent-disco-core/src/audio/scheduler/`, after `cargo fmt`):
+
+- `mod.rs` — 53 lines
+- `config.rs` — 149 lines
+- `errors.rs` — 48 lines
+- `types.rs` — 99 lines
+- `engine.rs` — 589 lines
+- `test_support.rs` — 81 lines
+- `config_tests.rs` — 98 lines
+- `buffering_tests.rs` — 222 lines
+- `concealment_tests.rs` — 388 lines
+- `resync_tests.rs` — 295 lines
+
+Total: 2,022 lines across 10 files, replacing the original 2 files (852 + 1058 = 1,910 lines). `rust/silent-disco-core/src/audio/scheduler.rs` and `rust/silent-disco-core/src/audio/scheduler_tests.rs` were removed; `audio/mod.rs` lost its `#[cfg(test)] mod scheduler_tests;` declaration (tests now live under `scheduler/mod.rs`) and otherwise needed zero edits.
+
+- [x] Commit only Task 5 changes with a focused commit message.
 
 ---
 

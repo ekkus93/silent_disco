@@ -4771,3 +4771,124 @@ test evidence), `memory.md` (this entry). `desktop/src-tauri/src/app_state_tests
 modified, per the task's own framing.
 
 Not started: Task 5 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T20:49:24Z - Claude Sonnet 5 - Round-2 Task 5: merge scheduler.rs + scheduler_tests.rs into scheduler/ module
+
+Split the tightly-coupled production/test pair `rust/silent-disco-core/src/audio/scheduler.rs`
+(852 lines) and `rust/silent-disco-core/src/audio/scheduler_tests.rs` (1058 lines) into one shared
+directory module per `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 5, following its
+proposed responsibility boundaries with no changes needed:
+
+- `rust/silent-disco-core/src/audio/scheduler/mod.rs` -- **53 lines**: module doc, `mod` decls
+  (production + `#[cfg(test)]`), the `pub use` re-export block (`silent_disco_core::audio::{...}`
+  unchanged), and a `#[cfg(test)] use engine as scheduler;` alias -- see below.
+- `.../scheduler/config.rs` -- **149 lines**: the `DEFAULT_*` tuning consts, `packets_spanning`
+  (still `pub(super)`), `SchedulerConfig` + its `new` constructor, moved verbatim.
+- `.../scheduler/errors.rs` -- **48 lines**: `SchedulerConfigErrorKind`, `SchedulerConfigError`,
+  `Display`/`Error` impls.
+- `.../scheduler/types.rs` -- **99 lines**: `PlaybackPhase`, `BufferHealth`, `ScheduledFrame`,
+  `SchedulerPoll`, `OffsetUpdateOutcome`, and the private `SchedulerState` (now `pub(super)`, reaching
+  `engine.rs`).
+- `.../scheduler/engine.rs` -- **589 lines**: `PlaybackScheduler` (struct + entire `impl` block --
+  construction/validation, `poll`, `drain_remaining`, the disabled `discard_already_late_head` with
+  its full explanatory doc comment intact, offset/rebuffer/lifecycle controls, diagnostics accessors),
+  plus `host_to_local_ms` (`pub(super)`) and `decode_payload_samples`, moved verbatim and kept as one
+  file exactly as the TODO specified (larger than its ~430-line estimate since it also carries the
+  full struct definition and every doc comment verbatim; still comfortably under the 800-line ceiling
+  and the 700-line stretch target).
+- `.../scheduler/test_support.rs` -- **81 lines**: shared fixtures (`session`, `stream`, `config`,
+  `payload_for`, `datagram`, `buffered_scheduler`, `frame_at`, `RAMP_FRAMES`, and the
+  `PACKET_DURATION_MS`/`SAMPLES_PER_PACKET`/`CHANNELS`/`HOST_START_MS` consts), all `pub(super)`.
+- `.../scheduler/config_tests.rs` -- **98 lines**: 7 tests (construction-validation rejections,
+  `host_to_local_ms` mapping via `poll`, and the direct multi-year/never-panics unit test).
+- `.../scheduler/buffering_tests.rs` -- **222 lines**: 10 tests (startup buffering, waiting, buffer
+  health, the rebuffer-vs-startup target family including the LG G6 regression guard, lifecycle/stop,
+  host-start-time re-anchoring).
+- `.../scheduler/concealment_tests.rs` -- **388 lines**: 15 tests (concealment bound, gap-skip vs.
+  packet-by-packet concealment, fade-in/blend/waveform continuity, the `drain_remaining` family, and
+  the arrival-outage-bridged-then-rebuffer test).
+- `.../scheduler/resync_tests.rs` -- **295 lines**: 10 tests (offset soft/hard correction,
+  `submit_packet` rejection taxonomy, the stale-packet-blocks-resync device regression test, the
+  out-of-order/outage/bootstrap integration tests, and the 1 pre-existing `#[ignore]`d cross-listener
+  alignment acceptance test).
+
+Total: **2,022 lines across 10 files**, replacing the original 2 files (852 + 1058 = 1,910 lines).
+Original two flat files removed. `audio/mod.rs` lost its `#[cfg(test)] mod scheduler_tests;`
+declaration (those tests now live under `scheduler/mod.rs` instead) and was otherwise **not edited**
+-- its `pub use scheduler::{BufferHealth, DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS, ...}` block
+resolves unchanged since a directory module at the same path is a drop-in replacement for the flat
+file, exactly as in Task 2.
+
+**The one real design question this task raised, resolved:** the TODO's own module-design comment
+said `mod.rs` "keeps `host_to_local_ms` reachable at `super::scheduler::` for the test files," and the
+task instructions required the test files' `super::scheduler::host_to_local_ms(...)` call sites to
+survive verbatim, matching the pre-split flat-file access pattern. But the new test files are
+declared as *children of the `scheduler` directory module itself* (per the TODO's own module sketch,
+`#[cfg(test)] mod config_tests;` etc. declared from `scheduler/mod.rs`), not children of `audio` as
+`scheduler_tests.rs` was before -- so from inside them, `super` now names `scheduler`, not `audio`,
+and a literal `super::scheduler::` would need a module actually named `scheduler` nested one level
+inside itself. Resolved with a `#[cfg(test)] use engine as scheduler;` alias in `scheduler/mod.rs`:
+private `use` items are visible to the defining module and all of its descendants (the same rule that
+lets private/`pub(super)` items reach nested test modules without individual re-exports), so this
+alias makes `super::scheduler` resolve to the `engine` module from every test file in the subtree,
+and `host_to_local_ms` (kept `pub(super)` on `engine`, reaching the whole `scheduler` subtree)
+resolves through it -- letting `config_tests.rs`'s `host_to_local_time_mapping_stays_correct_...` test
+keep its five `super::scheduler::host_to_local_ms(...)` call sites completely unedited from the
+original file. Gated `#[cfg(test)]` since nothing in the production build needs the alias, and cargo
+build confirmed 0 warnings in both configurations.
+
+**A near-miss caught before landing:** the initial split of
+`conceals_a_missing_packet_once_its_presentation_deadline_arrives_and_progresses_monotonically` into
+`concealment_tests.rs` dropped the original's `assert_eq!(frame.samples.len(), ...)` length assertion
+while trimming an unrelated import. Caught by re-diffing against the original file before running the
+gates and restored verbatim (with the `SAMPLES_PER_PACKET`/`CHANNELS` imports it needs) -- flagged
+here since "do not weaken tests" is a hard rule and this was a real near-violation, not a hypothetical
+one.
+
+Also fixed one honest unused-import warning during the build: `scheduler/mod.rs`'s `pub use config::{...}`
+initially re-exported `DEFAULT_CONCEALMENT_BRIDGE_MS`/`DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS`/
+`DEFAULT_REBUFFER_TARGET_MS`/`DEFAULT_REORDER_WINDOW_MS` (matching the flat file's constant list), but
+since `audio/mod.rs` never re-exported those 4 (documented in the TODO's own 5.1 as "internal-only"),
+nothing consumed that specific re-export path and `-D warnings` caught it. Fixed by dropping them from
+the `pub use` list (they're still `pub const` on `config.rs` itself, used directly by
+`SchedulerConfig::new` in the same file, which is all they ever needed to be).
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-adf5551c9ddb3ba47`:**
+- `cd rust && cargo fmt --all -- --check` -- 2 files needed a single `cargo fmt --all` pass
+  (import-wrapping/ordering diffs only, in `test_support.rs` and `resync_tests.rs`); clean after.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` (via
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-target-t5`, disk-space precaution) -- clean, zero warnings,
+  after the unused-import fix above. No pre-existing baseline warnings encountered in this crate.
+- `cargo test --workspace --all-features` (same `/dev/shm` target dir) -- **298 passed, 0 failed, 1
+  ignored** in `silent-disco-core`'s lib tests (all 42 `audio::scheduler::*_tests::*` present across
+  the 4 theme submodules -- 41 passing plus the 1 pre-existing `#[ignore]`d acceptance test -- exact
+  parity with the original flat file's test count), plus every integration-test binary green, plus
+  **54 passed** in `silent-disco-ffi`'s lib tests plus every integration-test binary green. Doc-tests:
+  0 (none exist), as expected.
+- `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` -- **BUILD SUCCESSFUL in 3m
+  23s**, 112 actionable tasks executed. Confirms the `cargo-ndk` Android build succeeds against the
+  split module and `testDebugUnitTest`/`testPocDebugUnitTest`/`testReleaseUnitTest`/`lintDebug` all
+  pass -- i.e. the Kotlin bindings still bind correctly to the same UniFFI-exported surface.
+- `cd desktop && npm install` (fresh worktree had no `node_modules`) then `npm run build` (fresh
+  worktree had no `dist/`, needed by `bindings:check`'s `tauri::generate_context!()`) then
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t5 npm run check` -- all green: bindings
+  verified, Biome format+lint clean (the same pre-existing `biome.json` "recommended deprecated" info
+  notice as prior sessions, unrelated), `tsc -b` clean, **86 Vitest tests passed (10 files)**,
+  production `vite build` succeeded. Same pre-existing `process_for_lab` never-used warning surfaced
+  during the bindings-check compile as every prior Task 2-4 session noted
+  (`platform/host_transport_events.rs`, untouched by this session) -- not fixed, out of scope.
+- `cd desktop/src-tauri && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t5 cargo clippy
+  --all-targets --all-features -- -D warnings` -- clean, exit 0, zero warnings/errors (consistent with
+  the Task 2 session's clean baseline, post-`3ad8383`).
+- Cleaned up both `/dev/shm` scratch build directories (3.7G + 5.8G) after validation.
+
+**Files touched:** `rust/silent-disco-core/src/audio/scheduler/{mod,config,errors,types,engine,
+test_support,config_tests,buffering_tests,concealment_tests,resync_tests}.rs` (new),
+`rust/silent-disco-core/src/audio/scheduler.rs` and `rust/silent-disco-core/src/audio/scheduler_tests.rs`
+(both removed), `rust/silent-disco-core/src/audio/mod.rs` (one `#[cfg(test)] mod scheduler_tests;`
+declaration removed, nothing else), `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 5
+checkboxes 5.1-5.4 marked complete with final line counts/file list and per-invariant test evidence),
+`memory.md` (this entry).
+
+Not started: Task 6 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.

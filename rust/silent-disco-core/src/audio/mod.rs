@@ -69,6 +69,4 @@ mod ramp_tests;
 #[cfg(test)]
 mod render_ring_tests;
 #[cfg(test)]
-mod scheduler_tests;
-#[cfg(test)]
 mod tests;
