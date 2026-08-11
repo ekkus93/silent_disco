@@ -39,8 +39,8 @@ use silent_disco_core::transport::{
     TransportFactory, VirtualTransportFactory, VirtualTransportNetwork, VirtualUdpFaultConfig,
 };
 use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 const MAX_PUMP_ITERATIONS: usize = 512;
@@ -102,15 +102,15 @@ impl LiveTransportDriver {
                 .get(node.id.as_str())
                 .copied()
                 .ok_or_else(|| live_error("unknown_node", "scenario node was not started"))?;
-            let handle = lab.node_handle(lab_id).ok_or_else(|| {
-                live_error("unknown_node", "scenario node actor is unavailable")
-            })?;
+            let handle = lab
+                .node_handle(lab_id)
+                .ok_or_else(|| live_error("unknown_node", "scenario node actor is unavailable"))?;
             let identity = lab.node_identity(lab_id).ok_or_else(|| {
                 live_error("unknown_node", "scenario node identity is unavailable")
             })?;
-            let clock = lab.node_clock(lab_id).ok_or_else(|| {
-                live_error("unknown_node", "scenario node clock is unavailable")
-            })?;
+            let clock = lab
+                .node_clock(lab_id)
+                .ok_or_else(|| live_error("unknown_node", "scenario node clock is unavailable"))?;
             let effects = effect_receivers.remove(&node.id).ok_or_else(|| {
                 live_error(
                     "observer_missing",
@@ -345,9 +345,9 @@ impl LiveTransportDriver {
                     "selected Lab session has no declared link to the listener",
                 )
             })?;
-        let endpoint = advertisement.endpoint.ok_or_else(|| {
-            live_error("no_endpoint", "Lab host advertisement has no endpoint")
-        })?;
+        let endpoint = advertisement
+            .endpoint
+            .ok_or_else(|| live_error("no_endpoint", "Lab host advertisement has no endpoint"))?;
         let profile = self.profile(node_id);
         let faulted = VirtualTransportFactory::new(self.network.clone()).with_udp_faults(
             VirtualUdpFaultConfig {
@@ -431,9 +431,10 @@ impl LiveTransportDriver {
         effect: TransportEffect,
     ) -> Result<(), DesktopErrorDto> {
         let handle = self.actor(node_id)?.handle.clone();
-        let host = self.hosts.get_mut(node_id).ok_or_else(|| {
-            live_error("host_missing", "transport effect has no live Lab host")
-        })?;
+        let host = self
+            .hosts
+            .get_mut(node_id)
+            .ok_or_else(|| live_error("host_missing", "transport effect has no live Lab host"))?;
         let (delivery, authorize) = match effect.request {
             TransportEffectRequest::DeliverJoinApproval {
                 session_id,
@@ -537,16 +538,14 @@ impl LiveTransportDriver {
                 progressed = true;
                 let handle = self.actor(&host_id)?.handle.clone();
                 let host = self.hosts.get_mut(&host_id).ok_or_else(|| {
-                    live_error("host_missing", "Lab host disappeared while processing event")
+                    live_error(
+                        "host_missing",
+                        "Lab host disappeared while processing event",
+                    )
                 })?;
                 if let Some(message) = host
                     .processor
-                    .process_for_lab(
-                        event,
-                        host.transport.as_ref(),
-                        &host.advertisement,
-                        &handle,
-                    )
+                    .process_for_lab(event, host.transport.as_ref(), &host.advertisement, &handle)
                     .map_err(|message| live_error("host_event_failed", &message))?
                 {
                     return Err(live_error("host_event_rejected", &message));
@@ -563,10 +562,7 @@ impl LiveTransportDriver {
             loop {
                 let event = {
                     let listener = self.listeners.get(&listener_id).ok_or_else(|| {
-                        live_error(
-                            "listener_missing",
-                            "Lab listener disappeared while pumping",
-                        )
+                        live_error("listener_missing", "Lab listener disappeared while pumping")
                     })?;
                     match listener.transport.recv_event(NONBLOCKING_RECV_BUDGET) {
                         Ok(event) => event,
@@ -639,10 +635,9 @@ impl LiveTransportDriver {
                 received_at,
                 ..
             } => self.apply_sync_response(listener_id, response, received_at),
-            RuntimeTransportEvent::Rejected { error, .. } => Err(transport_error(
-                "listener received rejected frame",
-                &error,
-            )),
+            RuntimeTransportEvent::Rejected { error, .. } => {
+                Err(transport_error("listener received rejected frame", &error))
+            }
             RuntimeTransportEvent::PeerDisconnected {
                 error: Some(error), ..
             } => Err(transport_error("listener peer disconnected", &error)),
@@ -655,9 +650,10 @@ impl LiveTransportDriver {
 
     fn send_sync_probe(&mut self, listener_id: &NodeId) -> Result<(), DesktopErrorDto> {
         let (_handle, _device_id, node_clock) = self.actor_parts(listener_id)?;
-        let listener = self.listeners.get_mut(listener_id).ok_or_else(|| {
-            live_error("listener_missing", "sync probe has no live Lab listener")
-        })?;
+        let listener = self
+            .listeners
+            .get_mut(listener_id)
+            .ok_or_else(|| live_error("listener_missing", "sync probe has no live Lab listener"))?;
         let LiveListener { transport, sync } = listener;
         sync.send_probe(transport.as_ref(), node_clock.now())
             .map_err(|error| live_error("sync_probe_failed", &error))
@@ -678,10 +674,7 @@ impl LiveTransportDriver {
             .observe_response(device_id.clone(), response, received_at)
             .map_err(|error| live_error("sync_response_rejected", &error))?;
         handle
-            .submit_audio_event(AudioEvent::SynchronizationUpdated {
-                device_id,
-                summary,
-            })
+            .submit_audio_event(AudioEvent::SynchronizationUpdated { device_id, summary })
             .map_err(core_error)?;
         transport
             .send_control(&report)
@@ -770,9 +763,9 @@ impl LiveTransportDriver {
     }
 
     fn actor(&self, node_id: &NodeId) -> Result<&ActorEndpoint, DesktopErrorDto> {
-        self.actors.get(node_id).ok_or_else(|| {
-            live_error("unknown_node", "Lab live transport does not know this node")
-        })
+        self.actors
+            .get(node_id)
+            .ok_or_else(|| live_error("unknown_node", "Lab live transport does not know this node"))
     }
 
     fn actor_parts(

@@ -1,8 +1,8 @@
 use crate::lab::recorder::{RecordingObserver, ScenarioRecorder};
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{CoreNotification, CoreObserver};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 
 const EFFECT_QUEUE_CAPACITY: usize = 128;
 

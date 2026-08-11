@@ -65,9 +65,9 @@ pub(crate) fn evaluate_assertion(
             let Some(snapshot) = snapshot else {
                 return false;
             };
-            snapshot.synchronization.is_some_and(|summary| {
-                summary.confidence.stable_code() >= confidence.stable_code()
-            })
+            snapshot
+                .synchronization
+                .is_some_and(|summary| summary.confidence.stable_code() >= confidence.stable_code())
         }
         ScenarioAssertion::SynchronizationWithinBounds {
             max_abs_offset_ms,

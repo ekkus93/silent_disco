@@ -108,11 +108,7 @@ fn submit_command(
         .map_err(ScenarioExecutionError::CommandShape)?;
     Ok(match handle.submit_command(request) {
         Ok(_receipt) => None,
-        Err(error) => Some(format!(
-            "{}: {}",
-            error.code.stable_name(),
-            error.message
-        )),
+        Err(error) => Some(format!("{}: {}", error.code.stable_name(), error.message)),
     })
 }
 
@@ -172,11 +168,11 @@ fn build_command(
         ScenarioAction::RemoveListener { .. }
         | ScenarioAction::InjectUnderrun { .. }
         | ScenarioAction::InjectSynchronizationUpdated { .. }
-        | ScenarioAction::InjectDeliveryCompleted { .. } => Err(
-            ScenarioExecutionError::IdentifierInvalid(
+        | ScenarioAction::InjectDeliveryCompleted { .. } => {
+            Err(ScenarioExecutionError::IdentifierInvalid(
                 "internal Lab action routing reached command construction".to_owned(),
-            ),
-        ),
+            ))
+        }
     }
 }
 

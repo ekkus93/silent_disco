@@ -41,14 +41,15 @@ fn run_live_scenario(
     let mut effect_receivers = HashMap::new();
 
     for node in &scenario.nodes {
-        let clock = scenario
-            .clocks
-            .get(node.id.as_str())
-            .copied()
-            .unwrap_or(super::ScenarioClock {
-                offset_ms: 0,
-                drift_ppm: 0,
-            });
+        let clock =
+            scenario
+                .clocks
+                .get(node.id.as_str())
+                .copied()
+                .unwrap_or(super::ScenarioClock {
+                    offset_ms: 0,
+                    drift_ppm: 0,
+                });
         let recorder = ScenarioRecorder::new();
         let (observer, effect_receiver) = LiveScenarioObserver::new(Arc::clone(&recorder));
         let lab_node_id = lab
@@ -103,13 +104,7 @@ fn execute_steps_and_assertions(
         if step.at_ms >= scenario.timeout_ms {
             break;
         }
-        advance_to(
-            lab,
-            driver,
-            &mut current_ms,
-            step.at_ms,
-            clock_advances,
-        )?;
+        advance_to(lab, driver, &mut current_ms, step.at_ms, clock_advances)?;
 
         let lab_node_id = node_id_for(step.node.as_str(), &step.node, lab_node_ids)?;
         let handle = node_handle(lab, lab_node_id, &step.node)?;
@@ -156,12 +151,7 @@ fn execute_steps_and_assertions(
         scenario.timeout_ms,
         clock_advances,
     )?;
-    let (outcome, assertion_results) = evaluate_assertions(
-        lab,
-        scenario,
-        lab_node_ids,
-        recorders,
-    )?;
+    let (outcome, assertion_results) = evaluate_assertions(lab, scenario, lab_node_ids, recorders)?;
 
     Ok(ScenarioReport {
         schema_version: scenario.schema_version,

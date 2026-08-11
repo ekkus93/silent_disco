@@ -130,7 +130,9 @@ impl fmt::Display for ScenarioValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidToken { kind, reason } => write!(formatter, "invalid {kind}: {reason}"),
-            Self::TooMany { field, limit } => write!(formatter, "{field} exceeds the bound of {limit}"),
+            Self::TooMany { field, limit } => {
+                write!(formatter, "{field} exceeds the bound of {limit}")
+            }
             Self::DurationOutOfBounds { field, limit } => {
                 write!(formatter, "{field} exceeds the bound of {limit} ms")
             }
@@ -139,7 +141,10 @@ impl fmt::Display for ScenarioValidationError {
                 write!(formatter, "{field} references undeclared node '{node}'")
             }
             Self::UnknownFixture { field, fixture } => {
-                write!(formatter, "{field} references undeclared fixture '{fixture}'")
+                write!(
+                    formatter,
+                    "{field} references undeclared fixture '{fixture}'"
+                )
             }
             Self::LinkOutOfBounds { field, limit } => {
                 write!(formatter, "link {field} exceeds the bound of {limit}")
@@ -171,15 +176,25 @@ impl fmt::Display for ScenarioParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooLarge { limit } => {
-                write!(formatter, "scenario file exceeds the bound of {limit} bytes")
+                write!(
+                    formatter,
+                    "scenario file exceeds the bound of {limit} bytes"
+                )
             }
-            Self::NotUtf8OrJson(error) => write!(formatter, "scenario file is not valid JSON: {error}"),
-            Self::MissingSchemaVersion => formatter.write_str("scenario file has no schemaVersion field"),
+            Self::NotUtf8OrJson(error) => {
+                write!(formatter, "scenario file is not valid JSON: {error}")
+            }
+            Self::MissingSchemaVersion => {
+                formatter.write_str("scenario file has no schemaVersion field")
+            }
             Self::UnknownSchemaVersion { found } => write!(
                 formatter,
                 "unsupported schemaVersion {found}, expected {SCHEMA_VERSION}"
             ),
-            Self::Shape(error) => write!(formatter, "scenario file does not match the schema: {error}"),
+            Self::Shape(error) => write!(
+                formatter,
+                "scenario file does not match the schema: {error}"
+            ),
         }
     }
 }
@@ -258,7 +273,9 @@ where
     decode_wire_name(deserializer, DeliverySeverity::from_wire_name)
 }
 
-fn deserialize_permission_capability<'de, D>(deserializer: D) -> Result<PermissionCapability, D::Error>
+fn deserialize_permission_capability<'de, D>(
+    deserializer: D,
+) -> Result<PermissionCapability, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -307,7 +324,10 @@ where
     D: Deserializer<'de>,
 {
     let value = Option::<String>::deserialize(deserializer)?;
-    if value.as_ref().is_some_and(|token| token.len() > MAX_TOKEN_BYTES) {
+    if value
+        .as_ref()
+        .is_some_and(|token| token.len() > MAX_TOKEN_BYTES)
+    {
         return Err(D::Error::custom("token is oversized"));
     }
     Ok(value)
@@ -348,21 +368,31 @@ pub(crate) enum ScenarioAction {
         remember_for_future: bool,
     },
     #[serde(rename_all = "camelCase")]
-    RejectJoin { request_id: String },
+    RejectJoin {
+        request_id: String,
+    },
     #[serde(rename_all = "camelCase")]
-    RemoveListener { listener_node: NodeId },
-    StartPlayback { fixture: FixtureId },
+    RemoveListener {
+        listener_node: NodeId,
+    },
+    StartPlayback {
+        fixture: FixtureId,
+    },
     PausePlayback,
     ResumePlayback,
     StopPlayback,
     #[serde(rename_all = "camelCase")]
-    SetLocalVolume { linear_gain: f32 },
+    SetLocalVolume {
+        linear_gain: f32,
+    },
     RequestResync,
     RetryRecoverableFailure,
     ExportDiagnostics,
     Shutdown,
     #[serde(rename_all = "camelCase")]
-    InjectUnderrun { missing_frames: u32 },
+    InjectUnderrun {
+        missing_frames: u32,
+    },
     #[serde(rename_all = "camelCase")]
     InjectSynchronizationUpdated {
         #[serde(deserialize_with = "deserialize_sync_confidence")]
@@ -398,13 +428,21 @@ macro_rules! define_wire_enum_field {
 }
 
 define_wire_enum_field!(WireAppRole, AppRole, AppRole::from_wire_name);
-define_wire_enum_field!(WireHostLifecycle, HostLifecycle, HostLifecycle::from_wire_name);
+define_wire_enum_field!(
+    WireHostLifecycle,
+    HostLifecycle,
+    HostLifecycle::from_wire_name
+);
 define_wire_enum_field!(
     WireListenerLifecycle,
     ListenerLifecycle,
     ListenerLifecycle::from_wire_name
 );
-define_wire_enum_field!(WirePlaybackState, PlaybackState, PlaybackState::from_wire_name);
+define_wire_enum_field!(
+    WirePlaybackState,
+    PlaybackState,
+    PlaybackState::from_wire_name
+);
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "machine", content = "state", rename_all = "camelCase")]
@@ -433,7 +471,11 @@ pub(crate) enum ScenarioAssertion {
         available: bool,
     },
     #[serde(rename_all = "camelCase")]
-    ListenerCountAtLeast { by_ms: u64, node: NodeId, count: u32 },
+    ListenerCountAtLeast {
+        by_ms: u64,
+        node: NodeId,
+        count: u32,
+    },
     #[serde(rename_all = "camelCase")]
     SyncConfidenceAtLeast {
         by_ms: u64,
@@ -451,7 +493,11 @@ pub(crate) enum ScenarioAssertion {
         max_round_trip_ms: Option<f64>,
     },
     #[serde(rename_all = "camelCase")]
-    ErrorCodeObserved { by_ms: u64, node: NodeId, code: String },
+    ErrorCodeObserved {
+        by_ms: u64,
+        node: NodeId,
+        code: String,
+    },
     #[serde(rename_all = "camelCase")]
     DeliverySeverityIs {
         by_ms: u64,
@@ -607,7 +653,9 @@ impl Scenario {
         let mut known_nodes = HashSet::new();
         for node in &self.nodes {
             if !known_nodes.insert(node.id.as_str()) {
-                return Err(ScenarioValidationError::DuplicateNodeId(node.id.to_string()));
+                return Err(ScenarioValidationError::DuplicateNodeId(
+                    node.id.to_string(),
+                ));
             }
         }
         Ok(known_nodes)
@@ -627,7 +675,11 @@ impl Scenario {
             for (field, actual, limit) in [
                 ("latencyMs", link.latency_ms, MAX_LINK_LATENCY_MS),
                 ("jitterMs", link.jitter_ms, MAX_LINK_JITTER_MS),
-                ("lossPermille", u64::from(link.loss_permille), u64::from(MAX_LOSS_PERMILLE)),
+                (
+                    "lossPermille",
+                    u64::from(link.loss_permille),
+                    u64::from(MAX_LOSS_PERMILLE),
+                ),
             ] {
                 if actual > limit {
                     return Err(ScenarioValidationError::LinkOutOfBounds { field, limit });
@@ -703,7 +755,10 @@ impl Scenario {
         Ok(())
     }
 
-    fn validate_assertions(&self, known_nodes: &HashSet<&str>) -> Result<(), ScenarioValidationError> {
+    fn validate_assertions(
+        &self,
+        known_nodes: &HashSet<&str>,
+    ) -> Result<(), ScenarioValidationError> {
         for assertion in &self.assertions {
             if assertion.by_ms() > MAX_SCENARIO_DURATION_MS {
                 return Err(ScenarioValidationError::DurationOutOfBounds {
