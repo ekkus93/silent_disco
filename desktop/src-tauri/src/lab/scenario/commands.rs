@@ -1,4 +1,6 @@
-use super::{FixtureId, NodeId, Scenario, ScenarioAction, ScenarioExecutionError};
+use super::{
+    FixtureId, NodeId, Scenario, ScenarioAction, ScenarioExecutionError, scenario_node_parts,
+};
 use crate::lab::{LabNodeId, LabRuntime};
 use silent_disco_core::domain::{ApprovalMode, DeviceId, OperationId, RequestId, SessionId};
 use silent_disco_core::runtime::{
@@ -60,9 +62,8 @@ pub(super) fn submit_action(
             round_trip_ms,
             drift_ppm,
         } => {
-            let identity = lab.node_identity(lab_node_id).ok_or_else(|| {
-                ScenarioExecutionError::IdentifierInvalid("node has no identity".to_owned())
-            })?;
+            let (_, identity, _) = scenario_node_parts(lab, lab_node_id)
+                .map_err(ScenarioExecutionError::Lab)?;
             let summary =
                 SynchronizationSummary::new(*confidence, *offset_ms, *round_trip_ms, *drift_ppm)
                     .map_err(ScenarioExecutionError::Descriptor)?;
@@ -224,8 +225,7 @@ fn resolve_remove_listener(
     let lab_node_id = *lab_node_ids
         .get(listener_node.as_str())
         .ok_or_else(|| ScenarioExecutionError::UnknownNode(listener_node.clone()))?;
-    let identity = lab
-        .node_identity(lab_node_id)
-        .ok_or_else(|| ScenarioExecutionError::UnknownNode(listener_node.clone()))?;
+    let (_, identity, _) =
+        scenario_node_parts(lab, lab_node_id).map_err(ScenarioExecutionError::Lab)?;
     Ok(identity.device_id().clone())
 }
