@@ -26,10 +26,13 @@ pub(super) fn action_revision_delta(action: &ScenarioAction) -> u64 {
     }
 }
 
-pub(super) fn current_revision(handle: &CoreActorHandle) -> SnapshotRevision {
+pub(super) fn current_revision(
+    handle: &CoreActorHandle,
+) -> Result<SnapshotRevision, ScenarioExecutionError> {
     handle
         .current_snapshot()
-        .map_or(SnapshotRevision::new(0), |snapshot| snapshot.revision)
+        .map(|snapshot| snapshot.revision)
+        .map_err(|error| ScenarioExecutionError::Lab(error.into()))
 }
 
 pub(super) fn submit_action(
@@ -104,7 +107,7 @@ fn submit_command(
     handle: &CoreActorHandle,
     command: CoreCommand,
 ) -> Result<Option<String>, ScenarioExecutionError> {
-    let request = CoreCommandRequest::new(current_revision(handle), command)
+    let request = CoreCommandRequest::new(current_revision(handle)?, command)
         .map_err(ScenarioExecutionError::CommandShape)?;
     Ok(match handle.submit_command(request) {
         Ok(_receipt) => None,
