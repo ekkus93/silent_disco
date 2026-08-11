@@ -68,11 +68,7 @@ pub(in crate::lab::scenario) fn scenario_node_parts(
             ),
         )
     })?;
-    Ok((
-        node.handle(),
-        node.identity().clone(),
-        node.clock(),
-    ))
+    Ok((node.handle(), node.identity().clone(), node.clock()))
 }
 
 #[cfg(test)]
