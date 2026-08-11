@@ -1,8 +1,9 @@
-pub use super::types::{
-    AudioSourceDescriptor, CapabilitySnapshot, CoreDiagnostic, DeliveryReport, DiagnosticField,
-    HostDraft, HostDraftPatch, JoinRequestSummary, ListenerSummary, NetworkEndpoint,
-    SessionAdvertisement, SnapshotRevision, SynchronizationSummary, TuningPatch,
-};
+// Only re-exported at this `records::` path because
+// `actor_runtime/state/mod.rs` still reaches them via
+// `crate::runtime::records::{CoreDiagnostic, DiagnosticField, SessionAdvertisement}`.
+// Every other `types` item this file's `contract` submodule used to pull in
+// through this re-export now imports directly from `crate::runtime::{...}`.
+pub use super::types::{CoreDiagnostic, DiagnosticField, SessionAdvertisement};
 use super::{StorageEffect, TransportEffect};
 use crate::error::CoreError;
 
