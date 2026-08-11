@@ -7,9 +7,17 @@ mod virtual_fault;
 mod virtual_transport;
 
 #[cfg(test)]
-mod tests;
+mod authorization_tests;
+#[cfg(test)]
+mod handshake_tests;
+#[cfg(test)]
+mod liveness_tests;
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod virtual_fault_tests;
+#[cfg(test)]
+mod virtual_tests;
 
 pub use boundary::{HostTransportNode, ListenerTransportNode, TransportFactory};
 pub use clock::{ManualTransportClock, SystemTransportClock, TransportClock};

@@ -668,16 +668,16 @@ Validation: **RUST-CORE only** (test-only file; no production behavior changes, 
 
 ## 8.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run RUST-CORE before editing and record the baseline result.
-- [ ] Confirm the 9 `#[test]` functions and their themes found during investigation: socket-runtime handshake/end-to-end exchange (3 tests, including the large multi-listener join/authorize/sync/audio flow), silent-peer liveness/eviction regression tests (2 tests, citing "Block A6 follow-up"), authorization/malformed-header rejection &amp; backpressure (2 tests), and virtual transport tests (2 tests, isolation + injected-clock timestamping semantics).
-- [ ] Confirm the shared helper/fixture block (lines 694–885, ~192 lines, no `#[test]`s): `join_request`, `audio_frame`, `wait_for_control_from`, `wait_for_authorized`, `wait_for_control_target`, `wait_for_frame`, `wait_for_frame_from`, `wait_for_rejection`, `wait_for_host_event`, `wait_for_listener_event`, `wait_until`, `invalid_version_header`, `oversized_control_header`, `id_session`, `id_device`, plus `const EVENT_TIMEOUT`.
-- [ ] Confirm the repo's existing convention in this exact directory: `transport/virtual_fault_tests.rs` is already a same-directory sibling file (`#[cfg(test)] mod virtual_fault_tests;` in `mod.rs`) with its **own independent** local helper copies (e.g. its own `audio_frame`) — it does not import from `tests.rs`, so it is untouched by this task.
-- [ ] Confirm via repo-wide search that none of `tests.rs`'s helpers are `pub`/`pub(crate)` and none are referenced from any other file — the split is fully safe; only `transport/mod.rs`'s module declaration needs to change.
+- [x] Record the current physical line count. 885 lines, confirmed by `wc -l` before editing.
+- [x] Run RUST-CORE before editing and record the baseline result. `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo test --workspace --all-features` — 298 passed, 0 failed, 1 ignored in `silent-disco-core`'s lib tests (matches the Task 7 baseline recorded in `memory.md`).
+- [x] Confirm the 9 `#[test]` functions and their themes found during investigation: socket-runtime handshake/end-to-end exchange (3 tests, including the large multi-listener join/authorize/sync/audio flow), silent-peer liveness/eviction regression tests (2 tests, citing "Block A6 follow-up"), authorization/malformed-header rejection &amp; backpressure (2 tests), and virtual transport tests (2 tests, isolation + injected-clock timestamping semantics).
+- [x] Confirm the shared helper/fixture block (lines 694–885, ~192 lines, no `#[test]`s): `join_request`, `audio_frame`, `wait_for_control_from`, `wait_for_authorized`, `wait_for_control_target`, `wait_for_frame`, `wait_for_frame_from`, `wait_for_rejection`, `wait_for_host_event`, `wait_for_listener_event`, `wait_until`, `invalid_version_header`, `oversized_control_header`, `id_session`, `id_device`, plus `const EVENT_TIMEOUT`.
+- [x] Confirm the repo's existing convention in this exact directory: `transport/virtual_fault_tests.rs` is already a same-directory sibling file (`#[cfg(test)] mod virtual_fault_tests;` in `mod.rs`) with its **own independent** local helper copies (e.g. its own `audio_frame`) — it does not import from `tests.rs`, so it is untouched by this task.
+- [x] Confirm via repo-wide search that none of `tests.rs`'s helpers are `pub`/`pub(crate)` and none are referenced from any other file — the split is fully safe; only `transport/mod.rs`'s module declaration needs to change.
 
 ## 8.2 Module design
 
-- [ ] Replace the single file with sibling files declared in `transport/mod.rs`, following the `virtual_fault_tests.rs` flat-file convention (not a `tests/` subdirectory):
+- [x] Replace the single file with sibling files declared in `transport/mod.rs`, following the `virtual_fault_tests.rs` flat-file convention (not a `tests/` subdirectory):
 
 ```text
 transport/test_support.rs        # shared helpers made pub(super)/pub(crate): join_request,
@@ -697,22 +697,28 @@ transport/virtual_tests.rs        # virtual_transport_is_explicit_isolated_and_u
                                   # virtual_transport_stamps_delivered_events_with_the_recipients_own_clock
 ```
 
-- [ ] Update `transport/mod.rs`: replace `#[cfg(test)] mod tests;` with `#[cfg(test)] mod test_support;` plus one `#[cfg(test)] mod ...;` line per new test file above.
-- [ ] Leave `virtual_fault_tests.rs` untouched.
+- [x] Update `transport/mod.rs`: replace `#[cfg(test)] mod tests;` with `#[cfg(test)] mod test_support;` plus one `#[cfg(test)] mod ...;` line per new test file above.
+- [x] Leave `virtual_fault_tests.rs` untouched.
 
 ## 8.3 Behavioral preservation
 
-- [ ] Preserve every test's exact assertions and doc comments verbatim, including the long device-regression narratives on the silent-peer eviction and recipient-clock-timestamping tests.
-- [ ] Preserve all shared helper behavior exactly (poll timeouts via `EVENT_TIMEOUT`, malformed-header byte fixtures, ID constructors).
+- [x] Preserve every test's exact assertions and doc comments verbatim, including the long device-regression narratives on the silent-peer eviction and recipient-clock-timestamping tests.
+- [x] Preserve all shared helper behavior exactly (poll timeouts via `EVENT_TIMEOUT`, malformed-header byte fixtures, ID constructors).
 
 ## 8.4 Acceptance criteria
 
-- [ ] All 9 tests pass, unchanged in behavior, split across the 4 new theme files.
-- [ ] `virtual_fault_tests.rs` is unaffected and still passes.
-- [ ] RUST-CORE passes.
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 8 changes with a focused commit message.
+- [x] All 9 tests pass, unchanged in behavior, split across the 4 new theme files.
+- [x] `virtual_fault_tests.rs` is unaffected and still passes.
+- [x] RUST-CORE passes: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean, zero warnings; `cargo test --workspace --all-features` — 298 passed, 0 failed, 1 ignored in `silent-disco-core`'s lib tests (exact parity with the pre-edit baseline), all 9 split tests visible and green at their new `transport::{handshake_tests,liveness_tests,authorization_tests,virtual_tests}::*` paths, plus every `transport::virtual_fault_tests::*` test still green.
+- [x] No file in the split exceeds 800 lines.
+- [x] Record final line counts and the final file list:
+  - `rust/silent-disco-core/src/transport/test_support.rs` — **190 lines**
+  - `rust/silent-disco-core/src/transport/handshake_tests.rs` — **240 lines**
+  - `rust/silent-disco-core/src/transport/liveness_tests.rs` — **188 lines**
+  - `rust/silent-disco-core/src/transport/authorization_tests.rs` — **144 lines**
+  - `rust/silent-disco-core/src/transport/virtual_tests.rs` — **173 lines**
+  - Total: **935 lines across 5 files**, replacing the original 885-line flat `tests.rs` (removed). `transport/virtual_fault_tests.rs` (511 lines) untouched.
+- [x] Commit only Task 8 changes with a focused commit message.
 
 ---
 

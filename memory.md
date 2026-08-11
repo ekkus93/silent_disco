@@ -5097,3 +5097,87 @@ final line counts/file list and per-invariant preservation evidence), `memory.md
 edited** -- confirmed zero changes needed to any of them.
 
 Not started: Task 8 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T21:44:10Z - Claude Sonnet 5 - Task 8: split transport/tests.rs into theme-based test files
+
+Split `rust/silent-disco-core/src/transport/tests.rs` (885 lines) into 5 flat sibling files under
+`transport/`, per `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 8, following the
+exact module design proposed in 8.2 with no boundary changes needed (the real file matched the
+pre-investigation summary exactly: 9 `#[test]` functions plus a single ~192-line no-`#[test]`
+helper block at the tail).
+
+Final file list and line counts (`rust/silent-disco-core/src/transport/`):
+
+- `test_support.rs` -- **190 lines**: all 13 shared helper functions (`join_request`, `audio_frame`,
+  `id_session`, `id_device`, `wait_for_control_from`, `wait_for_authorized`, `wait_for_control_target`,
+  `wait_for_frame`, `wait_for_frame_from`, `wait_for_rejection`, `wait_for_host_event`,
+  `wait_for_listener_event`, `wait_until`) plus `const EVENT_TIMEOUT`, all made `pub(super)` (visible
+  throughout `crate::transport` and all its descendant test modules, since `pub(super)` on an item
+  defined in a child module of `transport` grants access to `transport` and everything under it, not
+  just the immediate parent). `invalid_version_header`/`oversized_control_header` stayed local to
+  `authorization_tests.rs` per the TODO, since nothing else uses them.
+- `handshake_tests.rs` -- **240 lines**: `production_factory_is_socket_runtime`,
+  `pending_control_peer_receives_hello_before_datagram_authorization`,
+  `socket_runtime_completes_multi_listener_join_sync_and_audio_exchange` (the large multi-listener
+  flow), moved verbatim including `#![allow(clippy::too_many_lines)]` (still needed here -- that test
+  alone is ~160 lines).
+- `liveness_tests.rs` -- **188 lines**: `a_silent_peer_is_evicted_and_stops_being_reported_as_delivered`
+  and `a_listener_that_keeps_probing_is_never_evicted_as_silent`, moved verbatim including both tests'
+  full "Block A6 follow-up" / false-positive-guard doc comments word for word.
+- `authorization_tests.rs` -- **144 lines**:
+  `socket_runtime_rejects_unauthorized_control_and_malformed_headers`,
+  `bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success`, plus the two local-only
+  `invalid_version_header`/`oversized_control_header` byte-fixture helpers, moved verbatim.
+- `virtual_tests.rs` -- **173 lines**: `virtual_transport_is_explicit_isolated_and_uses_injected_clock`
+  and `virtual_transport_stamps_delivered_events_with_the_recipients_own_clock`, moved verbatim
+  including the latter's full "records when the recipient observed an event" doc comment.
+
+Total: **935 lines across 5 files**, replacing the original 885-line flat `tests.rs` (removed).
+`transport/virtual_fault_tests.rs` (511 lines, its own independent local helpers, e.g. its own
+`audio_frame`) was read for context only and is completely untouched, exactly as the TODO required.
+
+**One real visibility surprise caught by `cargo clippy`, not fabricated:** the original flat file's
+`use super::{... HostTransportNode, ListenerTransportNode ...}` imports (needed there because the
+shared helper functions took `&mut dyn HostTransportNode`/`&mut dyn ListenerTransportNode` parameters)
+turned out to be *unnecessary* in all four new theme test files once the helpers moved to
+`test_support.rs` -- calling a trait method directly on a `Box<dyn Trait>` value (e.g.
+`host.authorize_peer(...)`, `listener.shutdown()`) does not require the trait itself to be in scope,
+only the parameter/return-type declarations that literally name `dyn HostTransportNode` do. `cargo
+clippy -D warnings` caught this as 8 `unused_imports` errors across the 4 files on the first pass;
+fixed by dropping `HostTransportNode`/`ListenerTransportNode` from each file's `use super::{...}` list
+(kept in `test_support.rs`, where they're genuinely needed for the helper signatures). `TransportClock`
+was needed only in `liveness_tests.rs`, since only `a_listener_that_keeps_probing_is_never_evicted_as_
+silent` calls `clock.now()` (a trait method) directly rather than through a helper.
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-a6f36caa8ca46a7aa`:**
+- Pre-edit baseline: `cd rust && cargo fmt --all -- --check` clean; `CARGO_TARGET_DIR=/dev/shm/
+  silent-disco-target-t8 cargo clippy --workspace --all-targets --all-features -- -D warnings` clean;
+  `cargo test --workspace --all-features` -- **298 passed, 0 failed, 1 ignored** in
+  `silent-disco-core`'s lib tests (matches every prior session's baseline recorded through Task 7).
+- Post-split: `cargo fmt --all -- --check` initially flagged import-line-wrap diffs in all three
+  multi-import `use` blocks that needed wrapping (`authorization_tests.rs`, `handshake_tests.rs`,
+  `virtual_tests.rs`); one `cargo fmt --all` pass fixed all three, clean after.
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-target-t8 cargo clippy --workspace --all-targets
+  --all-features -- -D warnings` -- caught the 8 unused-trait-import errors above on the first run,
+  fixed, then clean, zero warnings. `cargo test --workspace --all-features` (same target dir) --
+  **298 passed, 0 failed, 1 ignored** in `silent-disco-core`'s lib tests, exact parity with baseline,
+  with all 9 split tests visible and green at their new `transport::{handshake_tests,liveness_tests,
+  authorization_tests,virtual_tests}::*` module paths and every `transport::virtual_fault_tests::*`
+  test (including the seed-determinism and reorder-window tests) still green. Full workspace run also
+  showed every integration-test binary green (`host_transport.rs`'s 3 tests,
+  `host_transport::handle::tests::shutdown_races_with_concurrent_broadcasts_and_never_panics_or_hangs`,
+  etc.), matching every prior Task 1-7 session's totals.
+- ANDROID/DESKTOP gates were **not** run for this task, per the TODO's own validation matrix: this is
+  a test-only file (`#[cfg(test)]`), not part of either downstream build.
+- Cleaned up the `/dev/shm` scratch build directory after validation.
+
+**Files touched:** `rust/silent-disco-core/src/transport/{test_support,handshake_tests,liveness_tests,
+authorization_tests,virtual_tests}.rs` (new), `rust/silent-disco-core/src/transport/tests.rs`
+(removed), `rust/silent-disco-core/src/transport/mod.rs` (module declarations updated),
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 8 checkboxes 8.1-8.4 marked complete
+with final line counts/file list and validation evidence), `memory.md` (this entry).
+`transport/virtual_fault_tests.rs` was read for context but **not edited** -- confirmed zero changes
+needed.
+
+Not started: Task 9 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
