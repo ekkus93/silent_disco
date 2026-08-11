@@ -1,0 +1,92 @@
+name: Desktop Lab live transport
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "desktop/src-tauri/src/lab/**"
+      - "desktop/src-tauri/src/platform/**"
+      - "rust/silent-disco-core/src/transport/**"
+      - "rust/silent-disco-core/src/runtime/**"
+      - ".github/workflows/desktop-lab-live-transport.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "desktop/src-tauri/src/lab/**"
+      - "desktop/src-tauri/src/platform/**"
+      - "rust/silent-disco-core/src/transport/**"
+      - "rust/silent-disco-core/src/runtime/**"
+      - ".github/workflows/desktop-lab-live-transport.yml"
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  proof:
+    name: Deterministic Lab live transport proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Generate exact Cargo lockfile
+        working-directory: desktop/src-tauri
+        run: cargo generate-lockfile
+
+      - name: Check Rust formatting
+        working-directory: desktop/src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Create Rust-only frontend placeholder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco Lab CI placeholder</title>\n' > desktop/dist/index.html
+
+      - name: Run deterministic Lab latency transport regressions
+        working-directory: desktop/src-tauri
+        run: cargo test --all-features lab::fault::tests -- --nocapture
+
+      - name: Run deterministic Lab live transport proofs
+        working-directory: desktop/src-tauri
+        run: cargo test --all-features lab::scenario::live_transport_proof_tests -- --nocapture
+
+      - name: Require committed Cargo lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- desktop/src-tauri/Cargo.lock)"
+          if [[ -n "${status}" ]]; then
+            printf '%s\n' "${status}"
+            echo "desktop/src-tauri/Cargo.lock must be committed exactly as generated." >&2
+            exit 1
+          fi

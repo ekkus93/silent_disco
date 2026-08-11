@@ -14,7 +14,7 @@ use silent_disco_core::transport::{
 };
 use std::sync::Arc;
 
-pub(super) trait DesktopHostTransportEventSink: Send + Sync + 'static {
+pub(crate) trait DesktopHostTransportEventSink: Send + Sync + 'static {
     fn current_snapshot(&self) -> Result<CoreSnapshot, CoreError>;
     fn submit_transport_event(&self, event: CoreTransportEvent) -> Result<(), CoreError>;
     fn submit_audio_event(&self, event: AudioEvent) -> Result<(), CoreError>;
@@ -34,13 +34,13 @@ impl DesktopHostTransportEventSink for CoreActorHandle {
     }
 }
 
-pub(super) struct HostTransportEventProcessor {
+pub(crate) struct HostTransportEventProcessor {
     pending: PendingJoinProjection,
     clock: Arc<dyn TransportClock>,
 }
 
 impl HostTransportEventProcessor {
-    pub(super) fn new(clock: Arc<dyn TransportClock>) -> Self {
+    pub(crate) fn new(clock: Arc<dyn TransportClock>) -> Self {
         Self {
             pending: PendingJoinProjection::new(),
             clock,
@@ -50,7 +50,7 @@ impl HostTransportEventProcessor {
     /// Removes and returns one pending listener's reported sync/audio
     /// ports, for the caller to authorize datagram routing after a
     /// successful join approval.
-    pub(super) fn take_pending_ports(
+    pub(crate) fn take_pending_ports(
         &mut self,
         device_id: &silent_disco_core::domain::DeviceId,
     ) -> Option<(u16, u16)> {
@@ -147,6 +147,23 @@ impl HostTransportEventProcessor {
             | RuntimeTransportEvent::PeerAuthorized { .. }
             | RuntimeTransportEvent::FrameReceived { .. } => Ok(None),
         }
+    }
+
+    /// Runs the exact production host event projection for Lab Mode while
+    /// converting the desktop-private adapter error into bounded text at the
+    /// module boundary. Lab therefore reuses the real join projection,
+    /// pending-port authorization data, Hello response, sync response, and
+    /// disconnect handling without exposing `DesktopNetworkError` outside
+    /// the production platform module.
+    pub(crate) fn process_for_lab(
+        &mut self,
+        event: RuntimeTransportEvent,
+        node: &dyn HostTransportNode,
+        advertisement: &SessionAdvertisement,
+        sink: &dyn DesktopHostTransportEventSink,
+    ) -> Result<Option<String>, String> {
+        self.process(event, node, advertisement, sink)
+            .map_err(|error| error.to_string())
     }
 }
 

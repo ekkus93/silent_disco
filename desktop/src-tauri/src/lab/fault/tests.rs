@@ -40,6 +40,19 @@ fn bind_and_connect(
     Box<dyn ListenerTransportNode>,
     SessionId,
 ) {
+    bind_and_connect_with_listener_clock(config, 0, 0)
+}
+
+fn bind_and_connect_with_listener_clock(
+    config: LabLatencyConfig,
+    listener_offset_ms: i64,
+    listener_drift_ppm: i64,
+) -> (
+    Arc<LabClock>,
+    Box<dyn HostTransportNode>,
+    Box<dyn ListenerTransportNode>,
+    SessionId,
+) {
     let session_id = SessionId::new("lab-latency-session").expect("test session ID is valid");
     let device_id = DeviceId::new("lab-latency-listener").expect("test device ID is valid");
     let clock = Arc::new(LabClock::new(1_000));
@@ -52,6 +65,10 @@ fn bind_and_connect(
             clock_handle(&clock),
         )
         .expect("host should bind");
+    let listener_clock: Arc<dyn TransportClock> = Arc::new(
+        LabNodeClock::new(Arc::clone(&clock), listener_offset_ms, listener_drift_ppm)
+            .expect("listener test clock should be valid"),
+    );
     let listener = factory
         .connect_listener(
             ListenerTransportConfig::loopback(
@@ -59,7 +76,7 @@ fn bind_and_connect(
                 device_id.clone(),
                 host.endpoint(),
             ),
-            clock_handle(&clock),
+            listener_clock,
         )
         .expect("listener should connect");
 
@@ -100,10 +117,8 @@ fn bind_and_connect(
     (clock, host, listener, session_id)
 }
 
-/// A `TransportClock` handle over the same shared virtual timeline, for
-/// stamping `received_at` on events -- a separate concern from this
-/// wrapper's own deadline scheduling, but deliberately built from the
-/// same clock so stamped times and computed deadlines stay consistent.
+/// A zero-offset/drift `TransportClock` handle over the shared virtual
+/// timeline for the host side of these tests.
 fn clock_handle(clock: &Arc<LabClock>) -> Arc<dyn TransportClock> {
     Arc::new(LabNodeClock::new(Arc::clone(clock), 0, 0).expect("zero offset/drift is always valid"))
 }
@@ -135,15 +150,100 @@ fn exact_fixed_latency_holds_until_the_precise_deadline() {
     assert_eq!(still_not_yet.kind, TransportErrorKind::Timeout);
 
     clock.advance(1).expect("advance to the exact deadline");
-    assert!(matches!(
-        listener
-            .recv_event(POLL_TIMEOUT)
-            .expect("event must be released exactly at its deadline"),
+    match listener
+        .recv_event(POLL_TIMEOUT)
+        .expect("event must be released exactly at its deadline")
+    {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Audio,
+            received_at,
             ..
+        } => assert_eq!(received_at, MonotonicMillis::new(1_100)),
+        _ => panic!("expected delayed audio frame"),
+    }
+
+    listener.shutdown().expect("listener should shut down");
+    host.shutdown().expect("host should shut down");
+}
+
+/// Polling the wrapped transport for the first time at the deadline must
+/// still expose the faulted delivery timestamp, not the underlying
+/// pre-latency timestamp. This exercises the direct-release path rather
+/// than the held-queue path above.
+#[test]
+fn first_poll_at_deadline_uses_the_faulted_delivery_timestamp() {
+    let (clock, mut host, mut listener, session_id) = bind_and_connect(LabLatencyConfig {
+        fixed_latency_ms: 100,
+        jitter_ms: 0,
+        seed: 0,
+    });
+
+    host.broadcast_audio(&audio_frame(&session_id, 1))
+        .expect("send should report local delivery");
+    clock
+        .advance(100)
+        .expect("advance directly to the deadline");
+
+    match listener
+        .recv_event(POLL_TIMEOUT)
+        .expect("event must be deliverable at its deadline")
+    {
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            received_at,
+            ..
+        } => assert_eq!(received_at, MonotonicMillis::new(1_100)),
+        _ => panic!("expected delayed audio frame"),
+    }
+
+    listener.shutdown().expect("listener should shut down");
+    host.shutdown().expect("host should shut down");
+}
+
+/// Listener-local clock skew must change only the externally visible
+/// `received_at` timestamp. The 100 ms network-delay deadline itself
+/// remains on the shared Lab timeline and therefore still releases at
+/// base time `1_100` even with both offset and drift configured.
+#[test]
+fn listener_clock_offset_and_drift_do_not_distort_latency_deadline() {
+    let (clock, mut host, mut listener, session_id) = bind_and_connect_with_listener_clock(
+        LabLatencyConfig {
+            fixed_latency_ms: 100,
+            jitter_ms: 0,
+            seed: 0,
+        },
+        500,
+        10_000,
+    );
+
+    host.broadcast_audio(&audio_frame(&session_id, 1))
+        .expect("send should report local delivery");
+    let Err(not_yet) = listener.recv_event(POLL_TIMEOUT) else {
+        panic!("skewed listener clock must not make latency release early");
+    };
+    assert_eq!(not_yet.kind, TransportErrorKind::Timeout);
+
+    clock.advance(99).expect("advance short of base deadline");
+    let Err(still_not_yet) = listener.recv_event(POLL_TIMEOUT) else {
+        panic!("listener offset/drift must not move the base latency deadline");
+    };
+    assert_eq!(still_not_yet.kind, TransportErrorKind::Timeout);
+
+    clock.advance(1).expect("advance to base deadline");
+    match listener
+        .recv_event(POLL_TIMEOUT)
+        .expect("event must release at the base-domain deadline")
+    {
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            received_at,
+            ..
+        } => {
+            // Base 1_100 with +1% drift is 1_111, then +500 ms offset.
+            assert_eq!(received_at, MonotonicMillis::new(1_611));
         }
-    ));
+        _ => panic!("expected delayed audio frame"),
+    }
 
     listener.shutdown().expect("listener should shut down");
     host.shutdown().expect("host should shut down");
