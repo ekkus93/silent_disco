@@ -1874,9 +1874,9 @@ fn corrupt_wav_bytes() -> Vec<u8> {
 /// exactly the "host source read failure" this fixture exists to trigger.
 /// See `a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming`.
 fn truncated_body_full_header_wav() -> Vec<u8> {
-    let mut bytes = long_pcm_wav();
     const WAV_HEADER_BYTES: usize = 44;
     const SURVIVING_DATA_BYTES: usize = 4_410 * 2; // ~0.1s at 44.1kHz mono 16-bit
+    let mut bytes = long_pcm_wav();
     bytes.truncate(WAV_HEADER_BYTES + SURVIVING_DATA_BYTES);
     bytes
 }
