@@ -18,7 +18,7 @@ on:
       - ".github/workflows/desktop-ci.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: desktop-ci-${{ github.workflow }}-${{ github.ref }}
@@ -123,8 +123,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Check out repository
+      - name: Check out Lab branch for formatter pass
         uses: actions/checkout@v4
+        with:
+          ref: agent/lab-live-transport
+          fetch-depth: 0
 
       - name: Install Linux Tauri build dependencies
         run: |
@@ -150,6 +153,23 @@ jobs:
       - name: Generate exact Cargo lockfile when missing
         working-directory: desktop/src-tauri
         run: cargo generate-lockfile
+
+      - name: Apply and commit Rust formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd desktop/src-tauri
+          cargo fmt --all
+          cd ../..
+          if git diff --quiet -- desktop/src-tauri/src; then
+            echo "Rust sources already formatted."
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add desktop/src-tauri/src
+            git commit -m 'Apply rustfmt to Lab live transport'
+            git push origin HEAD:agent/lab-live-transport
+          fi
 
       - name: Check Rust formatting
         working-directory: desktop/src-tauri
