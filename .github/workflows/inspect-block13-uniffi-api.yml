@@ -83,7 +83,7 @@ jobs:
               opened = False
               block = []
               for line in lines[start:]:
-                  block.append(line)
+                  block.append(line.rstrip())
                   depth += line.count("{") - line.count("}")
                   opened = opened or "{" in line
                   if opened and depth == 0:
