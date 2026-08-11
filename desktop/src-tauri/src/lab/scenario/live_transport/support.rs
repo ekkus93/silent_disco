@@ -83,6 +83,16 @@ pub(super) fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
 }
 
 impl super::LiveTransportDriver {
+    pub(super) fn profile(&self, node_id: &NodeId) -> ReceiveFaultProfile {
+        self.profiles.get(node_id).copied().unwrap_or_default()
+    }
+
+    pub(super) fn has_link(&self, from: &NodeId, to: &NodeId) -> bool {
+        self.links
+            .iter()
+            .any(|link| &link.from == from && &link.to == to)
+    }
+
     pub(super) fn shutdown(&mut self) -> Result<(), DesktopErrorDto> {
         let mut failure = None;
         let mut listener_ids: Vec<NodeId> = self.listeners.keys().cloned().collect();
