@@ -55,13 +55,23 @@ impl LiveSyncState {
         response: SyncResponse,
         received_at: MonotonicMillis,
     ) -> Result<(SynchronizationSummary, ControlMessage), String> {
+        let SyncResponse {
+            session_id,
+            correlation_id,
+            t1_listener_send_elapsed_ms,
+            t2_host_receive_elapsed_ms,
+            t3_host_send_elapsed_ms,
+        } = response;
+        if session_id != self.session_id {
+            return Err("sync response session does not match the live Lab listener session".to_owned());
+        }
         let observation = self
             .estimator
             .observe_response(
-                SyncCorrelationId::new(response.correlation_id),
-                LocalMonotonicMillis::from(response.t1_listener_send_elapsed_ms),
-                HostMonotonicMillis::from(response.t2_host_receive_elapsed_ms),
-                HostMonotonicMillis::from(response.t3_host_send_elapsed_ms),
+                SyncCorrelationId::new(correlation_id),
+                LocalMonotonicMillis::from(t1_listener_send_elapsed_ms),
+                HostMonotonicMillis::from(t2_host_receive_elapsed_ms),
+                HostMonotonicMillis::from(t3_host_send_elapsed_ms),
                 LocalMonotonicMillis::from(received_at),
             )
             .map_err(|error| error.to_string())?;
