@@ -1,7 +1,8 @@
-use super::{
-    LabSessionState, MAX_SUMMARY_CHARS, MAX_TIMELINE_ENTRIES_PER_NODE, bounded_summary_text,
-    node_dto, read_bounded_scenario_file, run_outcome_dto, scenario_summary_dto, state_dto,
+use super::dto_convert::{
+    bounded_summary_text, node_dto, run_outcome_dto, scenario_summary_dto, state_dto,
 };
+use super::scenario_io::read_bounded_scenario_file;
+use super::{LabSessionState, MAX_SUMMARY_CHARS, MAX_TIMELINE_ENTRIES_PER_NODE};
 use crate::lab::LabRuntime;
 use crate::lab::scenario::{MAX_SCENARIO_FILE_BYTES, load_scenario_json, run_scenario_with_trace};
 use std::fmt::Write as _;

@@ -5181,3 +5181,104 @@ with final line counts/file list and validation evidence), `memory.md` (this ent
 needed.
 
 Not started: Task 9 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T22:00:50Z - Claude Sonnet 5 - Task 9 (final task): split lab_commands.rs into a lab_commands/ module
+
+Split `desktop/src-tauri/src/lab_commands.rs` (838 lines) into 5 new sibling files plus the
+already-existing `lab_commands/tests.rs` (220 lines, 8 tests), per
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 9 -- the final task in round 2.
+
+**One real, compile-time-discovered deviation from 9.2's proposed layout, not fabricated or
+guessed:** the TODO's own proposed design (moving the 9 `#[tauri::command]` fns into
+`run_control.rs`/`recording.rs`/`scenario_io.rs` submodules and `pub use`-re-exporting them from
+`mod.rs`) does not compile. `#[tauri::command]` generates hidden companion items (e.g.
+`__cmd__lab_run_loaded_scenario`, `__tauri_command_name_lab_run_loaded_scenario`) in the exact
+module where the annotated fn is textually defined; `lib.rs`'s `generate_handler!` macro resolves
+those at the literal path it names (`lab_commands::lab_run_loaded_scenario`), and a named `pub use`
+only re-exports the fn itself, not its hidden macro companions -- `cargo clippy --features
+lab-mode` failed with 22 `` cannot find `__cmd__*`/`__tauri_command_name_*` in `lab_commands` ``
+errors on the first attempt at this layout. This is not a novel problem: `app_state/mod.rs` and
+`app_state/commands.rs` (already-merged Task 4) hit and documented the identical failure mode,
+deliberately keeping `#[tauri::command]` fns defined directly in `mod.rs` rather than using a
+wildcard `pub use submodule::*;` workaround (which the project's own "explicit imports, not
+wildcards" global execution rule forbids anyway). This session followed that same established
+in-repo precedent instead of the TODO's literal proposed file list.
+
+Final file list and line counts (`desktop/src-tauri/src/lab_commands/`):
+
+- `mod.rs` -- **534 lines**: module doc (including the full "Scope: what start/pause/step/stop
+  honestly maps to" section, kept here rather than relocated to a `run_control.rs` that no longer
+  exists), imports, `MAX_TIMELINE_ENTRIES_PER_NODE`/`MAX_SUMMARY_CHARS` consts (doc comments
+  preserved verbatim), `LoadedScenario`/`LastRun`/`LabSessionState`/`LabAppState`, and all 9
+  `#[tauri::command]` fn bodies verbatim (`lab_get_state`, `lab_open_scenario_file`,
+  `lab_save_scenario_file`, `lab_run_loaded_scenario`, `lab_advance_virtual_time`, `lab_start_node`,
+  `lab_stop_node`, `lab_stop_all_nodes`, `lab_export_recording_file`), each body calling out to the
+  submodules below; `#[cfg(test)] mod tests;`.
+- `dto_convert.rs` -- **175 lines**: `node_dto`, `scenario_summary_dto`, `bounded_summary_text`,
+  `timeline_entry` (private, only used internally), `run_outcome_dto`, `state_dto` -- all
+  `pub(super)` except `timeline_entry`.
+- `errors.rs` -- **110 lines**: all 10 `DesktopErrorDto` constructors (`poisoned_error`,
+  `already_running_error`, `no_scenario_loaded_error`, `no_run_to_export_error`,
+  `invalid_node_id_error`, `path_unavailable_error`, `parse_error`, `validation_error`,
+  `execution_error`, `recording_io_error`), all `pub(super)`.
+- `scenario_io.rs` -- **59 lines**: `read_bounded_scenario_file` (`pub(super)`, metadata-size-check-
+  before-read ordering preserved verbatim) and `parse_and_validate` (`pub(super)`) -- pure helpers
+  only; the two open/save commands that call them stayed in `mod.rs` per the macro-hygiene
+  constraint above.
+- `session.rs` -- **40 lines**: `ensure_runtime` (`pub(super)`), unchanged logic including the
+  Block 38.2 "deterministic starting time" (virtual clock always starts at 0) comment.
+- `tests.rs` -- **221 lines** (was 220; +1 for the updated multi-line `use` block): all 8 tests
+  unchanged in behavior, only `use super::{...}` updated to `use super::dto_convert::{...}; use
+  super::scenario_io::read_bounded_scenario_file; use super::{LabSessionState, MAX_SUMMARY_CHARS,
+  MAX_TIMELINE_ENTRIES_PER_NODE};`.
+
+Total: **1139 lines across 6 files**, replacing the original 838-line flat file (removed) plus its
+already-separate 220-line `tests.rs` (1058 combined baseline). No file in the split exceeds 800
+lines; largest is `mod.rs` at 534.
+
+No `run_control.rs`/`recording.rs` were created (9.2's proposed names) since, once the command
+bodies stayed in `mod.rs` for correctness, there was no non-command logic left to house in them --
+noted explicitly in the TODO doc rather than silently deviating.
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-a56a4414b9f3a9e9e`:** this was a fresh worktree with no `desktop/dist` or
+`desktop/node_modules`, so `npm install && npm run build` were run first (both succeeded) to satisfy
+`tauri::generate_context!()`'s `dist/` requirement before any Rust build in `desktop/src-tauri`
+could compile at all.
+
+- Baseline (before editing): `cd desktop/src-tauri && cargo fmt --check` clean;
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t9 cargo clippy --all-targets --features
+  lab-mode -- -D warnings` clean; `cargo test --features lab-mode` -- **282 passed, 0 failed, 4
+  ignored** (pre-existing manual/device-only tests), including all 8 pre-existing
+  `lab_commands::tests::*`.
+- Post-split, first attempt (9.2's literal proposed layout with `run_control.rs`/`recording.rs` and
+  `pub use` re-exports): `cargo clippy --all-targets --features lab-mode -- -D warnings` failed with
+  22 real compile errors (`__cmd__*`/`__tauri_command_name_*` not found) -- not fabricated, this is
+  the actual first-pass failure that drove the module-design deviation above.
+- Post-fix: `cargo fmt` (one pass needed for import-block wrapping in `dto_convert.rs`,
+  `recording.rs`-turned-inline, and `scenario_io.rs`, all auto-fixed), then `cargo fmt --check`
+  clean. `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t9 cargo clippy --all-targets
+  --features lab-mode -- -D warnings` -- clean, zero warnings. `cargo test --features lab-mode` --
+  **282 passed, 0 failed, 4 ignored**, exact parity with baseline; `cargo test --features lab-mode
+  lab_commands` isolated -- **8 passed, 0 failed**, all at their new `lab_commands::tests::*` paths.
+- `cd desktop && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t9 npm run check` -- all
+  green: bindings-check (one pre-existing `process_for_lab never used` warning in
+  `platform/host_transport_events.rs`, untouched by this session, same as every prior Task 2+
+  session's note), Biome format/lint clean (same pre-existing "recommended deprecated" info notice),
+  `tsc -b` clean, **86 Vitest tests passed (10 files)**, production `vite build` succeeded.
+- `cd desktop/src-tauri && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t9 cargo clippy
+  --all-targets --all-features -- -D warnings` -- clean (default-feature-set gate, separate from
+  the lab-mode-specific run above).
+- ANDROID gate was **not** run for this task, per the TODO's own validation matrix: this file has no
+  Android-reachable surface (Tauri-only, `lab-mode`-gated).
+- Cleaned up the `/dev/shm` scratch build directory after validation.
+
+**Files touched:** `desktop/src-tauri/src/lab_commands/{mod,dto_convert,errors,scenario_io,
+session}.rs` (new), `desktop/src-tauri/src/lab_commands/tests.rs` (imports updated),
+`desktop/src-tauri/src/lab_commands.rs` (removed), `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md`
+(Task 9 checkboxes 9.1-9.4 marked complete with final line counts/file list, the macro-hygiene
+deviation documented inline, and validation evidence), `memory.md` (this entry).
+
+This was Task 9, the last of the 9 top-level tasks in round 2. Final validation/closure ("Final
+validation and closure" section of the TODO) not yet run as of this entry -- that happens after
+this task's commit is pushed, per the round's explicit one-task-at-a-time rule.

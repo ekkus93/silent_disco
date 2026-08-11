@@ -14,6 +14,37 @@
 //! already proved deterministic. No command in this file reconstructs or
 //! bypasses that logic.
 //!
+//! ## Module layout
+//!
+//! The nine `#[tauri::command]`-annotated entry points
+//! (`lab_get_state`/`lab_open_scenario_file`/`lab_save_scenario_file`/
+//! `lab_run_loaded_scenario`/`lab_advance_virtual_time`/`lab_start_node`/
+//! `lab_stop_node`/`lab_stop_all_nodes`/`lab_export_recording_file`) live
+//! directly in this file, not re-exported from a submodule: Tauri's
+//! command macro generates hidden companion items (e.g.
+//! `__cmd__lab_run_loaded_scenario`) alongside each function that
+//! `generate_handler!` looks up at the exact path `lib.rs` names
+//! (`lab_commands::lab_run_loaded_scenario`) -- a `pub use
+//! run_control::lab_run_loaded_scenario;` re-export only re-exports the
+//! function itself, not those hidden macro companions, so
+//! `generate_handler!` would fail to find them (confirmed the hard way
+//! during this split: this exact failure mode is also documented in
+//! `app_state::commands`'s own module doc). Keeping the annotated
+//! functions defined directly where `lib.rs` names them avoids that
+//! without resorting to a wildcard `pub use submodule::*;` re-export.
+//!
+//! Everything each command's *body* calls into is still split by
+//! responsibility:
+//!
+//! - [`errors`]: every structured `DesktopErrorDto` constructor this
+//!   command surface returns.
+//! - [`session`]: lazy [`LabRuntime`] construction/reuse for the current
+//!   session.
+//! - [`dto_convert`]: domain state -> DTO conversion (node/scenario
+//!   summary/run outcome/session state), including the UI-facing
+//!   timeline-entry and summary-text bounds.
+//! - [`scenario_io`]: bounded scenario file read/parse/validate helpers.
+//!
 //! ## Scope: what "start/pause/step/stop" honestly maps to
 //!
 //! `scenario::run_scenario_with_trace` is architected as one atomic,
@@ -52,22 +83,29 @@
 //! deliberately out of scope, not the disablement itself.
 
 use crate::dto::DesktopErrorDto;
-use crate::lab::recorder::RecordedNotificationKind;
-use crate::lab::recording::{RecordingIoError, ScenarioRecording};
-use crate::lab::scenario::{
-    AssertionOutcome, Scenario, ScenarioExecutionError, ScenarioOutcome, ScenarioParseError,
-    ScenarioReport, ScenarioTrace, ScenarioValidationError, StepSettlement, load_scenario_json,
-    run_scenario_with_trace,
-};
+use crate::lab::recording::ScenarioRecording;
+use crate::lab::scenario::{Scenario, ScenarioReport, ScenarioTrace, run_scenario_with_trace};
 use crate::lab::{LabNodeId, LabRuntime};
 use crate::lab_dto::{
-    LabAdvanceTimeRequest, LabAssertionResultDto, LabFileOutcomeDto, LabLinkDto, LabNodeDto,
-    LabRunOutcomeDto, LabScenarioSummaryDto, LabStartNodeRequest, LabStateDto, LabStepResultDto,
-    LabStopNodeRequest, LabTimelineEntryDto,
+    LabAdvanceTimeRequest, LabFileOutcomeDto, LabNodeDto, LabRunOutcomeDto, LabScenarioSummaryDto,
+    LabStartNodeRequest, LabStateDto, LabStopNodeRequest,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
+
+use dto_convert::{node_dto, run_outcome_dto, scenario_summary_dto, state_dto};
+use errors::{
+    already_running_error, execution_error, invalid_node_id_error, no_run_to_export_error,
+    no_scenario_loaded_error, path_unavailable_error, poisoned_error, recording_io_error,
+};
+use scenario_io::{parse_and_validate, read_bounded_scenario_file};
+use session::ensure_runtime;
+
+mod dto_convert;
+mod errors;
+mod scenario_io;
+mod session;
 
 /// Hard cap on rendered timeline entries per node (Block 42 "bounded event
 /// timeline"). The underlying recorder is already bounded to
@@ -121,348 +159,6 @@ impl Default for LabAppState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn poisoned_error() -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.session_poisoned",
-        "runtime",
-        "fatal",
-        false,
-        "the Lab session mutex was poisoned",
-    )
-}
-
-fn already_running_error() -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.already_running",
-        "runtime",
-        "error",
-        false,
-        "a Lab scenario is already running; wait for it to finish or stop every node first",
-    )
-}
-
-fn no_scenario_loaded_error() -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.no_scenario_loaded",
-        "runtime",
-        "error",
-        false,
-        "no Lab scenario is currently open",
-    )
-}
-
-fn no_run_to_export_error() -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.no_run_to_export",
-        "runtime",
-        "error",
-        false,
-        "no completed Lab scenario run is available to export",
-    )
-}
-
-fn invalid_node_id_error(raw: &str) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.invalid_node_id",
-        "validation",
-        "error",
-        false,
-        &format!("'{raw}' is not a Lab node identifier this session issued"),
-    )
-}
-
-/// Mirrors `platform::file_picker::TauriAudioFileDialog::pick_file`'s own
-/// error-shape discipline: `FilePath::into_path`'s error type lives in
-/// `tauri_plugin_fs`, a transitive (not direct) dependency of this crate,
-/// so it is never named explicitly here -- only its `Display` output.
-fn path_unavailable_error(error: &impl std::fmt::Display) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.path_unavailable",
-        "platform",
-        "error",
-        false,
-        &format!("selected path could not be represented safely: {error}"),
-    )
-}
-
-fn ensure_runtime(
-    app: &AppHandle,
-    state: &mut LabSessionState,
-) -> Result<Arc<LabRuntime>, DesktopErrorDto> {
-    if let Some(runtime) = &state.runtime {
-        return Ok(Arc::clone(runtime));
-    }
-    let app_local_data_root = app.path().app_local_data_dir().map_err(|error| {
-        DesktopErrorDto::new(
-            "desktop.lab.path_resolution_failed",
-            "platform",
-            "fatal",
-            false,
-            &format!("could not resolve the application-local-data directory: {error}"),
-        )
-    })?;
-    // Block 38.2 "deterministic starting time": every Lab session in this
-    // process starts its shared virtual timeline at the same instant.
-    let runtime = Arc::new(LabRuntime::new(&app_local_data_root, 0).map_err(|error| {
-        DesktopErrorDto::new(
-            "desktop.lab.runtime_start_failed",
-            "runtime",
-            "fatal",
-            false,
-            &error.to_string(),
-        )
-    })?);
-    state.runtime = Some(Arc::clone(&runtime));
-    Ok(runtime)
-}
-
-fn node_dto(runtime: &LabRuntime, node_id: LabNodeId) -> Option<LabNodeDto> {
-    let clock = runtime.node_clock(node_id)?;
-    Some(LabNodeDto {
-        node_id: node_id.as_u32().to_string(),
-        offset_ms: clock.offset_ms().to_string(),
-        drift_ppm: clock.drift_ppm().to_string(),
-    })
-}
-
-fn scenario_summary_dto(scenario: &Scenario) -> LabScenarioSummaryDto {
-    LabScenarioSummaryDto {
-        schema_version: scenario.schema_version,
-        seed: scenario.seed.to_string(),
-        node_ids: scenario
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str().to_owned())
-            .collect(),
-        link_count: u32::try_from(scenario.links.len()).unwrap_or(u32::MAX),
-        fixture_count: u32::try_from(scenario.fixtures.len()).unwrap_or(u32::MAX),
-        step_count: u32::try_from(scenario.steps.len()).unwrap_or(u32::MAX),
-        assertion_count: u32::try_from(scenario.assertions.len()).unwrap_or(u32::MAX),
-        timeout_ms: scenario.timeout_ms.to_string(),
-        links: scenario
-            .links
-            .iter()
-            .map(|link| LabLinkDto {
-                from: link.from.as_str().to_owned(),
-                to: link.to.as_str().to_owned(),
-                latency_ms: link.latency_ms.to_string(),
-                jitter_ms: link.jitter_ms.to_string(),
-                loss_permille: link.loss_permille,
-            })
-            .collect(),
-    }
-}
-
-fn bounded_summary_text(value: &str) -> String {
-    if value.chars().count() <= MAX_SUMMARY_CHARS {
-        return value.to_owned();
-    }
-    let mut truncated: String = value.chars().take(MAX_SUMMARY_CHARS).collect();
-    truncated.push('…');
-    truncated
-}
-
-fn timeline_entry(
-    node: &str,
-    sequence: u64,
-    kind: &RecordedNotificationKind,
-) -> LabTimelineEntryDto {
-    let (kind_name, summary) = match kind {
-        RecordedNotificationKind::Snapshot { revision, summary } => (
-            "snapshot",
-            format!(
-                "revision {revision}: host={} listener={} playback={}",
-                summary.host_lifecycle, summary.listener_lifecycle, summary.playback_state
-            ),
-        ),
-        RecordedNotificationKind::Effect { name } => ("effect", name.clone()),
-        RecordedNotificationKind::TransportEffect { name } => ("transportEffect", name.clone()),
-        RecordedNotificationKind::StorageEffect { name } => ("storageEffect", name.clone()),
-        RecordedNotificationKind::Error {
-            code,
-            severity,
-            message,
-            ..
-        } => ("error", format!("{code} ({severity}): {message}")),
-        RecordedNotificationKind::Diagnostic { name, fields } => (
-            "diagnostic",
-            format!(
-                "{name}: {}",
-                fields
-                    .iter()
-                    .map(|(key, value)| format!("{key}={value}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ),
-    };
-    LabTimelineEntryDto {
-        node: node.to_owned(),
-        sequence: sequence.to_string(),
-        kind: kind_name.to_owned(),
-        summary: bounded_summary_text(&summary),
-    }
-}
-
-fn run_outcome_dto(report: &ScenarioReport, trace: &ScenarioTrace) -> LabRunOutcomeDto {
-    let outcome = match report.outcome {
-        ScenarioOutcome::Completed => "completed",
-        ScenarioOutcome::TimedOut => "timedOut",
-        ScenarioOutcome::ExecutionError => "executionError",
-    };
-    let mut timeline = Vec::new();
-    let mut truncated = false;
-    for (node, entries) in &trace.node_notifications {
-        for entry in entries.iter().take(MAX_TIMELINE_ENTRIES_PER_NODE) {
-            timeline.push(timeline_entry(node, entry.sequence, &entry.kind));
-        }
-        if entries.len() > MAX_TIMELINE_ENTRIES_PER_NODE {
-            truncated = true;
-        }
-    }
-    LabRunOutcomeDto {
-        outcome: outcome.to_owned(),
-        final_time_ms: report.final_time_ms.to_string(),
-        step_results: report
-            .step_results
-            .iter()
-            .map(|step| LabStepResultDto {
-                index: u32::try_from(step.index).unwrap_or(u32::MAX),
-                at_ms: step.at_ms.to_string(),
-                node: step.node.as_str().to_owned(),
-                submit_error: step.submit_error.clone(),
-                settlement: match step.settlement {
-                    StepSettlement::Settled => "settled".to_owned(),
-                    StepSettlement::TimedOut => "timedOut".to_owned(),
-                },
-            })
-            .collect(),
-        assertion_results: report
-            .assertion_results
-            .iter()
-            .map(|assertion| LabAssertionResultDto {
-                kind: assertion.kind.clone(),
-                node: assertion.node.as_str().to_owned(),
-                by_ms: assertion.by_ms.to_string(),
-                outcome: match assertion.outcome {
-                    AssertionOutcome::Held => "held".to_owned(),
-                    AssertionOutcome::TimedOut => "timedOut".to_owned(),
-                },
-            })
-            .collect(),
-        timeline,
-        timeline_truncated: truncated,
-    }
-}
-
-fn state_dto(runtime: &LabRuntime, session: &LabSessionState) -> LabStateDto {
-    let nodes = runtime
-        .node_ids()
-        .into_iter()
-        .filter_map(|id| node_dto(runtime, id))
-        .collect();
-    LabStateDto {
-        now_ms: runtime.now().get().to_string(),
-        running: session.running,
-        nodes,
-        loaded_scenario: session
-            .loaded
-            .as_ref()
-            .map(|loaded| scenario_summary_dto(&loaded.scenario)),
-        last_run: session
-            .last_run
-            .as_ref()
-            .map(|last_run| run_outcome_dto(&last_run.report, &last_run.trace)),
-    }
-}
-
-fn parse_error(error: &ScenarioParseError) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.scenario_parse_failed",
-        "validation",
-        "error",
-        false,
-        &error.to_string(),
-    )
-}
-
-fn validation_error(error: &ScenarioValidationError) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.scenario_invalid",
-        "validation",
-        "error",
-        false,
-        &error.to_string(),
-    )
-}
-
-fn execution_error(error: &ScenarioExecutionError) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.scenario_execution_failed",
-        "runtime",
-        "error",
-        false,
-        &error.to_string(),
-    )
-}
-
-fn recording_io_error(error: &RecordingIoError) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.lab.recording_io_failed",
-        "storage",
-        "error",
-        true,
-        &error.to_string(),
-    )
-}
-
-/// Reads a user-selected scenario file's bytes, rejecting an oversized file
-/// from filesystem metadata *before* reading it into memory (Block 43.1/43.2
-/// "bounded payload"). `load_scenario_json` also rejects an oversized
-/// document, but only after the whole thing has already been read into a
-/// `Vec<u8>` -- checking here first means a user accidentally selecting a
-/// huge file cannot balloon this process's memory even transiently.
-fn read_bounded_scenario_file(path: &std::path::Path) -> Result<Vec<u8>, DesktopErrorDto> {
-    let metadata = std::fs::metadata(path).map_err(|error| {
-        DesktopErrorDto::new(
-            "desktop.lab.scenario_read_failed",
-            "platform",
-            "error",
-            true,
-            &format!("could not read the selected scenario file: {error}"),
-        )
-    })?;
-    if metadata.len() > crate::lab::scenario::MAX_SCENARIO_FILE_BYTES as u64 {
-        return Err(DesktopErrorDto::new(
-            "desktop.lab.scenario_too_large",
-            "validation",
-            "error",
-            false,
-            &format!(
-                "the selected scenario file exceeds the {} byte limit",
-                crate::lab::scenario::MAX_SCENARIO_FILE_BYTES
-            ),
-        ));
-    }
-    std::fs::read(path).map_err(|error| {
-        DesktopErrorDto::new(
-            "desktop.lab.scenario_read_failed",
-            "platform",
-            "error",
-            true,
-            &format!("could not read the selected scenario file: {error}"),
-        )
-    })
-}
-
-fn parse_and_validate(bytes: &[u8]) -> Result<Scenario, DesktopErrorDto> {
-    let scenario = load_scenario_json(bytes).map_err(|error| parse_error(&error))?;
-    scenario
-        .validate()
-        .map_err(|error| validation_error(&error))?;
-    Ok(scenario)
 }
 
 /// Returns the complete Lab session state (Block 42 "node list and state

@@ -730,63 +730,78 @@ Validation: **DESKTOP + DESKTOP-LAB-MODE** (the whole module is gated behind the
 
 ## 9.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run DESKTOP and DESKTOP-LAB-MODE before editing and record the baseline result.
-- [ ] Confirm the responsibility clusters found during investigation: module doc/architectural invariants, session state types (`LoadedScenario`, `LastRun`, `LabSessionState`, `LabAppState`), error constructors (6 `DesktopErrorDto` builders), runtime/session helpers (`ensure_runtime`, `node_dto`, `scenario_summary_dto`, `bounded_summary_text`), run-outcome/timeline DTO conversion (`timeline_entry`, `run_outcome_dto`, `state_dto`), scenario file parsing/validation error mapping + bounded I/O (`parse_error`/`validation_error`/`execution_error`/`recording_io_error`, `read_bounded_scenario_file`, `parse_and_validate`), and 9 `#[tauri::command]` entry points (`lab_get_state`, `lab_open_scenario_file`, `lab_save_scenario_file`, `lab_run_loaded_scenario`, `lab_advance_virtual_time`, `lab_start_node`, `lab_stop_node`, `lab_stop_all_nodes`, `lab_export_recording_file`).
-- [ ] Confirm `#[cfg(test)] mod tests;` **already** points to an existing sibling `lab_commands/tests.rs` (220 lines, 8 tests) — a `lab_commands/` directory already exists containing only that file; this task converts `lab_commands.rs` into `lab_commands/mod.rs` alongside it, not a fresh directory creation.
-- [ ] Confirm the exact 9 IPC command-name strings that `desktop/src/core/client.ts` invokes by literal string (`"lab_get_state"`, `"lab_open_scenario_file"`, `"lab_save_scenario_file"`, `"lab_run_loaded_scenario"`, `"lab_advance_virtual_time"`, `"lab_start_node"`, `"lab_stop_node"`, `"lab_stop_all_nodes"`, `"lab_export_recording_file"`) and the corresponding `#[cfg(feature = "lab-mode")]`-gated registrations in `lib.rs`'s `generate_handler!` list — these string literals and Rust fn names must not change.
+- [x] Record the current physical line count. Baseline: `desktop/src-tauri/src/lab_commands.rs` was **838 lines**; `desktop/src-tauri/src/lab_commands/tests.rs` was already a separate 220-line/8-test sibling file.
+- [x] Run DESKTOP and DESKTOP-LAB-MODE before editing and record the baseline result. Baseline (this session, worktree `.claude/worktrees/agent-a56a4414b9f3a9e9e`, after `npm install && npm run build` to populate the `dist/` `tauri::generate_context!()` needs in this fresh worktree): `cd desktop/src-tauri && cargo fmt --check` clean; `cargo clippy --all-targets --features lab-mode -- -D warnings` clean; `cargo test --features lab-mode` — 282 passed, 0 failed, 4 ignored (pre-existing manual/device tests), including the 8 pre-existing `lab_commands::tests::*`.
+- [x] Confirm the responsibility clusters found during investigation: module doc/architectural invariants, session state types (`LoadedScenario`, `LastRun`, `LabSessionState`, `LabAppState`), error constructors (10 `DesktopErrorDto` builders: `poisoned_error`/`already_running_error`/`no_scenario_loaded_error`/`no_run_to_export_error`/`invalid_node_id_error`/`path_unavailable_error`/`parse_error`/`validation_error`/`execution_error`/`recording_io_error`), runtime/session helpers (`ensure_runtime`, `node_dto`, `scenario_summary_dto`, `bounded_summary_text`), run-outcome/timeline DTO conversion (`timeline_entry`, `run_outcome_dto`, `state_dto`), scenario file parsing/validation error mapping + bounded I/O (`read_bounded_scenario_file`, `parse_and_validate`), and 9 `#[tauri::command]` entry points (`lab_get_state`, `lab_open_scenario_file`, `lab_save_scenario_file`, `lab_run_loaded_scenario`, `lab_advance_virtual_time`, `lab_start_node`, `lab_stop_node`, `lab_stop_all_nodes`, `lab_export_recording_file`) — matched the pre-investigation summary exactly.
+- [x] Confirm `#[cfg(test)] mod tests;` **already** points to an existing sibling `lab_commands/tests.rs` (220 lines, 8 tests) — a `lab_commands/` directory already exists containing only that file; this task converts `lab_commands.rs` into `lab_commands/mod.rs` alongside it, not a fresh directory creation. Confirmed.
+- [x] Confirm the exact 9 IPC command-name strings that `desktop/src/core/client.ts` invokes by literal string (`"lab_get_state"`, `"lab_open_scenario_file"`, `"lab_save_scenario_file"`, `"lab_run_loaded_scenario"`, `"lab_advance_virtual_time"`, `"lab_start_node"`, `"lab_stop_node"`, `"lab_stop_all_nodes"`, `"lab_export_recording_file"`) and the corresponding `#[cfg(feature = "lab-mode")]`-gated registrations in `lib.rs`'s `generate_handler!` list — these string literals and Rust fn names must not change. Confirmed via grep; none changed.
 
 ## 9.2 Module design
 
-- [ ] Convert `lab_commands.rs` → `lab_commands/mod.rs`, keeping the existing `lab_commands/tests.rs` sibling in place:
+- [x] Convert `lab_commands.rs` → `lab_commands/mod.rs`, keeping the existing `lab_commands/tests.rs` sibling in place — **implemented, with one deliberate deviation from this section's original proposed layout, discovered the hard way during real compilation:**
+
+  Moving the 9 `#[tauri::command]`-annotated functions into `run_control.rs`/`recording.rs`/`scenario_io.rs` and re-exporting them from `mod.rs` via `pub use submodule::{fn1, fn2};` **does not compile**. Tauri's `#[tauri::command]` macro generates hidden companion items (e.g. `__cmd__lab_run_loaded_scenario`, `__tauri_command_name_lab_run_loaded_scenario`) in the *same module* where the annotated function is textually defined; `lib.rs`'s `generate_handler!` macro looks those up at the exact path it names (`lab_commands::lab_run_loaded_scenario`), and a named `pub use` only re-exports the function itself, not those hidden macro companions — `generate_handler!` then fails with `` cannot find `__cmd__lab_run_loaded_scenario` in `lab_commands` ``. This is not a new discovery: `app_state/mod.rs` and `app_state/commands.rs` (Task 4, already merged) already hit and documented this exact failure mode, explicitly choosing to keep `#[tauri::command]` functions defined directly in `mod.rs` rather than resorting to a wildcard `pub use submodule::*;` re-export (which would technically pull the hidden macro items in, but the project's own "use explicit imports instead of wildcard imports" global execution rule forbids it, and the codebase's own established precedent already rejected that route for the same reason). This task follows that same established precedent instead of the letter of this section's original text.
+
+  Final, real, actually-compiling layout:
 
 ```text
 lab_commands/
-  mod.rs             # module doc, imports, MAX_TIMELINE_ENTRIES_PER_NODE/MAX_SUMMARY_CHARS,
-                      # LabSessionState/LoadedScenario/LastRun/LabAppState, pub use re-exports of
-                      # command fns from submodules (so lib.rs's lab_commands::fn_name paths need
-                      # zero changes), #[cfg(test)] mod tests;
-  errors.rs          # all DesktopErrorDto constructors (poisoned/already_running/no_scenario_loaded/
-                      # no_run_to_export/invalid_node_id/path_unavailable/parse/validation/
-                      # execution/recording_io errors)
+  mod.rs             # module doc (incl. the "start/pause/step/stop" scope section),
+                      # imports, MAX_TIMELINE_ENTRIES_PER_NODE/MAX_SUMMARY_CHARS,
+                      # LabSessionState/LoadedScenario/LastRun/LabAppState, and all 9
+                      # #[tauri::command] fn bodies (kept here per the macro-hygiene
+                      # constraint above; each body calls out to the submodules below),
+                      # #[cfg(test)] mod tests;
+  errors.rs          # all 10 DesktopErrorDto constructors (poisoned/already_running/
+                      # no_scenario_loaded/no_run_to_export/invalid_node_id/
+                      # path_unavailable/parse/validation/execution/recording_io errors)
   session.rs         # ensure_runtime
-  dto_convert.rs      # node_dto, scenario_summary_dto, bounded_summary_text, timeline_entry,
+  dto_convert.rs     # node_dto, scenario_summary_dto, bounded_summary_text, timeline_entry,
                       # run_outcome_dto, state_dto
-  scenario_io.rs      # read_bounded_scenario_file, parse_and_validate,
-                      # lab_open_scenario_file, lab_save_scenario_file
-  run_control.rs      # lab_run_loaded_scenario, lab_advance_virtual_time, lab_start_node,
-                      # lab_stop_node, lab_stop_all_nodes (+ the relevant part of the start/step/
-                      # stop-mapping module doc, relocated here since it documents run-control
-                      # semantics specifically)
-  recording.rs        # lab_export_recording_file, lab_get_state
-  tests.rs            # existing 220-line test file — update its `use super::{...}` imports to
-                      # the new submodule paths (dto_convert::, scenario_io::, etc.)
+  scenario_io.rs     # read_bounded_scenario_file, parse_and_validate (pure helpers only --
+                      # the two open/save commands that call them stayed in mod.rs)
+  tests.rs           # existing 220-line test file — `use super::{...}` imports updated to
+                      # the new submodule paths (super::dto_convert::{...},
+                      # super::scenario_io::read_bounded_scenario_file)
 ```
 
-- [ ] Make cross-submodule helpers (`node_dto`, `scenario_summary_dto`, `run_outcome_dto`, `state_dto`, `read_bounded_scenario_file`) `pub(crate)`/`pub(super)` as needed for `tests.rs` and the command submodules to reach them.
-- [ ] Keep every `#[tauri::command]` fn name identical; re-export via `pub use submodule::*;` (or explicit names) from `mod.rs` so `lib.rs`'s `lab_commands::lab_run_loaded_scenario` etc. paths in `generate_handler!` need zero changes.
-- [ ] Keep `LabAppState` independent of `DesktopAppState` (no merge, no shared singleton) — this is an explicit standing invariant ("Block 37.2 no global production singleton reuse").
+  (No separate `run_control.rs`/`recording.rs` files were created, since after the command
+  bodies stayed in `mod.rs` there was no non-command logic left to put in them.)
+
+- [x] Make cross-submodule helpers (`node_dto`, `scenario_summary_dto`, `run_outcome_dto`, `state_dto`, `read_bounded_scenario_file`) `pub(super)` as needed for `tests.rs` and `mod.rs`'s command bodies to reach them.
+- [x] Keep every `#[tauri::command]` fn name identical — all 9 fn names unchanged, defined directly in `mod.rs` (see the module-design note above for why re-exporting from a submodule was not viable); `lib.rs`'s `lab_commands::lab_run_loaded_scenario` etc. paths in `generate_handler!` needed zero changes.
+- [x] Keep `LabAppState` independent of `DesktopAppState` (no merge, no shared singleton) — this is an explicit standing invariant ("Block 37.2 no global production singleton reuse"). Preserved unchanged.
 
 ## 9.3 Behavioral preservation
 
-- [ ] Preserve DTOs living only in the separate, unconditionally-compiled `lab_dto` module — do not fold DTO conversion logic into `lab_dto` itself.
-- [ ] Preserve every command routing through the exact same `LabRuntime`/`scenario::run_scenario_with_trace` entry points — no second code path to the runtime.
-- [ ] Preserve the `LabSessionState.running` mutex-guard coupling between `lab_run_loaded_scenario` and `lab_advance_virtual_time` (the latter must still check the flag and return `already_running_error()`).
-- [ ] Preserve `MAX_TIMELINE_ENTRIES_PER_NODE` (50) and `MAX_SUMMARY_CHARS` (200) as deliberately separate, tighter UI-facing bounds than the recorder's own 4096 cap — move their doc comments together with the DTO-conversion logic that uses them.
-- [ ] Preserve `read_bounded_scenario_file`'s filesystem-metadata-size-check-before-read ordering (deliberately duplicates/precedes `load_scenario_json`'s own oversize check, to avoid transient memory ballooning).
-- [ ] Preserve `lab_save_scenario_file` writing back the raw validated bytes verbatim ("save a copy, never a silent mutation"), not a re-serialization.
-- [ ] Preserve every `#[tauri::command]` fn name exactly (IPC contract with `desktop/src/core/client.ts`).
+- [x] Preserve DTOs living only in the separate, unconditionally-compiled `lab_dto` module — do not fold DTO conversion logic into `lab_dto` itself. `crate::lab_dto` untouched; `dto_convert.rs` only converts into its types.
+- [x] Preserve every command routing through the exact same `LabRuntime`/`scenario::run_scenario_with_trace` entry points — no second code path to the runtime. Confirmed unchanged.
+- [x] Preserve the `LabSessionState.running` mutex-guard coupling between `lab_run_loaded_scenario` and `lab_advance_virtual_time` (the latter must still check the flag and return `already_running_error()`). Preserved verbatim, both still in `mod.rs`.
+- [x] Preserve `MAX_TIMELINE_ENTRIES_PER_NODE` (50) and `MAX_SUMMARY_CHARS` (200) as deliberately separate, tighter UI-facing bounds than the recorder's own 4096 cap. Kept as `mod.rs` consts (private items are automatically visible to all descendant modules in Rust, so `dto_convert.rs` needs no extra visibility to use them) with their full original doc comments preserved verbatim.
+- [x] Preserve `read_bounded_scenario_file`'s filesystem-metadata-size-check-before-read ordering (deliberately duplicates/precedes `load_scenario_json`'s own oversize check, to avoid transient memory ballooning). Preserved verbatim in `scenario_io.rs`.
+- [x] Preserve `lab_save_scenario_file` writing back the raw validated bytes verbatim ("save a copy, never a silent mutation"), not a re-serialization. Preserved verbatim in `mod.rs`.
+- [x] Preserve every `#[tauri::command]` fn name exactly (IPC contract with `desktop/src/core/client.ts`). Confirmed via grep against `client.ts` and `lib.rs`.
 
 ## 9.4 Acceptance criteria
 
-- [ ] `lab_commands/tests.rs`'s 8 tests pass with updated imports, unchanged behavior.
-- [ ] `lib.rs`'s `lab_commands::` state-management (`.manage(lab_commands::LabAppState::new())`) and all 9 `generate_handler!` registrations compile unchanged.
-- [ ] `desktop/src/core/client.ts` and `LabScreen.tsx`/`LabScreen.test.tsx` are unaffected (Rust-only refactor; TS layer needs no change).
-- [ ] DESKTOP passes.
-- [ ] DESKTOP-LAB-MODE passes (`cargo fmt --check`, `cargo clippy --features lab-mode -- -D warnings`, `cargo test --features lab-mode`) — do not skip this; it is the only gate that actually compiles this module.
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 9 changes with a focused commit message.
+- [x] `lab_commands/tests.rs`'s 8 tests pass with updated imports, unchanged behavior. Confirmed: `cargo test --features lab-mode lab_commands` — 8 passed, 0 failed.
+- [x] `lib.rs`'s `lab_commands::` state-management (`.manage(lab_commands::LabAppState::new())`) and all 9 `generate_handler!` registrations compile unchanged. Confirmed via `cargo clippy --all-targets --features lab-mode -- -D warnings` passing clean with zero edits to `lib.rs`.
+- [x] `desktop/src/core/client.ts` and `LabScreen.tsx`/`LabScreen.test.tsx` are unaffected (Rust-only refactor; TS layer needs no change). Confirmed unchanged; `npm run check`'s 86 Vitest tests still pass.
+- [x] DESKTOP passes. `cd desktop && npm run check` — all green (bindings-check, Biome format/lint, `cargo fmt --check`, `tsc -b`, 86 Vitest tests, production `vite build`); `cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings` — clean.
+- [x] DESKTOP-LAB-MODE passes (`cargo fmt --check`, `cargo clippy --features lab-mode -- -D warnings`, `cargo test --features lab-mode`) — all three ran clean; 282 passed, 0 failed, 4 ignored (same pre-existing ignored set as baseline).
+- [x] No file in the split exceeds 800 lines. Largest is `mod.rs` at 534 lines (see final line counts below).
+- [x] Record final line counts and the final file list.
+
+  Final `desktop/src-tauri/src/lab_commands/` file list and line counts (replacing the single 838-line `lab_commands.rs`):
+  - `mod.rs` — **534 lines**
+  - `dto_convert.rs` — **175 lines**
+  - `errors.rs` — **110 lines**
+  - `scenario_io.rs` — **59 lines**
+  - `session.rs` — **40 lines**
+  - `tests.rs` — **221 lines** (unchanged test count/behavior, imports updated)
+
+  Total: **1139 lines across 6 files**, replacing the original 838-line flat file plus its already-separate 220-line `tests.rs` (1058 lines combined baseline).
+- [x] Commit only Task 9 changes with a focused commit message.
 
 ---
 
