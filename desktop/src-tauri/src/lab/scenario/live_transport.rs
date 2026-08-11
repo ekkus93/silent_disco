@@ -1,11 +1,10 @@
 //! Live virtual-transport adapter for Lab scenarios.
 //!
-//! This is the missing bridge between Block 40's scenario schema and Block
-//! 39's real virtual/fault transport. It executes actor-emitted platform and
-//! transport effects against one shared [`VirtualTransportNetwork`], then
-//! feeds facts observed on that wire back into the authoritative actors.
-//! Control traffic still goes through the production codec because the
-//! virtual transport itself round-trips every frame through encode/decode.
+//! This bridge executes actor-emitted platform/transport effects against one
+//! shared [`VirtualTransportNetwork`]. Control frames travel through the real
+//! codec/transport implementation, and an approved listener immediately runs
+//! one production-shaped synchronization exchange so a scenario's
+//! `latencyMs`/`jitterMs`/`lossPermille` values affect actual live traffic.
 
 use super::{NodeId, Scenario, ScenarioAction};
 use crate::dto::DesktopErrorDto;
@@ -13,16 +12,21 @@ use crate::lab::fault::{LabLatencyConfig, LabLatencyTransportFactory};
 use crate::lab::recorder::{RecordingObserver, ScenarioRecorder};
 use crate::lab::{LabClock, LabNodeId, LabRuntime};
 use crate::platform::host_transport_events::HostTransportEventProcessor;
-use silent_disco_core::domain::{DeliverySeverity, DeviceId, ErrorSeverity, OperationId};
-use silent_disco_core::error::{CoreError, CoreErrorCode};
+use silent_disco_core::domain::{DeliverySeverity, DeviceId, OperationId};
+use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::protocol::{
     ControlMessage, DeviceIdentity, Disconnect, JoinApproval, JoinRejection, JoinRequest,
-    ProtocolFrame,
+    ProtocolFrame, SyncRequest, SynchronizationReport,
 };
 use silent_disco_core::runtime::{
-    CoreActorHandle, CoreNotification, CoreObserver, DeliveryReport, PlatformEffect,
+    AudioEvent, CoreActorHandle, CoreNotification, CoreObserver, DeliveryReport, PlatformEffect,
     PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion, SessionAdvertisement,
-    TransportEffect, TransportEffectRequest, TransportEvent as CoreTransportEvent,
+    SynchronizationSummary, TransportEffect, TransportEffectRequest,
+    TransportEvent as CoreTransportEvent,
+};
+use silent_disco_core::sync::{
+    ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
+    SyncEstimatorConfig,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -36,11 +40,11 @@ use std::time::Duration;
 
 const EFFECT_QUEUE_CAPACITY: usize = 128;
 const MAX_PUMP_ITERATIONS: usize = 512;
-const NONBLOCKING_RECV_BUDGET: Duration = Duration::from_nanos(1);
+const NONBLOCKING_RECV_BUDGET: Duration = Duration::from_millis(1);
 
-/// Observer used by a live scenario node. Every notification still reaches
-/// the ordinary recorder first. Effect notifications are additionally copied
-/// into a small bounded queue consumed synchronously by [`LiveTransportDriver`].
+/// Records every actor notification and separately queues only effects that a
+/// platform adapter must execute. The effect queue is deliberately bounded;
+/// overflow is returned to the actor observer as a real structured failure.
 pub(super) struct LiveScenarioObserver {
     recorder: RecordingObserver,
     effects: SyncSender<CoreNotification>,
@@ -64,12 +68,14 @@ impl CoreObserver for LiveScenarioObserver {
         self.recorder.on_notification(notification.clone())?;
         if !matches!(
             notification,
-            CoreNotification::Effect(_) | CoreNotification::TransportEffect(_)
+            CoreNotification::Effect(_)
+                | CoreNotification::TransportEffect(_)
+                | CoreNotification::StorageEffect(_)
         ) {
             return Ok(());
         }
-        self.effects.try_send(notification).map_err(|error| {
-            let message = match error {
+        self.effects.try_send(notification).map_err(|queue_error| {
+            let message = match queue_error {
                 TrySendError::Full(_) => "Lab live-effect queue reached its bounded capacity",
                 TrySendError::Disconnected(_) => "Lab live-effect consumer disconnected",
             };
@@ -80,7 +86,7 @@ impl CoreObserver for LiveScenarioObserver {
                 true,
                 None,
             )
-            .expect("static Lab live-effect observer error is bounded and control-free")
+            .expect("static Lab effect-queue error text satisfies the core error contract")
         })
     }
 }
@@ -109,12 +115,14 @@ struct LiveHost {
 
 struct LiveListener {
     transport: Box<dyn ListenerTransportNode>,
-    host_node: NodeId,
+    session_id: silent_disco_core::domain::SessionId,
+    estimator: ClockSyncEstimator,
+    next_sync_correlation: u64,
 }
 
-/// Synchronous Lab platform/transport adapter. It owns no background worker:
-/// the scenario runner calls [`Self::pump`] after commands and virtual-clock
-/// advances, so all transport progress stays causally tied to the scenario.
+/// Synchronous Lab platform/transport adapter. It owns no detached worker:
+/// scenario execution explicitly calls [`Self::pump`] after commands and
+/// virtual-clock advances.
 pub(super) struct LiveTransportDriver {
     network: VirtualTransportNetwork,
     shared_clock: Arc<LabClock>,
@@ -130,7 +138,7 @@ impl LiveTransportDriver {
         lab: &LabRuntime,
         scenario: &Scenario,
         lab_node_ids: &HashMap<&str, LabNodeId>,
-        effect_receivers: HashMap<NodeId, Receiver<CoreNotification>>,
+        mut effect_receivers: HashMap<NodeId, Receiver<CoreNotification>>,
     ) -> Result<Self, DesktopErrorDto> {
         let profiles = build_receive_profiles(scenario)?;
         let mut pending_invites: HashMap<&str, VecDeque<Option<String>>> = HashMap::new();
@@ -145,41 +153,37 @@ impl LiveTransportDriver {
 
         let mut actors = HashMap::new();
         for node in &scenario.nodes {
-            let lab_id = lab_node_ids.get(node.id.as_str()).copied().ok_or_else(|| {
-                error("desktop.lab.live_transport_unknown_node", "scenario node was not started")
-            })?;
+            let lab_id = lab_node_ids
+                .get(node.id.as_str())
+                .copied()
+                .ok_or_else(|| live_error("unknown_node", "scenario node was not started"))?;
             let handle = lab.node_handle(lab_id).ok_or_else(|| {
-                error("desktop.lab.live_transport_unknown_node", "scenario node actor is unavailable")
+                live_error("unknown_node", "scenario node actor is unavailable")
             })?;
             let identity = lab.node_identity(lab_id).ok_or_else(|| {
-                error("desktop.lab.live_transport_unknown_node", "scenario node identity is unavailable")
+                live_error("unknown_node", "scenario node identity is unavailable")
             })?;
             let clock = lab.node_clock(lab_id).ok_or_else(|| {
-                error("desktop.lab.live_transport_unknown_node", "scenario node clock is unavailable")
+                live_error("unknown_node", "scenario node clock is unavailable")
             })?;
-            let effects = effect_receivers.get(&node.id).ok_or_else(|| {
-                error("desktop.lab.live_transport_observer_missing", "scenario node has no live-effect receiver")
+            let effects = effect_receivers.remove(&node.id).ok_or_else(|| {
+                live_error(
+                    "observer_missing",
+                    "scenario node has no live-effect receiver",
+                )
             })?;
-            // Receiver is not Clone; remove it below after all lookups are proven.
-            let _ = effects;
             actors.insert(
                 node.id.clone(),
                 ActorEndpoint {
                     handle,
                     device_id: identity.device_id().clone(),
                     clock,
-                    effects: mpsc::sync_channel(1).1,
+                    effects,
                     pending_invite_codes: pending_invites
                         .remove(node.id.as_str())
                         .unwrap_or_default(),
                 },
             );
-        }
-        let mut effect_receivers = effect_receivers;
-        for (node_id, actor) in &mut actors {
-            actor.effects = effect_receivers.remove(node_id).ok_or_else(|| {
-                error("desktop.lab.live_transport_observer_missing", "scenario node has no live-effect receiver")
-            })?;
         }
 
         Ok(Self {
@@ -193,9 +197,6 @@ impl LiveTransportDriver {
         })
     }
 
-    /// Executes all currently-observable effects and wire events. Returns
-    /// once a complete pass makes no progress; actor workers may enqueue a
-    /// later effect, so the scenario settlement loop calls this repeatedly.
     pub(super) fn pump(&mut self) -> Result<(), DesktopErrorDto> {
         for _ in 0..MAX_PUMP_ITERATIONS {
             let mut progressed = self.process_effects()?;
@@ -205,8 +206,8 @@ impl LiveTransportDriver {
                 return Ok(());
             }
         }
-        Err(error(
-            "desktop.lab.live_transport_did_not_quiesce",
+        Err(live_error(
+            "did_not_quiesce",
             "Lab live transport exceeded its bounded pump iteration limit",
         ))
     }
@@ -219,8 +220,8 @@ impl LiveTransportDriver {
                     Ok(notification) => pending.push((node_id.clone(), notification)),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        return Err(error(
-                            "desktop.lab.live_transport_observer_disconnected",
+                        return Err(live_error(
+                            "observer_disconnected",
                             "Lab actor effect observer disconnected before scenario completion",
                         ));
                     }
@@ -230,9 +231,17 @@ impl LiveTransportDriver {
         let progressed = !pending.is_empty();
         for (node_id, notification) in pending {
             match notification {
-                CoreNotification::Effect(effect) => self.process_platform_effect(&node_id, effect)?,
+                CoreNotification::Effect(effect) => {
+                    self.process_platform_effect(&node_id, effect)?;
+                }
                 CoreNotification::TransportEffect(effect) => {
                     self.process_transport_effect(&node_id, effect)?;
+                }
+                CoreNotification::StorageEffect(_) => {
+                    return Err(live_error(
+                        "storage_effect_unsupported",
+                        "Lab live transport does not fabricate durable-storage completion; use non-persistent scenario operations",
+                    ));
                 }
                 _ => {}
             }
@@ -247,200 +256,231 @@ impl LiveTransportDriver {
     ) -> Result<(), DesktopErrorDto> {
         match effect.request {
             PlatformEffectRequest::StartAdvertising(mut advertisement) => {
-                let profile = self.profile(node_id);
-                if profile.latency_ms != 0 || profile.jitter_ms != 0 {
-                    return self.fail_platform(
-                        node_id,
-                        effect.operation_id,
-                        "host-side Lab latency/jitter is unsupported by the current listener-receive latency adapter",
-                    );
-                }
-                let actor = self.actor(node_id)?;
-                let factory = VirtualTransportFactory::new(self.network.clone()).with_udp_faults(
-                    VirtualUdpFaultConfig {
-                        seed: profile.seed,
-                        loss_permille: profile.loss_permille,
-                        ..VirtualUdpFaultConfig::default()
-                    },
-                );
-                let clock: Arc<dyn TransportClock> = actor.clock.clone();
-                let transport = factory
-                    .bind_host(HostTransportConfig::loopback(advertisement.session_id.clone()), Arc::clone(&clock))
-                    .map_err(|e| transport_error("bind host", &e))?;
-                advertisement.endpoint = Some(transport.endpoint());
-                let processor = HostTransportEventProcessor::new(clock);
-                self.hosts.insert(
-                    node_id.clone(),
-                    LiveHost {
-                        transport,
-                        advertisement: advertisement.clone(),
-                        processor,
-                    },
-                );
-                actor
-                    .handle
-                    .submit_platform_event(PlatformEvent::OperationSucceeded {
-                        operation_id: effect.operation_id,
-                        completion: PlatformOperationCompletion::AdvertisingStarted,
-                    })
-                    .map_err(core_error)?;
-                self.publish_advertisement(node_id, &advertisement)?;
+                self.start_advertising(node_id, effect.operation_id, &mut advertisement)
             }
             PlatformEffectRequest::StopAdvertising => {
-                if let Some(mut host) = self.hosts.remove(node_id) {
-                    host.transport.shutdown().map_err(|e| transport_error("stop host", &e))?;
-                    self.expire_advertisement(&host.advertisement)?;
-                }
-                self.actor(node_id)?
-                    .handle
-                    .submit_platform_event(PlatformEvent::OperationSucceeded {
-                        operation_id: effect.operation_id,
-                        completion: PlatformOperationCompletion::AdvertisingStopped,
-                    })
-                    .map_err(core_error)?;
+                self.stop_advertising(node_id, effect.operation_id)
             }
             PlatformEffectRequest::StartDiscovery(_) => {
-                self.actor(node_id)?
-                    .handle
-                    .submit_platform_event(PlatformEvent::OperationSucceeded {
-                        operation_id: effect.operation_id,
-                        completion: PlatformOperationCompletion::DiscoveryStarted,
-                    })
-                    .map_err(core_error)?;
-                let visible: Vec<SessionAdvertisement> = self
-                    .hosts
-                    .iter()
-                    .filter(|(host_id, _)| self.has_link(host_id, node_id))
-                    .map(|(_, host)| host.advertisement.clone())
-                    .collect();
-                for advertisement in visible {
-                    self.actor(node_id)?
-                        .handle
-                        .submit_platform_event(PlatformEvent::SessionDiscovered(advertisement))
-                        .map_err(core_error)?;
-                }
+                self.start_discovery(node_id, effect.operation_id)
             }
-            PlatformEffectRequest::StopDiscovery => {
-                self.actor(node_id)?
-                    .handle
-                    .submit_platform_event(PlatformEvent::OperationSucceeded {
-                        operation_id: effect.operation_id,
-                        completion: PlatformOperationCompletion::DiscoveryStopped,
-                    })
-                    .map_err(core_error)?;
-            }
+            PlatformEffectRequest::StopDiscovery => self.complete_platform(
+                node_id,
+                effect.operation_id,
+                PlatformOperationCompletion::DiscoveryStopped,
+            ),
             PlatformEffectRequest::EstablishNetwork(request) => {
-                let (host_id, advertisement) = self
-                    .hosts
-                    .iter()
-                    .find(|(host_id, host)| {
-                        host.advertisement.session_id == request.session_id
-                            && self.has_link(host_id, node_id)
-                    })
-                    .map(|(id, host)| (id.clone(), host.advertisement.clone()))
-                    .ok_or_else(|| error(
-                        "desktop.lab.live_transport_no_route",
-                        "selected Lab session has no declared link to the listener",
-                    ))?;
-                let endpoint = advertisement.endpoint.ok_or_else(|| {
-                    error("desktop.lab.live_transport_no_endpoint", "Lab host advertisement has no endpoint")
-                })?;
-                let profile = self.profile(node_id);
-                let faulted = VirtualTransportFactory::new(self.network.clone()).with_udp_faults(
-                    VirtualUdpFaultConfig {
-                        seed: profile.seed,
-                        loss_permille: profile.loss_permille,
-                        ..VirtualUdpFaultConfig::default()
-                    },
-                );
-                let factory = LabLatencyTransportFactory::new(
-                    faulted,
-                    Arc::clone(&self.shared_clock),
-                    LabLatencyConfig {
-                        fixed_latency_ms: profile.latency_ms,
-                        jitter_ms: profile.jitter_ms,
-                        seed: profile.seed,
-                    },
-                );
-                let actor = self.actor(node_id)?;
-                let clock: Arc<dyn TransportClock> = actor.clock.clone();
-                let transport = factory
-                    .connect_listener(
-                        ListenerTransportConfig::loopback(
-                            request.session_id.clone(),
-                            actor.device_id.clone(),
-                            endpoint,
-                        ),
-                        clock,
-                    )
-                    .map_err(|e| transport_error("connect listener", &e))?;
-                let routes = transport.local_routes();
-                let invite_code = self
-                    .actors
-                    .get_mut(node_id)
-                    .and_then(|actor| actor.pending_invite_codes.pop_front())
-                    .flatten();
-                transport
-                    .send_control(&ControlMessage::JoinRequest(JoinRequest {
-                        session_id: request.session_id.clone(),
-                        device: DeviceIdentity {
-                            device_id: actor.device_id.clone(),
-                            display_name: node_id.as_str().to_owned(),
-                        },
-                        invite_code,
-                        sync_port: routes.synchronization.port(),
-                        audio_port: routes.audio.port(),
-                    }))
-                    .map_err(|e| transport_error("send join request", &e))?;
-                self.listeners.insert(
-                    node_id.clone(),
-                    LiveListener {
-                        transport,
-                        host_node: host_id,
-                    },
-                );
-                actor
-                    .handle
-                    .submit_platform_event(PlatformEvent::OperationSucceeded {
-                        operation_id: effect.operation_id,
-                        completion: PlatformOperationCompletion::NetworkEndpointReady(endpoint),
-                    })
-                    .map_err(core_error)?;
+                self.establish_network(node_id, effect.operation_id, request.session_id)
             }
             PlatformEffectRequest::ReleaseNetwork => {
-                if let Some(mut listener) = self.listeners.remove(node_id) {
-                    listener.transport.shutdown().map_err(|e| transport_error("release listener", &e))?;
-                }
-                self.actor(node_id)?
-                    .handle
-                    .submit_platform_event(PlatformEvent::OperationSucceeded {
-                        operation_id: effect.operation_id,
-                        completion: PlatformOperationCompletion::NetworkReleased,
-                    })
-                    .map_err(core_error)?;
+                self.release_network(node_id, effect.operation_id)
             }
-            PlatformEffectRequest::RequestCapabilities(_) => {
-                return self.fail_platform(
-                    node_id,
-                    effect.operation_id,
-                    "Lab live transport does not synthesize platform capability availability",
-                );
-            }
+            PlatformEffectRequest::RequestCapabilities(_) => self.fail_platform(
+                node_id,
+                effect.operation_id,
+                "Lab live transport does not synthesize platform capability availability",
+            ),
             PlatformEffectRequest::PrepareAudioSource(_)
             | PlatformEffectRequest::StartAudioOutput(_)
             | PlatformEffectRequest::StopAudioOutput
-            | PlatformEffectRequest::ShareDiagnostics { .. } => {
-                // These platform responsibilities are outside live transport.
-                // Leaving their operation pending would strand the actor, so
-                // fail them explicitly rather than claiming fake success.
-                return self.fail_platform(
-                    node_id,
-                    effect.operation_id,
-                    "platform effect is outside the Lab live-transport adapter",
-                );
-            }
+            | PlatformEffectRequest::ShareDiagnostics { .. } => self.fail_platform(
+                node_id,
+                effect.operation_id,
+                "platform effect is outside the Lab live-transport adapter",
+            ),
+        }
+    }
+
+    fn start_advertising(
+        &mut self,
+        node_id: &NodeId,
+        operation_id: OperationId,
+        advertisement: &mut SessionAdvertisement,
+    ) -> Result<(), DesktopErrorDto> {
+        let profile = self.profile(node_id);
+        if profile.latency_ms != 0 || profile.jitter_ms != 0 {
+            return self.fail_platform(
+                node_id,
+                operation_id,
+                "host-side Lab latency/jitter is unsupported by the listener-receive latency adapter",
+            );
+        }
+        let (handle, _device_id, node_clock) = self.actor_parts(node_id)?;
+        let factory = VirtualTransportFactory::new(self.network.clone()).with_udp_faults(
+            VirtualUdpFaultConfig {
+                seed: profile.seed,
+                loss_permille: profile.loss_permille,
+                ..VirtualUdpFaultConfig::default()
+            },
+        );
+        let clock: Arc<dyn TransportClock> = node_clock;
+        let transport = factory
+            .bind_host(
+                HostTransportConfig::loopback(advertisement.session_id.clone()),
+                Arc::clone(&clock),
+            )
+            .map_err(|error| transport_error("bind host", &error))?;
+        advertisement.endpoint = Some(transport.endpoint());
+        self.hosts.insert(
+            node_id.clone(),
+            LiveHost {
+                transport,
+                advertisement: advertisement.clone(),
+                processor: HostTransportEventProcessor::new(clock),
+            },
+        );
+        handle
+            .submit_platform_event(PlatformEvent::OperationSucceeded {
+                operation_id,
+                completion: PlatformOperationCompletion::AdvertisingStarted,
+            })
+            .map_err(core_error)?;
+        self.publish_advertisement(node_id, advertisement)
+    }
+
+    fn stop_advertising(
+        &mut self,
+        node_id: &NodeId,
+        operation_id: OperationId,
+    ) -> Result<(), DesktopErrorDto> {
+        if let Some(mut host) = self.hosts.remove(node_id) {
+            host.transport
+                .shutdown()
+                .map_err(|error| transport_error("stop host", &error))?;
+            self.expire_advertisement(node_id, &host.advertisement)?;
+        }
+        self.complete_platform(
+            node_id,
+            operation_id,
+            PlatformOperationCompletion::AdvertisingStopped,
+        )
+    }
+
+    fn start_discovery(
+        &self,
+        node_id: &NodeId,
+        operation_id: OperationId,
+    ) -> Result<(), DesktopErrorDto> {
+        self.complete_platform(
+            node_id,
+            operation_id,
+            PlatformOperationCompletion::DiscoveryStarted,
+        )?;
+        let visible: Vec<SessionAdvertisement> = self
+            .hosts
+            .iter()
+            .filter(|(host_id, _)| self.has_link(host_id, node_id))
+            .map(|(_, host)| host.advertisement.clone())
+            .collect();
+        let handle = self.actor(node_id)?.handle.clone();
+        for advertisement in visible {
+            handle
+                .submit_platform_event(PlatformEvent::SessionDiscovered(advertisement))
+                .map_err(core_error)?;
         }
         Ok(())
+    }
+
+    fn establish_network(
+        &mut self,
+        node_id: &NodeId,
+        operation_id: OperationId,
+        session_id: silent_disco_core::domain::SessionId,
+    ) -> Result<(), DesktopErrorDto> {
+        let advertisement = self
+            .hosts
+            .iter()
+            .find(|(host_id, host)| {
+                host.advertisement.session_id == session_id && self.has_link(host_id, node_id)
+            })
+            .map(|(_, host)| host.advertisement.clone())
+            .ok_or_else(|| {
+                live_error(
+                    "no_route",
+                    "selected Lab session has no declared link to the listener",
+                )
+            })?;
+        let endpoint = advertisement.endpoint.ok_or_else(|| {
+            live_error("no_endpoint", "Lab host advertisement has no endpoint")
+        })?;
+        let profile = self.profile(node_id);
+        let faulted = VirtualTransportFactory::new(self.network.clone()).with_udp_faults(
+            VirtualUdpFaultConfig {
+                seed: profile.seed,
+                loss_permille: profile.loss_permille,
+                ..VirtualUdpFaultConfig::default()
+            },
+        );
+        let factory = LabLatencyTransportFactory::new(
+            faulted,
+            Arc::clone(&self.shared_clock),
+            LabLatencyConfig {
+                fixed_latency_ms: profile.latency_ms,
+                jitter_ms: profile.jitter_ms,
+                seed: profile.seed,
+            },
+        );
+        let (handle, device_id, node_clock) = self.actor_parts(node_id)?;
+        let clock: Arc<dyn TransportClock> = node_clock;
+        let transport = factory
+            .connect_listener(
+                ListenerTransportConfig::loopback(session_id.clone(), device_id.clone(), endpoint),
+                clock,
+            )
+            .map_err(|error| transport_error("connect listener", &error))?;
+        let routes = transport.local_routes();
+        let invite_code = self
+            .actors
+            .get_mut(node_id)
+            .and_then(|actor| actor.pending_invite_codes.pop_front())
+            .flatten();
+        transport
+            .send_control(&ControlMessage::JoinRequest(JoinRequest {
+                session_id: session_id.clone(),
+                device: DeviceIdentity {
+                    device_id,
+                    display_name: node_id.as_str().to_owned(),
+                },
+                invite_code,
+                sync_port: routes.synchronization.port(),
+                audio_port: routes.audio.port(),
+            }))
+            .map_err(|error| transport_error("send join request", &error))?;
+        self.listeners.insert(
+            node_id.clone(),
+            LiveListener {
+                transport,
+                session_id,
+                estimator: ClockSyncEstimator::new(SyncEstimatorConfig::default()).map_err(
+                    |error| live_error("sync_estimator_failed", &error.to_string()),
+                )?,
+                next_sync_correlation: 1,
+            },
+        );
+        handle
+            .submit_platform_event(PlatformEvent::OperationSucceeded {
+                operation_id,
+                completion: PlatformOperationCompletion::NetworkEndpointReady(endpoint),
+            })
+            .map_err(core_error)
+    }
+
+    fn release_network(
+        &mut self,
+        node_id: &NodeId,
+        operation_id: OperationId,
+    ) -> Result<(), DesktopErrorDto> {
+        if let Some(mut listener) = self.listeners.remove(node_id) {
+            listener
+                .transport
+                .shutdown()
+                .map_err(|error| transport_error("release listener", &error))?;
+        }
+        self.complete_platform(
+            node_id,
+            operation_id,
+            PlatformOperationCompletion::NetworkReleased,
+        )
     }
 
     fn process_transport_effect(
@@ -448,8 +488,9 @@ impl LiveTransportDriver {
         node_id: &NodeId,
         effect: TransportEffect,
     ) -> Result<(), DesktopErrorDto> {
+        let handle = self.actor(node_id)?.handle.clone();
         let host = self.hosts.get_mut(node_id).ok_or_else(|| {
-            error("desktop.lab.live_transport_host_missing", "transport effect has no live Lab host")
+            live_error("host_missing", "transport effect has no live Lab host")
         })?;
         let (delivery, authorize) = match effect.request {
             TransportEffectRequest::DeliverJoinApproval {
@@ -526,8 +567,7 @@ impl LiveTransportDriver {
         {
             report = failed_delivery_report();
         }
-        self.actor(node_id)?
-            .handle
+        handle
             .submit_transport_event(CoreTransportEvent::DeliveryCompleted {
                 operation_id: effect.operation_id,
                 report,
@@ -542,25 +582,32 @@ impl LiveTransportDriver {
             loop {
                 let event = {
                     let host = self.hosts.get_mut(&host_id).ok_or_else(|| {
-                        error("desktop.lab.live_transport_host_missing", "Lab host disappeared while pumping")
+                        live_error("host_missing", "Lab host disappeared while pumping")
                     })?;
                     match host.transport.recv_event(NONBLOCKING_RECV_BUDGET) {
                         Ok(event) => event,
                         Err(error) if error.kind == TransportErrorKind::Timeout => break,
-                        Err(error) => return Err(transport_error("receive host event", &error)),
+                        Err(error) => {
+                            return Err(transport_error("receive host event", &error));
+                        }
                     }
                 };
                 progressed = true;
-                let actor = self.actor(&host_id)?.handle.clone();
+                let handle = self.actor(&host_id)?.handle.clone();
                 let host = self.hosts.get_mut(&host_id).ok_or_else(|| {
-                    error("desktop.lab.live_transport_host_missing", "Lab host disappeared while processing event")
+                    live_error("host_missing", "Lab host disappeared while processing event")
                 })?;
                 if let Some(message) = host
                     .processor
-                    .process_for_lab(event, host.transport.as_ref(), &host.advertisement, &actor)
-                    .map_err(|message| error("desktop.lab.live_transport_host_event_failed", &message))?
+                    .process_for_lab(
+                        event,
+                        host.transport.as_ref(),
+                        &host.advertisement,
+                        &handle,
+                    )
+                    .map_err(|message| live_error("host_event_failed", &message))?
                 {
-                    return Err(error("desktop.lab.live_transport_host_event_rejected", &message));
+                    return Err(live_error("host_event_rejected", &message));
                 }
             }
         }
@@ -574,12 +621,17 @@ impl LiveTransportDriver {
             loop {
                 let event = {
                     let listener = self.listeners.get(&listener_id).ok_or_else(|| {
-                        error("desktop.lab.live_transport_listener_missing", "Lab listener disappeared while pumping")
+                        live_error(
+                            "listener_missing",
+                            "Lab listener disappeared while pumping",
+                        )
                     })?;
                     match listener.transport.recv_event(NONBLOCKING_RECV_BUDGET) {
                         Ok(event) => event,
                         Err(error) if error.kind == TransportErrorKind::Timeout => break,
-                        Err(error) => return Err(transport_error("receive listener event", &error)),
+                        Err(error) => {
+                            return Err(transport_error("receive listener event", &error));
+                        }
                     }
                 };
                 progressed = true;
@@ -590,56 +642,164 @@ impl LiveTransportDriver {
     }
 
     fn apply_listener_event(
-        &self,
+        &mut self,
         listener_id: &NodeId,
         event: RuntimeTransportEvent,
     ) -> Result<(), DesktopErrorDto> {
-        let handle = &self.actor(listener_id)?.handle;
         match event {
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::Hello(_)),
                 ..
-            } => handle
+            } => self
+                .actor(listener_id)?
+                .handle
                 .submit_transport_event(CoreTransportEvent::AwaitingApproval)
                 .map_err(core_error),
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::JoinApproval(value)),
                 ..
-            } => handle
-                .submit_transport_event(CoreTransportEvent::JoinApproved {
-                    trusted_for_future: value.trusted_for_future,
-                })
-                .map_err(core_error),
+            } => {
+                self.actor(listener_id)?
+                    .handle
+                    .submit_transport_event(CoreTransportEvent::JoinApproved {
+                        trusted_for_future: value.trusted_for_future,
+                    })
+                    .map_err(core_error)?;
+                self.send_sync_probe(listener_id)
+            }
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::JoinRejection(value)),
                 ..
-            } => handle
-                .submit_transport_event(CoreTransportEvent::JoinRejected { reason: value.reason })
+            } => self
+                .actor(listener_id)?
+                .handle
+                .submit_transport_event(CoreTransportEvent::JoinRejected {
+                    reason: value.reason,
+                })
                 .map_err(core_error),
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::Disconnect(value)),
                 ..
-            } => handle
+            } => self
+                .actor(listener_id)?
+                .handle
                 .submit_transport_event(CoreTransportEvent::SessionEnded {
                     session_id: value.session_id,
                 })
                 .map_err(core_error),
-            RuntimeTransportEvent::Rejected { error: transport, .. } => Err(transport_error(
+            RuntimeTransportEvent::FrameReceived {
+                channel: TransportChannel::Synchronization,
+                frame: ProtocolFrame::SyncResponse(response),
+                received_at,
+                ..
+            } => self.apply_sync_response(listener_id, response, received_at),
+            RuntimeTransportEvent::Rejected { error, .. } => Err(transport_error(
                 "listener received rejected frame",
-                &transport,
+                &error,
             )),
-            RuntimeTransportEvent::PeerDisconnected { error: Some(transport), .. } => {
-                Err(transport_error("listener peer disconnected", &transport))
-            }
+            RuntimeTransportEvent::PeerDisconnected {
+                error: Some(error), ..
+            } => Err(transport_error("listener peer disconnected", &error)),
             RuntimeTransportEvent::PeerDisconnected { error: None, .. }
             | RuntimeTransportEvent::PeerAccepted { .. }
             | RuntimeTransportEvent::PeerAuthorized { .. }
             | RuntimeTransportEvent::FrameReceived { .. } => Ok(()),
         }
+    }
+
+    fn send_sync_probe(&mut self, listener_id: &NodeId) -> Result<(), DesktopErrorDto> {
+        let (_handle, _device_id, node_clock) = self.actor_parts(listener_id)?;
+        let listener = self.listeners.get_mut(listener_id).ok_or_else(|| {
+            live_error("listener_missing", "sync probe has no live Lab listener")
+        })?;
+        let correlation = listener.next_sync_correlation;
+        listener.next_sync_correlation = listener.next_sync_correlation.saturating_add(1);
+        let send_time = node_clock.now();
+        listener
+            .estimator
+            .begin_probe(
+                SyncCorrelationId::new(correlation),
+                LocalMonotonicMillis::from(send_time),
+            )
+            .map_err(|error| live_error("sync_probe_registration_failed", &error.to_string()))?;
+        listener
+            .transport
+            .send_sync_request(&SyncRequest {
+                session_id: listener.session_id.clone(),
+                correlation_id: correlation,
+                t1_listener_send_elapsed_ms: send_time,
+            })
+            .map_err(|error| transport_error("send sync request", &error))?;
+        Ok(())
+    }
+
+    fn apply_sync_response(
+        &mut self,
+        listener_id: &NodeId,
+        response: silent_disco_core::protocol::SyncResponse,
+        received_at: silent_disco_core::domain::MonotonicMillis,
+    ) -> Result<(), DesktopErrorDto> {
+        let (handle, device_id, _clock) = self.actor_parts(listener_id)?;
+        let listener = self.listeners.get_mut(listener_id).ok_or_else(|| {
+            live_error("listener_missing", "sync response has no live Lab listener")
+        })?;
+        let observation = listener
+            .estimator
+            .observe_response(
+                SyncCorrelationId::new(response.correlation_id),
+                LocalMonotonicMillis::from(response.t1_listener_send_elapsed_ms),
+                HostMonotonicMillis::from(response.t2_host_receive_elapsed_ms),
+                HostMonotonicMillis::from(response.t3_host_send_elapsed_ms),
+                LocalMonotonicMillis::from(received_at),
+            )
+            .map_err(|error| live_error("sync_response_rejected", &error.to_string()))?;
+        let snapshot = observation.snapshot;
+        let summary = SynchronizationSummary::new(
+            snapshot.confidence,
+            snapshot.offset_ms,
+            snapshot.round_trip_time_ms,
+            snapshot.skew_ppm,
+        )
+        .map_err(|error| live_error("sync_summary_invalid", &error.to_string()))?;
+        handle
+            .submit_audio_event(AudioEvent::SynchronizationUpdated {
+                device_id: device_id.clone(),
+                summary,
+            })
+            .map_err(core_error)?;
+        listener
+            .transport
+            .send_control(&ControlMessage::SynchronizationReport(
+                SynchronizationReport {
+                    session_id: listener.session_id.clone(),
+                    listener_id: device_id,
+                    confidence: snapshot.confidence,
+                    offset_ms: snapshot.offset_ms,
+                    round_trip_ms: snapshot.round_trip_time_ms,
+                    drift_ppm: snapshot.skew_ppm,
+                },
+            ))
+            .map_err(|error| transport_error("send synchronization report", &error))?;
+        Ok(())
+    }
+
+    fn complete_platform(
+        &self,
+        node_id: &NodeId,
+        operation_id: OperationId,
+        completion: PlatformOperationCompletion,
+    ) -> Result<(), DesktopErrorDto> {
+        self.actor(node_id)?
+            .handle
+            .submit_platform_event(PlatformEvent::OperationSucceeded {
+                operation_id,
+                completion,
+            })
+            .map_err(core_error)
     }
 
     fn publish_advertisement(
@@ -664,9 +824,13 @@ impl LiveTransportDriver {
 
     fn expire_advertisement(
         &self,
+        host_id: &NodeId,
         advertisement: &SessionAdvertisement,
     ) -> Result<(), DesktopErrorDto> {
-        for actor in self.actors.values() {
+        for (listener_id, actor) in &self.actors {
+            if !self.has_link(host_id, listener_id) {
+                continue;
+            }
             let snapshot = actor.handle.current_snapshot().map_err(core_error)?;
             if snapshot.discovery_active {
                 actor
@@ -693,7 +857,7 @@ impl LiveTransportDriver {
             false,
             Some(operation_id.clone()),
         )
-        .map_err(|validation| error("desktop.lab.live_transport_error_shape", &validation.to_string()))?;
+        .map_err(|error| live_error("error_shape_invalid", &error.to_string()))?;
         self.actor(node_id)?
             .handle
             .submit_platform_event(PlatformEvent::OperationFailed {
@@ -705,8 +869,27 @@ impl LiveTransportDriver {
 
     fn actor(&self, node_id: &NodeId) -> Result<&ActorEndpoint, DesktopErrorDto> {
         self.actors.get(node_id).ok_or_else(|| {
-            error("desktop.lab.live_transport_unknown_node", "Lab live transport does not know this node")
+            live_error("unknown_node", "Lab live transport does not know this node")
         })
+    }
+
+    fn actor_parts(
+        &self,
+        node_id: &NodeId,
+    ) -> Result<
+        (
+            CoreActorHandle,
+            DeviceId,
+            Arc<crate::lab::clock::LabNodeClock>,
+        ),
+        DesktopErrorDto,
+    > {
+        let actor = self.actor(node_id)?;
+        Ok((
+            actor.handle.clone(),
+            actor.device_id.clone(),
+            Arc::clone(&actor.clock),
+        ))
     }
 
     fn profile(&self, node_id: &NodeId) -> ReceiveFaultProfile {
@@ -729,15 +912,15 @@ fn build_receive_profiles(
             latency_ms: link.latency_ms,
             jitter_ms: link.jitter_ms,
             loss_permille: link.loss_permille,
-            seed: link_seed(scenario.seed, &link.from, &link.to),
+            seed: node_seed(scenario.seed, &link.to),
         };
         if let Some(existing) = profiles.get(&link.to) {
             if existing.latency_ms != candidate.latency_ms
                 || existing.jitter_ms != candidate.jitter_ms
                 || existing.loss_permille != candidate.loss_permille
             {
-                return Err(error(
-                    "desktop.lab.live_transport_ambiguous_link_faults",
+                return Err(live_error(
+                    "ambiguous_link_faults",
                     "multiple links targeting one Lab node must use the same receive-side latency/jitter/loss profile",
                 ));
             }
@@ -748,9 +931,9 @@ fn build_receive_profiles(
     Ok(profiles)
 }
 
-fn link_seed(base: u64, from: &NodeId, to: &NodeId) -> u64 {
+fn node_seed(base: u64, node: &NodeId) -> u64 {
     let mut value = base ^ 0x9E37_79B9_7F4A_7C15;
-    for byte in from.as_str().bytes().chain([0xFF]).chain(to.as_str().bytes()) {
+    for byte in node.as_str().bytes() {
         value ^= u64::from(byte);
         value = value.wrapping_mul(0x100_0000_01B3);
     }
@@ -767,19 +950,22 @@ const fn failed_delivery_report() -> DeliveryReport {
 }
 
 fn core_error(error_value: CoreError) -> DesktopErrorDto {
-    error(
-        "desktop.lab.live_transport_core_rejected_fact",
-        &error_value.to_string(),
-    )
+    live_error("core_rejected_fact", &error_value.to_string())
 }
 
-fn transport_error(context: &str, transport: &silent_disco_core::transport::TransportError) -> DesktopErrorDto {
-    error(
-        "desktop.lab.live_transport_failed",
-        &format!("{context}: {transport}"),
-    )
+fn transport_error(
+    context: &str,
+    error_value: &silent_disco_core::transport::TransportError,
+) -> DesktopErrorDto {
+    live_error("transport_failed", &format!("{context}: {error_value}"))
 }
 
-fn error(code: &str, message: &str) -> DesktopErrorDto {
-    DesktopErrorDto::new(code, "transport", "error", false, message)
+fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        &format!("desktop.lab.live_transport_{suffix}"),
+        "transport",
+        "error",
+        false,
+        message,
+    )
 }
