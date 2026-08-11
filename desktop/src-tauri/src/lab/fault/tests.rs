@@ -66,12 +66,8 @@ fn bind_and_connect_with_listener_clock(
         )
         .expect("host should bind");
     let listener_clock: Arc<dyn TransportClock> = Arc::new(
-        LabNodeClock::new(
-            Arc::clone(&clock),
-            listener_offset_ms,
-            listener_drift_ppm,
-        )
-        .expect("listener test clock should be valid"),
+        LabNodeClock::new(Arc::clone(&clock), listener_offset_ms, listener_drift_ppm)
+            .expect("listener test clock should be valid"),
     );
     let listener = factory
         .connect_listener(
