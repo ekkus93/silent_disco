@@ -96,10 +96,12 @@ impl<F: TransportFactory> TransportFactory for LabLatencyTransportFactory<F> {
         config: ListenerTransportConfig,
         clock: Arc<dyn TransportClock>,
     ) -> Result<Box<dyn ListenerTransportNode>, TransportError> {
+        let delivery_clock = Arc::clone(&clock);
         let inner = self.inner.connect_listener(config, clock)?;
         Ok(Box::new(LabLatencyListenerTransport {
             inner,
             clock: Arc::clone(&self.clock),
+            delivery_clock,
             config: self.config,
             held: Mutex::new(HeldEvents {
                 prng: DeterministicPrng::new(self.config.seed),
@@ -142,6 +144,7 @@ struct HeldEvents {
 struct LabLatencyListenerTransport {
     inner: Box<dyn ListenerTransportNode>,
     clock: Arc<LabClock>,
+    delivery_clock: Arc<dyn TransportClock>,
     config: LabLatencyConfig,
     held: Mutex<HeldEvents>,
 }
@@ -171,20 +174,22 @@ impl ListenerTransportNode for LabLatencyListenerTransport {
         // Anything already due is released before touching the
         // underlying transport at all -- this is the only path a
         // scenario's `LabRuntime::advance()` followed by a fresh
-        // `recv_event` call takes.
+        // `recv_event` call takes. A delayed datagram's receive timestamp
+        // must reflect this virtual delivery instant, not the underlying
+        // pre-fault event timestamp, or synchronization would silently
+        // under-report injected network latency.
         if let Some(released) = take_due(&mut held.queue, self.clock.now().get()) {
-            return Ok(released);
+            return Ok(self.stamp_delivery_time(released));
         }
 
         let event = self.inner.recv_event(timeout)?;
-        // The deadline is anchored to when the event *actually happened*
-        // (its own `received_at`, stamped by the sender's clock at send
-        // time -- see the module doc comment on per-node clocks) rather
-        // than when this call happened to poll for it. Anchoring to
-        // poll time instead would make the held duration depend on how
-        // promptly a scenario calls `recv_event`, which is exactly the
-        // kind of accidental nondeterminism Block 38's virtual clock
-        // exists to avoid.
+        // The deadline is anchored to the underlying transport's event
+        // timestamp rather than when this call happened to poll for it.
+        // Anchoring to poll time would make the hold duration depend on
+        // how promptly a scenario calls `recv_event`, which is exactly
+        // the kind of accidental nondeterminism Block 38's virtual clock
+        // exists to avoid. Once the faulted event is actually delivered,
+        // `received_at` is re-stamped from the listener's TransportClock.
         let (channel, arrived_at_ms) = match &event {
             TransportEvent::FrameReceived {
                 channel,
@@ -204,7 +209,7 @@ impl ListenerTransportNode for LabLatencyListenerTransport {
 
         let deadline_ms = self.compute_deadline(&mut held.prng, arrived_at_ms);
         if deadline_ms <= self.clock.now().get() {
-            return Ok(event);
+            return Ok(self.stamp_delivery_time(event));
         }
         held.queue.push(Reverse(HeldEvent { deadline_ms, event }));
         Err(TransportError::timeout(
@@ -235,6 +240,13 @@ impl LabLatencyListenerTransport {
             + i64::try_from(self.config.fixed_latency_ms).unwrap_or(i64::MAX)
             + jitter_offset;
         u64::try_from(base.max(0)).unwrap_or(u64::MAX)
+    }
+
+    fn stamp_delivery_time(&self, mut event: TransportEvent) -> TransportEvent {
+        if let TransportEvent::FrameReceived { received_at, .. } = &mut event {
+            *received_at = self.delivery_clock.now();
+        }
+        event
     }
 }
 
