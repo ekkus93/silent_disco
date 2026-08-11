@@ -55,7 +55,13 @@ internal fun MainViewModel.ensureRustHostCore(): HostCoreController {
     }
     viewModelScope.launch {
         controller.notifications.collect { notification ->
-            executeRustHostNotification(controller, notification)
+            try {
+                executeRustHostNotification(controller, notification)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                recoverRustHostNotificationFailure(controller, notification, error)
+            }
         }
     }
     ensureHostTransportEventLoop(controller)

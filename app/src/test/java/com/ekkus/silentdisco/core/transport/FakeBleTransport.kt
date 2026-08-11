@@ -22,6 +22,7 @@ class FakeBleTransport : BleTransport {
     override val failures: SharedFlow<BleOperationFailure> = _failures.asSharedFlow()
 
     var startAdvertisingResult: BleOperationResult = BleOperationResult.Started
+    var startAdvertisingFailure: Throwable? = null
     var startScanningResult: BleOperationResult = BleOperationResult.Started
 
     val startAdvertisingCalls = mutableListOf<BleAdvertisement>()
@@ -32,6 +33,7 @@ class FakeBleTransport : BleTransport {
 
     override fun startAdvertising(advertisement: BleAdvertisement): BleOperationResult {
         startAdvertisingCalls += advertisement
+        startAdvertisingFailure?.let { throw it }
         return startAdvertisingResult
     }
 
