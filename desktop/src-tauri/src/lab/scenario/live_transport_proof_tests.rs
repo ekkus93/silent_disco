@@ -117,13 +117,19 @@ fn zero_fault_join_and_sync_use_the_live_transport_path() {
     let (report, trace) = run_live_join(0, 0, 9, 20);
 
     assert_eq!(report.outcome, ScenarioOutcome::Completed);
-    assert!(report.step_results.iter().all(|step| step.submit_error.is_none()));
-    assert_eq!(
-        synchronization_assertion(&report),
-        AssertionOutcome::Held
+    assert!(
+        report
+            .step_results
+            .iter()
+            .all(|step| step.submit_error.is_none())
     );
-    let round_trip = last_listener_round_trip_ms(&trace).expect("live sync sample should be recorded");
-    assert!(round_trip.abs() <= f64::EPSILON, "zero-fault round trip was {round_trip}");
+    assert_eq!(synchronization_assertion(&report), AssertionOutcome::Held);
+    let round_trip =
+        last_listener_round_trip_ms(&trace).expect("live sync sample should be recorded");
+    assert!(
+        round_trip.abs() <= f64::EPSILON,
+        "zero-fault round trip was {round_trip}"
+    );
 }
 
 #[test]
@@ -141,8 +147,8 @@ fn configured_latency_holds_sync_until_deadline_and_reaches_the_estimator() {
 
     let (released_report, released_trace) = run_live_join(25, 0, 33, 40);
     assert_eq!(released_report.outcome, ScenarioOutcome::Completed);
-    let round_trip =
-        last_listener_round_trip_ms(&released_trace).expect("released sync sample should be recorded");
+    let round_trip = last_listener_round_trip_ms(&released_trace)
+        .expect("released sync sample should be recorded");
     assert!(
         (round_trip - 25.0).abs() <= f64::EPSILON,
         "25 ms receive latency must be visible to sync estimation; observed {round_trip} ms"
