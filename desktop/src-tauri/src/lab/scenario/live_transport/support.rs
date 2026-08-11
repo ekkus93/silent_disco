@@ -118,10 +118,7 @@ impl super::LiveTransportDriver {
             if let Err(error) = listener.transport.shutdown() {
                 append_failure(
                     &mut failure,
-                    transport_error(
-                        &format!("shutdown Lab listener '{node_id}'"),
-                        &error,
-                    ),
+                    transport_error(&format!("shutdown Lab listener '{node_id}'"), &error),
                 );
             }
         }
