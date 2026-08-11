@@ -67,8 +67,8 @@ pub(super) fn submit_action(
             round_trip_ms,
             drift_ppm,
         } => {
-            let (_, identity, _) = scenario_node_parts(lab, lab_node_id)
-                .map_err(ScenarioExecutionError::Lab)?;
+            let (_, identity, _) =
+                scenario_node_parts(lab, lab_node_id).map_err(ScenarioExecutionError::Lab)?;
             let summary =
                 SynchronizationSummary::new(*confidence, *offset_ms, *round_trip_ms, *drift_ppm)
                     .map_err(ScenarioExecutionError::Descriptor)?;
