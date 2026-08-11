@@ -135,15 +135,49 @@ fn exact_fixed_latency_holds_until_the_precise_deadline() {
     assert_eq!(still_not_yet.kind, TransportErrorKind::Timeout);
 
     clock.advance(1).expect("advance to the exact deadline");
-    assert!(matches!(
-        listener
-            .recv_event(POLL_TIMEOUT)
-            .expect("event must be released exactly at its deadline"),
+    match listener
+        .recv_event(POLL_TIMEOUT)
+        .expect("event must be released exactly at its deadline")
+    {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Audio,
+            received_at,
             ..
-        }
-    ));
+        } => assert_eq!(received_at, MonotonicMillis::new(1_100)),
+        other => panic!("expected delayed audio frame, got {other:?}"),
+    }
+
+    listener.shutdown().expect("listener should shut down");
+    host.shutdown().expect("host should shut down");
+}
+
+/// Polling the wrapped transport for the first time at the deadline must
+/// still expose the faulted delivery timestamp, not the underlying
+/// pre-latency timestamp. This exercises the direct-release path rather
+/// than the held-queue path above.
+#[test]
+fn first_poll_at_deadline_uses_the_faulted_delivery_timestamp() {
+    let (clock, mut host, mut listener, session_id) = bind_and_connect(LabLatencyConfig {
+        fixed_latency_ms: 100,
+        jitter_ms: 0,
+        seed: 0,
+    });
+
+    host.broadcast_audio(&audio_frame(&session_id, 1))
+        .expect("send should report local delivery");
+    clock.advance(100).expect("advance directly to the deadline");
+
+    match listener
+        .recv_event(POLL_TIMEOUT)
+        .expect("event must be deliverable at its deadline")
+    {
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            received_at,
+            ..
+        } => assert_eq!(received_at, MonotonicMillis::new(1_100)),
+        other => panic!("expected delayed audio frame, got {other:?}"),
+    }
 
     listener.shutdown().expect("listener should shut down");
     host.shutdown().expect("host should shut down");
