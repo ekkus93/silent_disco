@@ -36,6 +36,13 @@ pub(crate) use schema::{
     ScenarioParseError, ScenarioValidationError, load_scenario_json,
 };
 
+/// Returns one scenario node's actor, identity, and clock without collapsing
+/// Lab-registry failure into an ordinary missing-node result.
+///
+/// # Errors
+///
+/// Returns a fatal runtime error if the Lab node registry is poisoned, or a
+/// structured missing-node error if the requested node no longer exists.
 pub(in crate::lab::scenario) fn scenario_node_parts(
     lab: &LabRuntime,
     node_id: LabNodeId,
