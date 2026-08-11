@@ -18,7 +18,7 @@ on:
       - ".github/workflows/desktop-ci.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: desktop-ci-${{ github.workflow }}-${{ github.ref }}
@@ -123,11 +123,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Check out Lab branch for focused fix pass
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: agent/lab-live-transport
-          fetch-depth: 0
 
       - name: Install Linux Tauri build dependencies
         run: |
@@ -153,93 +150,6 @@ jobs:
       - name: Generate exact Cargo lockfile when missing
         working-directory: desktop/src-tauri
         run: cargo generate-lockfile
-
-      - name: Apply exact Lab Clippy fixes and commit
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_one(path: str, old: str, new: str) -> None:
-              target = Path(path)
-              text = target.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected one match, found {count}: {old!r}")
-              target.write_text(text.replace(old, new, 1))
-
-          replace_one(
-              "desktop/src-tauri/src/lab/scenario/live_transport/observer.rs",
-              "pub(super) struct LiveScenarioObserver",
-              "pub(in crate::lab::scenario) struct LiveScenarioObserver",
-          )
-          replace_one(
-              "desktop/src-tauri/src/lab/scenario/live_transport/observer.rs",
-              "    pub(super) fn new(",
-              "    pub(in crate::lab::scenario) fn new(",
-          )
-          replace_one(
-              "desktop/src-tauri/src/lab/scenario/live_transport/support.rs",
-              "    let mut profiles = HashMap::new();",
-              "    let mut profiles: HashMap<NodeId, ReceiveFaultProfile> = HashMap::new();",
-          )
-
-          types = "desktop/src-tauri/src/lab/scenario/schema/types.rs"
-          for method in ("by_ms", "node", "kind_name"):
-              replace_one(
-                  types,
-                  f"    pub(super) fn {method}",
-                  f"    pub(in crate::lab::scenario) fn {method}",
-              )
-
-          scenario = "desktop/src-tauri/src/lab/scenario.rs"
-          replace_one(
-              scenario,
-              "pub(crate) use assertions::evaluate_assertion;\npub(crate) use live_runner::{run_scenario, run_scenario_with_trace};",
-              "#[cfg(test)]\npub(crate) use assertions::evaluate_assertion;\n#[cfg(test)]\npub(crate) use live_runner::run_scenario;\npub(crate) use live_runner::run_scenario_with_trace;",
-          )
-          replace_one(
-              scenario,
-              "pub(crate) use schema::{\n    FixtureId, MAX_ASSERTIONS, MAX_FIXTURES, MAX_ID_BYTES, MAX_LINK_JITTER_MS, MAX_LINK_LATENCY_MS,\n    MAX_LINKS, MAX_LOSS_PERMILLE, MAX_NODES, MAX_SCENARIO_DURATION_MS, MAX_SCENARIO_FILE_BYTES,\n    MAX_STEPS, NodeId, SCHEMA_VERSION, Scenario, ScenarioAction, ScenarioAssertion, ScenarioClock,\n    ScenarioFixture, ScenarioLifecycleTarget, ScenarioLink, ScenarioParseError, ScenarioStep,\n    ScenarioValidationError, TerminationPolicy, load_scenario_json,\n};",
-              "pub(crate) use schema::{\n    FixtureId, MAX_ASSERTIONS, MAX_NODES, MAX_SCENARIO_FILE_BYTES, MAX_STEPS, NodeId, Scenario,\n    ScenarioAction, ScenarioAssertion, ScenarioClock, ScenarioLifecycleTarget, ScenarioLink,\n    ScenarioParseError, ScenarioValidationError, load_scenario_json,\n};",
-          )
-
-          transport = "desktop/src-tauri/src/lab/scenario/live_transport.rs"
-          replace_one(
-              transport,
-              "    AudioEvent, CoreActorHandle, CoreNotification, DeliveryReport, PlatformEffect,",
-              "    AudioEvent, CoreActorHandle, CoreNotification, PlatformEffect,",
-          )
-          replace_one(
-              transport,
-              "&ControlMessage::JoinApproval(JoinApproval {\n                            session_id,\n                            listener_id,\n                            trusted_for_future,\n                        })",
-              "&ControlMessage::JoinApproval(JoinApproval {\n                            session_id,\n                            listener_id: listener_id.clone(),\n                            trusted_for_future,\n                        })",
-          )
-          replace_one(
-              transport,
-              "&ControlMessage::JoinRejection(JoinRejection {\n                            session_id,\n                            listener_id,\n                            reason: reason_code,\n                        })",
-              "&ControlMessage::JoinRejection(JoinRejection {\n                            session_id,\n                            listener_id: listener_id.clone(),\n                            reason: reason_code,\n                        })",
-          )
-          replace_one(
-              transport,
-              "&ControlMessage::Disconnect(Disconnect {\n                            session_id,\n                            listener_id,\n                            reason: reason_code,\n                        })",
-              "&ControlMessage::Disconnect(Disconnect {\n                            session_id,\n                            listener_id: listener_id.clone(),\n                            reason: reason_code,\n                        })",
-          )
-          PY
-
-          cd desktop/src-tauri
-          cargo fmt --all
-          cd ../..
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add desktop/src-tauri/src
-          if git diff --cached --quiet; then
-            echo "No source changes produced by focused fix pass." >&2
-            exit 1
-          fi
-          git commit -m 'Fix Lab live transport Clippy errors'
-          git push origin HEAD:agent/lab-live-transport
 
       - name: Check Rust formatting
         working-directory: desktop/src-tauri
