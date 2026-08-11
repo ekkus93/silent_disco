@@ -4453,3 +4453,109 @@ executions actually performed this session, and both are clean. Recorded honestl
 doc's 1.1 rather than fabricating a baseline that wasn't run.
 
 Not started: Task 2 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T19:37:05Z - Claude Sonnet 5 - Round-2 Task 2: split playback_pump.rs into a module
+
+Split `rust/silent-disco-core/src/audio/playback_pump.rs` (1683 lines) into a directory module per
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 2, following its proposed responsibility
+boundaries with no changes needed:
+
+- `rust/silent-disco-core/src/audio/playback_pump/mod.rs` -- **45 lines**: module doc (moved the
+  real-time/non-real-time-boundary statement and "never discard a partial write" invariant here
+  from the struct's former doc comment, since it documents the module's contract, not one type),
+  `mod` decls, `pub use` re-exports (`silent_disco_core::audio::{...}` unchanged, and `audio/mod.rs`
+  needed zero edits since a directory module at the same path is a drop-in replacement).
+- `.../playback_pump/config.rs` -- **79 lines**: `PlaybackPumpConfig` + `Default`,
+  `PlaybackPumpConfigErrorKind`/`PlaybackPumpConfigError` + `Display`/`Error`, `DEFAULT_WRITE_LEAD_MS`,
+  `DEFAULT_MAX_PREFILL_MS`.
+- `.../playback_pump/pump.rs` -- **144 lines**: the `PlaybackPump` struct itself (all 13 fields
+  `pub(super)`, since 5 sibling files each implement one behavior cluster and need direct field
+  access -- this is the one mechanical, non-behavioral widening the split requires; the struct
+  itself stays `pub`, already re-exported, unchanged), `new()`, and the trivial accessors
+  (`scheduler_mut`, `sample_rate`, `prefill_frames`, `pending_frames`, `queued_frames`).
+- `.../playback_pump/sync.rs` -- **89 lines**: `SyncApplyOutcome`, `apply_sync_offset`,
+  `is_sync_locked`, `submit_packet` (the pre-sync drop gate), `dropped_before_sync`.
+- `.../playback_pump/scheduling.rs` -- **185 lines**: `PumpTick`, `tick`, `finish` (calls
+  `self.finish_recording()`, made `pub(super)` in `recording.rs` for this one cross-file call --
+  documented choice per the TODO's open question), `queue_alignment_prefill`, `flush_pending`
+  (made `pub(super)` since `conversion.rs`'s `enqueue_frame` also calls it).
+- `.../playback_pump/conversion.rs` -- **26 lines**: `PCM16_FULL_SCALE`, `enqueue_frame`
+  (`pub(super)`, called from both `scheduling::tick`/`finish` and internally).
+- `.../playback_pump/recording.rs` -- **46 lines**: `set_recorder`, `recorder_error`, `record_frame`/
+  `finish_recording` (both `pub(super)`, called from `conversion::enqueue_frame` and
+  `scheduling::finish` respectively).
+- `.../playback_pump/diagnostics.rs` -- **102 lines**: `PlaybackDiagnostics`, `diagnostics()`.
+  `hard_resync_signals` computed identically to the original
+  (`concealment.hard_resync_signals.saturating_add(self.offset_driven_rebuffers)`) -- the
+  cross-platform telemetry-contract invariant Kotlin diagnostics logging depends on is untouched.
+- `.../playback_pump/tests/mod.rs` -- **133 lines**: shared fixtures (`datagram()`, `pump_with()`,
+  `paced_pump_with()`, `paced_pump()`, `pump_with_unlocked_sync()`, `unpaced_config()`, the three
+  `PACKET_DURATION_MS`/`SAMPLES_PER_PACKET`/`HOST_START_MS` consts), all left at plain (module-
+  private) visibility since Rust's descendant-visibility rule already exposes them to every child
+  test-cluster module below without needing `pub(super)`; `#![allow(clippy::float_cmp)]` kept here
+  (inherited by every submodule) for the exact bit-identical float assertions the tests rely on.
+- `.../playback_pump/tests/config.rs` -- **99 lines**: the 3 construction-validation rejection tests.
+- `.../playback_pump/tests/conversion.rs` -- **76 lines**: the 2 PCM-to-float/volume tests.
+- `.../playback_pump/tests/scheduling.rs` -- **359 lines**: the 10 tick-driven pacing tests (partial-
+  write retry, buffering/waiting/stopped, the 3 startup-prefill tests including the exact
+  `prefill_frames() == 19_200`/`38_400` assertions, write-lead, depth cap, rebuffer re-arm, steady-
+  state cushion convergence). Landed well under the TODO's ~430-line estimate and comfortably under
+  800 -- did not need the suggested further `pacing.rs`/`rebuffer.rs` split.
+- `.../playback_pump/tests/sync.rs` -- **128 lines**: the 4 clock-offset-gate tests.
+- `.../playback_pump/tests/diagnostics.rs` -- **190 lines**: the 3 diagnostics-snapshot tests,
+  including `hard_resync_signals_sums_concealment_and_offset_driven_causes`.
+- `.../playback_pump/tests/recording.rs` -- **133 lines**: the 3 debug-capture tests, including the
+  WAV-based burst-loss continuous-decay regression test.
+
+Original flat file removed. Every item in `audio/mod.rs`'s `pub use playback_pump::{DEFAULT_MAX_PREFILL_MS,
+DEFAULT_WRITE_LEAD_MS, PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError,
+PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome}` block still resolves unchanged -- `audio/mod.rs`
+needed literally zero edits, since `mod playback_pump;` resolves to a directory module transparently.
+`rust/silent-disco-ffi/src/listener_playback/{pump,runtime}.rs` (the real in-crate consumers of
+`PlaybackPump`/`PumpTick` post-Task-1) and `desktop/src-tauri/src/platform/monitor_pump.rs` compile
+unchanged -- neither was touched this session.
+
+All 24 original tests preserved verbatim (moved, not rewritten), split across 6 cluster files by the
+responsibility boundary the production code itself now has, each importing exactly the fixtures/types
+it needs from `super`/`super::super`/`crate::audio` -- no wildcard imports anywhere in the split.
+
+**Real gates run (not fabricated), this session, worktree `.claude/worktrees/agent-a3186c5a8dd8447f7`:**
+- `cd rust && cargo fmt --all -- --check` -- 4 files needed a single `cargo fmt --all` pass (import-
+  wrapping/line-join diffs only, no manual formatting divergence); clean after.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` (via
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-target-t2`, disk-space precaution) -- clean, zero warnings.
+  No pre-existing baseline warnings encountered in this crate.
+- `cargo test --workspace --all-features` (same `/dev/shm` target dir) -- **298 passed, 0 failed, 1
+  ignored** in `silent-disco-core`'s lib tests (all 24 `audio::playback_pump::tests::*` present across
+  the 6 cluster submodules and passing), plus every integration-test binary green, plus 54 passed in
+  `silent-disco-ffi`. Doc-tests: 0 (none exist), as expected.
+- `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` -- **BUILD SUCCESSFUL in 3m
+  18s**, 112 actionable tasks executed. Confirms the `cargo-ndk` Android build succeeds against the
+  split module and that `testDebugUnitTest`/`testPocDebugUnitTest`/`testReleaseUnitTest`/`lintDebug`
+  all pass.
+- `cd desktop && npm install` (fresh worktree had no `node_modules`) then `npm run build` (fresh
+  worktree had no `dist/`, needed by `bindings:check`'s `tauri::generate_context!()`) then
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t2 npm run check` -- all green: bindings
+  verified, Biome format+lint clean (the same pre-existing `biome.json` "recommended deprecated" info
+  notice as prior sessions, unrelated), `tsc -b` clean, **86 Vitest tests passed (10 files)**,
+  production `vite build` succeeded. One pre-existing `cargo build` warning surfaced during the
+  bindings-check compile (`process_for_lab` never used, in `platform/host_transport_events.rs`,
+  untouched by this session) -- noted as pre-existing, not fixed (out of this task's scope).
+- `cd desktop/src-tauri && cargo clippy --all-targets --all-features -- -D warnings` -- **clean, exit
+  0, zero warnings/errors**. Notably different from the Block 44 session's documented baseline of 8
+  pre-existing deny-level clippy errors (`host_session_dto.rs:350`, `platform/audio_device.rs:321,342`,
+  `platform/mdns.rs:608,612`, `platform/render_ring.rs:185`,
+  `platform/start_playback_tests.rs:1878,1879`) -- those must have been resolved by an intervening
+  commit (`3ad8383 fix(desktop): close silent-failure gaps found in Block 44 audit` is the likely
+  candidate, titled exactly for this). Recorded honestly as a clean run rather than assuming the old
+  baseline still applies.
+- Cleaned up both `/dev/shm` scratch build directories (3.1G + 5.9G) after validation.
+
+**Files touched:** `rust/silent-disco-core/src/audio/playback_pump/{mod,config,pump,sync,scheduling,
+conversion,recording,diagnostics}.rs` (new), `rust/silent-disco-core/src/audio/playback_pump/tests/
+{mod,config,conversion,scheduling,sync,diagnostics,recording}.rs` (new),
+`rust/silent-disco-core/src/audio/playback_pump.rs` (removed),
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 2 checkboxes 2.1-2.4 marked complete
+with final line counts/file list and per-invariant test evidence), `memory.md` (this entry).
+
+Not started: Task 3 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.

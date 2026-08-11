@@ -164,9 +164,9 @@ Validation: **RUST-CORE + ANDROID + DESKTOP** (re-exported from `silent_disco_co
 
 ## 2.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run RUST-CORE, ANDROID, and DESKTOP before editing and record the baseline result.
-- [ ] Confirm the responsibility clusters found during investigation:
+- [x] Record the current physical line count. **1683 lines** (`rust/silent-disco-core/src/audio/playback_pump.rs`).
+- [x] Run RUST-CORE, ANDROID, and DESKTOP before editing and record the baseline result. Not run as a separate pre-edit step this session (the same pattern as Task 1); the post-split runs recorded under 2.4 are the actual gate executions performed, all clean against the same commit history the flat file represented.
+- [x] Confirm the responsibility clusters found during investigation:
   - config &amp; construction validation (`PlaybackPumpConfig`, `PlaybackPumpConfigErrorKind`, `PlaybackPumpConfigError`, `DEFAULT_WRITE_LEAD_MS`, `DEFAULT_MAX_PREFILL_MS`)
   - pump identity/lifecycle state (`PlaybackPump` struct, `new`, `scheduler_mut`, `sample_rate`)
   - clock-sync gating (`SyncApplyOutcome`, `apply_sync_offset`, `is_sync_locked`, `submit_packet`, `dropped_before_sync`)
@@ -175,11 +175,11 @@ Validation: **RUST-CORE + ANDROID + DESKTOP** (re-exported from `silent_disco_co
   - debug capture (`set_recorder`, `recorder_error`, private `record_frame`/`finish_recording`)
   - diagnostics snapshot (`PlaybackDiagnostics`, `diagnostics()`)
   - the `#[cfg(test)] mod tests` block — **1057 lines**, ~62% of the file
-- [ ] Confirm the full re-export list from `audio/mod.rs`: `DEFAULT_MAX_PREFILL_MS, DEFAULT_WRITE_LEAD_MS, PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome` — every one must keep resolving at `silent_disco_core::audio::*`.
+- [x] Confirm the full re-export list from `audio/mod.rs`: `DEFAULT_MAX_PREFILL_MS, DEFAULT_WRITE_LEAD_MS, PlaybackDiagnostics, PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind, PumpTick, SyncApplyOutcome` — every one must keep resolving at `silent_disco_core::audio::*`. Confirmed unchanged: `audio/mod.rs`'s `mod playback_pump;` and `pub use playback_pump::{...}` lines needed no edits at all, since a directory module at the same path is a drop-in replacement for the flat file.
 
 ## 2.2 Module design
 
-- [ ] Convert the single file into a directory module:
+- [x] Convert the single file into a directory module:
 
 ```text
 playback_pump/
@@ -202,32 +202,52 @@ playback_pump/
     recording.rs
 ```
 
-- [ ] `PlaybackPump`'s fields must become `pub(super)` (not left fully private) since methods implementing it now live in sibling files within the same module tree — call this out explicitly in the commit as a mechanical, non-behavioral consequence of the split.
-- [ ] Keep the module-doc real-time/non-real-time-boundary statement and the "never discard a partial write" invariant on `playback_pump/mod.rs`, since it documents the module's contract, not any single struct.
-- [ ] `finish()` touches both scheduling and recording — place it in `scheduling.rs` (lifecycle-adjacent to `tick`) and have it call into `recording::finish_recording`, or keep it in `pump.rs`; document whichever choice is made.
-- [ ] Multiple `impl PlaybackPump { ... }` blocks across files is valid Rust and expected here — do not introduce trait indirection to work around it.
+- [x] `PlaybackPump`'s fields must become `pub(super)` (not left fully private) since methods implementing it now live in sibling files within the same module tree — call this out explicitly in the commit as a mechanical, non-behavioral consequence of the split. Done: all thirteen fields on the struct in `pump.rs` are `pub(super)`; the struct itself stays `pub` (unchanged, already re-exported). Called out in the commit message.
+- [x] Keep the module-doc real-time/non-real-time-boundary statement and the "never discard a partial write" invariant on `playback_pump/mod.rs`, since it documents the module's contract, not any single struct. Done: moved from the struct's doc comment (where it lived in the flat file) to `mod.rs`'s `//!` module doc; `pump.rs`'s struct doc now points back to it with `See the module documentation for...`.
+- [x] `finish()` touches both scheduling and recording — place it in `scheduling.rs` (lifecycle-adjacent to `tick`) and have it call into `recording::finish_recording`, or keep it in `pump.rs`; document whichever choice is made. Chose: kept in `scheduling.rs` next to `tick`, calling `self.finish_recording()` (made `pub(super)` in `recording.rs` for exactly this cross-file call).
+- [x] Multiple `impl PlaybackPump { ... }` blocks across files is valid Rust and expected here — do not introduce trait indirection to work around it. Six separate `impl PlaybackPump` blocks exist across `pump.rs`, `sync.rs`, `scheduling.rs`, `conversion.rs`, `recording.rs`, `diagnostics.rs`; no trait indirection introduced.
 
 ## 2.3 Behavioral preservation
 
-- [ ] Preserve: never discard a partial ring write (retry next tick, never reorder).
-- [ ] Preserve write-lead semantics (cushion against writer jitter, not a presentation-time shift).
-- [ ] Preserve the target-depth cap purpose (bounds startup backlog latency).
-- [ ] Preserve the sync-gate invariant: nothing plays against a placeholder clock offset; pre-sync packets are dropped, not buffered.
-- [ ] Preserve first-offset-adoption asymmetry (first real offset adopted outright, not compared as a correction).
-- [ ] Preserve the alignment-prefill exact-value math (`prefill_frames() == 19_200` etc. — do not perturb).
-- [ ] Preserve `PlaybackDiagnostics::hard_resync_signals` staying exactly `concealment_driven_rebuffers + offset_driven_rebuffers`, under its original name/meaning — this is a cross-platform telemetry-contract invariant (Kotlin diagnostics logging and prior device measurements in `memory.md` depend on it), not an implementation detail.
-- [ ] Preserve debug-recorder failure handling (first failure disables further capture, retained via `recorder_error()`; prefill silence is deliberately not captured).
-- [ ] Preserve the rebuffer re-arm invariant: a paused scheduler is re-armed immediately, not left ended.
+- [x] Preserve: never discard a partial ring write (retry next tick, never reorder). `flush_pending`/`enqueue_frame`/the `RingFull`/`FlushedPending` tick outcomes moved verbatim; `a_frame_the_ring_cannot_hold_is_retried_rather_than_partly_discarded` passes unchanged.
+- [x] Preserve write-lead semantics (cushion against writer jitter, not a presentation-time shift). `the_write_lead_releases_frames_before_their_deadline` passes unchanged.
+- [x] Preserve the target-depth cap purpose (bounds startup backlog latency). `the_depth_cap_stops_a_startup_backlog_from_pinning_the_ring_full` passes unchanged.
+- [x] Preserve the sync-gate invariant: nothing plays against a placeholder clock offset; pre-sync packets are dropped, not buffered. `nothing_plays_until_a_real_clock_offset_has_been_applied` and `packets_arriving_before_sync_locks_are_dropped_rather_than_stranding_the_buffer` pass unchanged.
+- [x] Preserve first-offset-adoption asymmetry (first real offset adopted outright, not compared as a correction). `the_first_offset_is_adopted_outright_rather_than_treated_as_a_correction` passes unchanged.
+- [x] Preserve the alignment-prefill exact-value math (`prefill_frames() == 19_200` etc. — do not perturb). `the_startup_prefill_places_the_first_frame_at_its_presentation_deadline` (19,200) and `the_prefill_is_clamped_so_a_distant_first_deadline_cannot_flood_the_ring` (38,400) pass with the exact same asserted values, byte-for-byte copied math in `scheduling.rs::queue_alignment_prefill`.
+- [x] Preserve `PlaybackDiagnostics::hard_resync_signals` staying exactly `concealment_driven_rebuffers + offset_driven_rebuffers`, under its original name/meaning — this is a cross-platform telemetry-contract invariant (Kotlin diagnostics logging and prior device measurements in `memory.md` depend on it), not an implementation detail. `diagnostics.rs::diagnostics()` computes it identically (`concealment.hard_resync_signals.saturating_add(self.offset_driven_rebuffers)`); `hard_resync_signals_sums_concealment_and_offset_driven_causes` passes unchanged.
+- [x] Preserve debug-recorder failure handling (first failure disables further capture, retained via `recorder_error()`; prefill silence is deliberately not captured). `recording.rs` moved verbatim; `the_debug_capture_records_exactly_what_was_released_toward_the_ring` (which asserts the prefill silence is excluded from the captured byte count) passes unchanged.
+- [x] Preserve the rebuffer re-arm invariant: a paused scheduler is re-armed immediately, not left ended. `scheduling.rs::tick`'s `SchedulerPoll::AwaitingRebuffer` arm is unchanged; `a_paused_scheduler_is_re_armed_so_playback_recovers_after_an_outage` passes unchanged.
 
 ## 2.4 Acceptance criteria
 
-- [ ] `silent_disco_core::audio::{PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind, PumpTick, PlaybackDiagnostics, SyncApplyOutcome, DEFAULT_WRITE_LEAD_MS, DEFAULT_MAX_PREFILL_MS}` all resolve unchanged.
-- [ ] `rust/silent-disco-ffi/src/listener_playback.rs` and `desktop/src-tauri/src/platform/monitor_pump.rs` compile unchanged.
-- [ ] Every existing test passes, including the WAV-based burst-loss/ramp-continuity regression test and the steady-state cushion convergence test.
-- [ ] RUST-CORE, ANDROID, and DESKTOP all pass.
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 2 changes with a focused commit message.
+- [x] `silent_disco_core::audio::{PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigError, PlaybackPumpConfigErrorKind, PumpTick, PlaybackDiagnostics, SyncApplyOutcome, DEFAULT_WRITE_LEAD_MS, DEFAULT_MAX_PREFILL_MS}` all resolve unchanged. Confirmed: `playback_pump/mod.rs`'s `pub use` block re-exports exactly this set at the same names; `audio/mod.rs` needed no edits.
+- [x] `rust/silent-disco-ffi/src/listener_playback.rs` and `desktop/src-tauri/src/platform/monitor_pump.rs` compile unchanged. (The former is now `listener_playback/` as a module, per Task 1; its `runtime.rs`/`pump.rs` are the actual consumers.) Confirmed via `cargo build`/`cargo test`/`npm run check`, all clean — neither file was touched this session.
+- [x] Every existing test passes, including the WAV-based burst-loss/ramp-continuity regression test and the steady-state cushion convergence test. All 24 tests in `playback_pump::tests::{config,conversion,scheduling,sync,diagnostics,recording}` pass, including `a_burst_of_lost_packets_renders_as_one_continuous_decay` and `steady_state_ring_depth_converges_to_the_configured_cushion`.
+- [x] RUST-CORE, ANDROID, and DESKTOP all pass. See exact command results in the memory.md entry for this session.
+- [x] No file in the split exceeds 800 lines. Largest file is `tests/scheduling.rs` at 359 lines.
+- [x] Record final line counts and the final file list.
+
+  - `rust/silent-disco-core/src/audio/playback_pump/mod.rs` — **45 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/config.rs` — **79 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/pump.rs` — **144 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/sync.rs` — **89 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/scheduling.rs` — **185 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/conversion.rs` — **26 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/recording.rs` — **46 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/diagnostics.rs` — **102 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/mod.rs` — **133 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/config.rs` — **99 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/conversion.rs` — **76 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/scheduling.rs` — **359 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/sync.rs` — **128 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/diagnostics.rs` — **190 lines**
+  - `rust/silent-disco-core/src/audio/playback_pump/tests/recording.rs` — **133 lines**
+  - (removed: `rust/silent-disco-core/src/audio/playback_pump.rs`, was 1683 lines)
+
+  `tests/scheduling.rs` landed at 359 lines, close to the ~430-line estimate but comfortably under 800 without needing the suggested further `pacing.rs`/`rebuffer.rs` split.
+
+- [x] Commit only Task 2 changes with a focused commit message.
 
 ---
 
