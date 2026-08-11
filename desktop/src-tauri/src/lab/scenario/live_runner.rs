@@ -5,6 +5,7 @@ use super::{
     AssertionOutcome, AssertionResult, ClockAdvance, NodeId, Scenario, ScenarioExecutionError,
     ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
 };
+use crate::dto::DesktopErrorDto;
 use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind, ScenarioRecorder};
 use crate::lab::{LabNodeId, LabRuntime};
 use silent_disco_core::runtime::{CoreActorHandle, SnapshotRevision};
@@ -51,18 +52,27 @@ fn run_live_scenario(
                     drift_ppm: 0,
                 });
         let recorder = ScenarioRecorder::new();
-        let (observer, effect_receiver) = LiveScenarioObserver::new(Arc::clone(&recorder))
-            .map_err(ScenarioExecutionError::Lab)?;
-        let lab_node_id = lab
-            .start_node_with_clock_and_observer(clock.offset_ms, clock.drift_ppm, observer)
-            .map_err(ScenarioExecutionError::Lab)?;
+        let (observer, effect_receiver) = match LiveScenarioObserver::new(Arc::clone(&recorder)) {
+            Ok(observer) => observer,
+            Err(primary) => return Err(setup_failure(lab, &lab_node_ids, primary)),
+        };
+        let lab_node_id = match lab.start_node_with_clock_and_observer(
+            clock.offset_ms,
+            clock.drift_ppm,
+            observer,
+        ) {
+            Ok(node_id) => node_id,
+            Err(primary) => return Err(setup_failure(lab, &lab_node_ids, primary)),
+        };
         lab_node_ids.insert(node.id.as_str(), lab_node_id);
         recorders.insert(node.id.as_str(), recorder);
         effect_receivers.insert(node.id.clone(), effect_receiver);
     }
 
-    let mut driver = LiveTransportDriver::new(lab, scenario, &lab_node_ids, effect_receivers)
-        .map_err(ScenarioExecutionError::Lab)?;
+    let mut driver = match LiveTransportDriver::new(lab, scenario, &lab_node_ids, effect_receivers) {
+        Ok(driver) => driver,
+        Err(primary) => return Err(setup_failure(lab, &lab_node_ids, primary)),
+    };
     let mut clock_advances = Vec::new();
     let run_result = execute_steps_and_assertions(
         lab,
@@ -73,21 +83,49 @@ fn run_live_scenario(
         &mut clock_advances,
     );
 
+    let transport_cleanup = driver.shutdown().err();
     let node_notifications = collect_notifications(scenario, &recorders);
     drop(driver);
-    let teardown_ok = stop_scenario_nodes(lab, &lab_node_ids);
+    let node_cleanup = stop_scenario_nodes(lab, &lab_node_ids).err();
+    let cleanup = merge_cleanup(transport_cleanup, node_cleanup);
+    let trace = ScenarioTrace {
+        clock_advances,
+        node_notifications,
+    };
 
-    let mut report = run_result?;
-    if !teardown_ok && report.outcome == ScenarioOutcome::Completed {
-        report.outcome = ScenarioOutcome::ExecutionError;
+    match (run_result, cleanup) {
+        (Ok(report), None) => Ok((report, trace)),
+        (Ok(_report), Some(cleanup)) => Err(ScenarioExecutionError::Lab(cleanup)),
+        (Err(ScenarioExecutionError::Lab(primary)), Some(cleanup)) => Err(
+            ScenarioExecutionError::Lab(primary.with_appended_cleanup(Some(cleanup))),
+        ),
+        (Err(primary), Some(cleanup)) => Err(ScenarioExecutionError::Teardown {
+            primary: Box::new(primary),
+            cleanup,
+        }),
+        (Err(primary), None) => Err(primary),
     }
-    Ok((
-        report,
-        ScenarioTrace {
-            clock_advances,
-            node_notifications,
-        },
-    ))
+}
+
+fn setup_failure(
+    lab: &LabRuntime,
+    lab_node_ids: &HashMap<&str, LabNodeId>,
+    primary: DesktopErrorDto,
+) -> ScenarioExecutionError {
+    let cleanup = stop_scenario_nodes(lab, lab_node_ids).err();
+    ScenarioExecutionError::Lab(primary.with_appended_cleanup(cleanup))
+}
+
+fn merge_cleanup(
+    primary: Option<DesktopErrorDto>,
+    next: Option<DesktopErrorDto>,
+) -> Option<DesktopErrorDto> {
+    match (primary, next) {
+        (Some(primary), Some(next)) => Some(primary.with_appended_cleanup(Some(next))),
+        (Some(primary), None) => Some(primary),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    }
 }
 
 fn execute_steps_and_assertions(
@@ -293,12 +331,20 @@ fn collect_notifications(
         .collect()
 }
 
-fn stop_scenario_nodes(lab: &LabRuntime, lab_node_ids: &HashMap<&str, LabNodeId>) -> bool {
-    let mut clean = true;
-    for lab_node_id in lab_node_ids.values() {
-        if lab.stop_node(*lab_node_id).is_err() {
-            clean = false;
+fn stop_scenario_nodes(
+    lab: &LabRuntime,
+    lab_node_ids: &HashMap<&str, LabNodeId>,
+) -> Result<(), DesktopErrorDto> {
+    let mut node_ids: Vec<LabNodeId> = lab_node_ids.values().copied().collect();
+    node_ids.sort_unstable();
+    let mut failure = None;
+    for lab_node_id in node_ids {
+        if let Err(error) = lab.stop_node(lab_node_id) {
+            failure = Some(match failure {
+                Some(previous) => previous.with_appended_cleanup(Some(error)),
+                None => error,
+            });
         }
     }
-    clean
+    failure.map_or(Ok(()), Err)
 }
