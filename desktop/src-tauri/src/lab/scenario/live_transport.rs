@@ -29,9 +29,9 @@ use silent_disco_core::protocol::{
     ProtocolFrame,
 };
 use silent_disco_core::runtime::{
-    AudioEvent, CoreActorHandle, CoreNotification, DeliveryReport, PlatformEffect,
-    PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion, SessionAdvertisement,
-    TransportEffect, TransportEffectRequest, TransportEvent as CoreTransportEvent,
+    AudioEvent, CoreActorHandle, CoreNotification, PlatformEffect, PlatformEffectRequest,
+    PlatformEvent, PlatformOperationCompletion, SessionAdvertisement, TransportEffect,
+    TransportEffectRequest, TransportEvent as CoreTransportEvent,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -451,7 +451,7 @@ impl LiveTransportDriver {
                         &listener_id,
                         &ControlMessage::JoinApproval(JoinApproval {
                             session_id,
-                            listener_id,
+                            listener_id: listener_id.clone(),
                             trusted_for_future,
                         }),
                     ),
@@ -470,7 +470,7 @@ impl LiveTransportDriver {
                         &listener_id,
                         &ControlMessage::JoinRejection(JoinRejection {
                             session_id,
-                            listener_id,
+                            listener_id: listener_id.clone(),
                             reason: reason_code,
                         }),
                     ),
@@ -488,7 +488,7 @@ impl LiveTransportDriver {
                         &listener_id,
                         &ControlMessage::Disconnect(Disconnect {
                             session_id,
-                            listener_id,
+                            listener_id: listener_id.clone(),
                             reason: reason_code,
                         }),
                     ),

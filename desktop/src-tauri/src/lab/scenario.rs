@@ -14,18 +14,19 @@ mod live_transport;
 mod report;
 mod schema;
 
+#[cfg(test)]
 pub(crate) use assertions::evaluate_assertion;
-pub(crate) use live_runner::{run_scenario, run_scenario_with_trace};
+#[cfg(test)]
+pub(crate) use live_runner::run_scenario;
+pub(crate) use live_runner::run_scenario_with_trace;
 pub(crate) use report::{
     AssertionOutcome, AssertionResult, ClockAdvance, ScenarioExecutionError, ScenarioOutcome,
     ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
 };
 pub(crate) use schema::{
-    FixtureId, MAX_ASSERTIONS, MAX_FIXTURES, MAX_ID_BYTES, MAX_LINK_JITTER_MS, MAX_LINK_LATENCY_MS,
-    MAX_LINKS, MAX_LOSS_PERMILLE, MAX_NODES, MAX_SCENARIO_DURATION_MS, MAX_SCENARIO_FILE_BYTES,
-    MAX_STEPS, NodeId, SCHEMA_VERSION, Scenario, ScenarioAction, ScenarioAssertion, ScenarioClock,
-    ScenarioFixture, ScenarioLifecycleTarget, ScenarioLink, ScenarioParseError, ScenarioStep,
-    ScenarioValidationError, TerminationPolicy, load_scenario_json,
+    FixtureId, MAX_ASSERTIONS, MAX_NODES, MAX_SCENARIO_FILE_BYTES, MAX_STEPS, NodeId, Scenario,
+    ScenarioAction, ScenarioAssertion, ScenarioClock, ScenarioLifecycleTarget, ScenarioLink,
+    ScenarioParseError, ScenarioValidationError, load_scenario_json,
 };
 
 #[cfg(test)]

@@ -9,13 +9,15 @@ const EFFECT_QUEUE_CAPACITY: usize = 128;
 /// Records every actor notification and separately queues effects that the
 /// Lab platform adapter must execute. The queue is bounded so an actor cannot
 /// outrun scenario execution without surfacing a real failure.
-pub(super) struct LiveScenarioObserver {
+pub(in crate::lab::scenario) struct LiveScenarioObserver {
     recorder: RecordingObserver,
     effects: SyncSender<CoreNotification>,
 }
 
 impl LiveScenarioObserver {
-    pub(super) fn new(recorder: Arc<ScenarioRecorder>) -> (Self, Receiver<CoreNotification>) {
+    pub(in crate::lab::scenario) fn new(
+        recorder: Arc<ScenarioRecorder>,
+    ) -> (Self, Receiver<CoreNotification>) {
         let (effects, receiver) = mpsc::sync_channel(EFFECT_QUEUE_CAPACITY);
         (
             Self {

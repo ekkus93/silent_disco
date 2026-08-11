@@ -480,7 +480,7 @@ pub(crate) enum ScenarioAssertion {
 }
 
 impl ScenarioAssertion {
-    pub(super) fn by_ms(&self) -> u64 {
+    pub(in crate::lab::scenario) fn by_ms(&self) -> u64 {
         match self {
             Self::LifecycleReached { by_ms, .. }
             | Self::CapabilityAvailable { by_ms, .. }
@@ -495,7 +495,7 @@ impl ScenarioAssertion {
         }
     }
 
-    pub(super) fn node(&self) -> &NodeId {
+    pub(in crate::lab::scenario) fn node(&self) -> &NodeId {
         match self {
             Self::LifecycleReached { node, .. }
             | Self::CapabilityAvailable { node, .. }
@@ -510,7 +510,7 @@ impl ScenarioAssertion {
         }
     }
 
-    pub(super) fn kind_name(&self) -> &'static str {
+    pub(in crate::lab::scenario) fn kind_name(&self) -> &'static str {
         match self {
             Self::LifecycleReached { .. } => "lifecycleReached",
             Self::CapabilityAvailable { .. } => "capabilityAvailable",

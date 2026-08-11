@@ -16,7 +16,7 @@ pub(super) struct ReceiveFaultProfile {
 pub(super) fn build_receive_profiles(
     scenario: &Scenario,
 ) -> Result<HashMap<NodeId, ReceiveFaultProfile>, DesktopErrorDto> {
-    let mut profiles = HashMap::new();
+    let mut profiles: HashMap<NodeId, ReceiveFaultProfile> = HashMap::new();
     for link in &scenario.links {
         let candidate = ReceiveFaultProfile {
             latency_ms: link.latency_ms,
