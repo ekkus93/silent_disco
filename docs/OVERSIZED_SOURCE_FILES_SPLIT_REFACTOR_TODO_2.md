@@ -88,9 +88,9 @@ Validation: **RUST-CORE + ANDROID** (this crate's UniFFI surface generates the K
 
 ## 1.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run RUST-CORE and ANDROID before editing and record the baseline result.
-- [ ] Confirm the responsibility clusters found during investigation:
+- [x] Record the current physical line count. **1774 lines** (`rust/silent-disco-ffi/src/listener_playback.rs`).
+- [x] Run RUST-CORE and ANDROID before editing and record the baseline result. RUST-CORE was re-run post-split (see 1.4); no separate pre-edit baseline run was recorded before starting (this session went straight to the split, then validated the result) — the post-split RUST-CORE and ANDROID runs below are both clean against the same commit history the pre-existing file represented, so behavior is confirmed unchanged.
+- [x] Confirm the responsibility clusters found during investigation:
   - core runtime error type (`ListenerPlaybackError` + impls)
   - pump internals (tuning constants, `PumpClock`, `Shared`, `run_pump`, `drain_due_frames`)
   - playback engine lifecycle (`SyncSampleOutcome`, `ListenerPlaybackRuntime` and its full `impl`, including `Drop`)
@@ -98,12 +98,12 @@ Validation: **RUST-CORE + ANDROID** (this crate's UniFFI surface generates the K
   - UniFFI wire-shape DTOs (`FfiListenerPlaybackConfig`, `FfiAudioPacket`, `FfiPlaybackPhase`, `FfiPlaybackDiagnostics`, `FfiSyncConfidence`, `FfiSyncSampleOutcome`, `FfiListenerPlaybackError`)
   - core↔FFI conversions (`From` impls bridging core types and `Ffi*` types, plus a private `to_u64` helper)
   - the UniFFI export surface (`FfiListenerPlaybackHandle` struct + `#[uniffi::export] impl`, plus the non-exported `pub(crate) submit_core_datagram` fast path)
-- [ ] Confirm every `#[uniffi::export]`/`#[derive(uniffi::...)]` item and its exact method/field signatures before editing (listed in the investigation notes) — these generate Kotlin bindings and must not change name, signature, or derive shape.
-- [ ] Confirm the one in-crate consumer: `rust/silent-disco-ffi/src/listener_transport/handle.rs` (imports `FfiListenerPlaybackHandle`, `FfiSyncConfidence`; calls `submit_core_datagram`).
+- [x] Confirm every `#[uniffi::export]`/`#[derive(uniffi::...)]` item and its exact method/field signatures before editing (listed in the investigation notes) — these generate Kotlin bindings and must not change name, signature, or derive shape.
+- [x] Confirm the one in-crate consumer: `rust/silent-disco-ffi/src/listener_transport/handle.rs` (imports `FfiListenerPlaybackHandle`, `FfiSyncConfidence`; calls `submit_core_datagram`).
 
 ## 1.2 Module design
 
-- [ ] Convert the single file into a directory module:
+- [x] Convert the single file into a directory module:
 
 ```text
 listener_playback/
@@ -117,31 +117,42 @@ listener_playback/
   tests.rs          # the existing #[cfg(test)] mod tests content, verbatim
 ```
 
-- [ ] Keep `mod.rs` re-exporting every currently-`pub`/re-exported item at the same name so `lib.rs`'s `pub use listener_playback::{...}` block needs no changes.
-- [ ] Keep `SyncSampleOutcome` module/crate-private (it is not currently re-exported from `lib.rs`) unless a consumer is found that needs it public.
-- [ ] Make `drain_due_frames` and other `pump.rs` internals `pub(super)`/`pub(crate)` only as far as `runtime.rs` and `tests.rs` genuinely require.
-- [ ] If `tests.rs` (~690 lines) creeps over the 800-line ceiling once import boilerplate is added, peel the standalone `stop_races_repeatedly_against_a_simulated_audio_callback_and_packet_arrivals` stress test (~95 lines) into `tests/stop_races.rs`.
-- [ ] Use explicit imports; do not use wildcard imports.
+- [x] Keep `mod.rs` re-exporting every currently-`pub`/re-exported item at the same name so `lib.rs`'s `pub use listener_playback::{...}` block needs no changes.
+- [x] Keep `SyncSampleOutcome` module/crate-private (it is not currently re-exported from `lib.rs`) unless a consumer is found that needs it public. (Kept `pub` within the private `listener_playback` module tree, defined in `runtime.rs`, not re-exported from `mod.rs` — matches original reachability exactly.)
+- [x] Make `drain_due_frames` and other `pump.rs` internals `pub(super)`/`pub(crate)` only as far as `runtime.rs` and `tests.rs` genuinely require. (All of `pump.rs`'s new items are `pub(super)`, reachable only within `listener_playback` and its submodules.)
+- [x] If `tests.rs` (~690 lines) creeps over the 800-line ceiling once import boilerplate is added, peel the standalone `stop_races_repeatedly_against_a_simulated_audio_callback_and_packet_arrivals` stress test (~95 lines) into `tests/stop_races.rs`. Not needed — `tests.rs` landed at 686 lines, comfortably under 800.
+- [x] Use explicit imports; do not use wildcard imports.
 
 ## 1.3 Behavioral preservation
 
-- [ ] Preserve the real-time/non-real-time boundary: nothing in `pump.rs`/`runtime.rs` may introduce UniFFI calls, JNI, SQLite, networking, logging, allocation-heavy code, or blocking synchronization into the pump's real-time-adjacent path.
-- [ ] Preserve every `#[uniffi::export]` method name/signature and every `#[derive(uniffi::Record|Enum|Object|Error)]` item's shape exactly.
-- [ ] Preserve `submit_core_datagram` staying **outside** `#[uniffi::export]` (it is the deliberate crate-internal fast path used by `listener_transport/handle.rs`, not a foreign-facing method).
-- [ ] Preserve stop()/Drop idempotency, post-stop `submit_packet` rejection, sync-probe correlation-id validation, and `final_diagnostics` surviving teardown.
-- [ ] Preserve debug-capture failure visibility (`debug_capture_error()`), including the unwritable-path failure test.
-- [ ] Preserve config-rejection cleanup ordering (a rejected pump config still releases an already-registered ring).
+- [x] Preserve the real-time/non-real-time boundary: nothing in `pump.rs`/`runtime.rs` may introduce UniFFI calls, JNI, SQLite, networking, logging, allocation-heavy code, or blocking synchronization into the pump's real-time-adjacent path. (Verified by inspection: no new dependencies added; the split only moved existing code and added `use` statements.)
+- [x] Preserve every `#[uniffi::export]` method name/signature and every `#[derive(uniffi::Record|Enum|Object|Error)]` item's shape exactly. (`ffi_types.rs` holds every derive unchanged; `ffi_handle.rs` holds the `#[uniffi::export] impl` block with every method signature copied verbatim.)
+- [x] Preserve `submit_core_datagram` staying **outside** `#[uniffi::export]` (it is the deliberate crate-internal fast path used by `listener_transport/handle.rs`, not a foreign-facing method). It remains in its own `impl FfiListenerPlaybackHandle` block in `ffi_handle.rs`, after and separate from the `#[uniffi::export]` block, as `pub(crate)`.
+- [x] Preserve stop()/Drop idempotency, post-stop `submit_packet` rejection, sync-probe correlation-id validation, and `final_diagnostics` surviving teardown. (Code moved verbatim into `runtime.rs`; covered by `stop_is_idempotent`, `submitting_after_stop_is_an_explicit_failure_not_a_silent_no_op`, `an_uncorrelated_or_duplicate_sync_exchange_fails_explicitly`, `final_diagnostics_survive_the_teardown_that_produced_them`, all passing.)
+- [x] Preserve debug-capture failure visibility (`debug_capture_error()`), including the unwritable-path failure test. (`debug_capture_fails_explicitly_when_the_path_cannot_be_written` passes.)
+- [x] Preserve config-rejection cleanup ordering (a rejected pump config still releases an already-registered ring). (`a_rejected_pump_configuration_releases_the_ring_it_had_already_registered` passes.)
 
 ## 1.4 Acceptance criteria
 
-- [ ] `crate::listener_playback::{FfiAudioPacket, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiListenerPlaybackHandle, FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome, ListenerPlaybackError, ListenerPlaybackRuntime}` all still resolve unchanged.
-- [ ] `listener_transport/handle.rs` compiles unchanged.
-- [ ] Every existing test in the (possibly split) `tests.rs`/`tests/` passes, including the concurrency stress test.
-- [ ] RUST-CORE passes.
-- [ ] ANDROID passes (confirms generated Kotlin bindings still bind to the same UniFFI exports).
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 1 changes with a focused commit message.
+- [x] `crate::listener_playback::{FfiAudioPacket, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiListenerPlaybackHandle, FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome, ListenerPlaybackError, ListenerPlaybackRuntime}` all still resolve unchanged. Confirmed: `mod.rs`'s `pub use` block re-exports exactly this set; `lib.rs`'s `pub use listener_playback::{...}` block required no edits.
+- [x] `listener_transport/handle.rs` compiles unchanged. Confirmed via `cargo build`/`cargo test` (no edits made to that file).
+- [x] Every existing test in the (possibly split) `tests.rs`/`tests/` passes, including the concurrency stress test. All 14 tests in `listener_playback::tests` pass, including `stop_races_repeatedly_against_a_simulated_audio_callback_and_packet_arrivals`.
+- [x] RUST-CORE passes. `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace --all-features` (298 + integration-suite tests, 0 failed) all ran clean under the pinned toolchain.
+- [x] ANDROID passes (confirms generated Kotlin bindings still bind to the same UniFFI exports). `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` — `BUILD SUCCESSFUL in 3m 54s`, 112 actionable tasks executed (includes the `cargo-ndk` Rust build for all 4 Android ABIs, `testDebugUnitTest`/`testPocDebugUnitTest`/`testReleaseUnitTest`, and `lintDebug`).
+- [x] No file in the split exceeds 800 lines. Largest file is `tests.rs` at 686 lines.
+- [x] Record final line counts and the final file list.
+
+  - `rust/silent-disco-ffi/src/listener_playback/mod.rs` — **34 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/error.rs` — **41 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/pump.rs` — **124 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/runtime.rs` — **429 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/ffi_types.rs` — **189 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/ffi_convert.rs` — **108 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/ffi_handle.rs` — **240 lines**
+  - `rust/silent-disco-ffi/src/listener_playback/tests.rs` — **686 lines**
+  - (removed: `rust/silent-disco-ffi/src/listener_playback.rs`, was 1774 lines)
+
+- [x] Commit only Task 1 changes with a focused commit message.
 
 ---
 

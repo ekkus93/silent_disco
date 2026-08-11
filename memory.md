@@ -4381,3 +4381,75 @@ surfaces timeout/failure to the UI without forcibly freeing live resources).
 every "specifically verify" bullet was run and resolved (fixed or proven non-material with cited
 reasoning, recorded in the TODO doc itself). Not started: Block 45 (performance/soak testing),
 per this task's explicit instruction to stop after Block 44.
+
+## 2026-08-11T19:15:30Z - Claude Sonnet 5 - Round-2 Task 1: split listener_playback.rs into a module
+
+Split `rust/silent-disco-ffi/src/listener_playback.rs` (1774 lines) into a directory module per
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 1, following its proposed responsibility
+boundaries with no changes needed:
+
+- `rust/silent-disco-ffi/src/listener_playback/mod.rs` -- **34 lines**: module doc, `mod` decls,
+  `pub use` re-exports (`crate::listener_playback::{...}` unchanged so `lib.rs` needed no edits).
+- `.../listener_playback/error.rs` -- **41 lines**: `ListenerPlaybackError` + `Display`/`Error`/
+  `From<AudioAbiError>`.
+- `.../listener_playback/pump.rs` -- **124 lines**: tuning constants, `PumpClock`, `Shared`,
+  `run_pump`, `drain_due_frames`, all `pub(super)`.
+- `.../listener_playback/runtime.rs` -- **429 lines**: `SyncSampleOutcome` (kept module/crate-private,
+  not re-exported, matching its original reachability) and `ListenerPlaybackRuntime` + its `impl`
+  blocks including `Drop`.
+- `.../listener_playback/ffi_types.rs` -- **189 lines**: the UniFFI wire-shape DTOs only (no
+  conversions) -- `FfiListenerPlaybackConfig`, `FfiAudioPacket`, `FfiPlaybackPhase`,
+  `FfiPlaybackDiagnostics`, `FfiSyncConfidence`, `FfiSyncSampleOutcome`, `FfiListenerPlaybackError`.
+- `.../listener_playback/ffi_convert.rs` -- **108 lines**: every `From<>` conversion bridging core
+  types and `Ffi*` types, plus the private `to_u64` helper.
+- `.../listener_playback/ffi_handle.rs` -- **240 lines**: `FfiListenerPlaybackHandle` +
+  `#[uniffi::export] impl` (12 methods) + the crate-internal `submit_core_datagram` fast path, kept
+  in its own `impl` block outside the export block, exactly as before.
+- `.../listener_playback/tests.rs` -- **686 lines**: the former `#[cfg(test)] mod tests` content,
+  moved with only import-path updates (`super::error::ListenerPlaybackError`,
+  `super::pump::drain_due_frames`, `super::runtime::ListenerPlaybackRuntime`); no test deleted,
+  weakened, or logic-changed. All 14 tests present, including the concurrency stress test
+  `stop_races_repeatedly_against_a_simulated_audio_callback_and_packet_arrivals`. Did not need the
+  TODO's fallback split into `tests/stop_races.rs` -- landed at 686 lines, under the 800 ceiling.
+
+Original flat file removed. Every item in `lib.rs`'s `pub use listener_playback::{FfiAudioPacket,
+FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiListenerPlaybackHandle,
+FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome,
+ListenerPlaybackError, ListenerPlaybackRuntime}` block still resolves unchanged, so `lib.rs` needed
+no edits. `listener_transport/handle.rs` (the one in-crate consumer of
+`FfiListenerPlaybackHandle`/`FfiSyncConfidence`/`submit_core_datagram`) compiles unchanged.
+
+One clippy fix needed after the initial split: `clippy::doc_markdown` flagged bare `UniFFI`/`SQLite`
+in five new module-doc comments (`mod.rs`, `ffi_convert.rs`, `ffi_handle.rs`, `ffi_types.rs`,
+`pump.rs`) -- wrapped in backticks, no behavior change.
+
+**Real gates run (not fabricated):**
+- `cd rust && cargo fmt --all -- --check` -- clean after one `cargo fmt --all` pass (two files had
+  a single import-wrapping diff each; no manual formatting divergence otherwise).
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` (via
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-target`, disk space precaution) -- clean, zero warnings,
+  after the doc-markdown fix above. No pre-existing baseline warnings encountered in this crate.
+- `cargo test --workspace --all-features` (same `/dev/shm` target dir) -- **298 passed, 0 failed, 1
+  ignored** in `silent-disco-core`'s lib tests, plus every integration-test binary green, plus **54
+  passed, 0 failed** in `silent-disco-ffi`'s lib tests (all 14 `listener_playback::tests::*` present
+  and passing, including the stress test). Doc-tests: 0 (none exist), as expected. No test failures
+  anywhere in the workspace.
+- `./gradlew assembleDebug test lintDebug --stacktrace --console=plain` -- **BUILD SUCCESSFUL in 3m
+  54s**, 112 actionable tasks executed. Confirms the `cargo-ndk` Rust build succeeds for all 4
+  Android ABIs (armeabi-v7a, arm64-v8a, x86, x86_64) against the split module, and that
+  `testDebugUnitTest`/`testPocDebugUnitTest`/`testReleaseUnitTest`/`lintDebug` all pass -- i.e. the
+  generated Kotlin bindings still bind correctly to the same UniFFI-exported surface.
+- Cleaned up the `/dev/shm/silent-disco-target` scratch build directory after validation to avoid
+  leaving stale tmpfs usage behind.
+
+**Files touched:** `rust/silent-disco-ffi/src/listener_playback/{mod,error,pump,runtime,ffi_types,
+ffi_convert,ffi_handle,tests}.rs` (new), `rust/silent-disco-ffi/src/listener_playback.rs` (removed),
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 1 checkboxes 1.1-1.4 marked complete
+with final line counts/file list), `memory.md` (this entry).
+
+**Note on process:** this session ran the split before establishing a separate pre-edit RUST-CORE/
+ANDROID baseline run (the TODO's 1.1 asked for one); the post-split runs above are the only gate
+executions actually performed this session, and both are clean. Recorded honestly in the TODO
+doc's 1.1 rather than fabricating a baseline that wasn't run.
+
+Not started: Task 2 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
