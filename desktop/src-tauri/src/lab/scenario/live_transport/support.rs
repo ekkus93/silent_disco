@@ -85,8 +85,19 @@ pub(super) fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
 impl super::LiveTransportDriver {
     pub(super) fn shutdown(&mut self) -> Result<(), DesktopErrorDto> {
         let mut failure = None;
-
-        for (node_id, mut listener) in self.listeners.drain() {
+        let mut listener_ids: Vec<NodeId> = self.listeners.keys().cloned().collect();
+        listener_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for node_id in listener_ids {
+            let Some(mut listener) = self.listeners.remove(&node_id) else {
+                append_failure(
+                    &mut failure,
+                    live_error(
+                        "listener_missing",
+                        &format!("Lab listener '{node_id}' disappeared during shutdown"),
+                    ),
+                );
+                continue;
+            };
             if let Err(error) = listener.transport.shutdown() {
                 append_failure(
                     &mut failure,
@@ -98,7 +109,19 @@ impl super::LiveTransportDriver {
             }
         }
 
-        for (node_id, mut host) in self.hosts.drain() {
+        let mut host_ids: Vec<NodeId> = self.hosts.keys().cloned().collect();
+        host_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for node_id in host_ids {
+            let Some(mut host) = self.hosts.remove(&node_id) else {
+                append_failure(
+                    &mut failure,
+                    live_error(
+                        "host_missing",
+                        &format!("Lab host '{node_id}' disappeared during shutdown"),
+                    ),
+                );
+                continue;
+            };
             if let Err(error) = host.transport.shutdown() {
                 append_failure(
                     &mut failure,
