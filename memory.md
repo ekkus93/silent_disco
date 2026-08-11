@@ -4664,3 +4664,110 @@ checkboxes 3.1-3.4 marked complete with final line counts/file list and per-inva
 per the task's explicit scope boundary.
 
 Not started: Task 4 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T20:21:14Z - Claude Sonnet 5 - Round-2 Task 4: split app_state.rs into an app_state/ module
+
+Split `desktop/src-tauri/src/app_state.rs` (1159 lines) into a directory module per
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 4, following its proposed responsibility
+boundaries with one necessary deviation (see below):
+
+- `desktop/src-tauri/src/app_state/errors.rs` -- **39 lines**: `poisoned_state_error`,
+  `invitation_error_dto` (`pub(super)`, preserving the CSPRNG-vs-shape-validation distinction
+  verbatim).
+- `.../app_state/state.rs` -- **60 lines**: `DesktopRuntimeState` (with its `Failed`-vs-
+  `ShutdownFailed` doc invariant preserved word-for-word), `ReadyRuntime` (all 8 fields `pub(super)`,
+  the one mechanical, non-behavioral visibility widening the split requires -- 5 sibling files each
+  read or construct it), `CloseAction`. All three `pub(super)`, reaching `app_state` and every one of
+  its descendants (`lifecycle.rs`, `host_ops.rs`, `construct.rs`, `commands.rs`, `mod.rs`, and
+  `app_state_tests.rs`'s `mod tests`, itself declared as a direct child of `app_state` in `mod.rs` --
+  no Task-3-style `pub(in crate::platform)` deeper-nesting case here, since nothing needs to reach
+  outside the `app_state` tree).
+- `.../app_state/commands.rs` -- **72 lines**: `close_profile_sync` (`pub(crate)`, the shared close
+  body used by both the Tauri `close_profile` command and `app_shutdown.rs`'s dedicated shutdown
+  thread) and its `merge_close_results` helper -- moved verbatim, including the "already closed /
+  already in progress attempts no second teardown" comment.
+- `.../app_state/lifecycle.rs` -- **198 lines**: `begin_open`, `fail_open`, `install_ready`,
+  `take_for_close`, `finish_close`, and the `#[cfg(test)]` `open_profile_sync`/`close_sync`
+  synchronous wrappers -- all `pub(super)` (needed by `commands.rs`/`host_ops.rs`/`mod.rs`/tests).
+  Test-only imports (`DesktopProfilePaths`, `DesktopIdentityProvider`,
+  `DesktopHostSigningIdentityProvider`, `DesktopNotificationBuffer`, `shutdown_owned_resources`,
+  `Arc`, `construct::open_runtime`) are `#[cfg(test)]`-gated, since in a non-test build only
+  `begin_open`/`fail_open`/`install_ready`/`take_for_close`/`finish_close` compile and those imports
+  would otherwise be unused-import warnings under `-D warnings`.
+- `.../app_state/construct.rs` -- **212 lines**: `open_runtime`, moved verbatim including the exact
+  `cleanup_lease`/`cleanup_without_actor`/`cleanup_with_actor` failure-branch ordering; `pub(super)`.
+- `.../app_state/mod.rs` -- **231 lines**: `pub struct DesktopAppState`, `impl Default`, `impl
+  DesktopAppState { pub fn new() }`, `mod` decls, `pub(crate) use commands::close_profile_sync;`, and
+  -- the one real deviation from the TODO's module sketch -- the four `#[tauri::command]`-annotated
+  functions (`open_profile`, `get_current_snapshot`, `attach_notifications`, `close_profile`)
+  themselves, moved verbatim, rather than defined in `commands.rs` and re-exported. `CloseAction` and
+  `invitation_error_dto` are re-exported `#[cfg(test)]`-only (`use state::CloseAction;`/
+  `use errors::invitation_error_dto;`), since their sole purpose at this module level is letting
+  `app_state_tests.rs`'s `use super::{CloseAction, DesktopAppState, invitation_error_dto};` keep
+  resolving without editing that file -- confirmed by a real `unused_imports` warning under `-D
+  warnings` when they weren't gated. `#[path = "app_state_tests.rs"] mod tests;` became `#[path =
+  "../app_state_tests.rs"]`, since `mod.rs` now lives one directory deeper than the flat file did and
+  `#[path]` is resolved relative to the containing file's own directory.
+- `.../app_state/host_ops.rs` -- **498 lines**: `current_snapshot`, `source_staging_directory`,
+  `host_session_snapshot`, `host_diagnostics` (the ~80-line largest single method, Block-44-audit-fix
+  poisoned-mutex-visible-not-hidden behavior preserved verbatim), `host_network_snapshot`,
+  `create_host_invitation`, `set_monitor_enabled`, `start/pause/resume/stop_host_playback`,
+  `set_host_network_preference`, `submit_core_command`, `notification_buffer` -- every one moved
+  verbatim, all `pub(crate)` except `current_snapshot`/`notification_buffer` which stay `pub(super)`
+  (their only callers are `mod.rs`'s Tauri commands and `app_state_tests.rs`, both within the
+  `app_state` tree). Landed at 498 lines, under the TODO's own ~600-line contingency threshold for
+  splitting further into `host_ops/{playback,diagnostics,invitation}.rs` -- not needed.
+
+Original flat file and its 458-line `app_state_tests.rs` sibling: the flat file was removed; the test
+file was read but **never edited**, exactly as intended by the TODO's "avoids touching the test file
+at all" framing.
+
+**The one real deviation from the TODO's own module sketch, discovered by actually attempting it:**
+section 4.2 offered two options for keeping the four `#[tauri::command]` fns reachable at
+`app_state::open_profile` etc. -- "define them in `commands.rs` and `pub use commands::*;` from
+`mod.rs`, or keep them in `mod.rs` directly." The first option does not compile: Tauri's
+`#[tauri::command]` macro generates hidden companion items alongside each annotated function (e.g.
+`__cmd__open_profile`, `__tauri_command_name_open_profile`) that `lib.rs`'s `generate_handler!` macro
+looks up at the *exact* path it was given (`app_state::open_profile`); a `pub use
+commands::open_profile;` single-item re-export only re-exports the function itself, not those hidden
+macro companions, producing a real compile error (`` cannot find `__cmd__open_profile` in `app_state`
+``) confirmed on the first attempt. Used the TODO's second, sanctioned option instead -- defining the
+four command fns directly in `mod.rs` -- rather than reaching for `pub use commands::*;`, since the
+task's own top-level "do not introduce wildcard imports" rule takes precedence over the section 4.2
+sketch's first suggestion. `commands.rs` ended up holding only `close_profile_sync`/
+`merge_close_results` as a result, with a module doc explaining why the other four functions are not
+there.
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-a4344e9ad2cf54e91`:**
+- `cd desktop && npm install` (fresh worktree had no `node_modules`) then `npm run build` (fresh
+  worktree had no `dist/`, needed by `bindings:check`'s `tauri::generate_context!()`).
+- `cd desktop/src-tauri && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t4 cargo build
+  --all-targets --all-features` -- clean build, zero errors, after the deviation fix above and after
+  gating the test-only imports in `lifecycle.rs`/`mod.rs` with `#[cfg(test)]`.
+- `cargo test --all-features` (same target dir) -- **282 passed, 0 failed, 4 ignored** (the 4 ignored
+  are the pre-existing manual real-device/emulator tests), including all 12 tests in
+  `app_state::tests::*` (`opens_real_storage_actor_and_snapshot_then_shuts_down_idempotently`,
+  `a_duplicate_close_while_one_is_already_in_flight_is_idempotent`,
+  `a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy`,
+  `a_csprng_failure_building_an_invitation_is_a_visible_retryable_platform_error`, and all 8 others),
+  plus every other suite in the crate.
+- `cargo clippy --all-targets --all-features -- -D warnings` -- clean, zero warnings/errors.
+- `cargo fmt --check` -- one `cargo fmt` pass needed (`host_ops.rs`'s `notification_buffer` signature
+  wrapped onto its own line); clean after.
+- `cd desktop && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t4 npm run check` -- all green:
+  UniFFI-generated-DTO bindings verified, Biome format+lint clean (the same pre-existing `biome.json`
+  "recommended deprecated" info notice as prior sessions, unrelated), `tsc -b` clean, **86 Vitest
+  tests passed (10 files)**, production `vite build` succeeded. Same pre-existing `process_for_lab`
+  never-used warning surfaced during the bindings-check compile as the Task 2/3 sessions noted
+  (`platform/host_transport_events.rs`, untouched by this session) -- not fixed, out of scope.
+- Cleaned up this session's `/dev/shm/silent-disco-desktop-target-t4` (9.6G) after validation.
+
+**Files touched:** `desktop/src-tauri/src/app_state/{mod,state,lifecycle,host_ops,commands,construct,
+errors}.rs` (new), `desktop/src-tauri/src/app_state.rs` (removed),
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 4 checkboxes 4.1-4.4 marked complete with
+final line counts/file list, the Tauri-macro-hidden-companion-item deviation note, and per-invariant
+test evidence), `memory.md` (this entry). `desktop/src-tauri/src/app_state_tests.rs` was read but not
+modified, per the task's own framing.
+
+Not started: Task 5 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.

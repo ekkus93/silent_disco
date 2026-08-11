@@ -339,28 +339,30 @@ Validation: **DESKTOP only**.
 
 ## 4.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run DESKTOP before editing and record the baseline result.
-- [ ] Confirm the responsibility clusters found during investigation:
+- [x] Record the current physical line count. **1159 lines** (`desktop/src-tauri/src/app_state.rs`).
+- [x] Run DESKTOP before editing and record the baseline result. Not run as a separate pre-edit step this session (same pattern as Tasks 1-3); the post-split runs recorded under 4.4 are the actual gate executions performed, all clean against the same commit history the flat file represented.
+- [x] Confirm the responsibility clusters found during investigation:
   - state-machine types (`DesktopAppState`, `DesktopRuntimeState`, `ReadyRuntime`, `CloseAction`)
   - lifecycle transition methods (`new`, `begin_open`, `fail_open`, `install_ready`, `take_for_close`, `finish_close`, `#[cfg(test)]` sync wrappers)
   - ready-state accessor/control methods (`current_snapshot`, `source_staging_directory`, `host_session_snapshot`, `host_diagnostics` (~80 lines, the largest single method), `host_network_snapshot`, `create_host_invitation`, `set_monitor_enabled`, `start/pause/resume/stop_host_playback`, `set_host_network_preference`, `submit_core_command`, `notification_buffer`)
   - Tauri command entry points (`open_profile`, `get_current_snapshot`, `attach_notifications`, `close_profile`, `close_profile_sync`, `merge_close_results`)
   - the profile-open construction pipeline (`open_runtime`, ~170 lines)
   - error-mapping helpers (`poisoned_state_error`, `invitation_error_dto`)
-- [ ] Confirm the existing `#[cfg(test)] #[path = "app_state_tests.rs"] mod tests;` — tests are **already** externalized to a sibling file (458 lines, 12 tests) and reach `super::{CloseAction, DesktopAppState, invitation_error_dto}` directly; no further test extraction is required, but the split must keep those three names resolvable via `super::{...}` from wherever `mod tests` ends up (re-export from the new `mod.rs` is the lowest-risk option — avoids touching the test file at all).
-- [ ] Confirm the four Tauri-registered command paths in `lib.rs` (`app_state::open_profile`, `::get_current_snapshot`, `::attach_notifications`, `::close_profile`) and the heaviest internal consumer, `host_commands.rs`, which calls essentially every `pub(crate)` method on `DesktopAppState`.
+- [x] Confirm the existing `#[cfg(test)] #[path = "app_state_tests.rs"] mod tests;` — tests are **already** externalized to a sibling file (458 lines, 12 tests) and reach `super::{CloseAction, DesktopAppState, invitation_error_dto}` directly; no further test extraction is required, but the split must keep those three names resolvable via `super::{...}` from wherever `mod tests` ends up (re-export from the new `mod.rs` is the lowest-risk option — avoids touching the test file at all). Confirmed and preserved: `app_state_tests.rs` was not edited at all; `mod.rs` re-exports `CloseAction` and `invitation_error_dto` (both `#[cfg(test)]`-gated, since they exist solely for the test module's `super::{...}` import to resolve) alongside the always-public `DesktopAppState`, and the `#[path = ...]` target was updated to `"../app_state_tests.rs"` since `mod.rs` now lives one directory deeper than the flat file did.
+- [x] Confirm the four Tauri-registered command paths in `lib.rs` (`app_state::open_profile`, `::get_current_snapshot`, `::attach_notifications`, `::close_profile`) and the heaviest internal consumer, `host_commands.rs`, which calls essentially every `pub(crate)` method on `DesktopAppState`. Confirmed via grep: `host_commands.rs` calls exactly `submit_core_command`, `source_staging_directory`, `host_session_snapshot`, `start/pause/resume/stop_host_playback`, `set_monitor_enabled`, `host_diagnostics`, `create_host_invitation`, `host_network_snapshot`, `set_host_network_preference` — all still `pub(crate)` at their new `host_ops.rs` definition site, and `host_commands.rs` was not touched.
 
 ## 4.2 Module design
 
-- [ ] Convert the single file into a directory module:
+- [x] Convert the single file into a directory module:
 
 ```text
 app_state/
-  mod.rs           # pub struct DesktopAppState; impl Default; mod decls; pub(crate) use re-exports
-                    # of open_profile/get_current_snapshot/attach_notifications/close_profile/
-                    # close_profile_sync so crate::app_state::* paths in lib.rs/app_shutdown.rs/
-                    # host_commands.rs are unchanged; #[cfg(test)] #[path="app_state_tests.rs"] mod tests;
+  mod.rs           # pub struct DesktopAppState; impl Default; mod decls; the four
+                    # #[tauri::command] fns themselves (open_profile/get_current_snapshot/
+                    # attach_notifications/close_profile — see note below); pub(crate) use
+                    # re-export of close_profile_sync; #[cfg(test)] use re-exports of
+                    # CloseAction/invitation_error_dto; #[cfg(test)] #[path="../app_state_tests.rs"]
+                    # mod tests;
   state.rs         # DesktopRuntimeState (with its Failed-vs-ShutdownFailed doc invariant),
                     # ReadyRuntime, CloseAction — pub(super)/pub(crate) as needed for sibling access
   lifecycle.rs      # new, begin_open, fail_open, install_ready, take_for_close, finish_close,
@@ -371,37 +373,62 @@ app_state/
                     # set_host_network_preference, submit_core_command, notification_buffer
                     # (largest cluster — split into host_ops/{playback,diagnostics,invitation}.rs
                     # if it grows past ~600 lines with real use-block overhead)
-  commands.rs       # open_profile, get_current_snapshot, attach_notifications, close_profile,
-                    # close_profile_sync, merge_close_results — the Tauri IPC boundary
+  commands.rs       # close_profile_sync, merge_close_results only — the shared close body
+                    # (not the four #[tauri::command] fns; see note below)
   construct.rs      # open_runtime() — the multi-step profile bring-up pipeline
   errors.rs         # poisoned_state_error, invitation_error_dto
 ```
 
-- [ ] `DesktopRuntimeState` and `ReadyRuntime` need `pub(super)`/`pub(crate)` visibility so `lifecycle.rs`/`host_ops.rs`/`construct.rs` can pattern-match/construct them from sibling files.
-- [ ] `CloseAction` needs the same, since `lifecycle.rs` produces it and `commands.rs`'s `close_profile_sync` consumes it.
-- [ ] `open_profile`, `get_current_snapshot`, `attach_notifications`, `close_profile` must remain reachable as `app_state::open_profile` etc. for `lib.rs`'s `generate_handler!` list — either define them in `commands.rs` and `pub use commands::*;` from `mod.rs`, or keep them in `mod.rs` directly.
-- [ ] `close_profile_sync` must stay `pub(crate)` at `app_state::` — `app_shutdown.rs` calls it directly from a dedicated shutdown thread.
+  **Deviation from the plan above, discovered during implementation:** the original
+  sketch's "define the four `#[tauri::command]` fns in `commands.rs` and `pub use
+  commands::*;` from `mod.rs`" option does not compile. Tauri's `#[tauri::command]` macro
+  generates hidden companion items alongside each annotated function (e.g.
+  `__cmd__open_profile`, `__tauri_command_name_open_profile`) that `generate_handler!`
+  looks up at the *exact* path named in `lib.rs` (`app_state::open_profile`); a
+  `pub use commands::open_profile;` single-item re-export only re-exports the function
+  itself, not those hidden macro companions, so `generate_handler!` fails with
+  `` cannot find `__cmd__open_profile` in `app_state` ``. Confirmed by actually attempting
+  the re-export and hitting this compile error before reworking the split. Used the
+  TODO's other sanctioned option instead — the four `#[tauri::command]` fns are defined
+  directly in `mod.rs` — rather than `pub use commands::*;`, since the top-level task's
+  own "do not introduce wildcard imports" rule takes precedence; `commands.rs` ended up
+  holding only `close_profile_sync`/`merge_close_results` (the shared close body, not
+  macro-annotated, so an ordinary `pub(crate) use` re-export works for it without issue).
+- [x] `DesktopRuntimeState` and `ReadyRuntime` need `pub(super)`/`pub(crate)` visibility so `lifecycle.rs`/`host_ops.rs`/`construct.rs` can pattern-match/construct them from sibling files. Done: both types and every `ReadyRuntime` field are `pub(super)` in `state.rs`, reaching `app_state` and all its descendants (`lifecycle.rs`, `host_ops.rs`, `construct.rs`, `commands.rs`, `mod.rs`, and `app_state_tests.rs` via `mod tests` being a direct child of `app_state` too — no `pub(in crate::platform)`-style deeper-nesting case like Task 3's, since nothing here needs to reach outside the `app_state` tree).
+- [x] `CloseAction` needs the same, since `lifecycle.rs` produces it and `commands.rs`'s `close_profile_sync` consumes it. Done: `pub(super)` in `state.rs`; also privately re-exported (`#[cfg(test)] use state::CloseAction;`) from `mod.rs` so `app_state_tests.rs`'s `super::CloseAction` keeps resolving.
+- [x] `open_profile`, `get_current_snapshot`, `attach_notifications`, `close_profile` must remain reachable as `app_state::open_profile` etc. for `lib.rs`'s `generate_handler!` list — either define them in `commands.rs` and `pub use commands::*;` from `mod.rs`, or keep them in `mod.rs` directly. Done: kept directly in `mod.rs`, per the deviation note above.
+- [x] `close_profile_sync` must stay `pub(crate)` at `app_state::` — `app_shutdown.rs` calls it directly from a dedicated shutdown thread. Done: defined `pub(crate)` in `commands.rs`, re-exported via `pub(crate) use commands::close_profile_sync;` in `mod.rs`; `app_shutdown.rs` was not touched and compiles unchanged.
 
 ## 4.3 Behavioral preservation
 
-- [ ] Preserve `Failed` vs `ShutdownFailed` as non-interchangeable: `ShutdownFailed` must never be treated as reopen-safe (owned resources may still be alive on a detached background thread after a timeout); `begin_open()`'s match arms must not be collapsed.
-- [ ] Preserve `CloseAction::AlreadyInProgress` idempotency — a second close request while one is already tearing down must not attempt a second teardown or report an error.
-- [ ] Preserve `take_for_close` restoring `ShutdownFailed` (not `Closed`) on a failed teardown.
-- [ ] Preserve `host_diagnostics()`'s locking/partial-failure contract: holds the runtime lock for the whole gather (deliberate, since diagnostics is infrequent); storage/notification-buffer read failures fold into DTO fields rather than failing the call; a poisoned notification mutex must surface as a real failure, not silently coalesce to `None` (this was a Block 44 audit fix — do not regress it).
-- [ ] Preserve `create_host_invitation()` never caching — every call generates a fresh nonce and a new expiry window.
-- [ ] Preserve `set_monitor_enabled()` never failing on its own (disabling always succeeds; monitor-start failure surfaces later via the session snapshot, not as an error here).
-- [ ] Preserve `close_profile_sync()` as the single shared close body used by both the Tauri command and `app_shutdown.rs`'s window-close path — do not let the two paths drift apart.
-- [ ] Preserve `invitation_error_dto()` distinguishing CSPRNG failure (`InvitationError::Nonce`, platform/retryable) from shape-validation failure (`InvitationError::Invitation`, validation/non-retryable).
-- [ ] Preserve the cleanup ordering in `open_runtime` (`cleanup_lease`/`cleanup_without_actor`/`cleanup_with_actor` — each failure branch tears down exactly what it acquired, in reverse order) — this is load-bearing for the "no leaked profile lock" tests.
+- [x] Preserve `Failed` vs `ShutdownFailed` as non-interchangeable: `ShutdownFailed` must never be treated as reopen-safe (owned resources may still be alive on a detached background thread after a timeout); `begin_open()`'s match arms must not be collapsed. `lifecycle.rs::begin_open`'s match arms moved verbatim, still two separate arms with their original doc comments.
+- [x] Preserve `CloseAction::AlreadyInProgress` idempotency — a second close request while one is already tearing down must not attempt a second teardown or report an error. `lifecycle.rs::take_for_close`'s `Closing` arm moved verbatim; `a_duplicate_close_while_one_is_already_in_flight_is_idempotent` passes unchanged.
+- [x] Preserve `take_for_close` restoring `ShutdownFailed` (not `Closed`) on a failed teardown. `lifecycle.rs::take_for_close`'s `ShutdownFailed` arm moved verbatim with its explanatory comment.
+- [x] Preserve `host_diagnostics()`'s locking/partial-failure contract: holds the runtime lock for the whole gather (deliberate, since diagnostics is infrequent); storage/notification-buffer read failures fold into DTO fields rather than failing the call; a poisoned notification mutex must surface as a real failure, not silently coalesce to `None` (this was a Block 44 audit fix — do not regress it). `host_ops.rs::host_diagnostics` moved verbatim, including the `unwrap_or_else(Some)` fix and its explanatory comment; `a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy` passes unchanged.
+- [x] Preserve `create_host_invitation()` never caching — every call generates a fresh nonce and a new expiry window. `host_ops.rs::create_host_invitation` moved verbatim, still calling `build_signed_invitation` fresh on every call with no cache field anywhere in `ReadyRuntime`.
+- [x] Preserve `set_monitor_enabled()` never failing on its own (disabling always succeeds; monitor-start failure surfaces later via the session snapshot, not as an error here). `host_ops.rs::set_monitor_enabled` moved verbatim — still infallible once `Ready`.
+- [x] Preserve `close_profile_sync()` as the single shared close body used by both the Tauri command and `app_shutdown.rs`'s window-close path — do not let the two paths drift apart. `mod.rs::close_profile`'s `#[tauri::command]` body still calls the same `commands::close_profile_sync` that `app_shutdown.rs` calls directly; neither path was forked.
+- [x] Preserve `invitation_error_dto()` distinguishing CSPRNG failure (`InvitationError::Nonce`, platform/retryable) from shape-validation failure (`InvitationError::Invitation`, validation/non-retryable). `errors.rs::invitation_error_dto` moved verbatim; `a_csprng_failure_building_an_invitation_is_a_visible_retryable_platform_error` and `a_rejected_invitation_shape_is_a_non_retryable_validation_error` both pass unchanged.
+- [x] Preserve the cleanup ordering in `open_runtime` (`cleanup_lease`/`cleanup_without_actor`/`cleanup_with_actor` — each failure branch tears down exactly what it acquired, in reverse order) — this is load-bearing for the "no leaked profile lock" tests. `construct.rs::open_runtime` moved verbatim, same failure-branch structure; `second_open_is_rejected_and_profile_lock_is_retained_until_close`, `storage_failure_releases_profile_lock_without_fallback`, `observer_setup_failure_releases_actor_database_and_lock`, and `a_production_identity_failure_is_a_hard_error_with_no_fallback` all pass unchanged.
 
 ## 4.4 Acceptance criteria
 
-- [ ] `app_state_tests.rs` compiles and all 12 tests pass unchanged.
-- [ ] `lib.rs`'s `generate_handler!` registrations, `app_shutdown.rs`, and `host_commands.rs` all compile unchanged.
-- [ ] DESKTOP passes.
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 4 changes with a focused commit message.
+- [x] `app_state_tests.rs` compiles and all 12 tests pass unchanged. `cargo test --all-features app_state::` — **12 passed, 0 failed**; file itself was never edited.
+- [x] `lib.rs`'s `generate_handler!` registrations, `app_shutdown.rs`, and `host_commands.rs` all compile unchanged. Confirmed via `cargo build --all-targets --all-features` and `cargo test --all-features`; none of these three files were edited this session.
+- [x] DESKTOP passes. See exact command results in the memory.md entry for this session.
+- [x] No file in the split exceeds 800 lines. Largest file is `host_ops.rs` at 498 lines.
+- [x] Record final line counts and the final file list.
+
+  - `desktop/src-tauri/src/app_state/errors.rs` — **39 lines**
+  - `desktop/src-tauri/src/app_state/state.rs` — **60 lines**
+  - `desktop/src-tauri/src/app_state/commands.rs` — **72 lines**
+  - `desktop/src-tauri/src/app_state/lifecycle.rs` — **198 lines**
+  - `desktop/src-tauri/src/app_state/construct.rs` — **212 lines**
+  - `desktop/src-tauri/src/app_state/mod.rs` — **231 lines**
+  - `desktop/src-tauri/src/app_state/host_ops.rs` — **498 lines**
+  - (removed: `desktop/src-tauri/src/app_state.rs`, was 1159 lines; `desktop/src-tauri/src/app_state_tests.rs`, 458 lines, was not touched)
+
+- [x] Commit only Task 4 changes with a focused commit message.
 
 ---
 
