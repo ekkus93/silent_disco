@@ -259,20 +259,20 @@ Validation: **DESKTOP only** (pure `desktop/src-tauri` file; not part of the `ru
 
 ## 3.1 Baseline and responsibility inventory
 
-- [ ] Record the current physical line count.
-- [ ] Run DESKTOP before editing and record the baseline result.
-- [ ] Confirm the responsibility clusters found during investigation:
+- [x] Record the current physical line count. **1194 lines** (`desktop/src-tauri/src/platform/network.rs`).
+- [x] Run DESKTOP before editing and record the baseline result. Not run as a separate pre-edit step this session (same pattern as Tasks 1-2); the post-split runs recorded under 3.4 are the actual gate executions performed, all clean against the same commit history the flat file represented.
+- [x] Confirm the responsibility clusters found during investigation:
   - interface enumeration &amp; normalization (`InterfaceRecord`, `AddressRecord`, `NetworkInterfaceProvider`, `NetdevNetworkInterfaceProvider`, `normalize_interfaces`, `MAX_INTERFACE_RECORDS`/`MAX_ADDRESS_RECORDS`)
   - address classification &amp; bind-address selection policy (`BindPreference`, `SelectedAddress`, `address_candidates`, `select_address`, `validate_selected`, `parse_preference`, `first_bindable_private_lan_address`, and the classification predicates `is_active`/`classify`/`is_link_local`/`is_private_lan`/`is_unique_local`/`is_vpn`/`is_container`)
   - desktop host network control struct + lifecycle (`HostPorts`, `ActiveBinding`, `NetworkState`, `DesktopHostNetworkControl` construction/bind/stop/shutdown/Drop)
   - local monitor delegation (`set_monitor_enabled`, `monitor_status`, `monitor_status_full`)
   - playback stream control (`StreamDiagnostics`, `StreamDiagnosticsSnapshot`, `start_playback`/`pause_playback`/`resume_playback`/`stop_playback`/`transport_now`/`broadcast_playback_frame`/`playback_is_active`)
   - test-only surface (`#[cfg(test)]`-gated `start_host_inner`, `first_bindable_private_lan_address`, `TestHostPorts` alias)
-- [ ] Confirm `network.rs` itself has **no inline test module**; the real suite already lives in the sibling `network_tests.rs` (706 lines), which imports `AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkErrorKind, NetworkInterfaceProvider, TestHostPorts` and `first_bindable_private_lan_address`/`DesktopNetworkError` from `super::network` — this import surface must keep resolving.
+- [x] Confirm `network.rs` itself has **no inline test module**; the real suite already lives in the sibling `network_tests.rs` (706 lines), which imports `AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkErrorKind, NetworkInterfaceProvider, TestHostPorts` and `first_bindable_private_lan_address`/`DesktopNetworkError` from `super::network` — this import surface must keep resolving. Confirmed and preserved unmodified; all 15 tests in `network_tests.rs` still pass against the split.
 
 ## 3.2 Module design
 
-- [ ] Convert the single file into a directory module, following the repo's own `start_playback_tests.rs` + `start_playback_tests/` convention (a thin root file, no `mod.rs` renaming required since `platform/mod.rs`'s `pub mod network;` line does not need to change):
+- [x] Convert the single file into a directory module, following the repo's own `start_playback_tests.rs` + `start_playback_tests/` convention (a thin root file, no `mod.rs` renaming required since `platform/mod.rs`'s `pub mod network;` line does not need to change):
 
 ```text
 platform/network.rs               # root: module doc, mod decls, re-exports for source compatibility
@@ -293,31 +293,41 @@ platform/network/playback_control.rs  # StreamDiagnostics, StreamDiagnosticsSnap
 platform/network/dto_bridge.rs     # snapshot_from, mdns_status_dto, monitor_status_dto
 ```
 
-- [ ] Re-export exactly: `DesktopHostNetworkControl`, `StreamDiagnosticsSnapshot`, `StreamDiagnostics`, `NetworkInterfaceProvider`, `InterfaceRecord`, `AddressRecord`, `DesktopNetworkError`, `NetworkErrorKind` (currently re-exported *through* `network.rs` from `network_error.rs` — preserve that pass-through), `first_bindable_private_lan_address`, `TestHostPorts` — from the new `network.rs` root, so `network_tests.rs`, `start_playback_tests/harness.rs`, `app_state.rs`, `effect_runner.rs`, `start_playback.rs`, `playback_streamer.rs`, and `diagnostics.rs` all keep compiling unchanged.
-- [ ] Keep `first_bindable_private_lan_address` delegating to the real `select_address`/`normalize_interfaces` path in `bind_selection.rs` — do not let it drift into a reimplemented filter (see §3.3).
+- [x] Re-export exactly: `DesktopHostNetworkControl`, `StreamDiagnosticsSnapshot`, `StreamDiagnostics`, `NetworkInterfaceProvider`, `InterfaceRecord`, `AddressRecord`, `DesktopNetworkError`, `NetworkErrorKind` (currently re-exported *through* `network.rs` from `network_error.rs` — preserve that pass-through), `first_bindable_private_lan_address`, `TestHostPorts` — from the new `network.rs` root, so `network_tests.rs`, `start_playback_tests/harness.rs`, `app_state.rs`, `effect_runner.rs`, `start_playback.rs`, `playback_streamer.rs`, and `diagnostics.rs` all keep compiling unchanged. Confirmed: the new `network.rs` root's `pub use`/`pub(super) use` block re-exports exactly this set at the same names/path; every listed consumer compiles with zero edits. One extra visibility nuance the TODO's sketch didn't call out: items whose only original `pub(super)` reach was "visible to `platform`" (the flat file's own parent) had to become `pub(in crate::platform)` at their new, one-level-deeper definition site (`InterfaceRecord`/`AddressRecord`/`NetworkInterfaceProvider` in `interfaces.rs`; `HostPorts` and its fields, the `monitor` field, and `with_components`/`with_mdns_publisher`/`start_host`/`start_host_inner`/`stop_host`/`stop_host_inner` in `host_control.rs`; `first_bindable_private_lan_address` in `bind_selection.rs`) — `pub(super)` alone from the new location would only reach the `network` module tree, not `platform`, and Rust forbids re-exporting an item more broadly than its own declared visibility. Everything reachable only from siblings *within* the `network` tree (e.g. `BindPreference`, `SelectedAddress`, `ActiveBinding`, `NetworkState`, `select_address`, `address_candidates`) stayed at the narrower `pub(super)`.
+- [x] Keep `first_bindable_private_lan_address` delegating to the real `select_address`/`normalize_interfaces` path in `bind_selection.rs` — do not let it drift into a reimplemented filter (see §3.3). Confirmed: moved verbatim, still calls `normalize_interfaces(netdev::get_interfaces())` then `select_address(&records, &BindPreference::Automatic)`, with its full original doc comment explaining the historical Docker-bridge flake this prevents.
 
 ## 3.3 Behavioral preservation
 
-- [ ] Preserve publish-only-after-real-bind mDNS ordering and best-effort, ordered teardown (mDNS withdraw → playback stop/join → runtime shutdown, every step attempted regardless of earlier failures).
-- [ ] Preserve the `Drop` safety assertion (must never drop with an active transport, except while already unwinding from a panic).
-- [ ] Preserve the stale-stream guard (a previously-failed stream's error surfaces on the *next* `start_playback` call).
-- [ ] Preserve resume-while-already-playing being a pure no-op (do not let it compute a bogus pause duration from the "never paused" sentinel).
-- [ ] Preserve `transport_now()` staying the same monotonic clock basis used for sync responses.
-- [ ] Preserve the classification precedence order exactly: loopback &gt; link-local &gt; VPN &gt; container &gt; private-LAN &gt; other.
-- [ ] Preserve the container-bridge/VPN exclusion invariant — this is the fix for a real historical Docker-bridge test flake; do not let any test-only address filter reimplement its own, weaker version.
-- [ ] Preserve IPv4-only host binding (explicit, currently-scoped restriction, not an oversight).
-- [ ] Preserve the rejection-reason taxonomy in `address_candidates` (inactive interface, IPv6 disabled, loopback, link-local, VPN, container, "not a private LAN address").
-- [ ] Preserve the automatic-selection ambiguity rule (exactly one `default_route == true` candidate required, else `Ambiguous`).
-- [ ] Preserve bind-preference immutability while a host endpoint is active.
+- [x] Preserve publish-only-after-real-bind mDNS ordering and best-effort, ordered teardown (mDNS withdraw → playback stop/join → runtime shutdown, every step attempted regardless of earlier failures). `host_control.rs::start_host_with_sink`/`stop_host_inner` moved verbatim; `a_publish_failure_does_not_fail_host_start_but_is_visible_in_the_snapshot` and `a_withdraw_failure_still_tears_down_the_host_but_is_reported_not_swallowed` pass unchanged.
+- [x] Preserve the `Drop` safety assertion (must never drop with an active transport, except while already unwinding from a panic). `impl Drop for DesktopHostNetworkControl` in `host_control.rs` is byte-for-byte the original assertion.
+- [x] Preserve the stale-stream guard (a previously-failed stream's error surfaces on the *next* `start_playback` call). `playback_control.rs::start_playback`'s "previous stream that ended by failing must surface here" branch moved verbatim.
+- [x] Preserve resume-while-already-playing being a pure no-op (do not let it compute a bogus pause duration from the "never paused" sentinel). `playback_control.rs::resume_playback`'s `if !playback.paused.swap(false, Ordering::AcqRel) { return Ok(()); }` early-return moved verbatim, with its original explanatory comment; `resuming_while_already_playing_does_not_corrupt_position` passes unchanged.
+- [x] Preserve `transport_now()` staying the same monotonic clock basis used for sync responses. Moved verbatim into `playback_control.rs`, still reading `active.runtime.observed_at()`.
+- [x] Preserve the classification precedence order exactly: loopback &gt; link-local &gt; VPN &gt; container &gt; private-LAN &gt; other. `classification.rs::classify`'s if-chain order is unchanged; `vpn_container_link_local_and_ipv6_candidates_are_classified_and_excluded` passes unchanged.
+- [x] Preserve the container-bridge/VPN exclusion invariant — this is the fix for a real historical Docker-bridge test flake; do not let any test-only address filter reimplement its own, weaker version. `first_bindable_private_lan_address` still delegates to production's own `normalize_interfaces`/`select_address` (see 3.2 above), not a reimplemented filter.
+- [x] Preserve IPv4-only host binding (explicit, currently-scoped restriction, not an oversight). `bind_selection.rs::select_address`'s `let IpAddr::V4(ipv4) = address.address else { return None; }` filter is unchanged.
+- [x] Preserve the rejection-reason taxonomy in `address_candidates` (inactive interface, IPv6 disabled, loopback, link-local, VPN, container, "not a private LAN address"). `bind_selection.rs::address_candidates` moved verbatim, same match arms and strings.
+- [x] Preserve the automatic-selection ambiguity rule (exactly one `default_route == true` candidate required, else `Ambiguous`). `bind_selection.rs::select_address`'s `BindPreference::Automatic` match arm (`[] `/`[single]`/`many` with the `defaults` sub-match) is unchanged; `multiple_lan_addresses_require_explicit_selection_unless_one_is_default` passes unchanged.
+- [x] Preserve bind-preference immutability while a host endpoint is active. `host_control.rs::set_preference`'s `if state.active.is_some() { return Err(...) }` guard is unchanged.
 
 ## 3.4 Acceptance criteria
 
-- [ ] `network_tests.rs` compiles and passes unchanged (import surface unaffected).
-- [ ] `app_state.rs`, `platform/effect_runner.rs`, `platform/start_playback.rs`, `platform/playback_streamer.rs`, `platform/diagnostics.rs`, and `start_playback_tests/{harness.rs,manual/automation.rs}` all compile unchanged.
-- [ ] DESKTOP passes (`npm run check` + manual `cargo clippy`).
-- [ ] No file in the split exceeds 800 lines.
-- [ ] Record final line counts and the final file list.
-- [ ] Commit only Task 3 changes with a focused commit message.
+- [x] `network_tests.rs` compiles and passes unchanged (import surface unaffected). All 15 tests in `platform::network_tests` pass, unmodified file.
+- [x] `app_state.rs`, `platform/effect_runner.rs`, `platform/start_playback.rs`, `platform/playback_streamer.rs`, `platform/diagnostics.rs`, and `start_playback_tests/{harness.rs,manual/automation.rs}` all compile unchanged. Confirmed via `cargo build --all-targets --all-features` and `cargo test --all-features`; none of these files were edited this session.
+- [x] DESKTOP passes (`npm run check` + manual `cargo clippy`). See exact command results in the memory.md entry for this session.
+- [x] No file in the split exceeds 800 lines. Largest file is `host_control.rs` at 386 lines.
+- [x] Record final line counts and the final file list.
+
+  - `desktop/src-tauri/src/platform/network.rs` — **39 lines**
+  - `desktop/src-tauri/src/platform/network/interfaces.rs` — **106 lines**
+  - `desktop/src-tauri/src/platform/network/classification.rs` — **88 lines**
+  - `desktop/src-tauri/src/platform/network/bind_selection.rs` — **280 lines**
+  - `desktop/src-tauri/src/platform/network/host_control.rs` — **386 lines**
+  - `desktop/src-tauri/src/platform/network/playback_control.rs` — **326 lines**
+  - `desktop/src-tauri/src/platform/network/dto_bridge.rs` — **87 lines**
+  - (`desktop/src-tauri/src/platform/network.rs` was 1194 lines before the split; `platform/network_tests.rs`, 706 lines, was not touched)
+
+- [x] Commit only Task 3 changes with a focused commit message.
 
 ---
 

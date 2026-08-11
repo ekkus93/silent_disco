@@ -4559,3 +4559,108 @@ conversion,recording,diagnostics}.rs` (new), `rust/silent-disco-core/src/audio/p
 with final line counts/file list and per-invariant test evidence), `memory.md` (this entry).
 
 Not started: Task 3 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
+
+## 2026-08-11T20:02:41Z - Claude Sonnet 5 - Round-2 Task 3: split platform/network.rs into a network/ module
+
+Split `desktop/src-tauri/src/platform/network.rs` (1194 lines) into a directory module per
+`docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` Task 3, following its proposed responsibility
+boundaries (thin root file + sibling `network/` directory, matching this crate's own
+`start_playback_tests.rs` + `start_playback_tests/` convention -- `platform/mod.rs`'s
+`pub mod network;` line needed zero edits):
+
+- `desktop/src-tauri/src/platform/network.rs` -- **39 lines**: module doc, `mod` decls, `pub use`/
+  `pub(super) use` re-exports of exactly `DesktopHostNetworkControl, StreamDiagnosticsSnapshot,
+  StreamDiagnostics, NetworkInterfaceProvider, InterfaceRecord, AddressRecord, DesktopNetworkError,
+  NetworkErrorKind, first_bindable_private_lan_address, TestHostPorts` (the `DesktopNetworkError`/
+  `NetworkErrorKind` pass-through from `network_error.rs` is untouched, still literally
+  `pub(super) use super::network_error::{...};` at this same root file).
+- `.../network/interfaces.rs` -- **106 lines**: `InterfaceRecord`, `AddressRecord`,
+  `NetworkInterfaceProvider` trait, `NetdevNetworkInterfaceProvider`, `normalize_interfaces`,
+  `MAX_INTERFACE_RECORDS`/`MAX_ADDRESS_RECORDS`.
+- `.../network/classification.rs` -- **88 lines**: `is_active`, `classify` (precedence order
+  unchanged: loopback > link-local > VPN > container > private-LAN > other), `is_link_local`,
+  `is_private_lan`, `is_unique_local`, `is_vpn`, `is_container`.
+- `.../network/bind_selection.rs` -- **280 lines**: `BindPreference`, `SelectedAddress`,
+  `address_candidates`, `select_address`, `validate_selected`, `parse_preference`,
+  `first_bindable_private_lan_address` (`#[cfg(test)]`, still delegating to production's own
+  `normalize_interfaces`/`select_address` rather than a reimplemented filter -- the exact historical
+  Docker-bridge-flake fix its doc comment describes, preserved verbatim).
+- `.../network/host_control.rs` -- **386 lines**: `HostPorts`, `ActiveBinding`, `NetworkState`,
+  `DesktopHostNetworkControl` struct/constructors (`production`/`with_components`/
+  `with_mdns_publisher`/`with_monitor_backend`)/`snapshot`/`set_preference`/bind-lifecycle
+  (`start_host`/`start_host_inner`/`start_host_with_sink`/`stop_host`/`stop_host_inner`)/
+  `active_host_session`/`dispatch_transport_effect`/`shutdown`/`Drop`, plus the monitor-delegation
+  methods (`set_monitor_enabled`/`monitor_status`/`monitor_status_full`).
+- `.../network/playback_control.rs` -- **326 lines**: `StreamDiagnostics`, `StreamDiagnosticsSnapshot`,
+  and the `impl DesktopHostNetworkControl` block for `stream_diagnostics_snapshot`/`start_playback`/
+  `pause_playback`/`resume_playback`/`stop_playback`/`transport_now`/`broadcast_playback_frame`/
+  `playback_is_active`.
+- `.../network/dto_bridge.rs` -- **87 lines**: `snapshot_from`, `mdns_status_dto`,
+  `monitor_status_dto`.
+
+Original flat file replaced by the thin root above; `platform/network_tests.rs` (706 lines) was left
+completely untouched, per the task's explicit scope boundary, and its whole import surface
+(`use super::network::{AddressRecord, DesktopHostNetworkControl, InterfaceRecord, NetworkErrorKind,
+NetworkInterfaceProvider, TestHostPorts};` plus `super::network::DesktopNetworkError`/
+`first_bindable_private_lan_address`) resolves unchanged.
+
+**A visibility subtlety the TODO's module sketch didn't spell out, worth recording for the next
+split task:** several items were originally `pub(super)` in the flat `network.rs`, which reached
+`platform` (the flat file's own parent) -- e.g. `InterfaceRecord`/`AddressRecord`/
+`NetworkInterfaceProvider`, `HostPorts` (and its fields), the `monitor` field on
+`DesktopHostNetworkControl`, and the `with_components`/`with_mdns_publisher`/`start_host`/
+`start_host_inner`/`stop_host`/`stop_host_inner` methods (all called directly from sibling files
+like `network_tests.rs`, `effect_runner.rs`, `start_playback_tests/harness.rs`, and
+`playback_streamer.rs`'s direct `.monitor` field access). Moving their *definitions* one level
+deeper into `network/*.rs` and leaving them `pub(super)` would only reach the `network` module tree,
+not `platform` -- and Rust rejects re-exporting an item more broadly than its own declared
+visibility (confirmed by compile failures on the first attempt: "private trait/struct/function
+import"). Fixed by declaring those specific items `pub(in crate::platform)` at their new, deeper
+definition site (mirroring the `pub(in crate::lab::scenario)` pattern already used elsewhere in this
+same crate for the identical "definition moved deeper than its external consumers" situation), while
+everything reachable only from siblings *within* the `network` tree (`BindPreference`,
+`SelectedAddress`, `ActiveBinding`, `NetworkState`, `select_address`, `address_candidates`, etc.)
+correctly stayed at the narrower `pub(super)`. Separately, several submodules' internal imports were
+routed *through* the root `network.rs` re-export (e.g. `host_control.rs` does
+`use super::{DesktopNetworkError, NetworkInterfaceProvider, StreamDiagnostics};` rather than reaching
+around it to `crate::platform::network_error`/`interfaces`/`playback_control` directly) specifically
+so the root re-exports are genuinely consumed by production (non-test) code -- avoiding
+`unused_imports` warnings (which `-D warnings` would turn into hard clippy/build errors) without
+resorting to any `#[allow(...)]`.
+
+**Real gates run (not fabricated), this session, worktree
+`.claude/worktrees/agent-aa3cc5b9bf00c1242`:**
+- `cd desktop/src-tauri && cargo build --all-targets --all-features` (via
+  `CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t3`, disk-space precaution; needed
+  `desktop && npm install && npm run build` first in this fresh worktree, since `tauri::
+  generate_context!()` requires `dist/` to exist) -- clean build, zero errors.
+- `cd desktop/src-tauri && cargo test --all-features` -- **282 passed, 0 failed, 4 ignored**
+  (the 4 ignored are the pre-existing manual real-device/emulator tests), including all 15 tests in
+  `platform::network_tests::*` (`port_in_use_and_partial_bind_cleanup_are_preserved_by_shared_transport`,
+  `vpn_container_link_local_and_ipv6_candidates_are_classified_and_excluded`,
+  `multiple_lan_addresses_require_explicit_selection_unless_one_is_default`, etc.) plus every other
+  suite in the crate (`playback_streamer`, `start_playback_tests::*`, `mdns`, `monitor_tests`, `app_state`,
+  `lab::*`, `profile_lock_multiprocess` integration test, and more).
+- `cd desktop/src-tauri && cargo clippy --all-targets --all-features -- -D warnings` -- clean, zero
+  warnings/errors, after the internal-import routing fix above.
+- `cd desktop/src-tauri && cargo fmt --check` -- one `cargo fmt` pass needed (a multi-line trait bound
+  wrap in `interfaces.rs` and a re-export ordering diff in `network.rs`'s root file); clean after.
+- `cd desktop && CARGO_TARGET_DIR=/dev/shm/silent-disco-desktop-target-t3 npm run check` -- all green:
+  UniFFI-generated-DTO bindings verified, Biome format+lint clean (the same pre-existing `biome.json`
+  "recommended deprecated" info notice as prior sessions, unrelated), `tsc -b` clean, **86 Vitest
+  tests passed (10 files)**, production `vite build` succeeded. One pre-existing `cargo build`
+  warning surfaced during the bindings-check compile (`process_for_lab` never used, in
+  `platform/host_transport_events.rs`, untouched by this session) -- noted as pre-existing, not
+  fixed (out of this task's scope), same warning noted in the Task 2 session entry.
+- Freed a stale, unrelated `/dev/shm/silent-disco-desktop-target` (4.4G) leftover from an earlier
+  session before this session's own build could fit in `/dev/shm`, then cleaned up this session's own
+  `/dev/shm/silent-disco-desktop-target-t3` (9.3G) after validation.
+
+**Files touched:** `desktop/src-tauri/src/platform/network.rs` (rewritten to the thin root),
+`desktop/src-tauri/src/platform/network/{interfaces,classification,bind_selection,host_control,
+playback_control,dto_bridge}.rs` (new), `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md` (Task 3
+checkboxes 3.1-3.4 marked complete with final line counts/file list and per-invariant test evidence),
+`memory.md` (this entry). `desktop/src-tauri/src/platform/network_tests.rs` was read but not modified,
+per the task's explicit scope boundary.
+
+Not started: Task 4 onward in the round-2 TODO, per its explicit one-task-at-a-time rule.
