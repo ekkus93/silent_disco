@@ -339,7 +339,7 @@ fn stop_scenario_nodes(
 ) -> Result<(), DesktopErrorDto> {
     let mut node_ids: Vec<LabNodeId> = lab_node_ids.values().copied().collect();
     node_ids.sort_unstable();
-    let mut failure = None;
+    let mut failure: Option<DesktopErrorDto> = None;
     for lab_node_id in node_ids {
         if let Err(error) = lab.stop_node(lab_node_id) {
             failure = Some(match failure {
