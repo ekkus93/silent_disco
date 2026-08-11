@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
 
+# Temporary branch-only helper; delete after formatter output is committed.
 jobs:
   rustfmt:
     if: github.event.head_commit.message != 'Apply rustfmt to Lab live transport'
