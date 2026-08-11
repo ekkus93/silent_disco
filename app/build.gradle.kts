@@ -100,6 +100,17 @@ android {
 
     testOptions {
         animationsDisabled = true
+        unitTests {
+            // Several MainViewModel effect-runner paths call unmocked
+            // Android statics (e.g. SystemClock.elapsedRealtime()) that are
+            // harmless on a real device but otherwise throw
+            // "Method X not mocked" in a plain JVM unit test, which used to
+            // make constructing a real MainViewModel for effect-runner
+            // tests impossible. Returning safe default values instead
+            // (0/null/false) doesn't change any test's assertions -- no
+            // existing test relies on that exception being thrown.
+            isReturnDefaultValues = true
+        }
         managedDevices {
             localDevices {
                 create("pixel2api29") {

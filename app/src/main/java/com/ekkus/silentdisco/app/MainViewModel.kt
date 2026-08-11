@@ -40,9 +40,12 @@ import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.RustCoreBridge
+import com.ekkus.silentdisco.core.rust.RustDomainStore
 import com.ekkus.silentdisco.core.rust.RustSyncEstimator
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
+import com.ekkus.silentdisco.core.transport.BleTransport
+import com.ekkus.silentdisco.core.transport.SessionTransport
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
 import kotlinx.coroutines.Dispatchers
@@ -56,20 +59,30 @@ import kotlinx.coroutines.runBlocking
 class MainViewModel @JvmOverloads constructor(
     application: Application,
     internal val playbackEngine: PlaybackEngine = OboePlaybackEngine(),
-    internal val domainStore: AndroidRustDomainStore = AndroidRustDomainStore(application),
+    internal val domainStore: RustDomainStore = AndroidRustDomainStore(application),
     internal val hostCoreFactory: (String) -> HostCoreController = {
         UniFfiHostCoreController(it)
     },
     internal val listenerCoreFactory: (String) -> ListenerCoreController = {
         UniFfiListenerCoreController(it)
     },
+    /**
+     * Typed as the narrow ports these collaborators actually need
+     * ([BleTransport]/[SessionTransport]) rather than the concrete Android
+     * classes, so `MainViewModel`'s Rust-effect runner
+     * (`executeRustPlatformEffect`/`executeRustListenerPlatformEffect`) can
+     * be exercised in JVM tests against recording fakes -- the concrete
+     * [BleDiscoveryService]/[WifiDirectTransportService] require a real
+     * Android `Context`/`BluetoothManager`/`WifiP2pManager` and cannot be
+     * constructed in a plain JVM test.
+     */
+    internal val bleService: BleTransport = BleDiscoveryService(application),
+    internal val wifiDirectService: SessionTransport = WifiDirectTransportService(application, AppLogger()),
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
     internal val diagnosticsStore = DiagnosticsStore()
     internal val metrics = DiagnosticsMetrics()
     internal val decoder = AudioFileDecoder(application.contentResolver)
-    internal val bleService = BleDiscoveryService(application)
-    internal val wifiDirectService = WifiDirectTransportService(application, logger)
     internal val hostTimingService = HostTimingService()
     internal val manualListenerController = ManualListenerTransportController(
         application.getExternalFilesDir(null),

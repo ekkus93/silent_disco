@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.ekkus.silentdisco.core.persistence.LegacyPreferencesContract
 import com.ekkus.silentdisco.core.rust.RustDatabase
 import com.ekkus.silentdisco.core.rust.RustDatabaseBridge
+import com.ekkus.silentdisco.core.rust.RustDomainStore
 import com.ekkus.silentdisco.core.rust.RustLegacyImportOutcome
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.RustTrustedDevice
@@ -30,7 +31,7 @@ class AndroidRustDomainStore internal constructor(
     private val pathProvider: AndroidDatabasePathProvider = AndroidDatabasePathProvider(context),
     preferencesName: String = DEFAULT_PREFERENCES_NAME,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-) {
+) : RustDomainStore {
     private val preferences: SharedPreferences = context.getSharedPreferences(
         preferencesName,
         Context.MODE_PRIVATE,
@@ -38,7 +39,7 @@ class AndroidRustDomainStore internal constructor(
     private val mutex = Mutex()
     private var database: RustDatabase? = null
 
-    suspend fun initialize(): RustStoredTuningSettings = withContext(ioDispatcher) {
+    override suspend fun initialize(): RustStoredTuningSettings = withContext(ioDispatcher) {
         mutex.withLock {
             database?.let { existing ->
                 return@withLock existing.loadSettings()
@@ -72,16 +73,16 @@ class AndroidRustDomainStore internal constructor(
         }
     }
 
-    suspend fun saveTuning(settings: RustStoredTuningSettings) = withContext(ioDispatcher) {
+    override suspend fun saveTuning(settings: RustStoredTuningSettings) = withContext(ioDispatcher) {
         mutex.withLock {
             requireDatabase().saveSettings(settings)
         }
     }
 
-    suspend fun trustDevice(
+    override suspend fun trustDevice(
         deviceId: String,
         displayName: String,
-        observedAtMs: Long = System.currentTimeMillis(),
+        observedAtMs: Long,
     ) = withContext(ioDispatcher) {
         mutex.withLock {
             requireDatabase().trustDevice(deviceId, displayName, observedAtMs)
@@ -106,7 +107,7 @@ class AndroidRustDomainStore internal constructor(
         }
     }
 
-    suspend fun close() = withContext(ioDispatcher) {
+    override suspend fun close() = withContext(ioDispatcher) {
         mutex.withLock {
             val current = database ?: return@withLock
             current.close()

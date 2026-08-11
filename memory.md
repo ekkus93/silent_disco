@@ -4090,3 +4090,182 @@ and `ListenerSyncControllerTest.kt`; edited
 updated `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md` (Block 21's "sync
 controller"/"periodic domain resync job"/21.3/21.4/Acceptance notes, Block
 6's physical-device-status addendum).
+
+## 2026-08-11T00:23:44Z - Claude Sonnet 5 - Block 21.4 effect-runner fake infrastructure and real coverage
+
+**Why:** Block 21.4 had an honestly-recorded gap: no test at all (JVM or
+instrumented) exercised `executeRustPlatformEffect`/`executeRustTransportEffect`/
+`executeRustStorageEffect` (`MainViewModelRustHost.kt`) or
+`executeRustListenerPlatformEffect` (`MainViewModelRustListener.kt`) --
+not even with synthesized success -- because the fake
+`HostCoreController`/`ListenerCoreController`/collaborator infrastructure
+needed to do it honestly didn't exist. This session built that
+infrastructure and used it to drive the real effect-runner functions
+end-to-end, per CLAUDE.md's "no test-coverage gap left unaddressed without
+justification" and "effect runner tests report real completion/failure
+facts" (Block 21.4's own language).
+
+**How to apply / what was built:**
+- `FakeHostCoreController`/`FakeListenerCoreController`
+  (`app/src/test/java/com/ekkus/silentdisco/core/rust/`): real
+  `HostCoreController`/`ListenerCoreController` implementations that record
+  every call made to them (method + args, as typed lists/counts) and expose
+  `emit(notification)` to push a `FfiCoreNotification` into the same
+  `notifications: Flow` a real Rust actor would populate -- this is what
+  lets a test assert on exactly what got reported back rather than assuming
+  success.
+- Two collaborators `MainViewModel` previously constructed unconditionally
+  as concrete Android classes (impossible to fake, impossible to construct
+  in a plain JVM test -- see `BleDiscoveryServiceTest.kt`'s own comment on
+  this) got narrow interfaces so they could be substituted: `RustDomainStore`
+  (new file `core/rust/RustDomainStore.kt`; `AndroidRustDomainStore` now
+  implements it) and `BleTransport` (added to
+  `core/transport/BleDiscoveryService.kt`; `BleDiscoveryService` now
+  implements it). `wifiDirectService` didn't need a new interface --
+  `WifiDirectTransportService` already implements `SessionTransport`
+  (`core/transport/TransportModels.kt`), it just wasn't the field's
+  *declared* type yet.
+- `MainViewModel`'s constructor gained `bleService: BleTransport`/
+  `wifiDirectService: SessionTransport` injection points (defaults =
+  the real concrete classes, unchanged production wiring), alongside the
+  existing `domainStore`/`hostCoreFactory`/`listenerCoreFactory` pattern.
+  `domainStore`'s declared type changed from `AndroidRustDomainStore` to
+  `RustDomainStore`.
+- `hostTransportController`/`listenerTransportController` were deliberately
+  **not** abstracted behind a fake -- left as the real, unbound
+  `HostTransportController`/`ListenerTransportController` production
+  classes. Unbound, their send/broadcast methods genuinely return
+  null/zero-peer `FfiHostTransportDelivery`, which is real production
+  behavior, not a synthesized test double; the explicitly-required
+  "zero-peers-delivered" transport-effect case is covered this way with
+  zero new fake code. A bound handle (to test successful multi-peer
+  delivery, or the async `AdvertisingStarted`/`NetworkEndpointReady`
+  completions) needs a real native Rust socket -- out of reach for a JVM
+  unit test; recorded as a genuine remaining gap, not silently dropped.
+- New fakes: `FakeBleTransport`/`FakeSessionTransport`
+  (`app/src/test/java/com/ekkus/silentdisco/core/transport/`),
+  `FakeRustDomainStore` (`app/src/test/java/com/ekkus/silentdisco/core/rust/`).
+  Each records every call and can be configured to return/throw a specific
+  real failure, matching this codebase's existing fake convention (see
+  `TrustedDevicesViewModelTest.kt`'s `FakeTrustedDeviceStore`: a private
+  nested class implementing the real interface, with call-count fields and
+  constructor-injectable failure `Throwable`s).
+- `TestMainViewModelSupport.kt` (`app/src/test/java/com/ekkus/silentdisco/app/`):
+  builds a real, fully-wired `MainViewModel` against all the fakes above,
+  plus a `mock<Application>()` stubbed just enough (`contentResolver`,
+  `getSystemService(WIFI_SERVICE)`+`WifiManager.createWifiLock`,
+  `getSharedPreferences`) for the handful of Android calls `MainViewModel`
+  still makes unconditionally in its constructor/`init` block
+  (`AudioFileDecoder`, `WifiLowLatencyNetworkLock`, `DeviceIdentityStore`).
+- Tests drive the *real* production dispatch path: call the real (already
+  `internal`) `ensureRustHostCore()`/`ensureRustListenerCore()`, which wires
+  a real collector onto the fake controller's `notifications` Flow exactly
+  as it would a real Rust actor's; push a notification via `emit(...)`; run
+  the coroutine to completion; assert on the fake controller's/fake
+  collaborators' recorded calls. Nothing calls a private function
+  reflectively and nothing hand-simulates what the dispatch should do.
+
+**Real bug found and fixed:** the very first test run (before any other
+fix) threw `RuntimeException: Method elapsedRealtime in
+android.os.SystemClock not mocked` from inside `startAdvertisingForRust`,
+which silently killed `ensureRustHostCore()`'s notification-collector
+coroutine for the rest of the `MainViewModel`'s lifetime -- no diagnostic,
+no `lastError`, no host effect ever processed again after the first
+unhandled exception. That specific throw is a JVM-test artifact (real
+devices never throw there), but the underlying fact it exposed is real and
+was previously completely untested: `executeRustHostNotification`'s
+`controller.notifications.collect { ... }` loop has **zero** exception
+handling around the dispatch call, so *any* genuinely-unexpected exception
+on *any* platform-effect path is a silent, permanent, undiagnosed collector
+death, not a visible failure -- exactly what CLAUDE.md's diagnostics/error-
+handling rules exist to prevent. Fixed by adding
+`testOptions.unitTests.isReturnDefaultValues = true` to
+`app/build.gradle.kts` (a standard AGP unit-test setting: unmocked Android
+statics return safe defaults instead of throwing) rather than adding
+`SystemClock` try/catch scattered through production code -- verified no
+existing test relied on that exception being thrown (`AppLoggerTest.kt`
+only asserts a return value of `0`, unaffected either way). The
+architectural gap itself (an unguarded `collect` in the effect-dispatch
+loop) is now visible and worth a dedicated follow-up outside this task's
+scope -- not fixed here, since doing so risks turning a real failure into
+log-only behavior exactly as CLAUDE.md warns against unless done carefully
+(needs a real recovery path, not a blanket `runCatching`).
+
+**Coverage added:**
+`MainViewModelRustHostEffectTest.kt` (15 tests) --
+`startAdvertisingFailsWithoutNearbyConnectivityPermissions`,
+`startAdvertisingFailsWhenBleAdvertisingFails`,
+`startAdvertisingFailsAndStopsBleWhenWifiDirectHostFails`,
+`startAdvertisingFailsAndStopsBleWhenWifiDirectHostThrows`,
+`startAdvertisingSucceedsThroughBleAndWifiDirectUpToTheAsyncBindStep`,
+`stopAdvertisingRunsRealCleanupAndReportsSuccess`,
+`requestCapabilitiesEffectIsRejectedAsOutsideHostCreation`,
+`platformEffectsOutsideAndroidHostBlock12AreEachRejectedWithTheRealMessage`
+(loops all 8 remaining variants), `deliverJoinApprovalWithNoBoundTransportReportsZeroPeersDelivered`,
+`deliverJoinRejectionWithNoBoundTransportReportsZeroPeersDelivered`,
+`disconnectListenerWithNoBoundTransportReportsZeroPeersDelivered`,
+`persistSettingsSuccessReportsSettingsSaved`,
+`persistSettingsFailureReportsStorageOperationFailedNotASwallowedException`,
+`persistTrustedDeviceSuccessReportsTrustedDeviceUpdated`,
+`persistTrustedDeviceFailureReportsStorageOperationFailedNotASwallowedException`.
+`MainViewModelRustListenerEffectTest.kt` (9 tests) --
+`startDiscoveryFailsWithoutNearbyConnectivityPermissions`,
+`startDiscoverySucceedsAndStartsBleScanAndWifiDirectDiscovery`,
+`startDiscoveryFailsWhenBleScanFailsAndNeverStartsWifiDirectDiscovery`,
+`stopDiscoveryStopsBleScanAndWifiDirectDiscoveryAndReportsSuccess`,
+`establishNetworkWithAlreadyKnownEndpointCompletesImmediatelyWithoutTouchingWifiDirect`,
+`establishNetworkFailsWhenTheSelectedSessionHasDisappeared`,
+`establishNetworkForAKnownSessionConnectsThroughWifiDirectAndDefersCompletion`,
+`releaseNetworkStopsWifiDirectAndReportsSuccess`,
+`platformEffectsOutsideAndroidListenerBlock13AreEachRejectedWithTheRealMessage`
+(loops all 7 variants).
+
+**Known real-thread-hop test wrinkle:** `HostTransportController`'s real
+send methods hop onto genuine `Dispatchers.IO` (even unbound, just to
+evaluate a null check), which is a real background thread outside a
+`StandardTestDispatcher`'s virtual scheduler -- a single `advanceUntilIdle()`
+can race that real thread posting its continuation back. The 3 transport-
+effect tests use a small `awaitRealDispatchHop` helper (drains the virtual
+scheduler between short real `Thread.sleep(5)`s, up to 1s) instead of a bare
+`advanceUntilIdle()`. This is a genuine cross-thread wait, not a virtual-
+time shortcut, and was necessary rather than optional -- the bare version
+flaked deterministically (0/3 passing) until this was added.
+
+**Deliberately left uncovered, honestly:**
+- The actual async completions that require a real bound native Rust
+  transport handle (`FfiHostTransportHandle`/`FfiListenerTransportHandle`):
+  `AdvertisingStarted` (via `completeRustHostAdvertising`), successful
+  multi-peer `DeliverJoinApproval`/`DeliverJoinRejection`/`DisconnectListener`
+  delivery (`successfulPeers > 0`, which also drives `submitListenerConnected`/
+  `authorizeListener`), and `completeRustListenerNetworkEstablishment`'s
+  `NetworkEndpointReady` completion. All three require genuine native FFI
+  socket binding -- out of reach for a plain JVM unit test; remains
+  instrumented/physical-device-only territory.
+- The unguarded-`collect` architectural gap found above (see "Real bug
+  found and fixed") -- diagnosed and documented, not fixed; a real fix needs
+  a considered recovery/diagnostic story, not a quick patch.
+
+**Files touched:**
+`app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt`;
+`app/src/main/java/com/ekkus/silentdisco/core/rust/RustDomainStore.kt` (new);
+`app/src/main/java/com/ekkus/silentdisco/platform/persistence/AndroidRustDomainStore.kt`;
+`app/src/main/java/com/ekkus/silentdisco/core/transport/BleDiscoveryService.kt`;
+`app/build.gradle.kts` (`testOptions.unitTests.isReturnDefaultValues`);
+new test files `app/src/test/java/com/ekkus/silentdisco/core/rust/FakeHostCoreController.kt`,
+`FakeListenerCoreController.kt`, `FakeRustDomainStore.kt`;
+`app/src/test/java/com/ekkus/silentdisco/core/transport/FakeBleTransport.kt`,
+`FakeSessionTransport.kt`;
+`app/src/test/java/com/ekkus/silentdisco/app/TestMainViewModelSupport.kt`,
+`MainViewModelRustHostEffectTest.kt`, `MainViewModelRustListenerEffectTest.kt`;
+updated `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md` (Block 21.4's
+"Effect runner tests report real completion/failure facts" bullet, now
+`[x]`).
+
+**Gate results (actually run, this session, worktree
+`.claude/worktrees/agent-ab6d5f8e787c5ae1e`):** `./gradlew test lintDebug
+--console=plain --stacktrace` -- BUILD SUCCESSFUL, 0 `<failure>` elements
+across `debug`/`pocDebug`/`release` unit-test result XML (298 total test
+cases in the `debug` variant alone, up from the 275 recorded in the prior
+Block 21 session). `./gradlew :app:compileDebugAndroidTestKotlin` still
+fails on the pre-existing, already-recorded `P2UiTest.kt` break (unrelated
+file, not touched this session, not part of the required gate).

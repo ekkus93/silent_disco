@@ -52,10 +52,31 @@ data class BleOperationFailure(
     val message: String,
 )
 
+/**
+ * Android-facing BLE discovery/advertising port used by `MainViewModel`'s
+ * platform-effect runner (`startAdvertisingForRust`/`startRustListenerDiscovery`
+ * in `MainViewModelRustHost.kt`/`MainViewModelRustListener.kt`).
+ *
+ * Exists so those effect-runner paths can be exercised in JVM unit tests
+ * against a recording fake, without constructing a real [BleDiscoveryService]
+ * -- which requires a real Android `Context`/`BluetoothManager` and cannot be
+ * constructed in a plain JVM test (see `BleDiscoveryServiceTest.kt`).
+ */
+interface BleTransport {
+    val discoveredSessions: StateFlow<List<SessionInfo>>
+    val failures: SharedFlow<BleOperationFailure>
+
+    fun startAdvertising(advertisement: BleAdvertisement): BleOperationResult
+    fun startScanning(): BleOperationResult
+    fun stop()
+    fun stopAdvertising()
+    fun stopScanning()
+}
+
 class BleDiscoveryService(
     context: Context,
     private val logger: AppLogger = AppLogger(),
-) {
+) : BleTransport {
     private val appContext = context.applicationContext
     private val bluetoothManager = appContext.getSystemService(BluetoothManager::class.java)
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
@@ -65,11 +86,11 @@ class BleDiscoveryService(
         get() = bluetoothAdapter?.bluetoothLeScanner
 
     private val _discoveredSessions = MutableStateFlow<List<SessionInfo>>(emptyList())
-    val discoveredSessions: StateFlow<List<SessionInfo>> = _discoveredSessions.asStateFlow()
+    override val discoveredSessions: StateFlow<List<SessionInfo>> = _discoveredSessions.asStateFlow()
     private val _advertisement = MutableStateFlow<BleAdvertisement?>(null)
     val advertisement: StateFlow<BleAdvertisement?> = _advertisement.asStateFlow()
     private val _failures = MutableSharedFlow<BleOperationFailure>(extraBufferCapacity = 8)
-    val failures: SharedFlow<BleOperationFailure> = _failures.asSharedFlow()
+    override val failures: SharedFlow<BleOperationFailure> = _failures.asSharedFlow()
 
     private val seenSessions = linkedMapOf<String, SessionInfo>()
     private var advertiseCallback: AdvertiseCallback? = null
@@ -80,7 +101,7 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    fun startAdvertising(advertisement: BleAdvertisement): BleOperationResult {
+    override fun startAdvertising(advertisement: BleAdvertisement): BleOperationResult {
         _advertisement.value = advertisement
         stopAdvertising()
         if (!hasAdvertisePermission()) {
@@ -131,7 +152,7 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    fun startScanning(): BleOperationResult {
+    override fun startScanning(): BleOperationResult {
         if (!hasScanPermission()) {
             val message = "Missing Bluetooth scan permission"
             logger.w("ble.scan", message)
@@ -214,7 +235,7 @@ class BleDiscoveryService(
     internal fun emitAdvertiseFailureForTest(errorCode: Int) = emitAdvertiseFailure(errorCode)
     internal fun emitScanFailureForTest(errorCode: Int) = emitScanFailure(errorCode)
 
-    fun stop() {
+    override fun stop() {
         stopAdvertising()
         stopScanning()
         _advertisement.value = null
@@ -223,7 +244,7 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    fun stopAdvertising() {
+    override fun stopAdvertising() {
         val callback = advertiseCallback ?: return
         if (hasAdvertisePermission()) {
             runCatching { advertiser?.stopAdvertising(callback) }
@@ -232,7 +253,7 @@ class BleDiscoveryService(
     }
 
     @SuppressLint("MissingPermission")
-    fun stopScanning() {
+    override fun stopScanning() {
         val callback = scanCallback ?: return
         if (!hasScanPermission()) {
             val message = "Missing Bluetooth scan permission while stopping discovery"
