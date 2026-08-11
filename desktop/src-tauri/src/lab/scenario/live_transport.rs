@@ -638,8 +638,11 @@ impl LiveTransportDriver {
                 "listener connection closed without a transport error",
             )),
             RuntimeTransportEvent::PeerAccepted { .. }
-            | RuntimeTransportEvent::PeerAuthorized { .. }
-            | RuntimeTransportEvent::FrameReceived { .. } => Ok(()),
+            | RuntimeTransportEvent::PeerAuthorized { .. } => Ok(()),
+            RuntimeTransportEvent::FrameReceived { .. } => Err(live_error(
+                "listener_frame_unsupported",
+                "Lab listener received a transport frame outside the supported join/synchronization subset",
+            )),
         }
     }
 
