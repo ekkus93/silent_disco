@@ -26,7 +26,7 @@ use silent_disco_core::transport::{
 };
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
@@ -159,12 +159,18 @@ struct SoakMetric {
 
 fn main() -> ProbeResult<()> {
     let temp = TempDir::new()?;
-    let decode_iterations = env_u32("SILENT_DISCO_PERF_DECODE_ITERATIONS", DEFAULT_DECODE_ITERATIONS);
+    let decode_iterations = env_u32(
+        "SILENT_DISCO_PERF_DECODE_ITERATIONS",
+        DEFAULT_DECODE_ITERATIONS,
+    );
     let packetizer_seconds = env_u32(
         "SILENT_DISCO_PERF_PACKETIZER_SOURCE_SECONDS",
         DEFAULT_PACKETIZER_SOURCE_SECONDS,
     );
-    let transport_packets = env_u32("SILENT_DISCO_PERF_TRANSPORT_PACKETS", DEFAULT_TRANSPORT_PACKETS);
+    let transport_packets = env_u32(
+        "SILENT_DISCO_PERF_TRANSPORT_PACKETS",
+        DEFAULT_TRANSPORT_PACKETS,
+    );
     let soak_seconds = env_u64("SILENT_DISCO_PERF_SOAK_SECONDS", 0);
 
     let environment = environment_metric();
@@ -287,12 +293,15 @@ fn measure_packetizer(root: &Path, source_seconds: u32) -> ProbeResult<Packetize
         match packetizer.recv_timeout(Duration::from_secs(5)) {
             Ok(ProtocolFrame::Audio(_)) => emitted_packets = emitted_packets.saturating_add(1),
             Ok(_) => return Err("packetizer emitted a non-audio frame".into()),
-            Err(RecvTimeoutError::Timeout) => return Err("packetizer timed out before completion".into()),
+            Err(RecvTimeoutError::Timeout) => {
+                return Err("packetizer timed out before completion".into());
+            }
             Err(RecvTimeoutError::Disconnected) => break,
         }
         let (queued, _, _, _) = packetizer_reader.snapshot();
         packet_queue_high_water = packet_queue_high_water.max(queued);
-        decode_queue_high_water = decode_queue_high_water.max(decoder_reader.snapshot().queued_chunks);
+        decode_queue_high_water =
+            decode_queue_high_water.max(decoder_reader.snapshot().queued_chunks);
     }
 
     let elapsed_ms = duration_ms(started.elapsed());
@@ -306,7 +315,9 @@ fn measure_packetizer(root: &Path, source_seconds: u32) -> ProbeResult<Packetize
         packets_per_second: per_second(emitted_packets, elapsed_ms),
         packet_queue_high_water,
         packet_queue_capacity,
-        packet_backpressure_events: packetizer_summary.backpressure_events.max(packet_backpressure_events),
+        packet_backpressure_events: packetizer_summary
+            .backpressure_events
+            .max(packet_backpressure_events),
         decode_queue_high_water,
         decode_queue_capacity: decode_statistics.queue_capacity_chunks,
         decode_backpressure_events: decode_statistics.backpressure_events,
@@ -329,7 +340,10 @@ fn measure_transport(
             ..VirtualUdpFaultConfig::default()
         }))
     };
-    let session_id = SessionId::new(format!("block45-transport-{listener_count}-{loss_permille}"))?;
+    let session_id = SessionId::new(format!(
+        "block45-transport-{listener_count}-{loss_permille}"
+    ))?;
+    let stream_id = StreamId::new("block45-transport-stream")?;
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut host_config = HostTransportConfig::loopback(session_id.clone());
     host_config.event_queue_capacity = (listener_count.saturating_mul(2).saturating_add(8)).max(64);
@@ -349,7 +363,7 @@ fn measure_transport(
     let mut failed = 0_u64;
     let mut bytes_sent = 0_u64;
     for sequence in 0..u64::from(packets) {
-        let delivery = host.broadcast_audio(&audio_frame(&session_id, sequence))?;
+        let delivery = host.broadcast_audio(&audio_frame(&session_id, &stream_id, sequence))?;
         intended = intended.saturating_add(u64::from(delivery.report.intended_peers));
         successful = successful.saturating_add(u64::from(delivery.report.successful_peers));
         failed = failed.saturating_add(u64::from(delivery.report.failed_peers));
@@ -398,8 +412,12 @@ fn measure_reconnect() -> ProbeResult<ReconnectMetric> {
     let network = VirtualTransportNetwork::default();
     let factory = VirtualTransportFactory::new(network);
     let session_id = SessionId::new("block45-reconnect-session")?;
+    let stream_id = StreamId::new("block45-reconnect-stream")?;
     let clock = Arc::new(ManualTransportClock::new(0));
-    let mut host = factory.bind_host(HostTransportConfig::loopback(session_id.clone()), clock.clone())?;
+    let mut host = factory.bind_host(
+        HostTransportConfig::loopback(session_id.clone()),
+        clock.clone(),
+    )?;
     let mut listeners = connect_and_authorize_listeners(
         &factory,
         &mut *host,
@@ -412,16 +430,13 @@ fn measure_reconnect() -> ProbeResult<ReconnectMetric> {
     disconnected.shutdown()?;
 
     let reconnect_started = Instant::now();
-    let mut config = ListenerTransportConfig::loopback(
-        session_id.clone(),
-        device_id.clone(),
-        host.endpoint(),
-    );
+    let mut config =
+        ListenerTransportConfig::loopback(session_id.clone(), device_id.clone(), host.endpoint());
     config.event_queue_capacity = 128;
     let mut replacement = factory.connect_listener(config, clock)?;
     host.authorize_peer(&device_id, replacement.local_routes())?;
     let reconnect_elapsed_ms = duration_ms(reconnect_started.elapsed());
-    host.broadcast_audio(&audio_frame(&session_id, 1))?;
+    host.broadcast_audio(&audio_frame(&session_id, &stream_id, 1))?;
     let post_reconnect_audio_received = matches!(
         replacement.recv_event(Duration::from_secs(1)),
         Ok(TransportEvent::FrameReceived {
@@ -496,6 +511,7 @@ fn measure_soak(seconds: u64) -> ProbeResult<SoakMetric> {
         ..VirtualUdpFaultConfig::default()
     });
     let session_id = SessionId::new("block45-soak-session")?;
+    let stream_id = StreamId::new("block45-soak-stream")?;
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut host_config = HostTransportConfig::loopback(session_id.clone());
     host_config.event_queue_capacity = 128;
@@ -512,7 +528,7 @@ fn measure_soak(seconds: u64) -> ProbeResult<SoakMetric> {
     let mut sequence = 0_u64;
     let mut received = 0_u64;
     while Instant::now() < deadline {
-        host.broadcast_audio(&audio_frame(&session_id, sequence))?;
+        host.broadcast_audio(&audio_frame(&session_id, &stream_id, sequence))?;
         clock.advance(DEFAULT_SOAK_PACKET_CADENCE_MS);
         for (_, listener) in &mut listeners {
             match listener.recv_event(POLL_TIMEOUT) {
@@ -599,11 +615,10 @@ fn drain_audio_events(
     Ok(received)
 }
 
-fn audio_frame(session_id: &SessionId, sequence: u64) -> ProtocolFrame {
+fn audio_frame(session_id: &SessionId, stream_id: &StreamId, sequence: u64) -> ProtocolFrame {
     ProtocolFrame::Audio(AudioDatagram {
         session_id: session_id.clone(),
-        stream_id: StreamId::new("block45-transport-stream")
-            .expect("static Block 45 stream id is valid"),
+        stream_id: stream_id.clone(),
         sequence: PacketSequence::new(sequence),
         codec: AudioCodec::PcmS16Le,
         sample_rate: 48_000,
@@ -617,12 +632,21 @@ fn audio_frame(session_id: &SessionId, sequence: u64) -> ProtocolFrame {
 
 fn fixture_bytes(extension: &str) -> ProbeResult<Vec<u8>> {
     let encoded = match extension {
-        "wav" => include_str!("../../../../rust/silent-disco-core/src/audio/fixtures/short.wav.b64"),
-        "flac" => include_str!("../../../../rust/silent-disco-core/src/audio/fixtures/short.flac.b64"),
-        "mp3" => include_str!("../../../../rust/silent-disco-core/src/audio/fixtures/short.mp3.b64"),
+        "wav" => {
+            include_str!("../../../../rust/silent-disco-core/src/audio/fixtures/short.wav.b64")
+        }
+        "flac" => {
+            include_str!("../../../../rust/silent-disco-core/src/audio/fixtures/short.flac.b64")
+        }
+        "mp3" => {
+            include_str!("../../../../rust/silent-disco-core/src/audio/fixtures/short.mp3.b64")
+        }
         _ => return Err(format!("unsupported performance fixture extension: {extension}").into()),
     };
-    let compact: String = encoded.chars().filter(|character| !character.is_whitespace()).collect();
+    let compact: String = encoded
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
     Ok(STANDARD.decode(compact)?)
 }
 
@@ -687,7 +711,9 @@ fn linux_cpu_ticks() -> (Option<u64>, Option<u64>) {
     let Some(comm_end) = stat.rfind(')') else {
         return (None, None);
     };
-    let fields: Vec<&str> = stat[comm_end.saturating_add(1)..].split_whitespace().collect();
+    let fields: Vec<&str> = stat[comm_end.saturating_add(1)..]
+        .split_whitespace()
+        .collect();
     if fields.len() <= 12 {
         return (None, None);
     }
@@ -727,12 +753,4 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
-}
-
-#[allow(dead_code)]
-fn _path_for_diagnostic(path: PathBuf) -> String {
-    path.file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("<non-utf8>")
-        .to_owned()
 }
