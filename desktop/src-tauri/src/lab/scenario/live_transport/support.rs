@@ -140,7 +140,10 @@ impl super::LiveTransportDriver {
             }
         }
 
-        failure.map_or(Ok(()), Err)
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
