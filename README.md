@@ -1,4 +1,9 @@
 # silent_disco
+
+[![CI](https://github.com/ekkus93/silent_disco/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ekkus93/silent_disco/actions/workflows/ci.yml)
+[![Desktop CI](https://github.com/ekkus93/silent_disco/actions/workflows/desktop-ci.yml/badge.svg?branch=master)](https://github.com/ekkus93/silent_disco/actions/workflows/desktop-ci.yml)
+[![Source file line limit](https://github.com/ekkus93/silent_disco/actions/workflows/source-file-line-limit.yml/badge.svg?branch=master)](https://github.com/ekkus93/silent_disco/actions/workflows/source-file-line-limit.yml)
+
 Silent Disco for Android
 
 ## Where to look first
