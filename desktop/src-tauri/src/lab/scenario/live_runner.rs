@@ -346,5 +346,8 @@ fn stop_scenario_nodes(
             });
         }
     }
-    failure.map_or(Ok(()), Err)
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
