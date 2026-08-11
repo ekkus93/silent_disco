@@ -3,7 +3,8 @@ use super::commands::{action_revision_delta, current_revision, submit_action};
 use super::live_transport::{LiveScenarioObserver, LiveTransportDriver};
 use super::{
     AssertionOutcome, AssertionResult, ClockAdvance, NodeId, Scenario, ScenarioExecutionError,
-    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult, StepSettlement, scenario_node_parts,
+    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
+    scenario_node_parts,
 };
 use crate::dto::DesktopErrorDto;
 use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind, ScenarioRecorder};
@@ -69,7 +70,8 @@ fn run_live_scenario(
         effect_receivers.insert(node.id.clone(), effect_receiver);
     }
 
-    let mut driver = match LiveTransportDriver::new(lab, scenario, &lab_node_ids, effect_receivers) {
+    let mut driver = match LiveTransportDriver::new(lab, scenario, &lab_node_ids, effect_receivers)
+    {
         Ok(driver) => driver,
         Err(primary) => return Err(setup_failure(lab, &lab_node_ids, primary)),
     };
