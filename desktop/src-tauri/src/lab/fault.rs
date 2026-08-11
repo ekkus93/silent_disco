@@ -24,13 +24,15 @@
 //!
 //! No wall-clock sleep anywhere: a delayed event's release is decided
 //! purely by comparing [`LabClock::now`] to a precomputed deadline. The
-//! only real waiting here is for the underlying (already real, channel-
-//! based) transport to produce a *new* event -- exactly like the shared
-//! core's own `recv_faulted_event`. A scenario makes a held event
-//! releasable by calling [`crate::lab::LabRuntime::advance`], not by
-//! waiting.
+//! inner listener transport is intentionally given a clock in that same
+//! shared Lab-clock domain, so node-local offset/drift can never distort
+//! a network-delay deadline. Before an event crosses this wrapper's public
+//! boundary its `received_at` timestamp is re-stamped with the caller's
+//! listener clock, preserving the recipient-local timestamp semantics the
+//! production transport exposes.
 
 use super::clock::LabClock;
+use silent_disco_core::domain::MonotonicMillis;
 use silent_disco_core::protocol::{ControlMessage, SyncRequest};
 use silent_disco_core::transport::{
     DeterministicPrng, HostTransportConfig, HostTransportNode, ListenerDatagramRoutes,
@@ -96,18 +98,35 @@ impl<F: TransportFactory> TransportFactory for LabLatencyTransportFactory<F> {
         config: ListenerTransportConfig,
         clock: Arc<dyn TransportClock>,
     ) -> Result<Box<dyn ListenerTransportNode>, TransportError> {
-        let delivery_clock = Arc::clone(&clock);
-        let inner = self.inner.connect_listener(config, clock)?;
+        // The caller-provided clock is the listener's own offset/drift view
+        // and therefore belongs only at the wrapper's outward boundary.
+        // Give the inner transport a base-domain clock instead so the
+        // timestamps used to calculate latency deadlines are comparable to
+        // `self.clock.now()` for every Lab node configuration.
+        let inner_clock: Arc<dyn TransportClock> = Arc::new(LabBaseTransportClock {
+            clock: Arc::clone(&self.clock),
+        });
+        let inner = self.inner.connect_listener(config, inner_clock)?;
         Ok(Box::new(LabLatencyListenerTransport {
             inner,
             clock: Arc::clone(&self.clock),
-            delivery_clock,
+            delivery_clock: clock,
             config: self.config,
             held: Mutex::new(HeldEvents {
                 prng: DeterministicPrng::new(self.config.seed),
                 queue: BinaryHeap::new(),
             }),
         }))
+    }
+}
+
+struct LabBaseTransportClock {
+    clock: Arc<LabClock>,
+}
+
+impl TransportClock for LabBaseTransportClock {
+    fn now(&self) -> MonotonicMillis {
+        self.clock.now()
     }
 }
 
@@ -171,40 +190,36 @@ impl ListenerTransportNode for LabLatencyListenerTransport {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        // Anything already due is released before touching the
-        // underlying transport at all -- this is the only path a
-        // scenario's `LabRuntime::advance()` followed by a fresh
-        // `recv_event` call takes. A delayed datagram's receive timestamp
-        // must reflect this virtual delivery instant, not the underlying
-        // pre-fault event timestamp, or synchronization would silently
-        // under-report injected network latency.
+        // Anything already due is released before touching the underlying
+        // transport. `received_at` is stamped only when the event crosses
+        // this wrapper, using the listener's actual node clock.
         if let Some(released) = take_due(&mut held.queue, self.clock.now().get()) {
             return Ok(self.stamp_delivery_time(released));
         }
 
         let event = self.inner.recv_event(timeout)?;
-        // The deadline is anchored to the underlying transport's event
-        // timestamp rather than when this call happened to poll for it.
-        // Anchoring to poll time would make the hold duration depend on
-        // how promptly a scenario calls `recv_event`, which is exactly
-        // the kind of accidental nondeterminism Block 38's virtual clock
-        // exists to avoid. Once the faulted event is actually delivered,
-        // `received_at` is re-stamped from the listener's TransportClock.
+        // The inner listener uses `LabBaseTransportClock`, so every
+        // `received_at` below is in the same base domain as `self.clock`.
+        // That is the scheduling timestamp. It is intentionally not the
+        // listener-visible timestamp when offset/drift is configured.
         let (channel, arrived_at_ms) = match &event {
             TransportEvent::FrameReceived {
                 channel,
                 received_at,
                 ..
             } => (Some(*channel), received_at.get()),
-            _ => (None, self.clock.now().get()),
+            TransportEvent::PeerAccepted { received_at, .. }
+            | TransportEvent::PeerAuthorized { received_at, .. }
+            | TransportEvent::PeerDisconnected { received_at, .. }
+            | TransportEvent::Rejected { received_at, .. } => (None, received_at.get()),
         };
         if !matches!(
             channel,
             Some(TransportChannel::Synchronization | TransportChannel::Audio)
         ) {
-            // Control/Runtime events, and every non-`FrameReceived`
-            // variant, are never delayed.
-            return Ok(event);
+            // Control/runtime events are never delayed, but still cross the
+            // same recipient-local timestamp boundary as delayed datagrams.
+            return Ok(self.stamp_delivery_time(event));
         }
 
         let deadline_ms = self.compute_deadline(&mut held.prng, arrived_at_ms);
@@ -243,9 +258,14 @@ impl LabLatencyListenerTransport {
     }
 
     fn stamp_delivery_time(&self, mut event: TransportEvent) -> TransportEvent {
-        if let TransportEvent::FrameReceived { received_at, .. } = &mut event {
-            *received_at = self.delivery_clock.now();
-        }
+        let received_at = match &mut event {
+            TransportEvent::PeerAccepted { received_at, .. }
+            | TransportEvent::PeerAuthorized { received_at, .. }
+            | TransportEvent::FrameReceived { received_at, .. }
+            | TransportEvent::PeerDisconnected { received_at, .. }
+            | TransportEvent::Rejected { received_at, .. } => received_at,
+        };
+        *received_at = self.delivery_clock.now();
         event
     }
 }
