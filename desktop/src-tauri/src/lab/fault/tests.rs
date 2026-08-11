@@ -165,7 +165,9 @@ fn first_poll_at_deadline_uses_the_faulted_delivery_timestamp() {
 
     host.broadcast_audio(&audio_frame(&session_id, 1))
         .expect("send should report local delivery");
-    clock.advance(100).expect("advance directly to the deadline");
+    clock
+        .advance(100)
+        .expect("advance directly to the deadline");
 
     match listener
         .recv_event(POLL_TIMEOUT)
