@@ -6,27 +6,32 @@
 //! one production-shaped synchronization exchange so a scenario's
 //! `latencyMs`/`jitterMs`/`lossPermille` values affect actual live traffic.
 
+mod observer;
+mod support;
+mod sync;
+
+pub(super) use observer::LiveScenarioObserver;
+
+use self::support::{
+    ReceiveFaultProfile, build_receive_profiles, core_error, failed_delivery_report, live_error,
+    transport_error,
+};
+use self::sync::LiveSyncState;
 use super::{NodeId, Scenario, ScenarioAction};
 use crate::dto::DesktopErrorDto;
 use crate::lab::fault::{LabLatencyConfig, LabLatencyTransportFactory};
-use crate::lab::recorder::{RecordingObserver, ScenarioRecorder};
 use crate::lab::{LabClock, LabNodeId, LabRuntime};
 use crate::platform::host_transport_events::HostTransportEventProcessor;
-use silent_disco_core::domain::{DeliverySeverity, DeviceId, OperationId};
+use silent_disco_core::domain::{DeviceId, OperationId};
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::protocol::{
     ControlMessage, DeviceIdentity, Disconnect, JoinApproval, JoinRejection, JoinRequest,
-    ProtocolFrame, SyncRequest, SynchronizationReport,
+    ProtocolFrame,
 };
 use silent_disco_core::runtime::{
-    AudioEvent, CoreActorHandle, CoreNotification, CoreObserver, DeliveryReport, PlatformEffect,
+    AudioEvent, CoreActorHandle, CoreNotification, DeliveryReport, PlatformEffect,
     PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion, SessionAdvertisement,
-    SynchronizationSummary, TransportEffect, TransportEffectRequest,
-    TransportEvent as CoreTransportEvent,
-};
-use silent_disco_core::sync::{
-    ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
-    SyncEstimatorConfig,
+    TransportEffect, TransportEffectRequest, TransportEvent as CoreTransportEvent,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -34,70 +39,12 @@ use silent_disco_core::transport::{
     TransportFactory, VirtualTransportFactory, VirtualTransportNetwork, VirtualUdpFaultConfig,
 };
 use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
 
-const EFFECT_QUEUE_CAPACITY: usize = 128;
 const MAX_PUMP_ITERATIONS: usize = 512;
 const NONBLOCKING_RECV_BUDGET: Duration = Duration::from_millis(1);
-
-/// Records every actor notification and separately queues only effects that a
-/// platform adapter must execute. The effect queue is deliberately bounded;
-/// overflow is returned to the actor observer as a real structured failure.
-pub(super) struct LiveScenarioObserver {
-    recorder: RecordingObserver,
-    effects: SyncSender<CoreNotification>,
-}
-
-impl LiveScenarioObserver {
-    pub(super) fn new(recorder: Arc<ScenarioRecorder>) -> (Self, Receiver<CoreNotification>) {
-        let (effects, receiver) = mpsc::sync_channel(EFFECT_QUEUE_CAPACITY);
-        (
-            Self {
-                recorder: RecordingObserver(recorder),
-                effects,
-            },
-            receiver,
-        )
-    }
-}
-
-impl CoreObserver for LiveScenarioObserver {
-    fn on_notification(&self, notification: CoreNotification) -> Result<(), CoreError> {
-        self.recorder.on_notification(notification.clone())?;
-        if !matches!(
-            notification,
-            CoreNotification::Effect(_)
-                | CoreNotification::TransportEffect(_)
-                | CoreNotification::StorageEffect(_)
-        ) {
-            return Ok(());
-        }
-        self.effects.try_send(notification).map_err(|queue_error| {
-            let message = match queue_error {
-                TrySendError::Full(_) => "Lab live-effect queue reached its bounded capacity",
-                TrySendError::Disconnected(_) => "Lab live-effect consumer disconnected",
-            };
-            CoreError::new(
-                CoreErrorCode::QueueOverflow,
-                message,
-                ErrorSeverity::Error,
-                true,
-                None,
-            )
-            .expect("static Lab effect-queue error text satisfies the core error contract")
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct ReceiveFaultProfile {
-    latency_ms: u64,
-    jitter_ms: u64,
-    loss_permille: u16,
-    seed: u64,
-}
 
 struct ActorEndpoint {
     handle: CoreActorHandle,
@@ -115,9 +62,7 @@ struct LiveHost {
 
 struct LiveListener {
     transport: Box<dyn ListenerTransportNode>,
-    session_id: silent_disco_core::domain::SessionId,
-    estimator: ClockSyncEstimator,
-    next_sync_correlation: u64,
+    sync: LiveSyncState,
 }
 
 /// Synchronous Lab platform/transport adapter. It owns no detached worker:
@@ -450,11 +395,8 @@ impl LiveTransportDriver {
             node_id.clone(),
             LiveListener {
                 transport,
-                session_id,
-                estimator: ClockSyncEstimator::new(SyncEstimatorConfig::default()).map_err(
-                    |error| live_error("sync_estimator_failed", &error.to_string()),
-                )?,
-                next_sync_correlation: 1,
+                sync: LiveSyncState::new(session_id)
+                    .map_err(|error| live_error("sync_estimator_failed", &error))?,
             },
         );
         handle
@@ -716,25 +658,9 @@ impl LiveTransportDriver {
         let listener = self.listeners.get_mut(listener_id).ok_or_else(|| {
             live_error("listener_missing", "sync probe has no live Lab listener")
         })?;
-        let correlation = listener.next_sync_correlation;
-        listener.next_sync_correlation = listener.next_sync_correlation.saturating_add(1);
-        let send_time = node_clock.now();
-        listener
-            .estimator
-            .begin_probe(
-                SyncCorrelationId::new(correlation),
-                LocalMonotonicMillis::from(send_time),
-            )
-            .map_err(|error| live_error("sync_probe_registration_failed", &error.to_string()))?;
-        listener
-            .transport
-            .send_sync_request(&SyncRequest {
-                session_id: listener.session_id.clone(),
-                correlation_id: correlation,
-                t1_listener_send_elapsed_ms: send_time,
-            })
-            .map_err(|error| transport_error("send sync request", &error))?;
-        Ok(())
+        let LiveListener { transport, sync } = listener;
+        sync.send_probe(transport.as_ref(), node_clock.now())
+            .map_err(|error| live_error("sync_probe_failed", &error))
     }
 
     fn apply_sync_response(
@@ -747,42 +673,18 @@ impl LiveTransportDriver {
         let listener = self.listeners.get_mut(listener_id).ok_or_else(|| {
             live_error("listener_missing", "sync response has no live Lab listener")
         })?;
-        let observation = listener
-            .estimator
-            .observe_response(
-                SyncCorrelationId::new(response.correlation_id),
-                LocalMonotonicMillis::from(response.t1_listener_send_elapsed_ms),
-                HostMonotonicMillis::from(response.t2_host_receive_elapsed_ms),
-                HostMonotonicMillis::from(response.t3_host_send_elapsed_ms),
-                LocalMonotonicMillis::from(received_at),
-            )
-            .map_err(|error| live_error("sync_response_rejected", &error.to_string()))?;
-        let snapshot = observation.snapshot;
-        let summary = SynchronizationSummary::new(
-            snapshot.confidence,
-            snapshot.offset_ms,
-            snapshot.round_trip_time_ms,
-            snapshot.skew_ppm,
-        )
-        .map_err(|error| live_error("sync_summary_invalid", &error.to_string()))?;
+        let LiveListener { transport, sync } = listener;
+        let (summary, report) = sync
+            .observe_response(device_id.clone(), response, received_at)
+            .map_err(|error| live_error("sync_response_rejected", &error))?;
         handle
             .submit_audio_event(AudioEvent::SynchronizationUpdated {
-                device_id: device_id.clone(),
+                device_id,
                 summary,
             })
             .map_err(core_error)?;
-        listener
-            .transport
-            .send_control(&ControlMessage::SynchronizationReport(
-                SynchronizationReport {
-                    session_id: listener.session_id.clone(),
-                    listener_id: device_id,
-                    confidence: snapshot.confidence,
-                    offset_ms: snapshot.offset_ms,
-                    round_trip_ms: snapshot.round_trip_time_ms,
-                    drift_ppm: snapshot.skew_ppm,
-                },
-            ))
+        transport
+            .send_control(&report)
             .map_err(|error| transport_error("send synchronization report", &error))?;
         Ok(())
     }
@@ -901,71 +803,4 @@ impl LiveTransportDriver {
             .iter()
             .any(|link| &link.from == from && &link.to == to)
     }
-}
-
-fn build_receive_profiles(
-    scenario: &Scenario,
-) -> Result<HashMap<NodeId, ReceiveFaultProfile>, DesktopErrorDto> {
-    let mut profiles = HashMap::new();
-    for link in &scenario.links {
-        let candidate = ReceiveFaultProfile {
-            latency_ms: link.latency_ms,
-            jitter_ms: link.jitter_ms,
-            loss_permille: link.loss_permille,
-            seed: node_seed(scenario.seed, &link.to),
-        };
-        if let Some(existing) = profiles.get(&link.to) {
-            if existing.latency_ms != candidate.latency_ms
-                || existing.jitter_ms != candidate.jitter_ms
-                || existing.loss_permille != candidate.loss_permille
-            {
-                return Err(live_error(
-                    "ambiguous_link_faults",
-                    "multiple links targeting one Lab node must use the same receive-side latency/jitter/loss profile",
-                ));
-            }
-        } else {
-            profiles.insert(link.to.clone(), candidate);
-        }
-    }
-    Ok(profiles)
-}
-
-fn node_seed(base: u64, node: &NodeId) -> u64 {
-    let mut value = base ^ 0x9E37_79B9_7F4A_7C15;
-    for byte in node.as_str().bytes() {
-        value ^= u64::from(byte);
-        value = value.wrapping_mul(0x100_0000_01B3);
-    }
-    value
-}
-
-const fn failed_delivery_report() -> DeliveryReport {
-    DeliveryReport {
-        intended_peers: 1,
-        successful_peers: 0,
-        failed_peers: 1,
-        severity: DeliverySeverity::PartialFailure,
-    }
-}
-
-fn core_error(error_value: CoreError) -> DesktopErrorDto {
-    live_error("core_rejected_fact", &error_value.to_string())
-}
-
-fn transport_error(
-    context: &str,
-    error_value: &silent_disco_core::transport::TransportError,
-) -> DesktopErrorDto {
-    live_error("transport_failed", &format!("{context}: {error_value}"))
-}
-
-fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        &format!("desktop.lab.live_transport_{suffix}"),
-        "transport",
-        "error",
-        false,
-        message,
-    )
 }
