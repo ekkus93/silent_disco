@@ -45,6 +45,13 @@ jobs:
         with:
           toolchain: 1.97.1
 
+      - name: Create Rust-only frontend placeholder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/dist
+          printf '<!doctype html><title>Silent Disco performance CI placeholder</title>\n' > desktop/dist/index.html
+
       - name: Build Block 45 performance probe
         working-directory: desktop/src-tauri
         run: cargo build --release --bin performance_probe
