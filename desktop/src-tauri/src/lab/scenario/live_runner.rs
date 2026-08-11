@@ -51,7 +51,8 @@ fn run_live_scenario(
                     drift_ppm: 0,
                 });
         let recorder = ScenarioRecorder::new();
-        let (observer, effect_receiver) = LiveScenarioObserver::new(Arc::clone(&recorder));
+        let (observer, effect_receiver) = LiveScenarioObserver::new(Arc::clone(&recorder))
+            .map_err(ScenarioExecutionError::Lab)?;
         let lab_node_id = lab
             .start_node_with_clock_and_observer(clock.offset_ms, clock.drift_ppm, observer)
             .map_err(ScenarioExecutionError::Lab)?;
