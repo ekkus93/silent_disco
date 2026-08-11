@@ -112,7 +112,7 @@ fn execute_steps_and_assertions(
         let recorder = recorders
             .get(step.node.as_str())
             .ok_or_else(|| ScenarioExecutionError::UnknownNode(step.node.clone()))?;
-        let revision_before = current_revision(&handle);
+        let revision_before = current_revision(&handle)?;
         let sequence_before = recorder.next_sequence();
         let submit_error = submit_action(
             lab,
@@ -197,10 +197,10 @@ fn wait_for_step_settled(
     let mut remaining = STEP_SETTLE_TIMEOUT;
     loop {
         driver.pump().map_err(ScenarioExecutionError::Lab)?;
-        if handle
+        let snapshot = handle
             .current_snapshot()
-            .is_ok_and(|snapshot| snapshot.revision.get() >= target_revision)
-        {
+            .map_err(|error| ScenarioExecutionError::Lab(error.into()))?;
+        if snapshot.revision.get() >= target_revision {
             return Ok(StepSettlement::Settled);
         }
         if recorder.entries().iter().any(|entry| {
@@ -233,8 +233,10 @@ fn evaluate_assertions(
         let recorder = recorders
             .get(node.as_str())
             .ok_or_else(|| ScenarioExecutionError::UnknownNode(node.clone()))?;
-        let snapshot = handle.current_snapshot().ok();
-        let held = evaluate_assertion(assertion, snapshot.as_ref(), &recorder.entries());
+        let snapshot = handle
+            .current_snapshot()
+            .map_err(|error| ScenarioExecutionError::Lab(error.into()))?;
+        let held = evaluate_assertion(assertion, Some(&snapshot), &recorder.entries());
         let assertion_outcome = if held {
             AssertionOutcome::Held
         } else {
