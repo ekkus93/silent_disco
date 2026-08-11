@@ -19,6 +19,12 @@ pub(in crate::lab::scenario) struct LiveScenarioObserver {
 }
 
 impl LiveScenarioObserver {
+    /// Creates the bounded live-effect observer and its consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured Lab error if the shared core rejects one of the
+    /// prevalidated queue-failure error shapes.
     pub(in crate::lab::scenario) fn new(
         recorder: Arc<ScenarioRecorder>,
     ) -> Result<(Self, Receiver<CoreNotification>), DesktopErrorDto> {
