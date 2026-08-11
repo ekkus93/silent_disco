@@ -17,7 +17,7 @@ use self::support::{
     transport_error,
 };
 use self::sync::LiveSyncState;
-use super::{NodeId, Scenario, ScenarioAction};
+use super::{NodeId, Scenario, ScenarioAction, scenario_node_parts};
 use crate::dto::DesktopErrorDto;
 use crate::lab::fault::{LabLatencyConfig, LabLatencyTransportFactory};
 use crate::lab::{LabClock, LabNodeId, LabRuntime};
@@ -102,15 +102,7 @@ impl LiveTransportDriver {
                 .get(node.id.as_str())
                 .copied()
                 .ok_or_else(|| live_error("unknown_node", "scenario node was not started"))?;
-            let handle = lab
-                .node_handle(lab_id)
-                .ok_or_else(|| live_error("unknown_node", "scenario node actor is unavailable"))?;
-            let identity = lab.node_identity(lab_id).ok_or_else(|| {
-                live_error("unknown_node", "scenario node identity is unavailable")
-            })?;
-            let clock = lab
-                .node_clock(lab_id)
-                .ok_or_else(|| live_error("unknown_node", "scenario node clock is unavailable"))?;
+            let (handle, identity, clock) = scenario_node_parts(lab, lab_id)?;
             let effects = effect_receivers.remove(&node.id).ok_or_else(|| {
                 live_error(
                     "observer_missing",
@@ -158,8 +150,11 @@ impl LiveTransportDriver {
     }
 
     fn process_effects(&mut self) -> Result<bool, DesktopErrorDto> {
+        let mut actor_ids: Vec<NodeId> = self.actors.keys().cloned().collect();
+        actor_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         let mut pending = Vec::new();
-        for (node_id, actor) in &self.actors {
+        for node_id in actor_ids {
+            let actor = self.actor(&node_id)?;
             loop {
                 match actor.effects.try_recv() {
                     Ok(notification) => pending.push((node_id.clone(), notification)),
@@ -311,14 +306,15 @@ impl LiveTransportDriver {
             operation_id,
             PlatformOperationCompletion::DiscoveryStarted,
         )?;
-        let visible: Vec<SessionAdvertisement> = self
+        let mut visible: Vec<(NodeId, SessionAdvertisement)> = self
             .hosts
             .iter()
             .filter(|(host_id, _)| self.has_link(host_id, node_id))
-            .map(|(_, host)| host.advertisement.clone())
+            .map(|(host_id, host)| (host_id.clone(), host.advertisement.clone()))
             .collect();
+        visible.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
         let handle = self.actor(node_id)?.handle.clone();
-        for advertisement in visible {
+        for (_, advertisement) in visible {
             handle
                 .submit_platform_event(PlatformEvent::SessionDiscovered(advertisement))
                 .map_err(core_error)?;
@@ -519,7 +515,8 @@ impl LiveTransportDriver {
     }
 
     fn process_host_events(&mut self) -> Result<bool, DesktopErrorDto> {
-        let host_ids: Vec<NodeId> = self.hosts.keys().cloned().collect();
+        let mut host_ids: Vec<NodeId> = self.hosts.keys().cloned().collect();
+        host_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         let mut progressed = false;
         for host_id in host_ids {
             loop {
@@ -556,7 +553,8 @@ impl LiveTransportDriver {
     }
 
     fn process_listener_events(&mut self) -> Result<bool, DesktopErrorDto> {
-        let listener_ids: Vec<NodeId> = self.listeners.keys().cloned().collect();
+        let mut listener_ids: Vec<NodeId> = self.listeners.keys().cloned().collect();
+        listener_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         let mut progressed = false;
         for listener_id in listener_ids {
             loop {
@@ -702,10 +700,13 @@ impl LiveTransportDriver {
         host_id: &NodeId,
         advertisement: &SessionAdvertisement,
     ) -> Result<(), DesktopErrorDto> {
-        for (listener_id, actor) in &self.actors {
-            if !self.has_link(host_id, listener_id) {
+        let mut listener_ids: Vec<NodeId> = self.actors.keys().cloned().collect();
+        listener_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for listener_id in listener_ids {
+            if !self.has_link(host_id, &listener_id) {
                 continue;
             }
+            let actor = self.actor(&listener_id)?;
             let snapshot = actor.handle.current_snapshot().map_err(core_error)?;
             if snapshot.discovery_active {
                 actor
@@ -722,10 +723,13 @@ impl LiveTransportDriver {
         host_id: &NodeId,
         advertisement: &SessionAdvertisement,
     ) -> Result<(), DesktopErrorDto> {
-        for (listener_id, actor) in &self.actors {
-            if !self.has_link(host_id, listener_id) {
+        let mut listener_ids: Vec<NodeId> = self.actors.keys().cloned().collect();
+        listener_ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        for listener_id in listener_ids {
+            if !self.has_link(host_id, &listener_id) {
                 continue;
             }
+            let actor = self.actor(&listener_id)?;
             let snapshot = actor.handle.current_snapshot().map_err(core_error)?;
             if snapshot.discovery_active {
                 actor
