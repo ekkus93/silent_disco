@@ -3,7 +3,7 @@ use super::commands::{action_revision_delta, current_revision, submit_action};
 use super::live_transport::{LiveScenarioObserver, LiveTransportDriver};
 use super::{
     AssertionOutcome, AssertionResult, ClockAdvance, NodeId, Scenario, ScenarioExecutionError,
-    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
+    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult, StepSettlement, scenario_node_parts,
 };
 use crate::dto::DesktopErrorDto;
 use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind, ScenarioRecorder};
@@ -146,7 +146,7 @@ fn execute_steps_and_assertions(
         advance_to(lab, driver, &mut current_ms, step.at_ms, clock_advances)?;
 
         let lab_node_id = node_id_for(step.node.as_str(), &step.node, lab_node_ids)?;
-        let handle = node_handle(lab, lab_node_id, &step.node)?;
+        let handle = node_handle(lab, lab_node_id)?;
         let recorder = recorders
             .get(step.node.as_str())
             .ok_or_else(|| ScenarioExecutionError::UnknownNode(step.node.clone()))?;
@@ -267,7 +267,7 @@ fn evaluate_assertions(
     for assertion in &scenario.assertions {
         let node = assertion_node(assertion);
         let lab_node_id = node_id_for(node.as_str(), node, lab_node_ids)?;
-        let handle = node_handle(lab, lab_node_id, node)?;
+        let handle = node_handle(lab, lab_node_id)?;
         let recorder = recorders
             .get(node.as_str())
             .ok_or_else(|| ScenarioExecutionError::UnknownNode(node.clone()))?;
@@ -310,10 +310,10 @@ fn node_id_for(
 fn node_handle(
     lab: &LabRuntime,
     node_id: LabNodeId,
-    node: &NodeId,
 ) -> Result<CoreActorHandle, ScenarioExecutionError> {
-    lab.node_handle(node_id)
-        .ok_or_else(|| ScenarioExecutionError::UnknownNode(node.clone()))
+    scenario_node_parts(lab, node_id)
+        .map(|(handle, _identity, _clock)| handle)
+        .map_err(ScenarioExecutionError::Lab)
 }
 
 fn collect_notifications(
