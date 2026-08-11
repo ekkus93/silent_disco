@@ -1,0 +1,58 @@
+name: One-shot playback Clippy cleanup
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/one-shot-playback-clippy-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Move WAV constants before statements
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("desktop/src-tauri/src/platform/start_playback_tests.rs")
+          text = path.read_text()
+          old = '''fn truncated_body_full_header_wav() -> Vec<u8> {
+              let mut bytes = long_pcm_wav();
+              const WAV_HEADER_BYTES: usize = 44;
+              const SURVIVING_DATA_BYTES: usize = 4_410 * 2; // ~0.1s at 44.1kHz mono 16-bit
+          '''
+          new = '''fn truncated_body_full_header_wav() -> Vec<u8> {
+              const WAV_HEADER_BYTES: usize = 44;
+              const SURVIVING_DATA_BYTES: usize = 4_410 * 2; // ~0.1s at 44.1kHz mono 16-bit
+              let mut bytes = long_pcm_wav();
+          '''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one playback fixture block, found {count}")
+          path.write_text(text.replace(old, new))
+          PY
+
+          git diff --check -- desktop/src-tauri/src/platform/start_playback_tests.rs
+          git diff --exit-code -- . ':(exclude)desktop/src-tauri/src/platform/start_playback_tests.rs'
+
+      - name: Commit exact cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add desktop/src-tauri/src/platform/start_playback_tests.rs
+          git diff --cached --check
+          git commit -m "Fix playback test Clippy ordering"
+          git push origin HEAD:master
