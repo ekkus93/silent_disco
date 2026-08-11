@@ -1,0 +1,95 @@
+name: Desktop performance evidence
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "desktop/src-tauri/src/bin/performance_probe.rs"
+      - ".github/workflows/desktop-performance.yml"
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: "Long-soak duration in seconds"
+        required: false
+        default: "600"
+
+permissions:
+  contents: read
+
+jobs:
+  block45-performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SILENT_DISCO_PERF_DECODE_ITERATIONS: "200"
+      SILENT_DISCO_PERF_PACKETIZER_SOURCE_SECONDS: "60"
+      SILENT_DISCO_PERF_TRANSPORT_PACKETS: "1000"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+
+      - name: Build Block 45 performance probe
+        working-directory: desktop/src-tauri
+        run: cargo build --release --bin performance_probe
+
+      - name: Verify deterministic Lab jitter path
+        working-directory: desktop/src-tauri
+        run: >-
+          cargo test --release --features lab-mode
+          lab::fault::tests::jitter_keeps_the_deadline_within_its_configured_bound
+          -- --exact
+
+      - name: Run measured matrix and selected long soak
+        working-directory: desktop/src-tauri
+        shell: bash
+        env:
+          SOAK_SECONDS: ${{ inputs.soak_seconds || '600' }}
+        run: |
+          set -euo pipefail
+          export SILENT_DISCO_PERF_SOAK_SECONDS="$SOAK_SECONDS"
+          export SILENT_DISCO_PERF_CLK_TCK="$(getconf CLK_TCK)"
+          /usr/bin/time -v \
+            -o block45-process-time.txt \
+            ./target/release/performance_probe \
+            > block45-report.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("block45-report.json").read_text())
+          assert report["schemaVersion"] == 1
+          assert [entry["format"] for entry in report["decoder"]] == ["wav", "flac", "mp3"]
+          assert {entry["listenerCount"] for entry in report["transport"]} >= {1, 2, 5, 16}
+          assert report["reconnect"]["postReconnectAudioReceived"] is True
+          assert report["soak"] is not None
+          assert report["soak"]["packetsBroadcast"] > 0
+          print(json.dumps(report, indent=2))
+          PY
+          cat block45-process-time.txt
+
+      - name: Upload Block 45 raw evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: block45-performance-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            desktop/src-tauri/block45-report.json
+            desktop/src-tauri/block45-process-time.txt
