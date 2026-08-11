@@ -182,7 +182,12 @@ mod tests {
         let mut output = [0.0_f32; 4];
         let outcome = lease.consumer_mut().read_frames(&mut output);
         assert_eq!(outcome.frames_supplied * RENDER_CHANNELS, frames.len());
-        assert_eq!(output, frames);
+        assert!(
+            output
+                .iter()
+                .zip(frames.iter())
+                .all(|(actual, expected)| (*actual - *expected).abs() <= f32::EPSILON)
+        );
     }
 
     #[test]

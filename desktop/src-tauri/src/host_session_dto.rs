@@ -346,8 +346,7 @@ mod tests {
     };
     use std::net::{IpAddr, Ipv4Addr};
 
-    #[test]
-    fn projection_exposes_age_sync_delivery_and_core_capabilities() {
+    fn projection_snapshot() -> CoreSnapshot {
         let mut snapshot = CoreSnapshot {
             host_lifecycle: HostLifecycle::Ready,
             last_delivery: Some(DeliveryReport::new(2, 1, 1).expect("delivery")),
@@ -382,6 +381,10 @@ mod tests {
             SynchronizationSummary::new(SyncConfidence::Good, -2.5, 18.0, 1.25).expect("sync"),
         );
         snapshot.listeners.push(listener);
+        snapshot
+    }
+
+    fn active_host_snapshot() -> ActiveHostSessionSnapshot {
         let endpoint = NetworkEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4100, 4101, 4102)
             .expect("endpoint");
         let advertisement = SessionAdvertisement::new(
@@ -393,7 +396,7 @@ mod tests {
             Some(endpoint),
         )
         .expect("advertisement");
-        let active = ActiveHostSessionSnapshot {
+        ActiveHostSessionSnapshot {
             advertisement,
             endpoint,
             worker_running: true,
@@ -411,8 +414,13 @@ mod tests {
                 queue_peak_depth: 41,
                 queue_overflows: 2,
             },
-        };
+        }
+    }
 
+    #[test]
+    fn projection_exposes_age_sync_delivery_and_core_capabilities() {
+        let snapshot = projection_snapshot();
+        let active = active_host_snapshot();
         let dto = HostSessionSnapshotDto::from_parts(
             &snapshot,
             Some(&active),

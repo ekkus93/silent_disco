@@ -318,7 +318,7 @@ mod tests {
         let mut output = [1.0_f32, 1.0, 1.0, 1.0];
         callback.write(&mut output);
 
-        assert_eq!(output, [0.0_f32; 4]);
+        assert!(output.iter().all(|sample| sample.abs() <= f32::EPSILON));
         assert_eq!(telemetry.callback_count.load(Ordering::Relaxed), 1);
         assert_eq!(telemetry.frames_written.load(Ordering::Relaxed), 0);
         assert_eq!(telemetry.frames_silence_filled.load(Ordering::Relaxed), 2);
@@ -339,7 +339,12 @@ mod tests {
         let mut output = [0.0_f32; 4];
         callback.write(&mut output);
 
-        assert_eq!(output, pushed);
+        assert!(
+            output
+                .iter()
+                .zip(pushed.iter())
+                .all(|(actual, expected)| (*actual - *expected).abs() <= f32::EPSILON)
+        );
         assert_eq!(telemetry.frames_written.load(Ordering::Relaxed), 2);
         assert_eq!(telemetry.frames_silence_filled.load(Ordering::Relaxed), 0);
     }

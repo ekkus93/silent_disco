@@ -352,7 +352,7 @@ fn measure_transport(
         factory.as_ref(),
         &mut *host,
         &session_id,
-        clock.clone(),
+        &clock,
         listener_count,
         usize::try_from(packets)?.saturating_add(64),
     )?;
@@ -422,7 +422,7 @@ fn measure_reconnect() -> ProbeResult<ReconnectMetric> {
         &factory,
         &mut *host,
         &session_id,
-        clock.clone(),
+        &clock,
         listener_count,
         128,
     )?;
@@ -520,7 +520,7 @@ fn measure_soak(seconds: u64) -> ProbeResult<SoakMetric> {
         &factory,
         &mut *host,
         &session_id,
-        clock.clone(),
+        &clock,
         DEFAULT_SOAK_LISTENERS,
         128,
     )?;
@@ -575,7 +575,7 @@ fn connect_and_authorize_listeners<F: TransportFactory + ?Sized>(
     factory: &F,
     host: &mut dyn HostTransportNode,
     session_id: &SessionId,
-    clock: Arc<ManualTransportClock>,
+    clock: &Arc<ManualTransportClock>,
     listener_count: usize,
     event_queue_capacity: usize,
 ) -> ProbeResult<Vec<(DeviceId, Box<dyn ListenerTransportNode>)>> {
@@ -587,8 +587,8 @@ fn connect_and_authorize_listeners<F: TransportFactory + ?Sized>(
             device_id.clone(),
             host.endpoint(),
         );
-        config.event_queue_capacity = event_queue_capacity.min(8_192).max(64);
-        let listener = factory.connect_listener(config, clock.clone())?;
+        config.event_queue_capacity = event_queue_capacity.clamp(64, 8_192);
+        let listener = factory.connect_listener(config, Arc::clone(clock))?;
         host.authorize_peer(&device_id, listener.local_routes())?;
         listeners.push((device_id, listener));
     }
