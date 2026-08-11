@@ -28,6 +28,11 @@ pub(super) fn action_revision_delta(action: &ScenarioAction) -> u64 {
     }
 }
 
+/// Reads the actor's current authoritative snapshot revision.
+///
+/// # Errors
+///
+/// Returns a Lab execution error when the core snapshot cannot be read.
 pub(super) fn current_revision(
     handle: &CoreActorHandle,
 ) -> Result<SnapshotRevision, ScenarioExecutionError> {
