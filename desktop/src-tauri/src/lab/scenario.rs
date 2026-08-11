@@ -30,4 +30,6 @@ pub(crate) use schema::{
 };
 
 #[cfg(test)]
+mod live_transport_proof_tests;
+#[cfg(test)]
 mod tests;
