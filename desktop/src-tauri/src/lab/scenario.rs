@@ -14,6 +14,13 @@ mod live_transport;
 mod report;
 mod schema;
 
+use crate::dto::DesktopErrorDto;
+use crate::lab::clock::LabNodeClock;
+use crate::lab::{LabNodeId, LabRuntime};
+use crate::platform::identity::DesktopIdentity;
+use silent_disco_core::runtime::CoreActorHandle;
+use std::sync::Arc;
+
 #[cfg(test)]
 pub(crate) use assertions::evaluate_assertion;
 #[cfg(test)]
@@ -28,6 +35,38 @@ pub(crate) use schema::{
     ScenarioAction, ScenarioAssertion, ScenarioClock, ScenarioLifecycleTarget, ScenarioLink,
     ScenarioParseError, ScenarioValidationError, load_scenario_json,
 };
+
+pub(in crate::lab::scenario) fn scenario_node_parts(
+    lab: &LabRuntime,
+    node_id: LabNodeId,
+) -> Result<(CoreActorHandle, DesktopIdentity, Arc<LabNodeClock>), DesktopErrorDto> {
+    let nodes = lab.nodes.lock().map_err(|_| {
+        DesktopErrorDto::new(
+            "desktop.lab.state_poisoned",
+            "runtime",
+            "fatal",
+            false,
+            "the Lab runtime's node registry mutex was poisoned",
+        )
+    })?;
+    let node = nodes.get(&node_id).ok_or_else(|| {
+        DesktopErrorDto::new(
+            "desktop.lab.unknown_node",
+            "runtime",
+            "error",
+            false,
+            &format!(
+                "Lab node {} does not exist or was already stopped",
+                node_id.as_u32()
+            ),
+        )
+    })?;
+    Ok((
+        node.handle(),
+        node.identity().clone(),
+        node.clock(),
+    ))
+}
 
 #[cfg(test)]
 mod live_transport_proof_tests;
