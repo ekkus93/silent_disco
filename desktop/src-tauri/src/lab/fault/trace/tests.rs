@@ -21,6 +21,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn audio_event(payload: Vec<u8>) -> TransportEvent {
+    let samples_per_packet =
+        u32::try_from(payload.len() / 4).expect("test payload sample count fits u32");
     TransportEvent::FrameReceived {
         channel: TransportChannel::Audio,
         peer: TransportPeer {
@@ -34,7 +36,7 @@ fn audio_event(payload: Vec<u8>) -> TransportEvent {
             codec: AudioCodec::PcmS16Le,
             sample_rate: 48_000,
             channels: 2,
-            samples_per_packet: 4,
+            samples_per_packet,
             first_sample_index: SampleIndex::new(36),
             host_presentation_time_ms: MonotonicMillis::new(1_234),
             payload,
