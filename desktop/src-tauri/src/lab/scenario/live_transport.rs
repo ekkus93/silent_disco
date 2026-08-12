@@ -13,9 +13,7 @@ use self::support::{
 use self::sync::LiveSyncState;
 use super::{NodeId, Scenario, ScenarioAction, scenario_node_parts};
 use crate::dto::DesktopErrorDto;
-use crate::lab::fault::{
-    LabFaultController, LabLatencyTransportFactory,
-};
+use crate::lab::fault::{LabFaultController, LabLatencyTransportFactory};
 use crate::lab::{LabClock, LabNodeId, LabRuntime};
 use crate::platform::host_transport_events::HostTransportEventProcessor;
 use silent_disco_core::domain::{DeviceId, OperationId};
