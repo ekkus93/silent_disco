@@ -1,8 +1,7 @@
 use super::{
     Divergence, MAX_RECORDING_FILE_BYTES, RECORDING_FORMAT_VERSION, RecordedCoreVersion,
     RecordingLoadError, RecordingSaveError, ScenarioRecording, first_divergence,
-    first_trace_divergence,
-    load_recording_from_path, load_recording_json, save_recording_to_path,
+    first_trace_divergence, load_recording_from_path, load_recording_json, save_recording_to_path,
 };
 use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind};
 use crate::lab::scenario::{
@@ -307,8 +306,8 @@ fn changed_node_notification_is_a_replay_divergence_even_when_report_matches() {
         name: "stopAdvertising".to_owned(),
     };
 
-    let divergence = first_trace_divergence(&recorded, &replayed)
-        .expect("changed notification must diverge");
+    let divergence =
+        first_trace_divergence(&recorded, &replayed).expect("changed notification must diverge");
     assert!(matches!(
         divergence,
         Divergence::NotificationMismatch {
