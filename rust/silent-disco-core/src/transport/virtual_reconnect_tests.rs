@@ -25,11 +25,8 @@ fn disconnect_then_reconnect_obeys_the_virtual_clock_delay() {
             clock.clone(),
         )
         .expect("virtual host should bind");
-    let listener_config = ListenerTransportConfig::loopback(
-        session_id,
-        device_id.clone(),
-        host.endpoint(),
-    );
+    let listener_config =
+        ListenerTransportConfig::loopback(session_id, device_id.clone(), host.endpoint());
     let mut listener = factory
         .connect_listener(listener_config.clone(), clock.clone())
         .expect("initial listener should connect");
@@ -50,7 +47,9 @@ fn disconnect_then_reconnect_obeys_the_virtual_clock_delay() {
             .expect("listener should observe the disconnect"),
         TransportEvent::PeerDisconnected { .. }
     ));
-    listener.shutdown().expect("disconnected listener should stop");
+    listener
+        .shutdown()
+        .expect("disconnected listener should stop");
 
     let Err(too_early) = factory.connect_listener(listener_config.clone(), clock.clone()) else {
         panic!("reconnect before the virtual deadline must fail");
@@ -74,7 +73,9 @@ fn disconnect_then_reconnect_obeys_the_virtual_clock_delay() {
         TransportEvent::PeerAccepted { .. }
     ));
 
-    reconnected.shutdown().expect("reconnected listener should stop");
+    reconnected
+        .shutdown()
+        .expect("reconnected listener should stop");
     host.shutdown().expect("host should stop");
 }
 
@@ -82,8 +83,8 @@ fn disconnect_then_reconnect_obeys_the_virtual_clock_delay() {
 fn zero_reconnect_delay_does_not_invent_a_backoff() {
     let session_id = SessionId::new("reconnect-zero").expect("session ID");
     let device_id = DeviceId::new("reconnect-zero-listener").expect("device ID");
-    let factory = VirtualTransportFactory::new(VirtualTransportNetwork::default())
-        .with_reconnect_delay(0);
+    let factory =
+        VirtualTransportFactory::new(VirtualTransportNetwork::default()).with_reconnect_delay(0);
     let clock = Arc::new(ManualTransportClock::new(3_000));
     let mut host = factory
         .bind_host(
