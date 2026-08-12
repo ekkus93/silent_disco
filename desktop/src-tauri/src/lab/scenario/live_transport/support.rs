@@ -39,10 +39,12 @@ pub(super) fn build_receive_profiles(
         }
     }
     for node in &scenario.nodes {
-        profiles.entry(node.id.clone()).or_insert(ReceiveFaultProfile {
-            seed: node_seed(scenario.seed, &node.id),
-            ..ReceiveFaultProfile::default()
-        });
+        profiles
+            .entry(node.id.clone())
+            .or_insert(ReceiveFaultProfile {
+                seed: node_seed(scenario.seed, &node.id),
+                ..ReceiveFaultProfile::default()
+            });
     }
     Ok(profiles)
 }
