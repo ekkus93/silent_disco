@@ -108,6 +108,5 @@ pub(crate) struct ClockAdvance {
 pub(crate) struct ScenarioTrace {
     pub(crate) clock_advances: Vec<ClockAdvance>,
     pub(crate) node_notifications: Vec<(String, Vec<RecordedNotification>)>,
-    #[serde(default)]
     pub(crate) transport_trace: TransportTrace,
 }
