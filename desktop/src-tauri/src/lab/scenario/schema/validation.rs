@@ -151,10 +151,7 @@ impl Scenario {
                 loss_permille,
             } = &step.action
             {
-                for (field, node) in [
-                    ("steps[].action.from", from),
-                    ("steps[].action.to", to),
-                ] {
+                for (field, node) in [("steps[].action.from", from), ("steps[].action.to", to)] {
                     if !known_nodes.contains(node.as_str()) {
                         return Err(ScenarioValidationError::UnknownNode {
                             field,
@@ -168,7 +165,11 @@ impl Scenario {
                         target_node: to.to_string(),
                     });
                 }
-                if !self.links.iter().any(|link| &link.from == from && &link.to == to) {
+                if !self
+                    .links
+                    .iter()
+                    .any(|link| &link.from == from && &link.to == to)
+                {
                     return Err(ScenarioValidationError::UnknownLink {
                         from: from.to_string(),
                         to: to.to_string(),
