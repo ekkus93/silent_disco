@@ -35,7 +35,7 @@ fn empty_trace() -> ScenarioTrace {
     ScenarioTrace {
         clock_advances: Vec::new(),
         node_notifications: Vec::new(),
-        transport_trace: Default::default(),
+        transport_trace: crate::lab::fault::trace::TransportTrace::default(),
     }
 }
 
