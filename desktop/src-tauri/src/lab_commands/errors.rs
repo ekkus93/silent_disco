@@ -144,7 +144,9 @@ pub(super) fn scenario_encode_error(error: &serde_json::Error) -> DesktopErrorDt
         "runtime",
         "fatal",
         false,
-        &format!("the validated Lab scenario could not be re-encoded after editing faults: {error}"),
+        &format!(
+            "the validated Lab scenario could not be re-encoded after editing faults: {error}"
+        ),
     )
 }
 

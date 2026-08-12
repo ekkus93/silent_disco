@@ -91,7 +91,8 @@ use dto_convert::{node_dto, run_outcome_dto, scenario_summary_dto, state_dto};
 use errors::{
     already_running_error, execution_error, invalid_fault_field_error, invalid_node_id_error,
     no_active_run_error, no_run_to_export_error, no_scenario_loaded_error, path_unavailable_error,
-    poisoned_error, recording_io_error, run_control_error, run_worker_error, scenario_stopped_error,
+    poisoned_error, recording_io_error, run_control_error, run_worker_error,
+    scenario_stopped_error,
 };
 use scenario_io::{parse_and_validate, read_bounded_scenario_file, rewrite_link_faults};
 use session::ensure_runtime;
@@ -328,9 +329,10 @@ pub fn lab_set_link_faults(
 ) -> Result<LabScenarioSummaryDto, DesktopErrorDto> {
     let latency_ms = parse_fault_u64("latencyMs", &request.latency_ms)?;
     let jitter_ms = parse_fault_u64("jitterMs", &request.jitter_ms)?;
-    let loss_permille = request.loss_permille.parse::<u16>().map_err(|_| {
-        invalid_fault_field_error("lossPermille", request.loss_permille.as_str())
-    })?;
+    let loss_permille = request
+        .loss_permille
+        .parse::<u16>()
+        .map_err(|_| invalid_fault_field_error("lossPermille", request.loss_permille.as_str()))?;
 
     let lab_state = app.state::<LabAppState>();
     let mut session = lab_state.inner.lock().map_err(|_| poisoned_error())?;
@@ -421,9 +423,8 @@ pub async fn lab_run_loaded_scenario(app: AppHandle) -> Result<LabRunOutcomeDto,
     session.stop_all_after_run = false;
     session.run_control = None;
 
-    let run_result = worker_result.map_err(|error| {
-        run_worker_error(&error).with_appended_cleanup(shutdown_result.clone())
-    })?;
+    let run_result = worker_result
+        .map_err(|error| run_worker_error(&error).with_appended_cleanup(shutdown_result.clone()))?;
     let (report, trace) = match run_result {
         Ok(outcome) => outcome,
         Err(ScenarioExecutionError::RunControl(ScenarioRunControlError::Stopped)) => {
@@ -503,9 +504,7 @@ pub fn lab_resume_loaded_scenario(app: AppHandle) -> Result<(), DesktopErrorDto>
             "a Lab scenario is marked running but has no run-control handle",
         )
     })?;
-    control
-        .resume()
-        .map_err(|error| run_control_error(&error))?;
+    control.resume().map_err(|error| run_control_error(&error))?;
     session.paused = false;
     Ok(())
 }
