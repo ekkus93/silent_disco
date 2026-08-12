@@ -1,4 +1,4 @@
-name: Apply Block 26 Playback Failure Fix
+name: Apply Block 13 Targeted Transport
 
 on:
   push:
@@ -11,77 +11,473 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-block26-playback-failure-fix
+  group: apply-block13-targeted-transport
   cancel-in-progress: false
 
 jobs:
   apply:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Apply exact Block 26 patch
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Implement targeted control delivery
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git hash-object desktop/src-tauri/src/platform/playback_streamer.rs)" = "9f2c538cb1b04f8868a014ddc6d104cc71bdc2a1"
-          test "$(git hash-object desktop/src-tauri/src/platform/host_transport.rs)" = "427e041fb11b2e5004be5b338677710d884d3bd2"
-          test "$(git hash-object desktop/src-tauri/src/platform/network/playback_control.rs)" = "44cd9133ce9b5c787f82ee12d0241fec51077b87"
-          test "$(git hash-object desktop/src-tauri/src/platform/start_playback_tests/lifecycle_tests.rs)" = "be6ee5703247ae763778ff690eaa5898cd5ab12b"
-          test "$(git hash-object desktop/src-tauri/src/platform/host_transport_tests.rs)" = "b56f8ebaccc74f225663760981807167febb0e9f"
-          test "$(git hash-object desktop/src-tauri/src/platform/start_playback_tests/streaming_tests.rs)" = "282a6d575ee1ac7cad34e688c754492f7ac6f700"
-          printf '%s' 'H4sICCTOe2oCA2Jsb2NrMjZfcGxheWJhY2tfZmFpbHVyZV9maXguc2FuaXRpemVkLmRpZmYA7Vvrc9s4kv98/isQbZWXKkmMHrZjy0lmPLGnJrVxnLWdvavbumJgErK4pggOQdrxxrm//bobIAk+5NfM3H5ZVyqUSLDR6OevG9BoNGKBUFeZTF6q1B9lPE9D/PQyiXi2kOkKP9xecP/KU1kq+Eqkbqr+Yzqe7ozGu6PJlI0n8+nOfGvsTmavZnuz7d0xG4zhb2MwGPxhtH/8kY2m29vDHTbAyyv2448bDP9WMg4zmXoZT+bsJMlCGb/ePLuN/TMRByJ9fZAHoTzkGb9M+ert2+EG67PRW3YqVB5lr53+kB1qlo/SVKaHmXzLvmnKkcjYKs9YxFXmpSKRaSYCL5EqxEm8lSrny3e23rI37KOMxf7GwH5XLzOMLz2B5Ms3WnMWb+uZpUwKLvAvXAAhmbiR5IFzksKygOJ8fuD/moep6NtD8e8C5rza1yLbnQ4nIMPp7mw42S2F1vzjvp+vclASLpDnSnhysVAig0Wum3TYptTfb98Drd/wNPAy6RlNOZsL0IQY2pqDN0fNN2HRL254mHl5nIWRdxNmyzD2FGjV40vBA28p0/CfMi7pxSK7kenVkGSFQhk0Sa545i/Z70wU/06unCzNQRNvwHq+rx2z4JHSg0hFw+6BYBQOWYsm1z0I/xrGBTZ0JlfCvLu//j1jH53PO5jvuAW6QQu3OS0k5V6kYDA++kzp7CRLh/5fK8IHFnPfQjoW0bKmIJWJ80gWm9N932jp51T41+fhSsg8Ix+ez823wgQe8cZhqHwZx8IHr7ONAv12tjXGUDfb2htCVLTddsnjIBKuyi9WYMYco5snrkWcORTpjvDjfP7JrOssA59+B+9cisCp3ZzPz8CiE5i6v2Gv0l3xBFXgNELUfL5I5aowK2MApKIkDVc8vUUbaCrR0nUqsjyNSRTmhboduOiLHgeOIGwHnh8JHueJkwC/Igv/KVIIwRiyXeQNeH7My5Wen/6u0tKpv1ks38iqzRwopzVrn+7W6YHMgQapemu2M5xO2GBrezKc7JW6JlOcs81PqcykL6OfKR7pZ8aO4elB6he55Bepso/6wTsZZ6mM3prhODWOzeQq9H+SMhpujCgJXsBn1JGdEfHe/TmxxhEkBDQ7JzAZFq2AWGcCYh28NmoYAMbJ/ZZZFAHUeN73/Wq6BCQGNs0p6WbgQZCUYJJiQncp0Y87BrmXInP6z06ptRBi2KQA3oic1Qp0eLeChxWHcCUwJJY3dqzMUh4rBBYePHD6LZm15FY++W5xgbTh/fV0f7B4wsERZjqSYqfcFIcZ4Ra4MYQZ5FmL0l4aBQBN5TWE6qOPh97BL0cHh94vJ6fv//vko3d8du9C1ojQNoJG6M2WEFuC+VxFQiSONeOnkw8fvPcfz49O/3bwobSgjdHDSJdMp5RVBxR9Bf/c8fjV3hRA56vHw9znEabAP5tQ4IfLdFwL/N+rOK2l96e/+4tLJxMq6/+PvpOAtlSeCMjHi5js20NzgPC0QJwFI51NQqUiWqxBwSaCkOPXwAe+45LLwH+pIE0NWeU5pwLsgcy/ZpeUITQTlCCQiv7qZvxKVDa/xiCcvk3RtnoD5jStf8gwdlrYAt434RbTq/7YAF2Yjzx6fFTlPFsI83ke82seRvwiEk4bu/SMKTDUOSt1bhiDFBGHkCQCFuQoJ4ZKYGqZZ4G8iXsNZvp968b3ItUMTLKpK9eQcJ6oT/Z0fbJn6fMR7meiVVUU+jpvrfeX3cl4sjebPt4Rf+sUjbJzulVzyYKqMb9H+WcYMz8l/FUwWTlrFbZbbnuPiu0kXfM9XYDCXEZRDdxDjxr3IulfOU2AVCDCO++OdXpIIkMF1Wvg9N0gk+CyP3RFAe5n4bXQMBFmdvV3lysPGL0/EDzXNwl0kdsthXa9loOmgjK+YjxmmiPtyUooBUmx5aIN2ej1rglRml7jjRRLz5VoKaMjWK9TRKcogJN+I2S8fPkS7AUlqLQEGov/s2J+nqYAALAYB1QHsYohc0MargDGVYR8tA12wVWoWK4gogGbTN3GPgbWRMYgMAY+7/MoEikQlqskRwzBeOknFTGcBKxglTBHuJcu+0IZE+6A7RsY8qUPBgyKgLmAm1BBLS4zILaA6ZaPCS+aWun5KFH1MgoXwr8FkK+/d8aBrT13ezKdbgEy3318qPk9p6O6YPfVcAZlAVy2q85NgfDK+N93xdcEakiHjJ11Z6NeEcbBImXa9TI9qBITjkczGqCyDtpeE4QKKyZOOe1mGUaCUSnKwDh4hEDttioGSY+aVCZSuIMhCQ2sEBYERrAErMNAv9ehCsGdGVWQLjuHcTIK9BCs4qGI0rSg6k1v2Zd1xfyXIuEzJcmAmPgKqwQMH0Z5KiAuLTLkQhOj9b/8/B7MnIfEdAxK5VHFI3WMgBaUNtgoS+FGKqhlRn4uY3dj8Ke/o5oh2kNE5x3hXE/trcLANEC9UFWtxYtbD/iploFLrkBNGUchhcD0C+4LL6YeVfU9hBL265DxIIC1qz7GWpglgvIovAZOvYjHnnnYEXAFDIuzKH7h9GLJzDvsw8HHagYmYy3Ld+/JxPaZugopxPb6raquKJb30ZCKJWQC9PiGncPlMISwFYsbywzxaUkJhztg0H4aJqCdIZC9DEFuptXAL2FBEosUmae+cDbx5dq7pNShaZkMGUjaFxCQ4RZIAa5ZqMQKop/V5vNEHEA6ixEyWuCXfFvHKJ0Xanw9WiGlJOrBAooa/O5sFpxulvxslmu2/BzGlnZZSovamirmiVpKi9RdceuuhubNTddqyBNQeMMaXSL8Cuo1qqxWYDisSLoPQBgrmdVDloyj28701OvXLCeAqBKFMaKZ9zGwi30uXTYP2PnR2bl3/v746OTzeSEPikptNssVg+vpBN3JGsawyvlpYJjdMr5A1684NS7dMyQsEXOlwMJeNGBJg/PX5aoaOKNXj41XIskYIIeYEirxEGbqnrgsgl5F0HZNlUENXa+lD6nal7Fu8UF0iqJQOdOx1e6y1FC0Z9cYQMF3h1AJu/QQKxeQDKUnTGynZK9yHWbq5lAK2fCjReuJX1/o/jB2Q9WtAv8fsl4t6Q26NaHfAgiiIIi4WBPwMFZgj5D/CLPoJMju7tYOtZBnzy7b4IFeLayrtQJm6MzZt+82sqxNom/bgcz0DkHof5CTm1aw5eQNMRsOGpSGa+i0okQX4liAGahlHbDY+GPwRLwyeEbLZy0q251PZu50b3dv69X27NmNn6eRp1pzskW1Jlx2JyXoexpqYxrRnJVdvBrWGmVyVNnlr7nIhXY9NFE9MpVB7otUk9FwDAJfHEBe81NKmExC9lxE8gbSeQR3ID9ppFaPWuAtKgerJshgQBthsC+6iv2yrxEd8hhmuqrIAKxRmxCoQc6k1D6KAJJVTgTpVWpqCsIHcKP78CySSpmwj28DmKOwuQ7RtfDaIo8ir4KTJBvKEp7BpF7BkEcMFXiujtEcRRvPiFY02kC04oOnxiJybK/WynvD3slUHODnU10ZFmigcuRyxDsZL8JLDZoOxXXoi/eB/la0oUYl/yNcTq+yFXKw94e9WpNpBYpkd1BYhYvQpyRw1yzB9XJcvDj2wIqyvIA4cU21tF5xr7n7qBt5VpFsWDC3GtCGBFNDgTrOgay0J+ivNWF6NmuKcK/mpQYhaqgPtxg1mDuwb2t5WlGUbMwLcLfO80ETUGrLFSQBCHf69VIHBhuu14EZQGqwtPBUVQY0vkml91MxntF469FBAk59zaNjGQD7xzzOeWQ9nlqf8RjCGu3UpFfTz4L0cksbChg89HZCGQbN45rCYmAF94r0IwsrXABmJqjdQE64v3VekCwcAbd1CG3UeHONnL0wcH0oEcBU+g18dZD6WtpnhBsqwtjlAA2LBYcAVX+vCyYit7UcVpOL6fXAOq1NunKutf6OsrHmra/NLMjWbrEW7Redjx65zG6HLNbXCdBLG6BdvzfN7UGzF+mY67EBQAQV7veyxBDSY9thqVDxnK1TfkPnRckNb5zRx8px6es9fkvPmw5H2/G6b4WVj25bzdlx0Uo7JiCtpxjXWvuFtOsFDvZrixxXO02EnTYP0h4bu+5k7AFYsKXRdRjDGJ510sE64FD6RFOm1eTrD5I0D49U2xTNAsFQq8IHu5A57rGzkisbf9AhBohLgDV0R4QV+5AyfhDKZxIbKpDkARxVGL05T6h0ZFyH16sJmTmu9Y2u33t1TN7mYl1TFwiqVhu3bHaU7qQH9poDS/4b9zUyKTCYqj99y8b28vTKrZWRsDuQXBDyyxisOfSVtVz9qTCnDgjajg2/EcQPNqhDfIzbe0IZHIiwrTxsgW1rHojYhwJEwWpA2aA8bAUxEcv8csmcKb2jKSkBFhGoPpDi2EBORDqCVV4B9uS6FIUiKc0WYHrUtUYjVQQyGdcUVoJDYYqlHjah49E193OZq0p2YG0Z9gvkgi3DgOBszMDHGM4D7KoIu9/P7VlXp2rW1xOzXXe2s72zu7U93fqNPetnTkc968kO9azhsj37l/asT8A6GB1lRK/3ES6kKww9utXE8wxP+uHBBwDApk9YFS/mjKcmpRsTyCDkGR77qF7dDMYGM3gFVD4wx2XO00DbKxY/oHU9/SWW3GGGG3BDTRD3Mcqml6YBlxGQBp6Y2aEsWgWNKkWfzkRuFNQrGXaTa2c4IGlepiYB6jOOeoJ/95H/3Uf+vfrI7b6SdSga809BqnB8bbRVZ7BkQXvI/1srG2cLWp1s8MgPWBvGtwbDUp644dVOVqjbEVkIQ4jlEeSJFXZEUrRlJbIsKgA7bnItRUyZhKcYW1JsSyjcrcIshn0RTSORkHBIxVCZKbdQ6CPbs5Ptqj9Lx+RocaUmwLK12Kyaxez1VpLtKmg0nVKqNibp1Pf+E/neGtf5BsARRd7vxT1RGz1zDVa/03bZDv6GTXHbiKueW1pJxWQR4K9qVen9T25SRtDCX4Uj6Vje5UkmjfxLdoWKv83NB0NDQ2zrdpWaWwl1vNBa5PMBxh/TZK5H5Q4AtTefztzxq+lsvDveevYZg8cSRmQ2mdHvQPCiz5Nj4L2ntfWtUcU2Wv3DsoLGo7praKVFf+NbdTR9WDUzfyFbLN/HAILHSebzg9QHSTducjq9jLTow+edreq0GtLQSP0MBZQntXOt7CJfLETKLgTIUPsbgEGwBH1iQfFVEmnPgVXSqUK0bH1MBSEKQKp/gDkAoPtfCF5gxhccwBxuRDpKCPbl3YeDz4dH7ir40nc3qOcNAOv84PT88yfvp88//3x06h2fzVm+swVhDSjA2tCtQp99PPqvc+/w6Owv5yefvLPz06ODY+/s6K+fjz6+O5qzcqHwWvlZA51Jv1zxqVAyujaFUnGahwwdypsFcm2WSeBmyGQizGkgtcRtQk0lgBqJmtYq4Te151bdNaRNALJBRXhwRM2tAISBRzFcMrQ9sLAdNtizf6NFZ9+gqAd6HuGtwPxwwSCuApsMmY2Gzoo65JCYK1p+Vc/qB+uUePv8EOCucvLOlsy6w9L6sDMbtJVY/ExJ5y3TTIJ5ymPO9bYSuizPXlQNXdNmwr2/DobNIet+dd6Omg93zXPUrR9mUL96tO5gahmK3TAGoGEdPQl6w47XSDOdT4idrid08L3j/marOdMY1LcOtJeHBhvShej+Nat4dtqCqxmCsWR9th0tLnCxlPfM/fIHAWD05/wKgJoVFop3dcWICbUsGCsvKLbaLwRW/qNRSe4nOiA323YnKHui9FIbuG4/qZ7dY4Fl4ckhhr6DzgSjTaCmX/5MprPhbKf0IPN7kQHVgA8KpNWDtE+OFja6/vwoKUAAz1hDv7k3SlnAaiEgcnp5EkB6cGrniPlXETSOFutbdyZetfaczH3XXwo8PI21JsQ8q+loIzr7eGqDTrerDB52lVK6nvi6BMySiaDX8XO90lnaTxY841HXE+Ms6w+Sl4jRdJ3DAEQRLkKwuVIrdJptDWM1ORVO1R2ZLNTailGjb8VstaMK6+JW0dE2GwjtGDZ4glIeF7sGD6uijFmDh1TQFauaOz9odtSgBCfEBVq//6K3HdM13vxUPvhPChZHui8PTthYvP27Kl/viOnfNWhurnB3yTq030n3LzBoPj/TkebN2w7h6Wjk6dM2IIz/A1ii6ekFPgAA' | base64 -d | gzip -dc > /tmp/block26.diff
-          git apply --check /tmp/block26.diff
-          git apply /tmp/block26.diff
-          python3 - <<'PY_CHECK'
+          python3 - <<'PY'
           from pathlib import Path
-          files = [
-              Path('desktop/src-tauri/src/platform/playback_streamer.rs'),
-              Path('desktop/src-tauri/src/platform/host_transport.rs'),
-              Path('desktop/src-tauri/src/platform/network/playback_control.rs'),
-              Path('desktop/src-tauri/src/platform/start_playback_tests/lifecycle_tests.rs'),
-              Path('desktop/src-tauri/src/platform/host_transport_tests.rs'),
-              Path('desktop/src-tauri/src/platform/start_playback_tests/streaming_tests.rs'),
-          ]
-          for path in files:
-              text = path.read_text(encoding='utf-8')
-              if len(text.splitlines()) >= 800:
-                  raise SystemExit(f'oversized source after patch: {path}')
-              if any(line.rstrip() != line for line in text.splitlines()):
-                  raise SystemExit(f'trailing whitespace: {path}')
-          pump = files[0].read_text(encoding='utf-8')
-          required = [
-              'let mut streaming_error: Option<DesktopErrorDto> = None;',
-              'if let Err(error) = network.broadcast_playback_frame(frame)',
-              'let now = network.transport_now()?;',
-              '.with_appended_cleanup(packetizer_result.err())',
-          ]
-          for token in required:
-              if token not in pump:
-                  raise SystemExit(f'missing pump invariant: {token}')
-          if 'drop(network.broadcast_playback_frame(frame));' in pump:
-              raise SystemExit('silent playback broadcast failure still present')
-          joined = '\n'.join(path.read_text(encoding='utf-8') for path in files)
-          for test in [
-              'pause_stops_future_presentation_progression_until_resume',
-              'a_transport_worker_failure_mid_stream_is_reported_by_the_playback_pump',
-              'a_full_broadcast_queue_is_a_visible_resource_limit_failure',
-          ]:
-              if test not in joined:
-                  raise SystemExit(f'missing regression test: {test}')
-          print('Block 26 source invariants verified')
-          PY_CHECK
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          models = "app/src/main/java/com/ekkus/silentdisco/core/transport/TransportModels.kt"
+          replace_once(
+              models,
+              """data class SendAllResult(
+              val peerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+          ) {
+              val deliveredToAnyPeer: Boolean get() = successCount > 0
+              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+          }
+
+          """,
+              """data class SendAllResult(
+              val peerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+          ) {
+              val deliveredToAnyPeer: Boolean get() = successCount > 0
+              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+          }
+
+          data class TargetedDeliveryResult(
+              val listenerId: String,
+              val intendedPeerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+              val message: String? = null,
+          ) {
+              val deliveredToTarget: Boolean
+                  get() = intendedPeerCount == 1 && successCount == 1 && failureCount == 0
+
+              companion object {
+                  fun delivered(listenerId: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 1,
+                      successCount = 1,
+                      failureCount = 0,
+                  )
+
+                  fun notFound(listenerId: String, message: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 0,
+                      successCount = 0,
+                      failureCount = 0,
+                      message = message,
+                  )
+
+                  fun failed(listenerId: String, message: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 1,
+                      successCount = 0,
+                      failureCount = 1,
+                      message = message,
+                  )
+              }
+          }
+
+          """,
+          )
+          replace_once(
+              models,
+              """    suspend fun sendControlToHost(message: ControlMessage)
+              suspend fun broadcastControl(message: ControlMessage): SendAllResult
+          """,
+              """    suspend fun sendControlToHost(message: ControlMessage)
+              suspend fun sendControlToListener(
+                  listenerId: String,
+                  message: ControlMessage,
+              ): TargetedDeliveryResult
+              suspend fun broadcastControl(message: ControlMessage): SendAllResult
+          """,
+          )
+
+          tcp = "app/src/main/java/com/ekkus/silentdisco/core/transport/TcpTransport.kt"
+          replace_once(
+              tcp,
+              """internal data class TcpChannelStats(
+              val connectionCount: Int = 0,
+              val bytesSent: Long = 0,
+              val bytesReceived: Long = 0,
+          )
+
+          """,
+              """internal data class TcpChannelStats(
+              val connectionCount: Int = 0,
+              val bytesSent: Long = 0,
+              val bytesReceived: Long = 0,
+          )
+
+          internal data class PeerDeliveryResult(
+              val peerFound: Boolean,
+              val delivered: Boolean,
+              val errorMessage: String? = null,
+          )
+
+          """,
+          )
+          replace_once(
+              tcp,
+              """    suspend fun sendAll(message: T): SendAllResult {
+              val snapshot = peers.values.toList()
+              var success = 0
+              var failure = 0
+              snapshot.forEach { peer ->
+                  runCatching { peer.send(message) }
+                      .onSuccess { success += 1 }
+                      .onFailure { error ->
+                          failure += 1
+                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                      }
+              }
+              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
+          }
+
+          """,
+              """    suspend fun sendAll(message: T): SendAllResult {
+              val snapshot = peers.values.toList()
+              var success = 0
+              var failure = 0
+              snapshot.forEach { peer ->
+                  runCatching { peer.send(message) }
+                      .onSuccess { success += 1 }
+                      .onFailure { error ->
+                          failure += 1
+                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                      }
+              }
+              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
+          }
+
+              suspend fun sendTo(remoteAddress: String, message: T): PeerDeliveryResult {
+                  val peer = peers[remoteAddress]
+                      ?: return PeerDeliveryResult(
+                          peerFound = false,
+                          delivered = false,
+                          errorMessage = "No active $channelName connection for $remoteAddress",
+                      )
+                  return runCatching {
+                      peer.send(message)
+                      PeerDeliveryResult(peerFound = true, delivered = true)
+                  }.getOrElse { error ->
+                      val messageText = error.message ?: "Unknown $channelName send failure"
+                      logger.w(
+                          "transport.$channelName.send-target",
+                          "Failed to send to $remoteAddress: $messageText",
+                      )
+                      peer.close()
+                      PeerDeliveryResult(
+                          peerFound = true,
+                          delivered = false,
+                          errorMessage = messageText,
+                      )
+                  }
+              }
+
+          """,
+          )
+
+          service = "app/src/main/java/com/ekkus/silentdisco/core/transport/WifiDirectTransportService.kt"
+          replace_once(
+              service,
+              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+          import kotlinx.coroutines.CoroutineScope
+          """,
+              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+          import java.util.concurrent.ConcurrentHashMap
+          import kotlinx.coroutines.CoroutineScope
+          """,
+          )
+          replace_once(
+              service,
+              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+              private var activeSession: SessionInfo? = null
+          """,
+              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+              private val listenerControlRoutes = ConcurrentHashMap<String, String>()
+              private var activeSession: SessionInfo? = null
+          """,
+          )
+          replace_once(
+              service,
+              """        hosting = true
+              stopClientChannels()
+          """,
+              """        hosting = true
+              listenerControlRoutes.clear()
+              stopClientChannels()
+          """,
+          )
+          replace_once(
+              service,
+              """    override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+          """,
+              """    override suspend fun sendControlToListener(
+              listenerId: String,
+              message: ControlMessage,
+          ): TargetedDeliveryResult {
+              val embeddedListenerId = message.targetListenerId()
+              if (embeddedListenerId != listenerId) {
+                  return TargetedDeliveryResult.failed(
+                      listenerId,
+                      "Control message target does not match requested listener",
+                  )
+              }
+              val remoteAddress = listenerControlRoutes[listenerId]
+                  ?: return TargetedDeliveryResult.notFound(
+                      listenerId,
+                      "No control connection is associated with listener $listenerId",
+                  )
+              val server = controlServer
+                  ?: return TargetedDeliveryResult.failed(listenerId, "Control server is not active")
+              val delivery = server.sendTo(remoteAddress, message)
+              if (!delivery.peerFound || !delivery.delivered) {
+                  listenerControlRoutes.remove(listenerId, remoteAddress)
+              }
+              recordHeartbeat()
+              updateByteCounts()
+              return when {
+                  delivery.delivered -> TargetedDeliveryResult.delivered(listenerId)
+                  delivery.peerFound -> TargetedDeliveryResult.failed(
+                      listenerId,
+                      delivery.errorMessage ?: "Targeted control delivery failed",
+                  )
+                  else -> TargetedDeliveryResult.notFound(
+                      listenerId,
+                      delivery.errorMessage ?: "Targeted listener connection is no longer active",
+                  )
+              }
+          }
+
+              override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+          """,
+          )
+          replace_once(
+              service,
+              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+              server.incoming.collectInto(_controlMessages::tryEmit)
+          }
+
+          """,
+              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+              scope.launch {
+                  server.incoming.collect { event ->
+                      val message = event.message
+                      if (message is ControlMessage.JoinRequest) {
+                          listenerControlRoutes[message.device.deviceId] = event.remoteAddress
+                      }
+                      _controlMessages.emit(message)
+                      recordHeartbeat()
+                      updateByteCounts()
+                      logger.d("transport.message", "Received message from ${event.remoteAddress}")
+                  }
+              }
+          }
+
+          """,
+          )
+          for flow_name in ("_syncRequests", "_syncResponses", "_audioPackets", "_controlMessages"):
+              old = f"collectInto({flow_name}::tryEmit)"
+              new = f"collectInto({flow_name}::emit)"
+              target = Path(service)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"{service}: missing {old}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+          replace_once(
+              service,
+              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: (T) -> Boolean) {
+              scope.launch {
+                  collect { event ->
+                      emit(event.message)
+          """,
+              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: suspend (T) -> Unit) {
+              scope.launch {
+                  collect { event ->
+                      emit(event.message)
+          """,
+          )
+          replace_once(
+              service,
+              """    private fun stopServerChannels() {
+              controlServer?.close()
+          """,
+              """    private fun stopServerChannels() {
+              listenerControlRoutes.clear()
+              controlServer?.close()
+          """,
+          )
+          replace_once(
+              service,
+              """    private companion object {
+          """,
+              """    private fun ControlMessage.targetListenerId(): String? = when (this) {
+              is ControlMessage.JoinApproval -> listenerId
+              is ControlMessage.JoinRejection -> listenerId
+              is ControlMessage.Heartbeat -> listenerId
+              is ControlMessage.Disconnect -> listenerId
+              is ControlMessage.ResyncNotice -> listenerId
+              is ControlMessage.Hello,
+              is ControlMessage.JoinRequest,
+              is ControlMessage.StreamStart,
+              is ControlMessage.Pause,
+              is ControlMessage.Stop,
+              -> null
+          }
+
+              private companion object {
+          """,
+          )
+          PY
+
+          cat > app/src/test/java/com/ekkus/silentdisco/core/transport/TargetedTcpTransportTest.kt <<'KOTLIN'
+          package com.ekkus.silentdisco.core.transport
+
+          import com.ekkus.silentdisco.core.logging.AppLogger
+          import com.ekkus.silentdisco.core.protocol.ControlMessage
+          import com.ekkus.silentdisco.core.protocol.DeviceIdentity
+          import com.ekkus.silentdisco.core.protocol.SessionId
+          import com.google.common.truth.Truth.assertThat
+          import java.net.ServerSocket
+          import kotlinx.coroutines.async
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.runBlocking
+          import kotlinx.coroutines.withTimeout
+          import org.junit.Test
+
+          class TargetedTcpTransportTest {
+              @Test
+              fun `server sends approval only to source connection`() = runBlocking {
+                  val port = ServerSocket(0).use { it.localPort }
+                  val logger = AppLogger()
+                  val server = TcpServerChannel(
+                      port = port,
+                      channelName = "control-test",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+                  val intendedClient = TcpClientChannel(
+                      host = "127.0.0.1",
+                      port = port,
+                      channelName = "intended-client",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+                  val unrelatedClient = TcpClientChannel(
+                      host = "127.0.0.1",
+                      port = port,
+                      channelName = "unrelated-client",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+
+                  try {
+                      server.start()
+                      intendedClient.connect()
+                      unrelatedClient.connect()
+
+                      val inbound = async {
+                          withTimeout(5_000) { server.incoming.first() }
+                      }
+                      intendedClient.send(
+                          ControlMessage.JoinRequest(
+                              version = 1,
+                              sessionId = SessionId("session-1"),
+                              device = DeviceIdentity("listener-1", "Pixel"),
+                          ),
+                      )
+                      val sourceEvent = inbound.await()
+
+                      val intendedReply = async {
+                          withTimeout(5_000) { intendedClient.incoming.first() }
+                      }
+                      val approval = ControlMessage.JoinApproval(
+                          version = 1,
+                          sessionId = SessionId("session-1"),
+                          listenerId = "listener-1",
+                          trustedForFuture = false,
+                      )
+                      val result = server.sendTo(sourceEvent.remoteAddress, approval)
+
+                      assertThat(result.peerFound).isTrue()
+                      assertThat(result.delivered).isTrue()
+                      assertThat(intendedReply.await().message).isEqualTo(approval)
+                      assertThat(unrelatedClient.bytesReceived()).isEqualTo(0L)
+                  } finally {
+                      unrelatedClient.close()
+                      intendedClient.close()
+                      server.close()
+                  }
+              }
+
+              @Test
+              fun `server reports missing targeted connection`() = runBlocking {
+                  val port = ServerSocket(0).use { it.localPort }
+                  val server = TcpServerChannel(
+                      port = port,
+                      channelName = "control-test",
+                      codec = ControlMessageCodec,
+                      logger = AppLogger(),
+                  )
+                  try {
+                      server.start()
+                      val result = server.sendTo(
+                          "/127.0.0.1:1",
+                          ControlMessage.JoinRejection(
+                              version = 1,
+                              sessionId = SessionId("session-1"),
+                              listenerId = "listener-1",
+                              reason = "rejected",
+                          ),
+                      )
+                      assertThat(result.peerFound).isFalse()
+                      assertThat(result.delivered).isFalse()
+                  } finally {
+                      server.close()
+                  }
+              }
+          }
+          KOTLIN
+
+          git rm .github/workflows/apply-block13-targeted-transport.yml
           git diff --check
+
+      - name: Run targeted transport tests
+        run: ./gradlew testDebugUnitTest --tests com.ekkus.silentdisco.core.transport.TargetedTcpTransportTest --stacktrace --console=plain
+
+      - name: Commit targeted transport
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            desktop/src-tauri/src/platform/playback_streamer.rs \
-            desktop/src-tauri/src/platform/host_transport.rs \
-            desktop/src-tauri/src/platform/network/playback_control.rs \
-            desktop/src-tauri/src/platform/start_playback_tests/lifecycle_tests.rs \
-            desktop/src-tauri/src/platform/host_transport_tests.rs \
-            desktop/src-tauri/src/platform/start_playback_tests/streaming_tests.rs
-          git commit -m "Surface desktop playback transport failures"
+          git add app/src/main app/src/test
+          git commit -m "Add exact-listener control delivery"
           git push origin HEAD:master

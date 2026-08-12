@@ -255,6 +255,24 @@ impl DesktopHostNetworkControl {
         playback.join()
     }
 
+    #[cfg(test)]
+    pub(in crate::platform) fn stop_transport_worker_for_test(&self) -> Result<(), DesktopErrorDto> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_mut() else {
+            return Err(DesktopNetworkError::unavailable(
+                "stopping the test transport worker requires an active host session",
+            )
+            .dto());
+        };
+        active
+            .runtime
+            .stop_worker_for_test()
+            .map_err(DesktopNetworkError::dto)
+    }
+
     /// Returns the transport worker's current monotonic time, the same
     /// clock basis used for sync responses -- callers computing a playback
     /// timestamp (e.g. `host_start_time_ms`) must use this, not a fresh
@@ -313,8 +331,7 @@ impl DesktopHostNetworkControl {
     /// an `Error` state even though the real, already-running stream is
     /// untouched and the duplicate is correctly rejected underneath.
     pub(crate) fn playback_is_active(&self) -> Result<bool, DesktopErrorDto> {
-        let state = self
-            .state
+        let state = self.state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned().dto())?;
         Ok(state

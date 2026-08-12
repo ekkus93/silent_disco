@@ -56,6 +56,8 @@ mod file_picker_tests;
 #[cfg(test)]
 mod host_transport_admission_tests;
 #[cfg(test)]
+mod host_transport_failure_tests;
+#[cfg(test)]
 mod host_transport_tests;
 #[cfg(test)]
 mod monitor_tests;

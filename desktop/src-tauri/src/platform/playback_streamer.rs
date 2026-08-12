@@ -175,7 +175,7 @@ impl DesktopPlaybackStreamer {
                 "error",
                 false,
                 "the playback pump thread ended by panicking, so the stream was never stopped \
-                 cleanly",
+                 cleanle",
             )
         })?
     }
@@ -255,6 +255,7 @@ fn run_pump(
     monitor_tap: Option<&SyncSender<AudioDatagram>>,
 ) -> Result<(), DesktopErrorDto> {
     let mut last_reported_position_ms: Option<u64> = None;
+    let mut streaming_error: Option<DesktopErrorDto> = None;
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -282,10 +283,18 @@ fn run_pump(
                     accumulated_pause_offset_ms.load(Ordering::Acquire),
                 );
                 forward_to_monitor(&frame, monitor_tap);
-                if !wait_until_within_send_ahead_horizon(&frame, network, stop) {
+                match wait_until_within_send_ahead_horizon(&frame, network, stop) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => {
+                        streaming_error = Some(error);
+                        break;
+                    }
+                }
+                if let Err(error) = network.broadcast_playback_frame(frame) {
+                    streaming_error = Some(error);
                     break;
                 }
-                drop(network.broadcast_playback_frame(frame));
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
@@ -330,7 +339,7 @@ fn run_pump(
             session_id,
             stream_id,
             host_stop_time_ms,
-        })))
+        }))
     });
     let stopped_result = if ended_naturally {
         handle.submit_audio_event(AudioEvent::EndOfStream {
@@ -340,6 +349,12 @@ fn run_pump(
         handle.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
     }
     .map_err(DesktopErrorDto::from);
+    if let Some(primary) = streaming_error {
+        return Err(primary
+            .with_appended_cleanup(packetizer_result.err())
+            .with_appended_cleanup(broadcast_result.err())
+            .with_appended_cleanup(stopped_result.err()));
+    }
     packetizer_result.and(broadcast_result).and(stopped_result)
 }
 
@@ -348,10 +363,9 @@ fn run_pump(
 /// Position is computed from the frame's own presentation time against the
 /// stream's start -- the authoritative timeline this stream is scheduled
 /// against -- rather than from wall-clock elapsed time, which would drift
-/// under pause or send-ahead bursting. A failed submission is advisory-grade,
-/// the same severity as the audio broadcast just below this call in the
-/// caller, and is handled the same way: retried on the next due frame rather
-/// than treated as a reason to stop the stream.
+/// under pause or send-ahead bursting. A failed position submission remains
+/// advisory and is retried on the next due frame; unlike a transport broadcast
+/// failure, it does not mean listener delivery has become unavailable.
 fn report_position_if_due(
     frame: &ProtocolFrame,
     host_start_time_ms: u64,
@@ -365,7 +379,7 @@ fn report_position_if_due(
     let position_ms = datagram
         .host_presentation_time_ms
         .get()
-        .saturating_sub(host_start_time_ms);
+        .saturating_sub(hhost_start_time_ms);
     let due = match *last_reported_position_ms {
         Some(previous) => position_ms >= previous.saturating_add(POSITION_REPORT_INTERVAL_MS),
         None => true,
@@ -418,7 +432,7 @@ fn apply_pause_offset(frame: &mut ProtocolFrame, offset_ms: u64) {
 /// health (34.2 policy). Runs after [`apply_pause_offset`] so the monitor's
 /// own scheduler sees the same pause-corrected timeline the network
 /// broadcast does, and before the send-ahead wait, since the monitor has no
-/// use for that network-specific pacing at all.
+// use for that network-specific pacing at all.
 fn forward_to_monitor(frame: &ProtocolFrame, monitor_tap: Option<&SyncSender<AudioDatagram>>) {
     let (Some(tap), ProtocolFrame::Audio(datagram)) = (monitor_tap, frame) else {
         return;
@@ -430,27 +444,27 @@ fn forward_to_monitor(frame: &ProtocolFrame, monitor_tap: Option<&SyncSender<Aud
 /// time is no more than [`SEND_AHEAD_HORIZON_MS`] ahead of the transport's
 /// current time. Non-audio frames (there are none on this path today, but
 /// [`StreamingPacketizeHandle::recv_timeout`] returns `ProtocolFrame`) pass
-/// through immediately. Returns `false` if `stop` fired while waiting, so
-/// the caller can exit without sending a stale frame.
+/// through immediately. Returns `Ok(false)` if `stop` fired while waiting, so
+/// the caller can exit without sending a stale frame, and propagates a
+/// transport-clock failure instead of silently treating it as permission to
+/// send.
 fn wait_until_within_send_ahead_horizon(
     frame: &ProtocolFrame,
     network: &Arc<DesktopHostNetworkControl>,
     stop: &AtomicBool,
-) -> bool {
+) -> Result<bool, DesktopErrorDto> {
     let ProtocolFrame::Audio(datagram) = frame else {
-        return true;
+        return Ok(true);
     };
     let presentation_time_ms = datagram.host_presentation_time_ms.get();
     loop {
         if stop.load(Ordering::Acquire) {
-            return false;
+            return Ok(false);
         }
-        let Ok(now) = network.transport_now() else {
-            return true;
-        };
+        let now = network.transport_now()?;
         let lead_ms = presentation_time_ms.saturating_sub(now.get());
         if lead_ms <= SEND_AHEAD_HORIZON_MS {
-            return true;
+            return Ok(true);
         }
         thread::sleep(SEND_AHEAD_POLL_INTERVAL);
     }
@@ -587,6 +601,6 @@ mod tests {
         assert!(
             receiver.try_recv().is_err(),
             "a control frame must never reach the monitor tap"
-        );
+         );
     }
 }

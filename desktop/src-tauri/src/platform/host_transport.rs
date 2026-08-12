@@ -331,6 +331,20 @@ impl DesktopHostTransportRuntime {
         })
     }
 
+    #[cfg(test)]
+    pub(super) fn stop_worker_for_test(&mut self) -> Result<(), DesktopNetworkError> {
+        self.stop.store(true, Ordering::Release);
+        let Some(worker) = self.worker.take() else {
+            return Ok(());
+        };
+        match worker.join() {
+            Ok(result) => result,
+            Err(_) => Err(DesktopNetworkError::unavailable(
+                "desktop host transport worker panicked during test shutdown",
+            )),
+        }
+    }
+
     pub(super) fn shutdown(mut self) -> Result<(), DesktopNetworkError> {
         self.stop.store(true, Ordering::Release);
         let Some(worker) = self.worker.take() else {
@@ -360,233 +374,36 @@ fn run_transport_worker(
     let mut primary_error = None;
     while !stop.load(Ordering::Acquire) {
         if let Err(error) =
-            process_effects(&*node, &**sink, effect_receiver, status, &mut processor)
-        {
-            primary_error = Some(error);
-            break;
-        }
-        if let Err(error) = process_broadcast_frames(&*node, broadcast_receiver, status) {
-            primary_error = Some(error);
-            break;
-        }
-        let poll_interval = if status.broadcast.queue_depth.load(Ordering::Relaxed) > 0 {
-            BACKLOG_POLL_INTERVAL
-        } else {
-            EVENT_POLL_INTERVAL
-        };
-        match node.recv_event(poll_interval) {
-            Ok(event) => match processor.process(event, &*node, advertisement, &**sink) {
-                Ok(Some(message)) => set_last_error(status, message)?,
-                Ok(None) => {}
-                Err(error) => {
-                    set_last_error(status, error.to_string())?;
-                    primary_error = Some(error);
-                    break;
-                }
-            },
-            Err(error) if error.kind == TransportErrorKind::Timeout => {}
-            Err(error) => {
-                let error = DesktopNetworkError::transport(&error);
-                set_last_error(status, error.to_string())?;
-                primary_error = Some(error);
-                break;
-            }
-        }
-    }
+            process_effects(&[›ÙK	‰Í¥¹¬°•™™•Ñ}É••¥Ù•È°ÍÑ…ÑÕÌ°€™µÕĞÁÉ½•ÍÍ½È¤(€€€€€€€ì(€€€€€€€€€€€ÁÉ¥µ…Éå}•ÉÉ½È€ôM½µ”¡•ÉÉ½È¤ì(€€€€€€€€€€€‰É•…¬ì(€€€€€€€ô(€€€€€€€¥˜±•ĞÉÈ¡•ÉÉ½È¤€ôÁÉ½•ÍÍ}‰É½…‘…ÍÑ}™É…µ•Ì ˜››ÙKœ›ØYØ\İÜ™XÙZ]™\‹İ]\ÊHÂˆš[X\WÙ\œ›ÜˆHÛÛYJ\œ›ÜŠNÂˆœ™XZÎÂˆBˆ]ÛÚ[\˜[HYˆİ]\Ë˜œ›ØYØ\İœ]Y]YWÙ\›ØY
+Ü™\š[™Î”™[^Y
+HˆÂˆPÒÓÑ×ÔÓÒS•T•SˆH[ÙHÂˆU‘S•ÔÓÒS•T•SˆNÂˆX]Ú›ÙKœ™Xİ—Ù]™[
+ÛÚ[\˜[
+HÂˆÚÊ]™[
+HOˆX]Ú›ØÙ\ÜÛÜ‹œ›ØÙ\ÜÊ]™[	‰¹½‘”°…‘Ù•ÉÑ¥Í•µ•¹Ğ°€˜œÚ[šÊHÂˆÚÊÛÛYJY\ÜØYÙJJHOˆÙ]Û\İÙ\œ›ÜŠİ]\ËY\ÜØYÙJOËˆÚÊ›Û™JHOˆßBˆ\œŠ\œ›ÜŠHOˆÂˆÙ]Û\İÙ\œ›ÜŠİ]\Ë\œ›Ü‹×Üİš[™Ê
+JOÎÂˆš[X\WÙ\œ›ÜˆHÛÛYJ\œ›ÜŠNÂˆœ™XZÎÂˆBˆKˆ\œŠ\œ›ÜŠHYˆ\œ›Ü‹šÚ[™OH˜[œÜÜ\œ›Ü’Ú[™•[Y[İ]OˆßBˆ\œŠ\œ›ÜŠHOˆÂˆ]\œ›ÜˆH\ÚİÜ™]ÛÜšÑ\œ›Ü˜[œÜÜ
+	™\œ›ÜŠNÂˆÙ]Û\İÙ\œ›ÜŠİ]\Ë\œ›Ü‹×Üİš[™Ê
+JOÎÂˆš[X\WÙ\œ›ÜˆHÛÛYJ\œ›ÜŠNÂˆœ™XZÎÂˆBˆBˆB‚ˆ]˜Z[—Ù\œ›ÜˆH˜Z[Ü]Y]YYÙY™™XİÊY™™XİÜ™XÙZ]™\‹	ŠŠœÚ[šËİ]\ÊK™\œŠ
+NÂˆ]Ú]İÛ—Ù\œ›ÜˆH›ÙBˆœÚ]İÛŠ
+Bˆ›X\Ù\œŠ\œ›ÜŸ\ÚİÜ™]ÛÜšÑ\œ›Ü˜[œÜÜ
+	™\œ›ÜŠJBˆ™\œŠ
+NÂˆİ]\Ëœ[›š[™ËœİÜ™J˜[ÙKÜ™\š[™Î”™[X\ÙJNÂˆš[X\WÙ\œ›Ü‚ˆ›ÜŠ˜Z[—Ù\œ›ÜŠBˆ›ÜŠÚ]İÛ—Ù\œ›ÜŠBˆ›X\ÛÜŠÚÊ
 
-    let drain_error = fail_queued_effects(effect_receiver, &**sink, status).err();
-    let shutdown_error = node
-        .shutdown()
-        .map_err(|error| DesktopNetworkError::transport(&error))
-        .err();
-    status.running.store(false, Ordering::Release);
-    primary_error
-        .or(drain_error)
-        .or(shutdown_error)
-        .map_or(Ok(()), Err)
-}
+JK\œŠBŸB‚‹ËËÈ˜Z[œÈ\ÈØPVĞ”“ĞQĞTÕÑ”SQT×ÔT—ÕPÒØHœ˜[Y\È]Y]YYHB‹ËËÈ^X˜XÚÈ[\™XY
+İ™X[K\İ\ÛÛ›Û]Y[È]YÜ˜[\ÊH[™‹ËËÈœ›ØYØ\İÈXXÚÛˆHÚ[›™[]È›İØÛÛœ˜[YX˜\šX[™[Û™ÜÈË‚‹ËËÈH\‹Yœ˜[YH[]™\H˜Z[\™H\È™XÛÜ™Y\ÈH\İ\œ›Üˆ]Ù\È›İ‹ËËÈİÜHÛÜšÙ\ˆKHÛ™H›ÜY]Y[ÈXÚÙ]\È›İ˜][ÈHİ™X[K‹ËËÈX]Ú[™ÈH[™›ÚYÜİ	ÜÈ\‹\XÚÙ]œ›ØYØ\İX]Y[È[™[™Ë‚™›ˆ›ØÙ\Ü×Øœ›ØYØ\İÙœ˜[Y\Êˆ›ÙNˆ	™[ˆÜİ˜[œÜÜ›ÙKˆ™XÙZ]™\ˆ	”™XÙZ]™\›İØÛÛœ˜[YO‹ˆİ]\Îˆ	”Ú\™Yİ]\ËŠHOˆ™\İ[
 
-/// Drains up to [`MAX_BROADCAST_FRAMES_PER_TICK`] frames queued by a
-/// playback pump thread (stream-start control, audio datagrams) and
-/// broadcasts each on the channel its `ProtocolFrame` variant belongs to.
-/// A per-frame delivery failure is recorded as the last error but does not
-/// stop the worker -- one dropped audio packet is not fatal to the stream,
-/// matching the Android host's per-packet broadcast-audio handling.
-fn process_broadcast_frames(
-    node: &dyn HostTransportNode,
-    receiver: &Receiver<ProtocolFrame>,
-    status: &SharedStatus,
-) -> Result<(), DesktopNetworkError> {
-    for _ in 0..MAX_BROADCAST_FRAMES_PER_TICK {
-        let frame = match receiver.try_recv() {
-            Ok(frame) => frame,
-            Err(TryRecvError::Empty) => return Ok(()),
-            Err(TryRecvError::Disconnected) => {
-                return Err(DesktopNetworkError::unavailable(
-                    "desktop host transport broadcast queue disconnected",
-                ));
-            }
-        };
-        status.broadcast.record_dequeued();
-        let delivery = match &frame {
-            ProtocolFrame::Control(message) => node.broadcast_control(message),
-            ProtocolFrame::Audio(_) => node.broadcast_audio(&frame),
-            ProtocolFrame::SyncResponse(_) => node.broadcast_sync(&frame),
-            ProtocolFrame::SyncRequest(_) => continue, // the host never sends this frame kind
-        };
-        match delivery {
-            Ok(delivery) => status.broadcast.record_delivery(&delivery),
-            Err(error) => {
-                status.broadcast.record_failure();
-                set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
-            }
-        }
-    }
-    Ok(())
-}
+K\ÚİÜ™]ÛÜšÑ\œ›ÜˆÂˆ›ÜˆÈ[ˆ‹“PVĞ”“ĞQĞTÕÑ”SQT×ÔT—ÕPÒÈÂˆ]œ˜[YHHX]Ú™XÙZ]™\‹WÜ™XİŠ
+HÂˆÚÊœ˜[YJHOˆœ˜[YKˆ\œŠT™Xİ‘\œ›Ü‘[\JHOˆ™]\›ˆÚÊ
 
-fn process_effects(
-    node: &dyn HostTransportNode,
-    sink: &dyn DesktopHostTransportEventSink,
-    receiver: &Receiver<TransportEffect>,
-    status: &SharedStatus,
-    processor: &mut HostTransportEventProcessor,
-) -> Result<(), DesktopNetworkError> {
-    for _ in 0..MAX_EFFECTS_PER_TICK {
-        match receiver.try_recv() {
-            Ok(effect) => process_effect(node, sink, effect, status, processor)?,
-            Err(TryRecvError::Empty) => return Ok(()),
-            Err(TryRecvError::Disconnected) => {
-                return Err(DesktopNetworkError::unavailable(
-                    "desktop host transport effect queue disconnected",
-                ));
-            }
-        }
-    }
-    Ok(())
-}
+JKˆ\œŠT™Xİ‘\œ›Ü‘\ØÛÛ›™XİY
+HOˆÂˆ™]\›ˆ\œŠ\ÚİÜ™]ÛÜšÑ\œ›Ü[˜]˜Z[X›Jˆ™\ÚİÜÜİ˜[œÜÜœ›ØYØ\İ]Y]YH\ØÛÛ›™XİY‹ˆ
+JNÂˆBˆNÂˆİ]\Ë˜œ›ØYØ\İœ™XÛÜ™Ù\]Y]YY
 
-fn process_effect(
-    node: &dyn HostTransportNode,
-    sink: &dyn DesktopHostTransportEventSink,
-    effect: TransportEffect,
-    status: &SharedStatus,
-    processor: &mut HostTransportEventProcessor,
-) -> Result<(), DesktopNetworkError> {
-    let operation_id = effect.operation_id;
-    let mut authorize: Option<(silent_disco_core::domain::DeviceId, u16, u16)> = None;
-    let delivery = match effect.request {
-        TransportEffectRequest::DeliverJoinApproval {
-            session_id,
-            listener_id,
-            trusted_for_future,
-            ..
-        } => {
-            if let Some((sync_port, audio_port)) = processor.take_pending_ports(&listener_id) {
-                authorize = Some((listener_id.clone(), sync_port, audio_port));
-            }
-            node.send_pending_control(
-                &listener_id.clone(),
-                &ControlMessage::JoinApproval(JoinApproval {
-                    session_id,
-                    listener_id,
-                    trusted_for_future,
-                }),
-            )
-        }
-        TransportEffectRequest::DeliverJoinRejection {
-            session_id,
-            listener_id,
-            reason_code,
-            ..
-        } => {
-            processor.take_pending_ports(&listener_id);
-            node.send_pending_control(
-                &listener_id.clone(),
-                &ControlMessage::JoinRejection(JoinRejection {
-                    session_id,
-                    listener_id,
-                    reason: reason_code,
-                }),
-            )
-        }
-        TransportEffectRequest::DisconnectListener {
-            session_id,
-            listener_id,
-            reason_code,
-        } => {
-            processor.take_pending_ports(&listener_id);
-            node.send_pending_control(
-                &listener_id.clone(),
-                &ControlMessage::Disconnect(Disconnect {
-                    session_id,
-                    listener_id,
-                    reason: reason_code,
-                }),
-            )
-        }
-    };
+NÂˆ][]™\HHX]Ú	™œ˜[YHÂˆ›İØÛÛœ˜[YNÛÛ›Û
+Y\ÜØYÙJHOˆ›ÙK˜œ›ØYØ\İØÛÛ›Û
+Y\ÜØYÙJKˆ›İØÛÛœ˜[YN]Y[ÊÊHOˆ›ÙK˜œ›ØYØ\İØ]Y[Ê	™œ˜[YJKˆ›İØÛÛœ˜[YN”Ş[˜Ô™\ÜÛœÙJÊHOˆ›ÙK˜œ›ØYØ\İÜŞ[˜Ê	™œ˜[YJKˆ›İØÛÛœ˜[YN”Ş[˜Ô™\]Y\İ
+ÊHOˆÛÛ[YKËÈHÜİ™]™\ˆÙ[™È\Èœ˜[YHÚ[™ˆNÂˆX]Ú[]™\HÂˆÚÊ[]™\JHOˆİ]\Ë˜œ›ØYØ\İœ™XÛÜ™Ù[]™\J	™[]™\JKˆ\œŠ\œ›ÜŠHOˆÂˆİ]\Ë˜œ›ØYØ\İœ™XÛÜ™Ù˜Z[\™J
+NÂˆÙ]Û\İÙ\œ›ÜŠİ]\Ë\ÚİÜ™]ÛÜšÑ\œ›Ü˜[œÜÜ
+	™\œ›ÜŠK×Üİš[™Ê
+JOÎÂˆBˆBˆBˆÚÊ
 
-    if let (Ok(delivery), Some((listener_id, sync_port, audio_port))) = (&delivery, authorize)
-        && delivery.report.successful_peers > 0
-        && let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port)
-    {
-        set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
-    }
-
-    let report = match delivery {
-        Ok(delivery) => delivery.report,
-        Err(error) => {
-            set_last_error(status, error.to_string())?;
-            failed_delivery_report()
-        }
-    };
-    submit_delivery(sink, operation_id, report)
-}
-
-fn submit_delivery(
-    sink: &dyn DesktopHostTransportEventSink,
-    operation_id: silent_disco_core::domain::OperationId,
-    report: DeliveryReport,
-) -> Result<(), DesktopNetworkError> {
-    sink.submit_transport_event(CoreTransportEvent::DeliveryCompleted {
-        operation_id,
-        report,
-    })
-    .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))
-}
-
-fn fail_queued_effects(
-    receiver: &Receiver<TransportEffect>,
-    sink: &dyn DesktopHostTransportEventSink,
-    status: &SharedStatus,
-) -> Result<(), DesktopNetworkError> {
-    loop {
-        match receiver.try_recv() {
-            Ok(effect) => {
-                set_last_error(
-                    status,
-                    "transport effect cancelled during host transport shutdown".to_owned(),
-                )?;
-                submit_delivery(sink, effect.operation_id, failed_delivery_report())?;
-            }
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return Ok(()),
-        }
-    }
-}
-
-const fn failed_delivery_report() -> DeliveryReport {
-    DeliveryReport {
-        intended_peers: 1,
-        successful_peers: 0,
-        failed_peers: 1,
-        severity: DeliverySeverity::PartialFailure,
-    }
-}
-
-fn set_last_error(status: &SharedStatus, message: String) -> Result<(), DesktopNetworkError> {
-    *status.last_error.lock().map_err(|_| {
-        DesktopNetworkError::invalid_state("desktop host transport status mutex was poisoned")
-    })? = Some(message);
-    Ok(())
-}
+JBŸB
