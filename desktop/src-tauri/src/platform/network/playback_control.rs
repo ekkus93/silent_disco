@@ -256,7 +256,9 @@ impl DesktopHostNetworkControl {
     }
 
     #[cfg(test)]
-    pub(in crate::platform) fn stop_transport_worker_for_test(&self) -> Result<(), DesktopErrorDto> {
+    pub(in crate::platform) fn stop_transport_worker_for_test(
+        &self,
+    ) -> Result<(), DesktopErrorDto> {
         let mut state = self
             .state
             .lock()
@@ -331,7 +333,8 @@ impl DesktopHostNetworkControl {
     /// an `Error` state even though the real, already-running stream is
     /// untouched and the duplicate is correctly rejected underneath.
     pub(crate) fn playback_is_active(&self) -> Result<bool, DesktopErrorDto> {
-        let state = self.state
+        let state = self
+            .state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned().dto())?;
         Ok(state
