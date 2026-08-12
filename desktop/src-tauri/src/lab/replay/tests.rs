@@ -218,7 +218,9 @@ fn replay_detects_transport_evidence_divergence_when_the_report_still_matches() 
     let mut recording = ScenarioRecording::capture(&scenario, report, trace);
     recording.trace.transport_trace.dropped_count = 1;
 
-    let outcome = replay(&lab, &scenario, &recording).expect("replay succeeds");
+    let replay_root = TestDirectory::new();
+    let replay_lab = LabRuntime::new(&replay_root.0, 0).expect("replay lab runtime");
+    let outcome = replay(&replay_lab, &scenario, &recording).expect("replay succeeds");
 
     assert!(matches!(
         outcome.divergence,
