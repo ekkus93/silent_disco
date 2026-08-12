@@ -441,13 +441,15 @@ impl ProfileLease {
 
 ### 6.3 Add multiprocess tests
 
-- [ ] first process acquires;
-- [ ] second process fails visibly;
-- [ ] lock releases after normal shutdown;
-- [ ] abnormal process termination recovery follows selected library semantics;
-- [ ] separate profiles can open concurrently.
+- [x] first process acquires;
+- [x] second process fails visibly;
+- [x] lock releases after normal shutdown;
+- [x] abnormal process termination recovery follows selected library semantics;
+- [x] separate profiles can open concurrently.
 
 **Acceptance:** Two desktop processes cannot unknowingly mutate the same profile.
+
+**Completion evidence:** `desktop/src-tauri/tests/profile_lock_multiprocess.rs` now covers child-process acquisition, visible contention, normal release, kernel lock recovery after forced child termination, and concurrent ownership of separate profiles. Exact-SHA Desktop CI run `31553428990` passed strict Rust Clippy and the complete backend test suite.
 
 ---
 
@@ -461,17 +463,17 @@ Use the existing `silent-disco-core` storage API. Do not add desktop SQL.
 - [x] run schema creation/migration;
 - [x] query database/schema versions through typed APIs;
 - [x] close and join the worker;
-- [ ] display real success or structured failure.
+- [x] display real success or structured failure.
 
 ### 7.2 Add read-only inspection commands
 
 Temporary inspection commands may expose:
 
-- [ ] database metadata;
-- [ ] validated settings;
-- [ ] trusted-device summaries;
-- [ ] recent session summaries;
-- [ ] P2 store metadata when applicable.
+- [x] database metadata;
+- [x] validated settings;
+- [x] trusted-device summaries;
+- [x] recent session summaries;
+- [x] P2 store metadata when applicable.
 
 Do not expose raw SQL or raw rows.
 
@@ -485,7 +487,7 @@ Do not expose raw SQL or raw rows.
 - [x] profile lock release after open failure;
 - [x] no in-memory fallback.
 
-**Acceptance:** Partially met. The real Rust-owned storage inspection/migration path is implemented and tested, but the requested Tauri inspection commands/UI surface is not wired, so the desktop shell does not yet expose the result.
+**Acceptance:** Met. The active desktop profile exposes bounded read-only database metadata, validated settings, trusted-device summaries, deterministic recent-session summaries, and the explicit current P2-store applicability state through a typed Tauri command and Storage screen, all backed by the already-open Rust `DatabaseWorker` rather than a second SQL path. Structured backend failures remain visible in the UI instead of becoming empty success. Exact-SHA Desktop CI run `31553428990` passed frontend quality, strict Rust Clippy/tests/check, committed-lockfile checks, and Linux AppImage/`.deb` bundle smoke.
 
 ---
 
