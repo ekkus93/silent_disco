@@ -170,14 +170,17 @@ impl DesktopMonitorControl {
             active,
             failure_reason: runtime_failure.or_else(|| state.failure_reason.clone()),
             telemetry: if active {
-                state.active.as_ref().map(|active| MonitorTelemetrySnapshot {
-                    callback_count: active.telemetry.callback_count.load(Ordering::Relaxed),
-                    frames_written: active.telemetry.frames_written.load(Ordering::Relaxed),
-                    frames_silence_filled: active
-                        .telemetry
-                        .frames_silence_filled
-                        .load(Ordering::Relaxed),
-                })
+                state
+                    .active
+                    .as_ref()
+                    .map(|active| MonitorTelemetrySnapshot {
+                        callback_count: active.telemetry.callback_count.load(Ordering::Relaxed),
+                        frames_written: active.telemetry.frames_written.load(Ordering::Relaxed),
+                        frames_silence_filled: active
+                            .telemetry
+                            .frames_silence_filled
+                            .load(Ordering::Relaxed),
+                    })
             } else {
                 None
             },
@@ -337,9 +340,10 @@ impl DesktopMonitorControl {
                 // `RenderCallback::write`. Never take the monitor mutex here;
                 // retain the first actionable runtime cause in a write-once
                 // cell and let ordinary status readers expose it.
-                drop(runtime_failure_for_callback.set(format!(
-                    "local monitor audio device failed: {message}"
-                )));
+                drop(
+                    runtime_failure_for_callback
+                        .set(format!("local monitor audio device failed: {message}")),
+                );
             }),
         ) {
             Ok(output) => output,
