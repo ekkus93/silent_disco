@@ -503,7 +503,9 @@ pub fn lab_resume_loaded_scenario(app: AppHandle) -> Result<(), DesktopErrorDto>
             "a Lab scenario is marked running but has no run-control handle",
         )
     })?;
-    control.resume().map_err(|error| run_control_error(&error))?;
+    control
+        .resume()
+        .map_err(|error| run_control_error(&error))?;
     session.paused = false;
     Ok(())
 }

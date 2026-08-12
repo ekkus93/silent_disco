@@ -236,8 +236,8 @@ fn link_fault_edit_rewrites_and_revalidates_the_loaded_scenario() {
         "timeoutMs": 1000
     }"#;
 
-    let (scenario, rewritten) = rewrite_link_faults(json, 0, "host", "listener", 125, 12, 25)
-        .expect("valid link edit");
+    let (scenario, rewritten) =
+        rewrite_link_faults(json, 0, "host", "listener", 125, 12, 25).expect("valid link edit");
     let summary = scenario_summary_dto(&scenario);
     assert_eq!(summary.links[0].latency_ms, "125");
     assert_eq!(summary.links[0].jitter_ms, "12");
@@ -252,16 +252,8 @@ fn link_fault_edit_rewrites_and_revalidates_the_loaded_scenario() {
 
 #[test]
 fn link_fault_edit_rejects_a_stale_row_identity() {
-    let error = rewrite_link_faults(
-        SCENARIO_JSON,
-        0,
-        "different-host",
-        "host1",
-        30,
-        8,
-        10,
-    )
-    .expect_err("stale row must not mutate another link");
+    let error = rewrite_link_faults(SCENARIO_JSON, 0, "different-host", "host1", 30, 8, 10)
+        .expect_err("stale row must not mutate another link");
 
     assert_eq!(error.code, "desktop.lab.stale_link_selection");
 }

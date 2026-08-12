@@ -317,9 +317,7 @@ describe("LabScreen", () => {
       stepCount: 0,
       assertionCount: 0,
       timeoutMs: "1000",
-      links: [
-        { from: "host", to: "listener", latencyMs: "30", jitterMs: "8", lossPermille: 10 },
-      ],
+      links: [{ from: "host", to: "listener", latencyMs: "30", jitterMs: "8", lossPermille: 10 }],
     };
     const editedScenario = {
       ...initialScenario,
@@ -393,8 +391,6 @@ describe("LabScreen", () => {
     expect(
       await screen.findByRole("button", { name: "Apply faults for host → listener" }),
     ).toBeDisabled();
-    expect(
-      screen.getByRole("spinbutton", { name: "Latency for host → listener" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("spinbutton", { name: "Latency for host → listener" })).toBeDisabled();
   });
 });

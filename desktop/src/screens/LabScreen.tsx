@@ -181,25 +181,22 @@ export function LabScreen() {
     }));
   }, []);
 
-  const reportFailure = useCallback(
-    (error: unknown) => {
-      if (isDesktopErrorDto(error)) {
-        setLab((current) => ({ ...current, commandError: error }));
-        return;
-      }
-      setLab((current) => ({
-        ...current,
-        commandError: {
-          code: "desktop.lab.unknown_frontend_failure",
-          subsystem: "bridge",
-          severity: "error",
-          retryable: true,
-          message: error instanceof Error ? error.message : "Lab Mode command failed.",
-        },
-      }));
-    },
-    [],
-  );
+  const reportFailure = useCallback((error: unknown) => {
+    if (isDesktopErrorDto(error)) {
+      setLab((current) => ({ ...current, commandError: error }));
+      return;
+    }
+    setLab((current) => ({
+      ...current,
+      commandError: {
+        code: "desktop.lab.unknown_frontend_failure",
+        subsystem: "bridge",
+        severity: "error",
+        retryable: true,
+        message: error instanceof Error ? error.message : "Lab Mode command failed.",
+      },
+    }));
+  }, []);
 
   useEffect(() => {
     void refreshState().catch(reportFailure);
@@ -528,9 +525,7 @@ export function LabScreen() {
 
         {lab.loadedScenario && lab.loadedScenario.links.length > 0 ? (
           <div className="mt-4">
-            <h3 className="text-sm font-semibold text-violet-100/80">
-              Fault configuration
-            </h3>
+            <h3 className="text-sm font-semibold text-violet-100/80">Fault configuration</h3>
             <p className="text-xs text-violet-100/50">
               Edit the initial receive-side profile used by live Lab transport on the next run.
               Links into the same receiver share one profile and update together. Scheduled

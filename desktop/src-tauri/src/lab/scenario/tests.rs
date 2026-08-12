@@ -301,7 +301,10 @@ fn pause_before_first_step_holds_virtual_time_and_resume_preserves_report() {
         .expect("controlled worker joins")
         .expect("controlled scenario completes");
     assert_eq!(report, baseline);
-    assert!(controlled_lab.node_ids().is_empty(), "runner cleans its nodes");
+    assert!(
+        controlled_lab.node_ids().is_empty(),
+        "runner cleans its nodes"
+    );
 }
 
 #[test]
@@ -329,7 +332,11 @@ fn stop_releases_a_paused_run_and_runner_cleans_scenario_nodes() {
     while lab.node_ids().is_empty() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(lab.node_ids().len(), 1, "scenario node must be active before stop");
+    assert_eq!(
+        lab.node_ids().len(),
+        1,
+        "scenario node must be active before stop"
+    );
     control.request_stop().expect("request stop");
     let error = worker
         .join()
@@ -339,8 +346,15 @@ fn stop_releases_a_paused_run_and_runner_cleans_scenario_nodes() {
         error,
         ScenarioExecutionError::RunControl(ScenarioRunControlError::Stopped)
     ));
-    assert!(lab.node_ids().is_empty(), "runner cleanup must release scenario nodes");
-    assert_eq!(lab.now().get(), 0, "stop before first step must not advance time");
+    assert!(
+        lab.node_ids().is_empty(),
+        "runner cleanup must release scenario nodes"
+    );
+    assert_eq!(
+        lab.now().get(),
+        0,
+        "stop before first step must not advance time"
+    );
 }
 
 /// Block 40.4 "bounded malformed file behavior": an oversized file is

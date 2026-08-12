@@ -86,9 +86,11 @@ pub(super) fn rewrite_link_faults(
     jitter_ms: u64,
     loss_permille: u16,
 ) -> Result<(Scenario, Vec<u8>), DesktopErrorDto> {
-    let mut value: Value = serde_json::from_slice(raw_bytes).map_err(|error| parse_error(
-        &crate::lab::scenario::ScenarioParseError::NotUtf8OrJson(error),
-    ))?;
+    let mut value: Value = serde_json::from_slice(raw_bytes).map_err(|error| {
+        parse_error(&crate::lab::scenario::ScenarioParseError::NotUtf8OrJson(
+            error,
+        ))
+    })?;
     let links = value
         .get_mut("links")
         .and_then(Value::as_array_mut)

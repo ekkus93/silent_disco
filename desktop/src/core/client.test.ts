@@ -283,9 +283,7 @@ describe("desktop core client", () => {
       stepCount: 0,
       assertionCount: 0,
       timeoutMs: "1000",
-      links: [
-        { from: "host", to: "listener", latencyMs: "40", jitterMs: "5", lossPermille: 20 },
-      ],
+      links: [{ from: "host", to: "listener", latencyMs: "40", jitterMs: "5", lossPermille: 20 }],
     };
     invokeMock.mockResolvedValue(summary);
 

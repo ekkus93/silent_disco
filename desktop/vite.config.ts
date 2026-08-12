@@ -9,8 +9,7 @@ export default defineConfig(({ command }) => {
   // serves include the screen so `tauri dev --features lab-mode` remains
   // useful. A packaged Lab build must opt in explicitly through
   // `npm run build:lab` / `npm run tauri:lab:build`.
-  const includeLabFrontend =
-    command === "serve" || process.env.SILENT_DISCO_LAB_FRONTEND === "1";
+  const includeLabFrontend = command === "serve" || process.env.SILENT_DISCO_LAB_FRONTEND === "1";
 
   return {
     plugins: [react(), tailwindcss()],
