@@ -78,9 +78,9 @@ fn virtual_listener_decodes_raw_wire_bytes_at_receive_time() {
             corrupted,
         )
         .expect("corrupted bytes should still cross the virtual wire");
-    let decode_error = listener
-        .recv_event(EVENT_TIMEOUT)
-        .expect_err("production receive decode must reject corrupted bytes");
+    let Err(decode_error) = listener.recv_event(EVENT_TIMEOUT) else {
+        panic!("production receive decode must reject corrupted bytes");
+    };
     assert_eq!(decode_error.kind, TransportErrorKind::Protocol);
 
     listener.shutdown().expect("virtual listener should stop");
