@@ -1,6 +1,8 @@
 mod host;
 mod host_workers;
 mod listener;
+// Block 44 implicit-shutdown tests intentionally sit beside the shared shutdown policy.
+#[cfg_attr(test, allow(clippy::items_after_test_module))]
 mod shared;
 
 pub use host::SocketHostTransport;

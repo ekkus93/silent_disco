@@ -2,6 +2,7 @@
 name = "silent-disco-desktop"
 version = "0.1.0"
 description = "Silent Disco desktop host"
+default-run = "silent-disco-desktop"
 edition = "2024"
 license = "MIT"
 rust-version = "1.97.1"

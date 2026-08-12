@@ -264,8 +264,31 @@ jobs:
         working-directory: desktop
         shell: bash
         run: |
-          set -o pipefail
-          npm run tauri build 2>&1 | tee ../desktop-tauri-build.log
+          set -euo pipefail
+          combined_log="../desktop-tauri-build.log"
+          : > "${combined_log}"
+          for attempt in 1 2 3; do
+            attempt_log="$(mktemp)"
+            printf '=== Tauri bundle attempt %d/3 ===\n' "${attempt}" | tee -a "${combined_log}"
+            set +e
+            npm run tauri build 2>&1 | tee "${attempt_log}" | tee -a "${combined_log}"
+            status="${PIPESTATUS[0]}"
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              rm -f "${attempt_log}"
+              exit 0
+            fi
+            if ! grep -Fq 'Peer disconnected' "${attempt_log}"; then
+              rm -f "${attempt_log}"
+              exit "${status}"
+            fi
+            rm -f "${attempt_log}"
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "Tauri bundler still reports a peer disconnect after 3 attempts." >&2
+              exit "${status}"
+            fi
+            sleep "$((attempt * 10))"
+          done
 
       - name: Require committed lockfiles
         shell: bash

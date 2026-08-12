@@ -3,6 +3,8 @@ mod debug_recorder;
 mod decoder;
 mod jitter_buffer;
 mod packetizer;
+// Block 44 failure-visibility tests intentionally sit beside the Drop lifecycle they exercise.
+#[cfg_attr(test, allow(clippy::items_after_test_module))]
 mod packetizer_worker;
 mod playback_pump;
 mod ramp;
