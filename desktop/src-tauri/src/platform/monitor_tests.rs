@@ -120,7 +120,9 @@ impl RunningAudioOutputStream for FakeRunningStream {
             // release prevention": once `stop` returns, the fake's thread
             // (which is the only thing that ever calls `callback.write`)
             // is provably gone, so nothing can invoke the callback again.
-            thread.join().expect("fake audio output thread joins cleanly");
+            thread
+                .join()
+                .expect("fake audio output thread joins cleanly");
         }
     }
 }
