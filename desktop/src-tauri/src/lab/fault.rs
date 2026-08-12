@@ -204,7 +204,8 @@ impl HostTransportNode for LabFaultHostTransport {
         sync_port: u16,
         audio_port: u16,
     ) -> Result<(), TransportError> {
-        self.inner.authorize_peer_ports(device_id, sync_port, audio_port)
+        self.inner
+            .authorize_peer_ports(device_id, sync_port, audio_port)
     }
 
     fn disconnect_peer(
@@ -452,12 +453,9 @@ fn should_drop_event(
 ) -> bool {
     let (channel, _) = event_channel_and_time(event);
     match channel {
-        Some(channel) => should_drop_channel(
-            channel,
-            loss_permille,
-            synchronization_prng,
-            audio_prng,
-        ),
+        Some(channel) => {
+            should_drop_channel(channel, loss_permille, synchronization_prng, audio_prng)
+        }
         None => false,
     }
 }
