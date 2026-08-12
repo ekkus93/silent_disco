@@ -254,10 +254,12 @@ fn replay_detects_transport_evidence_divergence_when_the_report_still_matches() 
 
     assert!(matches!(
         outcome.divergence,
-        Some(crate::lab::recording::Divergence::TransportOverflowMismatch {
-            recorded: 1,
-            replayed: 0
-        })
+        Some(
+            crate::lab::recording::Divergence::TransportOverflowMismatch {
+                recorded: 1,
+                replayed: 0
+            }
+        )
     ));
 }
 
