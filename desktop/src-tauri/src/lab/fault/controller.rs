@@ -102,7 +102,7 @@ impl LabFaultController {
         trace
             .recorder
             .record_packet(&trace.receiver_node, event)
-            .map_err(trace_transport_error)
+            .map_err(|error| trace_transport_error(&error))
     }
 
     fn record_decision(
@@ -129,7 +129,7 @@ impl LabFaultController {
                 decided_at_ms,
                 deadline_ms,
             )
-            .map_err(trace_transport_error)
+            .map_err(|error| trace_transport_error(&error))
     }
 }
 
@@ -141,8 +141,8 @@ fn fault_state_poisoned() -> TransportError {
     }
 }
 
-fn trace_transport_error(error: TransportTraceError) -> TransportError {
-    let kind = match &error {
+fn trace_transport_error(error: &TransportTraceError) -> TransportError {
+    let kind = match error {
         TransportTraceError::Encode(_) => TransportErrorKind::Protocol,
         TransportTraceError::StatePoisoned
         | TransportTraceError::SequenceExhausted
@@ -224,4 +224,3 @@ impl<F: TransportFactory> TransportFactory for LabLatencyTransportFactory<F> {
         }))
     }
 }
-
