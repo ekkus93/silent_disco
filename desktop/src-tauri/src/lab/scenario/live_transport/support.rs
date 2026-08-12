@@ -139,7 +139,7 @@ impl super::LiveTransportDriver {
     /// node, so mutation is accepted only when that target has one inbound
     /// link. Existing held packets keep their previously computed deadline;
     /// the new profile applies to subsequently received datagrams.
-    pub(super) fn set_link_faults(
+    pub(in crate::lab::scenario) fn set_link_faults(
         &mut self,
         from: &NodeId,
         to: &NodeId,
