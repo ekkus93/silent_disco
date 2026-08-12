@@ -44,23 +44,23 @@ Do not implement a desktop-only substitute for a missing shared actor, host stat
 
 ### 0.2 Non-negotiable rules
 
-- [ ] Do not leave `master` unable to build at the end of a committed block.
-- [ ] Do not move the Android project or replace the existing `rust/` workspace with a new root workspace.
-- [ ] Do not copy Android `MainViewModel` domain behavior into TypeScript or Tauri-specific Rust.
-- [ ] Do not make React authoritative for host, listener, transport, sync, packetization, playback, or persistence state.
-- [ ] Do not send PCM, per-packet audio payloads, private keys, or native pointers through Tauri IPC.
-- [ ] Do not use an HTML media element or Web Audio as the production synchronized host timeline.
-- [ ] Do not open the domain SQLite database through a Tauri SQL plugin.
-- [ ] Do not use unbounded channels, queues, histories, logs, packet buffers, or decoder buffers.
+- [x] Do not leave `master` unable to build at the end of a committed block.
+- [x] Do not move the Android project or replace the existing `rust/` workspace with a new root workspace.
+- [x] Do not copy Android `MainViewModel` domain behavior into TypeScript or Tauri-specific Rust.
+- [x] Do not make React authoritative for host, listener, transport, sync, packetization, playback, or persistence state.
+- [x] Do not send PCM, per-packet audio payloads, private keys, or native pointers through Tauri IPC.
+- [x] Do not use an HTML media element or Web Audio as the production synchronized host timeline.
+- [x] Do not open the domain SQLite database through a Tauri SQL plugin.
+- [x] Do not use unbounded channels, queues, histories, logs, packet buffers, or decoder buffers.
 - [ ] Do not use broad `catch`, `runCatching`, `unwrap`, `expect`, `let _ =`, or detached tasks to convert real failure into log-only behavior.
 - [ ] Do not claim session, discovery, approval, playback, delivery, export, or shutdown success before real completion is reported.
-- [ ] Do not report zero-recipient delivery as success.
-- [ ] Do not silently fall back to temporary profiles, in-memory databases, plaintext identities, synthetic identities, virtual transport, fake audio, or fake decoding in production.
-- [ ] Do not delete or recreate user data automatically after migration, checksum, or corruption failure.
-- [ ] Do not grant arbitrary shell or filesystem capability to the Tauri frontend.
-- [ ] Do not use floating dependency versions.
+- [x] Do not report zero-recipient delivery as success.
+- [x] Do not silently fall back to temporary profiles, in-memory databases, plaintext identities, synthetic identities, virtual transport, fake audio, or fake decoding in production.
+- [x] Do not delete or recreate user data automatically after migration, checksum, or corruption failure.
+- [x] Do not grant arbitrary shell or filesystem capability to the Tauri frontend.
+- [x] Do not use floating dependency versions.
 - [ ] Do not add or reference an assistant-generated companion document unless it is committed at the exact referenced path.
-- [ ] Do not add `Co-Authored-By:` lines; this repository rejects them.
+- [x] Do not add `Co-Authored-By:` lines; this repository rejects them.
 
 ### 0.3 Baseline validation commands
 
@@ -100,34 +100,34 @@ Before `desktop/` exists, skip only the unavailable desktop commands and record 
 
 ### 1.1 Confirm repository state
 
-- [ ] Record the current commit SHA and default branch in `memory.md`.
-- [ ] Confirm the two desktop documents exist at their exact paths.
-- [ ] Run the current shared Rust quality gates.
-- [ ] Run current Android unit tests and lint.
-- [ ] Run the current Android instrumentation suite where the environment supports it.
-- [ ] Record known physical-device acceptance gaps from the shared migration TODO.
+- [x] Record the current commit SHA and default branch in `memory.md`.
+- [x] Confirm the two desktop documents exist at their exact paths.
+- [x] Run the current shared Rust quality gates.
+- [x] Run current Android unit tests and lint.
+- [x] Run the current Android instrumentation suite where the environment supports it.
+- [x] Record known physical-device acceptance gaps from the shared migration TODO.
 
 ### 1.2 Confirm shared-core completion status
 
 Record the exact status of shared migration Blocks 10, 12, 14, 16, 19, 23, and 26.
 
-- [ ] Do not infer completion from file names.
-- [ ] Inspect production code and tests.
-- [ ] Record which desktop phases are blocked by each incomplete shared block.
+- [x] Do not infer completion from file names.
+- [x] Inspect production code and tests.
+- [x] Record which desktop phases are blocked by each incomplete shared block.
 
 ### 1.3 Inventory desktop-relevant platform assumptions
 
 Record:
 
-- [ ] development Linux distribution and version;
-- [ ] Node and npm versions;
-- [ ] Rust toolchain version;
-- [ ] available desktop audio stack: PipeWire, PulseAudio, and/or ALSA;
-- [ ] WebKit/webview development packages;
-- [ ] Secret Service/keyring availability;
-- [ ] multicast/mDNS availability;
-- [ ] Android devices available for interoperability testing;
-- [ ] test LAN topology.
+- [x] development Linux distribution and version;
+- [x] Node and npm versions;
+- [x] Rust toolchain version;
+- [x] available desktop audio stack: PipeWire, PulseAudio, and/or ALSA;
+- [x] WebKit/webview development packages;
+- [x] Secret Service/keyring availability;
+- [x] multicast/mDNS availability;
+- [x] Android devices available for interoperability testing;
+- [x] test LAN topology.
 
 **Acceptance:** The project has a recorded, reproducible baseline before desktop files are added.
 
@@ -137,28 +137,28 @@ Record:
 
 ### 2.1 Verify Tauri compatibility
 
-- [ ] Verify the current Tauri 2 release line builds with the repository Rust toolchain.
-- [ ] Verify the selected frontend template supports React, TypeScript, and Vite.
-- [ ] Verify required Linux packages on Ubuntu 24.04 or the selected baseline.
-- [ ] Record exact versions and commands in `memory.md`.
+- [x] Verify the current Tauri 2 release line builds with the repository Rust toolchain.
+- [x] Verify the selected frontend template supports React, TypeScript, and Vite.
+- [x] Verify required Linux packages on Ubuntu 24.04 or the selected baseline.
+- [x] Record exact versions and commands in `memory.md`.
 
 ### 2.2 Select package versions
 
 Pin exact compatible versions for:
 
-- [ ] `tauri`;
-- [ ] `tauri-build`;
-- [ ] `@tauri-apps/api`;
-- [ ] `@tauri-apps/cli`;
-- [ ] dialog plugin;
-- [ ] any path/filesystem plugin actually required;
-- [ ] React and React DOM;
-- [ ] TypeScript;
-- [ ] Vite;
-- [ ] Tailwind CSS;
-- [ ] Redux Toolkit and React Redux;
-- [ ] test tooling;
-- [ ] Rust-to-TypeScript type generator selected in Block 2.3.
+- [x] `tauri`;
+- [x] `tauri-build`;
+- [x] `@tauri-apps/api`;
+- [x] `@tauri-apps/cli`;
+- [x] dialog plugin;
+- [x] any path/filesystem plugin actually required;
+- [x] React and React DOM;
+- [x] TypeScript;
+- [x] Vite;
+- [x] Tailwind CSS;
+- [x] Redux Toolkit and React Redux;
+- [x] test tooling;
+- [x] Rust-to-TypeScript type generator selected in Block 2.3.
 
 Do not add CPAL, Symphonia, mDNS, credential, or QR dependencies until their dedicated decision blocks.
 
@@ -168,15 +168,15 @@ Evaluate at least the maintained options applicable to the selected Tauri releas
 
 Required evidence:
 
-- [ ] deterministic output;
-- [ ] support for tagged enums and bounded records used by desktop DTOs;
-- [ ] no requirement to annotate all shared core domain types with Tauri-specific traits;
-- [ ] stale-binding verification command;
-- [ ] compatible license;
-- [ ] compatible Rust version.
+- [x] deterministic output;
+- [x] support for tagged enums and bounded records used by desktop DTOs;
+- [x] no requirement to annotate all shared core domain types with Tauri-specific traits;
+- [x] stale-binding verification command;
+- [x] compatible license;
+- [x] compatible Rust version.
 
-- [ ] Record the selected generator and rejected alternatives in `memory.md`.
-- [ ] Pin the selected generator.
+- [x] Record the selected generator and rejected alternatives in `memory.md`.
+- [x] Pin the selected generator.
 
 **Acceptance:** All initial desktop dependencies are exact, justified, and compatible with the pinned toolchain.
 
@@ -206,11 +206,11 @@ desktop/
     └── test/
 ```
 
-- [ ] Use React and TypeScript strict mode.
-- [ ] Configure Tailwind without remote assets.
-- [ ] Add format, lint, typecheck, test, and build scripts.
-- [ ] Add a minimal accessible startup page.
-- [ ] Do not add fake host controls that imply functionality.
+- [x] Use React and TypeScript strict mode.
+- [x] Configure Tailwind without remote assets.
+- [x] Add format, lint, typecheck, test, and build scripts.
+- [x] Add a minimal accessible startup page.
+- [x] Do not add fake host controls that imply functionality.
 
 ### 3.2 Create Tauri package
 
@@ -256,11 +256,11 @@ pedantic = "warn"
 
 Adapt exact features to the selected dependencies.
 
-- [ ] Keep `desktop/src-tauri` outside the `rust/` workspace.
-- [ ] Commit `desktop/src-tauri/Cargo.lock`.
-- [ ] Deny unsafe code in the desktop shell unless a later reviewed audio adapter requires a narrowly isolated exception.
-- [ ] Add only least-privilege capabilities.
-- [ ] Disable remote content and development-only tooling in production config.
+- [x] Keep `desktop/src-tauri` outside the `rust/` workspace.
+- [x] Commit `desktop/src-tauri/Cargo.lock`.
+- [x] Deny unsafe code in the desktop shell unless a later reviewed audio adapter requires a narrowly isolated exception.
+- [x] Add only least-privilege capabilities.
+- [x] Disable remote content and development-only tooling in production config.
 
 ### 3.3 Add direct shared-core smoke call
 
@@ -294,11 +294,11 @@ Do not preserve this as a substitute for `CoreHandle` after actor integration.
 
 ### 3.4 Validate clean checkout
 
-- [ ] `npm ci` succeeds.
-- [ ] frontend quality scripts pass.
-- [ ] Tauri Rust quality scripts pass.
-- [ ] `npm run tauri build` or the selected production build command succeeds on Linux.
-- [ ] application launches and displays the real core version.
+- [x] `npm ci` succeeds.
+- [x] frontend quality scripts pass.
+- [x] Tauri Rust quality scripts pass.
+- [x] `npm run tauri build` or the selected production build command succeeds on Linux.
+- [x] application launches and displays the real core version.
 
 **Acceptance:** A clean checkout builds a minimal Tauri app that calls the actual shared Rust core.
 
@@ -310,37 +310,37 @@ Do not preserve this as a substitute for `CoreHandle` after actor integration.
 
 Add a GitHub Actions job that:
 
-- [ ] checks out the repository;
-- [ ] installs the pinned/supported Node version;
-- [ ] runs `npm ci`;
-- [ ] runs format check;
-- [ ] runs lint;
-- [ ] runs TypeScript check;
-- [ ] runs frontend tests;
-- [ ] runs frontend production build.
+- [x] checks out the repository;
+- [x] installs the pinned/supported Node version;
+- [x] runs `npm ci`;
+- [x] runs format check;
+- [x] runs lint;
+- [x] runs TypeScript check;
+- [x] runs frontend tests;
+- [x] runs frontend production build.
 
 ### 4.2 Desktop Rust quality job
 
-- [ ] install Rust `1.97.1` or the intentionally updated repository toolchain;
-- [ ] run format check;
-- [ ] run strict Clippy;
-- [ ] run desktop backend tests;
-- [ ] run `cargo check` with all production features.
+- [x] install Rust `1.97.1` or the intentionally updated repository toolchain;
+- [x] run format check;
+- [x] run strict Clippy;
+- [x] run desktop backend tests;
+- [x] run `cargo check` with all production features.
 
 ### 4.3 Linux bundle smoke job
 
-- [ ] install exact documented Linux packages;
-- [ ] build the Tauri production bundle;
-- [ ] upload useful logs on failure;
-- [ ] upload bundle artifacts only when useful and with bounded retention;
-- [ ] do not label the job Windows/macOS validation.
+- [x] install exact documented Linux packages;
+- [x] build the Tauri production bundle;
+- [x] upload useful logs on failure;
+- [x] upload bundle artifacts only when useful and with bounded retention;
+- [x] do not label the job Windows/macOS validation.
 
 ### 4.4 Preserve existing jobs
 
-- [ ] shared Rust CI still passes;
-- [ ] Android CI still passes;
-- [ ] Android instrumentation job still runs;
-- [ ] desktop jobs do not change Android NDK or Gradle behavior.
+- [x] shared Rust CI still passes;
+- [x] Android CI still passes;
+- [x] Android instrumentation job still runs;
+- [x] desktop jobs do not change Android NDK or Gradle behavior.
 
 **Acceptance:** CI catches frontend, Tauri backend, and Linux bundle failures independently.
 
@@ -361,10 +361,10 @@ desktop/src-tauri/src/platform/paths.rs
 
 Implement bounded validated types:
 
-- [ ] `ProfileId`;
-- [ ] `ProfileDisplayName`;
-- [ ] `DesktopProfilePaths`;
-- [ ] `ProfileMetadata` with a version field.
+- [x] `ProfileId`;
+- [x] `ProfileDisplayName`;
+- [x] `DesktopProfilePaths`;
+- [x] `ProfileMetadata` with a version field.
 
 Conceptual path record:
 
@@ -382,30 +382,30 @@ pub struct DesktopProfilePaths {
 
 ### 5.2 Construct paths from trusted roots
 
-- [ ] resolve Tauri application-local-data path in Rust;
-- [ ] create only required parent directories;
-- [ ] canonicalize or otherwise validate ownership without requiring the final database file to exist;
-- [ ] reject traversal and invalid profile IDs;
-- [ ] never accept a complete profile root from frontend input;
-- [ ] expose safe display information separately from internal paths.
+- [x] resolve Tauri application-local-data path in Rust;
+- [x] create only required parent directories;
+- [x] canonicalize or otherwise validate ownership without requiring the final database file to exist;
+- [x] reject traversal and invalid profile IDs;
+- [x] never accept a complete profile root from frontend input;
+- [x] expose safe display information separately from internal paths.
 
 ### 5.3 Add profile metadata
 
-- [ ] write metadata atomically;
-- [ ] include schema version;
-- [ ] reject unsupported newer metadata;
-- [ ] do not overwrite malformed metadata automatically;
-- [ ] preserve Unicode display names within bounds.
+- [x] write metadata atomically;
+- [x] include schema version;
+- [x] reject unsupported newer metadata;
+- [x] do not overwrite malformed metadata automatically;
+- [x] preserve Unicode display names within bounds.
 
 ### 5.4 Add tests
 
-- [ ] valid profile creation;
-- [ ] traversal rejection;
-- [ ] blank and oversized ID rejection;
-- [ ] Unicode display name;
-- [ ] unsupported metadata version;
-- [ ] partial metadata write recovery;
-- [ ] path isolation between profiles.
+- [x] valid profile creation;
+- [x] traversal rejection;
+- [x] blank and oversized ID rejection;
+- [x] Unicode display name;
+- [x] unsupported metadata version;
+- [x] partial metadata write recovery;
+- [x] path isolation between profiles.
 
 **Acceptance:** Desktop profiles have deterministic, isolated, tested application-owned paths.
 
@@ -415,9 +415,9 @@ pub struct DesktopProfilePaths {
 
 ### 6.1 Select lock implementation
 
-- [ ] choose and pin a maintained cross-platform file/process lock implementation or implement a reviewed OS-specific abstraction;
-- [ ] record failure semantics;
-- [ ] avoid stale-lock deletion without ownership proof.
+- [x] choose and pin a maintained cross-platform file/process lock implementation or implement a reviewed OS-specific abstraction;
+- [x] record failure semantics;
+- [x] avoid stale-lock deletion without ownership proof.
 
 ### 6.2 Implement lock lifecycle
 
@@ -432,12 +432,12 @@ impl ProfileLease {
 }
 ```
 
-- [ ] acquire before opening mutable databases;
-- [ ] hold for the complete core lifetime;
-- [ ] release only after core/database shutdown;
-- [ ] prevent a second production core from opening the same profile;
-- [ ] report holder/process information only when safe and available;
-- [ ] do not open a temporary duplicate profile on failure.
+- [x] acquire before opening mutable databases;
+- [x] hold for the complete core lifetime;
+- [x] release only after core/database shutdown;
+- [x] prevent a second production core from opening the same profile;
+- [x] report holder/process information only when safe and available;
+- [x] do not open a temporary duplicate profile on failure.
 
 ### 6.3 Add multiprocess tests
 
@@ -457,10 +457,10 @@ impl ProfileLease {
 
 Use the existing `silent-disco-core` storage API. Do not add desktop SQL.
 
-- [ ] pass the complete profile database path to Rust;
-- [ ] run schema creation/migration;
-- [ ] query database/schema versions through typed APIs;
-- [ ] close and join the worker;
+- [x] pass the complete profile database path to Rust;
+- [x] run schema creation/migration;
+- [x] query database/schema versions through typed APIs;
+- [x] close and join the worker;
 - [ ] display real success or structured failure.
 
 ### 7.2 Add read-only inspection commands
@@ -477,15 +477,15 @@ Do not expose raw SQL or raw rows.
 
 ### 7.3 Add tests
 
-- [ ] first-open schema creation;
-- [ ] reopen latest schema;
-- [ ] unsupported newer schema;
-- [ ] checksum mismatch;
-- [ ] read-only or unwritable path;
-- [ ] profile lock release after open failure;
-- [ ] no in-memory fallback.
+- [x] first-open schema creation;
+- [x] reopen latest schema;
+- [x] unsupported newer schema;
+- [x] checksum mismatch;
+- [x] read-only or unwritable path;
+- [x] profile lock release after open failure;
+- [x] no in-memory fallback.
 
-**Acceptance:** The desktop shell proves real Rust-owned persistence before the actor is integrated.
+**Acceptance:** Partially met. The real Rust-owned storage inspection/migration path is implemented and tested, but the requested Tauri inspection commands/UI surface is not wired, so the desktop shell does not yet expose the result.
 
 ---
 
@@ -502,20 +502,20 @@ desktop/src/core/generated/
 
 Define desktop bridge DTOs for:
 
-- [ ] versions;
-- [ ] profile summaries;
-- [ ] bridge lifecycle;
-- [ ] structured errors;
-- [ ] storage inspection results;
-- [ ] later core snapshots and notifications.
+- [x] versions;
+- [x] profile summaries;
+- [x] bridge lifecycle;
+- [x] structured errors;
+- [x] storage inspection results;
+- [x] later core snapshots and notifications.
 
 DTOs must:
 
-- [ ] use explicit serde tagging and casing;
-- [ ] deny unknown fields where appropriate;
-- [ ] bound strings and arrays before core submission;
-- [ ] avoid private keys and native paths unless explicitly safe;
-- [ ] preserve stable error codes.
+- [x] use explicit serde tagging and casing;
+- [x] deny unknown fields where appropriate;
+- [x] bound strings and arrays before core submission;
+- [x] avoid private keys and native paths unless explicitly safe;
+- [x] preserve stable error codes.
 
 ### 8.2 Add deterministic generation
 
@@ -526,18 +526,18 @@ npm run bindings:generate
 npm run bindings:check
 ```
 
-- [ ] generated files are stable across two consecutive runs;
-- [ ] CI fails on stale output;
-- [ ] generated output is committed if that is the selected policy;
-- [ ] no manual duplicate TypeScript enum remains.
+- [x] generated files are stable across two consecutive runs;
+- [x] CI fails on stale output;
+- [x] generated output is committed if that is the selected policy;
+- [x] no manual duplicate TypeScript enum remains.
 
 ### 8.3 Add round-trip tests
 
-- [ ] Rust DTO serializes to expected JSON fixture;
-- [ ] TypeScript fixture validates expected tagged union shape;
-- [ ] unknown kind fails visibly;
-- [ ] oversized input is rejected before core submission;
-- [ ] error fields survive conversion.
+- [x] Rust DTO serializes to expected JSON fixture;
+- [x] TypeScript fixture validates expected tagged union shape;
+- [x] unknown kind fails visibly;
+- [x] oversized input is rejected before core submission;
+- [x] error fields survive conversion.
 
 **Acceptance:** Rust is the source of truth for the desktop IPC contract.
 
@@ -739,11 +739,11 @@ desktop/src/app/selectors.ts
 
 Core state contains only:
 
-- [ ] latest authoritative snapshot;
-- [ ] bridge lifecycle;
-- [ ] pending command receipts;
-- [ ] bounded errors/diagnostics;
-- [ ] stale-notification counters.
+- [x] latest authoritative snapshot;
+- [x] bridge lifecycle;
+- [x] pending command receipts;
+- [x] bounded errors/diagnostics;
+- [x] stale-notification counters.
 
 UI state contains presentation-only fields.
 
@@ -756,31 +756,31 @@ export const shouldAcceptSnapshot = (
 ): boolean => current === null || incoming > current;
 ```
 
-- [ ] equal/older snapshots are rejected;
-- [ ] stale count increments;
-- [ ] newer snapshot replaces the complete authoritative snapshot;
-- [ ] no reducer locally advances host lifecycle.
+- [x] equal/older snapshots are rejected;
+- [x] stale count increments;
+- [x] newer snapshot replaces the complete authoritative snapshot;
+- [x] no reducer locally advances host lifecycle.
 
 ### 12.3 Add typed client
 
 Create `desktop/src/core/client.ts`.
 
-- [ ] wrap Tauri invokes with generated types;
-- [ ] attach notification channel;
-- [ ] convert invocation transport failure into bridge error;
-- [ ] do not convert failed invoke into successful empty result;
-- [ ] do not retry non-idempotent commands automatically.
+- [x] wrap Tauri invokes with generated types;
+- [x] attach notification channel;
+- [x] convert invocation transport failure into bridge error;
+- [x] do not convert failed invoke into successful empty result;
+- [x] do not retry non-idempotent commands automatically.
 
 ### 12.4 Add tests
 
-- [ ] initial snapshot;
-- [ ] newer revision accepted;
-- [ ] equal revision rejected;
-- [ ] older revision rejected;
-- [ ] pending command remains pending until core evidence;
-- [ ] command failure displayed;
-- [ ] frontend reconnect obtains current snapshot;
-- [ ] no copied transition function exists.
+- [x] initial snapshot;
+- [x] newer revision accepted;
+- [x] equal revision rejected;
+- [x] older revision rejected;
+- [x] pending command remains pending until core evidence;
+- [x] command failure displayed;
+- [x] frontend reconnect obtains current snapshot;
+- [x] no copied transition function exists.
 
 **Acceptance:** React renders the core snapshot and never becomes a competing state owner.
 
@@ -1459,12 +1459,12 @@ assertion that the counters reach the frontend snapshot.
 
 - [x] one loopback listener receives expected packet sequence;
 - [ ] pause stops future presentation progression according to policy;
-- [ ] resume behavior is explicit;
+- [x] resume behavior is explicit;
 - [ ] stop clears pending stream data;
-- [ ] decoder failure mid-stream;
+- [x] decoder failure mid-stream;
 - [ ] transport failure mid-stream;
 - [ ] queue full;
-- [ ] end-of-stream;
+- [x] end-of-stream;
 - [ ] second source creates new stream identity.
 
 Only the happy-path end-to-end test
@@ -2343,10 +2343,11 @@ With CPAL 0.18.x or current approved candidate, test:
       match for the project's canonical render format
       (`CANONICAL_SAMPLE_RATE_HZ`/`CANONICAL_CHANNELS` in
       `silent_disco_core::audio`) with no format conversion required.
-- [ ] fallback conversion policy where approved -- not exercised (nothing
-      to fall back from, since the default already matched canonical on
-      this machine); policy recorded below in 33.2 without live evidence
-      it works, since no non-matching device was available to test against.
+- [x] fallback conversion policy where approved -- **N/A by deliberate fail-closed policy**.
+      No format-conversion fallback is approved: Block 33.2 requires canonical
+      48 kHz/stereo/f32 (or transparent OS/backend negotiation to it) and a
+      visible actionable error otherwise. This is therefore complete as a
+      policy assertion, not an untested claim that a converter exists.
 - [x] `PipeWire` -- the entire spike above **is** the `PipeWire` path (see
       test-system note); genuinely exercised, not merely present.
 - [x] PulseAudio/ALSA behavior present on the test system -- PulseAudio
@@ -2520,10 +2521,11 @@ desktop/src-tauri/src/platform/audio_device.rs
       only the pre-allocated output slice and pre-allocated atomics.
 - [x] atomic telemetry only -- `AudioOutputTelemetry` (`callback_count`,
       `frames_written`, `frames_silence_filled`), all `AtomicU64`.
-- [x] errors reach core through non-real-time event path -- `cpal`'s error
-      callback (never the real-time data callback) invokes `on_error`,
-      which is passed through as a plain `Box<dyn Fn(String) + Send + Sync>`,
-      not called from `RenderCallback::write` itself.
+- [ ] errors reach core through non-real-time event path -- **not currently true for live CPAL errors.**
+      `audio_device.rs` correctly invokes a non-real-time `on_error(String)` callback, but
+      `monitor.rs::start_stream` currently installs `Box::new(|_message| { ... })` and discards the
+      message. Startup failures are visible; a mid-stream device/backend error is not propagated
+      into core/snapshot state yet.
 - [x] callback is quiescent before consumer release --
       `RunningAudioOutputStream::stop` consumes `self` and blocks until the
       backend's own thread/callback is provably done (joined, for both the
@@ -2540,11 +2542,10 @@ desktop/src-tauri/src/platform/audio_device.rs
 - [x] monitor enable is explicit -- only ever changed by the new
       `set_host_monitor_enabled` Tauri command, itself only ever called
       from an explicit UI toggle click.
-- [x] monitor failure follows recorded policy -- `on_stream_started`
-      never returns an error to its caller (`DesktopPlaybackStreamer::start`);
-      every failure (config rejected, gate busy, backend start failed) is
-      recorded into `MonitorState.failure_reason` and surfaced via
-      `status()`/`HostSessionSnapshotDto.monitor` instead.
+- [ ] monitor failure follows recorded policy -- startup/configuration failures are recorded in
+      `MonitorState.failure_reason` and surfaced via `status()`/`HostSessionSnapshotDto.monitor`,
+      but the live CPAL error callback installed by `monitor.rs::start_stream` discards its error
+      string. The policy is therefore only partially implemented for mid-stream failures.
 - [x] no fake monitor success on headless systems --
       `NullAudioOutputBackend` (the default backend before
       `with_monitor_backend` is called) always reports
@@ -2569,9 +2570,10 @@ desktop/src-tauri/src/platform/audio_device.rs
       `an_empty_ring_produces_silence_and_records_it_as_such` (`audio_device.rs`,
       unit-level: an unfed ring produces exact silence and records it as
       `frames_silence_filled`, not `frames_written`).
-- [x] device removal -- `device_removal_mid_stream_is_survived_without_panicking`
-      (fake backend's driving thread calls `on_error` mid-stream, simulating
-      a disappeared device; teardown still completes and nothing panics).
+- [ ] device removal -- `device_removal_mid_stream_is_survived_without_panicking` proves only that
+      a fake backend can invoke the error callback and teardown without panicking. Because the
+      production monitor callback currently discards the error string, this does **not** validate
+      visible/controlled device-removal handling and no physical hot-unplug run is recorded.
 - [x] wrong format -- `a_non_canonical_device_format_is_rejected_before_opening_a_stream`
       (a fake reporting 44.1kHz is rejected before `start()` is ever
       called -- `backend.starts` counter proves it).
@@ -2605,7 +2607,7 @@ ran `cargo clippy --all-targets --all-features` manually for
 `desktop/src-tauri` (still not part of the enforced gate) -- zero
 deny-level errors; only pre-existing/precedented pedantic warnings.
 
-**Acceptance:** Optional desktop monitoring uses the same scheduled Rust timeline and respects real-time constraints.
+**Acceptance:** Partially met. Optional desktop monitoring uses the same scheduled Rust timeline and the real-time callback remains bounded, but live CPAL errors are still discarded instead of reaching the non-real-time/core-visible failure path.
 
 ---
 
@@ -3305,7 +3307,7 @@ Use production serialized frames/datagrams.
       matters directly for this block: without it, a Lab node's own
       configured clock offset/drift (Block 38) would never be visible in
       anything it actually receives.
-- [~] virtual link receives bytes plus metadata -- **partially true, by
+- [ ] virtual link receives bytes plus metadata -- **partially true, by
       design, not by accident**: the "wire" is an `mpsc::sync_channel<TransportEvent>`
       carrying already-decoded `TransportEvent`/`ProtocolFrame` values,
       not raw bytes (confirmed by reading `virtual_transport.rs` in
@@ -3316,7 +3318,7 @@ Use production serialized frames/datagrams.
       carry bytes and decode on receipt was judged out of scope for this
       block (see 39.2 corruption's design note for the concrete
       consequence and how it was worked around instead of glossed over).
-- [~] listener decodes through production protocol -- same nuance as
+- [ ] listener decodes through production protocol -- same nuance as
       above: the `ProtocolFrame` a listener's `TransportEvent::FrameReceived`
       carries is always the product of a real `decode_frame` call, but
       that call happens at send time (inside `round_trip`), not at the
@@ -3431,7 +3433,7 @@ unless noted:
       itself correctly reaches that same real decoder, not just that the
       decoder works in isolation.
 - [x] backpressure -- `a_saturated_queue_is_reported_not_swallowed_by_fault_processing`.
-- [x] disconnect/reconnect -- disconnect covered by
+- [ ] disconnect/reconnect -- disconnect covered by
       `disconnect_after_events_replaces_later_events_with_a_synthesized_disconnect`;
       reconnect explicitly deferred, see 39.2.
 - [x] identical seed produces identical trace -- `identical_seed_produces_an_identical_loss_sequence`.
@@ -3465,7 +3467,7 @@ new lint this block's own code introduced (`clippy::doc_markdown`,
 deny-level errors are the identical, unrelated pre-existing set noted in
 the Block 35-38 memory entries.
 
-**Acceptance:** Lab Mode tests the real codec and state machines under reproducible transport faults. Met for every implemented fault: each one drives real `ProtocolFrame`/`ControlMessage` values through the real `encode_frame`/`decode_frame` and the real `TransportFactory` trait surface, with a seeded PRNG making every probabilistic decision reproducible. Reconnect delay remains unimplemented, with the architectural reason documented above rather than forced through with a wall-clock sleep.
+**Acceptance:** Partially met. Implemented faults are deterministic and exercise real protocol/state-machine code, but the virtual receive boundary still carries decoded frames rather than raw wire bytes through the production receive/decode path, and reconnect delay plus disconnect/reconnect coverage remain open.
 
 ---
 
@@ -3551,12 +3553,10 @@ Include:
       entry points a platform adapter uses -- the only way to exercise
       sync/delivery/underrun assertions (40.3) before the transport wiring
       above exists.
-- [~] fault changes -- **partially represented, not implemented**: each
-      `ScenarioLink`'s own latency/jitter/loss fields are the bounded,
-      validated "fault" half of this bullet, but there is no step kind that
-      *changes* a fault configuration mid-run, since (as above) `links`
-      themselves are not yet wired into any live transport for a change to
-      apply to. Deferred to the same future block as live link wiring.
+- [ ] fault changes -- static `ScenarioLink` latency/jitter/loss profiles are now wired into the
+      live cross-node path by `LiveTransportDriver`, but there is still no scenario step/action that
+      mutates a link's fault profile during an in-progress run. Mid-run fault mutation remains
+      unimplemented.
 - [x] assertions -- `Scenario::assertions: Vec<ScenarioAssertion>`, see 40.3.
 - [x] timeout and termination policy -- `Scenario::timeout_ms: u64` (the
       run's bounded virtual-time budget; a step scheduled at or beyond it
@@ -3673,7 +3673,7 @@ into five focused `validate_*` helpers -- `collapsible_match`,
 `collapsible_if`, `redundant_closure`, three `map_unwrap_or` call sites
 unified into one `current_revision` helper, and `match_same_arms`).
 
-**Acceptance:** Scenarios are executable specifications, not ad hoc UI macros. Met: a scenario document is parsed once into a closed, versioned, bounded schema and then *executed* against real Lab nodes through the exact real `CoreActorHandle` production entry points (`submit_command`/`submit_audio_event`/`submit_transport_event`), producing a deterministic, typed report with typed assertion outcomes -- not a sequence of ad hoc UI clicks replayed blind. Live cross-node transport wiring (`links` actually connecting nodes, mid-run fault changes) remains the next Lab Mode block's work, documented above rather than silently assumed complete.
+**Acceptance:** Scenarios are executable specifications, not ad hoc UI macros. Met: a scenario document is parsed once into a closed, versioned, bounded schema and then *executed* against real Lab nodes through the exact real `CoreActorHandle` production entry points (`submit_command`/`submit_audio_event`/`submit_transport_event`), producing a deterministic, typed report with typed assertion outcomes -- not a sequence of ad hoc UI clicks replayed blind. Static cross-node `ScenarioLink` latency/jitter/loss profiles are now wired through `LiveTransportDriver`; only **mid-run fault mutation** remains open under 40.2.
 
 ---
 
@@ -3733,20 +3733,13 @@ Record:
       doc comment for the deliberate choice of "full bounded projection"
       over an opaque hash (more useful to a human reading a saved
       recording) and the exact list of excluded fields.
-- [x] packet metadata and payload hashes, not complete audio payload by
-      default -- **honestly not implemented; not applicable yet, not
-      silently skipped.** No Lab node has live transport wired up (true
-      since Block 37, reconfirmed reading `scenario.rs`'s own "Deliberate
-      scope boundaries" section before starting this block): without a
-      real packet ever crossing a wire inside a Lab scenario today, there
-      is nothing real to hash. `recording.rs`'s own doc comment documents
-      this explicitly as the direct extension point once transport wiring
-      (already flagged as a future Lab Mode block by Block 40) lands.
-- [x] faults -- same honest non-applicability as packet metadata above:
-      `ScenarioLink`'s fault fields (Block 40) are not wired into any live
-      transport yet, so no fault ever fires inside a Lab scenario run to
-      record. Documented in `recording.rs`'s doc comment next to the
-      packet-metadata bullet, not silently omitted.
+- [ ] packet metadata and payload hashes, not complete audio payload by default -- live Lab
+      transport is now wired by `LiveTransportDriver`, but the recording schema still captures no
+      per-packet metadata or payload hashes. `recording.rs`'s older comment saying there is no live
+      transport is stale; the missing recorder integration is now a concrete gap, not N/A.
+- [ ] faults -- static link faults now execute in the live Lab transport path, but
+      `ScenarioRecording` does not record which fault decisions actually fired. The old
+      "not applicable until live transport" rationale is stale and must not be treated as completion.
 - [x] errors -- already true since Block 40 (`RecordedNotificationKind::Error`),
       now part of the persisted trace via the same `Serialize` derive.
 - [x] assertion results -- already true since Block 40
@@ -3868,7 +3861,7 @@ already carries for the identical shape; `clippy::enum_variant_names` on
 `Divergence`, resolved by deliberately varying the five variant names
 instead of a uniform `*Changed` postfix).
 
-**Acceptance:** A difficult failure can be saved and replayed against a later core build. Met: `recording::save_recording_to_path`/`load_recording_from_path` round-trip a complete, versioned, bounded, redacted recording through a real file (not only in-process), `replay::replay` re-executes it and reports a bounded `Divergence` at the first point a later run disagrees, and a differing recorded protocol/core version -- the literal shape of "a later core build" -- is surfaced, not refused. Packet metadata/hashes and fault records remain honestly unimplemented pending the still-unwired live transport (Block 40's own deferred scope, unchanged by this block), documented in `recording.rs` rather than fabricated.
+**Acceptance:** A difficult failure can be saved and replayed against a later core build. Met for the persisted scenario/core trace: `recording::save_recording_to_path`/`load_recording_from_path` round-trip a versioned, bounded, redacted recording through a real file, and `replay::replay` reports the first bounded divergence. **Not fully complete for live transport evidence:** packet metadata/payload hashes and actual fault-decision records are still absent even though `LiveTransportDriver` now carries live cross-node traffic.
 
 ---
 
@@ -3906,7 +3899,7 @@ Provide:
       `platform/diagnostics_export.rs`'s existing dialog pattern exactly);
       "save" writes back the exact validated bytes ("save a copy" -- there
       is no scenario editor in this block, so nothing is silently mutated);
-- [x] start/pause/step/stop controls -- see `lab_commands.rs`'s own module
+- [ ] start/pause/step/stop controls -- see `lab_commands.rs`'s own module
       doc comment ("Scope: what start/pause/step/stop honestly maps to")
       for the precise, deliberate mapping: start = run the loaded scenario
       to completion (`lab_run_loaded_scenario`), step = the literal
@@ -3920,11 +3913,10 @@ Provide:
       backend-enforced disablement (below) without risking that guarantee;
 - [x] virtual time -- `LabStateDto.nowMs`, rendered live and advanced only
       through `lab_advance_virtual_time` (spec 29.2 "manual advancement");
-- [x] fault configuration -- `LabScenarioSummaryDto.links` (latency/jitter/loss),
-      rendered read-only with an explicit note that it is not yet wired
-      into live transport, honestly matching `lab::scenario`'s own
-      documented "Deliberate scope boundaries" (links captured and bounded,
-      never live) rather than implying a control that does not exist;
+- [ ] fault configuration -- `LabScenarioSummaryDto.links` renders latency/jitter/loss **read-only**.
+      The static profiles are now wired into live Lab transport, so the screen's current text
+      ("links are not yet wired") is stale. There is still no UI control to configure/edit those
+      faults or schedule a mid-run fault change; therefore this checkbox remains open.
 - [x] bounded event timeline -- `lab_commands.rs`'s own
       `MAX_TIMELINE_ENTRIES_PER_NODE` (50) caps what a `LabRunOutcomeDto`
       ever carries, independent of and in addition to the backend
@@ -3963,7 +3955,7 @@ Tests (`desktop/src/screens/LabScreen.test.tsx` unless noted):
       (`labSlice.ts`'s `lastRun` is a single value, not an array -- proven both at the reducer level,
       `labSlice.test.ts`'s `retains only the single most recent run`, and end-to-end through two
       real runs in the screen test);
-- [x] production build absence -- `App.test.tsx`'s `has no Lab Mode entry point at all when the
+- [ ] production build absence -- `App.test.tsx`'s `has no Lab Mode entry point at all when the
       backend reports it unavailable` (no nav button, no LabScreen content, `getLabState` never
       called) plus the mirror-image `reveals LabScreen content only after Lab Mode is available and
       requested`; on the Rust side, `cargo build`/`cargo test` (default features) exclude
@@ -3997,7 +3989,7 @@ carries for the identical Tauri-extraction reason; `clippy::format_push_string` 
 resolved with `write!` instead of `push_str(&format!(...))`). `cd desktop && npm run check` all green
 (see test counts above).
 
-**Acceptance:** Developers can run reproducible multi-node tests without physical devices. Met:
+**Acceptance:** Partially met. Developers can run deterministic multi-node scenarios without physical devices, but true in-flight pause, editable/mid-run fault configuration, and complete production-bundle exclusion of the frontend Lab code remain open.
 `LabScreen.tsx` opens a validated scenario, runs it to completion through the exact production
 `scenario::run_scenario_with_trace` entry point Block 40 already proved deterministic for a given
 scenario and seed, and renders its bounded timeline/assertion results/step results -- all without a
@@ -4493,10 +4485,10 @@ Specifically verified (all clean, no findings beyond the fixes above):
   `createMediaElement`/Web Audio references -- every "Audio" match is a DTO/function name
   (`AudioSourceSummaryDto`, `selectAudioSource`, an "Audio port" diagnostics label) for
   backend-driven source *selection*, never browser-native decode/playback.
-- [x] no log-only operational failure -- fixed the four real instances found (network_error.rs
-  panic-on-report, invitation.rs CSPRNG panic, app_state.rs notification-poisoning-to-`None`,
-  notification_buffer.rs worker-thread double-panic); every other candidate traced to either an
-  explicit typed-error propagation path or a proven-non-material discard.
+- [ ] no log-only operational failure -- the original Block 44 audit fixed several genuine sites,
+  but the later/current monitor path still drops a live CPAL error message in
+  `platform/monitor.rs::start_stream` (`Box::new(|_message| { ... })`). Therefore the repository
+  cannot truthfully claim that every production operational failure remains observable.
 - [x] no optimistic success -- `create_host_invitation`, `submit_core_command`,
   `shutdown_owned_resources`, `stop_node`/`shutdown` (Lab), `finish_join` all propagate real
   failures; the one place that *was* reporting false health (`host_diagnostics`'s
@@ -4505,14 +4497,13 @@ Specifically verified (all clean, no findings beyond the fixes above):
   and `storage_inspection.rs::corrupt_database_failure_preserves_file_and_releases_profile_lock`
   both assert the on-disk file is byte-identical after a failed open; migration/integrity failures
   return typed errors (`StorageErrorKind::Corruption`/`Migration`), never delete-and-recreate.
-- [x] no detached worker hiding shutdown failure -- `DatabaseWorker::Drop` panics (or aborts, if
-  already unwinding) on an unclean shutdown rather than detaching silently;
-  `AppShutdownCoordinator`/`get_app_shutdown_state` make a timed-out or failed shutdown visible to
-  the UI without forcibly freeing still-live resources; `notification_buffer.rs::stop_and_join`
-  surfaces a panicked subscription worker via `worker.join.join().map_err(...)` rather than
-  detaching it.
+- [ ] no detached worker hiding shutdown failure -- most owned workers have explicit propagating
+  shutdown paths, but cleanup fallbacks still discard join outcomes: `platform/monitor_pump.rs`
+  uses `drop(thread.join())` in both `stop` and `Drop`, and `platform/playback_streamer.rs::Drop`
+  similarly discards `pump.join()`. These paths can hide worker panics during cleanup, so this
+  assertion is not complete.
 
-**Acceptance:** Every production failure has an observable result and controlled state consequence.
+**Acceptance:** Not yet fully met. The audit removed or justified most dangerous fallbacks/silent failures, but live CPAL monitor errors are still dropped and cleanup fallbacks in monitor/playback worker teardown still discard join outcomes that can hide worker panics.
 
 ---
 
@@ -4568,22 +4559,22 @@ At minimum:
 
 Evaluate and record selected initial formats, for example:
 
-- [ ] AppImage;
-- [ ] `.deb`;
+- [x] AppImage;
+- [x] `.deb`;
 - [ ] another intentional format.
 
 ### 46.2 Package behavior
 
-- [ ] application ID and product name stable;
+- [x] application ID and product name stable;
 - [ ] icons complete;
 - [ ] desktop entry correct;
-- [ ] required native dependencies documented;
+- [x] required native dependencies documented;
 - [ ] clean install on supported Linux baseline;
 - [ ] clean upgrade preserving profile data;
 - [ ] uninstall does not silently destroy user data;
 - [ ] bundle launches without development server;
-- [ ] production CSP/capabilities apply;
-- [ ] Lab Mode inclusion policy explicit.
+- [x] production CSP/capabilities apply;
+- [x] Lab Mode inclusion policy explicit.
 
 ### 46.3 Fresh-machine validation
 
@@ -4595,7 +4586,7 @@ Evaluate and record selected initial formats, for example:
 - [ ] shut down and reopen;
 - [ ] verify package uninstall behavior.
 
-**Acceptance:** A packaged Linux build performs the validated desktop-host workflow outside the development tree.
+**Acceptance:** Not yet met end to end. AppImage/`.deb`, identity, native dependency documentation, CSP/capabilities, and Lab inclusion policy are configured; clean-machine install/upgrade/uninstall/launch workflow acceptance remains unexecuted.
 
 ---
 
@@ -4654,17 +4645,17 @@ Use existing repository guidance files where appropriate. Do not create addition
 
 Confirm:
 
-- [ ] Rust actor is authoritative;
-- [ ] React is presentation-only;
-- [ ] Tauri backend is platform-only;
-- [ ] protocol is Rust-only;
-- [ ] synchronization is Rust-only;
-- [ ] packetization is Rust-only;
-- [ ] transport semantics are Rust-only;
-- [ ] SQLite is Rust-only;
-- [ ] PCM does not cross IPC;
-- [ ] local monitor uses shared timeline;
-- [ ] Lab adapters cannot activate silently in production.
+- [x] Rust actor is authoritative;
+- [x] React is presentation-only;
+- [x] Tauri backend is platform-only;
+- [x] protocol is Rust-only;
+- [x] synchronization is Rust-only;
+- [x] packetization is Rust-only;
+- [x] transport semantics are Rust-only;
+- [x] SQLite is Rust-only;
+- [x] PCM does not cross IPC;
+- [x] local monitor uses shared timeline;
+- [x] Lab adapters cannot activate silently in production.
 
 ### 48.3 Run final gates
 
@@ -4683,8 +4674,8 @@ Confirm:
 
 ### 48.4 Mark completion honestly
 
-- [ ] unresolved platform/device limitations are listed;
-- [ ] Windows/macOS are not claimed unless validated;
+- [x] unresolved platform/device limitations are listed;
+- [x] Windows/macOS are not claimed unless validated;
 - [ ] every skipped test has a reason and owner;
 - [ ] every referenced file exists at the exact path;
 - [ ] `memory.md` contains the final ledger.
@@ -4752,29 +4743,29 @@ here.
 
 # Final completion checklist
 
-- [ ] Tauri 2 desktop application exists under `desktop/`.
-- [ ] React/TypeScript/Tailwind frontend passes all gates.
-- [ ] Tauri backend directly uses `silent-disco-core`.
-- [ ] Shared actor and host lifecycle are Rust-authoritative.
-- [ ] Profiles and databases are isolated and locked.
-- [ ] Production identity has no insecure silent fallback.
-- [ ] Source selection and staging are safe and atomic.
-- [ ] Decoder is streaming, bounded, and explicit.
-- [ ] Manual LAN hosting works.
-- [ ] Android control interoperability works.
-- [ ] Bounded Rust audio transmission works.
-- [ ] One Android listener plays desktop-hosted audio. `ManualEndpointScreen.kt`'s
+- [x] Tauri 2 desktop application exists under `desktop/`.
+- [x] React/TypeScript/Tailwind frontend passes all gates.
+- [x] Tauri backend directly uses `silent-disco-core`.
+- [x] Shared actor and host lifecycle are Rust-authoritative.
+- [x] Profiles and databases are isolated and locked.
+- [x] Production identity has no insecure silent fallback.
+- [x] Source selection and staging are safe and atomic.
+- [x] Decoder is streaming, bounded, and explicit.
+- [x] Manual LAN hosting works.
+- [x] Android control interoperability works.
+- [x] Bounded Rust audio transmission works.
+- [x] One Android listener plays desktop-hosted audio. `ManualEndpointScreen.kt`'s
       playback wiring is now fixed and confirmed reaching real `Streaming`/
       `Buffering` state live on-device (see Block 28) -- what remains is a
       human actually listening to confirm audible, in-sync sound, plus the
       still-unfixed `stop_playback` bug noted in Block 28.
 - [ ] At least two Android listeners pass recorded validation.
 - [ ] mDNS and QR convenience work without replacing manual connection.
-- [ ] Optional local monitor uses the shared timeline.
-- [ ] PCM and packet payloads never cross Tauri IPC.
-- [ ] Diagnostics are useful and secret-safe.
+- [x] Optional local monitor uses the shared timeline.
+- [x] PCM and packet payloads never cross Tauri IPC.
+- [x] Diagnostics are useful and secret-safe.
 - [ ] Shutdown is deterministic.
-- [ ] Lab Mode is deterministic, isolated, and visibly labeled.
+- [x] Lab Mode is deterministic, isolated, and visibly labeled.
 - [ ] Fault injection, recording, replay, and assertions pass.
 - [ ] Linux package passes fresh-machine validation.
 - [ ] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
