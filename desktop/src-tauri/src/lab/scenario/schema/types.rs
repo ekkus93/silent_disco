@@ -165,7 +165,10 @@ impl fmt::Display for ScenarioValidationError {
                 "node '{node}' has conflicting inbound receive-fault profiles; the current virtual transport applies latency/jitter/loss per receiving node, not per peer"
             ),
             Self::UnknownLink { from, to } => {
-                write!(formatter, "fault mutation references undeclared link '{from}' -> '{to}'")
+                write!(
+                    formatter,
+                    "fault mutation references undeclared link '{from}' -> '{to}'"
+                )
             }
             Self::FaultMutationOwnerMismatch {
                 step_node,
