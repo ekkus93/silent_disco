@@ -1,4 +1,4 @@
-use super::{LabFaultController, LabLatencyConfig, LabLatencyTransportFactory};
+use super::{LabLatencyConfig, LabLatencyTransportFactory};
 use crate::lab::clock::{LabClock, LabNodeClock};
 use silent_disco_core::domain::MonotonicMillis;
 use silent_disco_core::domain::{DeviceId, PacketSequence, SampleIndex, SessionId, StreamId};
@@ -408,7 +408,8 @@ fn live_controller_changes_loss_without_reconnecting_the_listener() {
     host.authorize_peer(&device_id, listener.local_routes())
         .expect("listener should authorize");
     assert!(matches!(
-        host.recv_event(POLL_TIMEOUT).expect("authorization should arrive"),
+        host.recv_event(POLL_TIMEOUT)
+            .expect("authorization should arrive"),
         TransportEvent::PeerAuthorized { .. }
     ));
 
@@ -496,7 +497,8 @@ fn live_controller_changes_latency_without_reconnecting_the_listener() {
     host.authorize_peer(&device_id, listener.local_routes())
         .expect("listener should authorize");
     assert!(matches!(
-        host.recv_event(POLL_TIMEOUT).expect("authorization should arrive"),
+        host.recv_event(POLL_TIMEOUT)
+            .expect("authorization should arrive"),
         TransportEvent::PeerAuthorized { .. }
     ));
 
@@ -520,13 +522,17 @@ fn live_controller_changes_latency_without_reconnecting_the_listener() {
         .expect_err("new 100ms latency must hold the next audio datagram");
     assert_eq!(held.kind, TransportErrorKind::Timeout);
 
-    clock.advance(99).expect("advance just short of new latency deadline");
+    clock
+        .advance(99)
+        .expect("advance just short of new latency deadline");
     let still_held = listener
         .recv_event(POLL_TIMEOUT)
         .expect_err("audio must remain held one millisecond before the deadline");
     assert_eq!(still_held.kind, TransportErrorKind::Timeout);
 
-    clock.advance(1).expect("advance to exact new latency deadline");
+    clock
+        .advance(1)
+        .expect("advance to exact new latency deadline");
     assert!(matches!(
         listener
             .recv_event(POLL_TIMEOUT)
