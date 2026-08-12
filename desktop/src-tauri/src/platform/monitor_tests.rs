@@ -120,7 +120,7 @@ impl RunningAudioOutputStream for FakeRunningStream {
             // release prevention": once `stop` returns, the fake's thread
             // (which is the only thing that ever calls `callback.write`)
             // is provably gone, so nothing can invoke the callback again.
-            drop(thread.join());
+            thread.join().expect("fake audio output thread joins cleanly");
         }
     }
 }
@@ -305,11 +305,70 @@ fn device_removal_mid_stream_is_survived_without_panicking() {
             SAMPLES_PER_PACKET,
         )));
     }
-    thread::sleep(Duration::from_millis(100));
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let failed_status = loop {
+        let status = monitor.status();
+        if status.failure_reason.is_some() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "monitor runtime failure was never surfaced"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(!failed_status.active);
+    assert!(failed_status.telemetry.is_none());
+    assert!(
+        failed_status
+            .failure_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("fake: device disappeared")),
+        "unexpected monitor failure: {:?}",
+        failed_status.failure_reason
+    );
 
-    // Must not have panicked getting here; teardown must still complete.
+    // Teardown must preserve the runtime cause instead of erasing it.
     monitor.on_stream_stopped();
-    assert!(!monitor.status().active);
+    let stopped = monitor.status();
+    assert!(!stopped.active);
+    assert!(
+        stopped
+            .failure_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("fake: device disappeared")),
+        "runtime device failure was erased during teardown: {:?}",
+        stopped.failure_reason
+    );
+}
+
+#[test]
+fn a_panicked_monitor_pump_is_reported_during_teardown() {
+    let monitor = DesktopMonitorControl::new(Arc::new(FakeBackend::new()));
+    monitor.set_enabled(true);
+
+    let tap = start_stream(&monitor, || -> Option<u64> {
+        panic!("injected monitor clock failure");
+    })
+    .expect("monitor stream starts before the pump observes the injected panic");
+    drop(tap);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while monitor.status().active && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    monitor.on_stream_stopped();
+    let status = monitor.status();
+    assert!(!status.active);
+    assert!(
+        status
+            .failure_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("monitor pump thread panicked during shutdown")),
+        "monitor pump panic was not surfaced: {:?}",
+        status.failure_reason
+    );
 }
 
 /// 34.3 "wrong format": a device reporting a non-canonical configuration

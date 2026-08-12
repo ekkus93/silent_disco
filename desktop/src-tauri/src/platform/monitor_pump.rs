@@ -116,19 +116,24 @@ impl DesktopMonitorPump {
     /// the monitor's render-ring producer is dropped only once this
     /// returns, so a caller that acquires a fresh lease immediately
     /// afterward never races the outgoing one.
-    pub(crate) fn stop(mut self) {
+    pub(crate) fn stop(mut self) -> Result<(), String> {
         self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
-            drop(thread.join());
+            thread
+                .join()
+                .map_err(|_| "local monitor pump thread panicked during shutdown".to_owned())?;
         }
+        Ok(())
     }
 }
 
 impl Drop for DesktopMonitorPump {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            drop(thread.join());
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            eprintln!("local monitor pump thread panicked during implicit shutdown");
         }
     }
 }

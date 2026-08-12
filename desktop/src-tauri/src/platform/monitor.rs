@@ -33,7 +33,7 @@ use silent_disco_core::domain::{SessionId, StreamId};
 use silent_disco_core::protocol::AudioDatagram;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Bounded so a stalled/slow monitor can never grow unbounded memory --
 /// matches the render ring's own one-second-ish scale of slack. A full
@@ -70,6 +70,37 @@ struct ActiveMonitorStream {
     /// this, "local monitor and render counters" diagnostics would be
     /// permanently unreachable, not merely unbuilt).
     telemetry: Arc<AudioOutputTelemetry>,
+    /// The audio backend's error callback cannot lock `MonitorState`: its
+    /// calling context is backend-owned and must never be allowed to block
+    /// the host's monitor/status mutex. A write-once cell retains the first
+    /// runtime failure so ordinary status readers can surface it later.
+    runtime_failure: Arc<OnceLock<String>>,
+}
+
+impl ActiveMonitorStream {
+    fn runtime_failure(&self) -> Option<String> {
+        self.runtime_failure.get().cloned()
+    }
+
+    fn stop(self) -> Option<String> {
+        let runtime_failure = self.runtime_failure();
+        let Self {
+            pump,
+            output,
+            telemetry: _,
+            runtime_failure: _,
+        } = self;
+        let pump_failure = pump.stop().err();
+        output.stop();
+        match (runtime_failure, pump_failure) {
+            (Some(runtime), Some(cleanup)) => {
+                Some(format!("{runtime}; monitor cleanup failed: {cleanup}"))
+            }
+            (Some(runtime), None) => Some(runtime),
+            (None, Some(cleanup)) => Some(cleanup),
+            (None, None) => None,
+        }
+    }
 }
 
 struct MonitorState {
@@ -107,11 +138,14 @@ impl DesktopMonitorControl {
         };
         state.enabled = enabled;
         if !enabled {
-            state.failure_reason = None;
             if let Some(active) = state.active.take() {
                 drop(state);
-                active.pump.stop();
-                active.output.stop();
+                let failure = active.stop();
+                if let Ok(mut state) = self.state.lock() {
+                    state.failure_reason = failure;
+                }
+            } else {
+                state.failure_reason = None;
             }
         }
     }
@@ -126,21 +160,27 @@ impl DesktopMonitorControl {
                 telemetry: None,
             };
         };
+        let runtime_failure = state
+            .active
+            .as_ref()
+            .and_then(ActiveMonitorStream::runtime_failure);
+        let active = state.active.is_some() && runtime_failure.is_none();
         MonitorStatus {
             enabled: state.enabled,
-            active: state.active.is_some(),
-            failure_reason: state.failure_reason.clone(),
-            telemetry: state
-                .active
-                .as_ref()
-                .map(|active| MonitorTelemetrySnapshot {
+            active,
+            failure_reason: runtime_failure.or_else(|| state.failure_reason.clone()),
+            telemetry: if active {
+                state.active.as_ref().map(|active| MonitorTelemetrySnapshot {
                     callback_count: active.telemetry.callback_count.load(Ordering::Relaxed),
                     frames_written: active.telemetry.frames_written.load(Ordering::Relaxed),
                     frames_silence_filled: active
                         .telemetry
                         .frames_silence_filled
                         .load(Ordering::Relaxed),
-                }),
+                })
+            } else {
+                None
+            },
         }
     }
 
@@ -171,12 +211,15 @@ impl DesktopMonitorControl {
         // overlap), but tear down defensively rather than leaking a lease.
         if let Some(previous) = state.active.take() {
             drop(state);
-            previous.pump.stop();
-            previous.output.stop();
+            let cleanup_failure = previous.stop();
             state = match self.state.lock() {
                 Ok(state) => state,
                 Err(_) => return None,
             };
+            if let Some(failure) = cleanup_failure {
+                state.failure_reason = Some(failure);
+                return None;
+            }
         }
 
         match self.start_stream(
@@ -212,8 +255,10 @@ impl DesktopMonitorControl {
             return;
         };
         drop(state);
-        active.pump.stop();
-        active.output.stop();
+        let failure = active.stop();
+        if let Ok(mut state) = self.state.lock() {
+            state.failure_reason = failure;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -282,27 +327,28 @@ impl DesktopMonitorControl {
 
         let telemetry = Arc::new(AudioOutputTelemetry::default());
         let callback = RenderCallback::new(lease, Arc::clone(&telemetry));
+        let runtime_failure = Arc::new(OnceLock::new());
+        let runtime_failure_for_callback = Arc::clone(&runtime_failure);
         let output = match self.backend.start(
             device_config,
             callback,
-            Box::new(|_message| {
-                // Errors reach the core through a non-real-time event path
-                // (34.1): this closure runs on the backend's own error-
-                // reporting mechanism, never the real-time data callback.
-                // Recording it into `MonitorState.failure_reason` would
-                // need re-locking this same mutex from a callback whose
-                // exact calling context this trait does not guarantee is
-                // safe to block in, so today this is a bounded, deliberate
-                // gap -- a live mid-stream device error is not yet
-                // reflected into `status()`, only a startup-time failure
-                // is. Recorded, not silently ignored: see 34.3's "device
-                // removal" test and the TODO doc for this block.
+            Box::new(move |message| {
+                // This is the backend's non-real-time error callback, not
+                // `RenderCallback::write`. Never take the monitor mutex here;
+                // retain the first actionable runtime cause in a write-once
+                // cell and let ordinary status readers expose it.
+                drop(runtime_failure_for_callback.set(format!(
+                    "local monitor audio device failed: {message}"
+                )));
             }),
         ) {
             Ok(output) => output,
             Err(error) => {
-                pump.stop();
-                return Err(error.to_string());
+                let primary = error.to_string();
+                return Err(match pump.stop() {
+                    Ok(()) => primary,
+                    Err(cleanup) => format!("{primary}; monitor cleanup failed: {cleanup}"),
+                });
             }
         };
 
@@ -311,6 +357,7 @@ impl DesktopMonitorControl {
                 pump,
                 output,
                 telemetry,
+                runtime_failure,
             },
             sender,
         ))
