@@ -146,6 +146,44 @@ impl Drop for DesktopMonitorPump {
     }
 }
 
+fn run_pump(
+    mut pump: PlaybackPump,
+    datagrams: &Receiver<AudioDatagram>,
+    stop: &AtomicBool,
+    now_ms: impl Fn() -> Option<u64>,
+) {
+    while !stop.load(Ordering::Acquire) {
+        while let Ok(datagram) = datagrams.try_recv() {
+            // A rejected packet (e.g. arrived before this pump's own
+            // startup buffer target) simply is not monitored this instant
+            // -- never fatal, and never affects the host's own network
+            // broadcast, which does not go through this pump at all.
+            drop(pump.submit_packet(datagram));
+        }
+        if let Some(now) = now_ms() {
+            drain_due_frames(&mut pump, now);
+        }
+        thread::sleep(PUMP_TICK_INTERVAL);
+    }
+}
+
+/// Advances `pump` until nothing further is due, mirroring
+/// `listener_playback.rs`'s own `drain_due_frames` exactly (same reasoning:
+/// one `tick` releases at most one frame, so draining once per wake-up
+/// silently caps throughput at one packet per [`PUMP_TICK_INTERVAL`] the
+/// moment a packet carries less audio than that interval).
+fn drain_due_frames(pump: &mut PlaybackPump, now_ms: u64) -> usize {
+    use silent_disco_core::audio::PumpTick;
+    let mut released = 0;
+    for _ in 0..MAX_FRAMES_PER_TICK {
+        match pump.tick(now_ms) {
+            PumpTick::Queued { .. } | PumpTick::FlushedPending { .. } => released += 1,
+            _ => break,
+        }
+    }
+    released
+}
+
 #[cfg(test)]
 mod drop_tests {
     use super::DesktopMonitorPump;
@@ -183,42 +221,4 @@ mod drop_tests {
             "a clean implicit join must remain harmless"
         );
     }
-}
-
-fn run_pump(
-    mut pump: PlaybackPump,
-    datagrams: &Receiver<AudioDatagram>,
-    stop: &AtomicBool,
-    now_ms: impl Fn() -> Option<u64>,
-) {
-    while !stop.load(Ordering::Acquire) {
-        while let Ok(datagram) = datagrams.try_recv() {
-            // A rejected packet (e.g. arrived before this pump's own
-            // startup buffer target) simply is not monitored this instant
-            // -- never fatal, and never affects the host's own network
-            // broadcast, which does not go through this pump at all.
-            drop(pump.submit_packet(datagram));
-        }
-        if let Some(now) = now_ms() {
-            drain_due_frames(&mut pump, now);
-        }
-        thread::sleep(PUMP_TICK_INTERVAL);
-    }
-}
-
-/// Advances `pump` until nothing further is due, mirroring
-/// `listener_playback.rs`'s own `drain_due_frames` exactly (same reasoning:
-/// one `tick` releases at most one frame, so draining once per wake-up
-/// silently caps throughput at one packet per [`PUMP_TICK_INTERVAL`] the
-/// moment a packet carries less audio than that interval).
-fn drain_due_frames(pump: &mut PlaybackPump, now_ms: u64) -> usize {
-    use silent_disco_core::audio::PumpTick;
-    let mut released = 0;
-    for _ in 0..MAX_FRAMES_PER_TICK {
-        match pump.tick(now_ms) {
-            PumpTick::Queued { .. } | PumpTick::FlushedPending { .. } => released += 1,
-            _ => break,
-        }
-    }
-    released
 }

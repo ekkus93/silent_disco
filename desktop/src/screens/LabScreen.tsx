@@ -80,7 +80,7 @@ function FaultLinkEditor({ link, index, disabled, onApply }: FaultLinkEditorProp
     setLatencyMs(link.latencyMs);
     setJitterMs(link.jitterMs);
     setLossPermille(link.lossPermille.toString());
-  }, [link.from, link.jitterMs, link.latencyMs, link.lossPermille, link.to]);
+  }, [link.jitterMs, link.latencyMs, link.lossPermille]);
 
   const pair = `${link.from} → ${link.to}`;
   return (
@@ -548,8 +548,8 @@ export function LabScreen() {
                   // scenario document may legitimately declare more than
                   // one link between the same pair -- so the stable
                   // declaration index is the correct React key here.
-                  // biome-ignore lint/suspicious/noArrayIndexKey: links have no other stable identity
                   <FaultLinkEditor
+                    // biome-ignore lint/suspicious/noArrayIndexKey: declaration index is the backend identity
                     key={index}
                     link={link}
                     index={index}

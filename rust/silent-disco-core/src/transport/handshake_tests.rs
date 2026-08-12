@@ -117,9 +117,9 @@ fn socket_runtime_completes_multi_listener_join_sync_and_audio_exchange() {
 
     host.authorize_peer(&device_a, listener_a.local_routes())
         .expect("first peer routes should match authenticated control address");
+    wait_for_authorized(&mut *host, &device_a);
     host.authorize_peer(&device_b, listener_b.local_routes())
         .expect("second peer routes should match authenticated control address");
-    wait_for_authorized(&mut *host, &device_a);
     wait_for_authorized(&mut *host, &device_b);
 
     let hello = ControlMessage::Hello(Hello {

@@ -35,6 +35,10 @@ pub(super) fn no_active_run_error() -> DesktopErrorDto {
     )
 }
 
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "map_err call sites borrow structured errors for DTO conversion"
+)]
 pub(super) fn run_control_error(
     error: &crate::lab::scenario::ScenarioRunControlError,
 ) -> DesktopErrorDto {
