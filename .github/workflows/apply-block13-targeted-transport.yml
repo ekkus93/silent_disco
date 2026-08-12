@@ -1,4 +1,4 @@
-name: Apply Block 7 Storage Inspection
+name: Apply Block 13 Targeted Transport
 
 on:
   push:
@@ -11,46 +11,473 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-block7-storage-inspection
+  group: apply-block13-targeted-transport
   cancel-in-progress: false
 
 jobs:
   apply:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Install pinned Rust formatter
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
 
-      - name: Apply audited Block 7 source patch
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Implement targeted control delivery
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY2'
-          import base64
-          import zlib
+          python3 - <<'PY'
           from pathlib import Path
-          payload = """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"""
-          patch = zlib.decompress(base64.b64decode(payload))
-          Path("/tmp/block7.patch").write_bytes(patch)
-          PY2
-          git apply --check /tmp/block7.patch
-          git apply /tmp/block7.patch
-          (cd rust && cargo +1.97.1 fmt --all)
-          cargo +1.97.1 fmt --manifest-path desktop/src-tauri/Cargo.toml
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          models = "app/src/main/java/com/ekkus/silentdisco/core/transport/TransportModels.kt"
+          replace_once(
+              models,
+              """data class SendAllResult(
+              val peerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+          ) {
+              val deliveredToAnyPeer: Boolean get() = successCount > 0
+              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+          }
+
+          """,
+              """data class SendAllResult(
+              val peerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+          ) {
+              val deliveredToAnyPeer: Boolean get() = successCount > 0
+              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
+          }
+
+          data class TargetedDeliveryResult(
+              val listenerId: String,
+              val intendedPeerCount: Int,
+              val successCount: Int,
+              val failureCount: Int,
+              val message: String? = null,
+          ) {
+              val deliveredToTarget: Boolean
+                  get() = intendedPeerCount == 1 && successCount == 1 && failureCount == 0
+
+              companion object {
+                  fun delivered(listenerId: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 1,
+                      successCount = 1,
+                      failureCount = 0,
+                  )
+
+                  fun notFound(listenerId: String, message: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 0,
+                      successCount = 0,
+                      failureCount = 0,
+                      message = message,
+                  )
+
+                  fun failed(listenerId: String, message: String) = TargetedDeliveryResult(
+                      listenerId = listenerId,
+                      intendedPeerCount = 1,
+                      successCount = 0,
+                      failureCount = 1,
+                      message = message,
+                  )
+              }
+          }
+
+          """,
+          )
+          replace_once(
+              models,
+              """    suspend fun sendControlToHost(message: ControlMessage)
+              suspend fun broadcastControl(message: ControlMessage): SendAllResult
+          """,
+              """    suspend fun sendControlToHost(message: ControlMessage)
+              suspend fun sendControlToListener(
+                  listenerId: String,
+                  message: ControlMessage,
+              ): TargetedDeliveryResult
+              suspend fun broadcastControl(message: ControlMessage): SendAllResult
+          """,
+          )
+
+          tcp = "app/src/main/java/com/ekkus/silentdisco/core/transport/TcpTransport.kt"
+          replace_once(
+              tcp,
+              """internal data class TcpChannelStats(
+              val connectionCount: Int = 0,
+              val bytesSent: Long = 0,
+              val bytesReceived: Long = 0,
+          )
+
+          """,
+              """internal data class TcpChannelStats(
+              val connectionCount: Int = 0,
+              val bytesSent: Long = 0,
+              val bytesReceived: Long = 0,
+          )
+
+          internal data class PeerDeliveryResult(
+              val peerFound: Boolean,
+              val delivered: Boolean,
+              val errorMessage: String? = null,
+          )
+
+          """,
+          )
+          replace_once(
+              tcp,
+              """    suspend fun sendAll(message: T): SendAllResult {
+              val snapshot = peers.values.toList()
+              var success = 0
+              var failure = 0
+              snapshot.forEach { peer ->
+                  runCatching { peer.send(message) }
+                      .onSuccess { success += 1 }
+                      .onFailure { error ->
+                          failure += 1
+                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                      }
+              }
+              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
+          }
+
+          """,
+              """    suspend fun sendAll(message: T): SendAllResult {
+              val snapshot = peers.values.toList()
+              var success = 0
+              var failure = 0
+              snapshot.forEach { peer ->
+                  runCatching { peer.send(message) }
+                      .onSuccess { success += 1 }
+                      .onFailure { error ->
+                          failure += 1
+                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
+                      }
+              }
+              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
+          }
+
+              suspend fun sendTo(remoteAddress: String, message: T): PeerDeliveryResult {
+                  val peer = peers[remoteAddress]
+                      ?: return PeerDeliveryResult(
+                          peerFound = false,
+                          delivered = false,
+                          errorMessage = "No active $channelName connection for $remoteAddress",
+                      )
+                  return runCatching {
+                      peer.send(message)
+                      PeerDeliveryResult(peerFound = true, delivered = true)
+                  }.getOrElse { error ->
+                      val messageText = error.message ?: "Unknown $channelName send failure"
+                      logger.w(
+                          "transport.$channelName.send-target",
+                          "Failed to send to $remoteAddress: $messageText",
+                      )
+                      peer.close()
+                      PeerDeliveryResult(
+                          peerFound = true,
+                          delivered = false,
+                          errorMessage = messageText,
+                      )
+                  }
+              }
+
+          """,
+          )
+
+          service = "app/src/main/java/com/ekkus/silentdisco/core/transport/WifiDirectTransportService.kt"
+          replace_once(
+              service,
+              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+          import kotlinx.coroutines.CoroutineScope
+          """,
+              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
+          import java.util.concurrent.ConcurrentHashMap
+          import kotlinx.coroutines.CoroutineScope
+          """,
+          )
+          replace_once(
+              service,
+              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+              private var activeSession: SessionInfo? = null
+          """,
+              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
+              private val listenerControlRoutes = ConcurrentHashMap<String, String>()
+              private var activeSession: SessionInfo? = null
+          """,
+          )
+          replace_once(
+              service,
+              """        hosting = true
+              stopClientChannels()
+          """,
+              """        hosting = true
+              listenerControlRoutes.clear()
+              stopClientChannels()
+          """,
+          )
+          replace_once(
+              service,
+              """    override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+          """,
+              """    override suspend fun sendControlToListener(
+              listenerId: String,
+              message: ControlMessage,
+          ): TargetedDeliveryResult {
+              val embeddedListenerId = message.targetListenerId()
+              if (embeddedListenerId != listenerId) {
+                  return TargetedDeliveryResult.failed(
+                      listenerId,
+                      "Control message target does not match requested listener",
+                  )
+              }
+              val remoteAddress = listenerControlRoutes[listenerId]
+                  ?: return TargetedDeliveryResult.notFound(
+                      listenerId,
+                      "No control connection is associated with listener $listenerId",
+                  )
+              val server = controlServer
+                  ?: return TargetedDeliveryResult.failed(listenerId, "Control server is not active")
+              val delivery = server.sendTo(remoteAddress, message)
+              if (!delivery.peerFound || !delivery.delivered) {
+                  listenerControlRoutes.remove(listenerId, remoteAddress)
+              }
+              recordHeartbeat()
+              updateByteCounts()
+              return when {
+                  delivery.delivered -> TargetedDeliveryResult.delivered(listenerId)
+                  delivery.peerFound -> TargetedDeliveryResult.failed(
+                      listenerId,
+                      delivery.errorMessage ?: "Targeted control delivery failed",
+                  )
+                  else -> TargetedDeliveryResult.notFound(
+                      listenerId,
+                      delivery.errorMessage ?: "Targeted listener connection is no longer active",
+                  )
+              }
+          }
+
+              override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
+          """,
+          )
+          replace_once(
+              service,
+              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+              server.incoming.collectInto(_controlMessages::tryEmit)
+          }
+
+          """,
+              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
+              scope.launch {
+                  server.incoming.collect { event ->
+                      val message = event.message
+                      if (message is ControlMessage.JoinRequest) {
+                          listenerControlRoutes[message.device.deviceId] = event.remoteAddress
+                      }
+                      _controlMessages.emit(message)
+                      recordHeartbeat()
+                      updateByteCounts()
+                      logger.d("transport.message", "Received message from ${event.remoteAddress}")
+                  }
+              }
+          }
+
+          """,
+          )
+          for flow_name in ("_syncRequests", "_syncResponses", "_audioPackets", "_controlMessages"):
+              old = f"collectInto({flow_name}::tryEmit)"
+              new = f"collectInto({flow_name}::emit)"
+              target = Path(service)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"{service}: missing {old}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+          replace_once(
+              service,
+              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: (T) -> Boolean) {
+              scope.launch {
+                  collect { event ->
+                      emit(event.message)
+          """,
+              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: suspend (T) -> Unit) {
+              scope.launch {
+                  collect { event ->
+                      emit(event.message)
+          """,
+          )
+          replace_once(
+              service,
+              """    private fun stopServerChannels() {
+              controlServer?.close()
+          """,
+              """    private fun stopServerChannels() {
+              listenerControlRoutes.clear()
+              controlServer?.close()
+          """,
+          )
+          replace_once(
+              service,
+              """    private companion object {
+          """,
+              """    private fun ControlMessage.targetListenerId(): String? = when (this) {
+              is ControlMessage.JoinApproval -> listenerId
+              is ControlMessage.JoinRejection -> listenerId
+              is ControlMessage.Heartbeat -> listenerId
+              is ControlMessage.Disconnect -> listenerId
+              is ControlMessage.ResyncNotice -> listenerId
+              is ControlMessage.Hello,
+              is ControlMessage.JoinRequest,
+              is ControlMessage.StreamStart,
+              is ControlMessage.Pause,
+              is ControlMessage.Stop,
+              -> null
+          }
+
+              private companion object {
+          """,
+          )
+          PY
+
+          cat > app/src/test/java/com/ekkus/silentdisco/core/transport/TargetedTcpTransportTest.kt <<'KOTLIN'
+          package com.ekkus.silentdisco.core.transport
+
+          import com.ekkus.silentdisco.core.logging.AppLogger
+          import com.ekkus.silentdisco.core.protocol.ControlMessage
+          import com.ekkus.silentdisco.core.protocol.DeviceIdentity
+          import com.ekkus.silentdisco.core.protocol.SessionId
+          import com.google.common.truth.Truth.assertThat
+          import java.net.ServerSocket
+          import kotlinx.coroutines.async
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.runBlocking
+          import kotlinx.coroutines.withTimeout
+          import org.junit.Test
+
+          class TargetedTcpTransportTest {
+              @Test
+              fun `server sends approval only to source connection`() = runBlocking {
+                  val port = ServerSocket(0).use { it.localPort }
+                  val logger = AppLogger()
+                  val server = TcpServerChannel(
+                      port = port,
+                      channelName = "control-test",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+                  val intendedClient = TcpClientChannel(
+                      host = "127.0.0.1",
+                      port = port,
+                      channelName = "intended-client",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+                  val unrelatedClient = TcpClientChannel(
+                      host = "127.0.0.1",
+                      port = port,
+                      channelName = "unrelated-client",
+                      codec = ControlMessageCodec,
+                      logger = logger,
+                  )
+
+                  try {
+                      server.start()
+                      intendedClient.connect()
+                      unrelatedClient.connect()
+
+                      val inbound = async {
+                          withTimeout(5_000) { server.incoming.first() }
+                      }
+                      intendedClient.send(
+                          ControlMessage.JoinRequest(
+                              version = 1,
+                              sessionId = SessionId("session-1"),
+                              device = DeviceIdentity("listener-1", "Pixel"),
+                          ),
+                      )
+                      val sourceEvent = inbound.await()
+
+                      val intendedReply = async {
+                          withTimeout(5_000) { intendedClient.incoming.first() }
+                      }
+                      val approval = ControlMessage.JoinApproval(
+                          version = 1,
+                          sessionId = SessionId("session-1"),
+                          listenerId = "listener-1",
+                          trustedForFuture = false,
+                      )
+                      val result = server.sendTo(sourceEvent.remoteAddress, approval)
+
+                      assertThat(result.peerFound).isTrue()
+                      assertThat(result.delivered).isTrue()
+                      assertThat(intendedReply.await().message).isEqualTo(approval)
+                      assertThat(unrelatedClient.bytesReceived()).isEqualTo(0L)
+                  } finally {
+                      unrelatedClient.close()
+                      intendedClient.close()
+                      server.close()
+                  }
+              }
+
+              @Test
+              fun `server reports missing targeted connection`() = runBlocking {
+                  val port = ServerSocket(0).use { it.localPort }
+                  val server = TcpServerChannel(
+                      port = port,
+                      channelName = "control-test",
+                      codec = ControlMessageCodec,
+                      logger = AppLogger(),
+                  )
+                  try {
+                      server.start()
+                      val result = server.sendTo(
+                          "/127.0.0.1:1",
+                          ControlMessage.JoinRejection(
+                              version = 1,
+                              sessionId = SessionId("session-1"),
+                              listenerId = "listener-1",
+                              reason = "rejected",
+                          ),
+                      )
+                      assertThat(result.peerFound).isFalse()
+                      assertThat(result.delivered).isFalse()
+                  } finally {
+                      server.close()
+                  }
+              }
+          }
+          KOTLIN
+
+          git rm .github/workflows/apply-block13-targeted-transport.yml
           git diff --check
 
-      - name: Commit Block 7 source
+      - name: Run targeted transport tests
+        run: ./gradlew testDebugUnitTest --tests com.ekkus.silentdisco.core.transport.TargetedTcpTransportTest --stacktrace --console=plain
+
+      - name: Commit targeted transport
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rust/silent-disco-core/src/storage desktop/src-tauri/src desktop/src/core desktop/src/App.tsx desktop/src/screens/StorageInspectionScreen.tsx desktop/src/screens/StorageInspectionScreen.test.tsx
-          git commit -m "Expose bounded desktop storage inspection"
+          git add app/src/main app/src/test
+          git commit -m "Add exact-listener control delivery"
           git push origin HEAD:master
