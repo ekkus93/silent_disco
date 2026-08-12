@@ -1,4 +1,4 @@
-use super::{LabLatencyConfig, LabLatencyTransportFactory};
+use super::{LabFaultController, LabLatencyConfig, LabLatencyTransportFactory};
 use crate::lab::clock::{LabClock, LabNodeClock};
 use silent_disco_core::domain::MonotonicMillis;
 use silent_disco_core::domain::{DeviceId, PacketSequence, SampleIndex, SessionId, StreamId};
@@ -428,9 +428,9 @@ fn live_controller_changes_loss_without_reconnecting_the_listener() {
     controller.update(0, 0, 1_000);
     host.broadcast_audio(&audio_frame(&session_id, 2))
         .expect("post-mutation UDP send should still report local success");
-    let dropped = listener
-        .recv_event(POLL_TIMEOUT)
-        .expect_err("100% live loss must drop the next audio datagram");
+    let Err(dropped) = listener.recv_event(POLL_TIMEOUT) else {
+        panic!("100% live loss must drop the next audio datagram");
+    };
     assert_eq!(dropped.kind, TransportErrorKind::Timeout);
 
     listener.shutdown().expect("listener should shut down");
@@ -517,17 +517,17 @@ fn live_controller_changes_latency_without_reconnecting_the_listener() {
     controller.update(100, 0, 0);
     host.broadcast_audio(&audio_frame(&session_id, 2))
         .expect("post-mutation send should succeed");
-    let held = listener
-        .recv_event(POLL_TIMEOUT)
-        .expect_err("new 100ms latency must hold the next audio datagram");
+    let Err(held) = listener.recv_event(POLL_TIMEOUT) else {
+        panic!("new 100ms latency must hold the next audio datagram");
+    };
     assert_eq!(held.kind, TransportErrorKind::Timeout);
 
     clock
         .advance(99)
         .expect("advance just short of new latency deadline");
-    let still_held = listener
-        .recv_event(POLL_TIMEOUT)
-        .expect_err("audio must remain held one millisecond before the deadline");
+    let Err(still_held) = listener.recv_event(POLL_TIMEOUT) else {
+        panic!("audio must remain held one millisecond before the deadline");
+    };
     assert_eq!(still_held.kind, TransportErrorKind::Timeout);
 
     clock
