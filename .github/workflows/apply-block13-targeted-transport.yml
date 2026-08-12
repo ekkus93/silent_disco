@@ -1,4 +1,4 @@
-name: Apply Block 13 Targeted Transport
+name: Apply Audited Desktop TODO One-Shot
 
 on:
   push:
@@ -11,473 +11,127 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-block13-targeted-transport
+  group: apply-audited-desktop-todo
   cancel-in-progress: false
 
 jobs:
   apply:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Implement targeted control delivery
+      - name: Apply exact audited TODO transformation and restore workflow
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
+          python3 - <<'PY2'
+          import base64
+          import hashlib
+          import json
+          import re
+          import zlib
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str) -> None:
-              target = Path(path)
-              text = target.read_text(encoding="utf-8")
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected one match, found {count}")
-              target.write_text(text.replace(old, new), encoding="utf-8")
+          path = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+          data = path.read_bytes()
+          before = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+          if before != "6a0c6e0170bcbeac545b1bdcc469f1b038fdaff3":
+              raise SystemExit(f"unexpected pre-audit TODO blob SHA: {before}")
 
-          models = "app/src/main/java/com/ekkus/silentdisco/core/transport/TransportModels.kt"
-          replace_once(
-              models,
-              """data class SendAllResult(
-              val peerCount: Int,
-              val successCount: Int,
-              val failureCount: Int,
-          ) {
-              val deliveredToAnyPeer: Boolean get() = successCount > 0
-              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
-          }
+          payload = """eNqdWdty20YS/ZUpvazM4kUkAIKUn5z4IalyLhVln2wXCQJDciIQg50BJHGT/PuenkuDkhy7avPAjEmgp/v06dM9oz+vyqMs73f6
+6er248d0Ob56uvo8/pjmcbGKi3VYZDdxMY+LRVwkcRHtZNFOFu1k0c4y2lnG1+c3wyrhVcqrjFdLXkX78zm/Mec35vzGYs4r3mPB
+byz4jcXwBu+x4D0WK17FKOYJr9IbXvFuKe/GQM4ZyTlDOWcs5wzmnNGcZ+xfxv4xxHPGeM4gzxnlOcM8z4cV75bzbjnvlvNuOe+W
+8x553GNxM6zibov5Da/mvIp7LNi/Bfu3YP8WS36DGbFYL3mV84qtrKOV5CZaSXi3hBmRMCMSZkQyX/Iq59WKV2yZWZIwSxJmScIs
+SZglSTLnFfuSsJWErSRshTmUMIcS5lDCHEqWbGXJVpZsZcm+rPjXFf+6Gn5lT1cc74o9WPMea7ayZiucj4Tzkd7MebXgVcKrlFcZr1hmuH7T+bBiyeEspIxayqilCVtJ+N2E32VMU+ZaylxLmWspcy3N+bkVP7fi51b83IpjY5xTxjnjeLOb4TuWQ4434+rJuHoyZmzG
+jM2YsRkzNmOsMlakjBUpS1igmYkZo5YxahmjljFqGaOWM/9y5l+eJrxKeRUt51zdOSOeM+I5I54vc17xG0t+g1UqZ5XKWYfyfMkr
+tsKKlHMGc85gzhnMV4MWLweB5prCksmdUJ5EqOZVXKZUxX65vuFv11SBwjONncdyPiyXw3Jg5UCejNmTLlnWscyH5WpYDmy+oPMF
+nwdCLzk2LNNhOey2HHa78GE1TAHcebDMhuXFA/mwXA1LdnJgQDpQAMuh6gYn88HJfHAyz4dn8+HZfHg24Pt5fGVkWxeldKMMZC4l
+gRuN3pWlbLuiKeXtaCR+LUyniro+i5PspuL3oxRGFrX4rbfdRD82shK206Y4SKEa28qyU7qZndTBFLQSbdEdhbJCndpanmTT4YWi
+qUQnLZZjses70Tmj/+ndV+L3ojfqwpgo9emEV+zs3z8K25s9XCaLje7EozJkxGpno5L2vtOtsEdZ16LS0j90lp2QT622Muxk+7qb
+fmpcU0xQkfhABibi49NnsUesu6K8x67NgzTWxaBrVZ7F41EaKYq2NfoBfk4mYjT6efZO7M7YuVY7iZAlDKh6UtbYrQovjkbYTLj/
+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"""
+          manifest = json.loads(zlib.decompress(base64.b64decode("".join(payload.split()))))
+          lines = data.decode("utf-8").splitlines(keepends=True)
+          for index, state in manifest["checkbox"]:
+              line = lines[index]
+              if not re.match(r"^- \[[ x~]\] ", line):
+                  raise SystemExit(f"line {index + 1} is not a checkbox: {line!r}")
+              lines[index] = line[:3] + state + line[4:]
+          for start, end, replacement in sorted(manifest["replace"], reverse=True):
+              lines[start:end] = replacement.splitlines(keepends=True)
+          output = "".join(lines).encode("utf-8")
+          after = hashlib.sha1(b"blob " + str(len(output)).encode() + b"\0" + output).hexdigest()
+          if after != "b06f9255727beb3910dff6b2a1438ab5cb7d2f0b":
+              raise SystemExit(f"unexpected audited TODO blob SHA: {after}")
+          path.write_bytes(output)
 
-          """,
-              """data class SendAllResult(
-              val peerCount: Int,
-              val successCount: Int,
-              val failureCount: Int,
-          ) {
-              val deliveredToAnyPeer: Boolean get() = successCount > 0
-              val allDelivered: Boolean get() = peerCount > 0 && failureCount == 0
-          }
+          text = output.decode("utf-8")
+          done = len(re.findall(r"^- \[x\] ", text, flags=re.MULTILINE))
+          open_ = len(re.findall(r"^- \[ \] ", text, flags=re.MULTILINE))
+          partial = len(re.findall(r"^- \[~\] ", text, flags=re.MULTILINE))
+          if (done, open_, partial) != (892, 157, 0):
+              raise SystemExit(f"unexpected checkbox counts: done={done} open={open_} partial={partial}")
+          print(f"verified audited TODO: done={done} open={open_} partial={partial} blob={after}")
+          PY2
 
-          data class TargetedDeliveryResult(
-              val listenerId: String,
-              val intendedPeerCount: Int,
-              val successCount: Int,
-              val failureCount: Int,
-              val message: String? = null,
-          ) {
-              val deliveredToTarget: Boolean
-                  get() = intendedPeerCount == 1 && successCount == 1 && failureCount == 0
-
-              companion object {
-                  fun delivered(listenerId: String) = TargetedDeliveryResult(
-                      listenerId = listenerId,
-                      intendedPeerCount = 1,
-                      successCount = 1,
-                      failureCount = 0,
-                  )
-
-                  fun notFound(listenerId: String, message: String) = TargetedDeliveryResult(
-                      listenerId = listenerId,
-                      intendedPeerCount = 0,
-                      successCount = 0,
-                      failureCount = 0,
-                      message = message,
-                  )
-
-                  fun failed(listenerId: String, message: String) = TargetedDeliveryResult(
-                      listenerId = listenerId,
-                      intendedPeerCount = 1,
-                      successCount = 0,
-                      failureCount = 1,
-                      message = message,
-                  )
-              }
-          }
-
-          """,
-          )
-          replace_once(
-              models,
-              """    suspend fun sendControlToHost(message: ControlMessage)
-              suspend fun broadcastControl(message: ControlMessage): SendAllResult
-          """,
-              """    suspend fun sendControlToHost(message: ControlMessage)
-              suspend fun sendControlToListener(
-                  listenerId: String,
-                  message: ControlMessage,
-              ): TargetedDeliveryResult
-              suspend fun broadcastControl(message: ControlMessage): SendAllResult
-          """,
-          )
-
-          tcp = "app/src/main/java/com/ekkus/silentdisco/core/transport/TcpTransport.kt"
-          replace_once(
-              tcp,
-              """internal data class TcpChannelStats(
-              val connectionCount: Int = 0,
-              val bytesSent: Long = 0,
-              val bytesReceived: Long = 0,
-          )
-
-          """,
-              """internal data class TcpChannelStats(
-              val connectionCount: Int = 0,
-              val bytesSent: Long = 0,
-              val bytesReceived: Long = 0,
-          )
-
-          internal data class PeerDeliveryResult(
-              val peerFound: Boolean,
-              val delivered: Boolean,
-              val errorMessage: String? = null,
-          )
-
-          """,
-          )
-          replace_once(
-              tcp,
-              """    suspend fun sendAll(message: T): SendAllResult {
-              val snapshot = peers.values.toList()
-              var success = 0
-              var failure = 0
-              snapshot.forEach { peer ->
-                  runCatching { peer.send(message) }
-                      .onSuccess { success += 1 }
-                      .onFailure { error ->
-                          failure += 1
-                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
-                      }
-              }
-              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
-          }
-
-          """,
-              """    suspend fun sendAll(message: T): SendAllResult {
-              val snapshot = peers.values.toList()
-              var success = 0
-              var failure = 0
-              snapshot.forEach { peer ->
-                  runCatching { peer.send(message) }
-                      .onSuccess { success += 1 }
-                      .onFailure { error ->
-                          failure += 1
-                          logger.w("transport.$channelName.send", "Failed to send to peer: ${error.message}")
-                      }
-              }
-              return SendAllResult(peerCount = snapshot.size, successCount = success, failureCount = failure)
-          }
-
-              suspend fun sendTo(remoteAddress: String, message: T): PeerDeliveryResult {
-                  val peer = peers[remoteAddress]
-                      ?: return PeerDeliveryResult(
-                          peerFound = false,
-                          delivered = false,
-                          errorMessage = "No active $channelName connection for $remoteAddress",
-                      )
-                  return runCatching {
-                      peer.send(message)
-                      PeerDeliveryResult(peerFound = true, delivered = true)
-                  }.getOrElse { error ->
-                      val messageText = error.message ?: "Unknown $channelName send failure"
-                      logger.w(
-                          "transport.$channelName.send-target",
-                          "Failed to send to $remoteAddress: $messageText",
-                      )
-                      peer.close()
-                      PeerDeliveryResult(
-                          peerFound = true,
-                          delivered = false,
-                          errorMessage = messageText,
-                      )
-                  }
-              }
-
-          """,
-          )
-
-          service = "app/src/main/java/com/ekkus/silentdisco/core/transport/WifiDirectTransportService.kt"
-          replace_once(
-              service,
-              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-          import kotlinx.coroutines.CoroutineScope
-          """,
-              """import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-          import java.util.concurrent.ConcurrentHashMap
-          import kotlinx.coroutines.CoroutineScope
-          """,
-          )
-          replace_once(
-              service,
-              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
-              private var activeSession: SessionInfo? = null
-          """,
-              """    private val currentPeers = linkedMapOf<String, WifiP2pDevice>()
-              private val listenerControlRoutes = ConcurrentHashMap<String, String>()
-              private var activeSession: SessionInfo? = null
-          """,
-          )
-          replace_once(
-              service,
-              """        hosting = true
-              stopClientChannels()
-          """,
-              """        hosting = true
-              listenerControlRoutes.clear()
-              stopClientChannels()
-          """,
-          )
-          replace_once(
-              service,
-              """    override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
-          """,
-              """    override suspend fun sendControlToListener(
-              listenerId: String,
-              message: ControlMessage,
-          ): TargetedDeliveryResult {
-              val embeddedListenerId = message.targetListenerId()
-              if (embeddedListenerId != listenerId) {
-                  return TargetedDeliveryResult.failed(
-                      listenerId,
-                      "Control message target does not match requested listener",
-                  )
-              }
-              val remoteAddress = listenerControlRoutes[listenerId]
-                  ?: return TargetedDeliveryResult.notFound(
-                      listenerId,
-                      "No control connection is associated with listener $listenerId",
-                  )
-              val server = controlServer
-                  ?: return TargetedDeliveryResult.failed(listenerId, "Control server is not active")
-              val delivery = server.sendTo(remoteAddress, message)
-              if (!delivery.peerFound || !delivery.delivered) {
-                  listenerControlRoutes.remove(listenerId, remoteAddress)
-              }
-              recordHeartbeat()
-              updateByteCounts()
-              return when {
-                  delivery.delivered -> TargetedDeliveryResult.delivered(listenerId)
-                  delivery.peerFound -> TargetedDeliveryResult.failed(
-                      listenerId,
-                      delivery.errorMessage ?: "Targeted control delivery failed",
-                  )
-                  else -> TargetedDeliveryResult.notFound(
-                      listenerId,
-                      delivery.errorMessage ?: "Targeted listener connection is no longer active",
-                  )
-              }
-          }
-
-              override suspend fun broadcastControl(message: ControlMessage): SendAllResult {
-          """,
-          )
-          replace_once(
-              service,
-              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
-              server.incoming.collectInto(_controlMessages::tryEmit)
-          }
-
-          """,
-              """    private fun observeControlServer(server: TcpServerChannel<ControlMessage>) {
-              scope.launch {
-                  server.incoming.collect { event ->
-                      val message = event.message
-                      if (message is ControlMessage.JoinRequest) {
-                          listenerControlRoutes[message.device.deviceId] = event.remoteAddress
-                      }
-                      _controlMessages.emit(message)
-                      recordHeartbeat()
-                      updateByteCounts()
-                      logger.d("transport.message", "Received message from ${event.remoteAddress}")
-                  }
-              }
-          }
-
-          """,
-          )
-          for flow_name in ("_syncRequests", "_syncResponses", "_audioPackets", "_controlMessages"):
-              old = f"collectInto({flow_name}::tryEmit)"
-              new = f"collectInto({flow_name}::emit)"
-              target = Path(service)
-              text = target.read_text(encoding="utf-8")
-              if old not in text:
-                  raise SystemExit(f"{service}: missing {old}")
-              target.write_text(text.replace(old, new), encoding="utf-8")
-          replace_once(
-              service,
-              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: (T) -> Boolean) {
-              scope.launch {
-                  collect { event ->
-                      emit(event.message)
-          """,
-              """    private fun <T> SharedFlow<TransportEvent<T>>.collectInto(emit: suspend (T) -> Unit) {
-              scope.launch {
-                  collect { event ->
-                      emit(event.message)
-          """,
-          )
-          replace_once(
-              service,
-              """    private fun stopServerChannels() {
-              controlServer?.close()
-          """,
-              """    private fun stopServerChannels() {
-              listenerControlRoutes.clear()
-              controlServer?.close()
-          """,
-          )
-          replace_once(
-              service,
-              """    private companion object {
-          """,
-              """    private fun ControlMessage.targetListenerId(): String? = when (this) {
-              is ControlMessage.JoinApproval -> listenerId
-              is ControlMessage.JoinRejection -> listenerId
-              is ControlMessage.Heartbeat -> listenerId
-              is ControlMessage.Disconnect -> listenerId
-              is ControlMessage.ResyncNotice -> listenerId
-              is ControlMessage.Hello,
-              is ControlMessage.JoinRequest,
-              is ControlMessage.StreamStart,
-              is ControlMessage.Pause,
-              is ControlMessage.Stop,
-              -> null
-          }
-
-              private companion object {
-          """,
-          )
-          PY
-
-          cat > app/src/test/java/com/ekkus/silentdisco/core/transport/TargetedTcpTransportTest.kt <<'KOTLIN'
-          package com.ekkus.silentdisco.core.transport
-
-          import com.ekkus.silentdisco.core.logging.AppLogger
-          import com.ekkus.silentdisco.core.protocol.ControlMessage
-          import com.ekkus.silentdisco.core.protocol.DeviceIdentity
-          import com.ekkus.silentdisco.core.protocol.SessionId
-          import com.google.common.truth.Truth.assertThat
-          import java.net.ServerSocket
-          import kotlinx.coroutines.async
-          import kotlinx.coroutines.flow.first
-          import kotlinx.coroutines.runBlocking
-          import kotlinx.coroutines.withTimeout
-          import org.junit.Test
-
-          class TargetedTcpTransportTest {
-              @Test
-              fun `server sends approval only to source connection`() = runBlocking {
-                  val port = ServerSocket(0).use { it.localPort }
-                  val logger = AppLogger()
-                  val server = TcpServerChannel(
-                      port = port,
-                      channelName = "control-test",
-                      codec = ControlMessageCodec,
-                      logger = logger,
-                  )
-                  val intendedClient = TcpClientChannel(
-                      host = "127.0.0.1",
-                      port = port,
-                      channelName = "intended-client",
-                      codec = ControlMessageCodec,
-                      logger = logger,
-                  )
-                  val unrelatedClient = TcpClientChannel(
-                      host = "127.0.0.1",
-                      port = port,
-                      channelName = "unrelated-client",
-                      codec = ControlMessageCodec,
-                      logger = logger,
-                  )
-
-                  try {
-                      server.start()
-                      intendedClient.connect()
-                      unrelatedClient.connect()
-
-                      val inbound = async {
-                          withTimeout(5_000) { server.incoming.first() }
-                      }
-                      intendedClient.send(
-                          ControlMessage.JoinRequest(
-                              version = 1,
-                              sessionId = SessionId("session-1"),
-                              device = DeviceIdentity("listener-1", "Pixel"),
-                          ),
-                      )
-                      val sourceEvent = inbound.await()
-
-                      val intendedReply = async {
-                          withTimeout(5_000) { intendedClient.incoming.first() }
-                      }
-                      val approval = ControlMessage.JoinApproval(
-                          version = 1,
-                          sessionId = SessionId("session-1"),
-                          listenerId = "listener-1",
-                          trustedForFuture = false,
-                      )
-                      val result = server.sendTo(sourceEvent.remoteAddress, approval)
-
-                      assertThat(result.peerFound).isTrue()
-                      assertThat(result.delivered).isTrue()
-                      assertThat(intendedReply.await().message).isEqualTo(approval)
-                      assertThat(unrelatedClient.bytesReceived()).isEqualTo(0L)
-                  } finally {
-                      unrelatedClient.close()
-                      intendedClient.close()
-                      server.close()
-                  }
-              }
-
-              @Test
-              fun `server reports missing targeted connection`() = runBlocking {
-                  val port = ServerSocket(0).use { it.localPort }
-                  val server = TcpServerChannel(
-                      port = port,
-                      channelName = "control-test",
-                      codec = ControlMessageCodec,
-                      logger = AppLogger(),
-                  )
-                  try {
-                      server.start()
-                      val result = server.sendTo(
-                          "/127.0.0.1:1",
-                          ControlMessage.JoinRejection(
-                              version = 1,
-                              sessionId = SessionId("session-1"),
-                              listenerId = "listener-1",
-                              reason = "rejected",
-                          ),
-                      )
-                      assertThat(result.peerFound).isFalse()
-                      assertThat(result.delivered).isFalse()
-                  } finally {
-                      server.close()
-                  }
-              }
-          }
-          KOTLIN
-
-          git rm .github/workflows/apply-block13-targeted-transport.yml
+          git checkout HEAD^ -- .github/workflows/apply-block13-targeted-transport.yml
           git diff --check
 
-      - name: Run targeted transport tests
-        run: ./gradlew testDebugUnitTest --tests com.ekkus.silentdisco.core.transport.TargetedTcpTransportTest --stacktrace --console=plain
-
-      - name: Commit targeted transport
+      - name: Commit audited TODO to master
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main app/src/test
-          git commit -m "Add exact-listener control delivery"
-          git push origin HEAD:master
+          git add docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md .github/workflows/apply-block13-targeted-transport.yml
+          git commit -m "Reconcile desktop host TODO audit"
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:master; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "push failed after $attempt attempts" >&2
+              exit 1
+            fi
+            git fetch origin master
+            git rebase origin/master
+            actual="$(git hash-object docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md)"
+            test "$actual" = "b06f9255727beb3910dff6b2a1438ab5cb7d2f0b"
+          done
