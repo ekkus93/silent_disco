@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::domain::{DeviceId, SessionId};
-use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest, encode_frame};
+use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest};
 use crate::runtime::NetworkEndpoint;
 use crate::transport::{
     ListenerDatagramRoutes, ListenerTransportNode, TransportChannel, TransportCounters,
@@ -13,8 +13,8 @@ use crate::transport::{
 
 use super::network::VirtualTransportNetwork;
 use super::support::{
-    network_poisoned, recv_virtual_event, round_trip, shutting_down, try_event, unauthorized,
-    update_counters, validate_virtual_listener_identity,
+    VirtualWireEvent, encode_wire_frame, network_poisoned, recv_virtual_event, shutting_down,
+    try_frame, unauthorized, update_counters, validate_virtual_listener_identity,
 };
 
 pub(super) struct VirtualListenerTransport {
@@ -29,7 +29,7 @@ pub(super) struct VirtualListenerTransport {
     /// `recv_event` takes `&self` so a poll parked here cannot delay a
     /// concurrent send, which is what previously made a clock-sync probe's
     /// measured round trip include the poll's own wait.
-    event_receiver: Mutex<Receiver<TransportEvent>>,
+    event_receiver: Mutex<Receiver<VirtualWireEvent>>,
     counters: Arc<Mutex<TransportCounters>>,
     shutdown_complete: bool,
 }
@@ -42,7 +42,7 @@ impl VirtualListenerTransport {
         device_id: DeviceId,
         control_address: SocketAddr,
         local_routes: ListenerDatagramRoutes,
-        event_receiver: Receiver<TransportEvent>,
+        event_receiver: Receiver<VirtualWireEvent>,
     ) -> Self {
         Self {
             network,
@@ -68,13 +68,9 @@ impl ListenerTransportNode for VirtualListenerTransport {
             return Err(unauthorized(TransportChannel::Control));
         }
         validate_virtual_listener_identity(&self.device_id, message)?;
-        let frame = round_trip(
-            &ProtocolFrame::Control(message.clone()),
-            TransportChannel::Control,
-        )?;
-        let encoded_len = encode_frame(&frame)
-            .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?
-            .len();
+        let frame = ProtocolFrame::Control(message.clone());
+        let bytes = encode_wire_frame(&frame, TransportChannel::Control)?;
+        let encoded_len = bytes.len();
         let state = self.network.inner.lock().map_err(network_poisoned)?;
         let host = state.hosts.get(&self.endpoint).ok_or_else(shutting_down)?;
         let listener = host
@@ -84,17 +80,15 @@ impl ListenerTransportNode for VirtualListenerTransport {
         if !matches!(message, ControlMessage::JoinRequest(_)) && !listener.authorized {
             return Err(unauthorized(TransportChannel::Control));
         }
-        try_event(
+        try_frame(
             &host.event_sender,
-            TransportEvent::FrameReceived {
-                channel: TransportChannel::Control,
-                peer: TransportPeer {
-                    device_id: Some(self.device_id.clone()),
-                    control_address: self.control_address,
-                },
-                frame,
-                received_at: host.clock.now(),
+            TransportChannel::Control,
+            TransportPeer {
+                device_id: Some(self.device_id.clone()),
+                control_address: self.control_address,
             },
+            bytes,
+            host.clock.now(),
         )?;
         update_counters(&host.counters, |counters| {
             counters.control_frames_received = counters.control_frames_received.saturating_add(1);
@@ -118,13 +112,9 @@ impl ListenerTransportNode for VirtualListenerTransport {
         if request.session_id != self.session_id {
             return Err(unauthorized(TransportChannel::Synchronization));
         }
-        let frame = round_trip(
-            &ProtocolFrame::SyncRequest(request.clone()),
-            TransportChannel::Synchronization,
-        )?;
-        let encoded_len = encode_frame(&frame)
-            .map_err(|error| TransportError::protocol(TransportChannel::Synchronization, &error))?
-            .len();
+        let frame = ProtocolFrame::SyncRequest(request.clone());
+        let bytes = encode_wire_frame(&frame, TransportChannel::Synchronization)?;
+        let encoded_len = bytes.len();
         let state = self.network.inner.lock().map_err(network_poisoned)?;
         let host = state.hosts.get(&self.endpoint).ok_or_else(shutting_down)?;
         let listener = host
@@ -134,17 +124,15 @@ impl ListenerTransportNode for VirtualListenerTransport {
         if !listener.authorized {
             return Err(unauthorized(TransportChannel::Synchronization));
         }
-        try_event(
+        try_frame(
             &host.event_sender,
-            TransportEvent::FrameReceived {
-                channel: TransportChannel::Synchronization,
-                peer: TransportPeer {
-                    device_id: Some(self.device_id.clone()),
-                    control_address: self.control_address,
-                },
-                frame,
-                received_at: host.clock.now(),
+            TransportChannel::Synchronization,
+            TransportPeer {
+                device_id: Some(self.device_id.clone()),
+                control_address: self.control_address,
             },
+            bytes,
+            host.clock.now(),
         )?;
         update_counters(&host.counters, |counters| {
             counters.sync_datagrams_received = counters.sync_datagrams_received.saturating_add(1);

@@ -13,7 +13,9 @@ use crate::transport::{
 
 use super::host::VirtualHostTransport;
 use super::listener::VirtualListenerTransport;
-use super::support::{allocate_endpoint, allocate_port, network_poisoned, try_event};
+use super::support::{
+    VirtualWireEvent, allocate_endpoint, allocate_port, network_poisoned, try_event,
+};
 
 #[derive(Clone, Default)]
 pub struct VirtualTransportNetwork {
@@ -28,7 +30,7 @@ pub(super) struct VirtualNetworkState {
 
 pub(super) struct VirtualHostRegistration {
     pub(super) session_id: SessionId,
-    pub(super) event_sender: SyncSender<TransportEvent>,
+    pub(super) event_sender: SyncSender<VirtualWireEvent>,
     pub(super) clock: Arc<dyn TransportClock>,
     pub(super) counters: Arc<Mutex<TransportCounters>>,
     pub(super) listeners: HashMap<DeviceId, VirtualListenerRegistration>,
@@ -36,7 +38,7 @@ pub(super) struct VirtualHostRegistration {
 
 #[derive(Clone)]
 pub(super) struct VirtualListenerRegistration {
-    pub(super) event_sender: SyncSender<TransportEvent>,
+    pub(super) event_sender: SyncSender<VirtualWireEvent>,
     pub(super) control_address: SocketAddr,
     pub(super) routes: ListenerDatagramRoutes,
     pub(super) authorized: bool,
@@ -63,6 +65,47 @@ impl VirtualTransportFactory {
     #[must_use]
     pub fn network(&self) -> VirtualTransportNetwork {
         self.network.clone()
+    }
+}
+
+#[cfg(test)]
+impl VirtualTransportNetwork {
+    /// Injects one raw protocol frame into a connected listener's virtual
+    /// receive queue. This test-only seam is intentionally byte-level: it
+    /// proves `ListenerTransportNode::recv_event` performs the production
+    /// decode instead of accepting a pre-decoded `ProtocolFrame`.
+    pub(crate) fn inject_listener_wire_frame_for_test(
+        &self,
+        endpoint: NetworkEndpoint,
+        device_id: &DeviceId,
+        channel: TransportChannel,
+        bytes: Vec<u8>,
+    ) -> Result<(), TransportError> {
+        let state = self.inner.lock().map_err(network_poisoned)?;
+        let host = state.hosts.get(&endpoint).ok_or_else(|| {
+            TransportError::new(
+                TransportErrorKind::Connect,
+                TransportChannel::Runtime,
+                "virtual host endpoint is not bound on this network",
+            )
+        })?;
+        let listener = host.listeners.get(device_id).ok_or_else(|| {
+            TransportError::new(
+                TransportErrorKind::PeerNotFound,
+                channel,
+                "virtual listener is not connected",
+            )
+        })?;
+        super::support::try_frame(
+            &listener.event_sender,
+            channel,
+            TransportPeer {
+                device_id: None,
+                control_address: SocketAddr::new(endpoint.address, endpoint.control_port),
+            },
+            bytes,
+            listener.clock.now(),
+        )
     }
 }
 

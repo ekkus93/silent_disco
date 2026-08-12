@@ -9,6 +9,11 @@
 //! of this module's public surface (re-exported at `crate::transport::*`);
 //! everything else is `pub(super)`, reachable across these sibling files but
 //! not outside `virtual_transport`.
+//!
+//! Protocol frames cross the in-process link as canonical encoded bytes plus
+//! channel/peer/timestamp metadata. `recv_event` performs the production
+//! `decode_frame` at the recipient; lifecycle events such as peer acceptance
+//! remain typed transport notifications because they are not protocol frames.
 
 mod host;
 mod listener;

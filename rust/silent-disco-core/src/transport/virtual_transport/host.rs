@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::domain::{DeviceId, SessionId};
-use crate::protocol::{ControlMessage, ProtocolFrame, encode_frame};
+use crate::protocol::{ControlMessage, ProtocolFrame};
 use crate::runtime::NetworkEndpoint;
 use crate::transport::{
     HostTransportNode, ListenerDatagramRoutes, TransportChannel, TransportCounters,
@@ -13,15 +13,15 @@ use crate::transport::{
 
 use super::network::{VirtualListenerRegistration, VirtualTransportNetwork};
 use super::support::{
-    network_poisoned, recv_virtual_event, round_trip, shutting_down, to_u32, try_event,
-    unauthorized, update_counters,
+    VirtualWireEvent, encode_wire_frame, network_poisoned, recv_virtual_event, shutting_down,
+    to_u32, try_event, try_frame, unauthorized, update_counters,
 };
 
 pub(super) struct VirtualHostTransport {
     network: VirtualTransportNetwork,
     endpoint: NetworkEndpoint,
     session_id: SessionId,
-    event_receiver: Receiver<TransportEvent>,
+    event_receiver: Receiver<VirtualWireEvent>,
     counters: Arc<Mutex<TransportCounters>>,
     shutdown_complete: bool,
 }
@@ -31,7 +31,7 @@ impl VirtualHostTransport {
         network: VirtualTransportNetwork,
         endpoint: NetworkEndpoint,
         session_id: SessionId,
-        event_receiver: Receiver<TransportEvent>,
+        event_receiver: Receiver<VirtualWireEvent>,
         counters: Arc<Mutex<TransportCounters>>,
     ) -> Self {
         Self {
@@ -53,10 +53,8 @@ impl VirtualHostTransport {
         if message.session_id() != &self.session_id {
             return Err(unauthorized(TransportChannel::Control));
         }
-        let frame = round_trip(
-            &ProtocolFrame::Control(message.clone()),
-            TransportChannel::Control,
-        )?;
+        let frame = ProtocolFrame::Control(message.clone());
+        let bytes = encode_wire_frame(&frame, TransportChannel::Control)?;
         let state = self.network.inner.lock().map_err(network_poisoned)?;
         let host = state.hosts.get(&self.endpoint).ok_or_else(shutting_down)?;
         let listeners: Vec<(&DeviceId, &VirtualListenerRegistration)> = host
@@ -79,28 +77,27 @@ impl VirtualHostTransport {
             ));
         }
         let intended = to_u32(listeners.len(), TransportChannel::Control)?;
-        let encoded_len = encode_frame(&frame)
-            .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?
-            .len();
+        let encoded_len = bytes.len();
         let mut successful = 0_u32;
         let mut failed = 0_u32;
         let mut bytes_sent = 0_u64;
         for (_, listener) in listeners {
-            let event = TransportEvent::FrameReceived {
-                channel: TransportChannel::Control,
-                peer: TransportPeer {
-                    device_id: None,
-                    control_address: SocketAddr::new(
-                        self.endpoint.address,
-                        self.endpoint.control_port,
-                    ),
-                },
-                frame: frame.clone(),
-                // The listener is the recipient, not the host -- stamped
-                // with the listener's own clock.
-                received_at: listener.clock.now(),
+            let peer = TransportPeer {
+                device_id: None,
+                control_address: SocketAddr::new(
+                    self.endpoint.address,
+                    self.endpoint.control_port,
+                ),
             };
-            if try_event(&listener.event_sender, event).is_ok() {
+            if try_frame(
+                &listener.event_sender,
+                TransportChannel::Control,
+                peer,
+                bytes.clone(),
+                listener.clock.now(),
+            )
+            .is_ok()
+            {
                 successful = successful.saturating_add(1);
                 bytes_sent =
                     bytes_sent.saturating_add(u64::try_from(encoded_len).unwrap_or(u64::MAX));
@@ -141,10 +138,8 @@ impl VirtualHostTransport {
                 ));
             }
         }
-        let frame = round_trip(frame, channel)?;
-        let encoded_len = encode_frame(&frame)
-            .map_err(|error| TransportError::protocol(channel, &error))?
-            .len();
+        let bytes = encode_wire_frame(frame, channel)?;
+        let encoded_len = bytes.len();
         let state = self.network.inner.lock().map_err(network_poisoned)?;
         let host = state.hosts.get(&self.endpoint).ok_or_else(shutting_down)?;
         let listeners: Vec<&VirtualListenerRegistration> = host
@@ -157,21 +152,22 @@ impl VirtualHostTransport {
         let mut failed = 0_u32;
         let mut bytes_sent = 0_u64;
         for listener in listeners {
-            let event = TransportEvent::FrameReceived {
-                channel,
-                peer: TransportPeer {
-                    device_id: None,
-                    control_address: SocketAddr::new(
-                        self.endpoint.address,
-                        self.endpoint.control_port,
-                    ),
-                },
-                frame: frame.clone(),
-                // The listener is the recipient, not the host -- stamped
-                // with the listener's own clock.
-                received_at: listener.clock.now(),
+            let peer = TransportPeer {
+                device_id: None,
+                control_address: SocketAddr::new(
+                    self.endpoint.address,
+                    self.endpoint.control_port,
+                ),
             };
-            if try_event(&listener.event_sender, event).is_ok() {
+            if try_frame(
+                &listener.event_sender,
+                channel,
+                peer,
+                bytes.clone(),
+                listener.clock.now(),
+            )
+            .is_ok()
+            {
                 successful = successful.saturating_add(1);
                 bytes_sent =
                     bytes_sent.saturating_add(u64::try_from(encoded_len).unwrap_or(u64::MAX));

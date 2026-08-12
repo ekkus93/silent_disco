@@ -4,6 +4,7 @@ mod manual_endpoint;
 mod socket;
 mod types;
 mod virtual_fault;
+mod virtual_reconnect;
 mod virtual_transport;
 
 #[cfg(test)]
@@ -17,7 +18,11 @@ mod test_support;
 #[cfg(test)]
 mod virtual_fault_tests;
 #[cfg(test)]
+mod virtual_reconnect_tests;
+#[cfg(test)]
 mod virtual_tests;
+#[cfg(test)]
+mod virtual_wire_tests;
 
 pub use boundary::{HostTransportNode, ListenerTransportNode, TransportFactory};
 pub use clock::{ManualTransportClock, SystemTransportClock, TransportClock};
@@ -34,6 +39,7 @@ pub use types::{
 pub use virtual_fault::{
     DeterministicPrng, FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig,
 };
+pub use virtual_reconnect::ReconnectDelayingTransportFactory;
 pub use virtual_transport::{VirtualTransportFactory, VirtualTransportNetwork};
 
 /// Returns the production standard-IP transport factory.
