@@ -103,8 +103,8 @@ fn audio_packet_records_metadata_and_hashes_but_never_raw_payload() {
 
 fn join_request_event(invite_code: &str) -> TransportEvent {
     let session_id = SessionId::new("trace-secret-session").expect("valid session ID");
-    let device_id = silent_disco_core::domain::DeviceId::new("trace-secret-listener")
-        .expect("valid device ID");
+    let device_id =
+        silent_disco_core::domain::DeviceId::new("trace-secret-listener").expect("valid device ID");
     TransportEvent::FrameReceived {
         channel: TransportChannel::Control,
         peer: TransportPeer {
@@ -150,9 +150,11 @@ fn secret_control_hash_redacts_invite_code_before_persisting_a_verifier() {
         .collect();
     assert_eq!(hashes.len(), 2);
     assert_eq!(hashes[0].0, hashes[1].0);
-    assert!(hashes
-        .iter()
-        .all(|(_, scope)| *scope == RecordedFrameHashScope::RedactedSensitiveFields));
+    assert!(
+        hashes
+            .iter()
+            .all(|(_, scope)| *scope == RecordedFrameHashScope::RedactedSensitiveFields)
+    );
 
     let json = serde_json::to_string(&trace).expect("trace serializes");
     assert!(!json.contains("123456"));
@@ -197,8 +199,8 @@ fn clock_handle(clock: &Arc<LabClock>) -> Arc<dyn TransportClock> {
 
 fn bind_traced_listener(latency_ms: u64, loss_permille: u16) -> TracedEndpoints {
     let session_id = SessionId::new("trace-live-session").expect("valid session ID");
-    let device_id = silent_disco_core::domain::DeviceId::new("trace-live-listener")
-        .expect("valid device ID");
+    let device_id =
+        silent_disco_core::domain::DeviceId::new("trace-live-listener").expect("valid device ID");
     let clock = Arc::new(LabClock::new(1_000));
     let recorder = TransportTraceRecorder::new();
     let network = VirtualTransportNetwork::default();
@@ -259,7 +261,8 @@ fn bind_traced_listener(latency_ms: u64, loss_permille: u16) -> TracedEndpoints 
     host.authorize_peer(&device_id, listener.local_routes())
         .expect("listener authorizes");
     assert!(matches!(
-        host.recv_event(POLL_TIMEOUT).expect("authorization arrives"),
+        host.recv_event(POLL_TIMEOUT)
+            .expect("authorization arrives"),
         TransportEvent::PeerAuthorized { .. }
     ));
     (clock, recorder, controller, host, listener, session_id)

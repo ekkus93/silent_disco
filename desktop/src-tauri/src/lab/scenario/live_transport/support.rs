@@ -116,10 +116,7 @@ pub(super) fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
 }
 
 impl super::LiveTransportDriver {
-    pub(super) fn profile(
-        &self,
-        node_id: &NodeId,
-    ) -> Result<ReceiveFaultProfile, DesktopErrorDto> {
+    pub(super) fn profile(&self, node_id: &NodeId) -> Result<ReceiveFaultProfile, DesktopErrorDto> {
         self.profiles.get(node_id).copied().ok_or_else(|| {
             live_error(
                 "fault_profile_missing",

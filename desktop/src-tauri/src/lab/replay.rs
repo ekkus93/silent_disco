@@ -117,8 +117,7 @@ pub(crate) fn replay(
         });
     }
 
-    let (report, trace) =
-        run_scenario_with_trace(lab, scenario).map_err(ReplayError::Execution)?;
+    let (report, trace) = run_scenario_with_trace(lab, scenario).map_err(ReplayError::Execution)?;
     let divergence = first_divergence(&recording.report, &report)
         .or_else(|| first_trace_divergence(&recording.trace, &trace));
     let current_core_version =

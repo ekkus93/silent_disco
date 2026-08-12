@@ -70,10 +70,11 @@ fn scenario_trace_contains_real_packet_and_fault_evidence() {
 
     assert_eq!(report.outcome, ScenarioOutcome::Completed);
     assert!(
-        trace.transport_trace.facts.iter().any(|fact| matches!(
-            &fact.entry,
-            TransportFactKind::Packet { .. }
-        )),
+        trace
+            .transport_trace
+            .facts
+            .iter()
+            .any(|fact| matches!(&fact.entry, TransportFactKind::Packet { .. })),
         "the live driver must persist real received packet metadata"
     );
     assert!(
