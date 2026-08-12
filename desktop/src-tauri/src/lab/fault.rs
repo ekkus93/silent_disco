@@ -230,7 +230,10 @@ impl HostTransportNode for LabFaultHostTransport {
         self.inner.send_control(device_id, message)
     }
 
-    fn broadcast_control(&self, message: &ControlMessage) -> Result<TransportDelivery, TransportError> {
+    fn broadcast_control(
+        &self,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
         self.inner.broadcast_control(message)
     }
 
@@ -449,7 +452,12 @@ fn should_drop_event(
 ) -> bool {
     let (channel, _) = event_channel_and_time(event);
     match channel {
-        Some(channel) => should_drop_channel(channel, loss_permille, synchronization_prng, audio_prng),
+        Some(channel) => should_drop_channel(
+            channel,
+            loss_permille,
+            synchronization_prng,
+            audio_prng,
+        ),
         None => false,
     }
 }
