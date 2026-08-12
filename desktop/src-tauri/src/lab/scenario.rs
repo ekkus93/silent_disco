@@ -74,4 +74,6 @@ pub(in crate::lab::scenario) fn scenario_node_parts(
 #[cfg(test)]
 mod live_transport_proof_tests;
 #[cfg(test)]
+mod transport_recording_tests;
+#[cfg(test)]
 mod tests;

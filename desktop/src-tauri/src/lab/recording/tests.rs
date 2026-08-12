@@ -1,8 +1,10 @@
 use super::{
     Divergence, MAX_RECORDING_FILE_BYTES, RECORDING_FORMAT_VERSION, RecordedCoreVersion,
     RecordingLoadError, RecordingSaveError, ScenarioRecording, first_divergence,
+    first_trace_divergence,
     load_recording_from_path, load_recording_json, save_recording_to_path,
 };
+use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind};
 use crate::lab::scenario::{
     AssertionOutcome, AssertionResult, NodeId, ScenarioOutcome, ScenarioReport, ScenarioTrace,
     StepResult, StepSettlement,
@@ -34,6 +36,7 @@ fn empty_trace() -> ScenarioTrace {
     ScenarioTrace {
         clock_advances: Vec::new(),
         node_notifications: Vec::new(),
+        transport_trace: Default::default(),
     }
 }
 
@@ -249,4 +252,50 @@ fn first_divergence_reports_a_changed_overall_outcome_when_nothing_else_differs(
 
     let divergence = first_divergence(&recorded, &replayed).expect("must diverge");
     assert!(matches!(divergence, Divergence::DifferentOutcome { .. }));
+}
+
+#[test]
+fn transport_trace_overflow_difference_is_a_replay_divergence() {
+    let recorded = empty_trace();
+    let mut replayed = empty_trace();
+    replayed.transport_trace.dropped_count = 1;
+
+    let divergence = first_trace_divergence(&recorded, &replayed)
+        .expect("different transport evidence must diverge");
+    assert!(matches!(
+        divergence,
+        Divergence::TransportOverflowMismatch {
+            recorded: 0,
+            replayed: 1
+        }
+    ));
+}
+
+#[test]
+fn changed_node_notification_is_a_replay_divergence_even_when_report_matches() {
+    let mut recorded = empty_trace();
+    recorded.node_notifications = vec![(
+        "host1".to_owned(),
+        vec![RecordedNotification {
+            sequence: 0,
+            kind: RecordedNotificationKind::Effect {
+                name: "startAdvertising".to_owned(),
+            },
+        }],
+    )];
+    let mut replayed = recorded.clone();
+    replayed.node_notifications[0].1[0].kind = RecordedNotificationKind::Effect {
+        name: "stopAdvertising".to_owned(),
+    };
+
+    let divergence = first_trace_divergence(&recorded, &replayed)
+        .expect("changed notification must diverge");
+    assert!(matches!(
+        divergence,
+        Divergence::NotificationMismatch {
+            node,
+            index: 0,
+            ..
+        } if node == "host1"
+    ));
 }

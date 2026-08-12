@@ -17,7 +17,10 @@
 //! than contradictory.
 
 use super::LabRuntime;
-use super::recording::{Divergence, RECORDING_FORMAT_VERSION, ScenarioRecording, first_divergence};
+use super::recording::{
+    Divergence, RECORDING_FORMAT_VERSION, ScenarioRecording, first_divergence,
+    first_trace_divergence,
+};
 use super::scenario::{Scenario, ScenarioExecutionError, ScenarioReport, run_scenario_with_trace};
 use std::fmt;
 
@@ -114,9 +117,10 @@ pub(crate) fn replay(
         });
     }
 
-    let (report, _trace) =
+    let (report, trace) =
         run_scenario_with_trace(lab, scenario).map_err(ReplayError::Execution)?;
-    let divergence = first_divergence(&recording.report, &report);
+    let divergence = first_divergence(&recording.report, &report)
+        .or_else(|| first_trace_divergence(&recording.trace, &trace));
     let current_core_version =
         super::recording::RecordedCoreVersion::from(silent_disco_core::core_version());
 

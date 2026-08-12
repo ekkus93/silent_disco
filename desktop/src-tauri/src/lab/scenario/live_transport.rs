@@ -13,6 +13,7 @@ use self::support::{
 use self::sync::LiveSyncState;
 use super::{NodeId, Scenario, ScenarioAction, scenario_node_parts};
 use crate::dto::DesktopErrorDto;
+use crate::lab::fault::trace::{TransportTrace, TransportTraceError, TransportTraceRecorder};
 use crate::lab::fault::{LabFaultController, LabLatencyTransportFactory};
 use crate::lab::{LabClock, LabNodeId, LabRuntime};
 use crate::platform::host_transport_events::HostTransportEventProcessor;
@@ -65,6 +66,7 @@ pub(super) struct LiveTransportDriver {
     links: Vec<super::ScenarioLink>,
     profiles: HashMap<NodeId, ReceiveFaultProfile>,
     fault_controllers: HashMap<NodeId, LabFaultController>,
+    transport_trace: TransportTraceRecorder,
     actors: HashMap<NodeId, ActorEndpoint>,
     hosts: HashMap<NodeId, LiveHost>,
     listeners: HashMap<NodeId, LiveListener>,

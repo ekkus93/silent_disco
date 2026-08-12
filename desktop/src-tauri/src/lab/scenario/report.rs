@@ -1,6 +1,7 @@
 use super::NodeId;
 use crate::dto::DesktopErrorDto;
 use crate::lab::clock::LabClockError;
+use crate::lab::fault::trace::TransportTrace;
 use crate::lab::recorder::RecordedNotification;
 use serde::{Deserialize, Serialize};
 use silent_disco_core::runtime::{RuntimeContractError, RuntimeRecordValidationError};
@@ -107,4 +108,6 @@ pub(crate) struct ClockAdvance {
 pub(crate) struct ScenarioTrace {
     pub(crate) clock_advances: Vec<ClockAdvance>,
     pub(crate) node_notifications: Vec<(String, Vec<RecordedNotification>)>,
+    #[serde(default)]
+    pub(crate) transport_trace: TransportTrace,
 }

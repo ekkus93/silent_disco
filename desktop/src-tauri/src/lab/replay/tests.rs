@@ -208,3 +208,23 @@ fn a_differing_recorded_protocol_or_core_version_does_not_block_replay() {
     );
     assert_ne!(outcome.recorded_core_version, outcome.current_core_version);
 }
+
+#[test]
+fn replay_detects_transport_evidence_divergence_when_the_report_still_matches() {
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let scenario = load_scenario_json(SCENARIO_JSON).expect("valid scenario document");
+    let (report, trace) = run_scenario_with_trace(&lab, &scenario).expect("run");
+    let mut recording = ScenarioRecording::capture(&scenario, report, trace);
+    recording.trace.transport_trace.dropped_count = 1;
+
+    let outcome = replay(&lab, &scenario, &recording).expect("replay succeeds");
+
+    assert!(matches!(
+        outcome.divergence,
+        Some(crate::lab::recording::Divergence::TransportOverflowMismatch {
+            recorded: 1,
+            replayed: 0
+        })
+    ));
+}

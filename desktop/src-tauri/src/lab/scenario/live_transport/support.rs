@@ -1,5 +1,6 @@
 use super::super::{NodeId, Scenario};
 use crate::dto::DesktopErrorDto;
+use crate::lab::fault::trace::TransportTraceRecorder;
 use silent_disco_core::domain::DeliverySeverity;
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::DeliveryReport;
@@ -51,19 +52,22 @@ pub(super) fn build_receive_profiles(
 
 pub(super) fn build_fault_controllers(
     profiles: &HashMap<NodeId, ReceiveFaultProfile>,
+    trace: &TransportTraceRecorder,
 ) -> HashMap<NodeId, crate::lab::fault::LabFaultController> {
     profiles
         .iter()
         .map(|(node_id, profile)| {
             (
                 node_id.clone(),
-                crate::lab::fault::LabFaultController::new(
+                crate::lab::fault::LabFaultController::new_traced(
                     crate::lab::fault::LabLatencyConfig {
                         fixed_latency_ms: profile.latency_ms,
                         jitter_ms: profile.jitter_ms,
                         seed: profile.seed,
                     },
                     profile.loss_permille,
+                    node_id.to_string(),
+                    trace.clone(),
                 ),
             )
         })
@@ -112,8 +116,16 @@ pub(super) fn live_error(suffix: &str, message: &str) -> DesktopErrorDto {
 }
 
 impl super::LiveTransportDriver {
-    pub(super) fn profile(&self, node_id: &NodeId) -> ReceiveFaultProfile {
-        self.profiles.get(node_id).copied().unwrap_or_default()
+    pub(super) fn profile(
+        &self,
+        node_id: &NodeId,
+    ) -> Result<ReceiveFaultProfile, DesktopErrorDto> {
+        self.profiles.get(node_id).copied().ok_or_else(|| {
+            live_error(
+                "fault_profile_missing",
+                &format!("Lab node '{node_id}' has no receive-fault profile"),
+            )
+        })
     }
 
     pub(super) fn has_link(&self, from: &NodeId, to: &NodeId) -> bool {
@@ -165,13 +177,9 @@ impl super::LiveTransportDriver {
             ));
         }
 
-        // Resolve every fallible prerequisite before changing either the
-        // live controller or the diagnostic/profile mirrors. Once mutation
-        // begins, the remaining operations are infallible so a failed lookup
-        // can never leave the live link half-updated.
         let controller = self.controller(to)?;
         let link_index = link_index.expect("link index was checked above");
-        let seed = self.profile(to).seed;
+        let seed = self.profile(to)?.seed;
         let profile = ReceiveFaultProfile {
             latency_ms,
             jitter_ms,
@@ -179,7 +187,9 @@ impl super::LiveTransportDriver {
             seed,
         };
 
-        controller.update(latency_ms, jitter_ms, loss_permille);
+        controller
+            .update_checked(latency_ms, jitter_ms, loss_permille)
+            .map_err(|error| transport_error("update Lab fault profile", &error))?;
         self.profiles.insert(to.clone(), profile);
         let link = &mut self.links[link_index];
         link.latency_ms = latency_ms;

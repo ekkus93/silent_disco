@@ -12,10 +12,10 @@
 //! - **protocol/core version stamping** ([`RecordedCoreVersion`],
 //!   `protocol_version`) -- recorded for diagnosis, deliberately **not** a
 //!   compatibility gate (see "Which versions gate replay" below);
-//! - **divergence detection** ([`first_divergence`]) comparing a fresh
-//!   replay's [`super::scenario::ScenarioReport`] against the recorded one,
-//!   returning a single bounded [`Divergence`] at the first point the two
-//!   disagree, not an unbounded list of every difference.
+//! - **divergence detection** ([`first_divergence`]/[`first_trace_divergence`])
+//!   comparing a fresh replay's semantic report and then its persisted
+//!   deterministic trace against the recording, returning one bounded
+//!   [`Divergence`] at the first stored mismatch rather than an unbounded list.
 //!
 //! ## Which versions gate replay, and why "later core build" is not a
 //! ## contradiction
@@ -58,20 +58,18 @@
 //! whose own doc comment lists exactly what is deliberately excluded (most
 //! importantly, a host session's plaintext `invite_code`) and why. See
 //! `super::recorder::tests::snapshot_summary_never_carries_the_raw_invite_code`
-//! for the direct test.
+//! for the direct test. The live-transport trace follows the same boundary:
+//! it omits raw peer device IDs and raw frame/audio bytes, and a `JoinRequest`
+//! carrying an invite code is redacted before its diagnostic frame hash is
+//! calculated so the recording cannot become a low-entropy secret verifier.
 //!
-//! ## Deliberately out of scope (honestly incomplete, not silently skipped)
+//! ## Deliberately excluded
 //!
-//! - **Packet metadata and payload hashes, and fault records** (Block
-//!   41.1's own bullets): no Lab node has live transport wired up yet --
-//!   `super::scenario`'s own module doc comment ("Deliberate scope
-//!   boundaries") has said so since Block 40, and `super::mod`'s doc
-//!   comment has said so since Block 37. Without a live packet ever
-//!   crossing a wire inside a Lab scenario today, there is nothing real to
-//!   hash or record under either bullet -- inventing placeholder fields for
-//!   data that cannot exist yet would misrepresent what this module
-//!   actually captures. Both remain this module's honest, direct
-//!   extension point once that future Lab Mode block lands.
+//! - **Raw packet bodies and raw audio payloads** are intentionally not persisted.
+//!   Block 41 records canonical encoded-frame hashes plus bounded metadata, and
+//!   audio payload length/SHA-256, but never the raw frame bytes or audio bytes.
+//!   Packet observations and the actual pass/drop/hold/release decisions share
+//!   one bounded monotonically ordered fact stream (`ScenarioTrace::transport_trace`).
 //! - **A conversion tool for an older, structurally incompatible
 //!   recording** (Block 41.2 "support conversion only through an explicit
 //!   versioned future tool"): no such tool exists, and this module contains
@@ -82,10 +80,11 @@
 //!   would be new, explicitly versioned code added later, not a silent
 //!   branch inside this loader.
 
-use super::recorder::MAX_RECORDED_NOTIFICATIONS;
+use super::fault::trace::{MAX_TRANSPORT_FACTS, TransportFact};
+use super::recorder::{MAX_RECORDED_NOTIFICATIONS, RecordedNotification};
 use super::scenario::{
-    AssertionResult, MAX_ASSERTIONS, MAX_NODES, MAX_STEPS, Scenario, ScenarioOutcome,
-    ScenarioReport, ScenarioTrace, StepResult,
+    AssertionResult, ClockAdvance, MAX_ASSERTIONS, MAX_NODES, MAX_STEPS, Scenario,
+    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult,
 };
 use serde::{Deserialize, Serialize};
 use silent_disco_core::CoreVersion;
@@ -96,7 +95,7 @@ use std::path::Path;
 /// On-disk shape version for [`ScenarioRecording`] itself, distinct from a
 /// scenario document's own `schemaVersion` -- the persisted recording
 /// format can evolve independently of the scenario schema it wraps.
-pub(crate) const RECORDING_FORMAT_VERSION: u32 = 1;
+pub(crate) const RECORDING_FORMAT_VERSION: u32 = 2;
 
 /// Hard cap on a serialized recording's byte length (Block 41.3 "bounded
 /// output"), checked both before writing ([`ScenarioRecording::to_bounded_json`])
@@ -196,6 +195,12 @@ impl ScenarioRecording {
             return Err(RecordingValidationError::TooMany {
                 field: "trace.clockAdvances",
                 limit: MAX_CLOCK_ADVANCES,
+            });
+        }
+        if self.trace.transport_trace.facts.len() > MAX_TRANSPORT_FACTS {
+            return Err(RecordingValidationError::TooMany {
+                field: "trace.transportTrace.facts",
+                limit: MAX_TRANSPORT_FACTS,
             });
         }
         if self.report.step_results.len() > MAX_STEPS {
@@ -379,143 +384,7 @@ pub(crate) fn load_recording_from_path(path: &Path) -> Result<ScenarioRecording,
     load_recording_json(&bytes).map_err(RecordingIoError::Load)
 }
 
-/// The first point at which a recorded [`ScenarioReport`] and a freshly
-/// replayed one disagree (Block 41.2 "detect divergence at the first
-/// meaningful event", "produce bounded diff").
-///
-/// Compared in the scenario's own chronological order -- every step result
-/// (in submission order), then every assertion result (evaluated after all
-/// steps, in declaration order) -- so "first" here means "first thing that
-/// actually happened differently", not an arbitrary field ordering.
-/// Deliberately a single value, not a list: Block 40 already proved
-/// [`ScenarioReport`] is genuinely deterministic for the same scenario and
-/// seed (`scenario::tests::identical_scenario_and_seed_produce_a_deterministic_report`),
-/// so once one point diverges, every result downstream of it is expected to
-/// diverge too and reporting all of them would mostly restate the same
-/// root cause.
-/// Deliberately varied naming (not a uniform `*Changed`/`*Mismatch` suffix
-/// on every variant) to keep `clippy::enum_variant_names` from firing on
-/// what would otherwise read as a repeated, redundant postfix.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Divergence {
-    DifferentStepCount {
-        recorded: usize,
-        replayed: usize,
-    },
-    StepResultMismatch {
-        index: usize,
-        recorded: StepResult,
-        replayed: StepResult,
-    },
-    DifferentAssertionCount {
-        recorded: usize,
-        replayed: usize,
-    },
-    AssertionResultMismatch {
-        index: usize,
-        recorded: AssertionResult,
-        replayed: AssertionResult,
-    },
-    DifferentOutcome {
-        recorded: ScenarioOutcome,
-        replayed: ScenarioOutcome,
-    },
-}
-
-impl fmt::Display for Divergence {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DifferentStepCount { recorded, replayed } => write!(
-                formatter,
-                "step count changed: recorded {recorded} step result(s), replay produced {replayed}"
-            ),
-            Self::StepResultMismatch {
-                index,
-                recorded,
-                replayed,
-            } => write!(
-                formatter,
-                "step {index} diverged: recorded {recorded:?}, replay produced {replayed:?}"
-            ),
-            Self::DifferentAssertionCount { recorded, replayed } => write!(
-                formatter,
-                "assertion count changed: recorded {recorded} assertion result(s), replay \
-                 produced {replayed}"
-            ),
-            Self::AssertionResultMismatch {
-                index,
-                recorded,
-                replayed,
-            } => write!(
-                formatter,
-                "assertion {index} diverged: recorded {recorded:?}, replay produced {replayed:?}"
-            ),
-            Self::DifferentOutcome { recorded, replayed } => write!(
-                formatter,
-                "overall outcome diverged: recorded {recorded:?}, replay produced {replayed:?}"
-            ),
-        }
-    }
-}
-
-/// Finds the first [`Divergence`] between a recorded report and a freshly
-/// replayed one, or `None` when they match exactly.
-#[must_use]
-pub(crate) fn first_divergence(
-    recorded: &ScenarioReport,
-    replayed: &ScenarioReport,
-) -> Option<Divergence> {
-    for (index, (recorded_step, replayed_step)) in recorded
-        .step_results
-        .iter()
-        .zip(replayed.step_results.iter())
-        .enumerate()
-    {
-        if recorded_step != replayed_step {
-            return Some(Divergence::StepResultMismatch {
-                index,
-                recorded: recorded_step.clone(),
-                replayed: replayed_step.clone(),
-            });
-        }
-    }
-    if recorded.step_results.len() != replayed.step_results.len() {
-        return Some(Divergence::DifferentStepCount {
-            recorded: recorded.step_results.len(),
-            replayed: replayed.step_results.len(),
-        });
-    }
-
-    for (index, (recorded_assertion, replayed_assertion)) in recorded
-        .assertion_results
-        .iter()
-        .zip(replayed.assertion_results.iter())
-        .enumerate()
-    {
-        if recorded_assertion != replayed_assertion {
-            return Some(Divergence::AssertionResultMismatch {
-                index,
-                recorded: recorded_assertion.clone(),
-                replayed: replayed_assertion.clone(),
-            });
-        }
-    }
-    if recorded.assertion_results.len() != replayed.assertion_results.len() {
-        return Some(Divergence::DifferentAssertionCount {
-            recorded: recorded.assertion_results.len(),
-            replayed: replayed.assertion_results.len(),
-        });
-    }
-
-    if recorded.outcome != replayed.outcome {
-        return Some(Divergence::DifferentOutcome {
-            recorded: recorded.outcome.clone(),
-            replayed: replayed.outcome.clone(),
-        });
-    }
-
-    None
-}
+include!("recording/divergence.rs");
 
 #[cfg(test)]
 mod tests;
