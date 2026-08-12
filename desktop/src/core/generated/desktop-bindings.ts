@@ -199,3 +199,4 @@ export type LabStartNodeRequest = { offsetMs: string, driftPpm: string, };
 export type LabStopNodeRequest = { nodeId: string, };
 
 export type LabSetLinkFaultsRequest = { linkIndex: number, from: string, to: string, latencyMs: string, jitterMs: string, lossPermille: string, };
+

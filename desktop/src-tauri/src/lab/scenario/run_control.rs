@@ -124,7 +124,9 @@ mod tests {
         let waiter = Arc::clone(&control);
         let (tx, rx) = std::sync::mpsc::channel();
         let thread = thread::spawn(move || {
-            waiter.wait_until_runnable().expect("resume releases boundary");
+            waiter
+                .wait_until_runnable()
+                .expect("resume releases boundary");
             tx.send(()).expect("signal completion");
         });
 

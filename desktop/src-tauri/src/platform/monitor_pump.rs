@@ -178,7 +178,10 @@ mod drop_tests {
         };
 
         let dropped = catch_unwind(AssertUnwindSafe(|| drop(pump)));
-        assert!(dropped.is_ok(), "a clean implicit join must remain harmless");
+        assert!(
+            dropped.is_ok(),
+            "a clean implicit join must remain harmless"
+        );
     }
 }
 

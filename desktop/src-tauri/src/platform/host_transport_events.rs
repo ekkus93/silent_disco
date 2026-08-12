@@ -155,6 +155,7 @@ impl HostTransportEventProcessor {
     /// pending-port authorization data, Hello response, sync response, and
     /// disconnect handling without exposing `DesktopNetworkError` outside
     /// the production platform module.
+    #[cfg(feature = "lab-mode")]
     pub(crate) fn process_for_lab(
         &mut self,
         event: RuntimeTransportEvent,

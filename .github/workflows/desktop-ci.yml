@@ -63,7 +63,12 @@ jobs:
             wget
 
       - name: Generate exact npm lockfile when missing
-        run: npm install --package-lock-only --ignore-scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f package-lock.json ]]; then
+            npm install --package-lock-only --ignore-scripts
+          fi
 
       - name: Install frontend dependencies
         run: npm ci
@@ -149,7 +154,12 @@ jobs:
 
       - name: Generate exact Cargo lockfile when missing
         working-directory: desktop/src-tauri
-        run: cargo generate-lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f Cargo.lock ]]; then
+            cargo generate-lockfile
+          fi
 
       - name: Check Rust formatting
         working-directory: desktop/src-tauri
@@ -167,15 +177,15 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee ../../desktop-rust-clippy.log
+          cargo clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee ../../desktop-rust-clippy.log
 
       - name: Run desktop backend tests
         working-directory: desktop/src-tauri
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
 
       - name: Check desktop backend
         working-directory: desktop/src-tauri
-        run: cargo check --all-features
+        run: cargo check --locked --all-features
 
       - name: Require committed Cargo lockfile
         shell: bash
@@ -238,9 +248,13 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop
-          npm install --package-lock-only --ignore-scripts
+          if [[ ! -f package-lock.json ]]; then
+            npm install --package-lock-only --ignore-scripts
+          fi
           cd src-tauri
-          cargo generate-lockfile
+          if [[ ! -f Cargo.lock ]]; then
+            cargo generate-lockfile
+          fi
 
       - name: Install frontend dependencies
         working-directory: desktop

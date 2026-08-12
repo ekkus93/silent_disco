@@ -330,9 +330,9 @@ impl Drop for StreamingPacketizeHandle {
             Ok(Err(error)) => Some(format!(
                 "streaming packetizer worker failed during implicit shutdown: {error}"
             )),
-            Err(_) => Some(
-                "streaming packetizer worker panicked during implicit shutdown".to_owned(),
-            ),
+            Err(_) => {
+                Some("streaming packetizer worker panicked during implicit shutdown".to_owned())
+            }
         };
         if let Some(failure) = failure {
             // Drop-triggered cooperative cancellation is expected and remains
@@ -371,8 +371,7 @@ mod failure_visibility_tests {
                 crate::protocol::ControlMessage::Stop(crate::protocol::Stop {
                     session_id: crate::domain::SessionId::new("drop-test-session")
                         .expect("session id"),
-                    stream_id: crate::domain::StreamId::new("drop-test-stream")
-                        .expect("stream id"),
+                    stream_id: crate::domain::StreamId::new("drop-test-stream").expect("stream id"),
                     host_stop_time_ms: crate::domain::MonotonicMillis::new(0),
                 }),
             ),

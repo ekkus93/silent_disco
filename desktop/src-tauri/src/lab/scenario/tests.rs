@@ -1,14 +1,14 @@
 use super::{
-    AssertionOutcome, NodeId, ScenarioAssertion, ScenarioOutcome, ScenarioParseError,
-    ScenarioExecutionError, ScenarioRunControl, ScenarioRunControlError, ScenarioValidationError,
+    AssertionOutcome, NodeId, ScenarioAssertion, ScenarioExecutionError, ScenarioOutcome,
+    ScenarioParseError, ScenarioRunControl, ScenarioRunControlError, ScenarioValidationError,
     evaluate_assertion, load_scenario_json, run_scenario, run_scenario_with_trace_controlled,
 };
 use crate::lab::LabRuntime;
 use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -268,9 +268,8 @@ fn pause_before_first_step_holds_virtual_time_and_resume_preserves_report() {
     let baseline = run_scenario(&baseline_lab, &scenario).expect("baseline run");
 
     let controlled_root = TestDirectory::new();
-    let controlled_lab = Arc::new(
-        LabRuntime::new(&controlled_root.0, 0).expect("controlled lab runtime"),
-    );
+    let controlled_lab =
+        Arc::new(LabRuntime::new(&controlled_root.0, 0).expect("controlled lab runtime"));
     let control = Arc::new(ScenarioRunControl::default());
     control.pause().expect("pause before run");
     let run_lab = Arc::clone(&controlled_lab);
