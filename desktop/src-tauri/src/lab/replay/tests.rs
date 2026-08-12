@@ -243,8 +243,10 @@ fn a_differing_recorded_protocol_or_core_version_does_not_block_replay() {
 fn replay_detects_transport_evidence_divergence_when_the_report_still_matches() {
     let root = TestDirectory::new();
     let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
-    let scenario = load_scenario_json(SCENARIO_JSON).expect("valid scenario document");
+    let scenario =
+        load_scenario_json(LIVE_TRANSPORT_SCENARIO_JSON).expect("valid live transport scenario");
     let (report, trace) = run_scenario_with_trace(&lab, &scenario).expect("run");
+    assert!(!trace.transport_trace.facts.is_empty());
     let mut recording = ScenarioRecording::capture(&scenario, report, trace);
     recording.trace.transport_trace.dropped_count = 1;
 
