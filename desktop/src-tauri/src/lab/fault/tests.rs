@@ -348,38 +348,44 @@ fn control_channel_events_are_never_delayed() {
     host.shutdown().expect("host should shut down");
 }
 
-#[test]
-fn live_controller_changes_loss_without_reconnecting_the_listener() {
-    let session_id = SessionId::new("lab-dynamic-fault-session").expect("session ID");
-    let device_id = DeviceId::new("lab-dynamic-fault-listener").expect("device ID");
-    let clock = Arc::new(LabClock::new(2_000));
+fn bind_dynamic_controller(
+    session_id: &SessionId,
+    device_id: &DeviceId,
+    clock: &Arc<LabClock>,
+    seed: u64,
+    display_name: &str,
+) -> (
+    LabFaultController,
+    Box<dyn HostTransportNode>,
+    Box<dyn ListenerTransportNode>,
+) {
     let controller = LabFaultController::new(
         LabLatencyConfig {
             fixed_latency_ms: 0,
             jitter_ms: 0,
-            seed: 123,
+            seed,
         },
         0,
     );
     let factory = LabLatencyTransportFactory::new_dynamic(
         VirtualTransportFactory::new(VirtualTransportNetwork::default()),
-        Arc::clone(&clock),
+        Arc::clone(clock),
         controller.clone(),
     );
     let mut host = factory
         .bind_host(
             HostTransportConfig::loopback(session_id.clone()),
-            clock_handle(&clock),
+            clock_handle(clock),
         )
         .expect("host should bind");
-    let mut listener = factory
+    let listener = factory
         .connect_listener(
             ListenerTransportConfig::loopback(
                 session_id.clone(),
                 device_id.clone(),
                 host.endpoint(),
             ),
-            clock_handle(&clock),
+            clock_handle(clock),
         )
         .expect("listener should connect");
     assert!(matches!(
@@ -391,7 +397,7 @@ fn live_controller_changes_loss_without_reconnecting_the_listener() {
             session_id: session_id.clone(),
             device: DeviceIdentity {
                 device_id: device_id.clone(),
-                display_name: "Dynamic Fault Listener".to_owned(),
+                display_name: display_name.to_owned(),
             },
             invite_code: None,
             sync_port: 0,
@@ -405,13 +411,29 @@ fn live_controller_changes_loss_without_reconnecting_the_listener() {
             ..
         }
     ));
-    host.authorize_peer(&device_id, listener.local_routes())
+    host.authorize_peer(device_id, listener.local_routes())
         .expect("listener should authorize");
     assert!(matches!(
         host.recv_event(POLL_TIMEOUT)
             .expect("authorization should arrive"),
         TransportEvent::PeerAuthorized { .. }
     ));
+
+    (controller, host, listener)
+}
+
+#[test]
+fn live_controller_changes_loss_without_reconnecting_the_listener() {
+    let session_id = SessionId::new("lab-dynamic-fault-session").expect("session ID");
+    let device_id = DeviceId::new("lab-dynamic-fault-listener").expect("device ID");
+    let clock = Arc::new(LabClock::new(2_000));
+    let (controller, mut host, mut listener) = bind_dynamic_controller(
+        &session_id,
+        &device_id,
+        &clock,
+        123,
+        "Dynamic Fault Listener",
+    );
 
     host.broadcast_audio(&audio_frame(&session_id, 1))
         .expect("pre-mutation send should succeed");
@@ -442,65 +464,13 @@ fn live_controller_changes_latency_without_reconnecting_the_listener() {
     let session_id = SessionId::new("lab-dynamic-latency-session").expect("session ID");
     let device_id = DeviceId::new("lab-dynamic-latency-listener").expect("device ID");
     let clock = Arc::new(LabClock::new(5_000));
-    let controller = LabFaultController::new(
-        LabLatencyConfig {
-            fixed_latency_ms: 0,
-            jitter_ms: 0,
-            seed: 456,
-        },
-        0,
+    let (controller, mut host, mut listener) = bind_dynamic_controller(
+        &session_id,
+        &device_id,
+        &clock,
+        456,
+        "Dynamic Latency Listener",
     );
-    let factory = LabLatencyTransportFactory::new_dynamic(
-        VirtualTransportFactory::new(VirtualTransportNetwork::default()),
-        Arc::clone(&clock),
-        controller.clone(),
-    );
-    let mut host = factory
-        .bind_host(
-            HostTransportConfig::loopback(session_id.clone()),
-            clock_handle(&clock),
-        )
-        .expect("host should bind");
-    let mut listener = factory
-        .connect_listener(
-            ListenerTransportConfig::loopback(
-                session_id.clone(),
-                device_id.clone(),
-                host.endpoint(),
-            ),
-            clock_handle(&clock),
-        )
-        .expect("listener should connect");
-    assert!(matches!(
-        host.recv_event(POLL_TIMEOUT).expect("peer accepted"),
-        TransportEvent::PeerAccepted { .. }
-    ));
-    listener
-        .send_control(&ControlMessage::JoinRequest(JoinRequest {
-            session_id: session_id.clone(),
-            device: DeviceIdentity {
-                device_id: device_id.clone(),
-                display_name: "Dynamic Latency Listener".to_owned(),
-            },
-            invite_code: None,
-            sync_port: 0,
-            audio_port: 0,
-        }))
-        .expect("join should send");
-    assert!(matches!(
-        host.recv_event(POLL_TIMEOUT).expect("join should arrive"),
-        TransportEvent::FrameReceived {
-            channel: TransportChannel::Control,
-            ..
-        }
-    ));
-    host.authorize_peer(&device_id, listener.local_routes())
-        .expect("listener should authorize");
-    assert!(matches!(
-        host.recv_event(POLL_TIMEOUT)
-            .expect("authorization should arrive"),
-        TransportEvent::PeerAuthorized { .. }
-    ));
 
     host.broadcast_audio(&audio_frame(&session_id, 1))
         .expect("pre-mutation send should succeed");
