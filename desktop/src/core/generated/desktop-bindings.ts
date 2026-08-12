@@ -181,7 +181,14 @@ export type LabStateDto = { nowMs: string,
  * `true` while `lab_run_loaded_scenario` is executing -- gates
  * "running-state command disablement" (Block 42's own test list).
  */
-running: boolean, nodes: Array<LabNodeDto>, loadedScenario: LabScenarioSummaryDto | null, lastRun: LabRunOutcomeDto | null, };
+running: boolean, 
+/**
+ * `true` after a backend pause request has been accepted and until a
+ * resume/stop/completion clears it. Pause is cooperative: the currently
+ * executing scenario step is allowed to settle before the next
+ * deterministic step boundary blocks.
+ */
+paused: boolean, nodes: Array<LabNodeDto>, loadedScenario: LabScenarioSummaryDto | null, lastRun: LabRunOutcomeDto | null, };
 
 export type LabFileOutcomeDto = { "kind": "saved" } | { "kind": "cancelled" };
 
@@ -191,3 +198,4 @@ export type LabStartNodeRequest = { offsetMs: string, driftPpm: string, };
 
 export type LabStopNodeRequest = { nodeId: string, };
 
+export type LabSetLinkFaultsRequest = { linkIndex: number, from: string, to: string, latencyMs: string, jitterMs: string, lossPermille: string, };

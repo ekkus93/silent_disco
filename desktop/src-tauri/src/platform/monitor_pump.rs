@@ -133,8 +133,52 @@ impl Drop for DesktopMonitorPump {
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
-            eprintln!("local monitor pump thread panicked during implicit shutdown");
+            // Normal owners call `stop()`, which propagates the join failure.
+            // Reaching Drop with a panicked worker is therefore a lifecycle
+            // invariant violation. Fail loudly instead of reducing that
+            // operational failure to a stderr-only message. During an
+            // unrelated panic, do not trigger a second panic while unwinding.
+            assert!(
+                std::thread::panicking(),
+                "local monitor pump thread panicked during implicit shutdown"
+            );
         }
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::DesktopMonitorPump;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::thread;
+
+    #[test]
+    fn implicit_drop_fails_loudly_when_the_monitor_worker_panicked() {
+        let worker = thread::spawn(|| panic!("injected monitor pump panic"));
+        let pump = DesktopMonitorPump {
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: Some(worker),
+        };
+
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(pump)));
+        assert!(
+            dropped.is_err(),
+            "a panicked monitor worker must not become a log-only Drop failure"
+        );
+    }
+
+    #[test]
+    fn implicit_drop_accepts_a_clean_monitor_worker_exit() {
+        let worker = thread::spawn(|| {});
+        let pump = DesktopMonitorPump {
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: Some(worker),
+        };
+
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(pump)));
+        assert!(dropped.is_ok(), "a clean implicit join must remain harmless");
     }
 }
 

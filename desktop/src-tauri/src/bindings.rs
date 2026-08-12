@@ -15,8 +15,8 @@ use crate::host_session_dto::{
 };
 use crate::lab_dto::{
     LabAdvanceTimeRequest, LabAssertionResultDto, LabFileOutcomeDto, LabLinkDto, LabNodeDto,
-    LabRunOutcomeDto, LabScenarioSummaryDto, LabStartNodeRequest, LabStateDto, LabStepResultDto,
-    LabStopNodeRequest, LabTimelineEntryDto,
+    LabRunOutcomeDto, LabScenarioSummaryDto, LabSetLinkFaultsRequest, LabStartNodeRequest,
+    LabStateDto, LabStepResultDto, LabStopNodeRequest, LabTimelineEntryDto,
 };
 use crate::platform::diagnostics_export::DiagnosticsExportOutcome;
 use crate::platform::network_dto::{
@@ -118,6 +118,7 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<LabAdvanceTimeRequest>(&config),
         declaration::<LabStartNodeRequest>(&config),
         declaration::<LabStopNodeRequest>(&config),
+        declaration::<LabSetLinkFaultsRequest>(&config),
     ];
 
     let mut output = String::from(GENERATED_HEADER);
@@ -176,6 +177,7 @@ mod tests {
         assert!(first.contains("export type LabStateDto"));
         assert!(first.contains("export type LabRunOutcomeDto"));
         assert!(first.contains("export type LabScenarioSummaryDto"));
+        assert!(first.contains("export type LabSetLinkFaultsRequest"));
     }
 
     #[test]

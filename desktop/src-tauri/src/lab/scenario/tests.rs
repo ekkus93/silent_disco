@@ -1,12 +1,16 @@
 use super::{
     AssertionOutcome, NodeId, ScenarioAssertion, ScenarioOutcome, ScenarioParseError,
-    ScenarioValidationError, evaluate_assertion, load_scenario_json, run_scenario,
+    ScenarioExecutionError, ScenarioRunControl, ScenarioRunControlError, ScenarioValidationError,
+    evaluate_assertion, load_scenario_json, run_scenario, run_scenario_with_trace_controlled,
 };
 use crate::lab::LabRuntime;
 use crate::lab::recorder::{RecordedNotification, RecordedNotificationKind};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
@@ -240,6 +244,104 @@ fn identical_scenario_and_seed_produce_a_deterministic_report() {
 
     assert_eq!(first_report, second_report);
     assert_eq!(first_report.outcome, ScenarioOutcome::Completed);
+}
+
+#[test]
+fn pause_before_first_step_holds_virtual_time_and_resume_preserves_report() {
+    let scenario_json = br#"{
+        "schemaVersion": 1, "seed": 43,
+        "nodes": [{"id": "host1"}],
+        "steps": [
+            {"atMs": 10, "node": "host1", "action": {"kind": "selectRole", "role": "host"}},
+            {"atMs": 20, "node": "host1", "action": {"kind": "exportDiagnostics"}}
+        ],
+        "assertions": [
+            {"kind": "lifecycleReached", "byMs": 50, "node": "host1",
+             "target": {"machine": "role", "state": "host"}}
+        ],
+        "timeoutMs": 50
+    }"#;
+    let scenario = load_scenario_json(scenario_json).expect("valid scenario document");
+
+    let baseline_root = TestDirectory::new();
+    let baseline_lab = LabRuntime::new(&baseline_root.0, 0).expect("baseline lab runtime");
+    let baseline = run_scenario(&baseline_lab, &scenario).expect("baseline run");
+
+    let controlled_root = TestDirectory::new();
+    let controlled_lab = Arc::new(
+        LabRuntime::new(&controlled_root.0, 0).expect("controlled lab runtime"),
+    );
+    let control = Arc::new(ScenarioRunControl::default());
+    control.pause().expect("pause before run");
+    let run_lab = Arc::clone(&controlled_lab);
+    let run_control = Arc::clone(&control);
+    let run_scenario = scenario.clone();
+    let worker = thread::spawn(move || {
+        run_scenario_with_trace_controlled(&run_lab, &run_scenario, &run_control)
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while controlled_lab.node_ids().is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        controlled_lab.node_ids().len(),
+        1,
+        "scenario setup must reach the first deterministic step boundary"
+    );
+    thread::sleep(Duration::from_millis(30));
+    assert_eq!(
+        controlled_lab.now().get(),
+        0,
+        "pause must prevent the first virtual-time advance"
+    );
+
+    control.resume().expect("resume");
+    let (report, _trace) = worker
+        .join()
+        .expect("controlled worker joins")
+        .expect("controlled scenario completes");
+    assert_eq!(report, baseline);
+    assert!(controlled_lab.node_ids().is_empty(), "runner cleans its nodes");
+}
+
+#[test]
+fn stop_releases_a_paused_run_and_runner_cleans_scenario_nodes() {
+    let root = TestDirectory::new();
+    let lab = Arc::new(LabRuntime::new(&root.0, 0).expect("lab runtime"));
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1, "seed": 44,
+            "nodes": [{"id": "host1"}],
+            "steps": [{"atMs": 10, "node": "host1", "action": {"kind": "exportDiagnostics"}}],
+            "assertions": [], "timeoutMs": 100
+        }"#,
+    )
+    .expect("valid scenario document");
+    let control = Arc::new(ScenarioRunControl::default());
+    control.pause().expect("pause before run");
+    let run_lab = Arc::clone(&lab);
+    let run_control = Arc::clone(&control);
+    let worker = thread::spawn(move || {
+        run_scenario_with_trace_controlled(&run_lab, &scenario, &run_control)
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while lab.node_ids().is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(lab.node_ids().len(), 1, "scenario node must be active before stop");
+    control.request_stop().expect("request stop");
+    let error = worker
+        .join()
+        .expect("controlled worker joins")
+        .expect_err("stopped run must not report completion");
+    assert!(matches!(
+        error,
+        ScenarioExecutionError::RunControl(ScenarioRunControlError::Stopped)
+    ));
+    assert!(lab.node_ids().is_empty(), "runner cleanup must release scenario nodes");
+    assert_eq!(lab.now().get(), 0, "stop before first step must not advance time");
 }
 
 /// Block 40.4 "bounded malformed file behavior": an oversized file is

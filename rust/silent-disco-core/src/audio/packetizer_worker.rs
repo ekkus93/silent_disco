@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use super::decoder::StreamingDecodeHandle;
 use super::packetizer::{Packetizer, PacketizerError, PacketizerErrorKind};
+use super::types::{DecodeError, DecodeErrorKind, DecodeSummary};
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
 use crate::protocol::ProtocolFrame;
 
@@ -320,9 +321,163 @@ impl StreamingPacketizeHandle {
 impl Drop for StreamingPacketizeHandle {
     fn drop(&mut self) {
         self.cancellation.store(true, Ordering::Release);
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        let Some(join) = self.join.take() else {
+            return;
+        };
+        let failure = match join.join() {
+            Ok(Ok(_)) => None,
+            Ok(Err(error)) if error.kind == PacketizerWorkerErrorKind::Cancelled => None,
+            Ok(Err(error)) => Some(format!(
+                "streaming packetizer worker failed during implicit shutdown: {error}"
+            )),
+            Err(_) => Some(
+                "streaming packetizer worker panicked during implicit shutdown".to_owned(),
+            ),
+        };
+        if let Some(failure) = failure {
+            // Drop-triggered cooperative cancellation is expected and remains
+            // harmless. A pre-existing typed worker failure or a Rust thread
+            // panic is different: implicit Drop would otherwise erase the
+            // only terminal result. Fail loudly unless another panic is
+            // already unwinding this thread.
+            assert!(thread::panicking(), "{failure}");
         }
+    }
+}
+
+#[cfg(test)]
+mod failure_visibility_tests {
+    use super::{
+        DecodeError, DecodeErrorKind, PacketizerSummary, PacketizerWorkerError,
+        PacketizerWorkerErrorKind, SharedStatistics, StreamingPacketizeConfig,
+        StreamingPacketizeHandle,
+    };
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc::sync_channel;
+    use std::thread::{self, JoinHandle};
+
+    fn handle_with_worker(
+        worker: JoinHandle<Result<PacketizerSummary, PacketizerWorkerError>>,
+    ) -> StreamingPacketizeHandle {
+        let (_sender, receiver) = sync_channel(1);
+        StreamingPacketizeHandle {
+            receiver,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            statistics: Arc::new(SharedStatistics::default()),
+            config: StreamingPacketizeConfig::default(),
+            stream_start: crate::protocol::ProtocolFrame::Control(
+                crate::protocol::ControlMessage::Stop(crate::protocol::Stop {
+                    session_id: crate::domain::SessionId::new("drop-test-session")
+                        .expect("session id"),
+                    stream_id: crate::domain::StreamId::new("drop-test-stream")
+                        .expect("stream id"),
+                    host_stop_time_ms: crate::domain::MonotonicMillis::new(0),
+                }),
+            ),
+            join: Some(worker),
+        }
+    }
+
+    #[test]
+    fn implicit_drop_fails_loudly_when_the_packetizer_worker_panicked() {
+        let worker = thread::spawn(|| -> Result<PacketizerSummary, PacketizerWorkerError> {
+            panic!("injected packetizer panic");
+        });
+        let handle = handle_with_worker(worker);
+
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(handle)));
+        assert!(
+            dropped.is_err(),
+            "a panicked packetizer worker must not disappear during implicit Drop"
+        );
+    }
+
+    #[test]
+    fn implicit_drop_fails_loudly_on_a_preexisting_typed_worker_failure() {
+        let worker = thread::spawn(|| {
+            Err(PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::Source,
+                "injected decoder failure",
+            ))
+        });
+        let handle = handle_with_worker(worker);
+
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(handle)));
+        assert!(
+            dropped.is_err(),
+            "a pre-existing packetizer failure must not disappear during implicit Drop"
+        );
+    }
+
+    #[test]
+    fn implicit_drop_does_not_turn_typed_cancellation_into_a_panic() {
+        let worker = thread::spawn(|| {
+            Err(PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::Cancelled,
+                "injected cooperative cancellation",
+            ))
+        });
+        let handle = handle_with_worker(worker);
+
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(handle)));
+        assert!(
+            dropped.is_ok(),
+            "cooperative cancellation is a typed worker result, not a Rust thread panic"
+        );
+    }
+
+    #[test]
+    fn decoder_failure_replaces_packetizer_cancellation_with_the_real_source_cause() {
+        let packetizer_result = Err(PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::Cancelled,
+            "packetizer cancellation",
+        ));
+        let decoder_result = Err(DecodeError::new(
+            DecodeErrorKind::CorruptInput,
+            "injected corrupt decoder input",
+        ));
+
+        let error = super::merge_decoder_shutdown_result(packetizer_result, decoder_result)
+            .expect_err("decoder failure must remain visible");
+        assert_eq!(error.kind, PacketizerWorkerErrorKind::Source);
+        assert!(error.message.contains("injected corrupt decoder input"));
+    }
+
+    #[test]
+    fn decoder_cleanup_failure_is_appended_without_erasing_the_primary_packetize_failure() {
+        let packetizer_result = Err(PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::Packetize,
+            "injected packetizer format failure",
+        ));
+        let decoder_result = Err(DecodeError::new(
+            DecodeErrorKind::WorkerPanicked,
+            "injected decoder panic",
+        ));
+
+        let error = super::merge_decoder_shutdown_result(packetizer_result, decoder_result)
+            .expect_err("double failure must remain visible");
+        assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
+        assert!(error.message.contains("injected packetizer format failure"));
+        assert!(error.message.contains("injected decoder panic"));
+    }
+
+    #[test]
+    fn expected_decoder_cancellation_does_not_turn_a_clean_packetizer_result_into_failure() {
+        let packetizer_result = Ok(PacketizerSummary {
+            state: super::PacketizerWorkerState::Completed,
+            emitted_packets: 1,
+            backpressure_events: 0,
+        });
+        let decoder_result = Err(DecodeError::new(
+            DecodeErrorKind::Cancelled,
+            "expected cleanup cancellation",
+        ));
+
+        let summary = super::merge_decoder_shutdown_result(packetizer_result, decoder_result)
+            .expect("cleanup cancellation is non-material");
+        assert_eq!(summary.state, super::PacketizerWorkerState::Completed);
     }
 }
 
@@ -352,9 +507,36 @@ fn run_packetizer_worker(
         cancellation,
         statistics,
     );
-    decoder.cancel();
-    drop(decoder.cancel_and_join());
-    result
+    merge_decoder_shutdown_result(result, decoder.cancel_and_join())
+}
+
+fn merge_decoder_shutdown_result(
+    packetizer_result: Result<PacketizerSummary, PacketizerWorkerError>,
+    decoder_result: Result<DecodeSummary, DecodeError>,
+) -> Result<PacketizerSummary, PacketizerWorkerError> {
+    let decoder_error = match decoder_result {
+        Ok(_) => return packetizer_result,
+        Err(error) if error.kind == DecodeErrorKind::Cancelled => return packetizer_result,
+        Err(error) => error,
+    };
+
+    let decoder_kind = if decoder_error.kind == DecodeErrorKind::WorkerPanicked {
+        PacketizerWorkerErrorKind::WorkerPanicked
+    } else {
+        PacketizerWorkerErrorKind::Source
+    };
+    let decoder_message = format!("streaming decoder worker failed: {decoder_error}");
+
+    match packetizer_result {
+        Ok(_) => Err(PacketizerWorkerError::new(decoder_kind, decoder_message)),
+        Err(primary) if primary.kind == PacketizerWorkerErrorKind::Cancelled => {
+            Err(PacketizerWorkerError::new(decoder_kind, decoder_message))
+        }
+        Err(mut primary) => {
+            primary.message = format!("{}; {decoder_message}", primary.message);
+            Err(primary)
+        }
+    }
 }
 
 fn packetize_stream(

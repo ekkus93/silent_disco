@@ -5,6 +5,9 @@ import {
   attachNotifications,
   connectProfileWithNotifications,
   openProfileWithNotifications,
+  pauseLoadedLabScenario,
+  resumeLoadedLabScenario,
+  setLabLinkFaults,
 } from "./client";
 
 const { channelInstances, invokeMock } = vi.hoisted(() => ({
@@ -268,5 +271,48 @@ describe("desktop core client", () => {
     ).toBe(true);
     expect(message).toContain("channel unavailable");
     expect(message).toContain("profile close failed");
+  });
+
+  it("sends Lab link fault edits as one typed request", async () => {
+    const summary = {
+      schemaVersion: 1,
+      seed: "4",
+      nodeIds: ["host", "listener"],
+      linkCount: 1,
+      fixtureCount: 0,
+      stepCount: 0,
+      assertionCount: 0,
+      timeoutMs: "1000",
+      links: [
+        { from: "host", to: "listener", latencyMs: "40", jitterMs: "5", lossPermille: 20 },
+      ],
+    };
+    invokeMock.mockResolvedValue(summary);
+
+    await expect(setLabLinkFaults(0, "host", "listener", "40", "5", "20")).resolves.toEqual(
+      summary,
+    );
+    expect(invokeMock).toHaveBeenCalledWith("lab_set_link_faults", {
+      request: {
+        linkIndex: 0,
+        from: "host",
+        to: "listener",
+        latencyMs: "40",
+        jitterMs: "5",
+        lossPermille: "20",
+      },
+    });
+  });
+
+  it("sends Lab pause and resume as distinct backend commands", async () => {
+    invokeMock.mockResolvedValue(undefined);
+
+    await expect(pauseLoadedLabScenario()).resolves.toBeUndefined();
+    await expect(resumeLoadedLabScenario()).resolves.toBeUndefined();
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["lab_pause_loaded_scenario", undefined],
+      ["lab_resume_loaded_scenario", undefined],
+    ]);
   });
 });

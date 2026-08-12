@@ -1,7 +1,7 @@
 use super::dto_convert::{
     bounded_summary_text, node_dto, run_outcome_dto, scenario_summary_dto, state_dto,
 };
-use super::scenario_io::read_bounded_scenario_file;
+use super::scenario_io::{parse_and_validate, read_bounded_scenario_file, rewrite_link_faults};
 use super::{LabSessionState, MAX_SUMMARY_CHARS, MAX_TIMELINE_ENTRIES_PER_NODE};
 use crate::lab::LabRuntime;
 use crate::lab::scenario::{MAX_SCENARIO_FILE_BYTES, load_scenario_json, run_scenario_with_trace};
@@ -53,7 +53,7 @@ const SCENARIO_JSON: &[u8] = br#"{
 
 /// Block 42 "scenario open ... through restricted dialogs": every scenario
 /// field the UI needs to display is present in the summary, including the
-/// declared (not-yet-wired) fault configuration.
+/// declared live-transport fault configuration.
 #[test]
 fn scenario_summary_reflects_the_real_document() {
     let scenario = load_scenario_json(SCENARIO_JSON).expect("valid scenario");
@@ -167,11 +167,15 @@ fn state_dto_reports_nodes_and_session_fields() {
         runtime: None,
         loaded: None,
         running: true,
+        paused: true,
+        run_control: None,
+        stop_all_after_run: false,
         last_run: None,
     };
 
     let dto = state_dto(&lab, &session);
     assert!(dto.running);
+    assert!(dto.paused);
     assert_eq!(dto.nodes.len(), 1);
     assert!(dto.loaded_scenario.is_none());
     assert!(dto.last_run.is_none());
@@ -218,4 +222,82 @@ fn bounded_summary_text_truncates_only_when_necessary() {
     let truncated = bounded_summary_text(&long);
     assert!(truncated.chars().count() <= MAX_SUMMARY_CHARS + 1);
     assert!(truncated.ends_with('…'));
+}
+
+#[test]
+fn link_fault_edit_rewrites_and_revalidates_the_loaded_scenario() {
+    let json = br#"{
+        "schemaVersion": 1,
+        "seed": 17,
+        "nodes": [{"id": "host"}, {"id": "listener"}],
+        "links": [{"from": "host", "to": "listener", "latencyMs": 30, "jitterMs": 8, "lossPermille": 10}],
+        "steps": [],
+        "assertions": [],
+        "timeoutMs": 1000
+    }"#;
+
+    let (scenario, rewritten) = rewrite_link_faults(json, 0, "host", "listener", 125, 12, 25)
+        .expect("valid link edit");
+    let summary = scenario_summary_dto(&scenario);
+    assert_eq!(summary.links[0].latency_ms, "125");
+    assert_eq!(summary.links[0].jitter_ms, "12");
+    assert_eq!(summary.links[0].loss_permille, 25);
+
+    let saved: serde_json::Value = serde_json::from_slice(&rewritten).expect("rewritten json");
+    assert_eq!(saved["links"][0]["latencyMs"], 125);
+    assert_eq!(saved["links"][0]["jitterMs"], 12);
+    assert_eq!(saved["links"][0]["lossPermille"], 25);
+    load_scenario_json(&rewritten).expect("rewritten bytes remain valid scenario JSON");
+}
+
+#[test]
+fn link_fault_edit_rejects_a_stale_row_identity() {
+    let error = rewrite_link_faults(
+        SCENARIO_JSON,
+        0,
+        "different-host",
+        "host1",
+        30,
+        8,
+        10,
+    )
+    .expect_err("stale row must not mutate another link");
+
+    assert_eq!(error.code, "desktop.lab.stale_link_selection");
+}
+
+#[test]
+fn link_fault_edit_uses_canonical_scenario_bounds() {
+    let error = rewrite_link_faults(SCENARIO_JSON, 0, "host1", "host1", 60_001, 8, 10)
+        .expect_err("latency above the schema limit must fail");
+
+    assert_eq!(error.code, "desktop.lab.scenario_invalid");
+    assert!(error.message.contains("latencyMs"));
+}
+
+#[test]
+fn link_fault_edit_updates_a_shared_receive_profile_atomically() {
+    let json = br#"{
+        "schemaVersion": 1,
+        "seed": 18,
+        "nodes": [{"id": "host-a"}, {"id": "host-b"}, {"id": "listener"}],
+        "links": [
+            {"from": "host-a", "to": "listener", "latencyMs": 30, "jitterMs": 8, "lossPermille": 10},
+            {"from": "host-b", "to": "listener", "latencyMs": 30, "jitterMs": 8, "lossPermille": 10}
+        ],
+        "steps": [],
+        "assertions": [],
+        "timeoutMs": 1000
+    }"#;
+
+    let (scenario, rewritten) = rewrite_link_faults(json, 0, "host-a", "listener", 31, 9, 11)
+        .expect("all links into one receiver update together");
+    let summary = scenario_summary_dto(&scenario);
+    assert_eq!(summary.links.len(), 2);
+    for link in &summary.links {
+        assert_eq!(link.latency_ms, "31");
+        assert_eq!(link.jitter_ms, "9");
+        assert_eq!(link.loss_permille, 11);
+    }
+    parse_and_validate(&rewritten).expect("atomically edited scenario stays valid");
 }

@@ -12,6 +12,7 @@ mod commands;
 mod live_runner;
 mod live_transport;
 mod report;
+mod run_control;
 mod schema;
 
 use crate::dto::DesktopErrorDto;
@@ -25,11 +26,12 @@ use std::sync::Arc;
 pub(crate) use assertions::evaluate_assertion;
 #[cfg(test)]
 pub(crate) use live_runner::run_scenario;
-pub(crate) use live_runner::run_scenario_with_trace;
+pub(crate) use live_runner::{run_scenario_with_trace, run_scenario_with_trace_controlled};
 pub(crate) use report::{
     AssertionOutcome, AssertionResult, ClockAdvance, ScenarioExecutionError, ScenarioOutcome,
     ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
 };
+pub(crate) use run_control::{ScenarioRunControl, ScenarioRunControlError};
 pub(crate) use schema::{
     FixtureId, MAX_ASSERTIONS, MAX_NODES, MAX_SCENARIO_FILE_BYTES, MAX_STEPS, NodeId, Scenario,
     ScenarioAction, ScenarioAssertion, ScenarioClock, ScenarioLifecycleTarget, ScenarioLink,

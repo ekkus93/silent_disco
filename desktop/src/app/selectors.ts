@@ -17,5 +17,3 @@ export const selectAuthoritativeRevision = (state: RootState) =>
   state.core.snapshot?.revision ?? null;
 export const selectActivePanel = (state: RootState) => state.ui.activePanel;
 export const selectDiagnosticsExpanded = (state: RootState) => state.ui.diagnosticsExpanded;
-export const selectLabModeAvailable = (state: RootState) => state.lab.available;
-export const selectLabState = (state: RootState) => state.lab;

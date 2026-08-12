@@ -19,6 +19,7 @@ import type {
   LabNodeDto,
   LabRunOutcomeDto,
   LabScenarioSummaryDto,
+  LabSetLinkFaultsRequest,
   LabStartNodeRequest,
   LabStateDto,
   LabStopNodeRequest,
@@ -440,6 +441,14 @@ export async function runLoadedLabScenario(): Promise<LabRunOutcomeDto> {
   return invokeDesktop<LabRunOutcomeDto>("lab_run_loaded_scenario");
 }
 
+export async function pauseLoadedLabScenario(): Promise<void> {
+  return invokeDesktop<void>("lab_pause_loaded_scenario");
+}
+
+export async function resumeLoadedLabScenario(): Promise<void> {
+  return invokeDesktop<void>("lab_resume_loaded_scenario");
+}
+
 export async function advanceLabVirtualTime(deltaMs: string): Promise<string> {
   const request: LabAdvanceTimeRequest = { deltaMs };
   return invokeDesktop<string>("lab_advance_virtual_time", { request });
@@ -457,6 +466,25 @@ export async function stopLabNode(nodeId: string): Promise<void> {
 
 export async function stopAllLabNodes(): Promise<void> {
   return invokeDesktop<void>("lab_stop_all_nodes");
+}
+
+export async function setLabLinkFaults(
+  linkIndex: number,
+  from: string,
+  to: string,
+  latencyMs: string,
+  jitterMs: string,
+  lossPermille: string,
+): Promise<LabScenarioSummaryDto> {
+  const request: LabSetLinkFaultsRequest = {
+    linkIndex,
+    from,
+    to,
+    latencyMs,
+    jitterMs,
+    lossPermille,
+  };
+  return invokeDesktop<LabScenarioSummaryDto>("lab_set_link_faults", { request });
 }
 
 export async function exportLabRecordingFile(): Promise<LabFileOutcomeDto> {

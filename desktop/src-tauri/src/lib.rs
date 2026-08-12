@@ -125,7 +125,13 @@ pub fn run() -> tauri::Result<()> {
             #[cfg(feature = "lab-mode")]
             lab_commands::lab_save_scenario_file,
             #[cfg(feature = "lab-mode")]
+            lab_commands::lab_set_link_faults,
+            #[cfg(feature = "lab-mode")]
             lab_commands::lab_run_loaded_scenario,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_pause_loaded_scenario,
+            #[cfg(feature = "lab-mode")]
+            lab_commands::lab_resume_loaded_scenario,
             #[cfg(feature = "lab-mode")]
             lab_commands::lab_advance_virtual_time,
             #[cfg(feature = "lab-mode")]

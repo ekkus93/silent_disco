@@ -5,6 +5,7 @@ fn execute_steps_and_assertions(
     recorders: &HashMap<&str, Arc<ScenarioRecorder>>,
     driver: &mut LiveTransportDriver,
     clock_advances: &mut Vec<ClockAdvance>,
+    control: &ScenarioRunControl,
 ) -> Result<ScenarioReport, ScenarioExecutionError> {
     let mut current_ms = lab.now().get();
     let mut step_results = Vec::with_capacity(scenario.steps.len());
@@ -13,7 +14,19 @@ fn execute_steps_and_assertions(
         if step.at_ms >= scenario.timeout_ms {
             break;
         }
-        advance_to(lab, driver, &mut current_ms, step.at_ms, clock_advances)?;
+        // Pause is honored only between complete scenario steps. The step
+        // that is already in flight is allowed to settle atomically; this is
+        // the boundary that preserves deterministic step semantics while
+        // still giving the operator real control over future progression.
+        control.wait_until_runnable()?;
+        advance_to(
+            lab,
+            driver,
+            &mut current_ms,
+            step.at_ms,
+            clock_advances,
+            control,
+        )?;
 
         if let super::ScenarioAction::SetLinkFaults {
             from,
@@ -27,6 +40,7 @@ fn execute_steps_and_assertions(
                 .set_link_faults(from, to, *latency_ms, *jitter_ms, *loss_permille)
                 .map_err(ScenarioExecutionError::Lab)?;
             driver.pump().map_err(ScenarioExecutionError::Lab)?;
+            control.check_stop()?;
             step_results.push(StepResult {
                 index,
                 at_ms: step.at_ms,
@@ -64,6 +78,7 @@ fn execute_steps_and_assertions(
                 revision_before,
                 sequence_before,
                 action_revision_delta(&step.action),
+                control,
             )?
         };
         step_results.push(StepResult {
@@ -75,13 +90,16 @@ fn execute_steps_and_assertions(
         });
     }
 
+    control.wait_until_runnable()?;
     advance_to(
         lab,
         driver,
         &mut current_ms,
         scenario.timeout_ms,
         clock_advances,
+        control,
     )?;
+    control.check_stop()?;
     let (outcome, assertion_results) = evaluate_assertions(lab, scenario, lab_node_ids, recorders)?;
 
     Ok(ScenarioReport {
@@ -100,9 +118,12 @@ fn advance_to(
     current_ms: &mut u64,
     target_ms: u64,
     clock_advances: &mut Vec<ClockAdvance>,
+    control: &ScenarioRunControl,
 ) -> Result<(), ScenarioExecutionError> {
+    control.check_stop()?;
     if target_ms <= *current_ms {
         driver.pump().map_err(ScenarioExecutionError::Lab)?;
+        control.check_stop()?;
         return Ok(());
     }
     let delta = target_ms - *current_ms;
@@ -112,7 +133,9 @@ fn advance_to(
         requested_delta_ms: delta,
         resulting_now_ms: *current_ms,
     });
-    driver.pump().map_err(ScenarioExecutionError::Lab)
+    driver.pump().map_err(ScenarioExecutionError::Lab)?;
+    control.check_stop()?;
+    Ok(())
 }
 
 fn wait_for_step_settled(
@@ -122,10 +145,12 @@ fn wait_for_step_settled(
     revision_before: SnapshotRevision,
     sequence_before: u64,
     minimum_revision_delta: u64,
+    control: &ScenarioRunControl,
 ) -> Result<StepSettlement, ScenarioExecutionError> {
     let target_revision = revision_before.get().saturating_add(minimum_revision_delta);
     let mut remaining = STEP_SETTLE_TIMEOUT;
     loop {
+        control.check_stop()?;
         driver.pump().map_err(ScenarioExecutionError::Lab)?;
         let snapshot = handle
             .current_snapshot()

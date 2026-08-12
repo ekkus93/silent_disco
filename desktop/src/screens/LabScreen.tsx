@@ -1,22 +1,51 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { labActions } from "../app/labSlice";
-import { selectLabState } from "../app/selectors";
-import { useAppDispatch, useAppSelector } from "../app/store";
 import {
   advanceLabVirtualTime,
   exportLabRecordingFile,
   getLabState,
   openLabScenarioFile,
+  pauseLoadedLabScenario,
+  resumeLoadedLabScenario,
   runLoadedLabScenario,
   saveLabScenarioFile,
+  setLabLinkFaults,
   startLabNode,
   stopAllLabNodes,
   stopLabNode,
 } from "../core/client";
-import type { DesktopErrorDto } from "../core/generated/desktop-bindings";
+import type {
+  DesktopErrorDto,
+  LabLinkDto,
+  LabRunOutcomeDto,
+  LabScenarioSummaryDto,
+  LabStateDto,
+} from "../core/generated/desktop-bindings";
 
 const DEFAULT_STEP_DELTA_MS = "1000";
+const RUN_STATE_POLL_INTERVAL_MS = 100;
+
+interface LabViewState {
+  nowMs: string;
+  running: boolean;
+  paused: boolean;
+  nodes: LabStateDto["nodes"];
+  loadedScenario: LabScenarioSummaryDto | null;
+  lastRun: LabRunOutcomeDto | null;
+  scenarioError: DesktopErrorDto | null;
+  commandError: DesktopErrorDto | null;
+}
+
+const INITIAL_LAB_VIEW_STATE: LabViewState = {
+  nowMs: "0",
+  running: false,
+  paused: false,
+  nodes: [],
+  loadedScenario: null,
+  lastRun: null,
+  scenarioError: null,
+  commandError: null,
+};
 
 function isDesktopErrorDto(value: unknown): value is DesktopErrorDto {
   return (
@@ -28,66 +57,158 @@ function isDesktopErrorDto(value: unknown): value is DesktopErrorDto {
   );
 }
 
+interface FaultLinkEditorProps {
+  link: LabLinkDto;
+  index: number;
+  disabled: boolean;
+  onApply: (
+    index: number,
+    from: string,
+    to: string,
+    latencyMs: string,
+    jitterMs: string,
+    lossPermille: string,
+  ) => void;
+}
+
+function FaultLinkEditor({ link, index, disabled, onApply }: FaultLinkEditorProps) {
+  const [latencyMs, setLatencyMs] = useState(link.latencyMs);
+  const [jitterMs, setJitterMs] = useState(link.jitterMs);
+  const [lossPermille, setLossPermille] = useState(link.lossPermille.toString());
+
+  useEffect(() => {
+    setLatencyMs(link.latencyMs);
+    setJitterMs(link.jitterMs);
+    setLossPermille(link.lossPermille.toString());
+  }, [link.from, link.jitterMs, link.latencyMs, link.lossPermille, link.to]);
+
+  const pair = `${link.from} → ${link.to}`;
+  return (
+    <tr className="font-mono text-violet-100/80">
+      <td className="pr-3">{link.from}</td>
+      <td className="pr-3">{link.to}</td>
+      <td className="pr-3">
+        <label className="sr-only" htmlFor={`lab-link-${index}-latency`}>
+          Latency for {pair}
+        </label>
+        <input
+          id={`lab-link-${index}-latency`}
+          type="number"
+          min="0"
+          step="1"
+          value={latencyMs}
+          onChange={(event) => setLatencyMs(event.target.value)}
+          disabled={disabled}
+          className="w-24 rounded-md border border-violet-300/30 bg-slate-900 px-2 py-1 text-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
+        />
+      </td>
+      <td className="pr-3">
+        <label className="sr-only" htmlFor={`lab-link-${index}-jitter`}>
+          Jitter for {pair}
+        </label>
+        <input
+          id={`lab-link-${index}-jitter`}
+          type="number"
+          min="0"
+          step="1"
+          value={jitterMs}
+          onChange={(event) => setJitterMs(event.target.value)}
+          disabled={disabled}
+          className="w-24 rounded-md border border-violet-300/30 bg-slate-900 px-2 py-1 text-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
+        />
+      </td>
+      <td className="pr-3">
+        <label className="sr-only" htmlFor={`lab-link-${index}-loss`}>
+          Loss permille for {pair}
+        </label>
+        <input
+          id={`lab-link-${index}-loss`}
+          type="number"
+          min="0"
+          step="1"
+          value={lossPermille}
+          onChange={(event) => setLossPermille(event.target.value)}
+          disabled={disabled}
+          className="w-20 rounded-md border border-violet-300/30 bg-slate-900 px-2 py-1 text-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
+        />
+      </td>
+      <td>
+        <button
+          type="button"
+          aria-label={`Apply faults for ${pair}`}
+          onClick={() => onApply(index, link.from, link.to, latencyMs, jitterMs, lossPermille)}
+          disabled={disabled}
+          className="rounded-md border border-cyan-300/40 px-3 py-1 text-xs font-semibold text-cyan-100 hover:border-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Apply
+        </button>
+      </td>
+    </tr>
+  );
+}
+
 /**
  * Block 42 "Build Lab Mode UI". Clearly and unmistakably labeled as a
  * developer/testing tool throughout (amber "LAB MODE" banner, matching the
  * amber badge convention `App.tsx` already established for a Lab-Mode
  * build) so it can never be confused with real session UI.
  *
- * This screen never mutates node domain state directly -- every control
- * below submits a scenario/test command to `LabRuntime` through
- * `core/client.ts`'s typed IPC wrappers and only ever renders what the
- * backend reports back (Block 42's own "UI must not mutate node domain
- * state directly" rule).
+ * This screen never mutates node domain state directly. Runtime controls
+ * submit scenario/test commands to `LabRuntime`, and scenario configuration
+ * edits go through the backend's canonical parser/validator; both paths use
+ * `core/client.ts`'s typed IPC wrappers and render only authoritative backend
+ * state (Block 42's own "UI must not mutate node domain state directly"
+ * rule).
  */
 export function LabScreen() {
-  const dispatch = useAppDispatch();
-  const lab = useAppSelector(selectLabState);
+  const [lab, setLab] = useState<LabViewState>(INITIAL_LAB_VIEW_STATE);
   const [offsetMs, setOffsetMs] = useState("0");
   const [driftPpm, setDriftPpm] = useState("0");
   const [stepDeltaMs, setStepDeltaMs] = useState(DEFAULT_STEP_DELTA_MS);
   const [busy, setBusy] = useState(false);
+  const [runInvocationPending, setRunInvocationPending] = useState(false);
 
   const refreshState = useCallback(async () => {
     const state = await getLabState();
-    dispatch(
-      labActions.labStateReceived({
-        nowMs: state.nowMs,
-        running: state.running,
-        nodes: state.nodes,
-        loadedScenario: state.loadedScenario,
-        lastRun: state.lastRun,
-      }),
-    );
-  }, [dispatch]);
-
-  useEffect(() => {
-    void refreshState();
-  }, [refreshState]);
+    setLab((current) => ({
+      ...current,
+      nowMs: state.nowMs,
+      running: state.running,
+      paused: state.paused,
+      nodes: state.nodes,
+      loadedScenario: state.loadedScenario,
+      lastRun: state.lastRun,
+    }));
+  }, []);
 
   const reportFailure = useCallback(
     (error: unknown) => {
       if (isDesktopErrorDto(error)) {
-        dispatch(labActions.commandFailed(error));
+        setLab((current) => ({ ...current, commandError: error }));
         return;
       }
-      dispatch(
-        labActions.commandFailed({
+      setLab((current) => ({
+        ...current,
+        commandError: {
           code: "desktop.lab.unknown_frontend_failure",
           subsystem: "bridge",
           severity: "error",
           retryable: true,
           message: error instanceof Error ? error.message : "Lab Mode command failed.",
-        }),
-      );
+        },
+      }));
     },
-    [dispatch],
+    [],
   );
+
+  useEffect(() => {
+    void refreshState().catch(reportFailure);
+  }, [refreshState, reportFailure]);
 
   const runGuarded = useCallback(
     async (action: () => Promise<void>) => {
       setBusy(true);
-      dispatch(labActions.commandErrorCleared());
+      setLab((current) => ({ ...current, commandError: null }));
       try {
         await action();
         await refreshState();
@@ -97,7 +218,7 @@ export function LabScreen() {
         setBusy(false);
       }
     },
-    [dispatch, reportFailure, refreshState],
+    [reportFailure, refreshState],
   );
 
   const handleOpenScenario = useCallback(() => {
@@ -105,17 +226,21 @@ export function LabScreen() {
       try {
         const summary = await openLabScenarioFile();
         if (summary) {
-          dispatch(labActions.scenarioLoaded(summary));
+          setLab((current) => ({
+            ...current,
+            loadedScenario: summary,
+            scenarioError: null,
+          }));
         }
       } catch (error: unknown) {
         if (isDesktopErrorDto(error)) {
-          dispatch(labActions.scenarioLoadFailed(error));
+          setLab((current) => ({ ...current, scenarioError: error }));
           return;
         }
         throw error;
       }
     });
-  }, [dispatch, runGuarded]);
+  }, [runGuarded]);
 
   const handleSaveScenario = useCallback(() => {
     void runGuarded(async () => {
@@ -123,28 +248,51 @@ export function LabScreen() {
     });
   }, [runGuarded]);
 
-  // Block 42 "start": runs the loaded scenario to completion. Disabled
-  // while `lab.running` is true (real, backend-reported state) or nothing
-  // is loaded -- see `lab_commands.rs`'s own module doc comment for why
-  // this, not an interior interruption, is what "start" honestly runs.
+  // Block 42 "start": the invoke remains pending for the lifetime of the
+  // scenario, while a lightweight state poll keeps `running`/`paused` and
+  // virtual time backend-authoritative. `runInvocationPending` is only a
+  // transport-level duplicate-submit guard before the first state poll can
+  // observe `running=true`; it never claims domain execution state itself.
   const handleRunScenario = useCallback(() => {
-    void runGuarded(async () => {
-      await runLoadedLabScenario();
-    });
-  }, [runGuarded]);
+    if (runInvocationPending) return;
+    setRunInvocationPending(true);
+    setLab((current) => ({ ...current, commandError: null }));
+    const poll = window.setInterval(() => {
+      void refreshState().catch(reportFailure);
+    }, RUN_STATE_POLL_INTERVAL_MS);
+    void runLoadedLabScenario()
+      .catch((error: unknown) => {
+        if (isDesktopErrorDto(error) && error.code === "desktop.lab.scenario_stopped") {
+          return;
+        }
+        reportFailure(error);
+      })
+      .finally(() => {
+        window.clearInterval(poll);
+        void refreshState()
+          .catch(reportFailure)
+          .finally(() => setRunInvocationPending(false));
+      });
+  }, [refreshState, reportFailure, runInvocationPending]);
 
-  // Block 42 "step": the only way virtual time ever advances (spec 29.2
-  // "manual advancement"). Gated by the frontend-only `stepPaused` toggle
-  // ("pause") in addition to the backend's own `running` guard.
+  // Block 42 "step": the literal manual virtual-time primitive. Scenario
+  // pause is separate and backend-controlled; manual Step is simply refused
+  // whenever a scenario owns the runtime.
   const handleStep = useCallback(() => {
     void runGuarded(async () => {
       await advanceLabVirtualTime(stepDeltaMs);
     });
   }, [runGuarded, stepDeltaMs]);
 
-  const handleTogglePause = useCallback(() => {
-    dispatch(labActions.stepPausedSet(!lab.stepPaused));
-  }, [dispatch, lab.stepPaused]);
+  const handleToggleScenarioPause = useCallback(() => {
+    void runGuarded(async () => {
+      if (lab.paused) {
+        await resumeLoadedLabScenario();
+      } else {
+        await pauseLoadedLabScenario();
+      }
+    });
+  }, [lab.paused, runGuarded]);
 
   const handleStartNode = useCallback(() => {
     void runGuarded(async () => {
@@ -174,8 +322,24 @@ export function LabScreen() {
     });
   }, [runGuarded]);
 
-  const canStep = !lab.running && !lab.stepPaused;
-  const canRun = !lab.running && lab.loadedScenario !== null;
+  const handleSetLinkFaults = useCallback(
+    (
+      index: number,
+      from: string,
+      to: string,
+      latencyMs: string,
+      jitterMs: string,
+      lossPermille: string,
+    ) => {
+      void runGuarded(async () => {
+        await setLabLinkFaults(index, from, to, latencyMs, jitterMs, lossPermille);
+      });
+    },
+    [runGuarded],
+  );
+
+  const canStep = !lab.running;
+  const canRun = !lab.running && !runInvocationPending && lab.loadedScenario !== null;
 
   return (
     <section aria-label="Lab Mode" className="mt-6 space-y-6">
@@ -203,7 +367,11 @@ export function LabScreen() {
           <h2 className="text-lg font-semibold">Virtual time</h2>
           <p className="mt-1 font-mono text-2xl text-cyan-200">{lab.nowMs} ms</p>
           <p className="mt-1 text-xs text-violet-100/60">
-            {lab.running ? "A scenario run is in progress." : "Idle."}
+            {lab.paused
+              ? "Pause accepted. The current step may finish settling; no later step will begin until resumed."
+              : lab.running
+                ? "A scenario run is in progress."
+                : "Idle."}
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <label className="flex flex-col text-xs text-violet-100/70" htmlFor="lab-step-delta">
@@ -224,14 +392,6 @@ export function LabScreen() {
               className="rounded-lg border border-cyan-300/50 px-4 py-2 text-sm font-semibold text-cyan-100 hover:border-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Step
-            </button>
-            <button
-              type="button"
-              onClick={handleTogglePause}
-              aria-pressed={lab.stepPaused}
-              className="rounded-lg border border-violet-300/40 px-4 py-2 text-sm font-semibold text-violet-100 hover:border-violet-200"
-            >
-              {lab.stepPaused ? "Resume stepping" : "Pause stepping"}
             </button>
           </div>
         </div>
@@ -262,7 +422,7 @@ export function LabScreen() {
             <button
               type="button"
               onClick={handleStartNode}
-              disabled={busy}
+              disabled={busy || lab.running}
               className="rounded-lg border border-cyan-300/50 px-4 py-2 text-sm font-semibold text-cyan-100 hover:border-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Start node
@@ -270,7 +430,7 @@ export function LabScreen() {
             <button
               type="button"
               onClick={handleStopAll}
-              disabled={busy || lab.nodes.length === 0}
+              disabled={busy || (!lab.running && lab.nodes.length === 0)}
               className="rounded-lg border border-red-300/40 px-4 py-2 text-sm font-semibold text-red-100 hover:border-red-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Stop all
@@ -291,7 +451,7 @@ export function LabScreen() {
                 <button
                   type="button"
                   onClick={() => handleStopNode(node.nodeId)}
-                  disabled={busy}
+                  disabled={busy || lab.running}
                   className="rounded-md border border-red-300/40 px-3 py-1 text-xs font-semibold text-red-100 hover:border-red-200 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Stop
@@ -327,7 +487,16 @@ export function LabScreen() {
             disabled={busy || !canRun}
             className="rounded-lg border border-emerald-300/50 px-4 py-2 text-sm font-semibold text-emerald-100 hover:border-emerald-200 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {lab.running ? "Running…" : "Run scenario"}
+            {lab.running ? "Running…" : runInvocationPending ? "Starting…" : "Run scenario"}
+          </button>
+          <button
+            type="button"
+            onClick={handleToggleScenarioPause}
+            disabled={busy || !lab.running}
+            aria-pressed={lab.paused}
+            className="rounded-lg border border-violet-300/40 px-4 py-2 text-sm font-semibold text-violet-100 hover:border-violet-200 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {lab.paused ? "Resume scenario" : "Pause scenario"}
           </button>
         </div>
 
@@ -360,10 +529,12 @@ export function LabScreen() {
         {lab.loadedScenario && lab.loadedScenario.links.length > 0 ? (
           <div className="mt-4">
             <h3 className="text-sm font-semibold text-violet-100/80">
-              Declared fault configuration
+              Fault configuration
             </h3>
             <p className="text-xs text-violet-100/50">
-              Display-only: links are not yet wired into live Lab transport.
+              Edit the initial receive-side profile used by live Lab transport on the next run.
+              Links into the same receiver share one profile and update together. Scheduled
+              setLinkFaults steps can change single-inbound targets later during virtual time.
             </p>
             <table className="mt-2 w-full text-left text-xs">
               <thead className="text-violet-100/50">
@@ -372,7 +543,8 @@ export function LabScreen() {
                   <th className="pr-3">To</th>
                   <th className="pr-3">Latency (ms)</th>
                   <th className="pr-3">Jitter (ms)</th>
-                  <th>Loss (‰)</th>
+                  <th className="pr-3">Loss (‰)</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -382,13 +554,13 @@ export function LabScreen() {
                   // one link between the same pair -- so the stable
                   // declaration index is the correct React key here.
                   // biome-ignore lint/suspicious/noArrayIndexKey: links have no other stable identity
-                  <tr key={index} className="font-mono text-violet-100/80">
-                    <td className="pr-3">{link.from}</td>
-                    <td className="pr-3">{link.to}</td>
-                    <td className="pr-3">{link.latencyMs}</td>
-                    <td className="pr-3">{link.jitterMs}</td>
-                    <td>{link.lossPermille}</td>
-                  </tr>
+                  <FaultLinkEditor
+                    key={index}
+                    link={link}
+                    index={index}
+                    disabled={busy || lab.running}
+                    onApply={handleSetLinkFaults}
+                  />
                 ))}
               </tbody>
             </table>

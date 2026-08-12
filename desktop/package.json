@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:frontend && node scripts/verify-production-lab-absence.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "bindings:generate": "cargo run --manifest-path src-tauri/Cargo.toml --bin generate_bindings --",
@@ -19,7 +19,11 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run bindings:check && npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
+    "check": "npm run bindings:check && npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "build:frontend": "tsc -b && vite build",
+    "build:lab": "SILENT_DISCO_LAB_FRONTEND=1 npm run build:frontend",
+    "tauri:lab:dev": "tauri dev --features lab-mode",
+    "tauri:lab:build": "tauri build --features lab-mode --config src-tauri/tauri.lab.conf.json"
   },
   "dependencies": {
     "@reduxjs/toolkit": "2.12.0",

@@ -469,6 +469,54 @@ pub(super) fn join_workers(
     }
 }
 
+/// Converts an implicit transport shutdown failure into a fail-loud lifecycle
+/// violation instead of discarding it from `Drop`. Explicit owners still call
+/// `shutdown()` directly and receive the original structured error. During an
+/// unrelated panic we avoid double-panicking while unwinding; the process is
+/// already visibly failing and `shutdown()` has still attempted every join.
+pub(super) fn fail_loud_on_implicit_shutdown(
+    result: &Result<(), TransportError>,
+    owner: &'static str,
+) {
+    if let Err(error) = result {
+        assert!(
+            thread::panicking(),
+            "{owner} dropped after shutdown failure: {error}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod implicit_shutdown_tests {
+    use super::fail_loud_on_implicit_shutdown;
+    use crate::transport::{TransportChannel, TransportError, TransportErrorKind};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn implicit_shutdown_failure_is_not_silently_discarded() {
+        let failure = TransportError::new(
+            TransportErrorKind::WorkerPanicked,
+            TransportChannel::Runtime,
+            "injected transport worker panic",
+        );
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            fail_loud_on_implicit_shutdown(&Err(failure), "test transport");
+        }));
+        assert!(
+            outcome.is_err(),
+            "an implicit transport shutdown failure must fail loudly"
+        );
+    }
+
+    #[test]
+    fn clean_implicit_shutdown_remains_a_no_op() {
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            fail_loud_on_implicit_shutdown(&Ok(()), "test transport");
+        }));
+        assert!(outcome.is_ok());
+    }
+}
+
 pub(super) fn recv_event(
     receiver: &Receiver<TransportEvent>,
     timeout: Duration,

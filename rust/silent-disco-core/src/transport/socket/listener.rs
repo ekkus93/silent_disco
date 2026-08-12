@@ -22,8 +22,9 @@ use super::super::{
     TransportEvent, TransportPeer,
 };
 use super::shared::{
-    ControlSender, CounterState, ReadControlOutcome, classify_rejection, join_workers,
-    read_control_loop, recv_event, send_event, shutdown_stream, spawn_control_writer,
+    ControlSender, CounterState, ReadControlOutcome, classify_rejection,
+    fail_loud_on_implicit_shutdown, join_workers, read_control_loop, recv_event, send_event,
+    shutdown_stream, spawn_control_writer,
 };
 
 pub struct SocketListenerTransport {
@@ -298,7 +299,8 @@ impl ListenerTransportNode for SocketListenerTransport {
 
 impl Drop for SocketListenerTransport {
     fn drop(&mut self) {
-        drop(self.shutdown());
+        let result = self.shutdown();
+        fail_loud_on_implicit_shutdown(&result, "socket listener transport");
     }
 }
 

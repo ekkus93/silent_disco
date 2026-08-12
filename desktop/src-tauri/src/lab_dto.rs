@@ -38,12 +38,10 @@ pub struct LabNodeDto {
 }
 
 /// One scenario-declared link's fault configuration (Block 42 "fault
-/// configuration"). Display-only: `lab::scenario`'s own module doc comment
-/// ("Deliberate scope boundaries") records that scenario links are not yet
-/// wired into any node's live transport, so there is nothing to actively
-/// configure at runtime yet -- this reflects exactly what the loaded
-/// scenario document declares, honestly, rather than implying a live
-/// control that does not exist.
+/// configuration"). These values are the validated initial receive-fault
+/// profile that the live Lab transport will use when the loaded scenario is
+/// next run; a later `setLinkFaults` scenario step may deliberately replace
+/// them during that run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
@@ -141,6 +139,11 @@ pub struct LabStateDto {
     /// `true` while `lab_run_loaded_scenario` is executing -- gates
     /// "running-state command disablement" (Block 42's own test list).
     pub running: bool,
+    /// `true` after a backend pause request has been accepted and until a
+    /// resume/stop/completion clears it. Pause is cooperative: the currently
+    /// executing scenario step is allowed to settle before the next
+    /// deterministic step boundary blocks.
+    pub paused: bool,
     pub nodes: Vec<LabNodeDto>,
     pub loaded_scenario: Option<LabScenarioSummaryDto>,
     pub last_run: Option<LabRunOutcomeDto>,
@@ -182,9 +185,30 @@ pub struct LabStopNodeRequest {
     pub node_id: String,
 }
 
+/// Request DTO for `lab_set_link_faults` (Block 42 "fault configuration").
+///
+/// `link_index` identifies the exact declaration because the bounded scenario
+/// schema permits multiple links between the same node pair. `from`/`to` are
+/// carried as a stale-selection guard: the backend rejects an edit if the
+/// frontend's row no longer matches that declaration instead of mutating the
+/// wrong link after a scenario replacement. Numeric text stays as strings
+/// until the Rust command boundary so malformed values become structured Lab
+/// validation errors rather than JavaScript coercions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct LabSetLinkFaultsRequest {
+    pub link_index: u32,
+    pub from: String,
+    pub to: String,
+    pub latency_ms: String,
+    pub jitter_ms: String,
+    pub loss_permille: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LabFileOutcomeDto, LabStateDto};
+    use super::{LabFileOutcomeDto, LabSetLinkFaultsRequest, LabStateDto};
 
     #[test]
     fn file_outcome_serializes_as_a_tagged_kind() {
@@ -199,6 +223,7 @@ mod tests {
         let state = LabStateDto {
             now_ms: "0".to_owned(),
             running: false,
+            paused: false,
             nodes: Vec::new(),
             loaded_scenario: None,
             last_run: None,
@@ -206,5 +231,22 @@ mod tests {
         let json = serde_json::to_string(&state).expect("serialize");
         let round_tripped: LabStateDto = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(round_tripped, state);
+    }
+
+    #[test]
+    fn link_fault_request_uses_camel_case_and_preserves_numeric_text() {
+        let request = LabSetLinkFaultsRequest {
+            link_index: 3,
+            from: "host".to_owned(),
+            to: "listener".to_owned(),
+            latency_ms: "125".to_owned(),
+            jitter_ms: "9".to_owned(),
+            loss_permille: "25".to_owned(),
+        };
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(json["linkIndex"], 3);
+        assert_eq!(json["latencyMs"], "125");
+        assert_eq!(json["jitterMs"], "9");
+        assert_eq!(json["lossPermille"], "25");
     }
 }

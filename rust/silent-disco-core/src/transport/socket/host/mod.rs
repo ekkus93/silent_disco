@@ -44,6 +44,7 @@ pub struct SocketHostTransport {
 
 impl Drop for SocketHostTransport {
     fn drop(&mut self) {
-        drop(self.shutdown());
+        let result = self.shutdown();
+        super::shared::fail_loud_on_implicit_shutdown(&result, "socket host transport");
     }
 }

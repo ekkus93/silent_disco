@@ -193,6 +193,7 @@ describe("App", () => {
     getLabStateMock.mockResolvedValue({
       nowMs: "0",
       running: false,
+      paused: false,
       nodes: [],
       loadedScenario: null,
       lastRun: null,
@@ -296,11 +297,10 @@ describe("App", () => {
     expect(screen.queryByText(/lab mode build/i)).not.toBeInTheDocument();
   });
 
-  // Block 42 test list: "production build absence" -- in the configuration
-  // a real production release ships (`get_lab_mode_available` answering
-  // `false`, exactly as it always does when compiled without `lab-mode`),
-  // there is no way to reach LabScreen at all: no nav control renders it,
-  // and its own "Lab Mode" content never appears anywhere on the page.
+  // Block 42 runtime gate: when the backend reports Lab unavailable there
+  // is no way to reach LabScreen -- no nav control renders it and no Lab
+  // command is called. Physical *bundle absence* is a separate build-time
+  // property enforced by scripts/verify-production-lab-absence.mjs.
   it("has no Lab Mode entry point at all when the backend reports it unavailable", async () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
     getLabModeAvailableMock.mockResolvedValue(false);

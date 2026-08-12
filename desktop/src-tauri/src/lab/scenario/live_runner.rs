@@ -3,7 +3,7 @@ use super::commands::{action_revision_delta, current_revision, submit_action};
 use super::live_transport::{LiveScenarioObserver, LiveTransportDriver};
 use super::{
     AssertionOutcome, AssertionResult, ClockAdvance, NodeId, Scenario, ScenarioExecutionError,
-    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult, StepSettlement,
+    ScenarioOutcome, ScenarioReport, ScenarioRunControl, ScenarioTrace, StepResult, StepSettlement,
     scenario_node_parts,
 };
 use crate::dto::DesktopErrorDto;
@@ -28,15 +28,29 @@ pub(crate) fn run_scenario_with_trace(
     lab: &LabRuntime,
     scenario: &Scenario,
 ) -> Result<(ScenarioReport, ScenarioTrace), ScenarioExecutionError> {
+    let control = ScenarioRunControl::default();
+    run_scenario_with_trace_controlled(lab, scenario, &control)
+}
+
+/// Runs a scenario with cooperative pause/stop control. The ordinary
+/// [`run_scenario_with_trace`] entry point intentionally remains a thin
+/// uncontrolled wrapper so Block 40/41 replay determinism keeps the same
+/// public behavior and call shape it already proved.
+pub(crate) fn run_scenario_with_trace_controlled(
+    lab: &LabRuntime,
+    scenario: &Scenario,
+    control: &ScenarioRunControl,
+) -> Result<(ScenarioReport, ScenarioTrace), ScenarioExecutionError> {
     scenario
         .validate()
         .map_err(ScenarioExecutionError::Validation)?;
-    run_live_scenario(lab, scenario)
+    run_live_scenario(lab, scenario, control)
 }
 
 fn run_live_scenario(
     lab: &LabRuntime,
     scenario: &Scenario,
+    control: &ScenarioRunControl,
 ) -> Result<(ScenarioReport, ScenarioTrace), ScenarioExecutionError> {
     let mut lab_node_ids: HashMap<&str, LabNodeId> = HashMap::new();
     let mut recorders: HashMap<&str, Arc<ScenarioRecorder>> = HashMap::new();
@@ -83,6 +97,7 @@ fn run_live_scenario(
         &recorders,
         &mut driver,
         &mut clock_advances,
+        control,
     );
 
     let mut transport_cleanup = driver.shutdown().err();

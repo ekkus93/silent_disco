@@ -1,11 +1,9 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { coreActions } from "./app/coreSlice";
-import { labActions } from "./app/labSlice";
 import {
   selectBridgeLifecycle,
   selectCoreSnapshot,
-  selectLabModeAvailable,
   selectLatestCoreError,
   selectStaleNotificationCounters,
 } from "./app/selectors";
@@ -16,8 +14,17 @@ import type { AppShutdownPhaseDto } from "./core/generated/desktop-bindings";
 import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
-import { LabScreen } from "./screens/LabScreen";
 import { StorageInspectionScreen } from "./screens/StorageInspectionScreen";
+
+// Standard production builds compile the condition to `false`, so Rollup
+// removes the dynamic import entirely. This is intentionally a build-time
+// boundary in addition to the backend's runtime-truthful availability gate.
+const LabScreen = __LAB_FRONTEND_INCLUDED__
+  ? lazy(async () => {
+      const module = await import("./screens/LabScreen");
+      return { default: module.LabScreen };
+    })
+  : null;
 
 // Block 36.3 "progress is visible" / "timeout becomes visible failure":
 // polled rather than pushed -- the webview stays fully alive while a
@@ -110,7 +117,7 @@ export function App() {
   const lifecycle = useAppSelector(selectBridgeLifecycle);
   const latestError = useAppSelector(selectLatestCoreError);
   const staleNotifications = useAppSelector(selectStaleNotificationCounters);
-  const labModeAvailable = useAppSelector(selectLabModeAvailable);
+  const [labModeAvailable, setLabModeAvailable] = useState<boolean | null>(null);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showStorage, setShowStorage] = useState(false);
@@ -152,13 +159,13 @@ export function App() {
     let active = true;
     getLabModeAvailable()
       .then((available) => {
-        if (active) dispatch(labActions.labModeAvailabilityReceived(available));
+        if (active) setLabModeAvailable(available);
       })
       .catch(() => {});
     return () => {
       active = false;
     };
-  }, [dispatch]);
+  }, []);
 
   const ready = lifecycle.kind === "ready" && snapshot !== null && connection !== null;
   const failed = lifecycle.kind === "failed";
@@ -196,7 +203,7 @@ export function App() {
                 <dd className="font-mono text-right">{staleNotifications.snapshots}</dd>
               </dl>
             ) : null}
-            {labModeAvailable ? (
+            {labModeAvailable && LabScreen ? (
               <button
                 type="button"
                 onClick={() => setShowLab((current) => !current)}
@@ -251,12 +258,16 @@ export function App() {
               startup failure is exactly when this screen matters most. */}
           {ready && showStorage ? <StorageInspectionScreen /> : null}
           {showDiagnostics ? <DiagnosticsScreen /> : null}
-          {/* Block 42 "production build absence": gated on the backend's
-              own `labModeAvailable` flag, not merely on local UI state --
-              a production build (where the backend always answers `false`)
-              can never render this screen even if `showLab` were somehow
-              set. */}
-          {showLab && labModeAvailable ? <LabScreen /> : null}
+          {/* Block 42 "production build absence": two independent gates.
+              `LabScreen` is literally null in the standard production
+              bundle (its dynamic import is compile-time dead), and a Lab
+              frontend still requires the backend to truthfully report that
+              Rust was compiled with `lab-mode`. */}
+          {showLab && labModeAvailable && LabScreen ? (
+            <Suspense fallback={<p role="status">Loading Lab Mode…</p>}>
+              <LabScreen />
+            </Suspense>
+          ) : null}
         </div>
       </section>
     </main>

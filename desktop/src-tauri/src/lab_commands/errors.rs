@@ -21,7 +21,58 @@ pub(super) fn already_running_error() -> DesktopErrorDto {
         "runtime",
         "error",
         false,
-        "a Lab scenario is already running; wait for it to finish or stop every node first",
+        "a Lab scenario is already running; pause, resume, or stop that run before starting another",
+    )
+}
+
+pub(super) fn no_active_run_error() -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.no_active_run",
+        "runtime",
+        "error",
+        false,
+        "no Lab scenario run is currently active",
+    )
+}
+
+pub(super) fn run_control_error(
+    error: &crate::lab::scenario::ScenarioRunControlError,
+) -> DesktopErrorDto {
+    match error {
+        crate::lab::scenario::ScenarioRunControlError::Stopped => DesktopErrorDto::new(
+            "desktop.lab.run_already_stopping",
+            "runtime",
+            "info",
+            false,
+            "the Lab scenario is already stopping",
+        ),
+        crate::lab::scenario::ScenarioRunControlError::Poisoned => DesktopErrorDto::new(
+            "desktop.lab.run_control_failed",
+            "runtime",
+            "fatal",
+            false,
+            &error.to_string(),
+        ),
+    }
+}
+
+pub(super) fn scenario_stopped_error() -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.scenario_stopped",
+        "runtime",
+        "info",
+        false,
+        "the Lab scenario was stopped by the operator and cleaned up",
+    )
+}
+
+pub(super) fn run_worker_error(error: &impl std::fmt::Display) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.run_worker_failed",
+        "runtime",
+        "fatal",
+        false,
+        &format!("the Lab scenario worker did not complete normally: {error}"),
     )
 }
 
@@ -52,6 +103,61 @@ pub(super) fn invalid_node_id_error(raw: &str) -> DesktopErrorDto {
         "error",
         false,
         &format!("'{raw}' is not a Lab node identifier this session issued"),
+    )
+}
+
+pub(super) fn invalid_fault_field_error(field: &str, raw: &str) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.invalid_fault_value",
+        "validation",
+        "error",
+        false,
+        &format!("{field} must be a non-negative integer; received '{raw}'"),
+    )
+}
+
+pub(super) fn invalid_link_index_error(index: u32) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.invalid_link_index",
+        "validation",
+        "error",
+        false,
+        &format!("Lab scenario link index {index} does not exist"),
+    )
+}
+
+pub(super) fn stale_link_selection_error(index: u32) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.stale_link_selection",
+        "validation",
+        "error",
+        true,
+        &format!(
+            "Lab scenario link {index} changed before the fault edit was applied; refresh the scenario state and try again"
+        ),
+    )
+}
+
+pub(super) fn scenario_encode_error(error: &serde_json::Error) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.scenario_encode_failed",
+        "runtime",
+        "fatal",
+        false,
+        &format!("the validated Lab scenario could not be re-encoded after editing faults: {error}"),
+    )
+}
+
+pub(super) fn edited_scenario_too_large_error() -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        "desktop.lab.scenario_too_large",
+        "validation",
+        "error",
+        false,
+        &format!(
+            "the edited scenario exceeds the {} byte limit",
+            crate::lab::scenario::MAX_SCENARIO_FILE_BYTES
+        ),
     )
 }
 

@@ -162,6 +162,7 @@ pub(super) fn state_dto(runtime: &LabRuntime, session: &LabSessionState) -> LabS
     LabStateDto {
         now_ms: runtime.now().get().to_string(),
         running: session.running,
+        paused: session.paused,
         nodes,
         loaded_scenario: session
             .loaded
