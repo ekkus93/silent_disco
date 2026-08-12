@@ -193,217 +193,6 @@ impl BroadcastCounters {
     }
 }
 
-pub(crate) struct DesktopHostTransportRuntime {
-    endpoint: silent_disco_core::runtime::NetworkEndpoint,
-    stop: Arc<AtomicBool>,
-    effect_sender: SyncSender<TransportEffect>,
-    broadcast_sender: SyncSender<ProtocolFrame>,
-    status: Arc<SharedStatus>,
-    clock: Arc<dyn TransportClock>,
-    worker: Option<JoinHandle<Result<(), DesktopNetworkError>>>,
-}
-
-impl DesktopHostTransportRuntime {
-    pub(super) fn start(
-        node: Box<dyn HostTransportNode>,
-        advertisement: SessionAdvertisement,
-        sink: Arc<dyn DesktopHostTransportEventSink>,
-        clock: Arc<dyn TransportClock>,
-    ) -> Result<Self, DesktopNetworkError> {
-        let endpoint = node.endpoint();
-        let stop = Arc::new(AtomicBool::new(false));
-        let status = Arc::new(SharedStatus {
-            running: AtomicBool::new(true),
-            last_error: Mutex::new(None),
-            broadcast: BroadcastCounters::default(),
-        });
-        let (effect_sender, effect_receiver) = sync_channel(TRANSPORT_EFFECT_QUEUE_CAPACITY);
-        let (broadcast_sender, broadcast_receiver) = sync_channel(BROADCAST_FRAME_QUEUE_CAPACITY);
-        let worker_stop = Arc::clone(&stop);
-        let worker_status = Arc::clone(&status);
-        let worker_clock = Arc::clone(&clock);
-        let worker = thread::Builder::new()
-            .name("silent-disco-desktop-host-transport".to_owned())
-            .spawn(move || {
-                run_transport_worker(
-                    node,
-                    &advertisement,
-                    &sink,
-                    &effect_receiver,
-                    &broadcast_receiver,
-                    &worker_stop,
-                    &worker_status,
-                    &worker_clock,
-                )
-            })
-            .map_err(|error| {
-                DesktopNetworkError::unavailable(format!(
-                    "failed to start desktop host transport worker: {error}"
-                ))
-            })?;
-        Ok(Self {
-            endpoint,
-            stop,
-            effect_sender,
-            broadcast_sender,
-            status,
-            clock,
-            worker: Some(worker),
-        })
-    }
-
-    /// Enqueues one control/sync/audio frame for the worker thread to
-    /// broadcast on its next tick. Non-blocking: a full queue or a shut-down
-    /// worker is reported as an error rather than stalling the caller (a
-    /// playback pump thread), since audio delivery is inherently best-effort.
-    pub(super) fn broadcast_frame(&self, frame: ProtocolFrame) -> Result<(), DesktopNetworkError> {
-        if self.stop.load(Ordering::Acquire) {
-            return Err(DesktopNetworkError::unavailable(
-                "desktop host transport is shutting down",
-            ));
-        }
-        match self.broadcast_sender.try_send(frame) {
-            Ok(()) => {
-                self.status.broadcast.record_enqueued();
-                Ok(())
-            }
-            Err(TrySendError::Full(_)) => {
-                self.status
-                    .broadcast
-                    .queue_overflows
-                    .fetch_add(1, Ordering::Relaxed);
-                Err(DesktopNetworkError::resource_limit(
-                    "desktop host transport broadcast queue is full",
-                ))
-            }
-            Err(TrySendError::Disconnected(_)) => Err(DesktopNetworkError::unavailable(
-                "desktop host transport worker is unavailable",
-            )),
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn endpoint(&self) -> silent_disco_core::runtime::NetworkEndpoint {
-        self.endpoint
-    }
-
-    #[must_use]
-    pub(crate) fn observed_at(&self) -> MonotonicMillis {
-        self.clock.now()
-    }
-
-    pub(crate) fn dispatch(&self, effect: TransportEffect) -> Result<(), CoreError> {
-        let operation_id = effect.operation_id.clone();
-        if self.stop.load(Ordering::Acquire) {
-            return Err(DesktopNetworkError::unavailable(
-                "desktop host transport is shutting down",
-            )
-            .core_error(Some(operation_id)));
-        }
-        match self.effect_sender.try_send(effect) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(DesktopNetworkError::resource_limit(
-                "desktop host transport effect queue is full",
-            )
-            .core_error(Some(operation_id))),
-            Err(TrySendError::Disconnected(_)) => Err(DesktopNetworkError::unavailable(
-                "desktop host transport effect worker is unavailable",
-            )
-            .core_error(Some(operation_id))),
-        }
-    }
-
-    pub(super) fn status(&self) -> Result<HostTransportStatus, DesktopNetworkError> {
-        let last_error = self
-            .status
-            .last_error
-            .lock()
-            .map_err(|_| {
-                DesktopNetworkError::invalid_state(
-                    "desktop host transport status mutex was poisoned",
-                )
-            })?
-            .clone();
-        Ok(HostTransportStatus {
-            running: self.status.running.load(Ordering::Acquire),
-            last_error,
-            broadcast: self.status.broadcast.snapshot(),
-        })
-    }
-
-    #[cfg(test)]
-    pub(super) fn stop_worker_for_test(&mut self) -> Result<(), DesktopNetworkError> {
-        self.stop.store(true, Ordering::Release);
-        let Some(worker) = self.worker.take() else {
-            return Ok(());
-        };
-        match worker.join() {
-            Ok(result) => result,
-            Err(_) => Err(DesktopNetworkError::unavailable(
-                "desktop host transport worker panicked during test shutdown",
-            )),
-        }
-    }
-
-    pub(super) fn shutdown(mut self) -> Result<(), DesktopNetworkError> {
-        self.stop.store(true, Ordering::Release);
-        let Some(worker) = self.worker.take() else {
-            return Ok(());
-        };
-        match worker.join() {
-            Ok(result) => result,
-            Err(_) => Err(DesktopNetworkError::unavailable(
-                "desktop host transport worker panicked during shutdown",
-            )),
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_transport_worker(
-    mut node: Box<dyn HostTransportNode>,
-    advertisement: &SessionAdvertisement,
-    sink: &Arc<dyn DesktopHostTransportEventSink>,
-    effect_receiver: &Receiver<TransportEffect>,
-    broadcast_receiver: &Receiver<ProtocolFrame>,
-    stop: &AtomicBool,
-    status: &SharedStatus,
-    clock: &Arc<dyn TransportClock>,
-) -> Result<(), DesktopNetworkError> {
-    let mut processor = HostTransportEventProcessor::new(Arc::clone(clock));
-    let mut primary_error = None;
-    while !stop.load(Ordering::Acquire) {
-        if let Err(error) =
-            process_effects(&[›ÙK	‰Í¥¹¬°•™™•Ñ}É••¥Ù•È°ÍÑ…ÑÕÌ°€™µÕĞÁÉ½•ÍÍ½È¤(€€€€€€€ì(€€€€€€€€€€€ÁÉ¥µ…Éå}•ÉÉ½È€ôM½µ”¡•ÉÉ½È¤ì(€€€€€€€€€€€‰É•…¬ì(€€€€€€€ô(€€€€€€€¥˜±•ĞÉÈ¡•ÉÉ½È¤€ôÁÉ½•ÍÍ}‰É½…‘…ÍÑ}™É…µ•Ì ˜››ÙKœ›ØYØ\İÜ™XÙZ]™\‹İ]\ÊHÂˆš[X\WÙ\œ›ÜˆHÛÛYJ\œ›ÜŠNÂˆœ™XZÎÂˆBˆ]ÛÚ[\˜[HYˆİ]\Ë˜œ›ØYØ\İœ]Y]YWÙ\›ØY
-Ü™\š[™Î”™[^Y
-HˆÂˆPÒÓÑ×ÔÓÒS•T•SˆH[ÙHÂˆU‘S•ÔÓÒS•T•SˆNÂˆX]Ú›ÙKœ™Xİ—Ù]™[
-ÛÚ[\˜[
-HÂˆÚÊ]™[
-HOˆX]Ú›ØÙ\ÜÛÜ‹œ›ØÙ\ÜÊ]™[	‰¹½‘”°…‘Ù•ÉÑ¥Í•µ•¹Ğ°€˜œÚ[šÊHÂˆÚÊÛÛYJY\ÜØYÙJJHOˆÙ]Û\İÙ\œ›ÜŠİ]\ËY\ÜØYÙJOËˆÚÊ›Û™JHOˆßBˆ\œŠ\œ›ÜŠHOˆÂˆÙ]Û\İÙ\œ›ÜŠİ]\Ë\œ›Ü‹×Üİš[™Ê
-JOÎÂˆš[X\WÙ\œ›ÜˆHÛÛYJ\œ›ÜŠNÂˆœ™XZÎÂˆBˆKˆ\œŠ\œ›ÜŠHYˆ\œ›Ü‹šÚ[™OH˜[œÜÜ\œ›Ü’Ú[™•[Y[İ]OˆßBˆ\œŠ\œ›ÜŠHOˆÂˆ]\œ›ÜˆH\ÚİÜ™]ÛÜšÑ\œ›Ü˜[œÜÜ
-	™\œ›ÜŠNÂˆÙ]Û\İÙ\œ›ÜŠİ]\Ë\œ›Ü‹×Üİš[™Ê
-JOÎÂˆš[X\WÙ\œ›ÜˆHÛÛYJ\œ›ÜŠNÂˆœ™XZÎÂˆBˆBˆB‚ˆ]˜Z[—Ù\œ›ÜˆH˜Z[Ü]Y]YYÙY™™XİÊY™™XİÜ™XÙZ]™\‹	ŠŠœÚ[šËİ]\ÊK™\œŠ
-NÂˆ]Ú]İÛ—Ù\œ›ÜˆH›ÙBˆœÚ]İÛŠ
-Bˆ›X\Ù\œŠ\œ›ÜŸ\ÚİÜ™]ÛÜšÑ\œ›Ü˜[œÜÜ
-	™\œ›ÜŠJBˆ™\œŠ
-NÂˆİ]\Ëœ[›š[™ËœİÜ™J˜[ÙKÜ™\š[™Î”™[X\ÙJNÂˆš[X\WÙ\œ›Ü‚ˆ›ÜŠ˜Z[—Ù\œ›ÜŠBˆ›ÜŠÚ]İÛ—Ù\œ›ÜŠBˆ›X\ÛÜŠÚÊ
-
-JK\œŠBŸB‚‹ËËÈ˜Z[œÈ\ÈØPVĞ”“ĞQĞTÕÑ”SQT×ÔT—ÕPÒØHœ˜[Y\È]Y]YYHB‹ËËÈ^X˜XÚÈ[\™XY
-İ™X[K\İ\ÛÛ›Û]Y[È]YÜ˜[\ÊH[™‹ËËÈœ›ØYØ\İÈXXÚÛˆHÚ[›™[]È›İØÛÛœ˜[YX˜\šX[™[Û™ÜÈË‚‹ËËÈH\‹Yœ˜[YH[]™\H˜Z[\™H\È™XÛÜ™Y\ÈH\İ\œ›Üˆ]Ù\È›İ‹ËËÈİÜHÛÜšÙ\ˆKHÛ™H›ÜY]Y[ÈXÚÙ]\È›İ˜][ÈHİ™X[K‹ËËÈX]Ú[™ÈH[™›ÚYÜİ	ÜÈ\‹\XÚÙ]œ›ØYØ\İX]Y[È[™[™Ë‚™›ˆ›ØÙ\Ü×Øœ›ØYØ\İÙœ˜[Y\Êˆ›ÙNˆ	™[ˆÜİ˜[œÜÜ›ÙKˆ™XÙZ]™\ˆ	”™XÙZ]™\›İØÛÛœ˜[YO‹ˆİ]\Îˆ	”Ú\™Yİ]\ËŠHOˆ™\İ[
-
-K\ÚİÜ™]ÛÜšÑ\œ›ÜˆÂˆ›ÜˆÈ[ˆ‹“PVĞ”“ĞQĞTÕÑ”SQT×ÔT—ÕPÒÈÂˆ]œ˜[YHHX]Ú™XÙZ]™\‹WÜ™XİŠ
-HÂˆÚÊœ˜[YJHOˆœ˜[YKˆ\œŠT™Xİ‘\œ›Ü‘[\JHOˆ™]\›ˆÚÊ
-
-JKˆ\œŠT™Xİ‘\œ›Ü‘\ØÛÛ›™XİY
-HOˆÂˆ™]\›ˆ\œŠ\ÚİÜ™]ÛÜšÑ\œ›Ü[˜]˜Z[X›Jˆ™\ÚİÜÜİ˜[œÜÜœ›ØYØ\İ]Y]YH\ØÛÛ›™XİY‹ˆ
-JNÂˆBˆNÂˆİ]\Ë˜œ›ØYØ\İœ™XÛÜ™Ù\]Y]YY
-
-NÂˆ][]™\HHX]Ú	™œ˜[YHÂˆ›İØÛÛœ˜[YNÛÛ›Û
-Y\ÜØYÙJHOˆ›ÙK˜œ›ØYØ\İØÛÛ›Û
-Y\ÜØYÙJKˆ›İØÛÛœ˜[YN]Y[ÊÊHOˆ›ÙK˜œ›ØYØ\İØ]Y[Ê	™œ˜[YJKˆ›İØÛÛœ˜[YN”Ş[˜Ô™\ÜÛœÙJÊHOˆ›ÙK˜œ›ØYØ\İÜŞ[˜Ê	™œ˜[YJKˆ›İØÛÛœ˜[YN”Ş[˜Ô™\]Y\İ
-ÊHOˆÛÛ[YKËÈHÜİ™]™\ˆÙ[™È\Èœ˜[YHÚ[™ˆNÂˆX]Ú[]™\HÂˆÚÊ[]™\JHOˆİ]\Ë˜œ›ØYØ\İœ™XÛÜ™Ù[]™\J	™[]™\JKˆ\œŠ\œ›ÜŠHOˆÂˆİ]\Ë˜œ›ØYØ\İœ™XÛÜ™Ù˜Z[\™J
-NÂˆÙ]Û\İÙ\œ›ÜŠİ]\Ë\ÚİÜ™]ÛÜšÑ\œ›Ü˜[œÜÜ
-	™\œ›ÜŠK×Üİš[™Ê
-JOÎÂˆBˆBˆBˆÚÊ
-
-JBŸB
+include!("host_transport/runtime.rs");
+include!("host_transport/worker.rs");
+include!("host_transport/effects.rs");
