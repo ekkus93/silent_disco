@@ -154,7 +154,7 @@ impl TransportTraceRecorder {
         Self::default()
     }
 
-    pub(crate) fn record_packet(
+    pub(super) fn record_packet(
         &self,
         receiver_node: &str,
         event: &TransportEvent,
