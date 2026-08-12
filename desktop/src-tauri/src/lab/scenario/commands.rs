@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 pub(super) fn action_revision_delta(action: &ScenarioAction) -> u64 {
     match action {
+        ScenarioAction::SetLinkFaults { .. } => 0,
         ScenarioAction::CreateHostSession
         | ScenarioAction::EndHostSession
         | ScenarioAction::StartDiscovery
@@ -175,6 +176,7 @@ fn build_command(
         ScenarioAction::ExportDiagnostics => Ok(CoreCommand::ExportDiagnostics),
         ScenarioAction::Shutdown => Ok(CoreCommand::Shutdown),
         ScenarioAction::RemoveListener { .. }
+        | ScenarioAction::SetLinkFaults { .. }
         | ScenarioAction::InjectUnderrun { .. }
         | ScenarioAction::InjectSynchronizationUpdated { .. }
         | ScenarioAction::InjectDeliveryCompleted { .. } => {

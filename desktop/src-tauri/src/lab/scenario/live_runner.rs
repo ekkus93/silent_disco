@@ -147,6 +147,28 @@ fn execute_steps_and_assertions(
         }
         advance_to(lab, driver, &mut current_ms, step.at_ms, clock_advances)?;
 
+        if let super::ScenarioAction::SetLinkFaults {
+            from,
+            to,
+            latency_ms,
+            jitter_ms,
+            loss_permille,
+        } = &step.action
+        {
+            driver
+                .set_link_faults(from, to, *latency_ms, *jitter_ms, *loss_permille)
+                .map_err(ScenarioExecutionError::Lab)?;
+            driver.pump().map_err(ScenarioExecutionError::Lab)?;
+            step_results.push(StepResult {
+                index,
+                at_ms: step.at_ms,
+                node: step.node.clone(),
+                submit_error: None,
+                settlement: StepSettlement::Settled,
+            });
+            continue;
+        }
+
         let lab_node_id = node_id_for(step.node.as_str(), &step.node, lab_node_ids)?;
         let handle = node_handle(lab, lab_node_id)?;
         let recorder = recorders

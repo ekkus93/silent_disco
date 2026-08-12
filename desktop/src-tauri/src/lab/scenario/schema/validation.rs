@@ -143,6 +143,56 @@ impl Scenario {
                     node: listener_node.to_string(),
                 });
             }
+            if let ScenarioAction::SetLinkFaults {
+                from,
+                to,
+                latency_ms,
+                jitter_ms,
+                loss_permille,
+            } = &step.action
+            {
+                for (field, node) in [
+                    ("steps[].action.from", from),
+                    ("steps[].action.to", to),
+                ] {
+                    if !known_nodes.contains(node.as_str()) {
+                        return Err(ScenarioValidationError::UnknownNode {
+                            field,
+                            node: node.to_string(),
+                        });
+                    }
+                }
+                if &step.node != to {
+                    return Err(ScenarioValidationError::FaultMutationOwnerMismatch {
+                        step_node: step.node.to_string(),
+                        target_node: to.to_string(),
+                    });
+                }
+                if !self.links.iter().any(|link| &link.from == from && &link.to == to) {
+                    return Err(ScenarioValidationError::UnknownLink {
+                        from: from.to_string(),
+                        to: to.to_string(),
+                    });
+                }
+                if self.links.iter().filter(|link| &link.to == to).count() != 1 {
+                    return Err(ScenarioValidationError::AmbiguousFaultMutationTarget {
+                        node: to.to_string(),
+                    });
+                }
+                for (field, actual, limit) in [
+                    ("latencyMs", *latency_ms, MAX_LINK_LATENCY_MS),
+                    ("jitterMs", *jitter_ms, MAX_LINK_JITTER_MS),
+                    (
+                        "lossPermille",
+                        u64::from(*loss_permille),
+                        u64::from(MAX_LOSS_PERMILLE),
+                    ),
+                ] {
+                    if actual > limit {
+                        return Err(ScenarioValidationError::LinkOutOfBounds { field, limit });
+                    }
+                }
+            }
         }
         Ok(())
     }

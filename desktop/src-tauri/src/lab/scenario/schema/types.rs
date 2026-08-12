@@ -121,6 +121,17 @@ pub(crate) enum ScenarioValidationError {
     AmbiguousInboundLinkFaults {
         node: String,
     },
+    UnknownLink {
+        from: String,
+        to: String,
+    },
+    FaultMutationOwnerMismatch {
+        step_node: String,
+        target_node: String,
+    },
+    AmbiguousFaultMutationTarget {
+        node: String,
+    },
     StepsNotTimeOrdered {
         index: usize,
     },
@@ -152,6 +163,20 @@ impl fmt::Display for ScenarioValidationError {
             Self::AmbiguousInboundLinkFaults { node } => write!(
                 formatter,
                 "node '{node}' has conflicting inbound receive-fault profiles; the current virtual transport applies latency/jitter/loss per receiving node, not per peer"
+            ),
+            Self::UnknownLink { from, to } => {
+                write!(formatter, "fault mutation references undeclared link '{from}' -> '{to}'")
+            }
+            Self::FaultMutationOwnerMismatch {
+                step_node,
+                target_node,
+            } => write!(
+                formatter,
+                "fault-mutation step node '{step_node}' must equal target node '{target_node}'"
+            ),
+            Self::AmbiguousFaultMutationTarget { node } => write!(
+                formatter,
+                "fault mutation for node '{node}' is ambiguous because it has multiple inbound links"
             ),
             Self::StepsNotTimeOrdered { index } => write!(
                 formatter,
@@ -343,6 +368,17 @@ pub(crate) enum ScenarioAction {
     PausePlayback,
     ResumePlayback,
     StopPlayback,
+    #[serde(rename_all = "camelCase")]
+    SetLinkFaults {
+        from: NodeId,
+        to: NodeId,
+        #[serde(default)]
+        latency_ms: u64,
+        #[serde(default)]
+        jitter_ms: u64,
+        #[serde(default)]
+        loss_permille: u16,
+    },
     #[serde(rename_all = "camelCase")]
     SetLocalVolume {
         linear_gain: f32,

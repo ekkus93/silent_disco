@@ -38,7 +38,34 @@ pub(super) fn build_receive_profiles(
             profiles.insert(link.to.clone(), candidate);
         }
     }
+    for node in &scenario.nodes {
+        profiles.entry(node.id.clone()).or_insert(ReceiveFaultProfile {
+            seed: node_seed(scenario.seed, &node.id),
+            ..ReceiveFaultProfile::default()
+        });
+    }
     Ok(profiles)
+}
+
+pub(super) fn build_fault_controllers(
+    profiles: &HashMap<NodeId, ReceiveFaultProfile>,
+) -> HashMap<NodeId, crate::lab::fault::LabFaultController> {
+    profiles
+        .iter()
+        .map(|(node_id, profile)| {
+            (
+                node_id.clone(),
+                crate::lab::fault::LabFaultController::new(
+                    crate::lab::fault::LabLatencyConfig {
+                        fixed_latency_ms: profile.latency_ms,
+                        jitter_ms: profile.jitter_ms,
+                        seed: profile.seed,
+                    },
+                    profile.loss_permille,
+                ),
+            )
+        })
+        .collect()
 }
 
 fn node_seed(base: u64, node: &NodeId) -> u64 {
@@ -91,6 +118,72 @@ impl super::LiveTransportDriver {
         self.links
             .iter()
             .any(|link| &link.from == from && &link.to == to)
+    }
+
+    pub(super) fn controller(
+        &self,
+        node_id: &NodeId,
+    ) -> Result<crate::lab::fault::LabFaultController, DesktopErrorDto> {
+        self.fault_controllers.get(node_id).cloned().ok_or_else(|| {
+            live_error(
+                "fault_controller_missing",
+                &format!("Lab node '{node_id}' has no receive-fault controller"),
+            )
+        })
+    }
+
+    /// Changes the receive-side fault profile for one declared directional
+    /// scenario link. The current live transport applies faults per receiving
+    /// node, so mutation is accepted only when that target has one inbound
+    /// link. Existing held packets keep their previously computed deadline;
+    /// the new profile applies to subsequently received datagrams.
+    pub(super) fn set_link_faults(
+        &mut self,
+        from: &NodeId,
+        to: &NodeId,
+        latency_ms: u64,
+        jitter_ms: u64,
+        loss_permille: u16,
+    ) -> Result<(), DesktopErrorDto> {
+        let incoming_count = self.links.iter().filter(|link| &link.to == to).count();
+        let link_index = self
+            .links
+            .iter()
+            .position(|link| &link.from == from && &link.to == to);
+        if incoming_count != 1 || link_index.is_none() {
+            return Err(live_error(
+                "fault_mutation_ambiguous",
+                "Lab link fault mutation requires one declared inbound link for the target node",
+            ));
+        }
+        if self.hosts.contains_key(to) && (latency_ms != 0 || jitter_ms != 0) {
+            return Err(live_error(
+                "host_latency_unsupported",
+                "host-side Lab latency/jitter remains unsupported; only receive loss can change on a host target",
+            ));
+        }
+
+        // Resolve every fallible prerequisite before changing either the
+        // live controller or the diagnostic/profile mirrors. Once mutation
+        // begins, the remaining operations are infallible so a failed lookup
+        // can never leave the live link half-updated.
+        let controller = self.controller(to)?;
+        let link_index = link_index.expect("link index was checked above");
+        let seed = self.profile(to).seed;
+        let profile = ReceiveFaultProfile {
+            latency_ms,
+            jitter_ms,
+            loss_permille,
+            seed,
+        };
+
+        controller.update(latency_ms, jitter_ms, loss_permille);
+        self.profiles.insert(to.clone(), profile);
+        let link = &mut self.links[link_index];
+        link.latency_ms = latency_ms;
+        link.jitter_ms = jitter_ms;
+        link.loss_permille = loss_permille;
+        Ok(())
     }
 
     /// Shuts down every live listener and host transport in deterministic

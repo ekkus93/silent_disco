@@ -1,4 +1,4 @@
-use super::{LabLatencyConfig, LabLatencyTransportFactory};
+use super::{LabFaultController, LabLatencyConfig, LabLatencyTransportFactory};
 use crate::lab::clock::{LabClock, LabNodeClock};
 use silent_disco_core::domain::MonotonicMillis;
 use silent_disco_core::domain::{DeviceId, PacketSequence, SampleIndex, SessionId, StreamId};
@@ -342,6 +342,200 @@ fn control_channel_events_are_never_delayed() {
             channel: TransportChannel::Control,
             ..
         }
+    ));
+
+    listener.shutdown().expect("listener should shut down");
+    host.shutdown().expect("host should shut down");
+}
+
+#[test]
+fn live_controller_changes_loss_without_reconnecting_the_listener() {
+    let session_id = SessionId::new("lab-dynamic-fault-session").expect("session ID");
+    let device_id = DeviceId::new("lab-dynamic-fault-listener").expect("device ID");
+    let clock = Arc::new(LabClock::new(2_000));
+    let controller = LabFaultController::new(
+        LabLatencyConfig {
+            fixed_latency_ms: 0,
+            jitter_ms: 0,
+            seed: 123,
+        },
+        0,
+    );
+    let factory = LabLatencyTransportFactory::new_dynamic(
+        VirtualTransportFactory::new(VirtualTransportNetwork::default()),
+        Arc::clone(&clock),
+        controller.clone(),
+    );
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock_handle(&clock),
+        )
+        .expect("host should bind");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock_handle(&clock),
+        )
+        .expect("listener should connect");
+    assert!(matches!(
+        host.recv_event(POLL_TIMEOUT).expect("peer accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    listener
+        .send_control(&ControlMessage::JoinRequest(JoinRequest {
+            session_id: session_id.clone(),
+            device: DeviceIdentity {
+                device_id: device_id.clone(),
+                display_name: "Dynamic Fault Listener".to_owned(),
+            },
+            invite_code: None,
+            sync_port: 0,
+            audio_port: 0,
+        }))
+        .expect("join should send");
+    assert!(matches!(
+        host.recv_event(POLL_TIMEOUT).expect("join should arrive"),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            ..
+        }
+    ));
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("listener should authorize");
+    assert!(matches!(
+        host.recv_event(POLL_TIMEOUT).expect("authorization should arrive"),
+        TransportEvent::PeerAuthorized { .. }
+    ));
+
+    host.broadcast_audio(&audio_frame(&session_id, 1))
+        .expect("pre-mutation send should succeed");
+    assert!(matches!(
+        listener
+            .recv_event(POLL_TIMEOUT)
+            .expect("pre-mutation audio should arrive"),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            ..
+        }
+    ));
+
+    controller.update(0, 0, 1_000);
+    host.broadcast_audio(&audio_frame(&session_id, 2))
+        .expect("post-mutation UDP send should still report local success");
+    let dropped = listener
+        .recv_event(POLL_TIMEOUT)
+        .expect_err("100% live loss must drop the next audio datagram");
+    assert_eq!(dropped.kind, TransportErrorKind::Timeout);
+
+    listener.shutdown().expect("listener should shut down");
+    host.shutdown().expect("host should shut down");
+}
+
+#[test]
+fn live_controller_changes_latency_without_reconnecting_the_listener() {
+    let session_id = SessionId::new("lab-dynamic-latency-session").expect("session ID");
+    let device_id = DeviceId::new("lab-dynamic-latency-listener").expect("device ID");
+    let clock = Arc::new(LabClock::new(5_000));
+    let controller = LabFaultController::new(
+        LabLatencyConfig {
+            fixed_latency_ms: 0,
+            jitter_ms: 0,
+            seed: 456,
+        },
+        0,
+    );
+    let factory = LabLatencyTransportFactory::new_dynamic(
+        VirtualTransportFactory::new(VirtualTransportNetwork::default()),
+        Arc::clone(&clock),
+        controller.clone(),
+    );
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock_handle(&clock),
+        )
+        .expect("host should bind");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock_handle(&clock),
+        )
+        .expect("listener should connect");
+    assert!(matches!(
+        host.recv_event(POLL_TIMEOUT).expect("peer accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    listener
+        .send_control(&ControlMessage::JoinRequest(JoinRequest {
+            session_id: session_id.clone(),
+            device: DeviceIdentity {
+                device_id: device_id.clone(),
+                display_name: "Dynamic Latency Listener".to_owned(),
+            },
+            invite_code: None,
+            sync_port: 0,
+            audio_port: 0,
+        }))
+        .expect("join should send");
+    assert!(matches!(
+        host.recv_event(POLL_TIMEOUT).expect("join should arrive"),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            ..
+        }
+    ));
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("listener should authorize");
+    assert!(matches!(
+        host.recv_event(POLL_TIMEOUT).expect("authorization should arrive"),
+        TransportEvent::PeerAuthorized { .. }
+    ));
+
+    host.broadcast_audio(&audio_frame(&session_id, 1))
+        .expect("pre-mutation send should succeed");
+    assert!(matches!(
+        listener
+            .recv_event(POLL_TIMEOUT)
+            .expect("pre-mutation audio should arrive immediately"),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            ..
+        }
+    ));
+
+    controller.update(100, 0, 0);
+    host.broadcast_audio(&audio_frame(&session_id, 2))
+        .expect("post-mutation send should succeed");
+    let held = listener
+        .recv_event(POLL_TIMEOUT)
+        .expect_err("new 100ms latency must hold the next audio datagram");
+    assert_eq!(held.kind, TransportErrorKind::Timeout);
+
+    clock.advance(99).expect("advance just short of new latency deadline");
+    let still_held = listener
+        .recv_event(POLL_TIMEOUT)
+        .expect_err("audio must remain held one millisecond before the deadline");
+    assert_eq!(still_held.kind, TransportErrorKind::Timeout);
+
+    clock.advance(1).expect("advance to exact new latency deadline");
+    assert!(matches!(
+        listener
+            .recv_event(POLL_TIMEOUT)
+            .expect("audio should release exactly at the mutated latency deadline"),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Audio,
+            received_at,
+            ..
+        } if received_at == MonotonicMillis::new(5_100)
     ));
 
     listener.shutdown().expect("listener should shut down");

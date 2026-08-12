@@ -1,35 +1,17 @@
-//! Lab-clock-aware latency/jitter fault injection (Block 39.2 "latency",
-//! "jitter"), layered on top of the shared core's virtual transport and
-//! fault model (`silent_disco_core::transport`).
+//! Lab-clock-aware receive fault injection (Block 39.2 latency/jitter and
+//! Block 40 mid-run fault mutation), layered on the shared virtual transport.
 //!
-//! This lives in the desktop Lab module, not the shared core, because it
-//! needs Block 38's [`crate::lab::clock::LabClock`] -- something the core
-//! has no concept of. Every other fault type (loss, duplication, reorder,
-//! corruption, bandwidth limit, disconnect, connection refusal) is
-//! synchronous and receive-side-only, so it fits the shared core's own
-//! `VirtualUdpFaultConfig`/`FaultInjectingVirtualTransportFactory`
-//! (`rust/silent-disco-core/src/transport/virtual_fault.rs`) without
-//! needing virtual time at all. Latency and jitter are different: they
-//! must *hold* an event until a computed deadline, and "deadline" is
-//! meaningless without a clock to measure it against.
+//! `LabFaultController` is deliberately mutable while the transport is live:
+//! scenario steps can atomically replace the receive-side latency, jitter,
+//! and loss profile for a node without rebuilding its transport. Datagrams
+//! already held for a latency deadline retain the deadline computed when they
+//! arrived; the new profile applies to subsequent receives. That keeps fault
+//! changes deterministic and avoids retroactively moving in-flight packets.
 //!
-//! Deliberately scoped to the **listener** receive path only (a host
-//! broadcasts once; each connecting listener that goes through this
-//! wrapper experiences delayed, optionally jittered receipt). This
-//! matches the far more common real-world asymmetry this project cares
-//! about -- a listener's own Wi-Fi path being slow or jittery -- and keeps
-//! this wrapper's surface to one trait instead of two. `bind_host` is not
-//! wrapped at all; a Lab scenario that also wants host-side latency can
-//! layer this around a *different* factory used only for `connect_listener`.
-//!
-//! No wall-clock sleep anywhere: a delayed event's release is decided
-//! purely by comparing [`LabClock::now`] to a precomputed deadline. The
-//! inner listener transport is intentionally given a clock in that same
-//! shared Lab-clock domain, so node-local offset/drift can never distort
-//! a network-delay deadline. Before an event crosses this wrapper's public
-//! boundary its `received_at` timestamp is re-stamped with the caller's
-//! listener clock, preserving the recipient-local timestamp semantics the
-//! production transport exposes.
+//! Listener latency/jitter uses the shared [`crate::lab::clock::LabClock`],
+//! never wall-clock sleep. Host-side latency/jitter remains unsupported (the
+//! same policy as before Block 40), but host-side receive loss is driven by
+//! the same controller so a link targeting a host can still mutate loss.
 
 use super::clock::LabClock;
 use silent_disco_core::domain::MonotonicMillis;
@@ -42,45 +24,85 @@ use silent_disco_core::transport::{
 };
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-/// Deterministic latency/jitter configuration (Block 39.2). Applies only
-/// to the datagram channels (`Synchronization`/`Audio`), matching the
-/// shared core's own `VirtualUdpFaultConfig` scope; control-channel
-/// events are always released immediately.
+/// Deterministic latency/jitter configuration. Applies only to datagram
+/// channels (`Synchronization`/`Audio`); control/runtime events are released
+/// immediately.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct LabLatencyConfig {
-    /// Every held event's deadline is at least this far past the moment
-    /// it actually arrived (Block 39.2 "latency").
     pub(crate) fixed_latency_ms: u64,
-    /// A seeded-random offset in `[-jitter_ms, +jitter_ms]` added on top
-    /// of `fixed_latency_ms` (Block 39.2 "jitter"). `0` disables jitter
-    /// entirely -- latency becomes exact.
     pub(crate) jitter_ms: u64,
-    /// Seeds this configuration's deterministic PRNG (Block 39.2 "use a
-    /// seeded deterministic PRNG"); irrelevant when `jitter_ms == 0`.
     pub(crate) seed: u64,
 }
 
-/// Wraps a [`TransportFactory`] so every listener connected through it
-/// experiences delayed (and optionally jittered) datagram receipt.
-/// `bind_host` is untouched -- see the module doc comment.
+/// Shared live receive-fault settings for one Lab node.
+#[derive(Debug, Clone, Copy)]
+struct LabReceiveFaultProfile {
+    latency: LabLatencyConfig,
+    loss_permille: u16,
+}
+
+#[derive(Clone)]
+pub(crate) struct LabFaultController {
+    profile: Arc<Mutex<LabReceiveFaultProfile>>,
+}
+
+impl LabFaultController {
+    #[must_use]
+    pub(crate) fn new(config: LabLatencyConfig, loss_permille: u16) -> Self {
+        Self {
+            profile: Arc::new(Mutex::new(LabReceiveFaultProfile {
+                latency: config,
+                loss_permille,
+            })),
+        }
+    }
+
+    pub(crate) fn update(&self, fixed_latency_ms: u64, jitter_ms: u64, loss_permille: u16) {
+        let mut profile = self
+            .profile
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        profile.latency.fixed_latency_ms = fixed_latency_ms;
+        profile.latency.jitter_ms = jitter_ms;
+        profile.loss_permille = loss_permille;
+    }
+
+    fn snapshot(&self) -> LabReceiveFaultProfile {
+        *self
+            .profile
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Wraps a [`TransportFactory`] with one node's receive-fault controller.
+/// Listener datagrams get latency/jitter/loss; host datagrams get loss only.
 #[derive(Clone)]
 pub(crate) struct LabLatencyTransportFactory<F> {
     inner: F,
     clock: Arc<LabClock>,
-    config: LabLatencyConfig,
+    controller: LabFaultController,
 }
 
 impl<F> LabLatencyTransportFactory<F> {
     #[must_use]
     pub(crate) fn new(inner: F, clock: Arc<LabClock>, config: LabLatencyConfig) -> Self {
+        Self::new_dynamic(inner, clock, LabFaultController::new(config, 0))
+    }
+
+    #[must_use]
+    pub(crate) fn new_dynamic(
+        inner: F,
+        clock: Arc<LabClock>,
+        controller: LabFaultController,
+    ) -> Self {
         Self {
             inner,
             clock,
-            config,
+            controller,
         }
     }
 }
@@ -91,7 +113,16 @@ impl<F: TransportFactory> TransportFactory for LabLatencyTransportFactory<F> {
         config: HostTransportConfig,
         clock: Arc<dyn TransportClock>,
     ) -> Result<Box<dyn HostTransportNode>, TransportError> {
-        self.inner.bind_host(config, clock)
+        let inner = self.inner.bind_host(config, clock)?;
+        let seed = self.controller.snapshot().latency.seed;
+        Ok(Box::new(LabFaultHostTransport {
+            inner,
+            controller: self.controller.clone(),
+            prngs: ChannelPrngs {
+                synchronization: DeterministicPrng::new(seed),
+                audio: DeterministicPrng::new(seed ^ 0xA5A5_A5A5_A5A5_A5A5),
+            },
+        }))
     }
 
     fn connect_listener(
@@ -101,20 +132,21 @@ impl<F: TransportFactory> TransportFactory for LabLatencyTransportFactory<F> {
     ) -> Result<Box<dyn ListenerTransportNode>, TransportError> {
         // The caller-provided clock is the listener's own offset/drift view
         // and therefore belongs only at the wrapper's outward boundary.
-        // Give the inner transport a base-domain clock instead so the
-        // timestamps used to calculate latency deadlines are comparable to
-        // `self.clock.now()` for every Lab node configuration.
+        // Give the inner transport a base-domain clock so latency deadlines
+        // are comparable to `self.clock.now()` for every Lab node.
         let inner_clock: Arc<dyn TransportClock> = Arc::new(LabBaseTransportClock {
             clock: Arc::clone(&self.clock),
         });
         let inner = self.inner.connect_listener(config, inner_clock)?;
+        let seed = self.controller.snapshot().latency.seed;
         Ok(Box::new(LabLatencyListenerTransport {
             inner,
             clock: Arc::clone(&self.clock),
             delivery_clock: clock,
-            config: self.config,
+            controller: self.controller.clone(),
             held: Mutex::new(HeldEvents {
-                prng: DeterministicPrng::new(self.config.seed),
+                synchronization_prng: DeterministicPrng::new(seed),
+                audio_prng: DeterministicPrng::new(seed ^ 0xA5A5_A5A5_A5A5_A5A5),
                 queue: BinaryHeap::new(),
             }),
         }))
@@ -128,6 +160,118 @@ struct LabBaseTransportClock {
 impl TransportClock for LabBaseTransportClock {
     fn now(&self) -> MonotonicMillis {
         self.clock.now()
+    }
+}
+
+struct ChannelPrngs {
+    synchronization: DeterministicPrng,
+    audio: DeterministicPrng,
+}
+
+impl ChannelPrngs {
+    fn should_drop(&mut self, event: &TransportEvent, loss_permille: u16) -> bool {
+        should_drop_event(
+            event,
+            loss_permille,
+            &mut self.synchronization,
+            &mut self.audio,
+        )
+    }
+}
+
+struct LabFaultHostTransport {
+    inner: Box<dyn HostTransportNode>,
+    controller: LabFaultController,
+    prngs: ChannelPrngs,
+}
+
+impl HostTransportNode for LabFaultHostTransport {
+    fn endpoint(&self) -> silent_disco_core::runtime::NetworkEndpoint {
+        self.inner.endpoint()
+    }
+
+    fn authorize_peer(
+        &self,
+        device_id: &silent_disco_core::domain::DeviceId,
+        routes: ListenerDatagramRoutes,
+    ) -> Result<(), TransportError> {
+        self.inner.authorize_peer(device_id, routes)
+    }
+
+    fn authorize_peer_ports(
+        &self,
+        device_id: &silent_disco_core::domain::DeviceId,
+        sync_port: u16,
+        audio_port: u16,
+    ) -> Result<(), TransportError> {
+        self.inner.authorize_peer_ports(device_id, sync_port, audio_port)
+    }
+
+    fn disconnect_peer(
+        &self,
+        device_id: &silent_disco_core::domain::DeviceId,
+    ) -> Result<(), TransportError> {
+        self.inner.disconnect_peer(device_id)
+    }
+
+    fn send_pending_control(
+        &self,
+        device_id: &silent_disco_core::domain::DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.send_pending_control(device_id, message)
+    }
+
+    fn send_control(
+        &self,
+        device_id: &silent_disco_core::domain::DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.send_control(device_id, message)
+    }
+
+    fn broadcast_control(&self, message: &ControlMessage) -> Result<TransportDelivery, TransportError> {
+        self.inner.broadcast_control(message)
+    }
+
+    fn broadcast_sync(
+        &self,
+        frame: &silent_disco_core::protocol::ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.broadcast_sync(frame)
+    }
+
+    fn broadcast_audio(
+        &self,
+        frame: &silent_disco_core::protocol::ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.broadcast_audio(frame)
+    }
+
+    fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
+        let started = Instant::now();
+        loop {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(TransportError::timeout(
+                    TransportChannel::Runtime,
+                    "Lab Mode dynamic receive fault timed out after dropping datagrams",
+                ));
+            }
+            let event = self.inner.recv_event(remaining)?;
+            let profile = self.controller.snapshot();
+            if !self.prngs.should_drop(&event, profile.loss_permille) {
+                return Ok(event);
+            }
+        }
+    }
+
+    fn counters(&self) -> TransportCounters {
+        self.inner.counters()
+    }
+
+    fn shutdown(&mut self) -> Result<(), TransportError> {
+        self.inner.shutdown()
     }
 }
 
@@ -157,15 +301,43 @@ impl Ord for HeldEvent {
 }
 
 struct HeldEvents {
-    prng: DeterministicPrng,
+    synchronization_prng: DeterministicPrng,
+    audio_prng: DeterministicPrng,
     queue: BinaryHeap<Reverse<HeldEvent>>,
+}
+
+impl HeldEvents {
+    fn should_drop(&mut self, channel: TransportChannel, loss_permille: u16) -> bool {
+        should_drop_channel(
+            channel,
+            loss_permille,
+            &mut self.synchronization_prng,
+            &mut self.audio_prng,
+        )
+    }
+
+    fn deadline(
+        &mut self,
+        channel: TransportChannel,
+        config: LabLatencyConfig,
+        arrived_at_ms: u64,
+    ) -> u64 {
+        let prng = match channel {
+            TransportChannel::Synchronization => &mut self.synchronization_prng,
+            TransportChannel::Audio => &mut self.audio_prng,
+            TransportChannel::Control | TransportChannel::Runtime => {
+                return arrived_at_ms;
+            }
+        };
+        compute_deadline(config, prng, arrived_at_ms)
+    }
 }
 
 struct LabLatencyListenerTransport {
     inner: Box<dyn ListenerTransportNode>,
     clock: Arc<LabClock>,
     delivery_clock: Arc<dyn TransportClock>,
-    config: LabLatencyConfig,
+    controller: LabFaultController,
     held: Mutex<HeldEvents>,
 }
 
@@ -186,53 +358,50 @@ impl ListenerTransportNode for LabLatencyListenerTransport {
     }
 
     fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError> {
+        let started = Instant::now();
         let mut held = self.held.lock().map_err(|_| TransportError {
             kind: TransportErrorKind::WorkerPanicked,
             channel: TransportChannel::Runtime,
             message: "Lab Mode latency fault state mutex was poisoned".to_owned(),
         })?;
 
-        // Anything already due is released before touching the underlying
-        // transport. `received_at` is stamped only when the event crosses
-        // this wrapper, using the listener's actual node clock.
         if let Some(released) = take_due(&mut held.queue, self.clock.now().get()) {
             return Ok(self.stamp_delivery_time(released));
         }
 
-        let event = self.inner.recv_event(timeout)?;
-        // The inner listener uses `LabBaseTransportClock`, so every
-        // `received_at` below is in the same base domain as `self.clock`.
-        // That is the scheduling timestamp. It is intentionally not the
-        // listener-visible timestamp when offset/drift is configured.
-        let (channel, arrived_at_ms) = match &event {
-            TransportEvent::FrameReceived {
+        loop {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(TransportError::timeout(
+                    TransportChannel::Runtime,
+                    "Lab Mode dynamic receive fault timed out while holding or dropping datagrams",
+                ));
+            }
+            let event = self.inner.recv_event(remaining)?;
+            let (channel, arrived_at_ms) = event_channel_and_time(&event);
+            if !matches!(
                 channel,
-                received_at,
-                ..
-            } => (Some(*channel), received_at.get()),
-            TransportEvent::PeerAccepted { received_at, .. }
-            | TransportEvent::PeerAuthorized { received_at, .. }
-            | TransportEvent::PeerDisconnected { received_at, .. }
-            | TransportEvent::Rejected { received_at, .. } => (None, received_at.get()),
-        };
-        if !matches!(
-            channel,
-            Some(TransportChannel::Synchronization | TransportChannel::Audio)
-        ) {
-            // Control/runtime events are never delayed, but still cross the
-            // same recipient-local timestamp boundary as delayed datagrams.
-            return Ok(self.stamp_delivery_time(event));
-        }
+                Some(TransportChannel::Synchronization | TransportChannel::Audio)
+            ) {
+                return Ok(self.stamp_delivery_time(event));
+            }
 
-        let deadline_ms = self.compute_deadline(&mut held.prng, arrived_at_ms);
-        if deadline_ms <= self.clock.now().get() {
-            return Ok(self.stamp_delivery_time(event));
+            let profile = self.controller.snapshot();
+            let channel = channel.expect("datagram channel was matched above");
+            if held.should_drop(channel, profile.loss_permille) {
+                continue;
+            }
+
+            let deadline_ms = held.deadline(channel, profile.latency, arrived_at_ms);
+            if deadline_ms <= self.clock.now().get() {
+                return Ok(self.stamp_delivery_time(event));
+            }
+            held.queue.push(Reverse(HeldEvent { deadline_ms, event }));
+            return Err(TransportError::timeout(
+                TransportChannel::Runtime,
+                "Lab Mode latency fault is holding the newest event for a later virtual deadline",
+            ));
         }
-        held.queue.push(Reverse(HeldEvent { deadline_ms, event }));
-        Err(TransportError::timeout(
-            TransportChannel::Runtime,
-            "Lab Mode latency fault is holding the newest event for a later virtual deadline",
-        ))
     }
 
     fn counters(&self) -> TransportCounters {
@@ -245,20 +414,6 @@ impl ListenerTransportNode for LabLatencyListenerTransport {
 }
 
 impl LabLatencyListenerTransport {
-    fn compute_deadline(&self, prng: &mut DeterministicPrng, arrived_at_ms: u64) -> u64 {
-        let jitter_offset = if self.config.jitter_ms == 0 {
-            0
-        } else {
-            let span = self.config.jitter_ms.saturating_mul(2).saturating_add(1);
-            let raw = prng.next_below(usize::try_from(span).unwrap_or(usize::MAX));
-            i64::try_from(raw).unwrap_or(0) - i64::try_from(self.config.jitter_ms).unwrap_or(0)
-        };
-        let base = i64::try_from(arrived_at_ms).unwrap_or(i64::MAX)
-            + i64::try_from(self.config.fixed_latency_ms).unwrap_or(i64::MAX)
-            + jitter_offset;
-        u64::try_from(base.max(0)).unwrap_or(u64::MAX)
-    }
-
     fn stamp_delivery_time(&self, mut event: TransportEvent) -> TransportEvent {
         let received_at = match &mut event {
             TransportEvent::PeerAccepted { received_at, .. }
@@ -272,8 +427,68 @@ impl LabLatencyListenerTransport {
     }
 }
 
-/// Pops and returns the earliest held event once its deadline is at or
-/// before `now_ms`; leaves the queue untouched otherwise.
+fn event_channel_and_time(event: &TransportEvent) -> (Option<TransportChannel>, u64) {
+    match event {
+        TransportEvent::FrameReceived {
+            channel,
+            received_at,
+            ..
+        } => (Some(*channel), received_at.get()),
+        TransportEvent::PeerAccepted { received_at, .. }
+        | TransportEvent::PeerAuthorized { received_at, .. }
+        | TransportEvent::PeerDisconnected { received_at, .. }
+        | TransportEvent::Rejected { received_at, .. } => (None, received_at.get()),
+    }
+}
+
+fn should_drop_event(
+    event: &TransportEvent,
+    loss_permille: u16,
+    synchronization_prng: &mut DeterministicPrng,
+    audio_prng: &mut DeterministicPrng,
+) -> bool {
+    let (channel, _) = event_channel_and_time(event);
+    match channel {
+        Some(channel) => should_drop_channel(channel, loss_permille, synchronization_prng, audio_prng),
+        None => false,
+    }
+}
+
+fn should_drop_channel(
+    channel: TransportChannel,
+    loss_permille: u16,
+    synchronization_prng: &mut DeterministicPrng,
+    audio_prng: &mut DeterministicPrng,
+) -> bool {
+    if loss_permille == 0 {
+        return false;
+    }
+    let prng = match channel {
+        TransportChannel::Synchronization => synchronization_prng,
+        TransportChannel::Audio => audio_prng,
+        TransportChannel::Control | TransportChannel::Runtime => return false,
+    };
+    prng.next_permille() < loss_permille
+}
+
+fn compute_deadline(
+    config: LabLatencyConfig,
+    prng: &mut DeterministicPrng,
+    arrived_at_ms: u64,
+) -> u64 {
+    let jitter_offset = if config.jitter_ms == 0 {
+        0
+    } else {
+        let span = config.jitter_ms.saturating_mul(2).saturating_add(1);
+        let raw = prng.next_below(usize::try_from(span).unwrap_or(usize::MAX));
+        i64::try_from(raw).unwrap_or(0) - i64::try_from(config.jitter_ms).unwrap_or(0)
+    };
+    let base = i64::try_from(arrived_at_ms).unwrap_or(i64::MAX)
+        + i64::try_from(config.fixed_latency_ms).unwrap_or(i64::MAX)
+        + jitter_offset;
+    u64::try_from(base.max(0)).unwrap_or(u64::MAX)
+}
+
 fn take_due(queue: &mut BinaryHeap<Reverse<HeldEvent>>, now_ms: u64) -> Option<TransportEvent> {
     let is_due = matches!(queue.peek(), Some(Reverse(held)) if held.deadline_ms <= now_ms);
     if !is_due {

@@ -200,3 +200,185 @@ fn conflicting_inbound_link_profiles_are_rejected_before_live_execution() {
         ) if node == "listener1"
     ));
 }
+
+#[test]
+fn mid_run_loss_mutation_applies_to_an_already_connected_listener() {
+    let document = br#"{
+        "schemaVersion": 1,
+        "seed": 77,
+        "nodes": [{"id": "host1"}, {"id": "listener1"}],
+        "links": [{
+            "from": "host1",
+            "to": "listener1",
+            "latencyMs": 0,
+            "jitterMs": 0,
+            "lossPermille": 0
+        }],
+        "fixtures": [{"id": "track", "displayName": "Lab Track"}],
+        "steps": [
+            {"atMs": 0, "node": "host1", "action": {"kind": "selectRole", "role": "host"}},
+            {"atMs": 1, "node": "host1", "action": {"kind": "configureHost", "sessionName": "Lab Party", "fixture": "track"}},
+            {"atMs": 2, "node": "host1", "action": {"kind": "createHostSession"}},
+            {"atMs": 3, "node": "listener1", "action": {"kind": "selectRole", "role": "listener"}},
+            {"atMs": 4, "node": "listener1", "action": {"kind": "startDiscovery"}},
+            {"atMs": 5, "node": "listener1", "action": {"kind": "selectSession", "sessionId": "session-1"}},
+            {"atMs": 6, "node": "listener1", "action": {"kind": "submitJoin"}},
+            {"atMs": 7, "node": "listener1", "action": {
+                "kind": "setLinkFaults",
+                "from": "host1",
+                "to": "listener1",
+                "latencyMs": 0,
+                "jitterMs": 0,
+                "lossPermille": 1000
+            }},
+            {"atMs": 8, "node": "host1", "action": {"kind": "approveJoin", "requestId": "desktop-join-1"}},
+            {"atMs": 20, "node": "listener1", "action": {"kind": "injectUnderrun", "missingFrames": 0}}
+        ],
+        "assertions": [
+            {"kind": "listenerCountAtLeast", "byMs": 30, "node": "host1", "count": 1},
+            {"kind": "lifecycleReached", "byMs": 30, "node": "listener1", "target": {"machine": "listener", "state": "approved"}},
+            {"kind": "synchronizationWithinBounds", "byMs": 30, "node": "listener1", "maxAbsOffsetMs": 1000.0, "maxRoundTripMs": 1000.0}
+        ],
+        "timeoutMs": 30
+    }"#;
+    let scenario = load_scenario_json(document).expect("fault-mutation scenario should parse");
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let (report, trace) = run_scenario_with_trace(&lab, &scenario)
+        .expect("fault-mutation scenario should execute deterministically");
+
+    assert_eq!(report.outcome, ScenarioOutcome::TimedOut);
+    assert_eq!(report.assertion_results[0].outcome, AssertionOutcome::Held);
+    assert_eq!(report.assertion_results[1].outcome, AssertionOutcome::Held);
+    assert_eq!(
+        synchronization_assertion(&report),
+        AssertionOutcome::TimedOut
+    );
+    assert!(
+        report
+            .step_results
+            .iter()
+            .find(|step| step.at_ms == 7)
+            .is_some_and(|step| step.submit_error.is_none()),
+        "the in-flight setLinkFaults step itself must settle successfully"
+    );
+    assert!(
+        last_listener_round_trip_ms(&trace).is_none(),
+        "100% loss applied after connect but before approval must suppress the later sync response"
+    );
+}
+
+#[test]
+fn fault_mutation_rejects_an_undeclared_link_before_execution() {
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1,
+            "seed": 1,
+            "nodes": [{"id": "host1"}, {"id": "listener1"}],
+            "links": [],
+            "steps": [{
+                "atMs": 1,
+                "node": "listener1",
+                "action": {
+                    "kind": "setLinkFaults",
+                    "from": "host1",
+                    "to": "listener1",
+                    "latencyMs": 1,
+                    "jitterMs": 0,
+                    "lossPermille": 0
+                }
+            }],
+            "assertions": [],
+            "timeoutMs": 10
+        }"#,
+    )
+    .expect("unknown-link mutation is semantic, not a JSON-shape failure");
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let error = run_scenario(&lab, &scenario).expect_err("undeclared link mutation must fail");
+    assert!(matches!(
+        error,
+        ScenarioExecutionError::Validation(ScenarioValidationError::UnknownLink {
+            ref from,
+            ref to,
+        }) if from == "host1" && to == "listener1"
+    ));
+}
+
+#[test]
+fn fault_mutation_rejects_an_ambiguous_multi_inbound_target() {
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1,
+            "seed": 2,
+            "nodes": [{"id": "host1"}, {"id": "host2"}, {"id": "listener1"}],
+            "links": [
+                {"from": "host1", "to": "listener1", "latencyMs": 0, "jitterMs": 0, "lossPermille": 0},
+                {"from": "host2", "to": "listener1", "latencyMs": 0, "jitterMs": 0, "lossPermille": 0}
+            ],
+            "steps": [{
+                "atMs": 1,
+                "node": "listener1",
+                "action": {
+                    "kind": "setLinkFaults",
+                    "from": "host1",
+                    "to": "listener1",
+                    "latencyMs": 5,
+                    "jitterMs": 0,
+                    "lossPermille": 0
+                }
+            }],
+            "assertions": [],
+            "timeoutMs": 10
+        }"#,
+    )
+    .expect("multi-inbound mutation is semantic, not a JSON-shape failure");
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let error = run_scenario(&lab, &scenario).expect_err("ambiguous link mutation must fail");
+    assert!(matches!(
+        error,
+        ScenarioExecutionError::Validation(
+            ScenarioValidationError::AmbiguousFaultMutationTarget { ref node }
+        ) if node == "listener1"
+    ));
+}
+
+#[test]
+fn fault_mutation_rejects_out_of_bounds_loss_before_execution() {
+    let scenario = load_scenario_json(
+        br#"{
+            "schemaVersion": 1,
+            "seed": 3,
+            "nodes": [{"id": "host1"}, {"id": "listener1"}],
+            "links": [
+                {"from": "host1", "to": "listener1", "latencyMs": 0, "jitterMs": 0, "lossPermille": 0}
+            ],
+            "steps": [{
+                "atMs": 1,
+                "node": "listener1",
+                "action": {
+                    "kind": "setLinkFaults",
+                    "from": "host1",
+                    "to": "listener1",
+                    "latencyMs": 0,
+                    "jitterMs": 0,
+                    "lossPermille": 1001
+                }
+            }],
+            "assertions": [],
+            "timeoutMs": 10
+        }"#,
+    )
+    .expect("out-of-bounds mutation is semantic, not a JSON-shape failure");
+    let root = TestDirectory::new();
+    let lab = LabRuntime::new(&root.0, 0).expect("lab runtime");
+    let error = run_scenario(&lab, &scenario).expect_err("out-of-bounds fault mutation must fail");
+    assert!(matches!(
+        error,
+        ScenarioExecutionError::Validation(ScenarioValidationError::LinkOutOfBounds {
+            field: "lossPermille",
+            ..
+        })
+    ));
+}
