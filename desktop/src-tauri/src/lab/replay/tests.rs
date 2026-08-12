@@ -85,6 +85,24 @@ fn replay_against_the_matching_scenario_reproduces_the_report_with_no_divergence
     let scenario = load_scenario_json(SCENARIO_JSON).expect("valid scenario document");
     let (original_report, trace) =
         run_scenario_with_trace(&capture_lab, &scenario).expect("captured run");
+    let host_notifications = trace
+        .node_notifications
+        .iter()
+        .find(|(node, _entries)| node == "host1")
+        .expect("host notification trace");
+    assert_eq!(
+        host_notifications.1.len(),
+        2,
+        "capture must wait for both the initial and select-role snapshots"
+    );
+    assert!(
+        host_notifications.1.iter().all(|entry| !matches!(
+            &entry.kind,
+            crate::lab::recorder::RecordedNotificationKind::Snapshot { summary, .. }
+                if summary.shutting_down
+        )),
+        "scenario trace must exclude teardown-only shutdown notifications"
+    );
     let recording = ScenarioRecording::capture(&scenario, original_report.clone(), trace);
 
     let replay_root = TestDirectory::new();

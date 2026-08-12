@@ -241,9 +241,19 @@ fn collect_notifications(
         .nodes
         .iter()
         .filter_map(|node| {
-            recorders
-                .get(node.id.as_str())
-                .map(|recorder| (node.id.to_string(), recorder.entries()))
+            recorders.get(node.id.as_str()).map(|recorder| {
+                let mut entries = recorder.entries();
+                if let Some(shutdown_index) = entries.iter().position(|entry| {
+                    matches!(
+                        &entry.kind,
+                        RecordedNotificationKind::Snapshot { summary, .. }
+                            if summary.shutting_down
+                    )
+                }) {
+                    entries.truncate(shutdown_index);
+                }
+                (node.id.to_string(), entries)
+            })
         })
         .collect()
 }

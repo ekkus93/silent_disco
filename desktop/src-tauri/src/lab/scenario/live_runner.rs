@@ -117,9 +117,16 @@ fn run_live_scenario(
             None
         }
     };
-    let node_notifications = collect_notifications(scenario, &recorders);
     drop(driver);
     let node_cleanup = stop_scenario_nodes(lab, &lab_node_ids).err();
+    // `CoreActorRuntime` writes its authoritative snapshot before the
+    // notification worker necessarily delivers the corresponding observer
+    // notification.  Stopping the nodes joins that worker, which gives the
+    // recording a real delivery barrier instead of freezing a scheduler-
+    // dependent prefix of the notification stream.  `collect_notifications`
+    // removes the shutdown marker itself so teardown is not part of the
+    // semantic scenario trace.
+    let node_notifications = collect_notifications(scenario, &recorders);
     let cleanup = merge_cleanup(transport_cleanup, node_cleanup);
     let trace = transport_trace.map(|transport_trace| ScenarioTrace {
         clock_advances,

@@ -57,9 +57,14 @@ jobs:
           rustup toolchain install "${RUST_VERSION}" --profile minimal --component rustfmt
           rustup default "${RUST_VERSION}"
 
-      - name: Generate exact Cargo lockfile
+      - name: Generate exact Cargo lockfile when missing
         working-directory: desktop/src-tauri
-        run: cargo generate-lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f Cargo.lock ]]; then
+            cargo generate-lockfile
+          fi
 
       - name: Check Rust formatting
         working-directory: desktop/src-tauri
@@ -74,11 +79,11 @@ jobs:
 
       - name: Run deterministic Lab latency transport regressions
         working-directory: desktop/src-tauri
-        run: cargo test --all-features lab::fault::tests -- --nocapture
+        run: cargo test --locked --all-features lab::fault::tests -- --nocapture
 
       - name: Run deterministic Lab live transport proofs
         working-directory: desktop/src-tauri
-        run: cargo test --all-features lab::scenario::live_transport_proof_tests -- --nocapture
+        run: cargo test --locked --all-features lab::scenario::live_transport_proof_tests -- --nocapture
 
       - name: Require committed Cargo lockfile
         shell: bash
