@@ -141,6 +141,25 @@ fn truncated_recording_bytes_are_rejected_not_a_panic() {
     assert!(matches!(error, RecordingLoadError::Malformed(_)));
 }
 
+/// A format-v2 recording cannot omit the transport evidence that v2 was
+/// introduced to carry. Missing evidence is malformed input, not an empty
+/// successful trace synthesized by a serde default.
+#[test]
+fn format_v2_recording_missing_transport_trace_is_rejected() {
+    let recording = sample_recording();
+    let mut document = serde_json::to_value(&recording).expect("recording converts to JSON value");
+    let trace = document
+        .get_mut("trace")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("recording trace is a JSON object");
+    assert!(trace.remove("transportTrace").is_some());
+    let bytes = serde_json::to_vec(&document).expect("modified recording encodes");
+
+    let error = load_recording_json(&bytes)
+        .expect_err("format v2 without transportTrace must fail structurally");
+    assert!(matches!(error, RecordingLoadError::Malformed(_)));
+}
+
 /// Arbitrary non-JSON bytes are a bounded error too, not a panic --
 /// complementing the truncation case above with a completely unstructured
 /// input.
