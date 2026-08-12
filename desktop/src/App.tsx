@@ -17,6 +17,7 @@ import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
 import { LabScreen } from "./screens/LabScreen";
+import { StorageInspectionScreen } from "./screens/StorageInspectionScreen";
 
 // Block 36.3 "progress is visible" / "timeout becomes visible failure":
 // polled rather than pushed -- the webview stays fully alive while a
@@ -112,6 +113,7 @@ export function App() {
   const labModeAvailable = useAppSelector(selectLabModeAvailable);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showStorage, setShowStorage] = useState(false);
   const [showLab, setShowLab] = useState(false);
 
   useEffect(() => {
@@ -204,6 +206,16 @@ export function App() {
                 {showLab ? "Hide Lab Mode" : "Lab Mode"}
               </button>
             ) : null}
+            {ready ? (
+              <button
+                type="button"
+                onClick={() => setShowStorage((current) => !current)}
+                aria-pressed={showStorage}
+                className="rounded-lg border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 hover:border-cyan-200"
+              >
+                {showStorage ? "Hide storage" : "Storage"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setShowDiagnostics((current) => !current)}
@@ -237,6 +249,7 @@ export function App() {
           ) : null}
           {/* Available even when the bridge failed to open -- diagnosing a
               startup failure is exactly when this screen matters most. */}
+          {ready && showStorage ? <StorageInspectionScreen /> : null}
           {showDiagnostics ? <DiagnosticsScreen /> : null}
           {/* Block 42 "production build absence": gated on the backend's
               own `labModeAvailable` flag, not merely on local UI state --

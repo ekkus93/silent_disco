@@ -45,7 +45,7 @@ use errors::invitation_error_dto;
 #[cfg(test)]
 use state::CloseAction;
 
-use crate::dto::{BridgeLifecycleDto, DesktopErrorDto};
+use crate::dto::{BridgeLifecycleDto, DesktopErrorDto, StorageInspectionDto};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::notification_channel::TauriNotificationSink;
 use crate::platform::identity::SystemDesktopIdentityProvider;
@@ -173,6 +173,34 @@ pub async fn open_profile(
 #[tauri::command]
 pub fn get_current_snapshot(app: AppHandle) -> Result<CoreSnapshotDto, DesktopErrorDto> {
     app.state::<DesktopAppState>().current_snapshot()
+}
+
+/// Returns a bounded read-only inspection from the already-open Rust database worker.
+///
+/// # Errors
+///
+/// Returns a structured error when no profile is ready or any typed storage query fails.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Tauri command injection supplies AppHandle by value"
+)]
+#[tauri::command]
+pub async fn get_storage_inspection(
+    app: AppHandle,
+) -> Result<StorageInspectionDto, DesktopErrorDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopAppState>().storage_inspection()
+    })
+    .await
+    .map_err(|error| {
+        DesktopErrorDto::new(
+            "desktop.storage.inspection_worker_failed",
+            "runtime",
+            "error",
+            true,
+            &format!("desktop storage inspection worker failed: {error}"),
+        )
+    })?
 }
 
 /// Attaches or replaces the frontend notification channel for the ready profile.

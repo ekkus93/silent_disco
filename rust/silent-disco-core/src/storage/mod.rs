@@ -33,7 +33,8 @@ pub use models::{
     LegacyAndroidImport, LegacyImportOutcome, MAX_DIAGNOSTIC_EXPORT_LIMIT,
     MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SUMMARY_BYTES, MAX_DISPLAY_NAME_BYTES,
     MAX_FAILURE_CODE_BYTES, MAX_FAILURE_MESSAGE_BYTES, MAX_PRIVATE_KEY_REFERENCE_BYTES,
-    MAX_PUBLIC_KEY_BYTES, MAX_SESSION_NAME_BYTES, SessionEnd, SessionHistory, SessionOutcome,
-    SessionStart, SessionUpdate, StorageModelValidationError, StoredSettings, TrustedDevice,
+    MAX_PUBLIC_KEY_BYTES, MAX_RECENT_SESSION_HISTORY_LIMIT, MAX_SESSION_NAME_BYTES, SessionEnd,
+    SessionHistory, SessionOutcome, SessionStart, SessionUpdate, StorageModelValidationError,
+    StoredSettings, TrustedDevice,
 };
 pub use worker::{DatabaseClient, DatabaseWorker};

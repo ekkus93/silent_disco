@@ -6,7 +6,8 @@ use crate::diagnostics_dto::{
 };
 use crate::dto::{
     AppShutdownPhaseDto, BridgeLifecycleDto, CoreVersionDto, DesktopErrorDto, MigrationSummaryDto,
-    ProfileSummaryDto, StorageInspectionDto, StoredSettingsSummaryDto, TrustedDeviceSummaryDto,
+    ProfileSummaryDto, SessionHistorySummaryDto, StorageInspectionDto, StoredSettingsSummaryDto,
+    TrustedDeviceSummaryDto,
 };
 use crate::host_session_dto::{
     BroadcastDeliveryDto, ConnectedListenerDto, DeliveryReportDto, HostConnectionDto,
@@ -55,6 +56,7 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<MigrationSummaryDto>(&config),
         declaration::<StoredSettingsSummaryDto>(&config),
         declaration::<TrustedDeviceSummaryDto>(&config),
+        declaration::<SessionHistorySummaryDto>(&config),
         declaration::<BridgeLifecycleDto>(&config),
         declaration::<AppShutdownPhaseDto>(&config),
         declaration::<StorageInspectionDto>(&config),

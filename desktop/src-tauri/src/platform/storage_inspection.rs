@@ -2,7 +2,8 @@ use crate::platform::paths::DesktopProfilePaths;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
 use crate::profile::ProfileId;
 use silent_disco_core::storage::{
-    DatabaseConfig, DatabaseMetadata, DatabaseWorker, StorageError, StoredSettings, TrustedDevice,
+    DatabaseClient, DatabaseConfig, DatabaseMetadata, DatabaseWorker,
+    MAX_RECENT_SESSION_HISTORY_LIMIT, SessionHistory, StorageError, StoredSettings, TrustedDevice,
 };
 use std::fmt;
 
@@ -15,6 +16,9 @@ pub struct ProfileStorageInspection {
     pub metadata: DatabaseMetadata,
     pub settings: Option<StoredSettings>,
     pub trusted_devices: Vec<TrustedDevice>,
+    pub recent_sessions: Vec<SessionHistory>,
+    /// The current desktop profile layout deliberately has no separate P2 store.
+    pub p2_store_applicable: bool,
 }
 
 /// Opens, inspects, and closes one profile database through the shared Rust worker.
@@ -45,15 +49,7 @@ pub fn inspect_profile_storage(
     };
 
     let client = worker.client();
-    let inspection_result = client.metadata().and_then(|metadata| {
-        let settings = client.load_settings()?;
-        let trusted_devices = client.list_trusted_devices()?;
-        Ok(ProfileStorageInspection {
-            metadata,
-            settings,
-            trusted_devices,
-        })
-    });
+    let inspection_result = inspect_database_client(&client);
 
     let shutdown_result = worker.stop_and_join();
     let release_result = lease.release();
@@ -75,6 +71,30 @@ pub fn inspect_profile_storage(
             Err(ProfileStorageInspectionError::ReleaseProfileLease(primary))
         }
     }
+}
+
+/// Reads the same bounded inspection from an already-open Rust database worker.
+///
+/// This is the production desktop path once a profile is ready: it avoids opening
+/// a second `SQLite` connection or attempting to reacquire the profile lease.
+///
+/// # Errors
+///
+/// Returns the first typed storage query failure without substituting empty data.
+pub(crate) fn inspect_database_client(
+    client: &DatabaseClient,
+) -> Result<ProfileStorageInspection, StorageError> {
+    let metadata = client.metadata()?;
+    let settings = client.load_settings()?;
+    let trusted_devices = client.list_trusted_devices()?;
+    let recent_sessions = client.list_recent_sessions(MAX_RECENT_SESSION_HISTORY_LIMIT)?;
+    Ok(ProfileStorageInspection {
+        metadata,
+        settings,
+        trusted_devices,
+        recent_sessions,
+        p2_store_applicable: false,
+    })
 }
 
 fn release_after_database_start_failure(
@@ -240,6 +260,8 @@ mod tests {
         assert_eq!(first.metadata.integrity_check, "ok");
         assert!(first.settings.is_none());
         assert!(first.trusted_devices.is_empty());
+        assert!(first.recent_sessions.is_empty());
+        assert!(!first.p2_store_applicable);
         assert!(paths.domain_database().is_file());
 
         let second = inspect_profile_storage(&paths, &profile_id).expect("reopen inspection");

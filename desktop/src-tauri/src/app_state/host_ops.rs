@@ -7,11 +7,12 @@ use super::DesktopAppState;
 use super::errors::{invitation_error_dto, poisoned_state_error};
 use super::state::DesktopRuntimeState;
 use crate::diagnostics_dto::{DesktopDiagnosticsDto, StorageDiagnosticsDto};
-use crate::dto::DesktopErrorDto;
+use crate::dto::{DesktopErrorDto, StorageInspectionDto};
 use crate::host_session_dto::{HostInvitationDto, HostSessionSnapshotDto};
 use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::invitation::{build_signed_invitation, current_wall_clock_ms};
 use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
+use crate::platform::storage_inspection::inspect_database_client;
 use crate::runtime_dto::{CommandReceiptDto, CoreSnapshotDto};
 use silent_disco_core::runtime::{CoreCommand, CoreCommandRequest, SnapshotRevision};
 use std::path::PathBuf;
@@ -48,6 +49,42 @@ impl DesktopAppState {
                 "no desktop profile is ready",
             )),
         }
+    }
+
+    /// Returns a bounded read-only inspection of the already-open Rust-owned database.
+    ///
+    /// No second database connection or profile lease is opened here; the ready
+    /// runtime's existing worker remains the sole `SQLite` owner.
+    pub(crate) fn storage_inspection(&self) -> Result<StorageInspectionDto, DesktopErrorDto> {
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        let ready = match &*state {
+            DesktopRuntimeState::Ready(ready) => ready,
+            DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                return Err(error.clone());
+            }
+            DesktopRuntimeState::Closed
+            | DesktopRuntimeState::Opening { .. }
+            | DesktopRuntimeState::Closing => {
+                return Err(DesktopErrorDto::new(
+                    "desktop.profile.not_ready",
+                    "runtime",
+                    "error",
+                    true,
+                    "no desktop profile is ready",
+                ));
+            }
+        };
+        let inspection = inspect_database_client(&ready.owned.database.client())
+            .map_err(|error| DesktopErrorDto::from(error.to_core_error()))?;
+        StorageInspectionDto::try_from(inspection).map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.storage.inspection_unbounded",
+                "storage",
+                "error",
+                false,
+                &error.to_string(),
+            )
+        })
     }
 
     pub(crate) fn source_staging_directory(&self) -> Result<PathBuf, DesktopErrorDto> {

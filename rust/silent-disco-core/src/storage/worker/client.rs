@@ -159,6 +159,17 @@ impl DatabaseClient {
         })
     }
 
+    /// Lists a bounded newest-first session history for inspection and diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, query, corruption, or worker lifecycle error.
+    pub fn list_recent_sessions(&self, limit: u32) -> Result<Vec<SessionHistory>, StorageError> {
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::ListRecentSessions { limit, reply }
+        })
+    }
+
     /// Validates and transactionally inserts one summarized diagnostic run.
     ///
     /// # Errors

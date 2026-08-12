@@ -3,8 +3,10 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::domain::{AppRole, SessionId};
 
 use super::{
-    error::{StorageError, StorageOperation, map_sqlite_error},
-    models::{SessionEnd, SessionHistory, SessionOutcome, SessionStart},
+    error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error},
+    models::{
+        MAX_RECENT_SESSION_HISTORY_LIMIT, SessionEnd, SessionHistory, SessionOutcome, SessionStart,
+    },
     repository_support::{corrupt_row, from_sql_u32, from_sql_u64},
 };
 
@@ -45,6 +47,56 @@ pub(crate) fn get(
         .optional()
         .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
     raw.map(|value| decode(value, schema_version)).transpose()
+}
+
+/// Lists the most recent session-history rows in deterministic newest-first order.
+///
+/// The caller-supplied limit is validated before preparing SQL so a future IPC
+/// adapter cannot accidentally turn this into an unbounded history read.
+pub(crate) fn list_recent(
+    connection: &Connection,
+    limit: u32,
+    schema_version: u32,
+) -> Result<Vec<SessionHistory>, StorageError> {
+    if limit == 0 || limit > MAX_RECENT_SESSION_HISTORY_LIMIT {
+        return Err(StorageError::new(
+            StorageErrorKind::InvalidConfiguration,
+            StorageOperation::Query,
+            format!(
+                "recent session history limit must be between 1 and {MAX_RECENT_SESSION_HISTORY_LIMIT}"
+            ),
+            Some(schema_version),
+        ));
+    }
+
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                 session_id,
+                 role,
+                 session_name,
+                 started_at_ms,
+                 ended_at_ms,
+                 listener_count,
+                 outcome,
+                 failure_code,
+                 failure_message
+             FROM session_history
+             ORDER BY started_at_ms DESC, session_id ASC
+             LIMIT ?1",
+        )
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let rows = statement
+        .query_map([i64::from(limit)], read_raw)
+        .map_err(|error| map_sqlite_error(StorageOperation::Query, Some(schema_version), &error))?;
+    let mut histories = Vec::with_capacity(limit as usize);
+    for row in rows {
+        let raw = row.map_err(|error| {
+            map_sqlite_error(StorageOperation::Query, Some(schema_version), &error)
+        })?;
+        histories.push(decode(raw, schema_version)?);
+    }
+    Ok(histories)
 }
 
 fn read_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawSessionHistory> {

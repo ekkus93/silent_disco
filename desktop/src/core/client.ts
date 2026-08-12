@@ -28,6 +28,7 @@ import type {
   OpenProfileResponse,
   RevisionCommandRequest,
   SetNetworkBindPreferenceRequest,
+  StorageInspectionDto,
   UpdateHostDraftRequest,
 } from "./generated/desktop-bindings";
 
@@ -233,6 +234,10 @@ export async function getCoreSmoke(input: number): Promise<CoreSmokeDto> {
 
 export async function getCurrentSnapshot(): Promise<CoreSnapshotDto> {
   return invokeDesktop<CoreSnapshotDto>("get_current_snapshot");
+}
+
+export async function getStorageInspection(): Promise<StorageInspectionDto> {
+  return invokeDesktop<StorageInspectionDto>("get_storage_inspection");
 }
 
 export async function attachNotifications(

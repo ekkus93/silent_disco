@@ -263,6 +263,13 @@ impl DatabaseConnection {
         session_read_repository::get(&self.connection, session_id, self.metadata.schema_version)
     }
 
+    pub(crate) fn list_recent_sessions(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<SessionHistory>, StorageError> {
+        session_read_repository::list_recent(&self.connection, limit, self.metadata.schema_version)
+    }
+
     pub(crate) fn insert_diagnostic_run(
         &mut self,
         run: &DiagnosticRunSummary,

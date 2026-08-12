@@ -6,6 +6,7 @@ use std::fmt;
 use ts_rs::TS;
 
 const MAX_TRUSTED_DEVICE_SUMMARIES: usize = 256;
+const MAX_RECENT_SESSION_SUMMARIES: usize = 32;
 const MAX_ERROR_MESSAGE_CHARS: usize = 512;
 
 /// Shared-core version returned by the desktop bridge.
@@ -187,6 +188,22 @@ pub struct TrustedDeviceSummaryDto {
     pub has_private_key_reference: bool,
 }
 
+/// Bounded persisted session summary for the storage inspection UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct SessionHistorySummaryDto {
+    pub session_id: String,
+    pub role: String,
+    pub session_name: String,
+    pub started_at_ms: String,
+    pub ended_at_ms: Option<String>,
+    pub listener_count: u32,
+    pub outcome: String,
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
+}
+
 /// Read-only typed storage inspection returned by the initial desktop bridge.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -202,6 +219,8 @@ pub struct StorageInspectionDto {
     pub integrity_check: String,
     pub settings: Option<StoredSettingsSummaryDto>,
     pub trusted_devices: Vec<TrustedDeviceSummaryDto>,
+    pub recent_sessions: Vec<SessionHistorySummaryDto>,
+    pub p2_store_applicable: bool,
 }
 
 impl TryFrom<ProfileStorageInspection> for StorageInspectionDto {
@@ -212,6 +231,12 @@ impl TryFrom<ProfileStorageInspection> for StorageInspectionDto {
             return Err(DtoConversionError::TrustedDeviceLimitExceeded {
                 found: value.trusted_devices.len(),
                 maximum: MAX_TRUSTED_DEVICE_SUMMARIES,
+            });
+        }
+        if value.recent_sessions.len() > MAX_RECENT_SESSION_SUMMARIES {
+            return Err(DtoConversionError::RecentSessionLimitExceeded {
+                found: value.recent_sessions.len(),
+                maximum: MAX_RECENT_SESSION_SUMMARIES,
             });
         }
 
@@ -239,6 +264,21 @@ impl TryFrom<ProfileStorageInspection> for StorageInspectionDto {
                 has_private_key_reference: device.private_key_ref.is_some(),
             })
             .collect();
+        let recent_sessions = value
+            .recent_sessions
+            .into_iter()
+            .map(|session| SessionHistorySummaryDto {
+                session_id: session.session_id.as_str().to_owned(),
+                role: session.role.wire_name().to_owned(),
+                session_name: session.session_name,
+                started_at_ms: session.started_at_ms.to_string(),
+                ended_at_ms: session.ended_at_ms.map(|value| value.to_string()),
+                listener_count: session.listener_count,
+                outcome: session.outcome.wire_name().to_owned(),
+                failure_code: session.failure_code,
+                failure_message: session.failure_message,
+            })
+            .collect();
         let applied_migrations = value
             .metadata
             .applied_migrations
@@ -261,6 +301,8 @@ impl TryFrom<ProfileStorageInspection> for StorageInspectionDto {
             integrity_check: value.metadata.integrity_check,
             settings,
             trusted_devices,
+            recent_sessions,
+            p2_store_applicable: value.p2_store_applicable,
         })
     }
 }
@@ -269,6 +311,7 @@ impl TryFrom<ProfileStorageInspection> for StorageInspectionDto {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DtoConversionError {
     TrustedDeviceLimitExceeded { found: usize, maximum: usize },
+    RecentSessionLimitExceeded { found: usize, maximum: usize },
 }
 
 impl fmt::Display for DtoConversionError {
@@ -277,6 +320,10 @@ impl fmt::Display for DtoConversionError {
             Self::TrustedDeviceLimitExceeded { found, maximum } => write!(
                 formatter,
                 "trusted-device summary count {found} exceeds the IPC limit {maximum}"
+            ),
+            Self::RecentSessionLimitExceeded { found, maximum } => write!(
+                formatter,
+                "recent-session summary count {found} exceeds the IPC limit {maximum}"
             ),
         }
     }
@@ -302,12 +349,13 @@ fn bounded_message(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BridgeLifecycleDto, DesktopErrorDto, StorageInspectionDto, TrustedDeviceSummaryDto,
-        bounded_message,
+        BridgeLifecycleDto, DesktopErrorDto, SessionHistorySummaryDto, StorageInspectionDto,
+        TrustedDeviceSummaryDto, bounded_message,
     };
     use silent_disco_core::domain::{DeviceId, TrustState, TuningSettings};
     use silent_disco_core::storage::{
-        DatabaseMetadata, MigrationRecord, StoredSettings, SynchronousPolicy, TrustedDevice,
+        DatabaseMetadata, MigrationRecord, SessionHistory, SessionOutcome, StoredSettings,
+        SynchronousPolicy, TrustedDevice,
     };
 
     /// Block 44 audit fix: a secondary cleanup failure alongside a primary
@@ -412,6 +460,19 @@ mod tests {
                 last_seen_ms: 2,
                 updated_at_ms: u64::MAX,
             }],
+            recent_sessions: vec![SessionHistory {
+                session_id: silent_disco_core::domain::SessionId::new("session-1")
+                    .expect("valid session ID"),
+                role: silent_disco_core::domain::AppRole::Host,
+                session_name: "Friday set".to_owned(),
+                started_at_ms: u64::MAX - 1,
+                ended_at_ms: Some(u64::MAX),
+                listener_count: 3,
+                outcome: SessionOutcome::Completed,
+                failure_code: None,
+                failure_message: None,
+            }],
+            p2_store_applicable: false,
         };
 
         let dto = StorageInspectionDto::try_from(inspection).expect("convert inspection");
@@ -436,6 +497,21 @@ mod tests {
                 has_private_key_reference: true,
             }]
         );
+        assert_eq!(
+            dto.recent_sessions,
+            vec![SessionHistorySummaryDto {
+                session_id: "session-1".to_owned(),
+                role: "host".to_owned(),
+                session_name: "Friday set".to_owned(),
+                started_at_ms: (u64::MAX - 1).to_string(),
+                ended_at_ms: Some(u64::MAX.to_string()),
+                listener_count: 3,
+                outcome: "completed".to_owned(),
+                failure_code: None,
+                failure_message: None,
+            }]
+        );
+        assert!(!dto.p2_store_applicable);
 
         let json = serde_json::to_string(&dto).expect("serialize inspection DTO");
         assert!(!json.contains("secret-service:item-1"));

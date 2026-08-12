@@ -12,11 +12,13 @@ export type StoredSettingsSummaryDto = { syncSampleWindow: number, syncCadenceMs
 
 export type TrustedDeviceSummaryDto = { deviceId: string, displayName: string, trustState: string, firstSeenMs: string, lastSeenMs: string, updatedAtMs: string, hasPublicKey: boolean, hasPrivateKeyReference: boolean, };
 
+export type SessionHistorySummaryDto = { sessionId: string, role: string, sessionName: string, startedAtMs: string, endedAtMs: string | null, listenerCount: number, outcome: string, failureCode: string | null, failureMessage: string | null, };
+
 export type BridgeLifecycleDto = { "kind": "closed" } | { "kind": "opening", "details": { profile_id: string, } } | { "kind": "ready", "details": { profile_id: string, } } | { "kind": "failed", "details": { error: DesktopErrorDto, } };
 
 export type AppShutdownPhaseDto = { "kind": "notRequested" } | { "kind": "shuttingDown" } | { "kind": "terminated" } | { "kind": "shutdownFailed", "details": { error: DesktopErrorDto, } };
 
-export type StorageInspectionDto = { sqliteVersion: string, foreignKeysEnabled: boolean, journalMode: string, busyTimeoutMs: number, synchronousPolicy: string, schemaVersion: number, appliedMigrations: Array<MigrationSummaryDto>, integrityCheck: string, settings: StoredSettingsSummaryDto | null, trustedDevices: Array<TrustedDeviceSummaryDto>, };
+export type StorageInspectionDto = { sqliteVersion: string, foreignKeysEnabled: boolean, journalMode: string, busyTimeoutMs: number, synchronousPolicy: string, schemaVersion: number, appliedMigrations: Array<MigrationSummaryDto>, integrityCheck: string, settings: StoredSettingsSummaryDto | null, trustedDevices: Array<TrustedDeviceSummaryDto>, recentSessions: Array<SessionHistorySummaryDto>, p2StoreApplicable: boolean, };
 
 export type OpenProfileRequest = { profileId: string, };
 

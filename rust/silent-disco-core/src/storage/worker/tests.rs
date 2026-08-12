@@ -209,6 +209,44 @@ fn diagnostic_export_is_bounded_and_cursor_paginated() {
 }
 
 #[test]
+fn recent_session_history_is_bounded_and_deterministically_ordered() {
+    let test_path = TestDatabasePath::new("worker-recent-sessions");
+    let worker =
+        DatabaseWorker::start(DatabaseConfig::new(test_path.path()).expect("valid worker config"))
+            .expect("worker starts");
+    let client = worker.client();
+
+    for (session_id, started_at_ms) in [("session-b", 300), ("session-a", 300), ("session-c", 200)]
+    {
+        client
+            .begin_session(&SessionStart {
+                session_id: SessionId::new(session_id).expect("valid session identifier"),
+                role: AppRole::Host,
+                session_name: format!("Session {session_id}"),
+                started_at_ms,
+            })
+            .expect("begin session");
+    }
+
+    let recent = client
+        .list_recent_sessions(2)
+        .expect("bounded recent history query");
+    assert_eq!(
+        recent
+            .iter()
+            .map(|history| history.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["session-a", "session-b"]
+    );
+
+    let invalid = client
+        .list_recent_sessions(0)
+        .expect_err("zero history limit is rejected");
+    assert_eq!(invalid.kind, StorageErrorKind::InvalidConfiguration);
+    worker.stop_and_join().expect("worker closes and joins");
+}
+
+#[test]
 fn duplicate_session_maps_to_constraint_violation() {
     let test_path = TestDatabasePath::new("worker-constraint");
     let worker =

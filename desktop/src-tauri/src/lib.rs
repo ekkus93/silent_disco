@@ -94,6 +94,7 @@ pub fn run() -> tauri::Result<()> {
             get_lab_mode_available,
             app_state::open_profile,
             app_state::get_current_snapshot,
+            app_state::get_storage_inspection,
             host_commands::select_host_role,
             host_commands::select_audio_source,
             host_commands::cancel_audio_source_staging,

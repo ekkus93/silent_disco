@@ -72,6 +72,10 @@ enum DatabaseCommand {
         session_id: SessionId,
         reply: DatabaseReply<Option<SessionHistory>>,
     },
+    ListRecentSessions {
+        limit: u32,
+        reply: DatabaseReply<Vec<SessionHistory>>,
+    },
     InsertDiagnosticRun {
         run: DiagnosticRunSummary,
         reply: DatabaseReply<()>,
@@ -219,6 +223,9 @@ fn process_command(
         }
         DatabaseCommand::GetSession { session_id, reply } => {
             process_get_session(&reply, &session_id, connection, version)?;
+        }
+        DatabaseCommand::ListRecentSessions { limit, reply } => {
+            process_list_recent_sessions(&reply, limit, connection, version)?;
         }
         DatabaseCommand::InsertDiagnosticRun { run, reply } => {
             process_insert_diagnostic_run(&reply, &run, connection, version)?;
@@ -439,6 +446,23 @@ fn process_get_session(
 ) -> Result<(), StorageError> {
     let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
         .and_then(|database| database.get_session(session_id));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_list_recent_sessions(
+    reply: &DatabaseReply<Vec<SessionHistory>>,
+    limit: u32,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(|database| database.list_recent_sessions(limit));
     send_reply(
         reply,
         result,
