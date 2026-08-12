@@ -84,10 +84,7 @@ impl VirtualHostTransport {
         for (_, listener) in listeners {
             let peer = TransportPeer {
                 device_id: None,
-                control_address: SocketAddr::new(
-                    self.endpoint.address,
-                    self.endpoint.control_port,
-                ),
+                control_address: SocketAddr::new(self.endpoint.address, self.endpoint.control_port),
             };
             if try_frame(
                 &listener.event_sender,
@@ -154,10 +151,7 @@ impl VirtualHostTransport {
         for listener in listeners {
             let peer = TransportPeer {
                 device_id: None,
-                control_address: SocketAddr::new(
-                    self.endpoint.address,
-                    self.endpoint.control_port,
-                ),
+                control_address: SocketAddr::new(self.endpoint.address, self.endpoint.control_port),
             };
             if try_frame(
                 &listener.event_sender,
