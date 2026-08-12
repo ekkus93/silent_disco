@@ -56,7 +56,10 @@ export function StorageInspectionScreen() {
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="mt-4 rounded-lg border border-red-300/30 bg-red-950/40 p-3 text-sm text-red-100">
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-red-300/30 bg-red-950/40 p-3 text-sm text-red-100"
+        >
           {error}
         </p>
       ) : null}
@@ -64,21 +67,47 @@ export function StorageInspectionScreen() {
       {inspection ? (
         <div className="mt-4 space-y-5">
           <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div><dt className="text-violet-100/55">Schema</dt><dd>{inspection.schemaVersion}</dd></div>
-            <div><dt className="text-violet-100/55">SQLite</dt><dd>{inspection.sqliteVersion}</dd></div>
-            <div><dt className="text-violet-100/55">Journal</dt><dd>{inspection.journalMode}</dd></div>
-            <div><dt className="text-violet-100/55">Integrity</dt><dd>{inspection.integrityCheck}</dd></div>
-            <div><dt className="text-violet-100/55">Foreign keys</dt><dd>{inspection.foreignKeysEnabled ? "enabled" : "disabled"}</dd></div>
-            <div><dt className="text-violet-100/55">Busy timeout</dt><dd>{inspection.busyTimeoutMs} ms</dd></div>
-            <div><dt className="text-violet-100/55">Synchronous policy</dt><dd>{inspection.synchronousPolicy}</dd></div>
-            <div><dt className="text-violet-100/55">P2 store</dt><dd>{inspection.p2StoreApplicable ? "configured" : "not applicable"}</dd></div>
+            <div>
+              <dt className="text-violet-100/55">Schema</dt>
+              <dd>{inspection.schemaVersion}</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">SQLite</dt>
+              <dd>{inspection.sqliteVersion}</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">Journal</dt>
+              <dd>{inspection.journalMode}</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">Integrity</dt>
+              <dd>{inspection.integrityCheck}</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">Foreign keys</dt>
+              <dd>{inspection.foreignKeysEnabled ? "enabled" : "disabled"}</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">Busy timeout</dt>
+              <dd>{inspection.busyTimeoutMs} ms</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">Synchronous policy</dt>
+              <dd>{inspection.synchronousPolicy}</dd>
+            </div>
+            <div>
+              <dt className="text-violet-100/55">P2 store</dt>
+              <dd>{inspection.p2StoreApplicable ? "configured" : "not applicable"}</dd>
+            </div>
           </dl>
 
           <div>
             <h3 className="text-sm font-semibold text-violet-100">Validated settings</h3>
             {inspection.settings ? (
               <p className="mt-2 text-sm text-violet-100/75">
-                Sync window {inspection.settings.syncSampleWindow}; cadence {inspection.settings.syncCadenceMs} ms; startup buffer {inspection.settings.startupBufferMs} ms.
+                Sync window {inspection.settings.syncSampleWindow}; cadence{" "}
+                {inspection.settings.syncCadenceMs} ms; startup buffer{" "}
+                {inspection.settings.startupBufferMs} ms.
               </p>
             ) : (
               <p className="mt-2 text-sm text-violet-100/55">No persisted settings row.</p>
@@ -86,14 +115,18 @@ export function StorageInspectionScreen() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-violet-100">Trusted devices ({inspection.trustedDevices.length})</h3>
+            <h3 className="text-sm font-semibold text-violet-100">
+              Trusted devices ({inspection.trustedDevices.length})
+            </h3>
             {inspection.trustedDevices.length === 0 ? (
               <p className="mt-2 text-sm text-violet-100/55">No trusted devices.</p>
             ) : (
               <ul className="mt-2 space-y-1 text-sm">
                 {inspection.trustedDevices.map((device) => (
                   <li key={device.deviceId}>
-                    {device.displayName} <span className="font-mono text-xs text-violet-100/55">{device.deviceId}</span> — {device.trustState}
+                    {device.displayName}{" "}
+                    <span className="font-mono text-xs text-violet-100/55">{device.deviceId}</span>{" "}
+                    — {device.trustState}
                   </li>
                 ))}
               </ul>
@@ -101,16 +134,24 @@ export function StorageInspectionScreen() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-violet-100">Recent sessions ({inspection.recentSessions.length})</h3>
+            <h3 className="text-sm font-semibold text-violet-100">
+              Recent sessions ({inspection.recentSessions.length})
+            </h3>
             {inspection.recentSessions.length === 0 ? (
               <p className="mt-2 text-sm text-violet-100/55">No session history.</p>
             ) : (
               <ol className="mt-2 space-y-2 text-sm">
                 {inspection.recentSessions.map((session) => (
-                  <li key={session.sessionId} className="rounded-lg border border-violet-200/10 p-2">
-                    <span className="font-semibold">{session.sessionName}</span> — {session.role} / {session.outcome}; listeners {session.listenerCount}
+                  <li
+                    key={session.sessionId}
+                    className="rounded-lg border border-violet-200/10 p-2"
+                  >
+                    <span className="font-semibold">{session.sessionName}</span> — {session.role} /{" "}
+                    {session.outcome}; listeners {session.listenerCount}
                     {session.failureCode ? (
-                      <span className="block text-xs text-red-200">{session.failureCode}: {session.failureMessage ?? "no failure message"}</span>
+                      <span className="block text-xs text-red-200">
+                        {session.failureCode}: {session.failureMessage ?? "no failure message"}
+                      </span>
                     ) : null}
                   </li>
                 ))}
