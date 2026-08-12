@@ -83,8 +83,8 @@
 use super::fault::trace::{MAX_TRANSPORT_FACTS, TransportFact};
 use super::recorder::{MAX_RECORDED_NOTIFICATIONS, RecordedNotification};
 use super::scenario::{
-    AssertionResult, ClockAdvance, MAX_ASSERTIONS, MAX_NODES, MAX_STEPS, Scenario,
-    ScenarioOutcome, ScenarioReport, ScenarioTrace, StepResult,
+    AssertionResult, ClockAdvance, MAX_ASSERTIONS, MAX_NODES, MAX_STEPS, Scenario, ScenarioOutcome,
+    ScenarioReport, ScenarioTrace, StepResult,
 };
 use serde::{Deserialize, Serialize};
 use silent_disco_core::CoreVersion;
