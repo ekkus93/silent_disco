@@ -45,6 +45,36 @@ const SCENARIO_JSON: &[u8] = br#"{
     "timeoutMs": 50
 }"#;
 
+const LIVE_TRANSPORT_SCENARIO_JSON: &[u8] = br#"{
+    "schemaVersion": 1,
+    "seed": 77,
+    "nodes": [{"id": "host1"}, {"id": "listener1"}],
+    "links": [{
+        "from": "host1",
+        "to": "listener1",
+        "latencyMs": 0,
+        "jitterMs": 0,
+        "lossPermille": 0
+    }],
+    "fixtures": [{"id": "track", "displayName": "Lab Track"}],
+    "steps": [
+        {"atMs": 0, "node": "host1", "action": {"kind": "selectRole", "role": "host"}},
+        {"atMs": 1, "node": "host1", "action": {"kind": "configureHost", "sessionName": "Lab Party", "fixture": "track"}},
+        {"atMs": 2, "node": "host1", "action": {"kind": "createHostSession"}},
+        {"atMs": 3, "node": "listener1", "action": {"kind": "selectRole", "role": "listener"}},
+        {"atMs": 4, "node": "listener1", "action": {"kind": "startDiscovery"}},
+        {"atMs": 5, "node": "listener1", "action": {"kind": "selectSession", "sessionId": "session-1"}},
+        {"atMs": 6, "node": "listener1", "action": {"kind": "submitJoin"}},
+        {"atMs": 8, "node": "host1", "action": {"kind": "approveJoin", "requestId": "desktop-join-1"}},
+        {"atMs": 9, "node": "listener1", "action": {"kind": "injectUnderrun", "missingFrames": 0}}
+    ],
+    "assertions": [
+        {"kind": "listenerCountAtLeast", "byMs": 20, "node": "host1", "count": 1},
+        {"kind": "lifecycleReached", "byMs": 20, "node": "listener1", "target": {"machine": "listener", "state": "approved"}}
+    ],
+    "timeoutMs": 20
+}"#;
+
 /// Replaying against the exact scenario/seed a recording was captured under
 /// succeeds and reports no divergence (Block 41.3 "record then replay
 /// identical").
@@ -229,4 +259,22 @@ fn replay_detects_transport_evidence_divergence_when_the_report_still_matches() 
             replayed: 0
         })
     ));
+}
+
+#[test]
+fn live_transport_recording_replays_with_identical_packet_and_fault_evidence() {
+    let capture_root = TestDirectory::new();
+    let capture_lab = LabRuntime::new(&capture_root.0, 0).expect("capture lab runtime");
+    let scenario =
+        load_scenario_json(LIVE_TRANSPORT_SCENARIO_JSON).expect("valid live transport scenario");
+    let (report, trace) =
+        run_scenario_with_trace(&capture_lab, &scenario).expect("capture live scenario");
+    assert!(!trace.transport_trace.facts.is_empty());
+    let recording = ScenarioRecording::capture(&scenario, report, trace);
+
+    let replay_root = TestDirectory::new();
+    let replay_lab = LabRuntime::new(&replay_root.0, 0).expect("replay lab runtime");
+    let outcome = replay(&replay_lab, &scenario, &recording).expect("live replay succeeds");
+
+    assert_eq!(outcome.divergence, None);
 }
