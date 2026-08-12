@@ -102,6 +102,28 @@ fn another_process_is_rejected_until_normal_release() {
 }
 
 #[test]
+fn separate_profiles_can_be_held_by_different_processes_concurrently() {
+    let root = TestDirectory::new("separate-profiles");
+    let ready = root.0.join("child.ready");
+    let release = root.0.join("child.release");
+    let mut child = spawn_child("release", &root.0, &ready, &release);
+    wait_for_child_ready(&mut child, &ready).expect("child acquires main profile lease");
+
+    let other_profile_id = ProfileId::parse("secondary").expect("valid secondary profile ID");
+    let other_paths =
+        DesktopProfilePaths::from_trusted_app_local_data_root(&root.0, &other_profile_id)
+            .expect("valid secondary profile paths");
+    ProfileLease::acquire(&other_paths, &other_profile_id)
+        .expect("parent acquires a different profile while child holds main")
+        .release()
+        .expect("parent releases secondary profile lease");
+
+    fs::write(&release, b"release").expect("write child release marker");
+    let status = wait_for_child_exit(&mut child, WAIT_TIMEOUT).expect("child exits after release");
+    assert!(status.success(), "child failed with status {status}");
+}
+
+#[test]
 fn operating_system_releases_lock_after_child_termination() {
     let root = TestDirectory::new("abnormal-termination");
     let ready = root.0.join("child.ready");
