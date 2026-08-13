@@ -1,5 +1,16 @@
 # memory.md — `silent_disco`
 
+## 2026-08-13T18:17:12Z - GPT-5.6 Sol - Block 46.2 package behavior complete on Ubuntu 22.04 CI baseline
+
+- Desktop CI run `31729330343` (run 514) at commit `6716402a2128db6632eb3411b5473d5419e1f4db` completed successfully.
+- `Linux desktop bundle smoke` ran on Ubuntu 22.04.5 LTS (`ubuntu-22.04`, runner image `20260810.260.1`) with Node 22.16.0 and Rust 1.97.1.
+- Tauri produced exactly the selected Linux package formats: `Silent Disco_0.1.0_amd64.AppImage` and `Silent Disco_0.1.0_amd64.deb`.
+- `verify-linux-bundles.py` passed: AppImage + `.deb` only, desktop entry/icon valid, no Block 45 probe binaries shipped, and required runtime dependencies declared.
+- `smoke-linux-package-lifecycle.sh` passed the real package lifecycle: clean `.deb` install, installed-app launch without a development server, synthetic-version `0.0.0` -> production `0.1.0` upgrade, uninstall, package-file removal, and preservation of profile-local user data.
+- The lifecycle proof uses isolated XDG state and verifies the real profile layout, including profile preferences, `songs/block46-lifecycle.wav`, `silent_disco.sqlite3`, and required database tables. The preservation result is therefore tied to production-style profile data rather than an arbitrary unrelated sentinel.
+- The uploaded `desktop-linux-bundle` artifact was ID `9192800682`; its ZIP SHA-256 was `b7a8f7d0a91e5230713d05c5d240041ba38ccd239a0bbfd95939d555c7d45261` (workflow retention: 3 days).
+- This closes Block 46.2. Block 46.3 remains intentionally open until the packaged app is exercised on a fresh graphical Ubuntu 22.04 machine/VM with a physical Android listener using `desktop/scripts/validate-block46-fresh-machine.sh`.
+
 ## 2026-08-10T11:25:24Z - Claude Sonnet 5 - Block 34 (desktop local monitor adapter) complete: real cpal output wired to the shared scheduled pipeline
 
 - Investigated desktop's existing host broadcast pump (`playback_streamer.rs`) before designing anything: it is deliberately NOT presentation-time-scheduled — it only bounds how far ahead of the transport clock it may send (a loose "don't get more than 1s ahead" horizon), relying entirely on each *listener's* own `PlaybackScheduler`/`PlaybackPump` to place audio in time. Real local audio hardware needs genuinely paced frames, so satisfying "the same scheduled Rust timeline" meant literally reusing `PlaybackScheduler`/`PlaybackPump` (`silent_disco_core::audio`, previously used only by Android's listener side) on the desktop host itself via a second real pump thread — not inventing a second scheduling implementation. Also found the render ring's `StreamingPacketizeHandle` is single-consumer (`mpsc::sync_channel`, no fan-out) — solved by having the existing broadcast pump forward a *clone* of each datagram to the monitor via a bounded, non-blocking tap, one decode feeding both consumers, rather than double-decoding.

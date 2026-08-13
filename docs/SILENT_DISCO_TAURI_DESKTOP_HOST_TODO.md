@@ -4568,15 +4568,17 @@ Evaluate and record selected initial formats, for example:
 ### 46.2 Package behavior
 
 - [x] application ID and product name stable;
-- [ ] icons complete;
-- [ ] desktop entry correct;
+- [x] icons complete;
+- [x] desktop entry correct;
 - [x] required native dependencies documented;
-- [ ] clean install on supported Linux baseline;
-- [ ] clean upgrade preserving profile data;
-- [ ] uninstall does not silently destroy user data;
-- [ ] bundle launches without development server;
+- [x] clean install on supported Linux baseline;
+- [x] clean upgrade preserving profile data;
+- [x] uninstall does not silently destroy user data;
+- [x] bundle launches without development server;
 - [x] production CSP/capabilities apply;
 - [x] Lab Mode inclusion policy explicit.
+
+**46.2 evidence:** Desktop CI run 514 at commit `6716402a2128db6632eb3411b5473d5419e1f4db` passed Linux bundle verification and the package lifecycle gate on Ubuntu 22.04.5 LTS. The lifecycle gate exercised a clean `.deb` install, synthetic-version upgrade, packaged-app launch without a development server, uninstall, and preservation of profile-local preferences, staged source data, and the SQLite database.
 
 ### 46.3 Fresh-machine validation
 
@@ -4588,7 +4590,7 @@ Evaluate and record selected initial formats, for example:
 - [ ] shut down and reopen;
 - [ ] verify package uninstall behavior.
 
-**Acceptance:** Not yet met end to end. AppImage/`.deb`, identity, native dependency documentation, CSP/capabilities, and Lab inclusion policy are configured; clean-machine install/upgrade/uninstall/launch workflow acceptance remains unexecuted.
+**Acceptance:** Block 46.2 is complete on the supported Ubuntu 22.04 CI baseline: package contents, clean install, synthetic-version upgrade, no-development-server launch, uninstall, and profile-local user-data preservation all pass. Block 46.3 fresh-machine validation with a graphical Ubuntu 22.04 machine/VM and a physical Android listener remains open.
 
 ---
 
