@@ -1,0 +1,114 @@
+name: Apply Block 46 bookkeeping once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/block46-bookkeeping-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-bookkeeping:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact updater commit
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Close Block 46.2 and remove updater
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_parent="6716402a2128db6632eb3411b5473d5419e1f4db"
+          expected_todo_before="3e207e794fe0a30c0195ba4ab36777caeaf7d5ee"
+          expected_memory_before="2b39ba483ed2078665391232970145192cbfc1be"
+          expected_todo_after="3de2b54d04eeb0d0e5e9a9a6544ab0dd1ff427d2"
+          expected_memory_after="64323e0d5dbb33c4f05614b83980d32ce2b74238"
+
+          test "$(git rev-parse HEAD^)" = "${expected_parent}"
+          test "$(git hash-object docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md)" = "${expected_todo_before}"
+          test "$(git hash-object memory.md)" = "${expected_memory_before}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          todo = Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md")
+          text = todo.read_text()
+          old = """### 46.2 Package behavior
+
+          - [x] application ID and product name stable;
+          - [ ] icons complete;
+          - [ ] desktop entry correct;
+          - [x] required native dependencies documented;
+          - [ ] clean install on supported Linux baseline;
+          - [ ] clean upgrade preserving profile data;
+          - [ ] uninstall does not silently destroy user data;
+          - [ ] bundle launches without development server;
+          - [x] production CSP/capabilities apply;
+          - [x] Lab Mode inclusion policy explicit.
+
+          ### 46.3 Fresh-machine validation
+          """
+          new = """### 46.2 Package behavior
+
+          - [x] application ID and product name stable;
+          - [x] icons complete;
+          - [x] desktop entry correct;
+          - [x] required native dependencies documented;
+          - [x] clean install on supported Linux baseline;
+          - [x] clean upgrade preserving profile data;
+          - [x] uninstall does not silently destroy user data;
+          - [x] bundle launches without development server;
+          - [x] production CSP/capabilities apply;
+          - [x] Lab Mode inclusion policy explicit.
+
+          **46.2 evidence:** Desktop CI run 514 at commit `6716402a2128db6632eb3411b5473d5419e1f4db` passed Linux bundle verification and the package lifecycle gate on Ubuntu 22.04.5 LTS. The lifecycle gate exercised a clean `.deb` install, synthetic-version upgrade, packaged-app launch without a development server, uninstall, and preservation of profile-local preferences, staged source data, and the SQLite database.
+
+          ### 46.3 Fresh-machine validation
+          """
+          if text.count(old) != 1:
+              raise SystemExit("expected Block 46.2 text exactly once")
+          text = text.replace(old, new, 1)
+          old_accept = "**Acceptance:** Not yet met end to end. AppImage/`.deb`, identity, native dependency documentation, CSP/capabilities, and Lab inclusion policy are configured; clean-machine install/upgrade/uninstall/launch workflow acceptance remains unexecuted."
+          new_accept = "**Acceptance:** Block 46.2 is complete on the supported Ubuntu 22.04 CI baseline: package contents, clean install, synthetic-version upgrade, no-development-server launch, uninstall, and profile-local user-data preservation all pass. Block 46.3 fresh-machine validation with a graphical Ubuntu 22.04 machine/VM and a physical Android listener remains open."
+          if text.count(old_accept) != 1:
+              raise SystemExit("expected Block 46 acceptance text exactly once")
+          todo.write_text(text.replace(old_accept, new_accept, 1))
+
+          memory = Path("memory.md")
+          text = memory.read_text()
+          heading = "# memory.md — `silent_disco`\n\n"
+          if not text.startswith(heading):
+              raise SystemExit("unexpected memory.md heading")
+          entry = """## 2026-08-13T18:17:12Z - GPT-5.6 Sol - Block 46.2 package behavior complete on Ubuntu 22.04 CI baseline
+
+          - Desktop CI run `31729330343` (run 514) at commit `6716402a2128db6632eb3411b5473d5419e1f4db` completed successfully.
+          - `Linux desktop bundle smoke` ran on Ubuntu 22.04.5 LTS (`ubuntu-22.04`, runner image `20260810.260.1`) with Node 22.16.0 and Rust 1.97.1.
+          - Tauri produced exactly the selected Linux package formats: `Silent Disco_0.1.0_amd64.AppImage` and `Silent Disco_0.1.0_amd64.deb`.
+          - `verify-linux-bundles.py` passed: AppImage + `.deb` only, desktop entry/icon valid, no Block 45 probe binaries shipped, and required runtime dependencies declared.
+          - `smoke-linux-package-lifecycle.sh` passed the real package lifecycle: clean `.deb` install, installed-app launch without a development server, synthetic-version `0.0.0` -> production `0.1.0` upgrade, uninstall, package-file removal, and preservation of profile-local user data.
+          - The lifecycle proof uses isolated XDG state and verifies the real profile layout, including profile preferences, `songs/block46-lifecycle.wav`, `silent_disco.sqlite3`, and required database tables. The preservation result is therefore tied to production-style profile data rather than an arbitrary unrelated sentinel.
+          - The uploaded `desktop-linux-bundle` artifact was ID `9192800682`; its ZIP SHA-256 was `b7a8f7d0a91e5230713d05c5d240041ba38ccd239a0bbfd95939d555c7d45261` (workflow retention: 3 days).
+          - This closes Block 46.2. Block 46.3 remains intentionally open until the packaged app is exercised on a fresh graphical Ubuntu 22.04 machine/VM with a physical Android listener using `desktop/scripts/validate-block46-fresh-machine.sh`.
+
+          """
+          memory.write_text(heading + entry + text[len(heading):])
+          PY
+
+          test "$(git hash-object docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md)" = "${expected_todo_after}"
+          test "$(git hash-object memory.md)" = "${expected_memory_after}"
+
+          git rm -- .github/workflows/block46-bookkeeping-once.yml
+          git add -- docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md memory.md
+          git diff --cached --check
+          git diff --cached --name-status
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Close Block 46.2 package behavior"
+          git push origin HEAD:master
