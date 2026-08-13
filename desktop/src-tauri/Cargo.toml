@@ -40,6 +40,14 @@ custom-protocol = ["tauri/custom-protocol"]
 # Never enabled by default -- a production release build must not link
 # lab.rs, its synthetic identities, or its node-management commands.
 lab-mode = []
+# Block 45: compiles the desktop-only measurement helpers and the
+# `block45_runtime_probe` binary. Never enabled in production release builds.
+performance-probe = []
+
+[[bin]]
+name = "block45_runtime_probe"
+path = "src/bin/block45_runtime_probe.rs"
+required-features = ["performance-probe"]
 
 [lints.rust]
 unsafe_code = "deny"

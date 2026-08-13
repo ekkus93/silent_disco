@@ -23,7 +23,8 @@ impl DesktopHostTransportRuntime {
             broadcast: BroadcastCounters::default(),
         });
         let (effect_sender, effect_receiver) = sync_channel(TRANSPORT_EFFECT_QUEUE_CAPACITY);
-        let (broadcast_sender, broadcast_receiver) = sync_channel(BROADCAST_FRAME_QUEUE_CAPACITY);
+        let (broadcast_sender, broadcast_receiver) =
+            sync_channel(usize::from(BROADCAST_FRAME_QUEUE_CAPACITY));
         let worker_stop = Arc::clone(&stop);
         let worker_status = Arc::clone(&status);
         let worker_clock = Arc::clone(&clock);
@@ -67,12 +68,19 @@ impl DesktopHostTransportRuntime {
                 "desktop host transport is shutting down",
             ));
         }
+        // Reserve depth before publishing the frame so the worker cannot
+        // dequeue it before accounting sees it. A failed `try_send` rolls the
+        // reservation back immediately.
+        let reserved_depth = self.status.broadcast.reserve_enqueue();
         match self.broadcast_sender.try_send(frame) {
             Ok(()) => {
-                self.status.broadcast.record_enqueued();
+                self.status
+                    .broadcast
+                    .record_enqueue_success(reserved_depth);
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
+                self.status.broadcast.record_dequeued();
                 self.status
                     .broadcast
                     .queue_overflows
@@ -81,9 +89,12 @@ impl DesktopHostTransportRuntime {
                     "desktop host transport broadcast queue is full",
                 ))
             }
-            Err(TrySendError::Disconnected(_)) => Err(DesktopNetworkError::unavailable(
-                "desktop host transport worker is unavailable",
-            )),
+            Err(TrySendError::Disconnected(_)) => {
+                self.status.broadcast.record_dequeued();
+                Err(DesktopNetworkError::unavailable(
+                    "desktop host transport worker is unavailable",
+                ))
+            }
         }
     }
 

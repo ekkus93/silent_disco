@@ -55,7 +55,7 @@ const MAX_EFFECTS_PER_TICK: usize = 8;
 /// sizing choice tied to those defaults, not an enforced invariant -- it
 /// must be revisited if `SEND_AHEAD_HORIZON_MS` grows or the default packet
 /// duration shrinks.
-const BROADCAST_FRAME_QUEUE_CAPACITY: usize = 256;
+pub(super) const BROADCAST_FRAME_QUEUE_CAPACITY: u16 = 256;
 const MAX_BROADCAST_FRAMES_PER_TICK: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,10 +152,24 @@ impl BroadcastCounters {
         }
     }
 
-    /// Records one frame entering the queue, keeping the peak depth current.
-    fn record_enqueued(&self) {
-        let depth = self.queue_depth.fetch_add(1, Ordering::Relaxed) + 1;
-        self.queue_peak_depth.fetch_max(depth, Ordering::Relaxed);
+    /// Reserves one queue-depth slot before a non-blocking send attempt.
+    ///
+    /// The reservation happens before `SyncSender::try_send` so the worker
+    /// cannot dequeue a newly admitted frame before its depth is counted. A
+    /// failed send must roll the reservation back with [`Self::record_dequeued`].
+    fn reserve_enqueue(&self) -> u64 {
+        self.queue_depth.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Commits a successful reservation to the high-water mark. `depth` may
+    /// conservatively include one in-flight reservation while the worker
+    /// drains older frames, but it is capped at the queue's real capacity and
+    /// never treats a failed send as admitted pressure.
+    fn record_enqueue_success(&self, depth: u64) {
+        self.queue_peak_depth.fetch_max(
+            depth.min(u64::from(BROADCAST_FRAME_QUEUE_CAPACITY)),
+            Ordering::Relaxed,
+        );
     }
 
     fn record_dequeued(&self) {

@@ -15,6 +15,8 @@ mod host_join_projection;
 mod host_pending_handshake;
 pub(crate) mod host_transport;
 pub(crate) mod host_transport_events;
+#[cfg(feature = "performance-probe")]
+pub mod performance_probe;
 pub mod identity;
 pub(crate) mod invitation;
 pub mod invitation_identity;

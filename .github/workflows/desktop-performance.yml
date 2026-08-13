@@ -4,22 +4,36 @@ on:
   push:
     branches: [master]
     paths:
+      - "desktop/src-tauri/Cargo.toml"
       - "desktop/src-tauri/src/bin/performance_probe.rs"
+      - "desktop/src-tauri/src/bin/block45_runtime_probe.rs"
+      - "desktop/src-tauri/src/notification_buffer.rs"
+      - "desktop/src-tauri/src/platform/host_transport.rs"
+      - "desktop/src-tauri/src/platform/mod.rs"
+      - "desktop/src-tauri/src/platform/performance_probe.rs"
+      - "desktop/src-tauri/src/platform/performance_probe/**"
+      - "desktop/src/screens/DiagnosticsScreen.test.tsx"
+      - "desktop/src/screens/DiagnosticsScreen.tsx"
+      - "desktop/scripts/analyze-block45-performance.py"
       - ".github/workflows/desktop-performance.yml"
   workflow_dispatch:
     inputs:
       soak_seconds:
-        description: "Long-soak duration in seconds"
+        description: "Selected long-soak duration in seconds (60-3600)"
         required: false
         default: "600"
 
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: "22.16.0"
+  RUST_VERSION: "1.97.1"
+
 jobs:
   block45-performance:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
     env:
       SILENT_DISCO_PERF_DECODE_ITERATIONS: "200"
       SILENT_DISCO_PERF_PACKETIZER_SOURCE_SECONDS: "60"
@@ -28,22 +42,53 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
             libasound2-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            time \
+            wget
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.97.1
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy --component rustfmt
+          rustup default "${RUST_VERSION}"
+
+      - name: Generate lockfiles only when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f desktop/src-tauri/Cargo.lock ]]; then
+            (cd desktop/src-tauri && cargo generate-lockfile)
+          fi
+          if [[ ! -f desktop/package-lock.json ]]; then
+            (cd desktop && npm install --package-lock-only --ignore-scripts)
+          fi
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Verify measured diagnostics UI cadence
+        working-directory: desktop
+        run: npm run test -- src/screens/DiagnosticsScreen.test.tsx
 
       - name: Create Rust-only frontend placeholder
         shell: bash
@@ -52,44 +97,121 @@ jobs:
           mkdir -p desktop/dist
           printf '<!doctype html><title>Silent Disco performance CI placeholder</title>\n' > desktop/dist/index.html
 
-      - name: Build Block 45 performance probe
+      - name: Check Block 45 Rust formatting
         working-directory: desktop/src-tauri
-        run: cargo build --release --bin performance_probe
+        run: cargo fmt --all -- --check
+
+      - name: Run strict Block 45 Clippy
+        working-directory: desktop/src-tauri
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Build Block 45 probes
+        working-directory: desktop/src-tauri
+        run: |
+          cargo build --locked --release --bin performance_probe
+          cargo build --locked --release --bin block45_runtime_probe --features performance-probe
 
       - name: Verify deterministic Lab jitter path
         working-directory: desktop/src-tauri
         run: >-
-          cargo test --release --features lab-mode
+          cargo test --locked --release --features lab-mode
           lab::fault::tests::jitter_keeps_the_deadline_within_its_configured_bound
           -- --exact
 
-      - name: Run measured matrix and selected long soak
+      - name: Record performance environment
+        working-directory: desktop/src-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p block45-evidence
+          {
+            echo "github_sha=${GITHUB_SHA}"
+            echo "runner_os=${RUNNER_OS}"
+            uname -a
+            echo "--- /etc/os-release ---"
+            cat /etc/os-release
+            echo "--- lscpu ---"
+            lscpu
+            echo "--- free -k ---"
+            free -k
+            echo "--- rustc -Vv ---"
+            rustc -Vv
+            echo "--- node/npm ---"
+            node --version
+            npm --version
+          } > block45-evidence/environment.txt
+          cat > block45-evidence/ui-cadence.json <<'JSON'
+          {
+            "pollIntervalMs": 2000,
+            "pollsPerSecond": 0.5,
+            "evidenceTest": "src/screens/DiagnosticsScreen.test.tsx"
+          }
+          JSON
+          cat > block45-evidence/jitter-evidence.json <<'JSON'
+          {
+            "fixedLatencyMs": 100,
+            "jitterMs": 20,
+            "seed": 7,
+            "evidenceTest": "lab::fault::tests::jitter_keeps_the_deadline_within_its_configured_bound"
+          }
+          JSON
+
+      - name: Run three baselines and selected long soak
         working-directory: desktop/src-tauri
         shell: bash
         env:
           SOAK_SECONDS: ${{ inputs.soak_seconds || '600' }}
         run: |
           set -euo pipefail
-          export SILENT_DISCO_PERF_SOAK_SECONDS="$SOAK_SECONDS"
+          if ! [[ "${SOAK_SECONDS}" =~ ^[0-9]+$ ]] \
+            || (( SOAK_SECONDS < 60 || SOAK_SECONDS > 3600 )); then
+            echo "soak_seconds must be an integer from 60 through 3600" >&2
+            exit 2
+          fi
           export SILENT_DISCO_PERF_CLK_TCK="$(getconf CLK_TCK)"
-          /usr/bin/time -v \
-            -o block45-process-time.txt \
-            ./target/release/performance_probe \
-            > block45-report.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
 
-          report = json.loads(Path("block45-report.json").read_text())
-          assert report["schemaVersion"] == 1
-          assert [entry["format"] for entry in report["decoder"]] == ["wav", "flac", "mp3"]
-          assert {entry["listenerCount"] for entry in report["transport"]} >= {1, 2, 5, 16}
-          assert report["reconnect"]["postReconnectAudioReceived"] is True
-          assert report["soak"] is not None
-          assert report["soak"]["packetsBroadcast"] > 0
-          print(json.dumps(report, indent=2))
-          PY
-          cat block45-process-time.txt
+          for run in 1 2 3; do
+            SILENT_DISCO_PERF_SOAK_SECONDS=0 \
+              /usr/bin/time -v \
+              -o "block45-evidence/baseline-${run}-process-time.txt" \
+              ./target/release/performance_probe \
+              > "block45-evidence/baseline-${run}.json"
+            /usr/bin/time -v \
+              -o "block45-evidence/runtime-${run}-process-time.txt" \
+              ./target/release/block45_runtime_probe \
+              > "block45-evidence/runtime-${run}.json"
+          done
+
+          SILENT_DISCO_PERF_SOAK_SECONDS="${SOAK_SECONDS}" \
+            /usr/bin/time -v \
+            -o block45-evidence/soak-process-time.txt \
+            ./target/release/performance_probe \
+            > block45-evidence/soak.json
+
+          python3 ../scripts/analyze-block45-performance.py \
+            --baseline \
+              block45-evidence/baseline-1.json \
+              block45-evidence/baseline-2.json \
+              block45-evidence/baseline-3.json \
+            --runtime \
+              block45-evidence/runtime-1.json \
+              block45-evidence/runtime-2.json \
+              block45-evidence/runtime-3.json \
+            --soak block45-evidence/soak.json \
+            --ui-cadence block45-evidence/ui-cadence.json \
+            --jitter-evidence block45-evidence/jitter-evidence.json \
+            --output block45-evidence/summary.json
+
+      - name: Require committed lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain -- desktop/package-lock.json desktop/src-tauri/Cargo.lock)"
+          if [[ -n "${status}" ]]; then
+            printf '%s\n' "${status}"
+            echo "Block 45 must consume the committed lockfiles exactly." >&2
+            exit 1
+          fi
 
       - name: Upload Block 45 raw evidence
         uses: actions/upload-artifact@v4
@@ -97,6 +219,4 @@ jobs:
           name: block45-performance-${{ github.sha }}
           if-no-files-found: error
           retention-days: 30
-          path: |
-            desktop/src-tauri/block45-report.json
-            desktop/src-tauri/block45-process-time.txt
+          path: desktop/src-tauri/block45-evidence/
