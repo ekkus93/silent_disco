@@ -9,13 +9,7 @@ This repository currently contains an Android proof of concept for an offline si
 - a future native iOS presentation and platform-adapter shell implemented with Swift and SwiftUI;
 - a Rust-owned real-time render ring consumed by platform-native audio callbacks.
 
-The immediate goal remains validating whether:
-- one Android phone can act as the **session host**
-- the same host can act as the **audio source**
-- the same host can act as the **authoritative monotonic clock**
-- multiple nearby Android listener devices can join and hear the same playback in tight sync
-
-This is a **viability-focused PoC and architectural migration**, not a production app.
+The Android application began as a viability-focused proof of concept. The current repository also contains the Linux Tauri desktop-host implementation, whose active release goal is production-capable Ubuntu 22.04 hosting for physical Android listeners with executable interoperability evidence. Android host-mode viability and future iOS/desktop-listener work remain separately scoped.
 
 ## Authoritative migration documents
 
@@ -31,7 +25,7 @@ For desktop companion work, read and follow:
 
 Do not create additional assistant-generated design documents unless they are committed at the exact path referenced by one of these specs or TODOs.
 
-`README.md` and `.github/copilot-instructions.md` predate the Rust/Tauri migration and still describe an Android-only, Wi-Fi-Direct-primary app. They are stale — do not treat them as authoritative for current architecture.
+`README.md` is the maintained developer quick-start for the current Rust/Android/Tauri repository. The architecture specs and TODOs above remain authoritative when a quick-start statement and a scoped design/completion decision differ. `.github/copilot-instructions.md` may still contain older Android-only context; do not treat it as authoritative over the migration documents.
 
 ## Confirmed project decisions
 
