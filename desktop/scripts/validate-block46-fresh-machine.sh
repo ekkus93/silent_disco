@@ -35,7 +35,7 @@ if [[ "$#" -lt 1 || "$#" -gt 2 ]]; then
 fi
 
 bundle_dir="$1"
-evidence_dir="${2:-block46-fresh-machine-evidence}"
+evidence_dir="${2:-${HOME}/silent-disco-block46-evidence-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 for command in dpkg-deb dpkg-query find python3 sha256sum uname; do
   require_command "${command}"
