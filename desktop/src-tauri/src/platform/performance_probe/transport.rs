@@ -55,7 +55,7 @@ pub(super) fn measure_transport_queue() -> ProbeResult<DesktopTransportQueueMetr
     let stream_id = StreamId::new("block45-desktop-stream")?;
     let host_device_id = DeviceId::new("block45-desktop-host")?;
     let clock = Arc::new(ManualTransportClock::new(0));
-    let mut host = factory.bind_host(
+    let host = factory.bind_host(
         HostTransportConfig::loopback(session_id.clone()),
         clock.clone(),
     )?;
