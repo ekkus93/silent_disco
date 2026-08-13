@@ -39,7 +39,7 @@ const MANUAL_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener_plays_a_song_change -- --ignored --nocapture`
 #[test]
-#[ignore = "requires a real external listener device on the same LAN, driven manually"]
+#[ignore = "reason: requires a real external listener device on the same LAN and human observation; owner: desktop Android interoperability / Block 47"]
 fn manual_real_android_listener_plays_a_song_change() {
     let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
         panic!("no private LAN interface available for the manual device test");
@@ -147,7 +147,7 @@ fn manual_real_android_listener_plays_a_song_change() {
 /// `manual::melody` for why the desktop app itself cannot produce this file. Run explicitly with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener_plays_flac -- --ignored --nocapture`
 #[test]
-#[ignore = "requires a real external listener device on the same LAN, driven manually"]
+#[ignore = "reason: requires a real external listener device on the same LAN and human observation; owner: desktop Android interoperability / Block 47"]
 fn manual_real_android_listener_plays_flac() {
     run_manual_single_format_session("flac-song", AudioContainer::Flac, "FLAC");
 }
@@ -156,7 +156,7 @@ fn manual_real_android_listener_plays_flac() {
 /// [`manual_real_android_listener_plays_flac`]. Run explicitly with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener_plays_mp3 -- --ignored --nocapture`
 #[test]
-#[ignore = "requires a real external listener device on the same LAN, driven manually"]
+#[ignore = "reason: requires a real external listener device on the same LAN and human observation; owner: desktop Android interoperability / Block 47"]
 fn manual_real_android_listener_plays_mp3() {
     run_manual_single_format_session("mp3-song", AudioContainer::Mp3, "MP3");
 }
@@ -225,7 +225,7 @@ fn run_manual_single_format_session(source_id: &str, container: AudioContainer, 
 /// below if your local setup differs. Run explicitly with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_two_emulator_listeners_play_together -- --ignored --nocapture`
 #[test]
-#[ignore = "requires two running Android emulators with the app installed, driven via adb"]
+#[ignore = "reason: requires two running Android emulators with the app installed and adb automation; owner: desktop Android interoperability / Block 47"]
 fn manual_two_emulator_listeners_play_together() {
     const FIRST_SERIAL: &str = "emulator-5554";
     const SECOND_SERIAL: &str = "emulator-5556";
