@@ -108,7 +108,7 @@ jobs:
       - name: Build Block 45 probes
         working-directory: desktop/src-tauri
         run: |
-          cargo build --locked --release --bin performance_probe
+          cargo build --locked --release --bin performance_probe --features performance-probe
           cargo build --locked --release --bin block45_runtime_probe --features performance-probe
 
       - name: Verify deterministic Lab jitter path

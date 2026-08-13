@@ -45,6 +45,11 @@ lab-mode = []
 performance-probe = []
 
 [[bin]]
+name = "performance_probe"
+path = "src/bin/performance_probe.rs"
+required-features = ["performance-probe"]
+
+[[bin]]
 name = "block45_runtime_probe"
 path = "src/bin/block45_runtime_probe.rs"
 required-features = ["performance-probe"]
