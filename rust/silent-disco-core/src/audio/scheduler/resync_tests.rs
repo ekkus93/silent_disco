@@ -54,7 +54,7 @@ fn submit_packet_rejects_a_duplicate_sequence() {
 }
 
 #[test]
-fn rejects_a_hostile_flood_of_far_future_sequences() {
+fn rejects_far_future_sequences_beyond_the_reorder_window() {
     let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
 
     let error = scheduler
@@ -79,8 +79,6 @@ fn stale_buffered_packets_do_not_block_resynchronisation_onto_a_live_stream() {
     cfg.startup_buffer_target_ms = 1_000;
     let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
 
-    // A few packets land inside the window and stick: far short of the
-    // startup target, so nothing ever plays them.
     for sequence in 0..15 {
         scheduler
             .submit_packet(datagram(sequence, 8_000))
@@ -91,8 +89,6 @@ fn stale_buffered_packets_do_not_block_resynchronisation_onto_a_live_stream() {
         SchedulerPoll::Buffering { .. }
     ));
 
-    // The live stream is now far beyond the reorder window. Enough corroborating
-    // arrivals must move the scheduler onto it despite the stale packets.
     let live_start = 5_000;
     let mut accepted_live = 0;
     for offset in 0..8 {
@@ -123,9 +119,7 @@ fn a_packet_arriving_after_its_slot_played_is_rejected_and_never_plays_out_of_or
     }
 
     let first = frame_at(scheduler.poll(HOST_START_MS));
-    // Sequence 1's slot is concealed and passes.
     let concealed = frame_at(scheduler.poll(HOST_START_MS + u64::from(PACKET_DURATION_MS)));
-    // Sequence 1 finally shows up, far too late to play in order.
     let rejection = scheduler
         .submit_packet(datagram(1, 8_000))
         .expect_err("an already-emitted sequence must be rejected");
@@ -134,7 +128,6 @@ fn a_packet_arriving_after_its_slot_played_is_rejected_and_never_plays_out_of_or
     assert_eq!(first.sequence, 0);
     assert!(concealed.concealed);
     assert_eq!(rejection.kind, JitterBufferRejectionKind::AlreadyEmitted);
-    // Playback continues forward; the late arrival never appears.
     assert_eq!(next.sequence, 2);
     assert!(!next.concealed);
 }
@@ -147,7 +140,6 @@ fn an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream
     cfg.max_reorder_window = 8;
     cfg.concealment_skip_threshold_packets = 4;
     let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
-    // Only as many as the reorder window admits at once.
     for sequence in 0..9 {
         scheduler
             .submit_packet(datagram(sequence, 8_000))
@@ -156,8 +148,6 @@ fn an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream
     for slot in 0..5 {
         let _ = scheduler.poll(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS));
     }
-    // The network drops entirely; concealment exhausts its bound and the
-    // caller rebuffers, exactly as the pump does automatically.
     for slot in 20..40 {
         if matches!(
             scheduler.poll(HOST_START_MS + slot * u64::from(PACKET_DURATION_MS)),
@@ -167,8 +157,6 @@ fn an_outage_wider_than_the_reorder_window_does_not_permanently_wedge_the_stream
         }
     }
 
-    // The host has moved far ahead. If every packet is rejected as
-    // unreorderable, the stream is silent until the runtime is torn down.
     let mut accepted = 0;
     for sequence in 400..420 {
         if scheduler.submit_packet(datagram(sequence, 8_000)).is_ok() {
@@ -187,10 +175,6 @@ fn a_listener_joining_a_stream_already_in_progress_can_bootstrap() {
     cfg.startup_buffer_target_ms = 100;
     let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
 
-    // The host has been streaming for ten seconds. The listener starts at
-    // sequence zero, so the first arrivals are beyond its reorder window and
-    // are rejected until they corroborate each other; after that it must
-    // adopt the live position rather than demanding the packets it missed.
     let mut accepted = 0;
     for sequence in 500..520 {
         if scheduler.submit_packet(datagram(sequence, 8_000)).is_ok() {
@@ -202,8 +186,6 @@ fn a_listener_joining_a_stream_already_in_progress_can_bootstrap() {
         "a listener joining mid-stream could never accept a packet"
     );
 
-    // The corroborating packets are themselves rejected, so their slots
-    // conceal; real audio resumes immediately after them.
     let mut real_frame = None;
     for _ in 0..10 {
         let frame = frame_at(scheduler.poll(HOST_START_MS + 520 * u64::from(PACKET_DURATION_MS)));
@@ -223,27 +205,16 @@ fn a_listener_joining_a_stream_already_in_progress_can_bootstrap() {
     );
 }
 
-/// Local time at which a scheduler's frame is actually heard, given that a
-/// stream is heard at `write time + ring depth` and the ring drains at a
-/// fixed rate. With no ring in this test the depth is the write-lead the
-/// pump maintains, which is constant across listeners.
 fn playout_time_ms(write_time_ms: u64, lead_ms: u64) -> u64 {
     write_time_ms + lead_ms
 }
 
-// Acceptance test for item 4. Ignored: the first implementation regressed a
-// real device (see the fixes TODO) and was reverted, so this documents the
-// target rather than current behaviour.
 #[test]
-#[ignore = "alignment is unimplemented: the first attempt regressed on device and was reverted"]
+#[ignore = "reason: alignment is unimplemented after the first attempt regressed on-device and was reverted; owner: shared audio synchronization / Block 47 physical acceptance"]
 fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together() {
-    // Same host stream, same offset; the only difference is when each
-    // listener finished buffering and began playing. That difference used to
-    // shift each listener's whole stream by its own startup latency.
     const LEAD_MS: u64 = 400;
     let mut early = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
     let mut late = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
-    // Stay inside the default reorder window.
     for sequence in 0..60 {
         early
             .submit_packet(datagram(sequence, 8_000))
@@ -252,14 +223,11 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
             .expect("accepted");
     }
 
-    // One listener starts promptly; the other is 300ms slower to lock sync.
     let early_start = HOST_START_MS + 100;
     let late_start = HOST_START_MS + 400;
     let early_frame = frame_at(early.poll(early_start));
     let late_frame = frame_at(late.poll(late_start));
 
-    // Each plays a frame that is genuinely due, so their playout times for
-    // the same sequence agree rather than differing by their startup skew.
     assert_eq!(
         early_frame.sequence, 5,
         "the early listener must start on the frame due at its start time"
@@ -269,8 +237,6 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
         "the late listener must skip the head it missed, not replay it"
     );
 
-    // Advance the early listener to the same sequence the late one started
-    // on, and compare when each would be heard.
     let mut early_playout = None;
     for step in 1..40 {
         let frame = frame_at(early.poll(early_start + step * u64::from(PACKET_DURATION_MS)));
@@ -289,7 +255,6 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
     let skew_ms = early_playout.abs_diff(late_playout);
     assert!(
         skew_ms <= u64::from(PACKET_DURATION_MS),
-        "listeners drifted {skew_ms}ms apart on the same sequence; \
-         they must agree within one packet"
+        "listeners drifted {skew_ms}ms apart on the same sequence; they must agree within one packet"
     );
 }
