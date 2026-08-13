@@ -15,8 +15,6 @@ mod host_join_projection;
 mod host_pending_handshake;
 pub(crate) mod host_transport;
 pub(crate) mod host_transport_events;
-#[cfg(feature = "performance-probe")]
-pub mod performance_probe;
 pub mod identity;
 pub(crate) mod invitation;
 pub mod invitation_identity;
@@ -31,6 +29,8 @@ mod network_error;
     reason = "canonical profile and profiles roots are distinct security boundaries"
 )]
 pub mod paths;
+#[cfg(feature = "performance-probe")]
+pub mod performance_probe;
 mod playback_streamer;
 pub mod profile_lock;
 pub mod profile_metadata;
