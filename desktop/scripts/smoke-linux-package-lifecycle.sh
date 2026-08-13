@@ -44,8 +44,15 @@ dpkg-deb --root-owner-group -b "${previous_root}" "${previous_deb}" >/dev/null
 sudo apt-get install --yes "${previous_deb}"
 test -x "/usr/bin/${main_binary}"
 
-data_root="${HOME}/.local/share/${app_identifier}"
-sentinel="${data_root}/block46-package-lifecycle/sentinel.txt"
+# Keep lifecycle evidence isolated from the runner account's ordinary Tauri
+# state. The sentinel lives inside the real production profile layout so the
+# upgrade/uninstall assertions are specifically about profile-local user data.
+xdg_data_home="${work}/xdg-data"
+xdg_config_home="${work}/xdg-config"
+xdg_cache_home="${work}/xdg-cache"
+mkdir -p "${xdg_data_home}" "${xdg_config_home}" "${xdg_cache_home}"
+data_root="${xdg_data_home}/${app_identifier}"
+sentinel="${data_root}/profiles/main/block46-package-lifecycle/sentinel.txt"
 mkdir -p "$(dirname "${sentinel}")"
 printf '%s\n' "preserve-across-upgrade-and-uninstall" > "${sentinel}"
 
@@ -64,7 +71,12 @@ test -f "${icon}"
 
 launch_log="${work}/installed-launch.log"
 set +e
-timeout --signal=TERM 12s dbus-run-session -- xvfb-run -a "/usr/bin/${main_binary}" >"${launch_log}" 2>&1
+env \
+  XDG_DATA_HOME="${xdg_data_home}" \
+  XDG_CONFIG_HOME="${xdg_config_home}" \
+  XDG_CACHE_HOME="${xdg_cache_home}" \
+  timeout --signal=TERM 12s dbus-run-session -- xvfb-run -a "/usr/bin/${main_binary}" \
+  >"${launch_log}" 2>&1
 launch_status="$?"
 set -e
 if [[ "${launch_status}" -ne 124 ]]; then
@@ -76,7 +88,13 @@ fi
 appimage_log="${work}/appimage-launch.log"
 chmod +x "${appimage}"
 set +e
-APPIMAGE_EXTRACT_AND_RUN=1 timeout --signal=TERM 20s dbus-run-session -- xvfb-run -a "${appimage}" >"${appimage_log}" 2>&1
+env \
+  XDG_DATA_HOME="${xdg_data_home}" \
+  XDG_CONFIG_HOME="${xdg_config_home}" \
+  XDG_CACHE_HOME="${xdg_cache_home}" \
+  APPIMAGE_EXTRACT_AND_RUN=1 \
+  timeout --signal=TERM 20s dbus-run-session -- xvfb-run -a "${appimage}" \
+  >"${appimage_log}" 2>&1
 appimage_status="$?"
 set -e
 if [[ "${appimage_status}" -ne 124 ]]; then
@@ -95,5 +113,4 @@ test ! -e "${desktop_entry}"
 test ! -e "${icon}"
 grep -Fxq 'preserve-across-upgrade-and-uninstall' "${sentinel}"
 
-rm -rf "${data_root}/block46-package-lifecycle"
-printf 'Linux package lifecycle passed: clean install, synthetic-version upgrade, no-dev-server launch, uninstall, user-data preservation.\n'
+printf 'Linux package lifecycle passed: clean install, synthetic-version upgrade, no-dev-server launch, uninstall, profile-local user-data preservation.\n'
