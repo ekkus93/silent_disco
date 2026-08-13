@@ -10,6 +10,12 @@ bundle_dir="$1"
 app_identifier="$2"
 main_binary="$3"
 
+if [[ ! -d "${bundle_dir}" ]]; then
+  echo "bundle directory does not exist: ${bundle_dir}" >&2
+  exit 1
+fi
+bundle_dir="$(cd "${bundle_dir}" && pwd -P)"
+
 mapfile -t debs < <(find "${bundle_dir}/deb" -maxdepth 1 -type f -name '*.deb' -print | sort)
 mapfile -t appimages < <(find "${bundle_dir}/appimage" -maxdepth 1 -type f -name '*.AppImage' -print | sort)
 if [[ "${#debs[@]}" -ne 1 || "${#appimages[@]}" -ne 1 ]]; then
