@@ -3,6 +3,7 @@ name = "silent-disco-desktop"
 version = "0.1.0"
 description = "Silent Disco desktop host"
 default-run = "silent-disco-desktop"
+autobins = false
 edition = "2024"
 license = "MIT"
 rust-version = "1.97.1"
@@ -40,9 +41,21 @@ custom-protocol = ["tauri/custom-protocol"]
 # Never enabled by default -- a production release build must not link
 # lab.rs, its synthetic identities, or its node-management commands.
 lab-mode = []
+# Build-time utility used only to generate/check Rust-derived TypeScript bindings.
+# Never enabled in production release builds.
+binding-generator = []
 # Block 45: compiles the desktop-only measurement helpers and the
-# `block45_runtime_probe` binary. Never enabled in production release builds.
+# Block 45 probe binaries. Never enabled in production release builds.
 performance-probe = []
+
+[[bin]]
+name = "silent-disco-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "generate_bindings"
+path = "src/bin/generate_bindings.rs"
+required-features = ["binding-generator"]
 
 [[bin]]
 name = "performance_probe"
