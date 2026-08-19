@@ -6,10 +6,7 @@ use crate::audio::{PlaybackScheduler, RenderRing, RenderRingConfig, SchedulerCon
 use crate::domain::{SessionId, StreamId};
 
 use super::super::{PlaybackPump, PumpTick, SyncApplyOutcome};
-use super::{
-    HOST_START_MS, PACKET_DURATION_MS, SAMPLES_PER_PACKET, datagram, pump_with_unlocked_sync,
-    unpaced_config,
-};
+use super::{HOST_START_MS, SAMPLES_PER_PACKET, datagram, pump_with_unlocked_sync, unpaced_config};
 
 #[test]
 fn nothing_plays_until_a_real_clock_offset_has_been_applied() {
