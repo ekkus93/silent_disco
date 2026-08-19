@@ -208,10 +208,27 @@ fn a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline()
         let datagram = tone_datagram(sequence, HOST_START_MS + sequence * 20, SAMPLES_PER_PACKET);
         tap.send(datagram).expect("tap accepts datagram");
     }
-    // Jump the clock well past the scheduler's startup buffer target so
-    // the pump's next tick releases queued frames instead of buffering.
-    clock.store(HOST_START_MS + 2_000, Ordering::Release);
-    thread::sleep(Duration::from_millis(300));
+    // Keep actual time at the stream start. The scheduler's normal 400ms
+    // write-ahead horizon is already enough to release the buffered tone.
+    // Jumping actual time forward here races the pump thread: if the thread
+    // has not processed the datagrams yet, the production scheduler correctly
+    // discards every packet whose presentation deadline is already stale.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let has_tone = {
+            let observed = captured.lock().expect("captured lock");
+            observed.iter().any(|&sample| sample > 0.05)
+                && observed.iter().any(|&sample| sample < -0.05)
+        };
+        if has_tone {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "generated tone never reached the real output callback"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 
     monitor.on_stream_stopped().expect("stop monitor");
 
