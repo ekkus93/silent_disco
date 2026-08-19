@@ -220,8 +220,8 @@ fn drain_due_frames(pump: &mut PlaybackPump, now_ms: u64) -> usize {
 mod drop_tests {
     use super::DesktopMonitorPump;
     use std::panic::{AssertUnwindSafe, catch_unwind};
-    use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use std::thread;
 
     #[test]
