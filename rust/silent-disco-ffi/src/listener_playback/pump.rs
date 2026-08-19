@@ -135,9 +135,10 @@ pub(super) fn run_pump(shared: &Arc<Shared>, clock: &Arc<PumpClock>) {
         shared.tick_count.fetch_add(1, Ordering::Relaxed);
         shared.last_tick_ms.store(now_ms, Ordering::Relaxed);
         #[cfg(test)]
-        if shared.panic_next_tick.swap(false, Ordering::SeqCst) {
-            panic!("injected playback pump panic");
-        }
+        assert!(
+            !shared.panic_next_tick.swap(false, Ordering::SeqCst),
+            "injected playback pump panic"
+        );
         {
             let mut pump = shared.lock_pump();
             drain_due_frames(&mut pump, now_ms);
