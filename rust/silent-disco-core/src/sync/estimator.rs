@@ -351,8 +351,7 @@ impl ClockSyncEstimator {
 
     fn acquisition_elapsed_ms(&self, now: LocalMonotonicMillis) -> u64 {
         self.acquisition_started_at
-            .map(|started| now.get().saturating_sub(started.get()))
-            .unwrap_or(0)
+            .map_or(0, |started| now.get().saturating_sub(started.get()))
     }
 
     fn effective_rtt_limit_ms(&self, now: LocalMonotonicMillis) -> f64 {
