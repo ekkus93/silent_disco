@@ -551,7 +551,7 @@ fn map_control_frame(
 
 #[cfg(test)]
 mod audio_forwarding_tests {
-    use super::{FfiListenerTransportHandle, ProtocolFrame};
+    use super::{FfiListenerTransportError, FfiListenerTransportHandle, ProtocolFrame};
     use crate::audio_abi::registry_test_guard;
     use crate::listener_playback::{FfiListenerPlaybackConfig, FfiListenerPlaybackHandle};
     use silent_disco_core::domain::{
@@ -665,7 +665,8 @@ mod audio_forwarding_tests {
 
         let error = handle
             .forward_audio(audio_event(0))
-            .expect_err("a dead attached runtime must make transport forwarding fail");
+            .err()
+            .expect("a dead attached runtime must make transport forwarding fail");
         assert!(matches!(error, FfiListenerTransportError::Io(_)));
         assert_eq!(handle.forwarded_audio_count(), 0);
     }
