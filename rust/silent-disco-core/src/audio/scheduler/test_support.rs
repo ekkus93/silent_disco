@@ -14,11 +14,9 @@ pub(super) const SAMPLES_PER_PACKET: u32 = 960;
 pub(super) const CHANNELS: u16 = 2;
 pub(super) const HOST_START_MS: u64 = 1_000;
 
-/// Ramp length for the default config: 5ms of a 20ms/960-sample packet.
-/// Frames the scheduler ramps over, derived exactly as it derives them so
-/// this stays correct if either the ramp or the packet duration moves.
-pub(super) const RAMP_FRAMES: usize =
-    (SAMPLES_PER_PACKET * DEFAULT_CONCEALMENT_RAMP_MS / PACKET_DURATION_MS) as usize;
+/// Ramp length for the default 48kHz config, derived from exact sample rate
+/// just as the scheduler derives it.
+pub(super) const RAMP_FRAMES: usize = (48_000 * DEFAULT_CONCEALMENT_RAMP_MS / 1_000) as usize;
 
 pub(super) fn session() -> SessionId {
     SessionId::new("session-scheduler").expect("session id")
@@ -32,7 +30,7 @@ pub(super) fn config() -> SchedulerConfig {
     SchedulerConfig::new(
         session(),
         stream(),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         CHANNELS,

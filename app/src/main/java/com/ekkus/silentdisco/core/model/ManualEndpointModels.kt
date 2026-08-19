@@ -22,7 +22,11 @@ sealed interface ManualConnectUiState {
     data class Approved(val trustedForFuture: Boolean) : ManualConnectUiState
 
     /** A stream is actually flowing from the host; [playbackState] reflects real local playback. */
-    data class Streaming(val trustedForFuture: Boolean, val playbackState: PlaybackState) : ManualConnectUiState
+    data class Streaming(
+        val trustedForFuture: Boolean,
+        val playbackState: PlaybackState,
+        val syncStatus: String? = null,
+    ) : ManualConnectUiState
 
     data class Rejected(val reason: String) : ManualConnectUiState
 

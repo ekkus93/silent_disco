@@ -202,6 +202,34 @@ internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): 
             return
         }
 
+        logger.i(
+            "sync.sample",
+            "accepted=${observation.accepted} rawRtt=${"%.2f".format(observation.roundTripTimeMs)} " +
+                "acquisitionRejected=${observation.acquisitionRejectedSampleCount} " +
+                "acquisitionElapsedMs=${observation.acquisitionElapsedMs} " +
+                "acquisitionRttLimitMs=${"%.0f".format(observation.acquisitionRttLimitMs)} " +
+                "degradedLock=${observation.degradedLock}",
+        )
+        if (!observation.accepted) {
+            val message =
+                "Clock sync: ${observation.acquisitionRejectedSampleCount} rejected over " +
+                    "${observation.acquisitionElapsedMs}ms (RTT gate " +
+                    "${"%.0f".format(observation.acquisitionRttLimitMs)}ms)"
+            _uiState.value = _uiState.value.copy(
+                listenerState = ListenerLifecycleState.SYNCING_CLOCK,
+                connectionProgress = _uiState.value.connectionProgress.copy(
+                    currentState = ListenerLifecycleState.SYNCING_CLOCK,
+                    synced = false,
+                    playing = false,
+                ),
+                lastMessage = message,
+                lastError = null,
+            )
+            diagnosticsStore.updateListener { it.copy(lastError = null) }
+            refreshListenerDiagnostics()
+            return
+        }
+
         // observation.snapshot is the filtered, multi-sample running
         // estimate (mirrors what the old ClockSyncEstimator.snapshot()
         // returned) -- not the single raw sample, which is noisy and, for a
@@ -219,11 +247,6 @@ internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): 
             offsetMs = syncState.offsetMs,
             driftThresholdMs = _uiState.value.tuningSettings.syncDriftThresholdMs,
         )
-        logger.i(
-            "sync.sample",
-            "accepted=${observation.accepted} offset=${"%.2f".format(syncState.offsetMs)} " +
-                "rtt=${"%.2f".format(syncState.rttMs)} jitter=${"%.2f".format(syncState.jitterMs)}",
-        )
         if (shouldResync && !_uiState.value.connectionProgress.synced) {
             handleSyncFailure("Unable to establish a stable sync estimate")
             return
@@ -232,6 +255,12 @@ internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): 
             listenerSyncState = syncState,
             listenerState = if (shouldResync) ListenerLifecycleState.DESYNCED else _uiState.value.listenerState,
             connectionProgress = _uiState.value.connectionProgress.copy(synced = !shouldResync),
+            lastMessage = if (!shouldResync && observation.degradedLock) {
+                "Clock sync locked after ${observation.acquisitionRejectedSampleCount} rejected samples " +
+                    "using a bounded degraded acquisition gate"
+            } else {
+                _uiState.value.lastMessage
+            },
         )
         diagnosticsStore.updateListener {
             it.copy(

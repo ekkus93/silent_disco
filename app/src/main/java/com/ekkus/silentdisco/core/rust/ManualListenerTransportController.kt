@@ -34,6 +34,12 @@ private const val LOCAL_BIND_ADDRESS = "0.0.0.0"
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 private const val AUDIO_CODEC_NAME = "pcm16le"
 
+internal fun mergeManualCleanupFailure(first: Throwable?, next: Throwable): Throwable {
+    if (first == null) return next
+    first.addSuppressed(next)
+    return first
+}
+
 /**
  * Platform hook keeping the device's network radio responsive for the
  * lifetime of one live connection. Without it, Android Wi-Fi power save may
@@ -83,8 +89,14 @@ class ManualListenerTransportController(
     private var eventLoop: Job? = null
     internal var syncProbeJob: Job? = null
     internal var diagnosticsSampleJob: Job? = null
-    internal var playbackRuntime: FfiListenerPlaybackHandle? = null
-    internal var currentStreamId: StreamId? = null
+    private val playbackRuntimeRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
+    internal var playbackRuntime: FfiListenerPlaybackHandle?
+        get() = playbackRuntimeRef.get()
+        set(value) = playbackRuntimeRef.set(value)
+    private val currentStreamIdRef = AtomicReference<StreamId?>(null)
+    internal var currentStreamId: StreamId?
+        get() = currentStreamIdRef.get()
+        set(value) = currentStreamIdRef.set(value)
 
     /**
      * The transport's own clock, read at [playbackRuntime]'s construction
@@ -100,14 +112,15 @@ class ManualListenerTransportController(
     val connectState: StateFlow<ManualConnectUiState> = _connectState.asStateFlow()
 
     internal var trustedForFuture: Boolean = false
-    internal var sessionId: SessionId? = null
+    private val sessionIdRef = AtomicReference<SessionId?>(null)
+    internal var sessionId: SessionId?
+        get() = sessionIdRef.get()
+        set(value) = sessionIdRef.set(value)
     private var protocolVersion: Int = 0
 
     internal val logger = AppLogger("ManualListenerAudio")
     internal var lastReceivedSequence: Long? = null
     internal var receivedCount: Long = 0
-    private var writtenCount: Long = 0
-    private var lastWrittenFrameConcealed = false
 
     suspend fun parse(rawInput: String): ManualEndpointParseResult = withContext(Dispatchers.Default) {
         try {
@@ -128,8 +141,8 @@ class ManualListenerTransportController(
             // Stop any stream still running before tearing down its
             // transport: a failed reconnect otherwise leaves the previous
             // stream audibly playing behind a "connection failed" message.
-            stopPlayback()
-            closeExistingHandle()
+            if (stopPlayback() != null) return@withContext
+            if (closeExistingHandle() != null) return@withContext
             // Before the socket connect, not after approval: power-save
             // latency also poisons the first clock-sync exchanges, and those
             // begin the moment the connection is up.
@@ -168,23 +181,37 @@ class ManualListenerTransportController(
     suspend fun disconnect(reason: String) {
         withContext(Dispatchers.IO) {
             val handle = handleRef.get() ?: return@withContext
-            runCatching { handle.sendDisconnect(reason) }
+            try {
+                handle.sendDisconnect(reason)
+            } catch (error: Throwable) {
+                _connectState.value = ManualConnectUiState.Failed(
+                    error.message ?: "disconnect send failed",
+                )
+                throw error
+            }
         }
     }
 
     fun reset() {
         eventLoop?.cancel()
         eventLoop = null
-        stopPlayback()
-        closeExistingHandle()
-        _connectState.value = ManualConnectUiState.Idle
+        val playbackFailure = stopPlayback()
+        val transportFailure = closeExistingHandle()
+        if (playbackFailure == null && transportFailure == null) {
+            _connectState.value = ManualConnectUiState.Idle
+        }
     }
 
     override fun close() {
         eventLoop?.cancel()
         eventLoop = null
-        stopPlayback()
-        closeExistingHandle()
+        val playbackFailure = stopPlayback()
+        val transportFailure = closeExistingHandle()
+        val failure = playbackFailure ?: transportFailure
+        if (playbackFailure != null && transportFailure != null) {
+            playbackFailure.addSuppressed(transportFailure)
+        }
+        if (failure != null) throw failure
     }
 
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
@@ -194,8 +221,9 @@ class ManualListenerTransportController(
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
-                    stopPlayback()
-                    _connectState.value = mapPostConnectionFailure(error)
+                    if (stopPlayback() == null) {
+                        _connectState.value = mapPostConnectionFailure(error)
+                    }
                     break
                 }
                 if (event != null) {
@@ -221,20 +249,24 @@ class ManualListenerTransportController(
                 startSyncProbeLoop(scope, handle)
             }
             is FfiListenerTransportEvent.JoinRejected -> {
-                stopPlayback()
-                _connectState.value = ManualConnectUiState.Rejected(event.reason)
+                if (stopPlayback() == null) {
+                    _connectState.value = ManualConnectUiState.Rejected(event.reason)
+                }
             }
             is FfiListenerTransportEvent.HostDisconnected -> {
-                stopPlayback()
-                _connectState.value = ManualConnectUiState.Disconnected(event.reason)
+                if (stopPlayback() == null) {
+                    _connectState.value = ManualConnectUiState.Disconnected(event.reason)
+                }
             }
             is FfiListenerTransportEvent.ConnectionClosed -> {
-                stopPlayback()
-                _connectState.value = ManualConnectUiState.Disconnected(event.message)
+                if (stopPlayback() == null) {
+                    _connectState.value = ManualConnectUiState.Disconnected(event.message)
+                }
             }
             is FfiListenerTransportEvent.Rejected -> {
-                stopPlayback()
-                _connectState.value = ManualConnectUiState.Failed(event.message)
+                if (stopPlayback() == null) {
+                    _connectState.value = ManualConnectUiState.Failed(event.message)
+                }
             }
             is FfiListenerTransportEvent.StreamStarted -> handleStreamStarted(scope, handle, event)
             is FfiListenerTransportEvent.Paused ->
@@ -246,16 +278,28 @@ class ManualListenerTransportController(
     }
 
     /** Stops this connection's real-time consumption -- playback, buffering, and sync probing. */
-    private fun closeExistingHandle() {
+    private fun closeExistingHandle(): Throwable? {
+        var firstFailure: Throwable? = null
+        fun capture(block: () -> Unit) {
+            try {
+                block()
+            } catch (error: Throwable) {
+                firstFailure = mergeManualCleanupFailure(firstFailure, error)
+            }
+        }
+
         handleRef.getAndSet(null)?.let { handle ->
-            runCatching { handle.shutdown() }
-            handle.close()
+            capture { handle.shutdown() }
+            capture { handle.close() }
         }
-        try {
-            networkSessionLock?.release()
-        } catch (error: RuntimeException) {
-            logger.w("manual.network_lock", "release failed: ${error.message}")
+        capture { networkSessionLock?.release() }
+        firstFailure?.let { error ->
+            logger.w("manual.transport_teardown_failed", error.message ?: "transport teardown failed")
+            _connectState.value = ManualConnectUiState.Failed(
+                error.message ?: "transport teardown failed",
+            )
         }
+        return firstFailure
     }
 
     private fun nowMs(): ULong = System.currentTimeMillis().toULong()

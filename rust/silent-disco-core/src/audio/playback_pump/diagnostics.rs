@@ -20,6 +20,10 @@ pub struct PlaybackDiagnostics {
     /// Sequences abandoned without being played: lost packets covered by
     /// concealment, plus whole gaps skipped as too wide to cover.
     pub sequences_skipped: u64,
+    /// Packets rejected because they belong to a different session.
+    pub wrong_session_rejections: u64,
+    /// Packets rejected because they belong to a different stream generation.
+    pub wrong_stream_rejections: u64,
     /// Packets rejected as arriving after their slot had already played.
     pub late_rejections: u64,
     /// Packets rejected as duplicates of an already-buffered sequence.
@@ -28,6 +32,9 @@ pub struct PlaybackDiagnostics {
     /// phase stays `Buffering` is the signature of a listener stranded
     /// behind the live stream.
     pub reorder_window_rejections: u64,
+    /// Packets rejected because accepting them would exceed the bounded
+    /// presentation-duration window.
+    pub buffered_duration_rejections: u64,
     /// Times the buffer adopted a far-ahead position because the stream had
     /// moved beyond its reorder window (a recovered outage, or a mid-stream
     /// join).
@@ -78,9 +85,12 @@ impl PlaybackPump {
             packets_accepted: jitter.accepted,
             packets_emitted: jitter.emitted,
             sequences_skipped: jitter.skipped,
+            wrong_session_rejections: jitter.wrong_session_rejections,
+            wrong_stream_rejections: jitter.wrong_stream_rejections,
             late_rejections: jitter.late_rejections,
             duplicate_rejections: jitter.duplicate_rejections,
             reorder_window_rejections: jitter.reorder_window_rejections,
+            buffered_duration_rejections: jitter.buffered_duration_rejections,
             resynchronisations: jitter.resynchronisations,
             dropped_before_sync: self.dropped_before_sync,
             concealed_packets: concealment.total_concealed_packets,

@@ -321,17 +321,23 @@ impl DesktopAppState {
     }
 
     /// Sets the desktop host's local-monitor preference (Block 34.2
-    /// "monitor enable is explicit"). Never fails on its own -- disabling
-    /// always succeeds, and enabling only records a preference that takes
-    /// effect on the next stream start; any failure to actually stand up a
-    /// monitor stream is surfaced through `HostSessionSnapshotDto.monitor`
-    /// on the next snapshot, not as an error from this call.
+    /// "monitor enable is explicit"). Enabling records a preference for the
+    /// next stream start. Disabling tears down an active monitor immediately
+    /// and fails visibly if that teardown cannot complete; transmission to
+    /// listeners is independent of this local preference.
     pub(crate) fn set_monitor_enabled(&self, enabled: bool) -> Result<(), DesktopErrorDto> {
         let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         match &*state {
             DesktopRuntimeState::Ready(ready) => {
-                ready.network.set_monitor_enabled(enabled);
-                Ok(())
+                ready.network.set_monitor_enabled(enabled).map_err(|error| {
+                    DesktopErrorDto::new(
+                        "desktop.monitor.preference_failed",
+                        "audio",
+                        "error",
+                        true,
+                        &error.to_string(),
+                    )
+                })
             }
             DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
                 Err(error.clone())

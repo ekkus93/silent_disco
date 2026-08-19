@@ -240,14 +240,8 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
 
     let early_start = HOST_START_MS + 100;
     let late_start = HOST_START_MS + 400;
-    let early_frame = frame_at(early.poll_with_release_horizon(
-        early_start,
-        early_start + LEAD_MS,
-    ));
-    let late_frame = frame_at(late.poll_with_release_horizon(
-        late_start,
-        late_start + LEAD_MS,
-    ));
+    let early_frame = frame_at(early.poll_with_release_horizon(early_start, early_start + LEAD_MS));
+    let late_frame = frame_at(late.poll_with_release_horizon(late_start, late_start + LEAD_MS));
 
     assert_eq!(
         early_frame.sequence, 5,

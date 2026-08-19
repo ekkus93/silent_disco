@@ -48,6 +48,14 @@ pub struct FfiSyncObservation {
     pub round_trip_time_ms: f64,
     pub offset_ms: f64,
     pub accepted: bool,
+    /// Samples rejected while acquiring the first usable lock.
+    pub acquisition_rejected_sample_count: u64,
+    /// Time spent acquiring the first usable lock.
+    pub acquisition_elapsed_ms: u64,
+    /// RTT acceptance gate used for this observation.
+    pub acquisition_rtt_limit_ms: f64,
+    /// True when the first lock required the bounded acquisition-only widened gate.
+    pub degraded_lock: bool,
     pub snapshot: FfiSyncSnapshot,
 }
 
@@ -176,6 +184,10 @@ impl FfiSyncEstimator {
             round_trip_time_ms: observation.sample.round_trip_time_ms,
             offset_ms: observation.sample.offset_ms,
             accepted: observation.accepted,
+            acquisition_rejected_sample_count: observation.acquisition.rejected_sample_count,
+            acquisition_elapsed_ms: observation.acquisition.elapsed_ms,
+            acquisition_rtt_limit_ms: observation.acquisition.effective_rtt_limit_ms,
+            degraded_lock: observation.acquisition.degraded_lock,
             snapshot: convert_snapshot(observation.snapshot)?,
         };
         self.next_correlation_id = next_correlation_id;
@@ -270,6 +282,42 @@ mod tests {
         assert_close(snapshot.jitter_ms, 0.0);
         assert_eq!(snapshot.confidence_code, 5);
         assert_eq!(snapshot.accepted_sample_count, 2);
+    }
+
+    #[test]
+    fn acquisition_metadata_crosses_the_plain_ffi_boundary() {
+        let mut estimator =
+            FfiSyncEstimator::new(FfiSyncEstimatorConfig::default()).expect("valid config");
+        for (index, t1) in [0_u64, 250, 500].into_iter().enumerate() {
+            let rejected = estimator
+                .observe(FfiSyncExchange {
+                    t1_local_send_ms: t1,
+                    t2_host_receive_ms: t1 + 125,
+                    t3_host_send_ms: t1 + 125,
+                    t4_local_receive_ms: t1 + 250,
+                })
+                .expect("valid rejected sample");
+            assert!(!rejected.accepted);
+            assert_eq!(
+                rejected.acquisition_rejected_sample_count,
+                u64::try_from(index + 1).expect("small index"),
+            );
+            assert!(!rejected.degraded_lock);
+        }
+
+        let accepted = estimator
+            .observe(FfiSyncExchange {
+                t1_local_send_ms: 750,
+                t2_host_receive_ms: 875,
+                t3_host_send_ms: 875,
+                t4_local_receive_ms: 1_000,
+            })
+            .expect("bounded acquisition accepts measured path");
+        assert!(accepted.accepted);
+        assert_eq!(accepted.acquisition_rejected_sample_count, 3);
+        assert_eq!(accepted.acquisition_elapsed_ms, 1_000);
+        assert_close(accepted.acquisition_rtt_limit_ms, 375.0);
+        assert!(accepted.degraded_lock);
     }
 
     #[test]

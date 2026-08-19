@@ -1,3 +1,4 @@
+use super::decoder::active_worker_count;
 use super::packetizer::Packetizer;
 use super::{
     AudioFormat, AudioSampleFormat, DecodedPcmChunk, PacketizerErrorKind,
@@ -537,6 +538,56 @@ fn a_statistics_reader_observes_live_backpressure_independent_of_the_handle() {
     // The reader's own final count must match the handle's own summary --
     // same underlying atomics, not two independently maintained tallies.
     assert_eq!(reader.snapshot().3, summary.emitted_packets);
+}
+
+#[test]
+fn cancelling_while_backpressured_joins_the_owned_decoder_worker() {
+    let _guard = super::tests::audio_test_guard();
+    assert_eq!(
+        active_worker_count(),
+        0,
+        "test must start without a leaked decoder"
+    );
+
+    let temp = TempDir::new().expect("temp");
+    // Long enough that the decoder cannot naturally finish while the
+    // packetizer is deliberately pinned behind a one-packet output queue.
+    let decoder = open_canonical_decoder(&temp, 30);
+    let handle = StreamingPacketizeHandle::spawn(
+        decoder,
+        SessionId::new("session-cancel-active-decode").expect("session id"),
+        StreamId::new("stream-cancel-active-decode").expect("stream id"),
+        MonotonicMillis::new(0),
+        StreamingPacketizeConfig {
+            packet_duration_ms: 20,
+            queue_capacity: 1,
+        },
+    )
+    .expect("spawn packetizer worker");
+    let reader = handle.statistics_reader();
+
+    let deadline = std::time::Instant::now() + TEST_TIMEOUT;
+    loop {
+        let (_queued, _capacity, backpressure_events, _emitted) = reader.snapshot();
+        if backpressure_events > 0 && active_worker_count() > 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "decoder never became observably active while packetizer was backpressured"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let error = handle
+        .cancel_and_join()
+        .expect_err("explicit cancellation is the expected terminal outcome");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+    assert_eq!(
+        active_worker_count(),
+        0,
+        "packetizer shutdown returned before its owned decoder worker was joined"
+    );
 }
 
 #[test]

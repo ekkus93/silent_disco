@@ -30,6 +30,19 @@ pub const MAX_DRIFT_HISTORY_SAMPLES: usize = 256;
 /// coming, not a slow-but-real one.
 pub const PENDING_PROBE_MAX_AGE_MS: u64 = 5_000;
 
+/// Acquisition stays strict until enough measured rejections show the default
+/// gate is unsuitable for the current path.
+pub const ACQUISITION_ADAPT_AFTER_REJECTIONS: u64 = 3;
+/// Earliest elapsed acquisition time at which measured RTTs may widen the gate.
+pub const ACQUISITION_ADAPT_AFTER_MS: u64 = 750;
+/// Ceiling for the measured adaptive gate before the hard acquisition bound.
+pub const ACQUISITION_ADAPTIVE_CEILING_MS: f64 = 600.0;
+/// Time after which acquisition may use the hard bounded ceiling.
+pub const ACQUISITION_HARD_CEILING_AFTER_MS: u64 = 2_000;
+/// Absolute default acquisition ceiling; steady-state samples never use it.
+pub const ACQUISITION_HARD_CEILING_MS: f64 = 1_000.0;
+const ACQUISITION_REJECTED_RTT_HISTORY: usize = 12;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SyncEstimatorConfig {
     pub max_samples: usize,
@@ -98,10 +111,23 @@ impl Default for SyncSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SyncAcquisitionStatus {
+    /// Samples rejected before the first accepted synchronization sample.
+    pub rejected_sample_count: u64,
+    /// Milliseconds elapsed since the first probe of the current acquisition.
+    pub elapsed_ms: u64,
+    /// RTT gate used for the current observation.
+    pub effective_rtt_limit_ms: f64,
+    /// True when initial lock required the acquisition-only widened gate.
+    pub degraded_lock: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SyncObservation {
     pub sample: SyncSample,
     pub accepted: bool,
     pub snapshot: SyncSnapshot,
+    pub acquisition: SyncAcquisitionStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +200,10 @@ pub struct ClockSyncEstimator {
     accepted_samples: VecDeque<SyncSample>,
     drift_history: VecDeque<(LocalMonotonicMillis, f64)>,
     last_accepted_sync_at: Option<LocalMonotonicMillis>,
+    acquisition_started_at: Option<LocalMonotonicMillis>,
+    rejected_acquisition_rtts: VecDeque<f64>,
+    acquisition_rejected_count: u64,
+    degraded_lock: bool,
 }
 
 impl ClockSyncEstimator {
@@ -190,6 +220,10 @@ impl ClockSyncEstimator {
             accepted_samples: VecDeque::with_capacity(config.max_samples),
             drift_history: VecDeque::with_capacity(config.drift_history_size),
             last_accepted_sync_at: None,
+            acquisition_started_at: None,
+            rejected_acquisition_rtts: VecDeque::with_capacity(ACQUISITION_REJECTED_RTT_HISTORY),
+            acquisition_rejected_count: 0,
+            degraded_lock: false,
             config,
         })
     }
@@ -226,6 +260,9 @@ impl ClockSyncEstimator {
             return Err(SyncEstimatorError::PendingProbeLimitReached {
                 maximum: MAX_PENDING_PROBES,
             });
+        }
+        if self.accepted_samples.is_empty() && self.acquisition_started_at.is_none() {
+            self.acquisition_started_at = Some(local_send_time);
         }
         self.pending.insert(correlation_id, local_send_time);
         Ok(())
@@ -271,8 +308,14 @@ impl ClockSyncEstimator {
             t3_host_send: host_send_time,
             t4_local_receive: local_receive_time,
         })?;
-        let accepted = sample.round_trip_time_ms <= self.config.max_accepted_rtt_ms;
+        let effective_rtt_limit_ms = self.effective_rtt_limit_ms(local_receive_time);
+        let accepted = sample.round_trip_time_ms <= effective_rtt_limit_ms;
         if accepted {
+            if self.accepted_samples.is_empty()
+                && sample.round_trip_time_ms > self.config.max_accepted_rtt_ms
+            {
+                self.degraded_lock = true;
+            }
             if self.accepted_samples.len() == self.config.max_samples {
                 self.accepted_samples.pop_front();
             }
@@ -284,13 +327,69 @@ impl ClockSyncEstimator {
             self.drift_history
                 .push_back((sample.local_receive_time, sample.offset_ms));
             self.last_accepted_sync_at = Some(sample.local_receive_time);
+        } else if self.accepted_samples.is_empty() {
+            self.acquisition_rejected_count = self.acquisition_rejected_count.saturating_add(1);
+            if self.rejected_acquisition_rtts.len() == ACQUISITION_REJECTED_RTT_HISTORY {
+                self.rejected_acquisition_rtts.pop_front();
+            }
+            self.rejected_acquisition_rtts
+                .push_back(sample.round_trip_time_ms);
         }
 
         Ok(SyncObservation {
             sample,
             accepted,
             snapshot: self.snapshot(),
+            acquisition: SyncAcquisitionStatus {
+                rejected_sample_count: self.acquisition_rejected_count,
+                elapsed_ms: self.acquisition_elapsed_ms(local_receive_time),
+                effective_rtt_limit_ms,
+                degraded_lock: self.degraded_lock,
+            },
         })
+    }
+
+    fn acquisition_elapsed_ms(&self, now: LocalMonotonicMillis) -> u64 {
+        self.acquisition_started_at
+            .map_or(0, |started| now.get().saturating_sub(started.get()))
+    }
+
+    fn effective_rtt_limit_ms(&self, now: LocalMonotonicMillis) -> f64 {
+        // Once a real sample has locked the timeline, steady-state quality is
+        // strict again. The widened gate is acquisition-only.
+        if !self.accepted_samples.is_empty() {
+            return self.config.max_accepted_rtt_ms;
+        }
+        let elapsed_ms = self.acquisition_elapsed_ms(now);
+        if elapsed_ms >= ACQUISITION_HARD_CEILING_AFTER_MS {
+            return self
+                .config
+                .max_accepted_rtt_ms
+                .max(ACQUISITION_HARD_CEILING_MS);
+        }
+        if elapsed_ms < ACQUISITION_ADAPT_AFTER_MS
+            || self.acquisition_rejected_count < ACQUISITION_ADAPT_AFTER_REJECTIONS
+            || self.rejected_acquisition_rtts.is_empty()
+        {
+            return self.config.max_accepted_rtt_ms;
+        }
+
+        let mut measured: Vec<f64> = self.rejected_acquisition_rtts.iter().copied().collect();
+        measured.sort_by(f64::total_cmp);
+        let median = measured[measured.len() / 2];
+        (median * 1.5)
+            .max(self.config.max_accepted_rtt_ms)
+            .min(ACQUISITION_ADAPTIVE_CEILING_MS.max(self.config.max_accepted_rtt_ms))
+    }
+
+    #[must_use]
+    pub fn acquisition_status(&self, now: LocalMonotonicMillis) -> SyncAcquisitionStatus {
+        SyncAcquisitionStatus {
+            rejected_sample_count: self.acquisition_rejected_count,
+            elapsed_ms: self.acquisition_elapsed_ms(now),
+            effective_rtt_limit_ms: self.effective_rtt_limit_ms(now),
+            degraded_lock: self.degraded_lock,
+        }
     }
 
     #[must_use]
@@ -416,307 +515,4 @@ fn usize_to_f64(value: usize) -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        ClockSyncEstimator, MAX_PENDING_PROBES, PENDING_PROBE_MAX_AGE_MS, SyncDecision,
-        SyncEstimatorConfig, SyncEstimatorError, SyncSnapshot,
-    };
-    use crate::{
-        domain::SyncConfidence,
-        sync::{HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId},
-    };
-
-    const FLOAT_TOLERANCE: f64 = 1.0e-9;
-
-    fn assert_close(actual: f64, expected: f64) {
-        assert!(
-            (actual - expected).abs() <= FLOAT_TOLERANCE,
-            "expected {actual} to be within {FLOAT_TOLERANCE} of {expected}"
-        );
-    }
-
-    fn observe(
-        estimator: &mut ClockSyncEstimator,
-        correlation: u64,
-        t1: u64,
-        t2: u64,
-        t3: u64,
-        t4: u64,
-    ) -> Result<super::SyncObservation, SyncEstimatorError> {
-        let correlation = SyncCorrelationId::new(correlation);
-        estimator.begin_probe(correlation, LocalMonotonicMillis::new(t1))?;
-        estimator.observe_response(
-            correlation,
-            LocalMonotonicMillis::new(t1),
-            HostMonotonicMillis::new(t2),
-            HostMonotonicMillis::new(t3),
-            LocalMonotonicMillis::new(t4),
-        )
-    }
-
-    #[test]
-    fn matches_kotlin_low_rtt_best_half_behavior() {
-        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
-            .expect("default config is valid");
-        assert!(
-            observe(&mut estimator, 1, 1_000, 1_012, 1_014, 1_026)
-                .expect("first sample")
-                .accepted
-        );
-        assert!(
-            observe(&mut estimator, 2, 2_000, 2_015, 2_017, 2_022)
-                .expect("second sample")
-                .accepted
-        );
-        assert!(
-            !observe(&mut estimator, 3, 3_000, 3_100, 3_101, 3_400)
-                .expect("high RTT sample is valid but rejected")
-                .accepted
-        );
-
-        let snapshot = estimator.snapshot();
-        assert_close(snapshot.offset_ms, 5.0);
-        assert_close(snapshot.round_trip_time_ms, 20.0);
-        assert_close(snapshot.jitter_ms, 0.0);
-        assert_eq!(snapshot.confidence, SyncConfidence::Excellent);
-        assert_eq!(snapshot.accepted_sample_count, 2);
-    }
-
-    #[test]
-    fn correlation_ids_are_bounded_unique_and_single_use() {
-        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
-            .expect("default config is valid");
-        let correlation = SyncCorrelationId::new(7);
-        estimator
-            .begin_probe(correlation, LocalMonotonicMillis::new(100))
-            .expect("first registration succeeds");
-        assert_eq!(
-            estimator.begin_probe(correlation, LocalMonotonicMillis::new(100)),
-            Err(SyncEstimatorError::DuplicateCorrelationId {
-                correlation_id: correlation
-            })
-        );
-        estimator
-            .observe_response(
-                correlation,
-                LocalMonotonicMillis::new(100),
-                HostMonotonicMillis::new(110),
-                HostMonotonicMillis::new(111),
-                LocalMonotonicMillis::new(120),
-            )
-            .expect("first response consumes correlation");
-        assert_eq!(
-            estimator.observe_response(
-                correlation,
-                LocalMonotonicMillis::new(100),
-                HostMonotonicMillis::new(110),
-                HostMonotonicMillis::new(111),
-                LocalMonotonicMillis::new(120),
-            ),
-            Err(SyncEstimatorError::StaleCorrelationId {
-                correlation_id: correlation
-            })
-        );
-
-        for id in 0..MAX_PENDING_PROBES {
-            estimator
-                .begin_probe(
-                    SyncCorrelationId::new(
-                        1_000 + u64::try_from(id).expect("pending-probe index fits u64"),
-                    ),
-                    LocalMonotonicMillis::new(1_000),
-                )
-                .expect("pending capacity not reached");
-        }
-        assert!(matches!(
-            estimator.begin_probe(
-                SyncCorrelationId::new(9_999),
-                LocalMonotonicMillis::new(1_000),
-            ),
-            Err(SyncEstimatorError::PendingProbeLimitReached { .. })
-        ));
-    }
-
-    /// The regression this exists to prevent: before eviction, filling
-    /// `pending` with lost responses bricked `begin_probe` for the rest of
-    /// the stream, since nothing ever removed an entry except a matching
-    /// `observe_response`. A probe attempt after the age threshold must
-    /// recover on its own, not require every prior probe to eventually
-    /// answer.
-    #[test]
-    fn stale_pending_probes_are_evicted_so_probing_recovers_from_sustained_loss() {
-        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
-            .expect("default config is valid");
-        for id in 0..MAX_PENDING_PROBES {
-            estimator
-                .begin_probe(
-                    SyncCorrelationId::new(u64::try_from(id).expect("index fits u64")),
-                    LocalMonotonicMillis::new(1_000),
-                )
-                .expect("pending capacity not reached");
-        }
-        assert_eq!(estimator.pending_probe_count(), MAX_PENDING_PROBES);
-
-        // Still fully stuck one millisecond before the age threshold.
-        assert!(matches!(
-            estimator.begin_probe(
-                SyncCorrelationId::new(20_000),
-                LocalMonotonicMillis::new(1_000 + PENDING_PROBE_MAX_AGE_MS - 1),
-            ),
-            Err(SyncEstimatorError::PendingProbeLimitReached { .. })
-        ));
-
-        // At the threshold, every one of the 64 lost probes is stale and a
-        // fresh probe succeeds -- this is "recovers", not "shrinks slowly".
-        estimator
-            .begin_probe(
-                SyncCorrelationId::new(20_001),
-                LocalMonotonicMillis::new(1_000 + PENDING_PROBE_MAX_AGE_MS),
-            )
-            .expect("probing recovers once the lost probes have aged out");
-        assert_eq!(
-            estimator.pending_probe_count(),
-            1,
-            "eviction must drop every stale entry, not just make room for one"
-        );
-    }
-
-    /// Eviction must not be trigger-happy: a probe still within its answer
-    /// window has to survive a later `begin_probe` call, or a real,
-    /// in-flight response would arrive to find its correlation ID already
-    /// gone.
-    #[test]
-    fn a_probe_within_its_age_window_survives_a_later_begin_probe() {
-        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
-            .expect("default config is valid");
-        let first = SyncCorrelationId::new(1);
-        estimator
-            .begin_probe(first, LocalMonotonicMillis::new(1_000))
-            .expect("first probe registers");
-
-        estimator
-            .begin_probe(
-                SyncCorrelationId::new(2),
-                LocalMonotonicMillis::new(1_000 + PENDING_PROBE_MAX_AGE_MS - 1),
-            )
-            .expect("second probe registers just under the age threshold");
-
-        // The still-young first probe must still be answerable.
-        estimator
-            .observe_response(
-                first,
-                LocalMonotonicMillis::new(1_000),
-                HostMonotonicMillis::new(1_010),
-                HostMonotonicMillis::new(1_011),
-                LocalMonotonicMillis::new(1_020),
-            )
-            .expect("a response within the age window must still find its correlation ID");
-    }
-
-    #[test]
-    fn mismatched_echo_consumes_correlation_and_fails_visibly() {
-        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
-            .expect("default config is valid");
-        let correlation = SyncCorrelationId::new(8);
-        estimator
-            .begin_probe(correlation, LocalMonotonicMillis::new(100))
-            .expect("probe registration succeeds");
-        assert_eq!(
-            estimator.observe_response(
-                correlation,
-                LocalMonotonicMillis::new(101),
-                HostMonotonicMillis::new(110),
-                HostMonotonicMillis::new(111),
-                LocalMonotonicMillis::new(120),
-            ),
-            Err(SyncEstimatorError::CorrelationTimestampMismatch {
-                correlation_id: correlation
-            })
-        );
-        assert_eq!(estimator.pending_probe_count(), 0);
-    }
-
-    #[test]
-    fn sample_and_drift_history_are_bounded() {
-        let config = SyncEstimatorConfig {
-            max_samples: 3,
-            drift_history_size: 3,
-            ..SyncEstimatorConfig::default()
-        };
-        let mut estimator = ClockSyncEstimator::new(config).expect("bounded config is valid");
-        for index in 0..5_u64 {
-            observe(
-                &mut estimator,
-                index,
-                index * 1_000,
-                index * 1_000 + 10 + index,
-                index * 1_000 + 11 + index,
-                index * 1_000 + 20,
-            )
-            .expect("ordered sample");
-        }
-        assert_eq!(estimator.snapshot().accepted_sample_count, 3);
-        assert!(estimator.snapshot().skew_ppm.is_finite());
-    }
-
-    #[test]
-    fn confidence_thresholds_match_android_baseline() {
-        assert_eq!(
-            super::classify_confidence(20.0, 2.0),
-            SyncConfidence::Excellent
-        );
-        assert_eq!(super::classify_confidence(50.0, 5.0), SyncConfidence::Good);
-        assert_eq!(super::classify_confidence(90.0, 12.0), SyncConfidence::Fair);
-        assert_eq!(super::classify_confidence(90.1, 0.0), SyncConfidence::Poor);
-    }
-
-    #[test]
-    fn decisions_distinguish_initial_periodic_drift_and_wait() {
-        let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default())
-            .expect("default config is valid");
-        assert_eq!(
-            estimator.decision(LocalMonotonicMillis::new(0), SyncSnapshot::default()),
-            Ok(SyncDecision::InitialProbeRequired)
-        );
-        let observation =
-            observe(&mut estimator, 1, 1_000, 1_010, 1_011, 1_020).expect("accepted sample");
-        assert_eq!(
-            estimator.decision(LocalMonotonicMillis::new(2_000), observation.snapshot),
-            Ok(SyncDecision::Wait)
-        );
-        assert_eq!(
-            estimator.decision(LocalMonotonicMillis::new(3_020), observation.snapshot),
-            Ok(SyncDecision::PeriodicProbeRequired)
-        );
-        let drifted = SyncSnapshot {
-            offset_ms: 18.1,
-            ..observation.snapshot
-        };
-        assert_eq!(
-            estimator.decision(LocalMonotonicMillis::new(2_000), drifted),
-            Ok(SyncDecision::DriftProbeRequired)
-        );
-        assert_eq!(
-            estimator.decision(LocalMonotonicMillis::new(999), observation.snapshot),
-            Err(SyncEstimatorError::LocalClockMovedBackwards)
-        );
-    }
-
-    #[test]
-    fn invalid_configuration_is_rejected_before_allocating() {
-        assert!(matches!(
-            ClockSyncEstimator::new(SyncEstimatorConfig {
-                max_samples: 0,
-                ..SyncEstimatorConfig::default()
-            }),
-            Err(SyncEstimatorError::InvalidConfiguration)
-        ));
-        assert!(matches!(
-            ClockSyncEstimator::new(SyncEstimatorConfig {
-                max_accepted_rtt_ms: f64::NAN,
-                ..SyncEstimatorConfig::default()
-            }),
-            Err(SyncEstimatorError::InvalidConfiguration)
-        ));
-    }
-}
+mod tests;

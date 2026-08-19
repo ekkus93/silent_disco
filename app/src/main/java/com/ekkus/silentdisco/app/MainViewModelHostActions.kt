@@ -89,7 +89,14 @@ internal fun MainViewModel.startHostPlaybackImpl() {
 
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
             val backend = try {
-                playbackEngine.start(decoded.format)
+                withContext(Dispatchers.IO) {
+                    startHostMonitorPlayback(
+                        sessionId = sessionId,
+                        streamId = streamId,
+                        format = decoded.format,
+                        firstPacket = prepared.packets.first(),
+                    )
+                }
             } catch (error: Throwable) {
                 handleHostPlaybackEngineFailure(error)
                 return@afterAuthoritativeHostPlaybackState
@@ -214,7 +221,12 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
             hostStreamJob?.cancel()
             playbackJob?.cancel()
             resyncJob?.cancel()
-            playbackEngine.stop()
+            try {
+                withContext(Dispatchers.IO) { stopHostMonitorPlayback() }
+            } catch (error: Throwable) {
+                handleHostPlaybackEngineFailure(error)
+                return@afterAuthoritativeHostPlaybackState
+            }
             metrics.increment("stream_stop")
             propagateListenerPlaybackState(
                 playbackState = PlaybackState.STOPPED,

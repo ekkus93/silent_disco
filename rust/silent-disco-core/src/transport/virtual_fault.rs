@@ -124,11 +124,12 @@ pub struct VirtualUdpFaultConfig {
 ///
 /// Every other fault here acts on the *receive* side: it wraps
 /// `recv_event` and decides what a real, already-decoded `TransportEvent`
-/// becomes once it reaches the recipient. Corruption cannot work that way
-/// in this transport: the virtual "wire" is an `mpsc` channel of already
-/// -decoded `TransportEvent`s (see [`super::virtual_transport`]'s own
-/// module documentation), not raw bytes -- there is no receive-side
-/// decode step to make fail. This wrapper instead corrupts the *encoded*
+/// becomes once it reaches the recipient. The underlying virtual transport
+/// now carries encoded bytes and decodes them at receive time, but this
+/// wrapper intentionally sits *outside* that wire behind the transport-node
+/// trait and therefore only sees the decoded event returned by the inner
+/// node. It cannot mutate the inner queue's private bytes in place. This
+/// wrapper instead corrupts the *encoded*
 /// bytes and attempts a real `decode_frame` on them at send time, before
 /// the (now-guaranteed-to-fail) send would otherwise proceed; the caller
 /// that attempted to send receives a genuine `ProtocolError`-derived

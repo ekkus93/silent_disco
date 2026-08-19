@@ -1,7 +1,7 @@
 //! Playback engine lifecycle: the runtime one caller owns per stream, and the
 //! outcome type returned from feeding it a correlated sync sample.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -22,7 +22,7 @@ use crate::audio_abi::{register_render_ring, release_render_ring};
 use super::error::ListenerPlaybackError;
 use super::pump::{
     PumpClock, RING_DRAIN_POLL_INTERVAL, RING_DRAIN_STALL_LIMIT, RING_DRAIN_TIMEOUT, Shared,
-    drain_due_frames, run_pump,
+    drain_due_frames, run_pump_contained,
 };
 
 /// Outcome of feeding one correlated sync response to the runtime.
@@ -45,6 +45,22 @@ pub struct SyncSampleOutcome {
     pub accepted_sample_count: usize,
     /// True once playback has a real offset and may start.
     pub sync_locked: bool,
+    /// Samples rejected before the first accepted synchronization sample.
+    pub acquisition_rejected_sample_count: u64,
+    /// Milliseconds spent acquiring the first usable synchronization sample.
+    pub acquisition_elapsed_ms: u64,
+    /// RTT gate used for this observation.
+    pub acquisition_rtt_limit_ms: f64,
+    /// True when initial lock required the bounded acquisition-only widened gate.
+    pub degraded_lock: bool,
+}
+
+/// Pump-thread liveness exported alongside playback accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PumpLiveness {
+    pub(crate) tick_count: u64,
+    pub(crate) last_tick_ms: u64,
+    pub(crate) contained_panics: u64,
 }
 
 /// One live listener playback stream.
@@ -59,6 +75,9 @@ pub struct ListenerPlaybackRuntime {
     clock: Arc<PumpClock>,
     token: u64,
     pump_thread: Mutex<Option<JoinHandle<()>>>,
+    /// Lifecycle stop is separate from `Shared::running`: a worker may stop
+    /// itself after a contained failure and still require explicit cleanup.
+    stopped: AtomicBool,
     /// Diagnostics captured at stop, so a stream's final accounting survives
     /// the teardown that produced it.
     last_diagnostics: Mutex<Option<PlaybackDiagnostics>>,
@@ -106,13 +125,19 @@ impl ListenerPlaybackRuntime {
             pump: Mutex::new(pump),
             estimator: Mutex::new(estimator),
             running: AtomicBool::new(true),
+            tick_count: AtomicU64::new(0),
+            last_tick_ms: AtomicU64::new(0),
+            contained_panics: AtomicU64::new(0),
+            terminal_failure: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            panic_next_tick: AtomicBool::new(false),
         });
         let clock = Arc::new(PumpClock::new());
         let thread_shared = Arc::clone(&shared);
         let thread_clock = Arc::clone(&clock);
         let pump_thread = thread::Builder::new()
             .name("silent-disco-playback".to_owned())
-            .spawn(move || run_pump(&thread_shared, &thread_clock))
+            .spawn(move || run_pump_contained(&thread_shared, &thread_clock))
             .map_err(|error| {
                 shared.running.store(false, Ordering::SeqCst);
                 let _ = release_render_ring(token);
@@ -124,6 +149,7 @@ impl ListenerPlaybackRuntime {
             clock,
             token,
             pump_thread: Mutex::new(Some(pump_thread)),
+            stopped: AtomicBool::new(false),
             last_diagnostics: Mutex::new(None),
         })
     }
@@ -225,6 +251,21 @@ impl ListenerPlaybackRuntime {
         self.shared.lock_pump().diagnostics()
     }
 
+    /// Cheap monotonic worker-liveness snapshot for platform diagnostics.
+    #[must_use]
+    pub(crate) fn pump_liveness(&self) -> PumpLiveness {
+        PumpLiveness {
+            tick_count: self.shared.tick_count.load(Ordering::Relaxed),
+            last_tick_ms: self.shared.last_tick_ms.load(Ordering::Relaxed),
+            contained_panics: self.shared.contained_panics.load(Ordering::Relaxed),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_pump_panic_for_test(&self) {
+        self.shared.panic_next_tick.store(true, Ordering::SeqCst);
+    }
+
     /// Monotonic milliseconds on the timeline this runtime schedules against.
     ///
     /// Every local timestamp handed to [`Self::begin_sync_probe`] and
@@ -233,6 +274,46 @@ impl ListenerPlaybackRuntime {
     #[must_use]
     pub fn now_ms(&self) -> u64 {
         self.clock.now_ms()
+    }
+
+    /// Locks playback to a monotonic host clock sampled in this same process.
+    ///
+    /// Android host self-monitoring timestamps packets with
+    /// `SystemClock.elapsedRealtime()`, while this runtime's pump clock starts at
+    /// zero when the runtime opens. The platform supplies only its current host
+    /// monotonic value; Rust samples its own runtime clock here and owns the
+    /// offset calculation, keeping clock-domain mapping out of the platform.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::Stopped`] once the runtime has stopped.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "Android elapsedRealtime and the runtime clock are millisecond values far below f64 integer precision limits"
+    )]
+    pub fn lock_same_process_host_clock(
+        &self,
+        host_monotonic_now_ms: u64,
+    ) -> Result<(), ListenerPlaybackError> {
+        self.ensure_running()?;
+        let local_now_ms = self.now_ms();
+        let offset_ms = host_monotonic_now_ms as f64 - local_now_ms as f64;
+        self.shared.lock_pump().apply_sync_offset(offset_ms);
+        Ok(())
+    }
+
+    /// Changes the gain used for subsequently converted playback frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::InvalidConfiguration`] for a non-finite
+    /// or out-of-range gain, and [`ListenerPlaybackError::Stopped`] once stopped.
+    pub fn set_volume(&self, volume: f32) -> Result<(), ListenerPlaybackError> {
+        self.ensure_running()?;
+        self.shared
+            .lock_pump()
+            .set_volume(volume)
+            .map_err(|error| ListenerPlaybackError::InvalidConfiguration(error.message))
     }
 
     /// Registers one outbound sync probe before it is sent.
@@ -306,11 +387,18 @@ impl ListenerPlaybackRuntime {
             confidence: snapshot.confidence,
             accepted_sample_count: snapshot.accepted_sample_count,
             sync_locked,
+            acquisition_rejected_sample_count: observation.acquisition.rejected_sample_count,
+            acquisition_elapsed_ms: observation.acquisition.elapsed_ms,
+            acquisition_rtt_limit_ms: observation.acquisition.effective_rtt_limit_ms,
+            degraded_lock: observation.acquisition.degraded_lock,
         })
     }
 
     fn ensure_running(&self) -> Result<(), ListenerPlaybackError> {
-        if self.shared.running.load(Ordering::SeqCst) {
+        if let Some(failure) = self.shared.terminal_failure.get() {
+            return Err(ListenerPlaybackError::PumpThread(failure.clone()));
+        }
+        if !self.stopped.load(Ordering::SeqCst) && self.shared.running.load(Ordering::SeqCst) {
             Ok(())
         } else {
             Err(ListenerPlaybackError::Stopped(
@@ -329,9 +417,10 @@ impl ListenerPlaybackRuntime {
     /// ended by panicking. The ring is released either way; the failure is
     /// reported rather than swallowed.
     pub fn stop(&self) -> Result<(), ListenerPlaybackError> {
-        if !self.shared.running.swap(false, Ordering::SeqCst) {
+        if self.stopped.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
+        self.shared.running.store(false, Ordering::SeqCst);
         // Drain before joining so the tail is queued while the ring is still
         // live and the consumer is still reading.
         {
@@ -367,8 +456,29 @@ impl ListenerPlaybackRuntime {
             });
 
         let release_result = release_render_ring(self.token).map_err(ListenerPlaybackError::from);
-        join_result?;
-        release_result
+        let mut failure = self
+            .shared
+            .terminal_failure
+            .get()
+            .cloned()
+            .map(ListenerPlaybackError::PumpThread);
+        if let Err(error) = join_result {
+            append_failure(&mut failure, error);
+        }
+        if let Err(error) = release_result {
+            append_failure(&mut failure, error);
+        }
+        failure.map_or(Ok(()), Err)
+    }
+}
+
+fn append_failure(primary: &mut Option<ListenerPlaybackError>, cleanup: ListenerPlaybackError) {
+    if let Some(existing) = primary.take() {
+        *primary = Some(ListenerPlaybackError::PumpThread(format!(
+            "{existing}; cleanup failure: {cleanup}"
+        )));
+    } else {
+        *primary = Some(cleanup);
     }
 }
 
@@ -419,11 +529,14 @@ impl ListenerPlaybackRuntime {
 impl Drop for ListenerPlaybackRuntime {
     fn drop(&mut self) {
         // Dropping without an explicit stop still has to release the ring and
-        // reap the thread; a failure here cannot be returned, so it is not
-        // silently discarded either — `stop` is the supported path precisely
-        // so failures stay reportable.
-        if self.shared.running.load(Ordering::SeqCst) {
-            let _ = self.stop();
+        // reap the thread. A failure here cannot be returned, so fail loudly
+        // unless another panic is already unwinding; explicit `stop` is the
+        // supported path precisely because it can report cleanup failures.
+        if !self.stopped.load(Ordering::SeqCst)
+            && let Err(error) = self.stop()
+            && !thread::panicking()
+        {
+            panic!("implicit listener playback shutdown failed: {error}");
         }
     }
 }

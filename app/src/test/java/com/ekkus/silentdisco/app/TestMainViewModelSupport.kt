@@ -7,8 +7,10 @@ import android.content.SharedPreferences
 import android.net.wifi.WifiManager
 import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.ekkus.silentdisco.core.rust.FakeListenerCoreController
+import com.ekkus.silentdisco.core.rust.FakeListenerTransport
 import com.ekkus.silentdisco.core.rust.FakeRustDomainStore
 import com.ekkus.silentdisco.core.transport.FakeBleTransport
+import com.ekkus.silentdisco.core.transport.FakeMdnsTransport
 import com.ekkus.silentdisco.core.transport.FakeSessionTransport
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -24,14 +26,10 @@ import org.mockito.kotlin.whenever
  * [FakeListenerCoreController.emit]) instead of being invoked reflectively
  * or re-implemented for the test.
  *
- * `hostTransportController`/`listenerTransportController` are deliberately
- * left as the real, unbound production classes (`HostTransportController`/
- * `ListenerTransportController`): with no bound native transport handle,
- * their send/broadcast methods genuinely return `null`/zero-peer deliveries
- * without needing a fake -- see the effect tests that assert on that exact,
- * real "zero peers delivered" fact. A bound handle needs a real native Rust
- * socket, which is out of reach for a JVM unit test; that path remains
- * instrumented/physical-device-only.
+ * `hostTransportController` remains the real unbound production class for
+ * zero-peer host-delivery assertions. The listener transport is injected as
+ * a recording fake so endpoint-backed mDNS discovery can exercise the real
+ * connect/join effect path without opening native sockets.
  */
 class MainViewModelHarness(
     val viewModel: MainViewModel,
@@ -40,6 +38,8 @@ class MainViewModelHarness(
     val domainStore: FakeRustDomainStore,
     val bleService: FakeBleTransport,
     val wifiDirectService: FakeSessionTransport,
+    val mdnsService: FakeMdnsTransport,
+    val listenerTransport: FakeListenerTransport,
 )
 
 /**
@@ -78,6 +78,8 @@ fun newTestMainViewModelHarness(): MainViewModelHarness {
     val domainStore = FakeRustDomainStore()
     val bleService = FakeBleTransport()
     val wifiDirectService = FakeSessionTransport()
+    val mdnsService = FakeMdnsTransport()
+    val listenerTransport = FakeListenerTransport()
     val viewModel = MainViewModel(
         application = fakeApplication(),
         domainStore = domainStore,
@@ -85,6 +87,8 @@ fun newTestMainViewModelHarness(): MainViewModelHarness {
         listenerCoreFactory = { listenerCoreController },
         bleService = bleService,
         wifiDirectService = wifiDirectService,
+        mdnsService = mdnsService,
+        listenerTransportController = listenerTransport,
     )
     return MainViewModelHarness(
         viewModel = viewModel,
@@ -93,5 +97,7 @@ fun newTestMainViewModelHarness(): MainViewModelHarness {
         domainStore = domainStore,
         bleService = bleService,
         wifiDirectService = wifiDirectService,
+        mdnsService = mdnsService,
+        listenerTransport = listenerTransport,
     )
 }

@@ -41,7 +41,7 @@ fn volume_scales_the_queued_samples() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -73,4 +73,31 @@ fn volume_scales_the_queued_samples() {
     let mut output = vec![0.0_f32; 960 * 2];
     let _ = consumer.read_frames(&mut output);
     assert_eq!(output[300 * 2], 0.25);
+}
+
+#[test]
+fn dynamic_volume_updates_only_subsequently_converted_frames() {
+    let (mut pump, consumer) = pump_with(4_800);
+    pump.scheduler_mut()
+        .submit_packet(datagram(0, 16_384))
+        .expect("accepted");
+    pump.scheduler_mut()
+        .submit_packet(datagram(1, 16_384))
+        .expect("accepted");
+
+    let first = pump.tick(HOST_START_MS);
+    assert!(matches!(first, PumpTick::Queued { sequence: 0, .. }));
+    pump.set_volume(0.5).expect("valid dynamic volume");
+    let second = pump.tick(HOST_START_MS + u64::from(PACKET_DURATION_MS));
+    assert!(matches!(second, PumpTick::Queued { sequence: 1, .. }));
+
+    let mut output = vec![0.0_f32; 2 * 960 * 2];
+    let outcome = consumer.read_frames(&mut output);
+    assert_eq!(outcome.frames_supplied, 2 * 960);
+    assert_eq!(output[300 * 2], 0.5);
+    assert_eq!(output[(960 + 300) * 2], 0.25);
+
+    assert!(pump.set_volume(f32::NAN).is_err());
+    assert!(pump.set_volume(-0.01).is_err());
+    assert!(pump.set_volume(1.01).is_err());
 }

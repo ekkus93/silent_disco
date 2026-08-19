@@ -1,6 +1,7 @@
 use std::{
     sync::{Arc, mpsc::sync_channel},
     thread,
+    time::Duration,
 };
 
 use super::{DatabaseCommand, DatabaseWorker};
@@ -339,6 +340,88 @@ fn queued_write_order_is_serialized_by_the_worker() {
         Some(second)
     );
     worker.stop_and_join().expect("worker closes and joins");
+}
+
+#[test]
+fn shutdown_waits_for_an_accepted_queued_write_then_checkpoints_and_joins() {
+    let test_path = TestDatabasePath::new("worker-shutdown-queued-write");
+    let config = DatabaseConfig::new(test_path.path())
+        .and_then(|config| config.with_queue_capacity(2))
+        .expect("valid worker config");
+    let worker = DatabaseWorker::start(config).expect("worker starts");
+
+    let (entered_sender, entered_receiver) = sync_channel(1);
+    let (release_sender, release_receiver) = sync_channel(1);
+    worker
+        .client
+        .sender
+        .send(DatabaseCommand::BlockForQueueTest {
+            entered: entered_sender,
+            release: release_receiver,
+        })
+        .expect("barrier command accepted");
+    entered_receiver.recv().expect("worker entered barrier");
+
+    let settings = StoredSettings {
+        tuning: TuningSettings {
+            scan_window_ms: 7_000,
+            ..TuningSettings::default()
+        },
+        updated_at_ms: 77,
+    };
+    let (write_sender, write_receiver) = sync_channel(1);
+    worker
+        .client
+        .sender
+        .send(DatabaseCommand::SaveSettings {
+            settings: settings.clone(),
+            reply: write_sender,
+        })
+        .expect("write accepted before shutdown");
+
+    let (shutdown_done_sender, shutdown_done_receiver) = sync_channel(1);
+    let shutdown_thread = thread::spawn(move || {
+        let result = worker.stop_and_join();
+        shutdown_done_sender
+            .send(result)
+            .expect("shutdown observer still present");
+    });
+
+    assert!(
+        shutdown_done_receiver
+            .recv_timeout(Duration::from_millis(50))
+            .is_err(),
+        "shutdown completed while an earlier accepted write was still blocked"
+    );
+
+    release_sender.send(()).expect("release worker");
+    write_receiver
+        .recv()
+        .expect("accepted write receives a reply")
+        .expect("accepted write succeeds before shutdown");
+    shutdown_done_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("shutdown completes after queued write")
+        .expect("shutdown checkpoints/closes cleanly");
+    shutdown_thread
+        .join()
+        .expect("shutdown thread does not panic");
+
+    // Reopen the same database to prove the accepted write was durable before
+    // shutdown returned, not merely acknowledged and then lost.
+    let reopened =
+        DatabaseWorker::start(DatabaseConfig::new(test_path.path()).expect("valid reopen config"))
+            .expect("database reopens after shutdown");
+    assert_eq!(
+        reopened
+            .client()
+            .load_settings()
+            .expect("load settings after reopen"),
+        Some(settings)
+    );
+    reopened
+        .stop_and_join()
+        .expect("reopened database shuts down cleanly");
 }
 
 #[test]

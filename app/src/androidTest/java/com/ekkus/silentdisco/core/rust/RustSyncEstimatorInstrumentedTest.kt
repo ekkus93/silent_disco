@@ -107,6 +107,34 @@ class RustSyncEstimatorInstrumentedTest {
         }
     }
 
+
+    @Test
+    fun boundedAcquisitionMetadataCrossesThePrimitiveBridge() {
+        RustCoreBridge.openSyncEstimator().use { estimator ->
+            listOf(0L, 250L, 500L).forEach { t1 ->
+                val rejected = estimator.observe(
+                    t1LocalSendMs = t1,
+                    t2HostReceiveMs = t1 + 125,
+                    t3HostSendMs = t1 + 125,
+                    t4LocalReceiveMs = t1 + 250,
+                )
+                assertTrue(!rejected.accepted)
+            }
+
+            val accepted = estimator.observe(
+                t1LocalSendMs = 750,
+                t2HostReceiveMs = 875,
+                t3HostSendMs = 875,
+                t4LocalReceiveMs = 1_000,
+            )
+            assertTrue(accepted.accepted)
+            assertEquals(3L, accepted.acquisitionRejectedSampleCount)
+            assertEquals(1_000L, accepted.acquisitionElapsedMs)
+            assertClose("acquisition RTT limit", accepted.acquisitionRttLimitMs, 375.0)
+            assertTrue(accepted.degradedLock)
+        }
+    }
+
     @Test
     fun impossibleTimestampOrderingFailsExplicitly() {
         RustCoreBridge.openSyncEstimator().use { estimator ->

@@ -12,13 +12,12 @@ private const val RING_FULL_RETRY_DELAY_MS = 2L
 private const val MAX_STALL_RETRIES = 500
 
 /**
- * Production listener/host-monitor output: Oboe (native, via [OboeBridge])
- * consuming the shared Rust render ring. Kotlin still decides what plays and
- * when, exactly as before; this engine only converts each already-scheduled
- * frame's PCM16LE payload to interleaved float32 and pushes it into the
- * ring. It never writes to any audio hardware API itself — the native Oboe
- * callback owns that, reading from the ring through the narrow real-time C
- * ABI (`include/silent_disco_audio.h`).
+ * Legacy adapter retained for focused PCM/ring/Oboe regression tests.
+ *
+ * Production listener and Android host-monitor playback use
+ * `FfiListenerPlaybackHandle`, so Kotlin no longer decides what plays or
+ * converts scheduled PCM into the render ring. This class remains useful as
+ * an isolated low-level test surface for the native Oboe bridge.
  */
 class OboePlaybackEngine : PlaybackEngine {
     private var handle: FfiAudioOutputHandle? = null

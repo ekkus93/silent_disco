@@ -41,11 +41,22 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
             val sendTimeMs = runtime.nowMs()
             // Register before sending: a response that beats its own
             // registration has nothing to correlate against.
-            val registered = runCatching {
+            try {
                 runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs)
-            }.isSuccess
-            if (registered) {
-                runCatching { handle.sendSyncRequest(correlationId.toULong(), sendTimeMs) }
+            } catch (error: Throwable) {
+                logger.w("manual.audio.sync_probe_failed", error.message ?: "sync probe registration failed")
+                handlePlaybackEngineFailure(error)
+                break
+            }
+            try {
+                handle.sendSyncRequest(correlationId.toULong(), sendTimeMs)
+            } catch (error: Throwable) {
+                logger.w("manual.audio.sync_send_failed", error.message ?: "sync request send failed")
+                stopPlayback()?.let(error::addSuppressed)
+                _connectState.value = ManualConnectUiState.Failed(
+                    error.message ?: "sync request send failed",
+                )
+                break
             }
             correlationId += 1
             val locked = playbackRuntime?.diagnostics()?.syncLocked == true
@@ -68,13 +79,23 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
  * live `nowMs()` (the pre-fix behaviour, dispatch delay included) if no
  * origin was captured -- still correct, just not as tight.
  */
+internal fun translateTransportElapsedToPumpClock(
+    transportClockOriginMs: ULong?,
+    elapsedTransportMs: ULong,
+    fallbackNowMs: () -> ULong,
+): ULong {
+    val origin = transportClockOriginMs ?: return fallbackNowMs()
+    return if (elapsedTransportMs >= origin) elapsedTransportMs - origin else 0uL
+}
+
 internal fun ManualListenerTransportController.translateToPumpClock(
     runtime: FfiListenerPlaybackHandle,
     elapsedTransportMs: ULong,
-): ULong {
-    val origin = transportClockOriginMs ?: return runtime.nowMs()
-    return if (elapsedTransportMs >= origin) elapsedTransportMs - origin else 0uL
-}
+): ULong = translateTransportElapsedToPumpClock(
+    transportClockOriginMs = transportClockOriginMs,
+    elapsedTransportMs = elapsedTransportMs,
+    fallbackNowMs = runtime::nowMs,
+)
 
 /**
  * Forwards one four-timestamp exchange to the Rust estimator.
@@ -133,13 +154,20 @@ internal fun ManualListenerTransportController.handleSyncResponse(
         "sync accepted=${outcome.accepted} offsetMs=${outcome.offsetMs} " +
             "rttMs=${outcome.roundTripTimeMs} jitterMs=${outcome.jitterMs} " +
             "samples=${outcome.acceptedSampleCount} locked=${outcome.syncLocked} " +
-            "confidence=${outcome.confidence}",
+            "confidence=${outcome.confidence} acquisitionRejected=${outcome.acquisitionRejectedSampleCount} " +
+            "acquisitionElapsedMs=${outcome.acquisitionElapsedMs} " +
+            "acquisitionRttLimitMs=${outcome.acquisitionRttLimitMs} " +
+            "degradedLock=${outcome.degradedLock}",
     )
     logger.i(
         "manual.audio.sync_sample",
         "accepted=${outcome.accepted} offsetMs=${outcome.offsetMs} " +
             "skewPpm=${outcome.skewPpm} rttMs=${outcome.roundTripTimeMs} " +
-            "samples=${outcome.acceptedSampleCount} syncLocked=${outcome.syncLocked}",
+            "samples=${outcome.acceptedSampleCount} syncLocked=${outcome.syncLocked} " +
+            "acquisitionRejected=${outcome.acquisitionRejectedSampleCount} " +
+            "acquisitionElapsedMs=${outcome.acquisitionElapsedMs} " +
+            "acquisitionRttLimitMs=${outcome.acquisitionRttLimitMs} " +
+            "degradedLock=${outcome.degradedLock}",
     )
     runCatching {
         handle.sendSynchronizationReport(
@@ -154,7 +182,26 @@ internal fun ManualListenerTransportController.handleSyncResponse(
             error.message ?: "synchronization report send failed",
         )
     }
-    if (outcome.syncLocked && _connectState.value is ManualConnectUiState.Streaming) {
-        _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PLAYING)
+    val current = _connectState.value
+    if (current is ManualConnectUiState.Streaming) {
+        val acquisitionStatus = when {
+            !outcome.syncLocked ->
+                "Clock sync: ${outcome.acquisitionRejectedSampleCount} rejected over " +
+                    "${outcome.acquisitionElapsedMs}ms (RTT gate " +
+                    "${"%.0f".format(outcome.acquisitionRttLimitMs)}ms)"
+            outcome.degradedLock ->
+                "Clock sync locked after ${outcome.acquisitionRejectedSampleCount} rejected samples " +
+                    "using a bounded degraded acquisition gate"
+            else -> null
+        }
+        val playbackState = if (outcome.syncLocked && current.playbackState == PlaybackState.BUFFERING) {
+            PlaybackState.PLAYING
+        } else {
+            current.playbackState
+        }
+        _connectState.value = current.copy(
+            playbackState = playbackState,
+            syncStatus = acquisitionStatus,
+        )
     }
 }

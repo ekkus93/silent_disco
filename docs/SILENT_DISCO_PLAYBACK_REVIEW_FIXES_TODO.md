@@ -124,7 +124,8 @@ playback, queue, or database failures behind generic success states".
 - [x] 3.2 Surface a visible error when a stream has been open and unable to
       play for longer than a bounded time (no accepted sync sample, or
       `Buffering` that never resolves).
-- [ ] 3.3 Audit the manual path's UI mapping for the same class of problem.
+- [x] 3.3 Audit the manual path's UI mapping for the same class of problem.
+      *Verified: manual playback enters `BUFFERING` at stream start and only maps to `PLAYING` after a locked sync outcome.*
 
 ## 4. HIGH — cross-listener alignment is never actually established
 
@@ -145,26 +146,30 @@ or the `AwaitingRebuffer` path, and a ring underrun advances wall time
 without advancing `read_index` — so an underrun shifts a listener permanently
 later with nothing that detects or corrects it.
 
-- [ ] 4.1 Make alignment hold under the real config, not only when
+- [x] 4.1 Make alignment hold under the real config, not only when
       `startup_buffer_target_ms` is 0. Every existing prefill test sets it to
       0, which is why this was never caught — fix the tests too.
 - [x] 4.2 Re-arm alignment after any rebuffer or offset adoption.
-- [ ] 4.3 Add a correction path for accumulated playout drift: compare
+- [x] 4.3 Add a correction path for accumulated playout drift: compare
+      *Implemented: accepted soft offset updates slew by at most 5ms per observation, and post-start ring underruns re-align stale scheduler slots to true current time; startup silence has a non-regression test.*
       intended vs actual playout position and correct gently, bounded well
       under the hard-resync threshold. This overlaps item 5.4 in the
       migration TODO (slew-limited correction) — do them together.
-- [ ] 4.4 Add a test with **two schedulers on one simulated timeline** that
+- [x] 4.4 Add a test with **two schedulers on one simulated timeline** that
+      *Implemented: `two_listeners_locking_sync_at_different_moments_play_the_same_audio_together` is an ordinary active test, not ignored.*
       lock sync at different moments and assert their playout positions
       converge. Nothing currently tests the property the product exists for.
 - [ ] 4.5 Device-validate with two phones playing the same stream. This is
       the acceptance criterion for the whole project and has never been run.
 
-**4 STATUS: ATTEMPTED, REGRESSED ON DEVICE, REVERTED (2026-08-03).**
+**4 STATUS: SOFTWARE FIX RE-IMPLEMENTED; PHYSICAL RE-VALIDATION STILL REQUIRED.**
 
-The diagnosis below still stands and the acceptance test
-(`two_listeners_...`, now `#[ignore]`d) still encodes the target. The
-*implementation* was wrong and is reverted; `discard_already_late_head` is
-retained, unused, with this explanation attached.
+The 2026-08-03 attempt was reverted because it compared stale-head deadlines
+against the pump's future write-ahead horizon. The replacement implementation
+separates true current time from that release horizon, actively exercises the
+two-listener scheduler regression, and now also re-aligns after a post-start
+render-ring underrun. Item 4.5 remains the required two-phone acceptance
+measurement; the software checks do not substitute for it.
 
 **What went wrong:** `poll` receives a time the pump has already advanced by
 its 400ms write lead, so discarding "everything whose deadline has passed"
@@ -227,9 +232,9 @@ everything past ~1.28s is rejected as unreorderable — 335 packets here. The
 12s hiccup is the buffer draining and then resynchronising onto the live
 position via the item-2 path.
 
-- [ ] 4b.1 Probe fast until locked (~250ms), then fall back to the steady
+- [x] 4b.1 Probe fast until locked (~250ms), then fall back to the steady
       cadence. Applies to both listener paths.
-- [ ] 4b.2 Do not submit packets to the scheduler while sync is unlocked.
+- [x] 4b.2 Do not submit packets to the scheduler while sync is unlocked.
       They cannot be scheduled without an offset and are stale by the time
       one exists; the item-2 resync adopts the live position instead. Count
       what is dropped so it stays visible.
@@ -264,7 +269,8 @@ reporting `Playing`. The same unconditional close exists in
 - [x] 5.4 Fix ownership of `nativeOboeClose()`. Only the component that
       opened the stream should close it; a global unconditional close from
       three unrelated call sites cannot be correct once two paths exist.
-- [ ] 5.5 Add a test or instrumentation asserting no runtime outlives its
+- [x] 5.5 Add a test or instrumentation asserting no runtime outlives its
+      *Implemented with test-only active-pump-thread instrumentation and repeated start/stop-cycle coverage.*
       stream (thread count / registry entries stable across N connect-drop
       cycles).
 
@@ -283,9 +289,9 @@ probe job appearing to complete normally. Mirror case: B reads a stale
 reference to an already-`close()`d handle and the exception is swallowed by
 `runCatching`.
 
-- [ ] 6.1 Make the shared fields safely published (`AtomicReference`, or
+- [x] 6.1 Make the shared fields safely published (`AtomicReference`, or
       confine all mutation to a single dispatcher).
-- [ ] 6.2 Re-check the same pattern in `MainViewModel.listenerPlayback`,
+- [x] 6.2 Re-check the same pattern in `MainViewModel.listenerPlayback`,
       which is touched from the main thread and the diagnostics loop.
 
 ## 7. MEDIUM-HIGH — burst packet loss produces a packet-rate buzz
@@ -366,7 +372,8 @@ is exactly the disagreement the recorder exists to rule out.
       tick can currently mutate counters after the "final" summary.
       *Done: the snapshot moved after the drain, which is also after the pump
       loop has been signalled to stop.*
-- [ ] 8.4 Decide what the debug capture represents and document it: either
+- [x] 8.4 Decide what the debug capture represents and document it: either
+      *Documented throughout `debug_recorder.rs`/`playback_pump/recording.rs` as audio released toward the render ring, not proof of rendered speaker output.*
       record only frames the ring accepted, or keep recording releases and
       state plainly that it is "released toward the ring, not rendered".
       *Still open, and it matters more than its severity suggests: this blind
@@ -386,24 +393,24 @@ returns a frozen but plausible snapshot, and the UI keeps reporting PLAYING.
 The `PumpThread` error surfaces only at `stop()`. CLAUDE.md lists contained
 panics as a mandatory diagnostic.
 
-- [ ] 9.1 Add a liveness signal to `PlaybackDiagnostics` (tick counter or
+- [x] 9.1 Add a liveness signal to `PlaybackDiagnostics` (tick counter or
       last-tick timestamp) and surface a stalled pump as a visible failure.
-- [ ] 9.2 Record a contained panic explicitly rather than inheriting it
+- [x] 9.2 Record a contained panic explicitly rather than inheriting it
       through mutex poisoning.
 
 ## 10. MEDIUM — silent rejection classes and swallowed failures
 
-- [ ] 10.1 `listener_playback.rs` discards the `JitterBufferRejection` with
+- [x] 10.1 `listener_playback.rs` discards the `JitterBufferRejection` with
       `let _ =`. The justifying comment covers duplicate/late/reorder, but
       the same line swallows `WrongSession`, `WrongStream`, and
       `BufferedDurationExceeded`. A stream-generation change gives 100%
       rejection, total silence, and every exposed counter reads normal.
       Expose these three in `FfiPlaybackDiagnostics`.
-- [ ] 10.2 Fix the `runCatching {}` sites with no `.onFailure`:
+- [x] 10.2 Fix the `runCatching {}` sites with no `.onFailure`:
       `submitPacket` (both paths), `beginSyncProbe` + `sendSyncRequest`,
       `sendDisconnect`, `handle.shutdown()`. Forbidden by CLAUDE.md; here it
       is not even log-only.
-- [ ] 10.3 `apply_sync_offset` accepts a non-finite offset. NaN maps every
+- [x] 10.3 `apply_sync_offset` accepts a non-finite offset. NaN maps every
       deadline to 0, dumps the buffer as due, and can never be corrected
       because `NaN > threshold` is false so it reports `SoftCorrected`
       forever. Reject non-finite input and make the soft-correct branch an
@@ -419,27 +426,28 @@ main-thread acquisition at 10Hz, and `stopListenerPlayback` blocks the main
 thread on the pump thread join. The manual controller does this correctly on
 `Dispatchers.IO`.
 
-- [ ] 11.1 Move the discovered-session event collection and packet
+- [x] 11.1 Move the discovered-session event collection and packet
       forwarding off the main thread.
-- [ ] 11.2 Make teardown not block the main thread on a thread join.
+- [x] 11.2 Make teardown not block the main thread on a thread join.
 
 ## 12. LOW — correctness and hygiene
 
-- [ ] 12.1 `packet_duration_ms` is derived by truncating integer division in
+- [x] 12.1 `packet_duration_ms` is derived by truncating integer division in
+      *Implemented: `SchedulerConfig`/UniFFI carry exact `sample_rate`; Rust derives deadlines from sequence × samples-per-packet / sample-rate. A 1024@48kHz regression catches cumulative truncation.*
       **two** Kotlin call sites. Exact for 960 @ 48kHz, but 1024 @ 48kHz
       gives 21ms instead of 21.33ms, and the scheduler multiplies it by the
       sequence number — cumulative drift of ~16ms/s. Move this derivation
       into Rust and stop duplicating it in the platform layer.
-- [ ] 12.2 `ringUnderruns` is cumulative but pins `diagnosticsStore` to
+- [x] 12.2 `ringUnderruns` is cumulative but pins `diagnosticsStore` to
       `UNDERRUN` forever after a single startup underrun. Report an
       instantaneous condition, or rate.
-- [ ] 12.3 `drain_all` counts drained packets as `emitted` but never counts
+- [x] 12.3 `drain_all` counts drained packets as `emitted` but never counts
       holes inside the drained range as `skipped`; `sequences_skipped`
       under-reports at stop.
-- [ ] 12.4 Debug recorder: the RIFF header arithmetic can overflow `u32`
+- [x] 12.4 Debug recorder: the RIFF header arithmetic can overflow `u32`
       once `data_bytes` saturates (~6h of 48kHz stereo), and a post-`finish`
       `append` returns `Ok(())` while dropping samples.
-- [ ] 12.5 Remove dead imports and fields left by the rewire in
+- [x] 12.5 Remove dead imports and fields left by the rewire in
       `ManualListenerTransportController` (`SystemClock`, `AudioFormatSpec`,
       `OboePlaybackEngine`, `PlaybackEngine`, `PlaybackFrame`,
       `PlaybackThresholds`, `AudioPacket`, `SyncResponsePacket`,
@@ -507,17 +515,18 @@ Holding the pre-sync packets instead of dropping them does not help: by the
 time sync locks they are 10 s past their presentation deadlines and would be
 discarded as late anyway. The lock time itself is the defect.
 
-- [ ] 14.1 Bound acquisition time. Sketch: if no sample passes the gate
+- [x] 14.1 Bound acquisition time. Sketch: if no sample passes the gate
+      *Implemented as bounded acquisition-only widening: strict initially, adaptive after repeated measured rejection, and a hard 1000ms ceiling after 2s; steady-state immediately returns to the strict gate.*
       within an acquisition window, adopt the lowest-RTT sample seen so far
       rather than continuing to reject. A loose initial offset is corrected
       by the soft-correction path within seconds; ten seconds of missing
       audio is not recoverable.
-- [ ] 14.2 Consider an adaptive gate — a multiple of observed median RTT —
+- [x] 14.2 Consider an adaptive gate — a multiple of observed median RTT —
       so a uniformly slow network is not treated as if every sample were an
       outlier. Keep a hard ceiling.
-- [ ] 14.3 Surface acquisition as a distinct UI state with elapsed time and
+- [x] 14.3 Surface acquisition as a distinct UI state with elapsed time and
       rejected-sample count. A listener waiting 10 s should see why.
-- [ ] 14.4 Report `droppedBeforeSync` as a health signal, not just a counter:
+- [x] 14.4 Report `droppedBeforeSync` as a health signal, not just a counter:
       500 dropped packets is a failed start, not a healthy stream.
 
 ## What the reviews found clean

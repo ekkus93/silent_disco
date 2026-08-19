@@ -4,14 +4,14 @@ use crate::audio::{PlaybackScheduler, RenderRing, RenderRingConfig, SchedulerCon
 use crate::domain::{SessionId, StreamId};
 
 use super::super::{PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind};
-use super::{HOST_START_MS, PACKET_DURATION_MS, SAMPLES_PER_PACKET, pump_with, unpaced_config};
+use super::{HOST_START_MS, SAMPLES_PER_PACKET, pump_with, unpaced_config};
 
 #[test]
 fn rejects_a_target_depth_the_ring_could_never_reach() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -45,7 +45,7 @@ fn rejects_an_invalid_volume() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -76,7 +76,7 @@ fn rejects_a_stream_whose_channel_count_the_ring_cannot_render() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         1,

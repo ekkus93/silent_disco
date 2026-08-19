@@ -44,20 +44,33 @@ pub const DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS: u32 = 200;
 /// Default reorder tolerance, in milliseconds of stream time.
 pub const DEFAULT_REORDER_WINDOW_MS: u32 = 1_280;
 
-/// Converts a duration in milliseconds into whole packets at
-/// `packet_duration_ms`, never returning zero.
+/// Converts a duration in milliseconds into whole packets using exact stream
+/// geometry, never returning zero.
 ///
-/// The tuning bounds below are all really statements about *time* — how long
-/// a bridge may last, how much audio a hole may cover, how far out of order a
-/// packet may arrive. Storing them as packet counts silently rescales every
-/// one of them whenever the packet duration changes, which is exactly the
-/// class of regression that hides until a device run.
-pub(super) const fn packets_spanning(duration_ms: u32, packet_duration_ms: u32) -> u32 {
-    if packet_duration_ms == 0 {
+/// The tuning bounds below are statements about *time* — how long a bridge
+/// may last, how much audio a hole may cover, how far out of order a packet
+/// may arrive. Deriving the count from `sample_rate` and `samples_per_packet`
+/// avoids silently changing those durations when a packet does not represent
+/// an integer number of milliseconds.
+#[allow(clippy::cast_possible_truncation)]
+pub(super) const fn packets_spanning(
+    duration_ms: u32,
+    sample_rate: u32,
+    samples_per_packet: u32,
+) -> u32 {
+    if sample_rate == 0 || samples_per_packet == 0 {
         return 1;
     }
-    let packets = duration_ms / packet_duration_ms;
-    if packets == 0 { 1 } else { packets }
+    let numerator = duration_ms as u64 * sample_rate as u64;
+    let denominator = samples_per_packet as u64 * 1_000;
+    let packets = numerator / denominator;
+    if packets == 0 {
+        1
+    } else if packets > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        packets as u32
+    }
 }
 
 /// Fixed identity, geometry, and tuning bounds for one playback scheduler,
@@ -68,9 +81,9 @@ pub struct SchedulerConfig {
     pub session_id: SessionId,
     /// Stream this scheduler accepts packets for.
     pub stream_id: StreamId,
-    /// Wire packet duration, matching the host packetizer's configuration
-    /// for this stream.
-    pub packet_duration_ms: u32,
+    /// Stream sample rate, used with `samples_per_packet` to derive exact
+    /// presentation deadlines without cumulative millisecond truncation.
+    pub sample_rate: u32,
     /// Host monotonic time at which sequence zero's presentation slot began,
     /// matching the host packetizer's `host_start_time_ms`.
     pub host_start_time_ms: u64,
@@ -116,7 +129,7 @@ impl SchedulerConfig {
     pub const fn new(
         session_id: SessionId,
         stream_id: StreamId,
-        packet_duration_ms: u32,
+        sample_rate: u32,
         host_start_time_ms: u64,
         samples_per_packet: u32,
         channels: u16,
@@ -124,7 +137,7 @@ impl SchedulerConfig {
         Self {
             session_id,
             stream_id,
-            packet_duration_ms,
+            sample_rate,
             host_start_time_ms,
             samples_per_packet,
             channels,
@@ -135,14 +148,20 @@ impl SchedulerConfig {
             hard_resync_threshold_ms: DEFAULT_HARD_RESYNC_THRESHOLD_MS,
             max_consecutive_concealed_packets: packets_spanning(
                 DEFAULT_CONCEALMENT_BRIDGE_MS,
-                packet_duration_ms,
+                sample_rate,
+                samples_per_packet,
             ),
             concealment_ramp_ms: DEFAULT_CONCEALMENT_RAMP_MS,
             concealment_skip_threshold_packets: packets_spanning(
                 DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS,
-                packet_duration_ms,
+                sample_rate,
+                samples_per_packet,
             ),
-            max_reorder_window: packets_spanning(DEFAULT_REORDER_WINDOW_MS, packet_duration_ms),
+            max_reorder_window: packets_spanning(
+                DEFAULT_REORDER_WINDOW_MS,
+                sample_rate,
+                samples_per_packet,
+            ),
             max_buffered_duration_ms: DEFAULT_MAX_BUFFERED_DURATION_MS,
         }
     }

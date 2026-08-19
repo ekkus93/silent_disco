@@ -5373,3 +5373,32 @@ evidence, not fabricated.
 
 **Round 2 is genuinely closed out clean.** No open items remain in
 `docs/OVERSIZED_SOURCE_FILES_SPLIT_REFACTOR_TODO_2.md`.
+
+## 2026-08-19 — Non-physical closure Ralph Loop checkpoint
+
+Continued from `docs/SILENT_DISCO_BLOCK47_BLOCK48_HANDOFF_2026-08-13.md` with the
+explicit scope “complete every task that does not require physical devices.”
+Implemented/reconciled the software-only Blocks 26/28/34/36/39–45/48 work,
+Android mDNS endpoint discovery/join, playback fail-visible/thread-ownership
+hardening, exact sample-rate timing, bounded sync acquisition, slew/underrun
+realignment, and listener-playback migration Item 5.5 (Android host self-monitor
+now uses `FfiListenerPlaybackHandle` rather than `PlaybackEngine`/`PlaybackFrame`).
+Detailed evidence and remaining-gate classification are in
+`docs/SILENT_DISCO_NONPHYSICAL_CLOSURE_CHECKPOINT_2026-08-19.md`.
+
+Dependency-free checks pass (Block 48 audit: 91 exact references / 4 accountable
+ignored Rust tests; Python/shell syntax; repository source-size gate: 579 tracked
+source files, all below 800 physical lines; targeted Kotlin stub compiles). On
+2026-08-19 the previously uploaded Rust toolchain was recovered from the persistent
+file library. It is Rust/Cargo 1.95.0, below the repository/CI pin of 1.97.1, but
+it exposed real WIP rustfmt drift in core and desktop sources; those WIP files
+were formatted and all 48 changed/new Rust files pass an isolated rustfmt check.
+`git diff --check` is clean. Full compiler-backed gates are still not claimed:
+the recovered Rust 1.95 rustfmt recursively disagrees with one untouched current-master
+scheduler test while CI pins 1.97.1; a temporary all-tree 1.95 formatting attempt then
+reached Cargo dependency resolution but could not resolve `index.crates.io` before
+Clippy/tests started, after which the unrelated formatter churn was restored. Gradle
+distribution DNS is blocked, and the desktop npm cache lacks required tarballs for an
+offline install. Physical,
+fresh-machine, performance-measurement, and final evidence-ledger items remain
+open. Per user workflow, do not monitor CI; the user will report CI failures.

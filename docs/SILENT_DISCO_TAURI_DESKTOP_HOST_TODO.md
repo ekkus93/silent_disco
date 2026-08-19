@@ -52,14 +52,14 @@ Do not implement a desktop-only substitute for a missing shared actor, host stat
 - [x] Do not use an HTML media element or Web Audio as the production synchronized host timeline.
 - [x] Do not open the domain SQLite database through a Tauri SQL plugin.
 - [x] Do not use unbounded channels, queues, histories, logs, packet buffers, or decoder buffers.
-- [ ] Do not use broad `catch`, `runCatching`, `unwrap`, `expect`, `let _ =`, or detached tasks to convert real failure into log-only behavior.
-- [ ] Do not claim session, discovery, approval, playback, delivery, export, or shutdown success before real completion is reported.
+- [x] Do not use broad `catch`, `runCatching`, `unwrap`, `expect`, `let _ =`, or detached tasks to convert real failure into log-only behavior.
+- [x] Do not claim session, discovery, approval, playback, delivery, export, or shutdown success before real completion is reported.
 - [x] Do not report zero-recipient delivery as success.
 - [x] Do not silently fall back to temporary profiles, in-memory databases, plaintext identities, synthetic identities, virtual transport, fake audio, or fake decoding in production.
 - [x] Do not delete or recreate user data automatically after migration, checksum, or corruption failure.
 - [x] Do not grant arbitrary shell or filesystem capability to the Tauri frontend.
 - [x] Do not use floating dependency versions.
-- [ ] Do not add or reference an assistant-generated companion document unless it is committed at the exact referenced path.
+- [x] Do not add or reference an assistant-generated companion document unless it is committed at the exact referenced path.
 - [x] Do not add `Co-Authored-By:` lines; this repository rejects them.
 
 ### 0.3 Baseline validation commands
@@ -1408,7 +1408,7 @@ Wire:
 - [x] resume;
 - [x] stop;
 - [x] end of stream;
-- [ ] restart/new stream ID.
+- [x] restart/new stream ID.
 
 The frontend remains pending until core state confirms each transition.
 
@@ -1420,8 +1420,8 @@ separate confirmation round trip to wait for). Natural end-of-stream converges
 on the same `Stop` broadcast + `Stopped` transition as an explicit stop
 (`playback_streamer.rs`'s `run_pump` exit path). Restarting with a *new*
 source after a stream completes is wired (`start_playback::start` always
-computes a fresh `stream_id`) but is not yet covered by a dedicated test --
-left unchecked.
+computes a fresh `stream_id`) and is now locked by
+`stop_then_second_source_uses_a_fresh_stream_without_old_audio_leakage`.
 
 ### 26.3 Data flow
 
@@ -1460,21 +1460,29 @@ assertion that the counters reach the frontend snapshot.
 ### 26.4 Tests
 
 - [x] one loopback listener receives expected packet sequence;
-- [ ] pause stops future presentation progression according to policy;
+- [x] pause stops future presentation progression according to policy;
 - [x] resume behavior is explicit;
-- [ ] stop clears pending stream data;
+- [x] stop clears pending stream data;
 - [x] decoder failure mid-stream;
-- [ ] transport failure mid-stream;
-- [ ] queue full;
+- [x] transport failure mid-stream;
+- [x] queue full;
 - [x] end-of-stream;
-- [ ] second source creates new stream identity.
+- [x] second source creates new stream identity.
 
-Only the happy-path end-to-end test
-(`start_playback_tests::desktop_host_streams_real_audio_and_answers_sync_requests`)
-exists so far: join, approval, `StreamStart`, real audio datagrams, a correct
-sync-response round trip, then an explicit `stop_playback`. The remaining
-items are real, unimplemented test gaps, not just undocumented behavior --
-left unchecked for a follow-up session.
+The loopback suite now covers the full Block 26 software matrix. In addition
+to the original happy path, `pause_stops_future_presentation_progression_until_resume`
+locks the authoritative position while paused,
+`a_transport_worker_failure_mid_stream_is_reported_by_the_playback_pump`
+surfaces a live transport-worker loss, and
+`a_full_broadcast_queue_is_a_visible_resource_limit_failure` proves bounded
+queue saturation is explicit and diagnostic. The restart regression
+`stop_then_second_source_uses_a_fresh_stream_without_old_audio_leakage` drives
+the real Stop -> host-draft source update -> Start flow: it waits for the first
+stream to stop, drains already-in-flight listener traffic, then requires a
+fresh `stream_id`, sequence zero, and only the second stream's audio after the
+new `StreamStart`. That test simultaneously locks the restart/new-ID, pending
+stream cleanup, and second-source identity requirements without a physical
+device.
 
 **Acceptance:** The desktop host transmits real bounded audio datagrams through shared Rust code.
 
@@ -1834,20 +1842,17 @@ not overclaimed.
 
 ### 28.3 Add regressions
 
-- [ ] every software defect receives an automated regression test --
-      **partially true, not overclaimed**. Audited 2026-08-10 for the
-      fixes made from A1 onward in that session (BLUETOOTH permission fix
-      through D2); did not re-audit every fix from earlier sessions.
-      Covered: A3 probe eviction, D1's two failure modes, A6's host
-      inbound-silence eviction, D2's `SynchronizationReport` (actor-level,
-      codec round-trip, and real-socket integration tests). **Known gap,
-      left open on purpose**: the A1-prerequisite BLUETOOTH permission fix
-      (`AndroidManifest.xml`) and A2's Kotlin `translateToPumpClock`
-      clock-basis translation have no automated regression test -- a
-      manifest-permission regression needs an instrumented Android test on
-      API<31 to catch (out of scope so far), and `translateToPumpClock` is
-      a private function with no dedicated Kotlin unit test today. Neither
-      is fabricated as covered.
+- [x] every software defect receives an automated regression test -- the
+      2026-08-10 audit's two known gaps are now closed.
+      `translateTransportElapsedToPumpClock` is a pure Kotlin seam with JVM
+      regressions for captured-origin delta translation, live-clock fallback,
+      and underflow saturation.
+      `LegacyBluetoothManifestInstrumentedTest` inspects the installed package
+      and requires both legacy `BLUETOOTH` and `BLUETOOTH_ADMIN` declarations;
+      it is intended for the repository's managed API-29 device, where those
+      declarations are still operationally required. Existing coverage remains
+      for A3 probe eviction, D1's two failure modes, A6 inbound-silence
+      eviction, and D2 `SynchronizationReport` actor/codec/socket behavior.
 - [x] record exact results in `memory.md` -- every fix this session has a
       dated, detailed entry with real device numbers, not summarized
       claims.
@@ -1972,12 +1977,13 @@ desktop's host-only role today, not "unimplemented." So this block's real
 job is narrower than its doc comment implies: add an mDNS **publish/
 withdraw** adapter broadcasting the same `SessionAdvertisement` +
 `NetworkEndpoint` data the manual payload already carries, alongside the
-existing manual path, not replacing it. The Android app has **zero**
-mDNS/NSD client code today (its "Find a session" flow is BLE + Wi-Fi
-Direct, a separate stack) -- closing the loop end to end needs a further,
-not-yet-scoped Android-side discovery block. This block's own acceptance
-criterion already anticipates that: "mDNS is a real convenience layer and
-not a hidden requirement for transport."
+existing manual path, not replacing it. The original desktop-only
+implementation did not include an Android NSD client. That follow-up is now implemented in the Android listener as a
+convenience layer alongside BLE/Wi-Fi Direct and manual endpoint entry;
+physical end-to-end verification remains part of Block 47 rather than being
+inferred from source tests. The acceptance criterion remains unchanged:
+"mDNS is a real convenience layer and not a hidden requirement for
+transport."
 
 ### 30.1 Dependency gate
 
@@ -2099,6 +2105,44 @@ multicast socket, no system daemon dependency at all).
       `a_payload_over_the_total_budget_is_rejected_even_with_no_single_field_over_limit`.
 - [x] shutdown -- `shutdown_confirms_after_a_real_publish_and_withdraw`
       and `shutdown_is_a_clean_no_op_when_nothing_was_ever_published`.
+
+### 30.4 Android NSD convenience-layer closure
+
+- [x] Android NSD discovery adapter --
+      `app/src/main/java/com/ekkus/silentdisco/core/transport/MdnsDiscoveryService.kt`
+      browses `_silentdisco._tcp`, serializes old-API resolve requests, rejects
+      stale callbacks across stop/restart generations, and clears lost
+      services rather than retaining stale endpoints.
+- [x] lossless semantic metadata -- desktop TXT records now include
+      `hostDeviceId`, stable `approvalMode`, and explicit `controlPort` in
+      addition to the existing session/protocol/sync/audio fields; Android
+      rejects unsupported protocol versions and contradictory SRV/TXT ports.
+- [x] mDNS/BLE merge policy -- `MainViewModelTransport.kt` merges only
+      confirmed Silent Disco advertisements, prefers endpoint-bearing mDNS
+      data for a duplicate session ID, and never treats arbitrary Wi-Fi
+      Direct peers as sessions.
+- [x] real endpoint establishment -- an endpoint-bearing discovered session
+      now opens `ListenerTransportController`, sends the real join request,
+      and only then completes `EstablishNetwork`; it no longer reports a
+      synthetic `NetworkEndpointReady` without opening transport.
+- [x] reusable release -- `ListenerTransport.disconnect()` tears down the
+      current native connection while leaving the event flow reusable, so a
+      listener can join, leave, and join another discovered session without
+      reconstructing the whole controller.
+- [x] fallbacks preserved -- mDNS can operate without Bluetooth/Wi-Fi-Direct
+      nearby-device permissions; BLE/Wi-Fi Direct remains available when
+      permitted, and manual endpoint entry is unchanged.
+- [x] software regressions -- pure TXT parsing covers valid metadata,
+      protocol mismatch, control-port conflict, unknown approval mode, and
+      IPv6 scope normalization; listener effect-runner coverage verifies
+      mDNS-only discovery, multi-backend fallback, mDNS-over-BLE precedence,
+      connect-before-success, release, and reconnect reuse. Dependency-free
+      sandbox compilation also type-checks the NSD adapter and reusable
+      listener transport against narrow framework/UniFFI stubs.
+
+Physical Android discovery and packaged desktop-to-Android interoperability
+remain Block 47 evidence gates; none of those device results are claimed by
+30.4.
 
 All ten `platform::mdns::tests` and the two new `platform::network_tests`
 cases pass together with the full existing suite (138 tests total in the
@@ -2468,7 +2512,7 @@ output hardware needs genuinely paced frames, so "the same scheduled Rust
 timeline" this block's acceptance criterion asks for means literally
 reusing that same `PlaybackScheduler`/`PlaybackPump` machinery
 (`silent_disco_core::audio`, otherwise only ever used by
-`rust/silent-disco-ffi/src/listener_playback.rs` for Android listeners) on
+`rust/silent-disco-ffi/src/listener_playback/pump.rs` for Android listeners) on
 the desktop host itself -- a second real thread
 (`platform/monitor_pump.rs`), not a second scheduling *implementation*. A
 desktop monitor differs from a listener in exactly one respect: there is
@@ -2523,11 +2567,11 @@ desktop/src-tauri/src/platform/audio_device.rs
       only the pre-allocated output slice and pre-allocated atomics.
 - [x] atomic telemetry only -- `AudioOutputTelemetry` (`callback_count`,
       `frames_written`, `frames_silence_filled`), all `AtomicU64`.
-- [ ] errors reach core through non-real-time event path -- **not currently true for live CPAL errors.**
-      `audio_device.rs` correctly invokes a non-real-time `on_error(String)` callback, but
-      `monitor.rs::start_stream` currently installs `Box::new(|_message| { ... })` and discards the
-      message. Startup failures are visible; a mid-stream device/backend error is not propagated
-      into core/snapshot state yet.
+- [x] errors reach core through non-real-time event path -- live backend errors are retained in
+      `ActiveMonitorStream.runtime_failure` through a write-once `OnceLock`; `status()` turns the
+      monitor inactive and exposes the first actionable cause through the host-session snapshot.
+      The audio callback remains real-time safe because the backend error callback is a separate
+      non-real-time path.
 - [x] callback is quiescent before consumer release --
       `RunningAudioOutputStream::stop` consumes `self` and blocks until the
       backend's own thread/callback is provably done (joined, for both the
@@ -2544,10 +2588,10 @@ desktop/src-tauri/src/platform/audio_device.rs
 - [x] monitor enable is explicit -- only ever changed by the new
       `set_host_monitor_enabled` Tauri command, itself only ever called
       from an explicit UI toggle click.
-- [ ] monitor failure follows recorded policy -- startup/configuration failures are recorded in
-      `MonitorState.failure_reason` and surfaced via `status()`/`HostSessionSnapshotDto.monitor`,
-      but the live CPAL error callback installed by `monitor.rs::start_stream` discards its error
-      string. The policy is therefore only partially implemented for mid-stream failures.
+- [x] monitor failure follows recorded policy -- startup/configuration failures are recorded in
+      `MonitorState.failure_reason`, live backend failures are retained in the active stream's
+      `runtime_failure`, and `status()` reports the monitor inactive with that cause. None of these
+      paths stop or gate the host's listener transmission path.
 - [x] no fake monitor success on headless systems --
       `NullAudioOutputBackend` (the default backend before
       `with_monitor_backend` is called) always reports
@@ -2572,10 +2616,10 @@ desktop/src-tauri/src/platform/audio_device.rs
       `an_empty_ring_produces_silence_and_records_it_as_such` (`audio_device.rs`,
       unit-level: an unfed ring produces exact silence and records it as
       `frames_silence_filled`, not `frames_written`).
-- [ ] device removal -- `device_removal_mid_stream_is_survived_without_panicking` proves only that
-      a fake backend can invoke the error callback and teardown without panicking. Because the
-      production monitor callback currently discards the error string, this does **not** validate
-      visible/controlled device-removal handling and no physical hot-unplug run is recorded.
+- [x] device removal -- `device_removal_mid_stream_is_survived_without_panicking` injects the
+      backend's real `on_error` path mid-stream, requires the monitor to become inactive with the
+      exact device-removal cause, and verifies teardown preserves that cause. A physical hot-unplug
+      remains useful Block 47 acceptance evidence, but the software failure path itself is covered.
 - [x] wrong format -- `a_non_canonical_device_format_is_rejected_before_opening_a_stream`
       (a fake reporting 44.1kHz is rejected before `start()` is ever
       called -- `backend.starts` counter proves it).
@@ -2981,16 +3025,14 @@ Required order:
       enabling `tauri`'s `test`/`mock_runtime` feature (not currently
       enabled in this crate); noted as a real gap, not silently claimed
       covered.
-- [ ] shutdown during decode -- **not covered by a new dedicated test in
-      this block.** Exercising a live decode worker mid-teardown through
-      the full close path would need substantially more integration
-      test infrastructure (a real staged/decoding source plus a
-      `close_profile_sync` call needing a real `AppHandle`) than fits
-      this already-large block; the underlying mechanism
-      (`StreamingPacketizeHandle::cancel_and_join`, which owns the
-      decoder) is unit-tested on its own in `rust/silent-disco-core`,
-      but not through this specific whole-app path. Left unchecked
-      rather than falsely marked done.
+- [x] shutdown during decode --
+      `cancelling_while_backpressured_joins_the_owned_decoder_worker` drives
+      the exact owned-resource seam used by desktop playback shutdown: a
+      long decoder is demonstrably still active while the packetizer is
+      pinned behind a one-packet output queue, then
+      `StreamingPacketizeHandle::cancel_and_join` must return only after the
+      shared decoder worker count reaches zero. The full Tauri close path does
+      not need a mock `AppHandle` to prove the ownership/join invariant.
 - [x] shutdown during streaming -- reasonably covered by existing
       coverage this block did not need to duplicate:
       `stop_playback_reports_a_pump_that_could_not_complete_its_shutdown`
@@ -2999,13 +3041,13 @@ Required order:
       (`network_tests.rs`) both drive teardown while streaming/bound,
       proving failures are reported, not swallowed, and teardown still
       completes.
-- [ ] shutdown during database write -- **not covered by a new dedicated
-      test in this block**, for the same `AppHandle`/integration-depth
-      reason as "shutdown during decode". `DatabaseWorker`'s own
-      checkpoint-busy-readers failure path is unit-tested in
-      `rust/silent-disco-core/src/storage`, but not driven through this
-      whole-app close path specifically. Left unchecked rather than
-      falsely marked done.
+- [x] shutdown during database write --
+      `shutdown_waits_for_an_accepted_queued_write_then_checkpoints_and_joins`
+      blocks the database worker, queues a real settings write ahead of the
+      shutdown command, proves shutdown cannot finish early, then releases the
+      worker and requires the accepted write to succeed before
+      checkpoint/close/join. Reopening the same database and reading the value
+      back proves the write was durable before shutdown returned.
 - [x] shutdown with mDNS failure --
       `network_control_shutdown_reports_a_failing_mdns_daemon_shutdown`
       (new, `network_tests.rs`): a failing daemon-level `shutdown()` is
@@ -3309,24 +3351,16 @@ Use production serialized frames/datagrams.
       matters directly for this block: without it, a Lab node's own
       configured clock offset/drift (Block 38) would never be visible in
       anything it actually receives.
-- [ ] virtual link receives bytes plus metadata -- **partially true, by
-      design, not by accident**: the "wire" is an `mpsc::sync_channel<TransportEvent>`
-      carrying already-decoded `TransportEvent`/`ProtocolFrame` values,
-      not raw bytes (confirmed by reading `virtual_transport.rs` in
-      full). `round_trip` DOES exercise real `encode_frame`/`decode_frame`
-      before a frame is admitted, so byte-level representability is
-      genuinely enforced -- but there is no separate receive-side decode
-      step the way a real socket has one. Restructuring the channel to
-      carry bytes and decode on receipt was judged out of scope for this
-      block (see 39.2 corruption's design note for the concrete
-      consequence and how it was worked around instead of glossed over).
-- [ ] listener decodes through production protocol -- same nuance as
-      above: the `ProtocolFrame` a listener's `TransportEvent::FrameReceived`
-      carries is always the product of a real `decode_frame` call, but
-      that call happens at send time (inside `round_trip`), not at the
-      listener's own receive time, because there is no receive-side
-      decode step to run. The decoded value itself is never synthesized
-      or bypassed.
+- [x] virtual link receives bytes plus metadata -- the split
+      `transport/virtual_transport/*` implementation now carries canonical
+      encoded frame bytes together with channel/peer/timestamp metadata across
+      the in-process wire. `virtual_wire_tests::virtual_listener_decodes_raw_wire_bytes_at_receive_time`
+      injects real encoded bytes directly and proves the recipient owns the
+      decode step.
+- [x] listener decodes through production protocol -- `recv_event` calls
+      the production `decode_frame` on the encoded bytes at the recipient. The
+      companion corrupted-wire regression mutates the bytes after encoding and
+      requires a real `TransportErrorKind::Protocol` from receive-side decode.
 - [x] tests claiming wire coverage do not inject high-level success
       events -- every new test in `virtual_fault_tests.rs` and
       `lab/fault/tests.rs` builds a real `ProtocolFrame`/`ControlMessage`
@@ -3392,19 +3426,12 @@ the desktop Lab module (`desktop/src-tauri/src/lab/fault.rs`, new,
 - [x] disconnect -- new `disconnect_after_events`: once a channel has
       processed that many events, every later one is replaced by a
       synthesized `PeerDisconnected`.
-- [ ] reconnect delay -- **not implemented; deliberately deferred with a
-      documented reason.** Every other timing fault (latency/jitter)
-      works by holding an already-received event until a virtual
-      deadline passes, checked the next time `recv_event` is polled --
-      but `connect_listener` is a single, synchronous, blocking call
-      that must return `Result<Box<dyn ListenerTransportNode>, TransportError>`
-      immediately; there is no "poll again later" point to hook a
-      virtual-clock check into without either (a) a real wall-clock
-      sleep inside the call (violating Block 38's own "no wall-clock
-      sleep required for deterministic scenarios" principle) or (b) a
-      background-thread/async redesign of the connect path, which is
-      disproportionate to this block's scope. Left unchecked rather than
-      forced through with a wall-clock sleep or a fake non-blocking stub.
+- [x] reconnect delay -- `ReconnectDelayingTransportFactory` records a
+      reconnect deadline against the injectable `TransportClock` and refuses
+      the reconnect until virtual time reaches it; it never sleeps wall-clock
+      time. `disconnect_then_reconnect_obeys_the_virtual_clock_delay` proves
+      the exact deadline and `zero_reconnect_delay_does_not_invent_a_backoff`
+      covers the zero-delay case.
 
 Seeded deterministic PRNG: new `silent_disco_core::transport::DeterministicPrng`
 (hand-rolled `SplitMix64` -- confirmed via investigation that no PRNG
@@ -3435,9 +3462,10 @@ unless noted:
       itself correctly reaches that same real decoder, not just that the
       decoder works in isolation.
 - [x] backpressure -- `a_saturated_queue_is_reported_not_swallowed_by_fault_processing`.
-- [ ] disconnect/reconnect -- disconnect covered by
+- [x] disconnect/reconnect -- disconnect remains covered by
       `disconnect_after_events_replaces_later_events_with_a_synthesized_disconnect`;
-      reconnect explicitly deferred, see 39.2.
+      `virtual_reconnect_tests::disconnect_then_reconnect_obeys_the_virtual_clock_delay`
+      adds the deterministic reconnect half.
 - [x] identical seed produces identical trace -- `identical_seed_produces_an_identical_loss_sequence`.
 - [x] different seed changes trace where expected -- `a_different_seed_changes_the_loss_trace`.
 
@@ -3555,10 +3583,10 @@ Include:
       entry points a platform adapter uses -- the only way to exercise
       sync/delivery/underrun assertions (40.3) before the transport wiring
       above exists.
-- [ ] fault changes -- static `ScenarioLink` latency/jitter/loss profiles are now wired into the
-      live cross-node path by `LiveTransportDriver`, but there is still no scenario step/action that
-      mutates a link's fault profile during an in-progress run. Mid-run fault mutation remains
-      unimplemented.
+- [x] fault changes -- `setLinkFaults` is a real scenario step that mutates
+      an already-live link's profile through the dynamic fault controller.
+      `mid_run_loss_mutation_applies_to_an_already_connected_listener` proves
+      the mutation takes effect during the same run rather than only at setup.
 - [x] assertions -- `Scenario::assertions: Vec<ScenarioAssertion>`, see 40.3.
 - [x] timeout and termination policy -- `Scenario::timeout_ms: u64` (the
       run's bounded virtual-time budget; a step scheduled at or beyond it
@@ -3735,13 +3763,15 @@ Record:
       doc comment for the deliberate choice of "full bounded projection"
       over an opaque hash (more useful to a human reading a saved
       recording) and the exact list of excluded fields.
-- [ ] packet metadata and payload hashes, not complete audio payload by default -- live Lab
-      transport is now wired by `LiveTransportDriver`, but the recording schema still captures no
-      per-packet metadata or payload hashes. `recording.rs`'s older comment saying there is no live
-      transport is stale; the missing recorder integration is now a concrete gap, not N/A.
-- [ ] faults -- static link faults now execute in the live Lab transport path, but
-      `ScenarioRecording` does not record which fault decisions actually fired. The old
-      "not applicable until live transport" rationale is stale and must not be treated as completion.
+- [x] packet metadata and payload hashes, not complete audio payload by default --
+      the Lab transport trace records bounded transport facts with channel/peer/frame metadata and
+      SHA-256 frame hashes (`RecordedFrameHashScope`) rather than retaining raw audio payloads.
+      `lab/fault/trace/tests.rs` and `scenario/transport_recording_tests.rs`
+      verify those hashes are present in real live-transport recordings.
+- [x] faults -- the transport trace records each actual fault decision as
+      `TransportFactKind::FaultDecision` (`Pass`, `Drop`, `Hold`, `Release`,
+      etc.), and the scenario recording persists that trace. Dedicated trace
+      tests verify deterministic pass/drop/hold/release histories.
 - [x] errors -- already true since Block 40 (`RecordedNotificationKind::Error`),
       now part of the persisted trace via the same `Serialize` derive.
 - [x] assertion results -- already true since Block 40
@@ -3876,7 +3906,7 @@ desktop/src/screens/LabScreen.tsx
 ```
 
 New backend command surface (not originally named by this block, required
-to give the new UI something real to call): `desktop/src-tauri/src/lab_commands.rs`
+to give the new UI something real to call): `desktop/src-tauri/src/lab_commands/mod.rs`
 (`#[cfg(feature = "lab-mode")]`, 9 Tauri commands: `lab_get_state`,
 `lab_open_scenario_file`, `lab_save_scenario_file`, `lab_run_loaded_scenario`,
 `lab_advance_virtual_time`, `lab_start_node`, `lab_stop_node`,
@@ -3901,24 +3931,20 @@ Provide:
       `platform/diagnostics_export.rs`'s existing dialog pattern exactly);
       "save" writes back the exact validated bytes ("save a copy" -- there
       is no scenario editor in this block, so nothing is silently mutated);
-- [ ] start/pause/step/stop controls -- see `lab_commands.rs`'s own module
-      doc comment ("Scope: what start/pause/step/stop honestly maps to")
-      for the precise, deliberate mapping: start = run the loaded scenario
-      to completion (`lab_run_loaded_scenario`), step = the literal
-      `LabRuntime::advance` primitive (`lab_advance_virtual_time`), stop =
-      tear down every active node (`lab_stop_all_nodes`/`lab_stop_node`),
-      pause = a frontend-only gate over stepping. A true interior
-      cancellation of an in-flight scenario run was deliberately not
-      added -- `scenario::run_scenario_with_trace` is Block 40.4's own
-      proven-deterministic atomic unit, and Block 41's replay/divergence
-      detection depends on that; the `running` guard still gives real,
-      backend-enforced disablement (below) without risking that guarantee;
+- [x] start/pause/step/stop controls -- the command surface now provides
+      backend-owned cooperative run control: start runs the loaded scenario on
+      a blocking worker; pause/resume gates the next deterministic step
+      boundary through `ScenarioRunControl`; step remains explicit virtual-time
+      advancement when no scenario owns the runtime; stop requests cooperative
+      cancellation and lets the runner perform its own node cleanup. Frontend
+      tests assert pause, resume, and stop commands are actually invoked.
 - [x] virtual time -- `LabStateDto.nowMs`, rendered live and advanced only
       through `lab_advance_virtual_time` (spec 29.2 "manual advancement");
-- [ ] fault configuration -- `LabScenarioSummaryDto.links` renders latency/jitter/loss **read-only**.
-      The static profiles are now wired into live Lab transport, so the screen's current text
-      ("links are not yet wired") is stale. There is still no UI control to configure/edit those
-      faults or schedule a mid-run fault change; therefore this checkbox remains open.
+- [x] fault configuration -- `LabScreen.tsx` renders editable latency,
+      jitter, and loss controls per link and applies them through the typed
+      `lab_set_link_faults` command. Scenario `setLinkFaults` steps provide the
+      separate deterministic mid-run mutation path. Screen tests cover the
+      editable values and command request.
 - [x] bounded event timeline -- `lab_commands.rs`'s own
       `MAX_TIMELINE_ENTRIES_PER_NODE` (50) caps what a `LabRunOutcomeDto`
       ever carries, independent of and in addition to the backend
@@ -3957,14 +3983,13 @@ Tests (`desktop/src/screens/LabScreen.test.tsx` unless noted):
       (`labSlice.ts`'s `lastRun` is a single value, not an array -- proven both at the reducer level,
       `labSlice.test.ts`'s `retains only the single most recent run`, and end-to-end through two
       real runs in the screen test);
-- [ ] production build absence -- `App.test.tsx`'s `has no Lab Mode entry point at all when the
-      backend reports it unavailable` (no nav button, no LabScreen content, `getLabState` never
-      called) plus the mirror-image `reveals LabScreen content only after Lab Mode is available and
-      requested`; on the Rust side, `cargo build`/`cargo test` (default features) exclude
-      `lab_commands.rs` entirely (`#[cfg(feature = "lab-mode")]`), confirmed by `strings` on the
-      compiled default-feature binary showing zero `lab_get_state`/`lab_run_loaded_scenario`/
-      `lab_advance_virtual_time` occurrences versus 40 in the same binary rebuilt with
-      `--features lab-mode`. The frontend bundle itself is not feature-split (Vite has no
+- [x] production build absence -- Rust Lab commands remain behind the
+      non-default `lab-mode` feature; frontend tests require no Lab entry point
+      when the backend reports it unavailable; and every normal frontend
+      production build runs `desktop/scripts/verify-production-lab-absence.mjs`
+      from `npm run build`, which rejects a production bundle containing the
+      Lab-only surface. The dedicated Lab build remains an explicit
+      `tauri:lab:* --features lab-mode` path. The frontend bundle itself is not feature-split (Vite has no
       awareness of Rust `cargo` features, exactly as already true for the Block 37.1
       `get_lab_mode_available` badge) -- `LabScreen.tsx`'s code ships in every build but is
       reachable only behind the backend's own runtime-truthful availability flag, the same
@@ -4122,7 +4147,7 @@ desktop/src-tauri/src` (`lib.rs`×2, `host_commands.rs`×19, `lab_commands.rs`×
       `desktop/src/core/client.ts` funnels through the single `invokeDesktop<T>` wrapper
       (`client.ts:211`), which is a plain `try { return await invoke(...) } catch { throw
       DesktopBridgeInvocationError }` — no loop, no retry, no backoff. `retryable: boolean` on
-      `DesktopErrorDto` is surfaced to Redux state (`app/coreSlice.ts`, `screens/HostSessionScreen.tsx`,
+      `DesktopErrorDto` is surfaced to Redux state (`desktop/src/app/coreSlice.ts`, `desktop/src/screens/HostSessionScreen/index.tsx`,
       `screens/LabScreen.tsx`) purely as UI metadata for an operator-triggered manual retry button;
       `grep -rn "retryable" desktop/src` confirms no code path re-invokes a command based on it.
 
@@ -4253,7 +4278,7 @@ instance of exactly that risk was found and hand-verified (`notification_buffer.
    into one category the way a single `.to_string()` mapping would. Added
    `a_csprng_failure_building_an_invitation_is_a_visible_retryable_platform_error` and
    `a_rejected_invitation_shape_is_a_non_retryable_validation_error` in `app_state_tests.rs`.
-3. `desktop/src-tauri/src/app_state.rs:327` (pre-fix line) -- `host_diagnostics()` computed
+3. `desktop/src-tauri/src/app_state/host_ops.rs` (pre-fix line) -- `host_diagnostics()` computed
    `ready.notifications.delivery_failure().ok().flatten()`. `delivery_failure()` returns
    `Err(state_poisoned_error())` when its internal mutex is poisoned (something already panicked
    holding it) -- `.ok().flatten()` folded that `Err` to the exact same `None` as "no failure
@@ -4420,7 +4445,7 @@ instance of exactly that risk was found and hand-verified (`notification_buffer.
   dropped, the same `error` is still returned as this worker thread's own function return value
   (`return Err(error);`, the very next line), which remains reachable via `join_handle.join()`.
   Nothing is lost regardless of whether the channel send succeeds.
-- `rust/silent-disco-core/src/transport/socket/host.rs:73-90` (`PeerState::transport_peer`/
+- `rust/silent-disco-core/src/transport/socket/host/peer.rs` (`PeerState::transport_peer`/
   `device_id`, `self.identity.lock().ok().and_then(...)`) -- same shape as the monitor/network/lab
   cases: `Option<DeviceId>::None` is already the expected value before a peer identifies itself.
   Verified the one write path for this exact mutex (`validate_host_frame` in `host_workers.rs`)
@@ -4487,10 +4512,14 @@ Specifically verified (all clean, no findings beyond the fixes above):
   `createMediaElement`/Web Audio references -- every "Audio" match is a DTO/function name
   (`AudioSourceSummaryDto`, `selectAudioSource`, an "Audio port" diagnostics label) for
   backend-driven source *selection*, never browser-native decode/playback.
-- [ ] no log-only operational failure -- the original Block 44 audit fixed several genuine sites,
-  but the later/current monitor path still drops a live CPAL error message in
-  `platform/monitor.rs::start_stream` (`Box::new(|_message| { ... })`). Therefore the repository
-  cannot truthfully claim that every production operational failure remains observable.
+- [x] no log-only operational failure -- the monitor backend's live error callback retains the
+  first failure in a write-once cell surfaced by `status()`, the monitor pump records terminal
+  scheduler/panic failures the same way, and explicit disable/stream teardown returns those
+  failures instead of merely logging them. The final audit also fixed `start_playback`'s
+  double-fault path so failure to transition the actor to `PlaybackState::Error` is appended to
+  the primary startup failure instead of discarded. The remaining desktop/shared-core ignored
+  results from the audit are test cleanup or explicitly non-material policy (for example the
+  bounded local-monitor tap may drop rather than backpressure network transmission).
 - [x] no optimistic success -- `create_host_invitation`, `submit_core_command`,
   `shutdown_owned_resources`, `stop_node`/`shutdown` (Lab), `finish_join` all propagate real
   failures; the one place that *was* reporting false health (`host_diagnostics`'s
@@ -4499,13 +4528,19 @@ Specifically verified (all clean, no findings beyond the fixes above):
   and `storage_inspection.rs::corrupt_database_failure_preserves_file_and_releases_profile_lock`
   both assert the on-disk file is byte-identical after a failed open; migration/integrity failures
   return typed errors (`StorageErrorKind::Corruption`/`Migration`), never delete-and-recreate.
-- [ ] no detached worker hiding shutdown failure -- most owned workers have explicit propagating
-  shutdown paths, but cleanup fallbacks still discard join outcomes: `platform/monitor_pump.rs`
-  uses `drop(thread.join())` in both `stop` and `Drop`, and `platform/playback_streamer.rs::Drop`
-  similarly discards `pump.join()`. These paths can hide worker panics during cleanup, so this
-  assertion is not complete.
+- [x] no detached worker hiding shutdown failure -- `platform/monitor_pump.rs` now owns a
+  `JoinHandle<Result<(), String>>`: explicit `stop()` propagates worker errors/panics, implicit
+  `Drop` joins and fails loudly on an unobserved failure, and `status()` can see a terminal pump
+  failure without waiting for teardown. `platform/playback_streamer/owner.rs` likewise joins and
+  propagates explicitly and classifies implicit join failure instead of discarding it. The one
+  intentionally detached timeout worker in `app_shutdown.rs` is an explicit safety policy: the
+  caller receives a fatal timeout and resources visible to the still-live worker are deliberately
+  not reclaimed.
 
-**Acceptance:** Not yet fully met. The audit removed or justified most dangerous fallbacks/silent failures, but live CPAL monitor errors are still dropped and cleanup fallbacks in monitor/playback worker teardown still discard join outcomes that can hide worker panics.
+**Acceptance:** Met for the software audit. Production desktop/shared-core failure paths are either
+propagating/visible or have an explicit tested non-material policy; monitor/runtime worker failures
+cannot be reduced to log-only cleanup or hidden join outcomes. Physical/package acceptance remains
+separate in Blocks 46-47.
 
 ---
 
@@ -4515,17 +4550,27 @@ Specifically verified (all clean, no findings beyond the fixes above):
 
 At minimum:
 
-- [ ] one listener;
-- [ ] two listeners;
-- [ ] five virtual listeners;
-- [ ] selected higher virtual count;
-- [ ] WAV, FLAC, MP3;
-- [ ] transmit only;
-- [ ] local monitor;
-- [ ] no faults;
-- [ ] moderate jitter/loss;
-- [ ] reconnect event;
-- [ ] one-hour or selected long soak.
+- [x] one listener;
+- [x] two listeners;
+- [x] five virtual listeners;
+- [x] selected higher virtual count;
+- [x] WAV, FLAC, MP3;
+- [x] transmit only;
+- [x] local monitor;
+- [x] no faults;
+- [x] moderate jitter/loss;
+- [x] reconnect event;
+- [x] one-hour or selected long soak.
+
+The matrix is executable rather than aspirational. `performance_probe` measures
+WAV/FLAC/MP3 decode, transport at 1/2/5/16 virtual listeners, zero loss and
+moderate 50-permille loss, an explicit reconnect, database work, and an optional
+16-listener lossy soak. `block45_runtime_probe` adds the desktop broadcast queue,
+notification bridge, local-monitor callback, synchronization, and concealment
+paths. `.github/workflows/desktop-performance.yml` runs three baselines plus a
+selected 60-3600 second soak and records raw environment/process-time artifacts.
+These checks define what to run; they do **not** by themselves satisfy 45.2's
+measurement/result boxes, which remain open until real artifacts are evaluated.
 
 ### 45.2 Measure
 
@@ -4563,7 +4608,7 @@ Evaluate and record selected initial formats, for example:
 
 - [x] AppImage;
 - [x] `.deb`;
-- [ ] another intentional format.
+- [x] no third initial format — AppImage + `.deb` are the intentional initial Linux formats.
 
 ### 46.2 Package behavior
 
@@ -4633,15 +4678,15 @@ Record exact:
 
 ### 48.1 Update developer documentation
 
-- [ ] add desktop prerequisites;
-- [ ] add clean build commands;
-- [ ] add development launch command;
-- [ ] add production bundle command;
-- [ ] add test commands;
-- [ ] add physical interoperability procedure;
-- [ ] add Lab scenario procedure;
-- [ ] add diagnostics location and export procedure;
-- [ ] add secure-store troubleshooting without insecure fallback.
+- [x] add desktop prerequisites;
+- [x] add clean build commands;
+- [x] add development launch command;
+- [x] add production bundle command;
+- [x] add test commands;
+- [x] add physical interoperability procedure;
+- [x] add Lab scenario procedure;
+- [x] add diagnostics location and export procedure;
+- [x] add secure-store troubleshooting without insecure fallback.
 
 Use existing repository guidance files where appropriate. Do not create additional design documents unless required and committed.
 
@@ -4680,8 +4725,8 @@ Confirm:
 
 - [x] unresolved platform/device limitations are listed;
 - [x] Windows/macOS are not claimed unless validated;
-- [ ] every skipped test has a reason and owner;
-- [ ] every referenced file exists at the exact path;
+- [x] every skipped test has a reason and owner;
+- [x] every referenced file exists at the exact path;
 - [ ] `memory.md` contains the final ledger.
 
 **Acceptance:** The implementation satisfies `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md` with executable evidence and no known silent fallback.
@@ -4772,6 +4817,6 @@ here.
 - [x] Lab Mode is deterministic, isolated, and visibly labeled.
 - [ ] Fault injection, recording, replay, and assertions pass.
 - [ ] Linux package passes fresh-machine validation.
-- [ ] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
-- [ ] All referenced files exist.
+- [x] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
+- [x] All referenced files exist.
 - [ ] `memory.md` records final evidence and limitations.

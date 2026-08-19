@@ -16,6 +16,7 @@ GUIDANCE_FILES = (
     Path("README.md"),
     Path("CLAUDE.md"),
     Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md"),
+    Path("docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md"),
 )
 REFERENCE_ROOTS = (
     "app/",

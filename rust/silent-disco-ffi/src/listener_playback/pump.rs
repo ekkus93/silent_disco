@@ -7,8 +7,9 @@
 //! allocation-heavy code, or blocking synchronization beyond the mutexes
 //! [`Shared`] already owns.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,6 +32,32 @@ pub(super) const RING_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the ring may fail to shrink before the consumer is treated as not
 /// running, so a closed or failed output does not cost the full timeout.
 pub(super) const RING_DRAIN_STALL_LIMIT: Duration = Duration::from_millis(150);
+
+#[cfg(test)]
+static ACTIVE_PUMP_THREADS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+pub(super) fn active_pump_threads_for_test() -> u64 {
+    ACTIVE_PUMP_THREADS.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+struct ActivePumpThreadGuard;
+
+#[cfg(test)]
+impl ActivePumpThreadGuard {
+    fn enter() -> Self {
+        ACTIVE_PUMP_THREADS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ActivePumpThreadGuard {
+    fn drop(&mut self) {
+        ACTIVE_PUMP_THREADS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// Monotonic milliseconds since this runtime started, matching the local
 /// timeline the caller's clock-offset estimates are expressed against.
@@ -61,6 +88,17 @@ pub(super) struct Shared {
     /// total silence) in the previous implementation.
     pub(super) estimator: Mutex<ClockSyncEstimator>,
     pub(super) running: AtomicBool,
+    /// Number of pump-loop wake-ups completed or attempted. Monotonic and
+    /// cheap enough to expose as a liveness signal without logging per tick.
+    pub(super) tick_count: AtomicU64,
+    /// Runtime-relative monotonic timestamp of the most recent pump wake-up.
+    pub(super) last_tick_ms: AtomicU64,
+    /// Panics caught at the pump-thread boundary instead of escaping silently.
+    pub(super) contained_panics: AtomicU64,
+    /// First terminal worker failure, retained for every later API call.
+    pub(super) terminal_failure: OnceLock<String>,
+    #[cfg(test)]
+    pub(super) panic_next_tick: AtomicBool,
 }
 
 impl Shared {
@@ -93,11 +131,35 @@ impl Shared {
 /// remainder to the next wake-up.
 pub(super) fn run_pump(shared: &Arc<Shared>, clock: &Arc<PumpClock>) {
     while shared.running.load(Ordering::SeqCst) {
+        let now_ms = clock.now_ms();
+        shared.tick_count.fetch_add(1, Ordering::Relaxed);
+        shared.last_tick_ms.store(now_ms, Ordering::Relaxed);
+        #[cfg(test)]
+        assert!(
+            !shared.panic_next_tick.swap(false, Ordering::SeqCst),
+            "injected playback pump panic"
+        );
         {
             let mut pump = shared.lock_pump();
-            drain_due_frames(&mut pump, clock.now_ms());
+            drain_due_frames(&mut pump, now_ms);
         }
         thread::sleep(PUMP_TICK_INTERVAL);
+    }
+}
+
+/// Runs the pump behind a containment boundary so an unexpected panic is a
+/// retained runtime failure rather than a frozen diagnostics snapshot that
+/// still looks like a live stream.
+pub(super) fn run_pump_contained(shared: &Arc<Shared>, clock: &Arc<PumpClock>) {
+    #[cfg(test)]
+    let _active_thread = ActivePumpThreadGuard::enter();
+    let outcome = catch_unwind(AssertUnwindSafe(|| run_pump(shared, clock)));
+    if outcome.is_err() {
+        shared.contained_panics.fetch_add(1, Ordering::SeqCst);
+        let _ = shared
+            .terminal_failure
+            .set("playback pump thread panicked".to_owned());
+        shared.running.store(false, Ordering::SeqCst);
     }
 }
 

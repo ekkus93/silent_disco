@@ -4,11 +4,10 @@
 //! already carries (`host_session_dto.rs`'s `HostConnectionDto`), as a
 //! convenience layer alongside that manual path -- never a replacement for
 //! it, and never a hidden requirement for transport (Block 30's own
-//! acceptance criterion). The Android app has no mDNS/NSD client today, so
-//! publishing here does not yet close the discovery loop end to end; that
-//! is separate, not-yet-scoped follow-up work. See
-//! `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` Block 30 for the full
-//! scope note and the `mdns-sd` crate selection record (30.1).
+//! acceptance criterion). Android consumes this publication through its
+//! `NsdManager` discovery adapter; BLE/Wi-Fi Direct and manual endpoint entry
+//! remain independent fallbacks. See `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`
+//! Block 30 for the full scope and the `mdns-sd` crate selection record.
 //!
 //! # Endpoint-change policy (30.2 "update after endpoint/interface change")
 //!
@@ -164,9 +163,18 @@ fn build_txt_properties(
     properties.insert("sessionId".to_owned(), advertisement.session_id.to_string());
     properties.insert("sessionName".to_owned(), advertisement.session_name.clone());
     properties.insert(
+        "hostDeviceId".to_owned(),
+        advertisement.host_device_id.to_string(),
+    );
+    properties.insert(
+        "approvalMode".to_owned(),
+        advertisement.approval_mode.wire_name().to_owned(),
+    );
+    properties.insert(
         "protocolVersion".to_owned(),
         advertisement.protocol_version.to_string(),
     );
+    properties.insert("controlPort".to_owned(), endpoint.control_port.to_string());
     properties.insert("syncPort".to_owned(), endpoint.sync_port.to_string());
     properties.insert("audioPort".to_owned(), endpoint.audio_port.to_string());
     properties.insert(
@@ -427,8 +435,20 @@ mod tests {
             Some("Living Room")
         );
         assert_eq!(
+            properties.get("hostDeviceId").map(String::as_str),
+            Some("mdns-test-host")
+        );
+        assert_eq!(
+            properties.get("approvalMode").map(String::as_str),
+            Some("manual")
+        );
+        assert_eq!(
             properties.get("protocolVersion").map(String::as_str),
             Some("2")
+        );
+        assert_eq!(
+            properties.get("controlPort").map(String::as_str),
+            Some("41100")
         );
         assert_eq!(
             properties.get("syncPort").map(String::as_str),

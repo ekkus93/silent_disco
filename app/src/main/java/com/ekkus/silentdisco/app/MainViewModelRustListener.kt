@@ -12,8 +12,7 @@ import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
-import com.ekkus.silentdisco.core.transport.TransportPorts
-import com.ekkus.silentdisco.core.transport.TransportSnapshot
+import com.ekkus.silentdisco.core.transport.MdnsSessionAdvertisement
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
@@ -26,30 +25,13 @@ import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
 import com.ekkus.silentdisco.core.uniffi.FfiSyncSampleOutcome
 import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
-import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
-import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
-private const val LOCAL_LISTENER_BIND_ADDRESS = "0.0.0.0"
-private const val LISTENER_DISPLAY_NAME = "This Android Listener"
-
-@Serializable
-private data class ManualHostEndpointPayload(
-    val hostAddress: String,
-    val controlPort: Int,
-    val syncPort: Int,
-    val audioPort: Int,
-    val sessionId: String,
-    val protocolVersion: Int,
-    val inviteCodeRequired: Boolean,
-    val expiresAtMs: String? = null,
-)
 
 private val REQUESTED_OR_LATER = setOf(
     ListenerLifecycleState.JOIN_REQUESTED,
@@ -188,156 +170,15 @@ private fun MainViewModel.executeRustListenerPlatformEffect(
     }
 }
 
-private fun MainViewModel.startRustListenerDiscovery(
-    controller: ListenerCoreController,
-    effect: FfiPlatformEffect.StartDiscovery,
-) {
-    if (!hasListenerTransportPermissions()) {
-        controller.platformOperationFailed(
-            effect.operationId,
-            "Missing nearby connectivity permissions for discovery",
-            true,
-        )
-        return
-    }
-    val bleResult = bleService.startScanning()
-    if (!bleResult.started) {
-        controller.platformOperationFailed(
-            effect.operationId,
-            bleResult.message ?: "BLE scan could not start",
-            true,
-        )
-        return
-    }
-    wifiDirectService.discoverPeers()
-    controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.DiscoveryStarted)
-}
-
-private fun MainViewModel.stopRustListenerDiscovery(
-    controller: ListenerCoreController,
-    effect: FfiPlatformEffect.StopDiscovery,
-) {
-    bleService.stopScanning()
-    wifiDirectService.cancelDiscovery()
-    controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.DiscoveryStopped)
-}
-
-private fun MainViewModel.establishRustListenerNetwork(
-    controller: ListenerCoreController,
-    effect: FfiPlatformEffect.EstablishNetwork,
-) {
-    val address = effect.address
-    val controlPort = effect.controlPort
-    val syncPort = effect.syncPort
-    val audioPort = effect.audioPort
-    if (address != null && controlPort != null && syncPort != null && audioPort != null) {
-        // The endpoint was already known (manual/desktop-style connect). The
-        // manual-endpoint UI flow still uses its own transport handle for now
-        // (see ManualListenerTransportController); this branch just models
-        // the actor's contract honestly for when that gets unified.
-        controller.platformOperationSucceeded(
-            effect.operationId,
-            FfiPlatformCompletion.NetworkEndpointReady(address, controlPort, syncPort, audioPort),
-        )
-        return
-    }
-    val session = _uiState.value.discoveredSessions.firstOrNull { it.id == effect.sessionId }
-    if (session == null) {
-        controller.platformOperationFailed(
-            effect.operationId,
-            "Selected session disappeared before establishment",
-            false,
-        )
-        return
-    }
-    pendingEstablishNetworkOperationId = effect.operationId
-    wifiDirectService.connectToSession(session)
-}
-
-private fun MainViewModel.releaseRustListenerNetwork(
-    controller: ListenerCoreController,
-    effect: FfiPlatformEffect.ReleaseNetwork,
-) {
-    pendingEstablishNetworkOperationId = null
-    wifiDirectService.stop()
-    controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.NetworkReleased)
-}
-
-/**
- * Called from the existing Wi-Fi Direct snapshot collector once the
- * transport reaches CONNECTED -- opens the real Rust listener transport
- * against the endpoint Wi-Fi Direct actually resolved, sends the join
- * request over it, and only then completes the pending EstablishNetwork
- * operation. Mirrors `completeRustHostAdvertising`'s async-completion shape
- * on the host side.
- */
-internal fun MainViewModel.completeRustListenerNetworkEstablishment(
-    snapshot: TransportSnapshot,
-) {
-    val operationId = pendingEstablishNetworkOperationId ?: return
-    if (snapshot.state != TransportConnectionState.CONNECTED) return
-    val controller = listenerCoreController ?: return
-    val address = snapshot.hostAddressHint
-    if (address == null) {
-        pendingEstablishNetworkOperationId = null
-        controller.platformOperationFailed(
-            operationId,
-            "Wi-Fi Direct reported connected without a resolved host address",
-            true,
-        )
-        return
-    }
-    val session = _uiState.value.selectedSession
-    if (session == null) {
-        pendingEstablishNetworkOperationId = null
-        controller.platformOperationFailed(operationId, "Selected session disappeared before establishment", false)
-        return
-    }
-    pendingEstablishNetworkOperationId = null
-    val ports = TransportPorts()
-    val rawEndpoint = Json.encodeToString(
-        ManualHostEndpointPayload.serializer(),
-        ManualHostEndpointPayload(
-            hostAddress = address,
-            controlPort = ports.control,
-            syncPort = ports.sync,
-            audioPort = ports.audio,
-            sessionId = session.id,
-            protocolVersion = LISTENER_DISCOVERY_PROTOCOL_VERSION,
-            inviteCodeRequired = session.inviteCodeRequired,
-        ),
-    )
-    val inviteCode = _uiState.value.connectionProgress.inviteCode.ifBlank { null }
-    viewModelScope.launch {
-        try {
-            listenerTransportController.connect(viewModelScope, rawEndpoint, localListenerDeviceId, LOCAL_LISTENER_BIND_ADDRESS)
-            listenerTransportController.sendJoinRequest(LISTENER_DISPLAY_NAME, inviteCode)
-        } catch (error: FfiListenerTransportException) {
-            controller.platformOperationFailed(operationId, error.message ?: "listener transport connection failed", true)
-            return@launch
-        }
-        ensureListenerTransportEventLoop()
-        controller.platformOperationSucceeded(
-            operationId,
-            FfiPlatformCompletion.NetworkEndpointReady(
-                address = address,
-                controlPort = ports.control.toUShort(),
-                syncPort = ports.sync.toUShort(),
-                audioPort = ports.audio.toUShort(),
-            ),
-        )
-    }
-}
-
 /**
  * Starts (once) the poll loop that forwards [ListenerTransportController]
  * events into the existing [ListenerCoreController] contract established in
  * Block 13.3 -- the controller itself has zero actor knowledge.
  */
-private fun MainViewModel.ensureListenerTransportEventLoop() {
+internal fun MainViewModel.ensureListenerTransportEventLoop() {
     if (listenerTransportEventLoopStarted) return
     listenerTransportEventLoopStarted = true
-    viewModelScope.launch {
+    viewModelScope.launch(Dispatchers.IO) {
         listenerTransportController.events.collect { event ->
             val controller = listenerCoreController ?: return@collect
             handleListenerTransportEvent(controller, event)
@@ -454,9 +295,29 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
         "sync.sample",
         "accepted=${outcome.accepted} offset=${"%.2f".format(outcome.offsetMs)} " +
             "rtt=${"%.2f".format(outcome.roundTripTimeMs)} skewPpm=${"%.2f".format(outcome.skewPpm)} " +
-            "confidence=${outcome.confidence} locked=${outcome.syncLocked}",
+            "confidence=${outcome.confidence} locked=${outcome.syncLocked} " +
+            "acquisitionRejected=${outcome.acquisitionRejectedSampleCount} " +
+            "acquisitionElapsedMs=${outcome.acquisitionElapsedMs} " +
+            "acquisitionRttLimitMs=${"%.0f".format(outcome.acquisitionRttLimitMs)} " +
+            "degradedLock=${outcome.degradedLock}",
     )
-    if (!outcome.accepted) return
+    if (!outcome.accepted) {
+        val message =
+            "Clock sync: ${outcome.acquisitionRejectedSampleCount} rejected over " +
+                "${outcome.acquisitionElapsedMs}ms (RTT gate " +
+                "${"%.0f".format(outcome.acquisitionRttLimitMs)}ms)"
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.SYNCING_CLOCK,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                currentState = ListenerLifecycleState.SYNCING_CLOCK,
+                synced = false,
+                playing = false,
+            ),
+            lastMessage = message,
+            lastError = null,
+        )
+        return
+    }
     val syncState = SyncState(
         offsetMs = outcome.offsetMs,
         rttMs = outcome.roundTripTimeMs,
@@ -468,6 +329,13 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
     _uiState.value = _uiState.value.copy(
         listenerSyncState = syncState,
         connectionProgress = _uiState.value.connectionProgress.copy(synced = outcome.syncLocked),
+        lastMessage = if (outcome.degradedLock) {
+            "Clock sync locked after ${outcome.acquisitionRejectedSampleCount} rejected samples " +
+                "using a bounded degraded acquisition gate"
+        } else {
+            "Clock sync locked"
+        },
+        lastError = null,
     )
     diagnosticsStore.updateListener {
         it.copy(
@@ -547,7 +415,7 @@ private fun MainViewModel.handleTransportAudioReceived(event: FfiListenerTranspo
             session.id,
             event.streamId,
         )
-    }
+    }.onFailure { error -> handleListenerPlaybackEngineFailure(error) }
 }
 
 /**
@@ -564,20 +432,23 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
     streamId: StreamId,
     event: FfiListenerTransportEvent.StreamStarted,
 ) {
-    stopListenerPlayback()
-    val sampleRate = event.sampleRate.toInt()
-    val samplesPerPacket = event.samplesPerPacket.toInt()
-    val packetDurationMs = if (sampleRate > 0) {
-        (samplesPerPacket.toLong() * 1_000L / sampleRate.toLong()).toInt()
-    } else {
-        0
+    listenerPlaybackControlExecutor.execute {
+        startListenerPlaybackFromTransportNow(sessionId, streamId, event)
     }
+}
+
+private fun MainViewModel.startListenerPlaybackFromTransportNow(
+    sessionId: SessionId,
+    streamId: StreamId,
+    event: FfiListenerTransportEvent.StreamStarted,
+) {
+    stopListenerPlaybackNow()
     val runtime = runCatching {
         FfiListenerPlaybackHandle.open(
             FfiListenerPlaybackConfig(
                 sessionId = sessionId.value,
                 streamId = streamId.value,
-                packetDurationMs = packetDurationMs.toUInt(),
+                sampleRate = event.sampleRate,
                 hostStartTimeMs = event.hostStartTimeMs,
                 samplesPerPacket = event.samplesPerPacket,
                 channels = event.channels,
@@ -600,10 +471,17 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
 
     val oboeStatus = OboeBridge.nativeOboeOpen(runtime.engineToken())
     if (oboeStatus != LISTENER_OBOE_STATUS_OK) {
-        stopListenerPlayback()
+        stopListenerPlaybackNow()
         handleListenerPlaybackEngineFailure(
             IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"),
         )
+        return
+    }
+    try {
+        listenerTransportController.attachPlayback(runtime)
+    } catch (error: Throwable) {
+        stopListenerPlaybackNow()
+        handleListenerPlaybackEngineFailure(error)
         return
     }
     _uiState.value = _uiState.value.copy(
@@ -622,10 +500,11 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
  */
 private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerPlaybackHandle) {
     playbackJob?.cancel()
-    playbackJob = viewModelScope.launch {
+    playbackJob = viewModelScope.launch(Dispatchers.IO) {
         var reportedPlaying = false
         var reportedSyncStall = false
         var lastUnderruns = 0UL
+        var lastDroppedBeforeSync = 0UL
         val openedAtMs = android.os.SystemClock.elapsedRealtime()
         while (_uiState.value.listenerState != ListenerLifecycleState.DISCONNECTED) {
             if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
@@ -653,6 +532,16 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                 )
                 diagnosticsStore.updateListener { it.copy(lastError = message) }
             }
+            if (!diagnostics.syncLocked && diagnostics.droppedBeforeSync > lastDroppedBeforeSync) {
+                val message =
+                    "Waiting for clock sync; ${diagnostics.droppedBeforeSync} audio packets were dropped before lock"
+                logger.w("sync.pre_sync_drop", message)
+                _uiState.value = _uiState.value.copy(
+                    listenerState = ListenerLifecycleState.SYNCING_CLOCK,
+                    lastMessage = message,
+                )
+            }
+            lastDroppedBeforeSync = diagnostics.droppedBeforeSync
             if (!reportedPlaying && diagnostics.phase == FfiPlaybackPhase.PLAYING) {
                 reportedPlaying = true
                 _uiState.value = _uiState.value.copy(
@@ -693,13 +582,32 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
 internal fun MainViewModel.stopListenerPlayback() {
     playbackJob?.cancel()
     playbackJob = null
+    listenerPlaybackControlExecutor.execute { stopListenerPlaybackNow() }
+}
+
+private fun MainViewModel.stopListenerPlaybackNow() {
     val runtime = listenerPlayback ?: return
     listenerPlayback = null
-    runCatching { runtime.stop() }.onFailure { error ->
-        logger.w("playback.stop_failed", error.message ?: "playback failed to stop cleanly")
+    var firstFailure: Throwable? = null
+    fun capture(block: () -> Unit) {
+        try {
+            block()
+        } catch (error: Throwable) {
+            val first = firstFailure
+            if (first == null) firstFailure = error else first.addSuppressed(error)
+        }
     }
-    OboeBridge.nativeOboeClose()
-    runtime.close()
+    capture { listenerTransportController.detachPlayback() }
+    capture { runtime.stop() }
+    capture { OboeBridge.nativeOboeClose() }
+    capture { runtime.close() }
+    firstFailure?.let { error ->
+        logger.w("playback.stop_failed", error.message ?: "playback failed to stop cleanly")
+        _uiState.value = _uiState.value.copy(
+            listenerPlaybackState = PlaybackState.ERROR,
+            lastError = error.message ?: "playback failed to stop cleanly",
+        )
+    }
 }
 
 internal fun FfiListenerLifecycle.toAppListenerLifecycle(): ListenerLifecycleState = when (this) {
@@ -727,9 +635,6 @@ internal fun FfiSessionAdvertisement.toAppSessionInfo(): SessionInfo = SessionIn
     inviteCodeRequired = approvalMode == FfiApprovalMode.INVITE_CODE,
 )
 
-/** Protocol version advertised by this app's own BLE/Wi-Fi Direct codec. */
-private const val LISTENER_DISCOVERY_PROTOCOL_VERSION: Int = 2
-
 internal fun SessionInfo.toFfiSessionAdvertisement(): FfiSessionAdvertisement = FfiSessionAdvertisement(
     sessionId = id,
     hostDeviceId = hostDeviceName,
@@ -741,3 +646,16 @@ internal fun SessionInfo.toFfiSessionAdvertisement(): FfiSessionAdvertisement = 
     syncPort = null,
     audioPort = null,
 )
+
+internal fun MdnsSessionAdvertisement.toFfiSessionAdvertisement(): FfiSessionAdvertisement =
+    FfiSessionAdvertisement(
+        sessionId = sessionId,
+        hostDeviceId = hostDeviceId,
+        sessionName = sessionName,
+        approvalMode = approvalMode.toFfiApprovalMode(),
+        protocolVersion = protocolVersion.toUShort(),
+        address = address,
+        controlPort = controlPort.toUShort(),
+        syncPort = syncPort.toUShort(),
+        audioPort = audioPort.toUShort(),
+    )

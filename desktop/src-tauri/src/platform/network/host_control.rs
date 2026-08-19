@@ -122,8 +122,10 @@ impl DesktopHostNetworkControl {
     /// enable is explicit"). Disabling takes effect immediately; enabling
     /// takes effect on the next stream start -- see `monitor.rs`'s module
     /// doc comment for why.
-    pub(crate) fn set_monitor_enabled(&self, enabled: bool) {
-        self.monitor.set_enabled(enabled);
+    pub(crate) fn set_monitor_enabled(&self, enabled: bool) -> Result<(), DesktopNetworkError> {
+        self.monitor
+            .set_enabled(enabled)
+            .map_err(DesktopNetworkError::unavailable)
     }
 
     /// Current desktop monitor status, safe to surface as-is.

@@ -17,7 +17,7 @@ fn hard_resync_signals_sums_concealment_and_offset_driven_causes() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -89,7 +89,7 @@ fn diagnostics_account_for_delivered_concealed_and_skipped_audio() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -152,11 +152,59 @@ fn diagnostics_account_for_delivered_concealed_and_skipped_audio() {
 }
 
 #[test]
+fn diagnostics_expose_all_bounded_jitter_rejection_classes() {
+    let mut scheduler_config = SchedulerConfig::new(
+        SessionId::new("session-pump").expect("session id"),
+        StreamId::new("stream-pump").expect("stream id"),
+        48_000,
+        HOST_START_MS,
+        SAMPLES_PER_PACKET,
+        2,
+    );
+    scheduler_config.startup_buffer_target_ms = 0;
+    scheduler_config.max_reorder_window = 4;
+    scheduler_config.max_buffered_duration_ms = 100;
+    scheduler_config.concealment_skip_threshold_packets = 3;
+    let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+    let ring = RenderRing::new(RenderRingConfig {
+        capacity_frames: 48_000,
+        target_fill_frames: 19_200,
+    })
+    .expect("valid ring");
+    let (producer, _consumer) = ring.split();
+    let mut pump =
+        PlaybackPump::new(scheduler, producer, unpaced_config(48_000)).expect("valid pump");
+    pump.apply_sync_offset(0.0);
+
+    let mut wrong_session = datagram(0, 1);
+    wrong_session.session_id = SessionId::new("session-other").expect("session id");
+    assert!(pump.scheduler_mut().submit_packet(wrong_session).is_err());
+
+    let mut wrong_stream = datagram(0, 1);
+    wrong_stream.stream_id = StreamId::new("stream-other").expect("stream id");
+    assert!(pump.scheduler_mut().submit_packet(wrong_stream).is_err());
+
+    pump.scheduler_mut()
+        .submit_packet(datagram(0, 1))
+        .expect("baseline accepted");
+    // Inside the reorder window but far enough in presentation time to exceed
+    // this test's deliberately small buffered-duration bound.
+    let mut too_wide = datagram(4, 1);
+    too_wide.host_presentation_time_ms = crate::domain::MonotonicMillis::new(HOST_START_MS + 500);
+    assert!(pump.scheduler_mut().submit_packet(too_wide).is_err());
+
+    let diagnostics = pump.diagnostics();
+    assert_eq!(diagnostics.wrong_session_rejections, 1);
+    assert_eq!(diagnostics.wrong_stream_rejections, 1);
+    assert_eq!(diagnostics.buffered_duration_rejections, 1);
+}
+
+#[test]
 fn diagnostics_report_the_phase_through_a_streams_life() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
