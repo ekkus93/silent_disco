@@ -41,16 +41,16 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
             val sendTimeMs = runtime.nowMs()
             // Register before sending: a response that beats its own
             // registration has nothing to correlate against.
-            runCatching {
+            try {
                 runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs)
-            }.getOrElse { error ->
+            } catch (error: Throwable) {
                 logger.w("manual.audio.sync_probe_failed", error.message ?: "sync probe registration failed")
                 handlePlaybackEngineFailure(error)
                 break
             }
-            runCatching {
+            try {
                 handle.sendSyncRequest(correlationId.toULong(), sendTimeMs)
-            }.getOrElse { error ->
+            } catch (error: Throwable) {
                 logger.w("manual.audio.sync_send_failed", error.message ?: "sync request send failed")
                 stopPlayback()?.let(error::addSuppressed)
                 _connectState.value = ManualConnectUiState.Failed(
