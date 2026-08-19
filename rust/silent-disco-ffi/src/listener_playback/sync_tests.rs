@@ -7,7 +7,6 @@ use crate::audio_abi::registry_test_guard;
 use silent_disco_core::audio::{PlaybackPumpConfig, RenderRingConfig, SchedulerConfig};
 use silent_disco_core::domain::{SessionId, StreamId};
 
-const PACKET_DURATION_MS: u32 = 20;
 const SAMPLES_PER_PACKET: u32 = 960;
 
 fn scheduler_config() -> SchedulerConfig {
