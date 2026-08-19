@@ -32,6 +32,12 @@ use super::types::{
 /// one. `poll` performs no allocation beyond one `Vec<i16>` per frame, no
 /// I/O, and no blocking, so it is safe to call at the stream's packet-duration
 /// cadence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BufferTargetProgress {
+    Accumulating,
+    Satisfied,
+}
+
 #[derive(Debug)]
 pub struct PlaybackScheduler {
     config: SchedulerConfig,
@@ -60,7 +66,7 @@ pub struct PlaybackScheduler {
     /// `state` prevents the scheduler from demanding another full buffer
     /// target every time that happens -- a real-time arrival stream would
     /// otherwise repeat "accumulate 400ms, discard 400ms" forever.
-    buffer_target_satisfied: bool,
+    buffer_target_progress: BufferTargetProgress,
 }
 
 impl PlaybackScheduler {
@@ -78,65 +84,7 @@ impl PlaybackScheduler {
         config: SchedulerConfig,
         initial_offset_ms: f64,
     ) -> Result<Self, SchedulerConfigError> {
-        if config.sample_rate == 0 {
-            return Err(SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidPacketDuration,
-                message: "sample rate must be nonzero".to_owned(),
-            });
-        }
-        if config.samples_per_packet == 0 {
-            return Err(SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidSamplesPerPacket,
-                message: "samples per packet must be nonzero".to_owned(),
-            });
-        }
-        let packet_time_numerator = u64::from(config.samples_per_packet) * 1_000;
-        let minimum_time_numerator =
-            u64::from(MIN_PACKET_DURATION_MS) * u64::from(config.sample_rate);
-        let maximum_time_numerator =
-            u64::from(MAX_PACKET_DURATION_MS) * u64::from(config.sample_rate);
-        if packet_time_numerator < minimum_time_numerator
-            || packet_time_numerator > maximum_time_numerator
-        {
-            return Err(SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidPacketDuration,
-                message: format!(
-                    "packet geometry of {} frames at {}Hz is outside the supported {}..={}ms range",
-                    config.samples_per_packet,
-                    config.sample_rate,
-                    MIN_PACKET_DURATION_MS,
-                    MAX_PACKET_DURATION_MS,
-                ),
-            });
-        }
-        if config.low_water_ms >= config.high_water_ms {
-            return Err(SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidWaterMarks,
-                message: format!(
-                    "low water of {}ms must be strictly less than high water of {}ms",
-                    config.low_water_ms, config.high_water_ms
-                ),
-            });
-        }
-        if config.hard_resync_threshold_ms <= 0.0 {
-            return Err(SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidHardResyncThreshold,
-                message: "hard resync threshold must be positive".to_owned(),
-            });
-        }
-        // The jitter buffer rejects anything beyond the reorder window, so a
-        // gap can never be wider than the window itself. A threshold at or
-        // above it would silently disable the skip policy rather than tune it.
-        if config.concealment_skip_threshold_packets >= config.max_reorder_window {
-            return Err(SchedulerConfigError {
-                kind: SchedulerConfigErrorKind::InvalidConcealmentSkipThreshold,
-                message: format!(
-                    "concealment skip threshold of {} packets must be smaller than the \
-                     {}-packet reorder window",
-                    config.concealment_skip_threshold_packets, config.max_reorder_window
-                ),
-            });
-        }
+        validate_scheduler_config(&config)?;
 
         let jitter_buffer = JitterBuffer::new(JitterBufferConfig {
             session_id: config.session_id.clone(),
@@ -195,7 +143,7 @@ impl PlaybackScheduler {
             last_emitted_tail: Vec::new(),
             resume_from_silence: true,
             has_played: false,
-            buffer_target_satisfied: false,
+            buffer_target_progress: BufferTargetProgress::Accumulating,
         })
     }
 
@@ -249,6 +197,39 @@ impl PlaybackScheduler {
         self.poll_with_release_horizon(local_now_ms, local_now_ms)
     }
 
+    fn advance_buffering(&mut self, local_now_ms: u64) -> Option<SchedulerPoll> {
+        let buffered_ms = self.jitter_buffer.buffered_span_ms();
+        // A stream's first start and a mid-stream recovery are not the same
+        // situation. Clamp recovery to the startup target so lowering startup
+        // latency can never silently make a later recovery longer.
+        let target = if self.has_played {
+            self.config
+                .rebuffer_target_ms
+                .min(self.config.startup_buffer_target_ms)
+        } else {
+            self.config.startup_buffer_target_ms
+        };
+        if self.buffer_target_progress == BufferTargetProgress::Accumulating && buffered_ms < target
+        {
+            return Some(SchedulerPoll::Buffering { buffered_ms });
+        }
+        self.buffer_target_progress = BufferTargetProgress::Satisfied;
+
+        // Start only on a packet whose host-timeline deadline is still reachable.
+        // Remember a satisfied target even if alignment discards the whole stale
+        // head; otherwise a real-time stream can loop forever accumulating and
+        // discarding the same target-sized window.
+        self.discard_already_late_head(local_now_ms);
+        if target > 0 && self.jitter_buffer.is_empty() {
+            return Some(SchedulerPoll::Buffering { buffered_ms: 0 });
+        }
+
+        self.state = SchedulerState::Playing;
+        self.has_played = true;
+        self.buffer_target_progress = BufferTargetProgress::Accumulating;
+        None
+    }
+
     /// Advances the scheduler with separate actual-time and release-horizon
     /// clocks.
     ///
@@ -276,51 +257,9 @@ impl PlaybackScheduler {
             SchedulerState::Stopped => return SchedulerPoll::Stopped,
             SchedulerState::AwaitingRebuffer => return SchedulerPoll::AwaitingRebuffer,
             SchedulerState::Buffering => {
-                let buffered_ms = self.jitter_buffer.buffered_span_ms();
-                // A stream's first start and a mid-stream recovery are not
-                // the same situation, and must not share a target: the
-                // recovery's target is the length of an audible hole.
-                // Clamped to the startup target: a mid-stream recovery
-                // never needs a deeper cushion than the stream's own first
-                // start, and without the clamp a caller that lowered only
-                // the startup target would silently get a *longer* recovery
-                // than it asked for.
-                let target = if self.has_played {
-                    self.config
-                        .rebuffer_target_ms
-                        .min(self.config.startup_buffer_target_ms)
-                } else {
-                    self.config.startup_buffer_target_ms
-                };
-                if !self.buffer_target_satisfied && buffered_ms < target {
-                    return SchedulerPoll::Buffering { buffered_ms };
+                if let Some(poll) = self.advance_buffering(local_now_ms) {
+                    return poll;
                 }
-                self.buffer_target_satisfied = true;
-
-                // The first audible frame must still be placeable on the
-                // host timeline. Two listeners can lock sync or finish
-                // buffering at different moments; replaying each listener's
-                // already-elapsed buffered head would permanently offset the
-                // whole stream by that device's own startup latency.
-                //
-                // Crucially this uses *true current time*. The pump may ask
-                // us to release 400ms into the future to seed its FIFO, and
-                // an earlier implementation compared against that future
-                // horizon instead. It discarded still-future audio and
-                // repeatedly emptied/rebuffered on a physical device.
-                self.discard_already_late_head(local_now_ms);
-
-                // Reaching the buffering target is remembered even if every
-                // held packet was stale. Stay in Buffering until a live
-                // packet arrives, but do not require another full target --
-                // otherwise a real-time stream can loop forever accumulating
-                // and discarding the same target-sized stale window.
-                if target > 0 && self.jitter_buffer.is_empty() {
-                    return SchedulerPoll::Buffering { buffered_ms: 0 };
-                }
-                self.state = SchedulerState::Playing;
-                self.has_played = true;
-                self.buffer_target_satisfied = false;
             }
             SchedulerState::Playing => {}
         }
@@ -580,7 +519,7 @@ impl PlaybackScheduler {
         self.offset_ms = new_offset_ms;
         self.concealment.reset_consecutive_count();
         self.state = SchedulerState::Buffering;
-        self.buffer_target_satisfied = false;
+        self.buffer_target_progress = BufferTargetProgress::Accumulating;
         // Playback resumes after a real interruption; fade back in.
         self.fade_in_next_real_frame = true;
         self.resume_from_silence = true;
@@ -665,6 +604,68 @@ impl PlaybackScheduler {
     pub fn local_time_for_host_ms(&self, host_time_ms: u64) -> u64 {
         host_to_local_ms(host_time_ms, self.offset_ms)
     }
+}
+
+fn validate_scheduler_config(config: &SchedulerConfig) -> Result<(), SchedulerConfigError> {
+    if config.sample_rate == 0 {
+        return Err(SchedulerConfigError {
+            kind: SchedulerConfigErrorKind::InvalidPacketDuration,
+            message: "sample rate must be nonzero".to_owned(),
+        });
+    }
+    if config.samples_per_packet == 0 {
+        return Err(SchedulerConfigError {
+            kind: SchedulerConfigErrorKind::InvalidSamplesPerPacket,
+            message: "samples per packet must be nonzero".to_owned(),
+        });
+    }
+
+    let packet_time_numerator = u64::from(config.samples_per_packet) * 1_000;
+    let minimum_time_numerator = u64::from(MIN_PACKET_DURATION_MS) * u64::from(config.sample_rate);
+    let maximum_time_numerator = u64::from(MAX_PACKET_DURATION_MS) * u64::from(config.sample_rate);
+    if packet_time_numerator < minimum_time_numerator
+        || packet_time_numerator > maximum_time_numerator
+    {
+        return Err(SchedulerConfigError {
+            kind: SchedulerConfigErrorKind::InvalidPacketDuration,
+            message: format!(
+                "packet geometry of {} frames at {}Hz is outside the supported {}..={}ms range",
+                config.samples_per_packet,
+                config.sample_rate,
+                MIN_PACKET_DURATION_MS,
+                MAX_PACKET_DURATION_MS,
+            ),
+        });
+    }
+    if config.low_water_ms >= config.high_water_ms {
+        return Err(SchedulerConfigError {
+            kind: SchedulerConfigErrorKind::InvalidWaterMarks,
+            message: format!(
+                "low water of {}ms must be strictly less than high water of {}ms",
+                config.low_water_ms, config.high_water_ms
+            ),
+        });
+    }
+    if config.hard_resync_threshold_ms <= 0.0 {
+        return Err(SchedulerConfigError {
+            kind: SchedulerConfigErrorKind::InvalidHardResyncThreshold,
+            message: "hard resync threshold must be positive".to_owned(),
+        });
+    }
+    // The jitter buffer rejects anything beyond the reorder window, so a gap
+    // can never be wider than the window itself. A threshold at or above it
+    // would silently disable the skip policy rather than tune it.
+    if config.concealment_skip_threshold_packets >= config.max_reorder_window {
+        return Err(SchedulerConfigError {
+            kind: SchedulerConfigErrorKind::InvalidConcealmentSkipThreshold,
+            message: format!(
+                "concealment skip threshold of {} packets must be smaller than the \
+                 {}-packet reorder window",
+                config.concealment_skip_threshold_packets, config.max_reorder_window
+            ),
+        });
+    }
+    Ok(())
 }
 
 #[allow(
