@@ -4,7 +4,7 @@ use crate::audio::{PlaybackScheduler, RenderRing, RenderRingConfig, SchedulerCon
 use crate::domain::{SessionId, StreamId};
 
 use super::super::{PlaybackPump, PlaybackPumpConfig, PlaybackPumpConfigErrorKind};
-use super::{HOST_START_MS, PACKET_DURATION_MS, SAMPLES_PER_PACKET, pump_with, unpaced_config};
+use super::{HOST_START_MS, SAMPLES_PER_PACKET, pump_with, unpaced_config};
 
 #[test]
 fn rejects_a_target_depth_the_ring_could_never_reach() {
