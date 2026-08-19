@@ -221,7 +221,7 @@ mod drop_tests {
     use super::DesktopMonitorPump;
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::atomic::AtomicBool;
-    use std::sync::{Arc, OnceLock};
+    use std::sync::Arc;
     use std::thread;
 
     #[test]
