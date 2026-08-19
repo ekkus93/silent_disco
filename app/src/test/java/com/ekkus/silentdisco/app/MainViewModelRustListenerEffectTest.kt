@@ -386,7 +386,7 @@ class MainViewModelRustListenerEffectTest {
         assertThat(latest.sessionId).isEqualTo("session-1")
         assertThat(latest.hostDeviceId).isEqualTo("desktop-host")
         assertThat(latest.address).isEqualTo("192.168.1.50")
-        assertThat(latest.controlPort).isEqualTo(41_100u)
+        assertThat(latest.controlPort).isEqualTo(41_100u.toUShort())
     }
 
     @Test
