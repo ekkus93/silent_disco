@@ -368,7 +368,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
     handle: i64,
 ) -> i32 {
     last_observation(handle).map_or_else(AndroidSyncStatus::code, |observation| {
-        if observation.degraded_lock { 1 } else { 0 }
+        i32::from(observation.degraded_lock)
     })
 }
 
