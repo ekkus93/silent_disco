@@ -76,8 +76,11 @@ pub(crate) fn start(
     match start_after_buffering(handle, network, registry, &descriptor, session_id) {
         Ok(()) => Ok(()),
         Err(error) => {
-            drop(handle.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Error)));
-            Err(error)
+            let state_error = handle
+                .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Error))
+                .map_err(DesktopErrorDto::from)
+                .err();
+            Err(error.with_appended_cleanup(state_error))
         }
     }
 }

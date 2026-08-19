@@ -16,7 +16,7 @@ fn nothing_plays_until_a_real_clock_offset_has_been_applied() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -125,4 +125,77 @@ fn packets_arriving_before_sync_locks_are_dropped_rather_than_stranding_the_buff
         "the live stream was never picked up after sync locked"
     );
     assert_eq!(diagnostics.resynchronisations, 1);
+}
+
+#[test]
+fn non_finite_offsets_are_rejected_without_locking_or_mutating_playback() {
+    let (mut pump, _consumer) = pump_with_unlocked_sync();
+
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            pump.apply_sync_offset(invalid),
+            SyncApplyOutcome::RejectedNonFinite
+        );
+        assert!(!pump.is_sync_locked());
+    }
+
+    assert_eq!(pump.apply_sync_offset(100.0), SyncApplyOutcome::Locked);
+    assert!(pump.is_sync_locked());
+    assert_eq!(
+        pump.apply_sync_offset(f64::NAN),
+        SyncApplyOutcome::RejectedNonFinite
+    );
+    // The rejected NaN must not poison the stored offset: a small correction
+    // from the last valid 100ms estimate remains a soft correction.
+    assert_eq!(
+        pump.apply_sync_offset(110.0),
+        SyncApplyOutcome::SoftCorrected
+    );
+}
+
+#[test]
+fn exactly_the_hard_resync_threshold_is_still_a_soft_correction() {
+    let (mut pump, _consumer) = pump_with_unlocked_sync();
+    assert_eq!(pump.apply_sync_offset(0.0), SyncApplyOutcome::Locked);
+
+    assert_eq!(
+        pump.apply_sync_offset(crate::audio::DEFAULT_HARD_RESYNC_THRESHOLD_MS),
+        SyncApplyOutcome::SoftCorrected,
+        "the soft branch is inclusive; only a delta above the threshold may rebuffer"
+    );
+    assert_eq!(pump.diagnostics().offset_driven_rebuffers, 0);
+    assert_eq!(
+        pump.scheduler_mut().local_time_for_host_ms(1_000),
+        995,
+        "threshold equality stays soft and therefore uses the bounded 5ms slew"
+    );
+}
+
+#[test]
+fn soft_offset_updates_are_slew_limited_and_converge_without_an_instant_jump() {
+    let (mut pump, _consumer) = pump_with_unlocked_sync();
+    assert_eq!(pump.apply_sync_offset(0.0), SyncApplyOutcome::Locked);
+
+    assert_eq!(
+        pump.apply_sync_offset(100.0),
+        SyncApplyOutcome::SoftCorrected
+    );
+    assert_eq!(
+        pump.scheduler_mut().local_time_for_host_ms(1_000),
+        995,
+        "a 100ms estimator correction must move the playback timeline only 5ms on one update"
+    );
+
+    for _ in 0..19 {
+        assert_eq!(
+            pump.apply_sync_offset(100.0),
+            SyncApplyOutcome::SoftCorrected
+        );
+    }
+    assert_eq!(
+        pump.scheduler_mut().local_time_for_host_ms(1_000),
+        900,
+        "repeated accepted observations must converge to the estimator target"
+    );
+    assert_eq!(pump.diagnostics().offset_driven_rebuffers, 0);
 }

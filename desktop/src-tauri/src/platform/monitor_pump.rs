@@ -21,9 +21,10 @@ use silent_disco_core::audio::{
 };
 use silent_disco_core::protocol::AudioDatagram;
 use std::fmt;
-use std::sync::Arc;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -65,7 +66,8 @@ impl std::error::Error for MonitorPumpStartError {}
 /// One active monitor stream's real-time-paced pump thread.
 pub(crate) struct DesktopMonitorPump {
     stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+    terminal_failure: Arc<OnceLock<String>>,
+    thread: Option<JoinHandle<Result<(), String>>>,
 }
 
 impl DesktopMonitorPump {
@@ -101,15 +103,34 @@ impl DesktopMonitorPump {
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = Arc::clone(&stop);
+        let terminal_failure = Arc::new(OnceLock::new());
+        let terminal_failure_for_thread = Arc::clone(&terminal_failure);
         let thread = thread::Builder::new()
             .name("silent-disco-desktop-monitor-pump".to_owned())
-            .spawn(move || run_pump(pump, &datagrams, &stop_for_thread, now_ms))
+            .spawn(move || {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    run_pump(pump, &datagrams, &stop_for_thread, now_ms)
+                }))
+                .unwrap_or_else(|_| Err("local monitor pump thread panicked".to_owned()));
+                if let Err(error) = &result {
+                    drop(terminal_failure_for_thread.set(error.clone()));
+                }
+                result
+            })
             .map_err(|error| MonitorPumpStartError::ThreadSpawnFailed(error.to_string()))?;
 
         Ok(Self {
             stop,
+            terminal_failure,
             thread: Some(thread),
         })
+    }
+
+    /// Returns the worker's first terminal operational failure, if it has
+    /// already exited unsuccessfully. Reading this never blocks on the worker.
+    #[must_use]
+    pub(crate) fn terminal_failure(&self) -> Option<String> {
+        self.terminal_failure.get().cloned()
     }
 
     /// Signals the pump thread to stop and blocks until it has exited --
@@ -119,9 +140,12 @@ impl DesktopMonitorPump {
     pub(crate) fn stop(mut self) -> Result<(), String> {
         self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
-            thread
-                .join()
-                .map_err(|_| "local monitor pump thread panicked during shutdown".to_owned())?;
+            match thread.join() {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err("local monitor pump thread panicked during shutdown".to_owned());
+                }
+            }
         }
         Ok(())
     }
@@ -130,18 +154,22 @@ impl DesktopMonitorPump {
 impl Drop for DesktopMonitorPump {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take()
-            && thread.join().is_err()
-        {
-            // Normal owners call `stop()`, which propagates the join failure.
-            // Reaching Drop with a panicked worker is therefore a lifecycle
-            // invariant violation. Fail loudly instead of reducing that
-            // operational failure to a stderr-only message. During an
-            // unrelated panic, do not trigger a second panic while unwinding.
-            assert!(
-                std::thread::panicking(),
-                "local monitor pump thread panicked during implicit shutdown"
-            );
+        if let Some(thread) = self.thread.take() {
+            let failure = match thread.join() {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(error),
+                Err(_) => {
+                    Some("local monitor pump thread panicked during implicit shutdown".to_owned())
+                }
+            };
+            if let Some(failure) = failure {
+                // Normal owners call `stop()`, which propagates worker failures.
+                // Reaching Drop with an unobserved operational failure is a
+                // lifecycle invariant violation. Fail loudly instead of
+                // reducing it to stderr-only diagnostics. During an unrelated
+                // panic, do not trigger a second panic while unwinding.
+                assert!(std::thread::panicking(), "{failure}");
+            }
         }
     }
 }
@@ -151,20 +179,24 @@ fn run_pump(
     datagrams: &Receiver<AudioDatagram>,
     stop: &AtomicBool,
     now_ms: impl Fn() -> Option<u64>,
-) {
+) -> Result<(), String> {
     while !stop.load(Ordering::Acquire) {
         while let Ok(datagram) = datagrams.try_recv() {
-            // A rejected packet (e.g. arrived before this pump's own
-            // startup buffer target) simply is not monitored this instant
-            // -- never fatal, and never affects the host's own network
-            // broadcast, which does not go through this pump at all.
-            drop(pump.submit_packet(datagram));
+            // These datagrams are generated locally for this exact host
+            // session/stream. A scheduler rejection therefore means the
+            // monitor pipeline violated its own ordering/identity bounds; it
+            // is not benign packet loss and must become a visible terminal
+            // monitor failure. Network transmission is independent and keeps
+            // running because only this local monitor worker exits.
+            pump.submit_packet(datagram)
+                .map_err(|error| format!("local monitor rejected host audio datagram: {error}"))?;
         }
         if let Some(now) = now_ms() {
             drain_due_frames(&mut pump, now);
         }
         thread::sleep(PUMP_TICK_INTERVAL);
     }
+    Ok(())
 }
 
 /// Advances `pump` until nothing further is due, mirroring
@@ -188,15 +220,17 @@ fn drain_due_frames(pump: &mut PlaybackPump, now_ms: u64) -> usize {
 mod drop_tests {
     use super::DesktopMonitorPump;
     use std::panic::{AssertUnwindSafe, catch_unwind};
-    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, OnceLock};
     use std::thread;
 
     #[test]
     fn implicit_drop_fails_loudly_when_the_monitor_worker_panicked() {
-        let worker = thread::spawn(|| panic!("injected monitor pump panic"));
+        let worker =
+            thread::spawn(|| -> Result<(), String> { panic!("injected monitor pump panic") });
         let pump = DesktopMonitorPump {
             stop: Arc::new(AtomicBool::new(false)),
+            terminal_failure: Arc::new(std::sync::OnceLock::new()),
             thread: Some(worker),
         };
 
@@ -209,9 +243,10 @@ mod drop_tests {
 
     #[test]
     fn implicit_drop_accepts_a_clean_monitor_worker_exit() {
-        let worker = thread::spawn(|| {});
+        let worker = thread::spawn(|| Ok(()));
         let pump = DesktopMonitorPump {
             stop: Arc::new(AtomicBool::new(false)),
+            terminal_failure: Arc::new(std::sync::OnceLock::new()),
             thread: Some(worker),
         };
 

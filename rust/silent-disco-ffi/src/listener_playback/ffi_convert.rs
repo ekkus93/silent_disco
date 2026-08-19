@@ -57,9 +57,12 @@ impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
             packets_accepted: diagnostics.packets_accepted,
             packets_emitted: diagnostics.packets_emitted,
             sequences_skipped: diagnostics.sequences_skipped,
+            wrong_session_rejections: diagnostics.wrong_session_rejections,
+            wrong_stream_rejections: diagnostics.wrong_stream_rejections,
             late_rejections: diagnostics.late_rejections,
             duplicate_rejections: diagnostics.duplicate_rejections,
             reorder_window_rejections: diagnostics.reorder_window_rejections,
+            buffered_duration_rejections: diagnostics.buffered_duration_rejections,
             resynchronisations: diagnostics.resynchronisations,
             dropped_before_sync: diagnostics.dropped_before_sync,
             concealed_packets: diagnostics.concealed_packets,
@@ -74,6 +77,9 @@ impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
             ring_underruns: diagnostics.ring_underruns,
             ring_silence_filled_frames: diagnostics.ring_silence_filled_frames,
             ring_full_events: diagnostics.ring_full_events,
+            pump_thread_tick_count: 0,
+            pump_thread_last_tick_ms: 0,
+            contained_pump_panics: 0,
         }
     }
 }
@@ -89,6 +95,10 @@ impl From<SyncSampleOutcome> for FfiSyncSampleOutcome {
             confidence: outcome.confidence.into(),
             accepted_sample_count: to_u64(outcome.accepted_sample_count),
             sync_locked: outcome.sync_locked,
+            acquisition_rejected_sample_count: outcome.acquisition_rejected_sample_count,
+            acquisition_elapsed_ms: outcome.acquisition_elapsed_ms,
+            acquisition_rtt_limit_ms: outcome.acquisition_rtt_limit_ms,
+            degraded_lock: outcome.degraded_lock,
         }
     }
 }

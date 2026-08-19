@@ -2,6 +2,7 @@ package com.ekkus.silentdisco.core.rust
 
 import android.os.SystemClock
 import com.ekkus.silentdisco.core.audio.OboeBridge
+import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +37,7 @@ internal fun ManualListenerTransportController.startDiagnosticsSampler(
         var previousSilenceFrames = 0uL
         var previousConcealed = 0uL
         var previousEmitted = 0uL
+        var previousDroppedBeforeSync = 0uL
         while (isActive) {
             delay(DIAGNOSTICS_SAMPLE_CADENCE_MS)
             val diagnostics = playbackRuntime?.takeIf { it === runtime }?.diagnostics() ?: break
@@ -56,10 +58,21 @@ internal fun ManualListenerTransportController.startDiagnosticsSampler(
                     "ringQueued=${diagnostics.ringQueuedFrames} " +
                     "bufferedMs=${diagnostics.bufferedSpanMs} phase=${diagnostics.phase}",
             )
+            if (!diagnostics.syncLocked && diagnostics.droppedBeforeSync > previousDroppedBeforeSync) {
+                val warning =
+                    "Waiting for clock sync; ${diagnostics.droppedBeforeSync} audio packets were dropped before lock"
+                logger.w("manual.audio.pre_sync_drop", warning)
+                appendDiagnosticsLine("warning $warning")
+                val current = _connectState.value
+                if (current is ManualConnectUiState.Streaming) {
+                    _connectState.value = current.copy(syncStatus = warning)
+                }
+            }
             previousUnderruns = diagnostics.ringUnderruns
             previousSilenceFrames = diagnostics.ringSilenceFilledFrames
             previousConcealed = diagnostics.concealedPackets
             previousEmitted = diagnostics.packetsEmitted
+            previousDroppedBeforeSync = diagnostics.droppedBeforeSync
         }
     }
 }

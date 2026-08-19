@@ -1451,7 +1451,7 @@ sync (needs a second physical device, per 20.4 below).
 Refactor existing Android services so they report facts:
 
 - [x] BLE session advertisement/discovery.
-- [ ] Android NSD/mDNS discovery where implemented (not implemented anywhere in this app; BLE + Wi-Fi Direct only).
+- [x] Android NSD/mDNS discovery -- `MdnsDiscoveryService` browses the desktop `_silentdisco._tcp` publication, validates semantic TXT metadata, and feeds endpoint-bearing advertisements into the Rust listener actor; BLE/Wi-Fi Direct and manual endpoint entry remain fallbacks.
 - [x] Wi-Fi Direct group/connection establishment.
 - [x] resulting local/remote IP endpoint.
 - [x] permission and platform failures.

@@ -1164,22 +1164,28 @@ Before handing back the code, Claude Code should run or manually verify:
 
 - [ ] `./gradlew test` passes.
 - [ ] `./gradlew lintDebug` passes, or every failure is listed with reason and fix plan.
-- [ ] Discover screen scan indicator stops after scan window.
-- [ ] Scan button is re-enabled after scan success, empty scan, permission failure, and scan start failure.
-- [ ] Join buttons are disabled while another join is active.
-- [ ] Join progress shows all seven steps, including "Buffering audio".
-- [ ] Diagnostics shows no raw enum names.
-- [ ] Manual Resync disabled without active listener session.
-- [ ] Manual Resync called directly without session sets `lastError`.
-- [ ] Host setup shows real `CREATING_SESSION` loading state.
-- [ ] Host setup does not navigate to Host Control on BLE/Wi-Fi start failure.
-- [ ] Invite-code mode rejects wrong/missing real join request codes.
-- [ ] The hardcoded demo invite code is debug/demo-only.
-- [ ] Volume slider changes actual playback engine volume.
-- [ ] Playback write before start does not report success.
-- [ ] Playback engine write failures transition to visible error state.
-- [ ] BLE scan/advertise synchronous failures update UI/diagnostics.
-- [ ] Repeated audio broadcast failures do not silently continue forever.
+- [x] Discover screen scan indicator stops after scan window.
+- [x] Scan button is re-enabled after scan success, empty scan, permission failure, and scan start failure.
+- [x] Join buttons are disabled while another join is active.
+- [x] Join progress shows all seven steps, including "Buffering audio".
+- [x] Diagnostics shows no raw enum names.
+- [x] Manual Resync disabled without active listener session.
+- [x] Manual Resync called directly without session sets `lastError`.
+- [x] Host setup shows real `CREATING_SESSION` loading state.
+- [x] Host setup does not navigate to Host Control on BLE/Wi-Fi start failure.
+- [x] Invite-code mode rejects wrong/missing real join request codes.
+- [x] The hardcoded demo invite code is debug/demo-only.
+- [x] Volume slider changes actual playback engine volume.
+- [x] Playback write before start does not report success.
+- [x] Playback engine write failures transition to visible error state.
+- [x] BLE scan/advertise synchronous failures update UI/diagnostics.
+- [x] Repeated audio broadcast failures do not silently continue forever.
+
+Software-only validation was re-audited during the 2026-08-19 non-device
+closure pass. The checked behavior items above are backed by current
+production helpers/state transitions and their regression tests; the two
+Gradle execution gates remain open because this sandbox cannot resolve the
+Gradle distribution and are not inferred from source inspection.
 
 ## Notes for Claude Code
 

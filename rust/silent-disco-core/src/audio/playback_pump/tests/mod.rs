@@ -49,7 +49,7 @@ pub(super) fn pump_with(capacity_frames: usize) -> (PlaybackPump, RenderRingCons
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -76,7 +76,7 @@ pub(super) fn paced_pump_with(config: PlaybackPumpConfig) -> (PlaybackPump, Rend
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -105,7 +105,7 @@ pub(super) fn pump_with_unlocked_sync() -> (PlaybackPump, RenderRingConsumer) {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,

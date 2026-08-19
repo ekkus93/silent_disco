@@ -13,6 +13,9 @@ use std::path::Path;
 
 /// Bytes in a canonical PCM WAV header, before any sample data.
 const WAV_HEADER_BYTES: u32 = 44;
+/// Largest data chunk representable by canonical RIFF/WAVE, accounting for
+/// the 36 bytes between the RIFF size field and the PCM payload.
+const MAX_WAV_DATA_BYTES: u32 = u32::MAX - (WAV_HEADER_BYTES - 8);
 const PCM_FORMAT_TAG: u16 = 1;
 const BITS_PER_SAMPLE: u16 = 16;
 
@@ -51,14 +54,43 @@ impl DebugPcmRecorder {
     /// Returns any I/O error from writing the samples.
     pub fn append(&mut self, samples: &[i16]) -> io::Result<()> {
         if self.finished {
-            return Ok(());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "debug PCM recorder is already finished",
+            ));
         }
+
+        // Validate the final RIFF size before writing anything. Saturating the
+        // counter after the bytes have already reached disk would create a WAV
+        // whose header cannot describe its payload and make a diagnostic
+        // capture silently misleading.
+        let append_bytes = samples
+            .len()
+            .checked_mul(core::mem::size_of::<i16>())
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "debug PCM append is too large for a WAV data chunk",
+                )
+            })?;
+        let new_data_bytes = self.data_bytes.checked_add(append_bytes).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "debug PCM capture exceeds the WAV data-size limit",
+            )
+        })?;
+        if new_data_bytes > MAX_WAV_DATA_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "debug PCM capture exceeds the RIFF size limit",
+            ));
+        }
+
         for &sample in samples {
             self.writer.write_all(&sample.to_le_bytes())?;
         }
-        self.data_bytes = self
-            .data_bytes
-            .saturating_add(u32::try_from(samples.len() * 2).unwrap_or(u32::MAX));
+        self.data_bytes = new_data_bytes;
         Ok(())
     }
 
@@ -114,4 +146,57 @@ fn write_header(
     writer.write_all(&BITS_PER_SAMPLE.to_le_bytes())?;
     writer.write_all(b"data")?;
     writer.write_all(&data_bytes.to_le_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recorder_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "silent-disco-debug-recorder-{name}-{}-{:?}.wav",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    #[test]
+    fn append_after_finish_is_an_error_instead_of_a_silent_drop() {
+        let path = recorder_path("after-finish");
+        let mut recorder = DebugPcmRecorder::create(&path, 48_000, 2).expect("recorder");
+        recorder.append(&[1, -1]).expect("initial append");
+        recorder.finish(48_000).expect("finish");
+
+        let error = recorder
+            .append(&[2, -2])
+            .expect_err("post-finish audio must not be silently discarded");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(recorder.data_bytes(), 4);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn append_refuses_riff_overflow_before_writing_any_sample_bytes() {
+        let path = recorder_path("riff-overflow");
+        let mut recorder = DebugPcmRecorder::create(&path, 48_000, 2).expect("recorder");
+        // Private state is intentionally set at the boundary so this test can
+        // exercise a multi-gigabyte file limit without allocating or writing
+        // a multi-gigabyte fixture.
+        recorder.data_bytes = MAX_WAV_DATA_BYTES - 1;
+        recorder.writer.flush().expect("flush header");
+        let before_len = std::fs::metadata(&path).expect("metadata").len();
+
+        let error = recorder
+            .append(&[7])
+            .expect_err("an unrepresentable RIFF payload must be rejected");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(recorder.data_bytes(), MAX_WAV_DATA_BYTES - 1);
+        recorder.writer.flush().expect("flush");
+        assert_eq!(
+            std::fs::metadata(&path).expect("metadata").len(),
+            before_len,
+            "overflow rejection must happen before sample bytes are written"
+        );
+        std::fs::remove_file(path).ok();
+    }
 }

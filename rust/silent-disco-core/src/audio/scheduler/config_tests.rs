@@ -20,11 +20,11 @@ fn maps_host_presentation_time_to_local_time_using_the_configured_offset() {
 }
 
 #[test]
-fn rejects_an_invalid_packet_duration() {
+fn rejects_an_invalid_packet_geometry() {
     let mut cfg = config();
-    cfg.packet_duration_ms = 0;
+    cfg.sample_rate = 0;
 
-    let error = PlaybackScheduler::new(cfg, 0.0).expect_err("invalid duration must be rejected");
+    let error = PlaybackScheduler::new(cfg, 0.0).expect_err("invalid geometry must be rejected");
     assert_eq!(error.kind, SchedulerConfigErrorKind::InvalidPacketDuration);
 }
 

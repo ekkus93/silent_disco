@@ -64,6 +64,10 @@ data class RustSyncObservation(
     val roundTripTimeMs: Double,
     val offsetMs: Double,
     val accepted: Boolean,
+    val acquisitionRejectedSampleCount: Long,
+    val acquisitionElapsedMs: Long,
+    val acquisitionRttLimitMs: Double,
+    val degradedLock: Boolean,
     val snapshot: RustSyncSnapshot,
 )
 
@@ -115,6 +119,31 @@ private fun requireNativeSyncSuccess(
     }
 }
 
+private fun decodeNonNegativeNativeLong(
+    fieldName: String,
+    value: Long,
+): Long {
+    if (value < 0L) {
+        throw RustSyncNativeException(value.toInt(), "read $fieldName")
+    }
+    return value
+}
+
+private fun decodeNativeBoolean(
+    fieldName: String,
+    value: Int,
+): Boolean = when (value) {
+    0 -> false
+    1 -> true
+    else -> if (value < 0) {
+        throw RustSyncNativeException(value, "read $fieldName")
+    } else {
+        throw RustSyncBridgeProtocolException(
+            "Rust synchronization core returned invalid $fieldName value $value",
+        )
+    }
+}
+
 /**
  * A control-plane handle for the Rust-owned synchronization estimator.
  *
@@ -161,6 +190,22 @@ class RustSyncEstimator internal constructor(
                 bits = RustCoreBridge.lastSyncObservationOffsetBits(currentHandle),
             ),
             accepted = accepted,
+            acquisitionRejectedSampleCount = decodeNonNegativeNativeLong(
+                fieldName = "acquisition rejected sample count",
+                value = RustCoreBridge.lastSyncObservationAcquisitionRejectedCount(currentHandle),
+            ),
+            acquisitionElapsedMs = decodeNonNegativeNativeLong(
+                fieldName = "acquisition elapsed time",
+                value = RustCoreBridge.lastSyncObservationAcquisitionElapsedMs(currentHandle),
+            ),
+            acquisitionRttLimitMs = decodeFiniteNativeDouble(
+                fieldName = "acquisition RTT limit",
+                bits = RustCoreBridge.lastSyncObservationAcquisitionRttLimitBits(currentHandle),
+            ),
+            degradedLock = decodeNativeBoolean(
+                fieldName = "degraded lock",
+                value = RustCoreBridge.lastSyncObservationDegradedLock(currentHandle),
+            ),
             snapshot = readSnapshot(currentHandle),
         )
     }
@@ -261,6 +306,14 @@ object RustCoreBridge {
 
     private external fun nativeSyncEstimatorLastOffsetBits(handle: Long): Long
 
+    private external fun nativeSyncEstimatorLastAcquisitionRejectedCount(handle: Long): Long
+
+    private external fun nativeSyncEstimatorLastAcquisitionElapsedMs(handle: Long): Long
+
+    private external fun nativeSyncEstimatorLastAcquisitionRttLimitBits(handle: Long): Long
+
+    private external fun nativeSyncEstimatorLastDegradedLock(handle: Long): Int
+
     private external fun nativeSyncEstimatorSnapshotStatus(handle: Long): Int
 
     private external fun nativeSyncEstimatorSnapshotOffsetBits(handle: Long): Long
@@ -329,6 +382,27 @@ object RustCoreBridge {
     internal fun lastSyncObservationOffsetBits(handle: Long): Long =
         invokeNative("read the latest Rust synchronization offset") {
             nativeSyncEstimatorLastOffsetBits(handle)
+        }
+
+
+    internal fun lastSyncObservationAcquisitionRejectedCount(handle: Long): Long =
+        invokeNative("read synchronization acquisition rejected count") {
+            nativeSyncEstimatorLastAcquisitionRejectedCount(handle)
+        }
+
+    internal fun lastSyncObservationAcquisitionElapsedMs(handle: Long): Long =
+        invokeNative("read synchronization acquisition elapsed time") {
+            nativeSyncEstimatorLastAcquisitionElapsedMs(handle)
+        }
+
+    internal fun lastSyncObservationAcquisitionRttLimitBits(handle: Long): Long =
+        invokeNative("read synchronization acquisition RTT limit") {
+            nativeSyncEstimatorLastAcquisitionRttLimitBits(handle)
+        }
+
+    internal fun lastSyncObservationDegradedLock(handle: Long): Int =
+        invokeNative("read synchronization degraded-lock flag") {
+            nativeSyncEstimatorLastDegradedLock(handle)
         }
 
     internal fun syncEstimatorSnapshotStatus(handle: Long): Int =

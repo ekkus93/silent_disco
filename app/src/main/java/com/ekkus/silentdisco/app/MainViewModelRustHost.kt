@@ -448,7 +448,7 @@ private fun MainViewModel.stopAdvertisingForRust(
     hostStreamJob?.cancel()
     playbackJob?.cancel()
     resyncJob?.cancel()
-    playbackEngine.stop()
+    stopHostMonitorPlayback()
     bleService.stop()
     wifiDirectService.stop()
     pendingStartAdvertisingOperationId = null

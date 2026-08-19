@@ -51,7 +51,7 @@ impl FfiListenerPlaybackHandle {
         let mut scheduler_config = SchedulerConfig::new(
             session_id,
             stream_id,
-            config.packet_duration_ms,
+            config.sample_rate,
             config.host_start_time_ms,
             config.samples_per_packet,
             config.channels,
@@ -89,6 +89,35 @@ impl FfiListenerPlaybackHandle {
     #[must_use]
     pub fn now_ms(&self) -> u64 {
         self.runtime.now_ms()
+    }
+
+    /// Locks this runtime to a monotonic host clock sampled in the same process.
+    ///
+    /// Intended for the host's own local monitor. Remote listeners must continue
+    /// using correlated sync probes so transport latency is measured rather than
+    /// assumed away.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::Stopped`] once stopped.
+    pub fn lock_same_process_host_clock(
+        &self,
+        host_monotonic_now_ms: u64,
+    ) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime
+            .lock_same_process_host_clock(host_monotonic_now_ms)?;
+        Ok(())
+    }
+
+    /// Changes the gain used for subsequently converted frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::InvalidConfiguration`] for an invalid
+    /// gain and `Stopped` once stopped.
+    pub fn set_volume(&self, volume: f32) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime.set_volume(volume)?;
+        Ok(())
     }
 
     /// Submits one arriving audio packet.
@@ -184,13 +213,24 @@ impl FfiListenerPlaybackHandle {
     /// Current playback accounting.
     #[must_use]
     pub fn diagnostics(&self) -> FfiPlaybackDiagnostics {
-        self.runtime.diagnostics().into()
+        self.with_liveness(self.runtime.diagnostics().into())
     }
 
     /// Accounting as it stood when the stream was stopped, if it has been.
     #[must_use]
     pub fn final_diagnostics(&self) -> Option<FfiPlaybackDiagnostics> {
-        self.runtime.final_diagnostics().map(Into::into)
+        self.runtime
+            .final_diagnostics()
+            .map(Into::into)
+            .map(|diagnostics| self.with_liveness(diagnostics))
+    }
+
+    fn with_liveness(&self, mut diagnostics: FfiPlaybackDiagnostics) -> FfiPlaybackDiagnostics {
+        let liveness = self.runtime.pump_liveness();
+        diagnostics.pump_thread_tick_count = liveness.tick_count;
+        diagnostics.pump_thread_last_tick_ms = liveness.last_tick_ms;
+        diagnostics.contained_pump_panics = liveness.contained_panics;
+        diagnostics
     }
 
     /// Captures released PCM to a WAV at `path` for offline analysis.
@@ -234,7 +274,11 @@ impl FfiListenerPlaybackHandle {
     /// `submit_packet` exists for callers that only hold the wire fields;
     /// this one takes the datagram the transport already parsed, so
     /// forwarding costs no conversion and no payload copy.
-    pub(crate) fn submit_core_datagram(&self, datagram: AudioDatagram) -> bool {
-        self.runtime.submit_packet(datagram).is_ok()
+    pub(crate) fn submit_core_datagram(
+        &self,
+        datagram: AudioDatagram,
+    ) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime.submit_packet(datagram)?;
+        Ok(())
     }
 }

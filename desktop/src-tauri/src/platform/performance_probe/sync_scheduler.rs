@@ -75,7 +75,8 @@ pub(super) fn measure_synchronization() -> ProbeResult<SynchronizationMetric> {
 pub(super) fn measure_scheduler_concealment() -> ProbeResult<SchedulerMetric> {
     let session_id = SessionId::new("block45-scheduler")?;
     let stream_id = StreamId::new("block45-scheduler-stream")?;
-    let mut config = SchedulerConfig::new(session_id.clone(), stream_id.clone(), 20, 1_000, 960, 2);
+    let mut config =
+        SchedulerConfig::new(session_id.clone(), stream_id.clone(), 48_000, 1_000, 960, 2);
     config.startup_buffer_target_ms = 0;
     let mut scheduler = PlaybackScheduler::new(config, 0.0)?;
     for sequence in std::iter::once(0_u64).chain(2_u64..=21) {

@@ -8,8 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
-import com.ekkus.silentdisco.core.audio.OboePlaybackEngine
-import com.ekkus.silentdisco.core.audio.PlaybackEngine
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
 import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
@@ -30,6 +28,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
+import com.ekkus.silentdisco.core.rust.ListenerTransport
 import com.ekkus.silentdisco.core.rust.ListenerTransportController
 import com.ekkus.silentdisco.core.rust.ManualListenerTransportController
 import com.ekkus.silentdisco.core.rust.P2ValidatedInvitation
@@ -45,9 +44,13 @@ import com.ekkus.silentdisco.core.rust.RustSyncEstimator
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
 import com.ekkus.silentdisco.core.transport.BleTransport
+import com.ekkus.silentdisco.core.transport.MdnsDiscoveryService
+import com.ekkus.silentdisco.core.transport.MdnsTransport
 import com.ekkus.silentdisco.core.transport.SessionTransport
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,7 +61,6 @@ import kotlinx.coroutines.runBlocking
 
 class MainViewModel @JvmOverloads constructor(
     application: Application,
-    internal val playbackEngine: PlaybackEngine = OboePlaybackEngine(),
     internal val domainStore: RustDomainStore = AndroidRustDomainStore(application),
     internal val hostCoreFactory: (String) -> HostCoreController = {
         UniFfiHostCoreController(it)
@@ -78,6 +80,8 @@ class MainViewModel @JvmOverloads constructor(
      */
     internal val bleService: BleTransport = BleDiscoveryService(application),
     internal val wifiDirectService: SessionTransport = WifiDirectTransportService(application, AppLogger()),
+    internal val mdnsService: MdnsTransport = MdnsDiscoveryService(application),
+    internal val listenerTransportController: ListenerTransport = ListenerTransportController(),
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
     internal val diagnosticsStore = DiagnosticsStore()
@@ -89,7 +93,6 @@ class MainViewModel @JvmOverloads constructor(
         networkSessionLock = WifiLowLatencyNetworkLock(application),
     )
     internal val hostTransportController = HostTransportController()
-    internal val listenerTransportController = ListenerTransportController()
 
     internal val _uiState = MutableStateFlow(
         AppUiState(
@@ -110,7 +113,19 @@ class MainViewModel @JvmOverloads constructor(
      * `listenerSyncController` now calls `closeListenerSyncEstimator()` instead.
      */
     internal var listenerSyncEstimator: RustSyncEstimator? = null
-    internal var listenerPlayback: FfiListenerPlaybackHandle? = null
+    internal val listenerPlaybackControlExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "silent-disco-listener-playback-control").apply { isDaemon = true }
+    }
+    private val listenerPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
+    internal var listenerPlayback: FfiListenerPlaybackHandle?
+        get() = listenerPlaybackRef.get()
+        set(value) = listenerPlaybackRef.set(value)
+    private val hostMonitorPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
+    internal var hostMonitorPlayback: FfiListenerPlaybackHandle?
+        get() = hostMonitorPlaybackRef.get()
+        set(value) = hostMonitorPlaybackRef.set(value)
+    internal fun swapHostMonitorPlayback(value: FfiListenerPlaybackHandle?): FfiListenerPlaybackHandle? =
+        hostMonitorPlaybackRef.getAndSet(value)
     internal var latestDecodedAudio: AudioDecodeResult? = null
     internal var latestPackets: List<AudioPacket> = emptyList()
     internal var hostStreamJob: Job? = null
@@ -141,6 +156,7 @@ class MainViewModel @JvmOverloads constructor(
         initializeDomainPersistence()
         observeDiscovery()
         observeBleFailures()
+        observeMdnsFailures()
         observeManualEndpointConnection()
     }
 
@@ -280,8 +296,13 @@ class MainViewModel @JvmOverloads constructor(
 
     fun setLocalVolume(volume: Float) {
         val normalized = volume.coerceIn(0f, 1f)
-        playbackEngine.setVolume(normalized)
         _uiState.value = _uiState.value.copy(localVolume = normalized)
+        runCatching { hostMonitorPlayback?.setVolume(normalized) }
+            .onFailure { error ->
+                if (_uiState.value.hostPlaybackState != PlaybackState.STOPPED) {
+                    handleHostPlaybackEngineFailure(error)
+                }
+            }
     }
 
     fun adjustTuning(field: TuningField, direction: Int) {
@@ -412,15 +433,21 @@ class MainViewModel @JvmOverloads constructor(
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
         stopListenerPlayback()
+        listenerPlaybackControlExecutor.shutdown()
         closeListenerSyncEstimator()
         bleService.stop()
         wifiDirectService.stop()
+        mdnsService.stopDiscovery()
         manualListenerController.close()
         hostCoreController?.close()
         listenerCoreController?.close()
         hostTransportController.close()
         listenerTransportController.close()
-        runBlocking(Dispatchers.IO) { domainStore.close() }
+        runBlocking(Dispatchers.IO) {
+            runCatching { stopHostMonitorPlayback() }
+                .onFailure { error -> logger.e("playback.host.stop", "Host monitor cleanup failed", error) }
+            domainStore.close()
+        }
         super.onCleared()
     }
 }

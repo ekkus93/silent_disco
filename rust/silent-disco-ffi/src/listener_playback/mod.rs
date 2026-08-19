@@ -23,6 +23,8 @@ mod pump;
 mod runtime;
 
 #[cfg(test)]
+mod sync_tests;
+#[cfg(test)]
 mod tests;
 
 pub use error::ListenerPlaybackError;

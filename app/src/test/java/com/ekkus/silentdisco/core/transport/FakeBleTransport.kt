@@ -54,6 +54,10 @@ class FakeBleTransport : BleTransport {
         stopScanningCallCount += 1
     }
 
+    fun setSessions(value: List<SessionInfo>) {
+        _discoveredSessions.value = value
+    }
+
     fun emitFailure(failure: BleOperationFailure) {
         check(_failures.tryEmit(failure)) { "Failed to emit fake BLE failure $failure" }
     }

@@ -198,7 +198,7 @@ fn a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline()
     let backend = Arc::new(FakeBackend::new());
     let captured = Arc::clone(&backend.captured);
     let monitor = DesktopMonitorControl::new(backend);
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let (clock_fn, clock) = controllable_clock();
     clock.store(HOST_START_MS, Ordering::Release);
@@ -213,7 +213,7 @@ fn a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline()
     clock.store(HOST_START_MS + 2_000, Ordering::Release);
     thread::sleep(Duration::from_millis(300));
 
-    monitor.on_stream_stopped();
+    monitor.on_stream_stopped().expect("stop monitor");
 
     let observed = captured.lock().expect("captured lock");
     assert!(
@@ -226,6 +226,50 @@ fn a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline()
     );
 }
 
+#[test]
+fn a_locally_rejected_monitor_datagram_fails_visibly_and_disable_propagates_teardown() {
+    let monitor = DesktopMonitorControl::new(Arc::new(FakeBackend::new()));
+    monitor.set_enabled(true).expect("enable monitor");
+
+    let (clock_fn, clock) = controllable_clock();
+    clock.store(HOST_START_MS, Ordering::Release);
+    let tap = start_stream(&monitor, clock_fn).expect("monitor stream starts");
+    let mut wrong = tone_datagram(0, HOST_START_MS, SAMPLES_PER_PACKET);
+    wrong.session_id = SessionId::new("different-session").expect("session id");
+    tap.send(wrong).expect("monitor tap accepts local datagram");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let failure = loop {
+        let status = monitor.status();
+        if let Some(failure) = status.failure_reason {
+            break failure;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "monitor datagram rejection was never surfaced"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        failure.contains("local monitor rejected host audio datagram"),
+        "unexpected monitor failure: {failure}"
+    );
+
+    let disable = monitor
+        .set_enabled(false)
+        .expect_err("disable must not claim success after a terminal monitor failure");
+    assert!(disable.contains("local monitor rejected host audio datagram"));
+    let status = monitor.status();
+    assert!(!status.enabled);
+    assert!(!status.active);
+    assert!(
+        status
+            .failure_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("local monitor rejected host audio datagram"))
+    );
+}
+
 /// Block 35.1 "local monitor and render counters": once a stream is
 /// active, `status().telemetry` must reflect real, live callback activity
 /// -- not stay `None` forever (the gap this block closes: the telemetry
@@ -235,7 +279,7 @@ fn a_generated_test_tone_reaches_the_output_callback_through_the_real_pipeline()
 fn active_status_reports_live_telemetry_counters() {
     let backend = Arc::new(FakeBackend::new());
     let monitor = DesktopMonitorControl::new(backend);
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let (clock_fn, clock) = controllable_clock();
     clock.store(HOST_START_MS, Ordering::Release);
@@ -251,7 +295,7 @@ fn active_status_reports_live_telemetry_counters() {
         "the fake's driving thread must have called write"
     );
 
-    monitor.on_stream_stopped();
+    monitor.on_stream_stopped().expect("stop monitor");
     assert!(
         monitor.status().telemetry.is_none(),
         "telemetry must disappear once the stream is no longer active"
@@ -265,7 +309,7 @@ fn active_status_reports_live_telemetry_counters() {
 fn start_stop_repeated_never_leaks_or_panics() {
     let backend = Arc::new(FakeBackend::new());
     let monitor = DesktopMonitorControl::new(backend);
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     for iteration in 0..5_u64 {
         let (clock_fn, clock) = controllable_clock();
@@ -277,7 +321,7 @@ fn start_stop_repeated_never_leaks_or_panics() {
             status.active,
             "iteration {iteration}: monitor should be active"
         );
-        monitor.on_stream_stopped();
+        monitor.on_stream_stopped().expect("stop monitor");
         let status = monitor.status();
         assert!(
             !status.active,
@@ -295,7 +339,7 @@ fn device_removal_mid_stream_is_survived_without_panicking() {
     let backend = FakeBackend::new();
     *backend.fail_after_writes.lock().expect("lock") = Some(3);
     let monitor = DesktopMonitorControl::new(Arc::new(backend));
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let (clock_fn, clock) = controllable_clock();
     clock.store(HOST_START_MS, Ordering::Release);
@@ -331,7 +375,10 @@ fn device_removal_mid_stream_is_survived_without_panicking() {
     );
 
     // Teardown must preserve the runtime cause instead of erasing it.
-    monitor.on_stream_stopped();
+    let teardown = monitor
+        .on_stream_stopped()
+        .expect_err("the device failure must remain visible through teardown");
+    assert!(teardown.contains("fake: device disappeared"));
     let stopped = monitor.status();
     assert!(!stopped.active);
     assert!(
@@ -347,7 +394,7 @@ fn device_removal_mid_stream_is_survived_without_panicking() {
 #[test]
 fn a_panicked_monitor_pump_is_reported_during_teardown() {
     let monitor = DesktopMonitorControl::new(Arc::new(FakeBackend::new()));
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let tap = start_stream(&monitor, || -> Option<u64> {
         panic!("injected monitor clock failure");
@@ -360,14 +407,17 @@ fn a_panicked_monitor_pump_is_reported_during_teardown() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    monitor.on_stream_stopped();
+    let teardown = monitor
+        .on_stream_stopped()
+        .expect_err("the pump panic must remain visible through teardown");
+    assert!(teardown.contains("monitor pump thread panicked"));
     let status = monitor.status();
     assert!(!status.active);
     assert!(
         status
             .failure_reason
             .as_deref()
-            .is_some_and(|reason| reason.contains("monitor pump thread panicked during shutdown")),
+            .is_some_and(|reason| reason.contains("monitor pump thread panicked")),
         "monitor pump panic was not surfaced: {:?}",
         status.failure_reason
     );
@@ -384,7 +434,7 @@ fn a_non_canonical_device_format_is_rejected_before_opening_a_stream() {
     })));
     let starts_before = backend.starts.load(Ordering::Relaxed);
     let monitor = DesktopMonitorControl::new(backend.clone());
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let (clock_fn, _clock) = controllable_clock();
     let tap = start_stream(&monitor, clock_fn);
@@ -413,27 +463,27 @@ fn a_non_canonical_device_format_is_rejected_before_opening_a_stream() {
 fn callback_after_release_is_structurally_impossible() {
     let backend = Arc::new(FakeBackend::new());
     let monitor = DesktopMonitorControl::new(backend);
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let (clock_fn, clock) = controllable_clock();
     clock.store(HOST_START_MS, Ordering::Release);
     let _tap = start_stream(&monitor, clock_fn).expect("monitor stream starts");
     thread::sleep(Duration::from_millis(30));
 
-    monitor.on_stream_stopped();
+    monitor.on_stream_stopped().expect("stop monitor");
 
     // A fresh acquire against the SAME gate succeeding proves the previous
     // lease (and the callback holding it) is genuinely gone, not merely
     // logically "stopped" while still alive somewhere.
     let (clock_fn, clock) = controllable_clock();
     clock.store(HOST_START_MS, Ordering::Release);
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
     let tap = start_stream(&monitor, clock_fn);
     assert!(
         tap.is_some(),
         "a fresh stream must be able to reacquire the render ring"
     );
-    monitor.on_stream_stopped();
+    monitor.on_stream_stopped().expect("stop monitor");
 }
 
 /// 34.3 "shutdown under active callback": stopping while the fake's thread
@@ -442,7 +492,7 @@ fn callback_after_release_is_structurally_impossible() {
 fn shutdown_while_the_callback_is_actively_running_completes_cleanly() {
     let backend = Arc::new(FakeBackend::new());
     let monitor = DesktopMonitorControl::new(backend);
-    monitor.set_enabled(true);
+    monitor.set_enabled(true).expect("enable monitor");
 
     let (clock_fn, clock) = controllable_clock();
     clock.store(HOST_START_MS, Ordering::Release);
@@ -460,5 +510,6 @@ fn shutdown_while_the_callback_is_actively_running_completes_cleanly() {
     let stopped = thread::spawn(move || monitor.on_stream_stopped());
     stopped
         .join()
-        .expect("shutdown under an active callback must not panic");
+        .expect("shutdown under an active callback must not panic")
+        .expect("shutdown under an active callback must complete cleanly");
 }

@@ -28,6 +28,8 @@ mod concealment_tests;
 mod config_tests;
 #[cfg(test)]
 mod resync_tests;
+#[cfg(test)]
+mod timing_tests;
 
 // `DEFAULT_REBUFFER_TARGET_MS`, `DEFAULT_CONCEALMENT_BRIDGE_MS`,
 // `DEFAULT_CONCEALMENT_SKIP_THRESHOLD_MS`, and `DEFAULT_REORDER_WINDOW_MS`

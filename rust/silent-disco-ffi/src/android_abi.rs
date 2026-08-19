@@ -309,6 +309,69 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativ
     )
 }
 
+/// Returns acquisition-only rejected-sample count for the latest observation.
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionRejectedCount(
+    _environment: *mut c_void,
+    _receiver: *mut c_void,
+    handle: i64,
+) -> i64 {
+    last_observation(handle)
+        .and_then(|observation| {
+            i64::try_from(observation.acquisition_rejected_sample_count)
+                .map_err(|_| AndroidSyncStatus::SampleCountOverflow)
+        })
+        .unwrap_or_else(|status| i64::from(status.code()))
+}
+
+/// Returns milliseconds spent acquiring the first usable lock.
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionElapsedMs(
+    _environment: *mut c_void,
+    _receiver: *mut c_void,
+    handle: i64,
+) -> i64 {
+    last_observation(handle)
+        .and_then(|observation| {
+            i64::try_from(observation.acquisition_elapsed_ms)
+                .map_err(|_| AndroidSyncStatus::SampleCountOverflow)
+        })
+        .unwrap_or_else(|status| i64::from(status.code()))
+}
+
+/// Returns raw IEEE-754 bits for the RTT gate used by the latest observation.
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionRttLimitBits(
+    _environment: *mut c_void,
+    _receiver: *mut c_void,
+    handle: i64,
+) -> i64 {
+    last_observation(handle).map_or_else(
+        |_| invalid_f64_bits(),
+        |observation| f64_bits(observation.acquisition_rtt_limit_ms),
+    )
+}
+
+/// Returns 1 when initial lock required the acquisition-only widened gate.
+#[must_use]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastDegradedLock(
+    _environment: *mut c_void,
+    _receiver: *mut c_void,
+    handle: i64,
+) -> i32 {
+    last_observation(handle).map_or_else(AndroidSyncStatus::code, |observation| {
+        if observation.degraded_lock { 1 } else { 0 }
+    })
+}
+
 /// Validates that the estimator snapshot can be represented by the FFI record.
 #[must_use]
 #[allow(non_snake_case)]
@@ -409,6 +472,10 @@ mod tests {
         AndroidSyncStatus,
         Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorCreate,
         Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorDestroy,
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionElapsedMs,
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionRejectedCount,
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionRttLimitBits,
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastDegradedLock,
         Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastOffsetBits,
         Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastRttBits,
         Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastStatus,
@@ -491,6 +558,40 @@ mod tests {
         )
     }
 
+    fn latest_acquisition_rejected_count(handle: i64) -> i64 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionRejectedCount(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    fn latest_acquisition_elapsed_ms(handle: i64) -> i64 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionElapsedMs(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
+    fn latest_acquisition_rtt_limit(handle: i64) -> f64 {
+        decode_f64(
+            Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastAcquisitionRttLimitBits(
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                handle,
+            ),
+        )
+    }
+
+    fn latest_degraded_lock(handle: i64) -> i32 {
+        Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorLastDegradedLock(
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            handle,
+        )
+    }
+
     fn snapshot_status(handle: i64) -> i32 {
         Java_com_ekkus_silentdisco_core_rust_RustCoreBridge_nativeSyncEstimatorSnapshotStatus(
             core::ptr::null_mut(),
@@ -554,6 +655,31 @@ mod tests {
         assert_eq!(
             destroy_test_estimator(handle),
             AndroidSyncStatus::InvalidHandle.code()
+        );
+    }
+
+    #[test]
+    fn static_jni_exports_surface_bounded_acquisition_metadata() {
+        let handle = create_test_estimator();
+        for t1 in [0_i64, 250, 500] {
+            assert_eq!(
+                observe_test_sample(handle, t1, t1 + 125, t1 + 125, t1 + 250),
+                AndroidSyncStatus::Rejected.code()
+            );
+        }
+        assert_eq!(latest_acquisition_rejected_count(handle), 3);
+
+        assert_eq!(
+            observe_test_sample(handle, 750, 875, 875, 1_000),
+            AndroidSyncStatus::Accepted.code()
+        );
+        assert_eq!(latest_acquisition_rejected_count(handle), 3);
+        assert_eq!(latest_acquisition_elapsed_ms(handle), 1_000);
+        assert_close(latest_acquisition_rtt_limit(handle), 375.0);
+        assert_eq!(latest_degraded_lock(handle), 1);
+        assert_eq!(
+            destroy_test_estimator(handle),
+            AndroidSyncStatus::Accepted.code()
         );
     }
 

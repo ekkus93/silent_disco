@@ -79,7 +79,14 @@ struct ActiveMonitorStream {
 
 impl ActiveMonitorStream {
     fn runtime_failure(&self) -> Option<String> {
-        self.runtime_failure.get().cloned()
+        let backend = self.runtime_failure.get().cloned();
+        let pump = self.pump.terminal_failure();
+        match (backend, pump) {
+            (Some(backend), Some(pump)) => Some(format!("{backend}; {pump}")),
+            (Some(backend), None) => Some(backend),
+            (None, Some(pump)) => Some(pump),
+            (None, None) => None,
+        }
     }
 
     fn stop(self) -> Option<String> {
@@ -132,22 +139,30 @@ impl DesktopMonitorControl {
     /// Sets the user's monitor preference. Disabling takes effect
     /// immediately (tears down any active stream); enabling only arms the
     /// preference for the next stream start -- see the module doc comment.
-    pub(crate) fn set_enabled(&self, enabled: bool) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
+    pub(crate) fn set_enabled(&self, enabled: bool) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "monitor state is unavailable".to_owned())?;
         state.enabled = enabled;
-        if !enabled {
-            if let Some(active) = state.active.take() {
-                drop(state);
-                let failure = active.stop();
-                if let Ok(mut state) = self.state.lock() {
-                    state.failure_reason = failure;
-                }
-            } else {
-                state.failure_reason = None;
-            }
+        if enabled {
+            return Ok(());
         }
+
+        let Some(active) = state.active.take() else {
+            state.failure_reason = None;
+            return Ok(());
+        };
+        drop(state);
+        let failure = active.stop();
+        let mut state = self.state.lock().map_err(|_| match &failure {
+            Some(cleanup) => format!(
+                "monitor state is unavailable after teardown; monitor cleanup also failed: {cleanup}"
+            ),
+            None => "monitor state is unavailable after teardown".to_owned(),
+        })?;
+        state.failure_reason = failure.clone();
+        failure.map_or(Ok(()), Err)
     }
 
     #[must_use]
@@ -250,18 +265,24 @@ impl DesktopMonitorControl {
     /// monitor stream if there is one; a no-op otherwise. Blocks until the
     /// monitor pump and output stream are both quiescent before returning
     /// (34.1 "callback is quiescent before consumer release").
-    pub(crate) fn on_stream_stopped(&self) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
+    pub(crate) fn on_stream_stopped(&self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "monitor state is unavailable".to_owned())?;
         let Some(active) = state.active.take() else {
-            return;
+            return Ok(());
         };
         drop(state);
         let failure = active.stop();
-        if let Ok(mut state) = self.state.lock() {
-            state.failure_reason = failure;
-        }
+        let mut state = self.state.lock().map_err(|_| match &failure {
+            Some(cleanup) => format!(
+                "monitor state is unavailable after stream teardown; monitor cleanup also failed: {cleanup}"
+            ),
+            None => "monitor state is unavailable after stream teardown".to_owned(),
+        })?;
+        state.failure_reason = failure.clone();
+        failure.map_or(Ok(()), Err)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -297,18 +318,10 @@ impl DesktopMonitorControl {
                  {CANONICAL_CHANNELS}ch/{CANONICAL_SAMPLE_RATE_HZ}Hz canonical format"
             ));
         }
-        let packet_duration_ms = if sample_rate == 0 {
-            0
-        } else {
-            u32::try_from(
-                u64::from(samples_per_packet).saturating_mul(1_000) / u64::from(sample_rate),
-            )
-            .unwrap_or(u32::MAX)
-        };
         let scheduler_config = SchedulerConfig::new(
             session_id,
             stream_id,
-            packet_duration_ms,
+            sample_rate,
             host_start_time_ms,
             samples_per_packet,
             channels,

@@ -155,6 +155,14 @@ fun ManualEndpointScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        connectState.syncStatus?.let { syncStatus ->
+                            Text(
+                                syncStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("manual-endpoint-sync-status"),
+                            )
+                        }
                     }
                 }
 

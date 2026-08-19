@@ -314,7 +314,7 @@ impl FfiListenerTransportHandle {
             // Forwarded audio is consumed here rather than returned, so the
             // caller's loop keeps pace with control traffic no matter how
             // much audio is arriving.
-            if let Some(event) = self.forward_audio(event)
+            if let Some(event) = self.forward_audio(event)?
                 && let Some(mapped) = map_event(event)
             {
                 return Ok(Some(mapped));
@@ -421,7 +421,10 @@ impl FfiListenerTransportHandle {
     /// an audio datagram, returning `None` to mean "consumed". Any other
     /// event, or audio with nothing attached, is handed back unchanged for
     /// normal mapping.
-    fn forward_audio(&self, event: TransportEvent) -> Option<TransportEvent> {
+    fn forward_audio(
+        &self,
+        event: TransportEvent,
+    ) -> Result<Option<TransportEvent>, FfiListenerTransportError> {
         let is_audio = matches!(
             &event,
             TransportEvent::FrameReceived {
@@ -431,11 +434,11 @@ impl FfiListenerTransportHandle {
             }
         );
         if !is_audio {
-            return Some(event);
+            return Ok(Some(event));
         }
         let attached = self.playback.lock().ok().and_then(|guard| guard.clone());
         let Some(playback) = attached else {
-            return Some(event);
+            return Ok(Some(event));
         };
         let TransportEvent::FrameReceived {
             frame: ProtocolFrame::Audio(datagram),
@@ -444,9 +447,13 @@ impl FfiListenerTransportHandle {
         else {
             unreachable!("checked to be an audio frame above")
         };
-        playback.submit_core_datagram(datagram);
+        playback.submit_core_datagram(datagram).map_err(|error| {
+            FfiListenerTransportError::Io(format!(
+                "attached listener playback failed while forwarding audio: {error}"
+            ))
+        })?;
         self.forwarded_audio.fetch_add(1, Ordering::Relaxed);
-        None
+        Ok(None)
     }
 }
 
@@ -572,7 +579,7 @@ mod audio_forwarding_tests {
         FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
             session_id: "session-forwarding".to_owned(),
             stream_id: "stream-forwarding".to_owned(),
-            packet_duration_ms: 5,
+            sample_rate: 48_000,
             host_start_time_ms: 0,
             samples_per_packet: SAMPLES_PER_PACKET,
             channels: 2,
@@ -638,11 +645,29 @@ mod audio_forwarding_tests {
 
         for sequence in 0..5 {
             assert!(
-                handle.forward_audio(audio_event(sequence)).is_none(),
+                handle
+                    .forward_audio(audio_event(sequence))
+                    .expect("forward succeeds")
+                    .is_none(),
                 "audio must be consumed while a runtime is attached"
             );
         }
         assert_eq!(handle.forwarded_audio_count(), 5);
+    }
+
+    #[test]
+    fn attached_playback_failure_is_returned_instead_of_counted_as_forwarded_audio() {
+        let _guard = registry_test_guard();
+        let handle = detached_handle();
+        let playback = playback();
+        playback.stop().expect("playback stops");
+        handle.attach_playback(Arc::clone(&playback));
+
+        let error = handle
+            .forward_audio(audio_event(0))
+            .expect_err("a dead attached runtime must make transport forwarding fail");
+        assert!(matches!(error, FfiListenerTransportError::Io(_)));
+        assert_eq!(handle.forwarded_audio_count(), 0);
     }
 
     /// Control traffic must be unaffected -- it is precisely what was being
@@ -654,7 +679,10 @@ mod audio_forwarding_tests {
         handle.attach_playback(playback());
 
         assert!(
-            handle.forward_audio(control_event()).is_some(),
+            handle
+                .forward_audio(control_event())
+                .expect("forward succeeds")
+                .is_some(),
             "control frames must still reach the caller"
         );
         assert_eq!(handle.forwarded_audio_count(), 0);
@@ -667,7 +695,10 @@ mod audio_forwarding_tests {
         let _guard = registry_test_guard();
         let handle = detached_handle();
         assert!(
-            handle.forward_audio(audio_event(0)).is_some(),
+            handle
+                .forward_audio(audio_event(0))
+                .expect("forward succeeds")
+                .is_some(),
             "audio must surface when no runtime is attached"
         );
         assert_eq!(handle.forwarded_audio_count(), 0);
@@ -681,11 +712,19 @@ mod audio_forwarding_tests {
         let _guard = registry_test_guard();
         let handle = detached_handle();
         handle.attach_playback(playback());
-        assert!(handle.forward_audio(audio_event(0)).is_none());
+        assert!(
+            handle
+                .forward_audio(audio_event(0))
+                .expect("forward succeeds")
+                .is_none()
+        );
 
         handle.detach_playback();
         assert!(
-            handle.forward_audio(audio_event(1)).is_some(),
+            handle
+                .forward_audio(audio_event(1))
+                .expect("forward succeeds")
+                .is_some(),
             "audio must surface again once detached"
         );
         handle.detach_playback();

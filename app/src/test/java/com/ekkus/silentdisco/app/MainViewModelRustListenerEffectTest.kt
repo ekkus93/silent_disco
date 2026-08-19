@@ -7,6 +7,8 @@ import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.rust.RecordedCompletion
 import com.ekkus.silentdisco.core.rust.RecordedFailure
 import com.ekkus.silentdisco.core.transport.BleOperationResult
+import com.ekkus.silentdisco.core.transport.MdnsOperationResult
+import com.ekkus.silentdisco.core.transport.MdnsSessionAdvertisement
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiAudioSource
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
@@ -51,23 +53,43 @@ class MainViewModelRustListenerEffectTest {
     }
 
     @Test
-    fun startDiscoveryFailsWithoutNearbyConnectivityPermissions() = runTest(dispatcher) {
+    fun startDiscoveryWithoutNearbyPermissionsStillUsesMdns() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustListenerCore()
         advanceUntilIdle()
 
         harness.listenerCoreController.emit(
             FfiCoreNotification.PlatformEffect(
-                FfiPlatformEffect.StartDiscovery(operationId = "op-perm", scanWindowMs = 3_000uL),
+                FfiPlatformEffect.StartDiscovery(operationId = "op-mdns-only", scanWindowMs = 3_000uL),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertThat(harness.mdnsService.startCallCount).isEqualTo(1)
+        assertThat(harness.bleService.startScanningCallCount).isEqualTo(0)
+        assertThat(harness.wifiDirectService.discoverPeersCallCount).isEqualTo(0)
+        assertThat(harness.listenerCoreController.platformOperationSucceededCalls).containsExactly(
+            RecordedCompletion("op-mdns-only", FfiPlatformCompletion.DiscoveryStarted),
+        )
+    }
+
+    @Test
+    fun startDiscoveryFailsWithoutNearbyPermissionsWhenMdnsIsAlsoUnavailable() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.mdnsService.startResult = MdnsOperationResult.failed("Android NSD service is unavailable")
+        harness.viewModel.ensureRustListenerCore()
+        advanceUntilIdle()
+
+        harness.listenerCoreController.emit(
+            FfiCoreNotification.PlatformEffect(
+                FfiPlatformEffect.StartDiscovery(operationId = "op-no-backend", scanWindowMs = 3_000uL),
             ),
         )
         advanceUntilIdle()
 
         assertThat(harness.listenerCoreController.platformOperationFailedCalls).containsExactly(
-            RecordedFailure("op-perm", "Missing nearby connectivity permissions for discovery", true),
+            RecordedFailure("op-no-backend", "Android NSD service is unavailable", true),
         )
-        assertThat(harness.bleService.startScanningCallCount).isEqualTo(0)
-        assertThat(harness.wifiDirectService.discoverPeersCallCount).isEqualTo(0)
     }
 
     @Test
@@ -84,6 +106,7 @@ class MainViewModelRustListenerEffectTest {
         )
         advanceUntilIdle()
 
+        assertThat(harness.mdnsService.startCallCount).isEqualTo(1)
         assertThat(harness.bleService.startScanningCallCount).isEqualTo(1)
         assertThat(harness.wifiDirectService.discoverPeersCallCount).isEqualTo(1)
         assertThat(harness.listenerCoreController.platformOperationSucceededCalls).containsExactly(
@@ -92,7 +115,7 @@ class MainViewModelRustListenerEffectTest {
     }
 
     @Test
-    fun startDiscoveryFailsWhenBleScanFailsAndNeverStartsWifiDirectDiscovery() = runTest(dispatcher) {
+    fun mdnsKeepsDiscoveryAvailableWhenBleScanFails() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         grantListenerTransportPermissions(harness.viewModel)
         harness.bleService.startScanningResult = BleOperationResult.failed("BLE scanner unavailable on this device")
@@ -106,8 +129,30 @@ class MainViewModelRustListenerEffectTest {
         )
         advanceUntilIdle()
 
+        assertThat(harness.wifiDirectService.discoverPeersCallCount).isEqualTo(0)
+        assertThat(harness.listenerCoreController.platformOperationSucceededCalls).containsExactly(
+            RecordedCompletion("op-ble-fail", FfiPlatformCompletion.DiscoveryStarted),
+        )
+    }
+
+    @Test
+    fun discoveryFailsWhenBothMdnsAndBleFail() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        grantListenerTransportPermissions(harness.viewModel)
+        harness.mdnsService.startResult = MdnsOperationResult.failed("NSD unavailable")
+        harness.bleService.startScanningResult = BleOperationResult.failed("BLE scanner unavailable on this device")
+        harness.viewModel.ensureRustListenerCore()
+        advanceUntilIdle()
+
+        harness.listenerCoreController.emit(
+            FfiCoreNotification.PlatformEffect(
+                FfiPlatformEffect.StartDiscovery(operationId = "op-all-fail", scanWindowMs = 3_000uL),
+            ),
+        )
+        advanceUntilIdle()
+
         assertThat(harness.listenerCoreController.platformOperationFailedCalls).containsExactly(
-            RecordedFailure("op-ble-fail", "BLE scanner unavailable on this device", true),
+            RecordedFailure("op-all-fail", "BLE scanner unavailable on this device", true),
         )
         assertThat(harness.wifiDirectService.discoverPeersCallCount).isEqualTo(0)
     }
@@ -123,6 +168,7 @@ class MainViewModelRustListenerEffectTest {
         )
         advanceUntilIdle()
 
+        assertThat(harness.mdnsService.stopCallCount).isEqualTo(1)
         assertThat(harness.bleService.stopScanningCallCount).isEqualTo(1)
         // wifiDirectService.cancelDiscovery() is SessionTransport's default
         // (`= stop()`), so a real stop() call is the real, observable fact.
@@ -133,8 +179,16 @@ class MainViewModelRustListenerEffectTest {
     }
 
     @Test
-    fun establishNetworkWithAlreadyKnownEndpointCompletesImmediatelyWithoutTouchingWifiDirect() = runTest(dispatcher) {
+    fun establishNetworkWithMdnsEndpointOpensRustTransportAndSendsJoinBeforeCompleting() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
+        val session = SessionInfo(
+            id = "session-1",
+            name = "Patio Mix",
+            hostDeviceName = "host-1",
+            approvalMode = ApprovalMode.MANUAL,
+            inviteCodeRequired = false,
+        )
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(discoveredSessions = listOf(session))
         harness.viewModel.ensureRustListenerCore()
         advanceUntilIdle()
 
@@ -143,7 +197,7 @@ class MainViewModelRustListenerEffectTest {
                 FfiPlatformEffect.EstablishNetwork(
                     operationId = "op-known",
                     sessionId = "session-1",
-                    address = "192.168.49.1",
+                    address = "192.168.1.50",
                     controlPort = 41_000u,
                     syncPort = 41_001u,
                     audioPort = 41_002u,
@@ -152,18 +206,21 @@ class MainViewModelRustListenerEffectTest {
         )
         advanceUntilIdle()
 
+        assertThat(harness.listenerTransport.connectCalls).hasSize(1)
+        assertThat(harness.listenerTransport.connectCalls.single().rawEndpoint).contains("192.168.1.50")
+        assertThat(harness.listenerTransport.joinRequestCalls).containsExactly("This Android Listener" to null)
+        assertThat(harness.wifiDirectService.connectToSessionCalls).isEmpty()
         assertThat(harness.listenerCoreController.platformOperationSucceededCalls).containsExactly(
             RecordedCompletion(
                 "op-known",
                 FfiPlatformCompletion.NetworkEndpointReady(
-                    address = "192.168.49.1",
+                    address = "192.168.1.50",
                     controlPort = 41_000u,
                     syncPort = 41_001u,
                     audioPort = 41_002u,
                 ),
             ),
         )
-        assertThat(harness.wifiDirectService.connectToSessionCalls).isEmpty()
     }
 
     @Test
@@ -240,10 +297,96 @@ class MainViewModelRustListenerEffectTest {
         )
         advanceUntilIdle()
 
+        assertThat(harness.listenerTransport.disconnectCalls).containsExactly("Listener released network")
         assertThat(harness.wifiDirectService.stopCallCount).isEqualTo(1)
         assertThat(harness.listenerCoreController.platformOperationSucceededCalls).containsExactly(
             RecordedCompletion("op-release", FfiPlatformCompletion.NetworkReleased),
         )
+    }
+
+    @Test
+    fun releasedEndpointConnectionCanJoinAnotherMdnsSessionWithoutClosingTheEventStream() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        val session = SessionInfo(
+            id = "session-1",
+            name = "Patio Mix",
+            hostDeviceName = "host-1",
+            approvalMode = ApprovalMode.MANUAL,
+            inviteCodeRequired = false,
+        )
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(discoveredSessions = listOf(session))
+        harness.viewModel.ensureRustListenerCore()
+        advanceUntilIdle()
+
+        fun establish(operationId: String) {
+            harness.listenerCoreController.emit(
+                FfiCoreNotification.PlatformEffect(
+                    FfiPlatformEffect.EstablishNetwork(
+                        operationId = operationId,
+                        sessionId = "session-1",
+                        address = "192.168.1.50",
+                        controlPort = 41_000u,
+                        syncPort = 41_001u,
+                        audioPort = 41_002u,
+                    ),
+                ),
+            )
+        }
+
+        establish("op-first")
+        advanceUntilIdle()
+        harness.listenerCoreController.emit(
+            FfiCoreNotification.PlatformEffect(FfiPlatformEffect.ReleaseNetwork(operationId = "op-release")),
+        )
+        advanceUntilIdle()
+        establish("op-second")
+        advanceUntilIdle()
+
+        assertThat(harness.listenerTransport.disconnectCalls).containsExactly("Listener released network")
+        assertThat(harness.listenerTransport.connectCalls).hasSize(2)
+        assertThat(harness.listenerTransport.joinRequestCalls).hasSize(2)
+        assertThat(harness.listenerTransport.closeCallCount).isEqualTo(0)
+    }
+
+    @Test
+    fun mdnsAdvertisementReplacesBleFallbackForTheSameSessionId() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustListenerCore()
+        advanceUntilIdle()
+        harness.bleService.setSessions(
+            listOf(
+                SessionInfo(
+                    id = "session-1",
+                    name = "BLE Patio",
+                    hostDeviceName = "ble-host",
+                    approvalMode = ApprovalMode.MANUAL,
+                    inviteCodeRequired = false,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+        harness.mdnsService.setSessions(
+            listOf(
+                MdnsSessionAdvertisement(
+                    sessionId = "session-1",
+                    hostDeviceId = "desktop-host",
+                    sessionName = "Desktop Patio",
+                    approvalMode = ApprovalMode.INVITE_CODE,
+                    protocolVersion = 2,
+                    address = "192.168.1.50",
+                    controlPort = 41_100,
+                    syncPort = 41_101,
+                    audioPort = 41_102,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        val latest = harness.listenerCoreController.submitSessionDiscoveredCalls.last()
+        assertThat(latest.sessionId).isEqualTo("session-1")
+        assertThat(latest.hostDeviceId).isEqualTo("desktop-host")
+        assertThat(latest.address).isEqualTo("192.168.1.50")
+        assertThat(latest.controlPort).isEqualTo(41_100u)
     }
 
     @Test

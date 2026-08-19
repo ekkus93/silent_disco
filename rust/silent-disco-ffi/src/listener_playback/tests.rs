@@ -4,7 +4,7 @@
 #![allow(clippy::float_cmp)]
 
 use super::error::ListenerPlaybackError;
-use super::pump::drain_due_frames;
+use super::pump::{active_pump_threads_for_test, drain_due_frames};
 use super::runtime::ListenerPlaybackRuntime;
 use crate::audio_abi::{
     register_render_ring, registry_test_guard, release_render_ring,
@@ -30,7 +30,7 @@ fn scheduler_config() -> SchedulerConfig {
     let mut config = SchedulerConfig::new(
         SessionId::new("session-runtime").expect("session id"),
         StreamId::new("stream-runtime").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         0,
         SAMPLES_PER_PACKET,
         2,
@@ -83,7 +83,7 @@ fn one_pump_wake_up_drains_every_frame_already_due() {
     let mut config = SchedulerConfig::new(
         SessionId::new("session-drain").expect("session id"),
         StreamId::new("stream-drain").expect("stream id"),
-        SHORT_PACKET_MS,
+        48_000,
         0,
         SHORT_SAMPLES,
         2,
@@ -319,90 +319,6 @@ fn submitting_after_stop_is_an_explicit_failure_not_a_silent_no_op() {
         .submit_packet(datagram(1))
         .expect_err("a stopped runtime must reject further packets");
     assert!(matches!(error, ListenerPlaybackError::Stopped(_)));
-}
-
-#[test]
-fn an_accepted_sync_sample_unlocks_playback_and_a_rejected_one_does_not() {
-    let _guard = registry_test_guard();
-    let runtime = ListenerPlaybackRuntime::start(
-        scheduler_config(),
-        ring_config(),
-        PlaybackPumpConfig::default(),
-        0.0,
-    )
-    .expect("runtime starts");
-
-    // A sample whose round trip is far outside the acceptance window must
-    // not reach the playback timeline -- nor the skew estimate, which is
-    // exactly how a placeholder offset once poisoned it.
-    runtime.begin_sync_probe(1, 0).expect("probe registered");
-    let rejected = runtime
-        .observe_sync_response(1, 0, 500_000, 500_001, 4_000)
-        .expect("a correlated response is not an error");
-    assert!(!rejected.accepted);
-    assert!(!rejected.sync_locked);
-
-    // A low-latency sample is accepted and unlocks playback.
-    runtime
-        .begin_sync_probe(2, 10_000)
-        .expect("probe registered");
-    let accepted = runtime
-        .observe_sync_response(2, 10_000, 500_000, 500_002, 10_020)
-        .expect("a correlated response is not an error");
-    assert!(accepted.accepted);
-    assert!(accepted.sync_locked);
-    assert_eq!(accepted.accepted_sample_count, 1);
-    // A single sample cannot support a skew regression yet.
-    assert_eq!(accepted.skew_ppm, 0.0);
-
-    runtime.stop().expect("stop succeeds");
-}
-
-#[test]
-fn an_uncorrelated_or_duplicate_sync_exchange_fails_explicitly() {
-    let _guard = registry_test_guard();
-    let runtime = ListenerPlaybackRuntime::start(
-        scheduler_config(),
-        ring_config(),
-        PlaybackPumpConfig::default(),
-        0.0,
-    )
-    .expect("runtime starts");
-
-    let unknown = runtime
-        .observe_sync_response(99, 0, 1, 2, 3)
-        .expect_err("a response with no registered probe must fail");
-    assert!(matches!(unknown, ListenerPlaybackError::Sync(_)));
-
-    runtime.begin_sync_probe(1, 0).expect("probe registered");
-    let duplicate = runtime
-        .begin_sync_probe(1, 0)
-        .expect_err("a duplicate correlation id must fail");
-    assert!(matches!(duplicate, ListenerPlaybackError::Sync(_)));
-
-    runtime.stop().expect("stop succeeds");
-}
-
-#[test]
-fn sync_calls_after_stop_fail_explicitly() {
-    let _guard = registry_test_guard();
-    let runtime = ListenerPlaybackRuntime::start(
-        scheduler_config(),
-        ring_config(),
-        PlaybackPumpConfig::default(),
-        0.0,
-    )
-    .expect("runtime starts");
-    runtime.stop().expect("stop succeeds");
-
-    assert!(matches!(
-        runtime.begin_sync_probe(1, 0),
-        Err(ListenerPlaybackError::Stopped(_))
-    ));
-    assert!(matches!(
-        runtime.observe_sync_response(1, 0, 1, 2, 3),
-        Err(ListenerPlaybackError::Stopped(_))
-    ));
 }
 
 #[test]
@@ -683,4 +599,83 @@ fn stop_races_repeatedly_against_a_simulated_audio_callback_and_packet_arrivals(
         );
         assert_eq!(status_after, 2 /* STOPPING */);
     }
+}
+
+#[test]
+fn repeated_runtime_start_stop_cycles_leave_no_pump_worker_alive() {
+    let _guard = registry_test_guard();
+    let baseline = active_pump_threads_for_test();
+
+    for cycle in 0..10 {
+        let runtime = ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts");
+        let start_deadline = Instant::now() + Duration::from_millis(500);
+        while active_pump_threads_for_test() <= baseline && Instant::now() < start_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            active_pump_threads_for_test(),
+            baseline + 1,
+            "cycle {cycle} did not own exactly one pump worker"
+        );
+
+        runtime.stop().expect("runtime stops");
+        let stop_deadline = Instant::now() + Duration::from_millis(500);
+        while active_pump_threads_for_test() != baseline && Instant::now() < stop_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            active_pump_threads_for_test(),
+            baseline,
+            "cycle {cycle} left a pump worker alive after stop"
+        );
+    }
+}
+
+#[test]
+fn a_contained_pump_panic_is_visible_and_later_calls_fail_as_pump_thread_errors() {
+    let _guard = registry_test_guard();
+    let runtime = ListenerPlaybackRuntime::start(
+        scheduler_config(),
+        ring_config(),
+        PlaybackPumpConfig::default(),
+        0.0,
+    )
+    .expect("runtime starts");
+
+    let ticking_deadline = Instant::now() + Duration::from_millis(500);
+    while runtime.pump_liveness().tick_count == 0 && Instant::now() < ticking_deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        runtime.pump_liveness().tick_count > 0,
+        "pump never reported liveness"
+    );
+
+    runtime.inject_pump_panic_for_test();
+    let panic_deadline = Instant::now() + Duration::from_millis(500);
+    while runtime.pump_liveness().contained_panics == 0 && Instant::now() < panic_deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let liveness = runtime.pump_liveness();
+    assert_eq!(liveness.contained_panics, 1);
+    assert!(liveness.tick_count > 0);
+
+    let submit_error = runtime
+        .submit_packet(datagram(0))
+        .expect_err("a dead pump must not masquerade as a live runtime");
+    assert!(matches!(submit_error, ListenerPlaybackError::PumpThread(_)));
+
+    let stop_error = runtime
+        .stop()
+        .expect_err("explicit cleanup must preserve the contained worker failure");
+    assert!(matches!(stop_error, ListenerPlaybackError::PumpThread(_)));
+    // Idempotence applies after the first explicit cleanup even when that
+    // cleanup reported the terminal worker failure.
+    runtime.stop().expect("second stop is idempotent");
 }

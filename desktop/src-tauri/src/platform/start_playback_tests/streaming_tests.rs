@@ -3,16 +3,17 @@
 //! resume re-anchor, and get the opening burst without overflowing the
 //! broadcast queue.
 
-use super::fixtures::{stage_long_source, stage_source};
+use super::fixtures::{replace_source, stage_long_source, stage_source};
 use super::harness::{
-    join_and_approve_listener, real_private_lan_address, start_host_session, wait_for_audio,
-    wait_for_control, wait_for_stream_start, wait_for_sync_response, wait_snapshot,
+    join_and_approve_listener, real_private_lan_address, start_host_session, submit,
+    wait_for_audio, wait_for_control, wait_for_stream_start, wait_for_sync_response, wait_snapshot,
 };
 use crate::platform::start_playback;
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, SyncConfidence};
 use silent_disco_core::protocol::{
     ControlMessage, ProtocolFrame, SyncRequest, SynchronizationReport,
 };
+use silent_disco_core::runtime::{AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch};
 use silent_disco_core::transport::{TransportChannel, TransportEvent};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -167,6 +168,105 @@ fn a_listener_synchronization_report_populates_the_hosts_per_listener_diagnostic
     assert!((synchronization.round_trip_ms - 16.25).abs() < f64::EPSILON);
     assert!((synchronization.drift_ppm - 2.5).abs() < f64::EPSILON);
 
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+#[test]
+fn stop_then_second_source_uses_a_fresh_stream_without_old_audio_leakage() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!(
+            "no private LAN interface on this CI host; stream-restart coverage remains deterministic"
+        );
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor_a, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor_a, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+
+    start_playback::start(&handle, &network, &registry).expect("start first source");
+    let first_start = wait_for_stream_start(&mut *listener);
+    let first_audio = wait_for_audio(&mut *listener);
+    assert_eq!(first_audio.stream_id, first_start.stream_id);
+
+    network.stop_playback().expect("stop first source");
+    wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == PlaybackState::Stopped
+    });
+    wait_for_control(
+        &mut *listener,
+        |message| matches!(message, ControlMessage::Stop(stop) if stop.stream_id == first_start.stream_id),
+    );
+
+    // Drain anything that was already in the listener sockets before the
+    // Stop control arrived. The next StreamStart establishes the boundary
+    // after which no datagram from the old stream may appear.
+    loop {
+        match listener.recv_event(Duration::from_millis(25)) {
+            Ok(_) => {}
+            Err(error)
+                if error.kind == silent_disco_core::transport::TransportErrorKind::Timeout =>
+            {
+                break;
+            }
+            Err(error) => {
+                panic!("listener transport failed while draining stopped stream: {error}")
+            }
+        }
+    }
+
+    let descriptor_b = replace_source(&temp, &registry, "desktop-block-playback-second-source");
+    let current = handle.current_snapshot().expect("current snapshot");
+    submit(
+        &handle,
+        current.revision.get(),
+        CoreCommand::UpdateHostDraft(HostDraftPatch {
+            session_name: None,
+            approval_mode: None,
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(descriptor_b.clone()),
+            remember_approved_devices: None,
+        }),
+    );
+    wait_snapshot(&handle, |snapshot| {
+        snapshot
+            .host_draft
+            .audio_source
+            .as_ref()
+            .is_some_and(|source| source.source_id == descriptor_b.source_id)
+    });
+
+    start_playback::start(&handle, &network, &registry).expect("start second source");
+    let second_start = wait_for_stream_start(&mut *listener);
+    assert_ne!(
+        second_start.stream_id, first_start.stream_id,
+        "a new source after Stop must allocate a fresh stream identity"
+    );
+
+    let second_audio = wait_for_audio(&mut *listener);
+    assert_eq!(
+        second_audio.stream_id, second_start.stream_id,
+        "audio after the second StreamStart must belong to the new stream, not stale queued audio"
+    );
+    assert_ne!(second_audio.stream_id, first_start.stream_id);
+    assert_eq!(
+        second_audio.sequence.get(),
+        0,
+        "a genuinely new stream must restart packet sequencing at zero"
+    );
+
+    network.stop_playback().expect("stop second source");
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");

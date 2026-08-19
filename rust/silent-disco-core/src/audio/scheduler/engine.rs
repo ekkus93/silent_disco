@@ -69,28 +69,44 @@ impl PlaybackScheduler {
     ///
     /// # Errors
     ///
-    /// Returns a [`SchedulerConfigError`] when `packet_duration_ms` is
-    /// outside the packetizer's supported range, `samples_per_packet` is
-    /// zero, the water marks are not strictly ordered, the hard-resync
+    /// Returns a [`SchedulerConfigError`] when the configured sample geometry
+    /// implies an unsupported packet duration, the sample rate or
+    /// `samples_per_packet` is zero, the water marks are not strictly ordered, the hard-resync
     /// threshold is not positive, or the jitter buffer/concealment bounds
     /// are individually invalid.
     pub fn new(
         config: SchedulerConfig,
         initial_offset_ms: f64,
     ) -> Result<Self, SchedulerConfigError> {
-        if !(MIN_PACKET_DURATION_MS..=MAX_PACKET_DURATION_MS).contains(&config.packet_duration_ms) {
+        if config.sample_rate == 0 {
             return Err(SchedulerConfigError {
                 kind: SchedulerConfigErrorKind::InvalidPacketDuration,
-                message: format!(
-                    "packet duration of {}ms is outside the supported range",
-                    config.packet_duration_ms
-                ),
+                message: "sample rate must be nonzero".to_owned(),
             });
         }
         if config.samples_per_packet == 0 {
             return Err(SchedulerConfigError {
                 kind: SchedulerConfigErrorKind::InvalidSamplesPerPacket,
                 message: "samples per packet must be nonzero".to_owned(),
+            });
+        }
+        let packet_time_numerator = u64::from(config.samples_per_packet) * 1_000;
+        let minimum_time_numerator =
+            u64::from(MIN_PACKET_DURATION_MS) * u64::from(config.sample_rate);
+        let maximum_time_numerator =
+            u64::from(MAX_PACKET_DURATION_MS) * u64::from(config.sample_rate);
+        if packet_time_numerator < minimum_time_numerator
+            || packet_time_numerator > maximum_time_numerator
+        {
+            return Err(SchedulerConfigError {
+                kind: SchedulerConfigErrorKind::InvalidPacketDuration,
+                message: format!(
+                    "packet geometry of {} frames at {}Hz is outside the supported {}..={}ms range",
+                    config.samples_per_packet,
+                    config.sample_rate,
+                    MIN_PACKET_DURATION_MS,
+                    MAX_PACKET_DURATION_MS,
+                ),
             });
         }
         if config.low_water_ms >= config.high_water_ms {
@@ -132,13 +148,14 @@ impl PlaybackScheduler {
             kind: SchedulerConfigErrorKind::InvalidJitterBufferBounds,
             message: error.message,
         })?;
-        // The ramp is expressed in milliseconds but applied in frames; the
-        // stream's sample rate is implied by its validated packet geometry.
-        let ramp_frames = (config
-            .samples_per_packet
-            .saturating_mul(config.concealment_ramp_ms)
-            / config.packet_duration_ms)
-            .max(1);
+        // The ramp is expressed in milliseconds but applied in frames.
+        // Use the exact sample rate rather than dividing by a rounded packet
+        // duration, or the shaping window drifts with non-integer packet time.
+        let ramp_frames = u32::try_from(
+            u64::from(config.sample_rate) * u64::from(config.concealment_ramp_ms) / 1_000,
+        )
+        .unwrap_or(u32::MAX)
+        .max(1);
         // A ramp as long as the packet leaves no steady-state body between the
         // two edges: every synthesized frame would be pure ramp, so concealed
         // content would never reach its intended amplitude and a run's final
@@ -205,11 +222,14 @@ impl PlaybackScheduler {
     }
 
     fn expected_host_presentation_time_ms(&self, sequence: u64) -> u64 {
-        self.config.host_start_time_ms + sequence * u64::from(self.config.packet_duration_ms)
+        let sample_index = u128::from(sequence) * u128::from(self.config.samples_per_packet);
+        let elapsed_ms = sample_index * 1_000 / u128::from(self.config.sample_rate);
+        let elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX);
+        self.config.host_start_time_ms.saturating_add(elapsed_ms)
     }
 
     fn expected_first_sample_index(&self, sequence: u64) -> u64 {
-        sequence * u64::from(self.config.samples_per_packet)
+        sequence.saturating_mul(u64::from(self.config.samples_per_packet))
     }
 
     /// Advances the scheduler by one tick at the given local monotonic time,
@@ -517,6 +537,27 @@ impl PlaybackScheduler {
         }
     }
 
+    /// Re-aligns a playing scheduler after the real-time output has run dry.
+    ///
+    /// Once the render ring underruns, wall-clock time advances while no audio
+    /// is rendered. Replaying packets whose deadlines elapsed during that
+    /// silence would permanently move this listener behind the host timeline,
+    /// so only those now-unreachable head slots are discarded. The next real
+    /// frame is treated as a resume from silence and blended in accordingly.
+    pub(crate) fn realign_to_now(&mut self, local_now_ms: u64) {
+        self.discard_already_late_head(local_now_ms);
+        self.concealment.reset_consecutive_count();
+        self.fade_in_next_real_frame = true;
+        self.resume_from_silence = true;
+        self.last_emitted_tail.clear();
+    }
+
+    /// Hard-resync threshold configured for this scheduler.
+    #[must_use]
+    pub(crate) const fn hard_resync_threshold_ms(&self) -> f64 {
+        self.config.hard_resync_threshold_ms
+    }
+
     /// Applies an updated host/local clock-offset estimate, deciding between
     /// a soft correction and a hard resync based on the configured
     /// hard-resync threshold.
@@ -612,10 +653,10 @@ impl PlaybackScheduler {
         self.jitter_buffer.buffered_span_ms()
     }
 
-    /// Sample rate implied by this stream's validated packet geometry.
+    /// Exact sample rate configured for this stream.
     #[must_use]
     pub const fn sample_rate(&self) -> u32 {
-        self.config.samples_per_packet * 1_000 / self.config.packet_duration_ms
+        self.config.sample_rate
     }
 
     /// Maps a host presentation time onto this scheduler's local timeline

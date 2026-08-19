@@ -379,10 +379,21 @@ impl JitterBuffer {
     pub fn drain_all(&mut self) -> Vec<AudioDatagram> {
         let drained: Vec<AudioDatagram> =
             core::mem::take(&mut self.packets).into_values().collect();
-        if let Some(last) = drained.last() {
-            self.next_expected_sequence = last.sequence.get() + 1;
+        let mut expected = self.next_expected_sequence;
+        let mut skipped = 0_u64;
+        for datagram in &drained {
+            let sequence = datagram.sequence.get();
+            skipped = skipped.saturating_add(sequence.saturating_sub(expected));
+            expected = sequence.saturating_add(1);
         }
-        self.statistics.emitted += u64::try_from(drained.len()).unwrap_or(u64::MAX);
+        if !drained.is_empty() {
+            self.next_expected_sequence = expected;
+        }
+        self.statistics.skipped = self.statistics.skipped.saturating_add(skipped);
+        self.statistics.emitted = self
+            .statistics
+            .emitted
+            .saturating_add(u64::try_from(drained.len()).unwrap_or(u64::MAX));
         drained
     }
 

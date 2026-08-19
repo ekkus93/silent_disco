@@ -60,7 +60,7 @@ fn reports_buffering_waiting_and_stopped_states() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -143,7 +143,7 @@ fn startup_alignment_uses_true_now_not_the_future_write_horizon() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -156,14 +156,10 @@ fn startup_alignment_uses_true_now_not_the_future_write_horizon() {
     })
     .expect("valid ring");
     let (producer, _consumer) = ring.split();
-    let mut pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
-        .expect("valid pump");
+    let mut pump =
+        PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default()).expect("valid pump");
     pump.apply_sync_offset(0.0);
 
-    // Exactly 400ms of contiguous audio is buffered. At true time +400ms,
-    // sequences 0..19 are already stale but sequence 20 is due *now*.
-    // The pump's release horizon is another 400ms in the future; treating
-    // that horizon as actual time would wrongly discard sequence 20 too.
     for sequence in 0..=20 {
         pump.scheduler_mut()
             .submit_packet(datagram(sequence, 16_384))
@@ -186,7 +182,7 @@ fn alignment_does_not_reaccumulate_a_full_target_after_discarding_a_stale_buffer
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -199,8 +195,8 @@ fn alignment_does_not_reaccumulate_a_full_target_after_discarding_a_stale_buffer
     })
     .expect("valid ring");
     let (producer, _consumer) = ring.split();
-    let mut pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
-        .expect("valid pump");
+    let mut pump =
+        PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default()).expect("valid pump");
     pump.apply_sync_offset(0.0);
 
     for sequence in 0..=20 {
@@ -209,19 +205,10 @@ fn alignment_does_not_reaccumulate_a_full_target_after_discarding_a_stale_buffer
             .expect("accepted");
     }
 
-    // By 420ms every buffered packet is stale. The target was genuinely
-    // reached, so alignment may discard that stale head, but it must wait
-    // for a live packet instead of entering conceal/rebuffer thrash.
     let emptied = pump.tick(HOST_START_MS + 420);
-    assert!(matches!(
-        emptied,
-        PumpTick::Buffering { buffered_ms: 0 }
-    ));
+    assert!(matches!(emptied, PumpTick::Buffering { buffered_ms: 0 }));
     assert_eq!(pump.diagnostics().hard_resync_signals, 0);
 
-    // The very next live packet is due now. Because the 400ms target was
-    // already satisfied before stale-head alignment, it can start directly
-    // rather than demanding another impossible 400ms real-time backlog.
     pump.scheduler_mut()
         .submit_packet(datagram(21, 16_384))
         .expect("accepted");
@@ -351,7 +338,7 @@ fn a_paused_scheduler_is_re_armed_so_playback_recovers_after_an_outage() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -451,4 +438,66 @@ fn steady_state_ring_depth_converges_to_the_configured_cushion() {
         "a held cushion must prevent underruns"
     );
     assert_eq!(diagnostics.ring_silence_filled_frames, 0);
+}
+
+#[test]
+fn a_post_start_ring_underrun_realigns_to_the_live_timeline() {
+    let (mut pump, consumer) = pump_with(48_000);
+    for sequence in 0..20 {
+        pump.scheduler_mut()
+            .submit_packet(datagram(sequence, 16_384))
+            .expect("accepted");
+    }
+
+    assert!(matches!(
+        pump.tick(HOST_START_MS),
+        PumpTick::Queued { sequence: 0, .. }
+    ));
+
+    // Consume the only queued packet plus one packet of silence. The ring is
+    // now empty and wall time has advanced while the stream position has not.
+    let mut output = vec![0.0_f32; 2 * usize::try_from(SAMPLES_PER_PACKET).expect("fits") * 2];
+    let outcome = consumer.read_frames(&mut output);
+    assert_eq!(
+        outcome.frames_supplied,
+        usize::try_from(SAMPLES_PER_PACKET).expect("fits")
+    );
+    assert!(outcome.frames_silence_filled > 0);
+
+    // At +100ms, sequences 1..4 are now irretrievably late. Replaying them
+    // would leave this listener permanently 80ms behind; realignment skips
+    // only those stale slots and resumes on sequence 5, which is due now.
+    let resumed = pump.tick(HOST_START_MS + 5 * u64::from(PACKET_DURATION_MS));
+    assert!(
+        matches!(resumed, PumpTick::Queued { sequence: 5, .. }),
+        "underrun recovery must catch the live timeline, got {resumed:?}"
+    );
+    assert_eq!(pump.diagnostics().sequences_skipped, 4);
+}
+
+#[test]
+fn startup_silence_does_not_trigger_underrun_realign_or_skip_future_audio() {
+    let (mut pump, consumer) = paced_pump();
+
+    // The platform output can begin asking for frames before the playback
+    // worker has placed the first scheduled frame. That pre-roll silence is
+    // expected and must only establish the underrun baseline.
+    let mut startup = vec![0.0_f32; 480 * 2];
+    let startup_outcome = consumer.read_frames(&mut startup);
+    assert_eq!(startup_outcome.frames_supplied, 0);
+    assert_eq!(startup_outcome.frames_silence_filled, 480);
+
+    for sequence in 0..40 {
+        pump.scheduler_mut()
+            .submit_packet(datagram(sequence, 16_384))
+            .expect("accepted");
+    }
+
+    let first = pump.tick(HOST_START_MS - 400);
+    assert!(
+        matches!(first, PumpTick::Queued { sequence: 0, .. }),
+        "startup underrun telemetry must not skip the first future frame: {first:?}"
+    );
+    assert_eq!(pump.prefill_frames(), 19_200);
+    assert_eq!(pump.diagnostics().sequences_skipped, 0);
 }

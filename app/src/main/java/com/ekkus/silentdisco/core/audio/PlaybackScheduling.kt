@@ -9,9 +9,9 @@ data class PlaybackThresholds(
 /**
  * One frame handed to a [PlaybackEngine], with the local time it is due.
  *
- * Listener playback no longer produces these — the Rust runtime owns
- * scheduling and writes to its render ring directly. They remain for the
- * host's own monitor output, which still renders locally decoded audio.
+ * Production listener and host-monitor playback no longer produce these —
+ * the Rust runtime owns scheduling and writes to its render ring directly.
+ * This legacy shape remains only for isolated adapter regression tests.
  */
 data class PlaybackFrame(
     val packet: com.ekkus.silentdisco.core.protocol.AudioPacket,

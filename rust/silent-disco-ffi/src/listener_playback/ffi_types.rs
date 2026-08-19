@@ -13,8 +13,9 @@ pub struct FfiListenerPlaybackConfig {
     pub session_id: String,
     /// Stream identity; a new stream generation requires a new runtime.
     pub stream_id: String,
-    /// Wire packet duration, matching the host packetizer.
-    pub packet_duration_ms: u32,
+    /// Exact stream sample rate; Rust derives packet timing from this and
+    /// `samples_per_packet` without millisecond truncation.
+    pub sample_rate: u32,
     /// Host monotonic time at which sequence zero's slot began.
     pub host_start_time_ms: u64,
     /// Samples per channel per packet.
@@ -84,12 +85,18 @@ pub struct FfiPlaybackDiagnostics {
     pub packets_emitted: u64,
     /// Sequences abandoned without playing: concealed losses plus skipped gaps.
     pub sequences_skipped: u64,
+    /// Packets rejected for a different session.
+    pub wrong_session_rejections: u64,
+    /// Packets rejected for a different stream generation.
+    pub wrong_stream_rejections: u64,
     /// Packets that arrived after their slot had already played.
     pub late_rejections: u64,
     /// Duplicate packets rejected.
     pub duplicate_rejections: u64,
     /// Packets too far ahead to reorder.
     pub reorder_window_rejections: u64,
+    /// Packets rejected because the bounded buffered-duration limit would be exceeded.
+    pub buffered_duration_rejections: u64,
     /// Times the buffer adopted a far-ahead position after the stream moved
     /// beyond its reorder window.
     pub resynchronisations: u64,
@@ -120,6 +127,12 @@ pub struct FfiPlaybackDiagnostics {
     pub ring_silence_filled_frames: u64,
     /// Producer writes that could not fit every frame.
     pub ring_full_events: u64,
+    /// Pump-thread wake-ups observed since this runtime started.
+    pub pump_thread_tick_count: u64,
+    /// Runtime-relative monotonic timestamp of the most recent pump wake-up.
+    pub pump_thread_last_tick_ms: u64,
+    /// Pump panics caught and converted into explicit runtime failure.
+    pub contained_pump_panics: u64,
 }
 
 /// The estimator's confidence in its current estimate.
@@ -156,6 +169,14 @@ pub struct FfiSyncSampleOutcome {
     pub accepted_sample_count: u64,
     /// True once playback has a real offset and may start.
     pub sync_locked: bool,
+    /// Samples rejected before the first accepted synchronization sample.
+    pub acquisition_rejected_sample_count: u64,
+    /// Milliseconds spent acquiring the first usable synchronization sample.
+    pub acquisition_elapsed_ms: u64,
+    /// RTT gate used for this observation.
+    pub acquisition_rtt_limit_ms: f64,
+    /// True when initial lock required the bounded acquisition-only widened gate.
+    pub degraded_lock: bool,
 }
 
 /// Errors surfaced to the foreign binding.

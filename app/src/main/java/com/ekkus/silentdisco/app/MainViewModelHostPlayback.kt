@@ -2,7 +2,6 @@ package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
-import com.ekkus.silentdisco.core.audio.PlaybackFrame
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.protocol.StreamId
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +10,7 @@ import kotlinx.coroutines.launch
 
 internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
     hostStreamJob?.cancel()
-    hostStreamJob = viewModelScope.launch {
+    hostStreamJob = viewModelScope.launch(Dispatchers.IO) {
         var previousSendElapsedMs: Long? = null
         var consecutiveAudioSendFailures = 0
         var presentationOffsetMs = 0L
@@ -44,6 +43,14 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
                 presentationOffsetMs += SystemClock.elapsedRealtime() - startedAt
                 pauseStartedAtMs = null
                 previousSendElapsedMs = null
+                runCatching {
+                    reanchorHostMonitorPlayback(
+                        latestPackets.first().hostPresentationTimeMs + presentationOffsetMs,
+                    )
+                }.onFailure { error ->
+                    handleHostPlaybackEngineFailure(error)
+                    return@launch
+                }
             }
             if (_uiState.value.hostPlaybackState in setOf(PlaybackState.STOPPED, PlaybackState.ERROR)) {
                 return@launch
@@ -78,14 +85,15 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
                 )
             }
             runCatching {
-                playbackEngine.write(
-                    PlaybackFrame(
-                        packet = packet,
-                        localDeadlineMs = packet.hostPresentationTimeMs,
-                    ),
-                )
+                submitHostMonitorPacket(packet)
             }.onFailure { error ->
-                handleHostPlaybackEngineFailure(error)
+                // Explicit Stop swaps/stops the runtime from another command
+                // coroutine. A packet already between cancellation points may
+                // observe that teardown; once STOPPED is authoritative, that is
+                // normal cancellation rather than a playback-engine failure.
+                if (_uiState.value.hostPlaybackState != PlaybackState.STOPPED) {
+                    handleHostPlaybackEngineFailure(error)
+                }
                 return@launch
             }
             runCatching {
@@ -154,6 +162,11 @@ internal fun MainViewModel.startHostStreamingLoop(streamId: StreamId) {
             previousSendElapsedMs = now
             delay(packetDurationMs)
         }
+        runCatching { stopHostMonitorPlayback() }
+            .onFailure { error ->
+                handleHostPlaybackEngineFailure(error)
+                return@launch
+            }
         logger.i("stream.stop", "Reached end of file for host stream")
         metrics.increment("stream_eof")
         _uiState.value = _uiState.value.copy(lastMessage = "Reached end of file")

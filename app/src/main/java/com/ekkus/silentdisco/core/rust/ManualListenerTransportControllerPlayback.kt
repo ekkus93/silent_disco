@@ -107,23 +107,16 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     // was granted rather than reopening one. Usually a no-op here, since
     // the host's `Stop` for the previous track has already ended it the
     // same way -- this covers a new stream arriving without one.
-    endStream(keepOutputOpen = true)
+    if (endStream(keepOutputOpen = true) != null) return
     receivedCount = 0
     lastReceivedSequence = null
 
-    val sampleRate = event.sampleRate.toInt()
-    val samplesPerPacket = event.samplesPerPacket.toInt()
-    val packetDurationMs = if (sampleRate > 0) {
-        (samplesPerPacket.toLong() * 1_000L / sampleRate.toLong()).toInt()
-    } else {
-        0
-    }
     val runtime = runCatching {
         FfiListenerPlaybackHandle.open(
             FfiListenerPlaybackConfig(
                 sessionId = session.value,
                 streamId = event.streamId,
-                packetDurationMs = packetDurationMs.toUInt(),
+                sampleRate = event.sampleRate,
                 hostStartTimeMs = event.hostStartTimeMs,
                 samplesPerPacket = event.samplesPerPacket,
                 channels = event.channels,
@@ -184,7 +177,7 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     logger.i(
         "manual.audio.stream_started",
         "streamId=${event.streamId} hostStartMs=${event.hostStartTimeMs} " +
-            "sampleRate=$sampleRate samplesPerPacket=$samplesPerPacket packetDurationMs=$packetDurationMs",
+            "sampleRate=${event.sampleRate} samplesPerPacket=${event.samplesPerPacket}",
     )
     _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.BUFFERING)
     startSyncProbeLoop(scope, handle)
@@ -213,8 +206,9 @@ internal fun ManualListenerTransportController.handleStreamStopped() {
     // output deliberately stays open: the session is still live and the
     // host may start another track, which then rebinds this same stream
     // instead of reopening one (see [endStream]).
-    endStream(keepOutputOpen = true)
-    _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
+    if (endStream(keepOutputOpen = true) == null) {
+        _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
+    }
 }
 
 /**
@@ -222,7 +216,7 @@ internal fun ManualListenerTransportController.handleStreamStopped() {
  * current stream while the session continues, use
  * `endStream(keepOutputOpen = true)` instead.
  */
-internal fun ManualListenerTransportController.stopPlayback() = endStream(keepOutputOpen = false)
+internal fun ManualListenerTransportController.stopPlayback(): Throwable? = endStream(keepOutputOpen = false)
 
 /**
  * Ends the current stream, logging its final accounting.
@@ -237,37 +231,56 @@ internal fun ManualListenerTransportController.stopPlayback() = endStream(keepOu
  * teardown -- disconnect, rejection, or closing the controller -- closes
  * it.
  */
-internal fun ManualListenerTransportController.endStream(keepOutputOpen: Boolean) {
+internal fun ManualListenerTransportController.endStream(keepOutputOpen: Boolean): Throwable? {
     syncProbeJob?.cancel()
     syncProbeJob = null
     diagnosticsSampleJob?.cancel()
     diagnosticsSampleJob = null
+    var firstFailure: Throwable? = null
+    fun capture(block: () -> Unit) {
+        try {
+            block()
+        } catch (error: Throwable) {
+            firstFailure = mergeManualCleanupFailure(firstFailure, error)
+        }
+    }
+
     val runtime = playbackRuntime ?: run {
         // No stream to end, but a teardown still has to release the
         // output; leaving a low-latency stream running against a
         // released token would burn the radio and the CPU for silence.
-        if (!keepOutputOpen) OboeBridge.nativeOboeClose()
-        return
+        if (!keepOutputOpen) capture { OboeBridge.nativeOboeClose() }
+        firstFailure?.let { error ->
+            _connectState.value = ManualConnectUiState.Failed(
+                error.message ?: "playback teardown failed",
+            )
+        }
+        return firstFailure
     }
     playbackRuntime = null
     currentStreamId = null
     transportClockOriginMs = null
     // Detach before stopping: the transport must not submit into a
-    // runtime that is shutting down.
-    runCatching { handleRef.get()?.detachPlayback() }
+    // runtime that is shutting down. Every cleanup step is still attempted
+    // if one fails; the first failure remains primary and later failures are
+    // attached as suppressed exceptions.
+    capture { handleRef.get()?.detachPlayback() }
     // Order matters and is deliberate: `stop()` drains the render ring
     // *through the still-running Oboe callback* so the stream ends on its
     // own final sample rather than mid-note (see `await_ring_drain`, which
     // documents that a consumer closed first means the ring never drains).
-    // The window between the token's release inside `stop()` and either
-    // the close below or the next track's rebind is contained by the ABI
-    // itself -- a released token reads as silence, never as freed memory.
-    runCatching { runtime.stop() }.onFailure { error ->
-        logger.w("manual.audio.stop_failed", error.message ?: "playback failed to stop cleanly")
+    capture { runtime.stop() }
+    if (!keepOutputOpen) capture { OboeBridge.nativeOboeClose() }
+    capture { logPlaybackSummary(runtime) }
+    capture { runtime.close() }
+
+    firstFailure?.let { error ->
+        logger.w("manual.audio.teardown_failed", error.message ?: "playback teardown failed")
+        _connectState.value = ManualConnectUiState.Failed(
+            error.message ?: "playback teardown failed",
+        )
     }
-    if (!keepOutputOpen) OboeBridge.nativeOboeClose()
-    logPlaybackSummary(runtime)
-    runtime.close()
+    return firstFailure
 }
 
 internal fun ManualListenerTransportController.handleAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
@@ -301,10 +314,10 @@ internal fun ManualListenerTransportController.handleAudioReceived(event: FfiLis
             session.value,
             event.streamId,
         )
-    }
+    }.onFailure { error -> handlePlaybackEngineFailure(error) }
 }
 
 internal fun ManualListenerTransportController.handlePlaybackEngineFailure(error: Throwable) {
-    stopPlayback()
+    stopPlayback()?.let(error::addSuppressed)
     _connectState.value = ManualConnectUiState.Failed(error.message ?: "playback engine failed")
 }

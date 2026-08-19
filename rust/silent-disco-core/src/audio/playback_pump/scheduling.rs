@@ -63,6 +63,7 @@ impl PlaybackPump {
         if !self.sync_locked {
             return PumpTick::AwaitingSync;
         }
+        self.realign_after_output_underrun(local_now_ms);
         if !self.pending.is_empty() {
             // Never poll for new audio while an earlier frame is still
             // partly unwritten: that would reorder the stream.
@@ -108,6 +109,7 @@ impl PlaybackPump {
                 let concealed = frame.concealed;
                 self.queue_alignment_prefill(&frame, local_now_ms);
                 let frames = self.enqueue_frame(&frame);
+                self.timeline_started = true;
                 if self.pending.is_empty() {
                     PumpTick::Queued {
                         sequence,
@@ -141,6 +143,32 @@ impl PlaybackPump {
         written
     }
 
+    /// Detects a newly observed real-time output underrun and, after the
+    /// stream has genuinely started, re-anchors queued playback to true now.
+    ///
+    /// A render-ring underrun means the consumer emitted silence after it had
+    /// exhausted every queued frame. Wall time therefore advanced without
+    /// advancing the stream. Any converted-but-unwritten samples and scheduler
+    /// packets whose deadlines elapsed during that silence are stale; replaying
+    /// them would make this listener permanently late. Startup/pre-roll
+    /// underruns are only recorded as a baseline because silence before the
+    /// first scheduled frame is expected.
+    fn realign_after_output_underrun(&mut self, local_now_ms: u64) {
+        let underruns = self.producer.telemetry().underrun_callbacks;
+        if !self.timeline_started {
+            self.last_observed_underrun_callbacks = underruns;
+            return;
+        }
+        if underruns <= self.last_observed_underrun_callbacks {
+            return;
+        }
+        self.last_observed_underrun_callbacks = underruns;
+        self.pending.clear();
+        self.awaiting_prefill = true;
+        self.prefill_frames = 0;
+        self.scheduler.realign_to_now(local_now_ms);
+    }
+
     /// Queues silence ahead of the stream's first frame so that frame is heard
     /// at its presentation deadline rather than as soon as it is written.
     ///
@@ -156,6 +184,7 @@ impl PlaybackPump {
             return;
         }
         self.awaiting_prefill = false;
+        self.prefill_frames = 0;
         let deadline_ms = self
             .scheduler
             .local_time_for_host_ms(frame.host_presentation_time_ms);

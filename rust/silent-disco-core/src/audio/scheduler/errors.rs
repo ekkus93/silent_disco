@@ -7,7 +7,7 @@ use std::error::Error;
 /// Stable failure taxonomy for scheduler configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedulerConfigErrorKind {
-    /// `packet_duration_ms` is outside the packetizer's supported range.
+    /// The sample-rate/packet-size geometry implies an unsupported packet duration.
     InvalidPacketDuration,
     /// `samples_per_packet` is zero.
     InvalidSamplesPerPacket,

@@ -11,7 +11,7 @@ fn rejects_a_target_depth_the_ring_could_never_reach() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -45,7 +45,7 @@ fn rejects_an_invalid_volume() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         2,
@@ -76,7 +76,7 @@ fn rejects_a_stream_whose_channel_count_the_ring_cannot_render() {
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("session-pump").expect("session id"),
         StreamId::new("stream-pump").expect("stream id"),
-        PACKET_DURATION_MS,
+        48_000,
         HOST_START_MS,
         SAMPLES_PER_PACKET,
         1,

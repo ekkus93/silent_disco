@@ -33,6 +33,16 @@ pub struct PlaybackPump {
     pub(super) peak_queued_frames: usize,
     /// Packets discarded because they arrived before sync locked.
     pub(super) dropped_before_sync: u64,
+    /// Render-ring underrun count observed on the previous pump tick.
+    ///
+    /// Before the first frame has been placed on the timeline this is only a
+    /// baseline: startup/pre-roll silence is expected and must not be mistaken
+    /// for mid-stream drift.
+    pub(super) last_observed_underrun_callbacks: u64,
+    /// True after the first scheduled frame has been handed toward the render
+    /// ring. Only then can a later underrun represent accumulated playout
+    /// drift that needs timeline realignment.
+    pub(super) timeline_started: bool,
     /// Times a clock-offset jump too large to splice forced a rebuffer --
     /// the counterpart to `ConcealmentStatistics::hard_resync_signals`, which
     /// only counts the *other* rebuffer cause (the consecutive-concealment
@@ -94,6 +104,7 @@ impl PlaybackPump {
                 ),
             });
         }
+        let last_observed_underrun_callbacks = producer.telemetry().underrun_callbacks;
         Ok(Self {
             scheduler,
             producer,
@@ -105,6 +116,8 @@ impl PlaybackPump {
             offset_ms: 0.0,
             peak_queued_frames: 0,
             dropped_before_sync: 0,
+            last_observed_underrun_callbacks,
+            timeline_started: false,
             offset_driven_rebuffers: 0,
             recorder: None,
             recorder_error: None,
@@ -115,6 +128,27 @@ impl PlaybackPump {
     /// clock-offset updates.
     pub const fn scheduler_mut(&mut self) -> &mut PlaybackScheduler {
         &mut self.scheduler
+    }
+
+    /// Updates the linear output gain used for subsequently converted frames.
+    ///
+    /// Already-converted samples waiting in the render ring or pending queue keep
+    /// the gain they were converted with; the new value applies at the next frame
+    /// conversion boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlaybackPumpConfigErrorKind::InvalidVolume`] when `volume` is
+    /// NaN, infinite, or outside `0.0..=1.0`.
+    pub fn set_volume(&mut self, volume: f32) -> Result<(), PlaybackPumpConfigError> {
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err(PlaybackPumpConfigError {
+                kind: PlaybackPumpConfigErrorKind::InvalidVolume,
+                message: format!("volume of {volume} must be finite and within 0.0..=1.0"),
+            });
+        }
+        self.config.volume = volume;
+        Ok(())
     }
 
     /// Sample rate of the stream this pump serves.

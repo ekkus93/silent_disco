@@ -17,6 +17,11 @@ import kotlinx.coroutines.launch
             }
         }
         viewModelScope.launch {
+            mdnsService.discoveredSessions.collect {
+                refreshDiscoveredSessions()
+            }
+        }
+        viewModelScope.launch {
             wifiDirectService.snapshot.collect { snapshot ->
                 refreshDiscoveredSessions()
                 reportRustHostTransportState(snapshot.state)
@@ -49,6 +54,17 @@ import kotlinx.coroutines.launch
                     BleOperation.SCAN -> handleBleScanFailure(failure.message)
                     BleOperation.ADVERTISE -> handleBleAdvertiseFailure(failure.message)
                 }
+            }
+        }
+    }
+
+    internal fun MainViewModel.observeMdnsFailures() {
+        viewModelScope.launch {
+            mdnsService.failures.collect { message ->
+                logger.w("mdns.discovery", message)
+                _uiState.value = _uiState.value.copy(lastError = message)
+                diagnosticsStore.updateListener { it.copy(lastError = message) }
+                refreshListenerDiagnostics()
             }
         }
     }
@@ -152,25 +168,34 @@ import kotlinx.coroutines.launch
     }
 
     /**
-     * Only BLE-advertised sessions are trusted as discovered sessions. Wi-Fi
-     * Direct's own peer list is not a signal that a peer is running Silent
-     * Disco at all -- it surfaces every nearby Wi-Fi-Direct-capable device
-     * (TVs, printers, other phones), and previously got merged in directly,
-     * rendering arbitrary nearby devices as joinable "sessions". Wi-Fi
-     * Direct is only used for establishment once a BLE-confirmed session has
-     * actually been selected (see `establishRustListenerNetwork`).
+     * Merges Silent Disco advertisements from BLE and desktop mDNS. Wi-Fi
+     * Direct's peer list is deliberately excluded: it contains arbitrary
+     * nearby Wi-Fi-Direct-capable devices, not authenticated Silent Disco
+     * sessions. When both discovery layers report the same session, mDNS
+     * wins because it carries the already-bound standard-IP endpoint and can
+     * skip Wi-Fi Direct establishment entirely.
      */
     internal fun MainViewModel.refreshDiscoveredSessions() {
+        val controller = listenerCoreController ?: return
+        val mdnsSessions = mdnsService.discoveredSessions.value
+            .distinctBy { it.sessionId }
+            .sortedBy { it.sessionName }
+        val mdnsSessionIds = mdnsSessions.map { it.sessionId }.toSet()
         val bleSessions = bleService.discoveredSessions.value
+            .filter { it.id !in mdnsSessionIds }
             .distinctBy { it.id }
             .sortedBy { it.name }
-        val controller = listenerCoreController ?: return
+
+        // Re-submit current advertisements, not only new IDs. The Rust actor
+        // replaces an existing advertisement with the same session ID, which
+        // is how an endpoint-less BLE discovery is upgraded when mDNS later
+        // resolves the same desktop session.
+        mdnsSessions.forEach { controller.submitSessionDiscovered(it.toFfiSessionAdvertisement()) }
+        bleSessions.forEach { controller.submitSessionDiscovered(it.toFfiSessionAdvertisement()) }
+
+        val desiredSessionIds = mdnsSessionIds + bleSessions.map { it.id }
         val known = controller.snapshots.value?.discoveredSessions.orEmpty()
             .map { it.sessionId }
             .toSet()
-        val bleSessionIds = bleSessions.map { it.id }.toSet()
-        bleSessions.filter { it.id !in known }.forEach { session ->
-            controller.submitSessionDiscovered(session.toFfiSessionAdvertisement())
-        }
-        (known - bleSessionIds).forEach { sessionId -> controller.submitSessionExpired(sessionId) }
+        (known - desiredSessionIds).forEach(controller::submitSessionExpired)
     }

@@ -12,6 +12,14 @@ pub(super) fn stage_source(temp: &TempDir) -> (AudioSourceDescriptor, SelectedSo
     stage_wav_source(temp, "desktop-block-playback-source", pcm_wav())
 }
 
+pub(super) fn replace_source(
+    temp: &TempDir,
+    registry: &SelectedSourceRegistry,
+    source_id: &str,
+) -> AudioSourceDescriptor {
+    replace_wav_source(temp, registry, source_id, pcm_wav())
+}
+
 /// Comfortably longer than [`SEND_AHEAD_HORIZON_MS`]-worth of playback (via
 /// `playback_streamer::SEND_AHEAD_HORIZON_MS`, not directly importable from
 /// this test module) so a mid-stream check (a sync request/response
@@ -27,13 +35,23 @@ pub(super) fn stage_wav_source(
     source_id: &str,
     wav_bytes: Vec<u8>,
 ) -> (AudioSourceDescriptor, SelectedSourceRegistry) {
-    let source_path = temp.path().join("source.wav");
+    let registry = SelectedSourceRegistry::new();
+    let descriptor = replace_wav_source(temp, &registry, source_id, wav_bytes);
+    (descriptor, registry)
+}
+
+fn replace_wav_source(
+    temp: &TempDir,
+    registry: &SelectedSourceRegistry,
+    source_id: &str,
+    wav_bytes: Vec<u8>,
+) -> AudioSourceDescriptor {
+    let source_path = temp.path().join(format!("{source_id}.wav"));
     fs::write(&source_path, wav_bytes).expect("write source");
     let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
     let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
     let descriptor = AudioSourceDescriptor::new(source_id, "source.wav", Some(byte_length), None)
         .expect("descriptor");
-    let registry = SelectedSourceRegistry::new();
     registry
         .replace(InspectedAudioSource::from_staged(
             descriptor.clone(),
@@ -41,7 +59,7 @@ pub(super) fn stage_wav_source(
             AudioContainer::Wav,
         ))
         .expect("register staged source");
-    (descriptor, registry)
+    descriptor
 }
 
 fn pcm_wav() -> Vec<u8> {

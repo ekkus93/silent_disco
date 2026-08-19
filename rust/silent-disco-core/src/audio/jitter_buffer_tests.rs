@@ -183,6 +183,29 @@ fn skip_expected_sequence_advances_past_a_missing_packet_without_emitting_one() 
 }
 
 #[test]
+fn drain_all_counts_sequence_holes_as_skipped_without_falsely_emitting_them() {
+    let mut buffer = buffer();
+    for sequence in [0, 2, 4] {
+        buffer
+            .accept(packet(sequence, sequence * 20))
+            .expect("accepted");
+    }
+
+    let drained = buffer.drain_all();
+
+    assert_eq!(
+        drained
+            .iter()
+            .map(|datagram| datagram.sequence.get())
+            .collect::<Vec<_>>(),
+        vec![0, 2, 4]
+    );
+    assert_eq!(buffer.next_expected_sequence(), 5);
+    assert_eq!(buffer.statistics().emitted, 3);
+    assert_eq!(buffer.statistics().skipped, 2);
+}
+
+#[test]
 fn discard_in_order_advances_without_falsely_counting_a_packet_as_emitted() {
     let mut buffer = buffer();
     buffer.accept(packet(0, 0)).expect("accepted");

@@ -103,7 +103,15 @@ fn run_pump(
     // leaving `Playing`. Ordered before the packetizer cancellation only so
     // the monitor's own thread/device stop first, not because anything
     // downstream depends on that order.
-    network.monitor.on_stream_stopped();
+    let monitor_result = network.monitor.on_stream_stopped().map_err(|message| {
+        DesktopErrorDto::new(
+            "desktop.playback.monitor_shutdown_failed",
+            "audio",
+            "error",
+            false,
+            &message,
+        )
+    });
     // Every shutdown step is attempted even when an earlier one fails -- a
     // packetizer that will not cancel must not prevent the listeners being
     // told the stream ended, nor the actor leaving `Playing` -- and the first
@@ -148,11 +156,15 @@ fn run_pump(
     .map_err(DesktopErrorDto::from);
     if let Some(primary) = streaming_error {
         return Err(primary
+            .with_appended_cleanup(monitor_result.err())
             .with_appended_cleanup(packetizer_result.err())
             .with_appended_cleanup(broadcast_result.err())
             .with_appended_cleanup(stopped_result.err()));
     }
-    packetizer_result.and(broadcast_result).and(stopped_result)
+    monitor_result
+        .and(packetizer_result)
+        .and(broadcast_result)
+        .and(stopped_result)
 }
 
 /// Submits a throttled `PositionAdvanced` event for one emitted audio frame.
