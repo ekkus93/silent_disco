@@ -15,7 +15,7 @@ pub(super) enum NetworkErrorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DesktopNetworkError {
+pub(crate) struct DesktopNetworkError {
     pub(super) kind: NetworkErrorKind,
     pub(super) message: String,
     code: CoreErrorCode,
