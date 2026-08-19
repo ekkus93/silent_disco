@@ -78,13 +78,14 @@ fn one_pump_wake_up_drains_every_frame_already_due() {
     const SHORT_PACKET_MS: u32 = 5;
     const SHORT_SAMPLES: u32 = 240;
     const DUE_PACKETS: u64 = 40;
+    const HOST_START_MS: u64 = 1_000;
 
     let _guard = registry_test_guard();
     let mut config = SchedulerConfig::new(
         SessionId::new("session-drain").expect("session id"),
         StreamId::new("stream-drain").expect("stream id"),
         48_000,
-        0,
+        HOST_START_MS,
         SHORT_SAMPLES,
         2,
     );
@@ -108,7 +109,7 @@ fn one_pump_wake_up_drains_every_frame_already_due() {
                 samples_per_packet: SHORT_SAMPLES,
                 first_sample_index: SampleIndex::new(sequence * u64::from(SHORT_SAMPLES)),
                 host_presentation_time_ms: MonotonicMillis::new(
-                    sequence * u64::from(SHORT_PACKET_MS),
+                    HOST_START_MS + sequence * u64::from(SHORT_PACKET_MS),
                 ),
                 payload: (0..SHORT_SAMPLES * 2)
                     .flat_map(|_| 16_384_i16.to_le_bytes())
@@ -117,8 +118,10 @@ fn one_pump_wake_up_drains_every_frame_already_due() {
             .expect("accepted");
     }
 
-    // Every packet above is due at this instant.
-    let released = drain_due_frames(&mut pump, DUE_PACKETS * u64::from(SHORT_PACKET_MS));
+    // Every packet above falls within the write-ahead horizon at stream start,
+    // while none is stale against actual now. One wake-up should therefore
+    // drain all of them into the ring.
+    let released = drain_due_frames(&mut pump, HOST_START_MS);
 
     assert!(
         released >= usize::try_from(DUE_PACKETS).expect("fits"),
