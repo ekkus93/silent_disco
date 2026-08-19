@@ -53,6 +53,14 @@ pub struct PlaybackScheduler {
     /// True once this stream has reached `Playing` at least once, which is
     /// what distinguishes a startup buffer from a mid-stream rebuffer.
     has_played: bool,
+    /// True once the current startup/rebuffer span target has been reached.
+    ///
+    /// Alignment may then discard the entire stale head while waiting for a
+    /// packet whose deadline is still reachable. Keeping this separate from
+    /// `state` prevents the scheduler from demanding another full buffer
+    /// target every time that happens -- a real-time arrival stream would
+    /// otherwise repeat "accumulate 400ms, discard 400ms" forever.
+    buffer_target_satisfied: bool,
 }
 
 impl PlaybackScheduler {
@@ -170,6 +178,7 @@ impl PlaybackScheduler {
             last_emitted_tail: Vec::new(),
             resume_from_silence: true,
             has_played: false,
+            buffer_target_satisfied: false,
         })
     }
 
@@ -206,12 +215,43 @@ impl PlaybackScheduler {
     /// Advances the scheduler by one tick at the given local monotonic time,
     /// returning the frame ready for this tick's presentation slot, if any.
     ///
+    /// This is the no-write-ahead form used by direct scheduler callers and
+    /// tests. The render-ring pump uses an internal two-clock form so stale
+    /// startup alignment is evaluated against *actual now*, not its future
+    /// release horizon.
+    ///
     /// # Panics
     ///
     /// Never panics; every arithmetic path is bounded by validated
     /// configuration.
     #[must_use]
     pub fn poll(&mut self, local_now_ms: u64) -> SchedulerPoll {
+        self.poll_with_release_horizon(local_now_ms, local_now_ms)
+    }
+
+    /// Advances the scheduler with separate actual-time and release-horizon
+    /// clocks.
+    ///
+    /// `local_now_ms` is the listener's real current monotonic time and is
+    /// used only to decide which startup/rebuffer packets are already too
+    /// late to play on the authoritative host timeline.
+    /// `local_release_horizon_ms` is how far ahead a non-real-time producer
+    /// may queue into its FIFO render ring. It controls ordinary due/waiting
+    /// decisions but must never make future audio look stale.
+    ///
+    /// A release horizon before actual now is harmlessly clamped to now.
+    ///
+    /// # Panics
+    ///
+    /// Never panics; every arithmetic path is bounded by validated
+    /// configuration.
+    #[must_use]
+    pub(crate) fn poll_with_release_horizon(
+        &mut self,
+        local_now_ms: u64,
+        local_release_horizon_ms: u64,
+    ) -> SchedulerPoll {
+        let local_release_horizon_ms = local_release_horizon_ms.max(local_now_ms);
         match self.state {
             SchedulerState::Stopped => return SchedulerPoll::Stopped,
             SchedulerState::AwaitingRebuffer => return SchedulerPoll::AwaitingRebuffer,
@@ -232,11 +272,35 @@ impl PlaybackScheduler {
                 } else {
                     self.config.startup_buffer_target_ms
                 };
-                if buffered_ms < target {
+                if !self.buffer_target_satisfied && buffered_ms < target {
                     return SchedulerPoll::Buffering { buffered_ms };
+                }
+                self.buffer_target_satisfied = true;
+
+                // The first audible frame must still be placeable on the
+                // host timeline. Two listeners can lock sync or finish
+                // buffering at different moments; replaying each listener's
+                // already-elapsed buffered head would permanently offset the
+                // whole stream by that device's own startup latency.
+                //
+                // Crucially this uses *true current time*. The pump may ask
+                // us to release 400ms into the future to seed its FIFO, and
+                // an earlier implementation compared against that future
+                // horizon instead. It discarded still-future audio and
+                // repeatedly emptied/rebuffered on a physical device.
+                self.discard_already_late_head(local_now_ms);
+
+                // Reaching the buffering target is remembered even if every
+                // held packet was stale. Stay in Buffering until a live
+                // packet arrives, but do not require another full target --
+                // otherwise a real-time stream can loop forever accumulating
+                // and discarding the same target-sized stale window.
+                if target > 0 && self.jitter_buffer.is_empty() {
+                    return SchedulerPoll::Buffering { buffered_ms: 0 };
                 }
                 self.state = SchedulerState::Playing;
                 self.has_played = true;
+                self.buffer_target_satisfied = false;
             }
             SchedulerState::Playing => {}
         }
@@ -245,7 +309,7 @@ impl PlaybackScheduler {
         let mut host_deadline_ms = self.expected_host_presentation_time_ms(next_sequence);
         let mut local_deadline_ms = host_to_local_ms(host_deadline_ms, self.offset_ms);
 
-        if local_now_ms < local_deadline_ms {
+        if local_release_horizon_ms < local_deadline_ms {
             return SchedulerPoll::Waiting {
                 buffer_health: self.buffer_health(),
             };
@@ -273,7 +337,7 @@ impl PlaybackScheduler {
             next_sequence = self.jitter_buffer.next_expected_sequence();
             host_deadline_ms = self.expected_host_presentation_time_ms(next_sequence);
             local_deadline_ms = host_to_local_ms(host_deadline_ms, self.offset_ms);
-            if local_now_ms < local_deadline_ms {
+            if local_release_horizon_ms < local_deadline_ms {
                 return SchedulerPoll::Waiting {
                     buffer_health: self.buffer_health(),
                 };
@@ -415,17 +479,9 @@ impl PlaybackScheduler {
         }
     }
 
-    /// Drops buffered packets whose presentation deadline has already passed,
-    /// so playback begins on a frame that is genuinely due.
-    ///
-    /// **Currently unused — see item 4 in
-    /// `docs/SILENT_DISCO_PLAYBACK_REVIEW_FIXES_TODO.md`.** Enabling this
-    /// regressed a real device badly (playback stopped after ~11s of a 40s
-    /// stream and never recovered) because `poll` receives a time already
-    /// advanced by the pump's write lead, so this treated a lead's worth of
-    /// *future* audio as late, and after each rebuffer it emptied the buffer
-    /// and thrashed. The reasoning below is sound; the mechanism needs the
-    /// true current time, not the release horizon.
+    /// Drops buffered or missing head sequences whose presentation deadline
+    /// has already passed, so playback begins on a frame that is genuinely
+    /// reachable on the authoritative timeline.
     ///
     /// This is what makes two listeners agree. A stream is heard at
     /// `write time + ring depth`, and writing ahead into a FIFO preserves
@@ -436,14 +492,11 @@ impl PlaybackScheduler {
     /// stay that far apart for the whole session.
     ///
     /// The cost is the already-elapsed head of the stream, bounded by the
-    /// startup buffer. Being late together is the product; hearing the first
-    /// second is not.
-    #[allow(
-        dead_code,
-        reason = "retained for the redesign recorded in the fixes TODO"
-    )]
+    /// startup/rebuffer window. Being late together is the product; replaying
+    /// stale audio is not.
     fn discard_already_late_head(&mut self, local_now_ms: u64) {
-        while let Some(sequence) = self.jitter_buffer.peek_next_sequence() {
+        while !self.jitter_buffer.is_empty() {
+            let sequence = self.jitter_buffer.next_expected_sequence();
             let deadline_ms = host_to_local_ms(
                 self.expected_host_presentation_time_ms(sequence),
                 self.offset_ms,
@@ -451,9 +504,14 @@ impl PlaybackScheduler {
             if deadline_ms >= local_now_ms {
                 break;
             }
-            if self.jitter_buffer.pop_in_order().is_none() {
-                // The head is missing rather than stale; concealment owns it.
-                break;
+
+            if self.jitter_buffer.peek_next_sequence() == Some(sequence) {
+                let discarded = self.jitter_buffer.discard_in_order();
+                debug_assert!(discarded, "peeked next packet must still be discardable");
+            } else {
+                // A missing slot that is already in the past cannot be
+                // repaired by concealment without shifting all later audio.
+                self.jitter_buffer.skip_expected_sequence();
             }
             self.fade_in_next_real_frame = true;
         }
@@ -481,6 +539,7 @@ impl PlaybackScheduler {
         self.offset_ms = new_offset_ms;
         self.concealment.reset_consecutive_count();
         self.state = SchedulerState::Buffering;
+        self.buffer_target_satisfied = false;
         // Playback resumes after a real interruption; fade back in.
         self.fade_in_next_real_frame = true;
         self.resume_from_silence = true;

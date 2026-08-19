@@ -161,7 +161,7 @@ fn a_mid_stream_rebuffer_resumes_on_the_rebuffer_target_not_the_startup_target()
     let mut scheduler = scheduler_after_rebuffer_with_100ms_buffered(100);
     assert!(
         matches!(
-            scheduler.poll(HOST_START_MS + 600),
+            scheduler.poll(HOST_START_MS + 420),
             SchedulerPoll::Frame { .. }
         ),
         "100ms buffered must satisfy a 100ms rebuffer target, without rebuilding the 400ms \
@@ -177,7 +177,7 @@ fn an_equal_rebuffer_target_reproduces_the_long_recovery() {
     let mut scheduler = scheduler_after_rebuffer_with_100ms_buffered(400);
     assert!(
         matches!(
-            scheduler.poll(HOST_START_MS + 600),
+            scheduler.poll(HOST_START_MS + 420),
             SchedulerPoll::Buffering { .. }
         ),
         "with the targets equal the recovery must still be rebuilding the full startup span"

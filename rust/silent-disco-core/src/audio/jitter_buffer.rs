@@ -141,9 +141,9 @@ pub struct JitterBufferStatistics {
     pub buffered_duration_rejections: u64,
     /// Packets emitted in order via [`JitterBuffer::pop_in_order`].
     pub emitted: u64,
-    /// Sequences the caller gave up waiting for and advanced past without
-    /// emitting, via [`JitterBuffer::skip_expected_sequence`] or
-    /// [`JitterBuffer::skip_to_earliest_buffered`].
+    /// Sequences advanced past without emitting, including missing sequences
+    /// abandoned by the caller and buffered packets deliberately discarded
+    /// after their presentation deadline became unreachable.
     pub skipped: u64,
     /// Times the buffer adopted a far-ahead sequence because the stream had
     /// moved beyond the reorder window entirely.
@@ -323,6 +323,22 @@ impl JitterBuffer {
         self.next_expected_sequence += 1;
         self.statistics.emitted += 1;
         Some(datagram)
+    }
+
+    /// Discards the next packet only when it is exactly the next-expected
+    /// sequence, advancing ordering without counting the packet as emitted.
+    ///
+    /// This is distinct from [`Self::pop_in_order`]: callers use it when a
+    /// packet arrived successfully but its presentation slot is already in
+    /// the past, so reporting it as rendered would make delivery diagnostics
+    /// lie. Returns `false` when the next-expected sequence is not buffered.
+    pub(crate) fn discard_in_order(&mut self) -> bool {
+        if self.packets.remove(&self.next_expected_sequence).is_none() {
+            return false;
+        }
+        self.next_expected_sequence += 1;
+        self.statistics.skipped += 1;
+        true
     }
 
     /// Forcibly advances past the next-expected sequence without emitting a

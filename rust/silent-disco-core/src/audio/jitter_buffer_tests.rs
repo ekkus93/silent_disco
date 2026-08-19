@@ -183,6 +183,20 @@ fn skip_expected_sequence_advances_past_a_missing_packet_without_emitting_one() 
 }
 
 #[test]
+fn discard_in_order_advances_without_falsely_counting_a_packet_as_emitted() {
+    let mut buffer = buffer();
+    buffer.accept(packet(0, 0)).expect("accepted");
+    buffer.accept(packet(1, 20)).expect("accepted");
+
+    assert!(buffer.discard_in_order());
+    assert_eq!(buffer.next_expected_sequence(), 1);
+    assert_eq!(buffer.statistics().emitted, 0);
+    assert_eq!(buffer.statistics().skipped, 1);
+    assert_eq!(buffer.pop_in_order().expect("seq 1").sequence.get(), 1);
+    assert_eq!(buffer.statistics().emitted, 1);
+}
+
+#[test]
 fn buffered_span_ms_reflects_the_earliest_and_latest_buffered_presentation_times() {
     let mut buffer = buffer();
     assert_eq!(buffer.buffered_span_ms(), 0);

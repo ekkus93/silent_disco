@@ -1,6 +1,6 @@
 //! Offset soft/hard correction, `submit_packet` rejection, stale-packet
 //! resync-onto-live-stream, out-of-order/outage/bootstrap integration tests,
-//! and the ignored cross-listener alignment acceptance test.
+//! and cross-listener startup alignment.
 
 use crate::audio::JitterBufferRejectionKind;
 use crate::domain::SessionId;
@@ -186,23 +186,22 @@ fn a_listener_joining_a_stream_already_in_progress_can_bootstrap() {
         "a listener joining mid-stream could never accept a packet"
     );
 
-    let mut real_frame = None;
-    for _ in 0..10 {
-        let frame = frame_at(scheduler.poll(HOST_START_MS + 520 * u64::from(PACKET_DURATION_MS)));
-        assert!(
-            frame.sequence >= 500,
-            "playback must resume at the live position, got {}",
-            frame.sequence
-        );
-        if !frame.concealed {
-            real_frame = Some(frame);
-            break;
-        }
-    }
-    assert!(
-        real_frame.is_some(),
-        "a listener joining mid-stream never reached real audio"
-    );
+    // By the time the listener reaches the live edge, the accepted bootstrap
+    // packets are historical. They must be discarded rather than replayed.
+    let live_now = HOST_START_MS + 520 * u64::from(PACKET_DURATION_MS);
+    assert!(matches!(
+        scheduler.poll(live_now),
+        SchedulerPoll::Buffering { buffered_ms: 0 }
+    ));
+
+    // The next packet on the live timeline can then start immediately; the
+    // already-satisfied startup target is not accumulated a second time.
+    scheduler
+        .submit_packet(datagram(520, 8_000))
+        .expect("live packet accepted");
+    let frame = frame_at(scheduler.poll(live_now));
+    assert_eq!(frame.sequence, 520);
+    assert!(!frame.concealed);
 }
 
 fn playout_time_ms(write_time_ms: u64, lead_ms: u64) -> u64 {
@@ -210,7 +209,23 @@ fn playout_time_ms(write_time_ms: u64, lead_ms: u64) -> u64 {
 }
 
 #[test]
-#[ignore = "reason: alignment is unimplemented after the first attempt regressed on-device and was reverted; owner: shared audio synchronization / Block 47 physical acceptance"]
+fn startup_alignment_skips_a_missing_head_that_is_already_in_the_past() {
+    let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
+    for sequence in 1..60 {
+        scheduler
+            .submit_packet(datagram(sequence, 8_000))
+            .expect("accepted");
+    }
+
+    let actual_now = HOST_START_MS + u64::from(PACKET_DURATION_MS);
+    let frame = frame_at(scheduler.poll_with_release_horizon(actual_now, actual_now + 400));
+
+    assert_eq!(frame.sequence, 1);
+    assert!(!frame.concealed);
+    assert_eq!(scheduler.jitter_statistics().skipped, 1);
+}
+
+#[test]
 fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together() {
     const LEAD_MS: u64 = 400;
     let mut early = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
@@ -225,8 +240,14 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
 
     let early_start = HOST_START_MS + 100;
     let late_start = HOST_START_MS + 400;
-    let early_frame = frame_at(early.poll(early_start));
-    let late_frame = frame_at(late.poll(late_start));
+    let early_frame = frame_at(early.poll_with_release_horizon(
+        early_start,
+        early_start + LEAD_MS,
+    ));
+    let late_frame = frame_at(late.poll_with_release_horizon(
+        late_start,
+        late_start + LEAD_MS,
+    ));
 
     assert_eq!(
         early_frame.sequence, 5,
@@ -239,7 +260,8 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
 
     let mut early_playout = None;
     for step in 1..40 {
-        let frame = frame_at(early.poll(early_start + step * u64::from(PACKET_DURATION_MS)));
+        let actual_now = early_start + step * u64::from(PACKET_DURATION_MS);
+        let frame = frame_at(early.poll_with_release_horizon(actual_now, actual_now + LEAD_MS));
         if frame.sequence == late_frame.sequence {
             early_playout = Some(playout_time_ms(
                 early_start + step * u64::from(PACKET_DURATION_MS),

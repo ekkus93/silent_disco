@@ -139,6 +139,101 @@ fn the_startup_prefill_places_the_first_frame_at_its_presentation_deadline() {
 }
 
 #[test]
+fn startup_alignment_uses_true_now_not_the_future_write_horizon() {
+    let mut scheduler_config = SchedulerConfig::new(
+        SessionId::new("session-pump").expect("session id"),
+        StreamId::new("stream-pump").expect("stream id"),
+        PACKET_DURATION_MS,
+        HOST_START_MS,
+        SAMPLES_PER_PACKET,
+        2,
+    );
+    scheduler_config.startup_buffer_target_ms = 400;
+    let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+    let ring = RenderRing::new(RenderRingConfig {
+        capacity_frames: 48_000,
+        target_fill_frames: 19_200,
+    })
+    .expect("valid ring");
+    let (producer, _consumer) = ring.split();
+    let mut pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
+        .expect("valid pump");
+    pump.apply_sync_offset(0.0);
+
+    // Exactly 400ms of contiguous audio is buffered. At true time +400ms,
+    // sequences 0..19 are already stale but sequence 20 is due *now*.
+    // The pump's release horizon is another 400ms in the future; treating
+    // that horizon as actual time would wrongly discard sequence 20 too.
+    for sequence in 0..=20 {
+        pump.scheduler_mut()
+            .submit_packet(datagram(sequence, 16_384))
+            .expect("accepted");
+    }
+
+    let tick = pump.tick(HOST_START_MS + 400);
+    assert!(
+        matches!(tick, PumpTick::Queued { sequence: 20, .. }),
+        "the first reachable frame must survive the write-ahead horizon: {tick:?}"
+    );
+    let diagnostics = pump.diagnostics();
+    assert_eq!(diagnostics.sequences_skipped, 20);
+    assert_eq!(diagnostics.packets_emitted, 1);
+    assert_eq!(diagnostics.hard_resync_signals, 0);
+}
+
+#[test]
+fn alignment_does_not_reaccumulate_a_full_target_after_discarding_a_stale_buffer() {
+    let mut scheduler_config = SchedulerConfig::new(
+        SessionId::new("session-pump").expect("session id"),
+        StreamId::new("stream-pump").expect("stream id"),
+        PACKET_DURATION_MS,
+        HOST_START_MS,
+        SAMPLES_PER_PACKET,
+        2,
+    );
+    scheduler_config.startup_buffer_target_ms = 400;
+    let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("valid scheduler");
+    let ring = RenderRing::new(RenderRingConfig {
+        capacity_frames: 48_000,
+        target_fill_frames: 19_200,
+    })
+    .expect("valid ring");
+    let (producer, _consumer) = ring.split();
+    let mut pump = PlaybackPump::new(scheduler, producer, PlaybackPumpConfig::default())
+        .expect("valid pump");
+    pump.apply_sync_offset(0.0);
+
+    for sequence in 0..=20 {
+        pump.scheduler_mut()
+            .submit_packet(datagram(sequence, 16_384))
+            .expect("accepted");
+    }
+
+    // By 420ms every buffered packet is stale. The target was genuinely
+    // reached, so alignment may discard that stale head, but it must wait
+    // for a live packet instead of entering conceal/rebuffer thrash.
+    let emptied = pump.tick(HOST_START_MS + 420);
+    assert!(matches!(
+        emptied,
+        PumpTick::Buffering { buffered_ms: 0 }
+    ));
+    assert_eq!(pump.diagnostics().hard_resync_signals, 0);
+
+    // The very next live packet is due now. Because the 400ms target was
+    // already satisfied before stale-head alignment, it can start directly
+    // rather than demanding another impossible 400ms real-time backlog.
+    pump.scheduler_mut()
+        .submit_packet(datagram(21, 16_384))
+        .expect("accepted");
+    let resumed = pump.tick(HOST_START_MS + 420);
+    assert!(
+        matches!(resumed, PumpTick::Queued { sequence: 21, .. }),
+        "alignment should resume on the first reachable packet: {resumed:?}"
+    );
+    assert_eq!(pump.diagnostics().hard_resync_signals, 0);
+}
+
+#[test]
 fn a_first_frame_that_is_already_due_is_not_delayed_by_a_prefill() {
     let (mut pump, _consumer) = paced_pump();
     for sequence in 0..40 {

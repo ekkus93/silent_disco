@@ -88,7 +88,10 @@ impl PlaybackPump {
         // Release frames early by the configured lead. The ring's FIFO
         // position, not the moment of writing, decides when a frame is heard.
         let poll_time_ms = local_now_ms.saturating_add(self.config.write_lead_ms);
-        match self.scheduler.poll(poll_time_ms) {
+        match self
+            .scheduler
+            .poll_with_release_horizon(local_now_ms, poll_time_ms)
+        {
             SchedulerPoll::Buffering { buffered_ms } => PumpTick::Buffering { buffered_ms },
             SchedulerPoll::Waiting { .. } => PumpTick::Waiting,
             SchedulerPoll::AwaitingRebuffer => {
