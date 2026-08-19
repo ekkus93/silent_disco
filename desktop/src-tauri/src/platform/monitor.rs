@@ -161,7 +161,7 @@ impl DesktopMonitorControl {
             ),
             None => "monitor state is unavailable after teardown".to_owned(),
         })?;
-        state.failure_reason = failure.clone();
+        state.failure_reason.clone_from(&failure);
         failure.map_or(Ok(()), Err)
     }
 
@@ -281,7 +281,7 @@ impl DesktopMonitorControl {
             ),
             None => "monitor state is unavailable after stream teardown".to_owned(),
         })?;
-        state.failure_reason = failure.clone();
+        state.failure_reason.clone_from(&failure);
         failure.map_or(Ok(()), Err)
     }
 
