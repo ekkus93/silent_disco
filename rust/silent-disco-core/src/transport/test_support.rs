@@ -126,6 +126,51 @@ pub(super) fn wait_for_frame_from(
     })
 }
 
+/// Waits until every expected peer has produced one matching frame, without
+/// imposing an arrival order. A sequence of single-peer waits is unsafe for
+/// concurrent socket tests because the first wait necessarily consumes and
+/// discards a valid event from another peer if that peer wins the race.
+pub(super) fn wait_for_frames_from_all(
+    host: &mut dyn HostTransportNode,
+    channel: TransportChannel,
+    device_ids: &[&DeviceId],
+    predicate: impl Fn(&DeviceId, &ProtocolFrame) -> bool,
+) {
+    let mut remaining: Vec<DeviceId> = Vec::with_capacity(device_ids.len());
+    for device_id in device_ids {
+        assert!(
+            !remaining.contains(device_id),
+            "expected peer list must not contain duplicates"
+        );
+        remaining.push((**device_id).clone());
+    }
+
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    while !remaining.is_empty() {
+        let wait = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !wait.is_zero(),
+            "timed out waiting for host transport events from all expected peers"
+        );
+        let event = host
+            .recv_event(wait)
+            .expect("host event queue should remain connected");
+        if let TransportEvent::FrameReceived {
+            channel: actual,
+            peer,
+            frame,
+            ..
+        } = event
+            && actual == channel
+            && let Some(device_id) = peer.device_id.as_ref()
+            && remaining.contains(device_id)
+            && predicate(device_id, &frame)
+        {
+            remaining.retain(|expected| expected != device_id);
+        }
+    }
+}
+
 pub(super) fn wait_for_rejection(host: &mut dyn HostTransportNode, kind: TransportErrorKind) {
     drop(wait_for_host_event(
         host,
