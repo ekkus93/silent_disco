@@ -146,6 +146,15 @@ jobs:
           set -o pipefail
           ./gradlew test --stacktrace --console=plain 2>&1 | tee android-unit-tests.log
 
+      - name: Upload Android release-candidate APK
+        if: steps.android-build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-candidate
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Android build and test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
