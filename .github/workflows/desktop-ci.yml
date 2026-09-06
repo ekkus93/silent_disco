@@ -333,4 +333,4 @@ jobs:
             desktop/src-tauri/Cargo.lock
             desktop/src-tauri/target/release/bundle/
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 7

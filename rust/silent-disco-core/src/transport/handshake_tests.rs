@@ -8,7 +8,7 @@ use crate::protocol::{
 
 use super::test_support::{
     audio_frame, id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
-    wait_for_control_target, wait_for_frame, wait_for_frame_from,
+    wait_for_control_target, wait_for_frame, wait_for_frames_from_all,
 };
 use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
@@ -108,12 +108,17 @@ fn socket_runtime_completes_multi_listener_join_sync_and_audio_exchange() {
     listener_b
         .send_control(&join_request(&session_id, &device_b, "Listener B"))
         .expect("second join request should reach host control socket");
-    wait_for_control_from(&mut *host, &device_a, |message| {
-        matches!(message, ControlMessage::JoinRequest(_))
-    });
-    wait_for_control_from(&mut *host, &device_b, |message| {
-        matches!(message, ControlMessage::JoinRequest(_))
-    });
+    wait_for_frames_from_all(
+        &mut *host,
+        TransportChannel::Control,
+        &[&device_a, &device_b],
+        |_device_id, frame| {
+            matches!(
+                frame,
+                ProtocolFrame::Control(ControlMessage::JoinRequest(_))
+            )
+        },
+    );
 
     host.authorize_peer(&device_a, listener_a.local_routes())
         .expect("first peer routes should match authenticated control address");
@@ -172,17 +177,16 @@ fn socket_runtime_completes_multi_listener_join_sync_and_audio_exchange() {
     listener_b
         .send_sync_request(&sync_request_b)
         .expect("second authorized listener should send synchronization request");
-    wait_for_frame_from(
+    let expected_sync_a = ProtocolFrame::SyncRequest(sync_request_a.clone());
+    let expected_sync_b = ProtocolFrame::SyncRequest(sync_request_b.clone());
+    wait_for_frames_from_all(
         &mut *host,
         TransportChannel::Synchronization,
-        &device_a,
-        |frame| frame == &ProtocolFrame::SyncRequest(sync_request_a.clone()),
-    );
-    wait_for_frame_from(
-        &mut *host,
-        TransportChannel::Synchronization,
-        &device_b,
-        |frame| frame == &ProtocolFrame::SyncRequest(sync_request_b.clone()),
+        &[&device_a, &device_b],
+        |device_id, frame| {
+            (device_id == &device_a && frame == &expected_sync_a)
+                || (device_id == &device_b && frame == &expected_sync_b)
+        },
     );
 
     let sync_response = ProtocolFrame::SyncResponse(SyncResponse {

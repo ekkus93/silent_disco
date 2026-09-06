@@ -169,7 +169,12 @@ fn wait_for_step_settled(
         }
         let chunk = remaining.min(STEP_SETTLE_POLL);
         remaining -= chunk;
-        recorder.wait_for_progress(sequence_before, chunk);
+        // Wait only for progress that has not already been observed. Reusing
+        // `sequence_before` here makes every wait return immediately after
+        // the command's first notification, which can exhaust the nominal
+        // settlement budget before an asynchronous completion is scheduled.
+        let progress_sequence = recorder.next_sequence();
+        recorder.wait_for_progress(progress_sequence, chunk);
     }
 }
 
