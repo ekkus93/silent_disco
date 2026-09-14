@@ -1,0 +1,133 @@
+name: Self-hosted Android device probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/self-hosted-android-device-probe.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-android-device-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe attached physical Android device
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - name: Locate ADB and probe attached device
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if command -v adb >/dev/null 2>&1; then
+            ADB="$(command -v adb)"
+          elif [[ -n "${ANDROID_SDK_ROOT:-}" && -x "${ANDROID_SDK_ROOT}/platform-tools/adb" ]]; then
+            ADB="${ANDROID_SDK_ROOT}/platform-tools/adb"
+          elif [[ -n "${ANDROID_HOME:-}" && -x "${ANDROID_HOME}/platform-tools/adb" ]]; then
+            ADB="${ANDROID_HOME}/platform-tools/adb"
+          else
+            echo "adb is not available on PATH, ANDROID_SDK_ROOT, or ANDROID_HOME." >&2
+            exit 1
+          fi
+
+          echo "Runner: ${RUNNER_NAME:-unknown} (${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown})"
+          echo "ADB: ${ADB}"
+          "${ADB}" version
+          "${ADB}" start-server >/dev/null
+
+          mapfile -t serials < <("${ADB}" devices | awk 'NR > 1 && $2 == "device" {print $1}')
+          if (( ${#serials[@]} == 0 )); then
+            echo "No authorized online Android device is visible to adb." >&2
+            echo "Current adb states:" >&2
+            "${ADB}" devices >&2
+            exit 1
+          fi
+
+          for serial in "${serials[@]}"; do
+            echo "::add-mask::${serial}"
+          done
+
+          report="${RUNNER_TEMP}/android-device-probe.txt"
+          : > "${report}"
+          found_physical=0
+          found_samsung=0
+
+          for serial in "${serials[@]}"; do
+            prop() {
+              "${ADB}" -s "${serial}" shell getprop "$1" 2>/dev/null | tr -d '\r'
+            }
+
+            manufacturer="$(prop ro.product.manufacturer)"
+            model="$(prop ro.product.model)"
+            product="$(prop ro.product.name)"
+            release="$(prop ro.build.version.release)"
+            sdk="$(prop ro.build.version.sdk)"
+            abi="$(prop ro.product.cpu.abi)"
+            fingerprint="$(prop ro.build.fingerprint)"
+            qemu="$(prop ro.kernel.qemu)"
+            boot_qemu="$(prop ro.boot.qemu)"
+
+            physical=yes
+            if [[ "${qemu}" == "1" || "${boot_qemu}" == "1" || "${fingerprint}" == *generic* ]]; then
+              physical=no
+            else
+              found_physical=1
+            fi
+
+            if [[ "${manufacturer,,}" == "samsung" && "${physical}" == "yes" ]]; then
+              found_samsung=1
+            fi
+
+            {
+              echo "device: <masked>"
+              echo "manufacturer: ${manufacturer:-unknown}"
+              echo "model: ${model:-unknown}"
+              echo "product: ${product:-unknown}"
+              echo "android_release: ${release:-unknown}"
+              echo "sdk: ${sdk:-unknown}"
+              echo "abi: ${abi:-unknown}"
+              echo "physical: ${physical}"
+              echo "fingerprint: ${fingerprint:-unknown}"
+              echo
+            } >> "${report}"
+
+            echo "Detected ${manufacturer:-unknown} ${model:-unknown}: Android ${release:-?} / API ${sdk:-?} / ${abi:-?} / physical=${physical}"
+
+            probe="$("${ADB}" -s "${serial}" shell 'printf silent-disco-ci-probe' 2>/dev/null | tr -d '\r')"
+            if [[ "${probe}" != "silent-disco-ci-probe" ]]; then
+              echo "adb shell probe failed for ${manufacturer:-unknown} ${model:-unknown}." >&2
+              exit 1
+            fi
+          done
+
+          if (( found_physical == 0 )); then
+            echo "adb is reachable, but no physical Android device was detected." >&2
+            cat "${report}" >&2
+            exit 1
+          fi
+
+          if (( found_samsung == 0 )); then
+            echo "A physical Android device is reachable, but none identifies as Samsung." >&2
+            cat "${report}" >&2
+            exit 1
+          fi
+
+          echo "Physical Samsung Android device access confirmed."
+          cat "${report}"
+
+      - name: Upload probe report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-hosted-android-device-probe
+          path: ${{ runner.temp }}/android-device-probe.txt
+          if-no-files-found: warn
+          retention-days: 7
