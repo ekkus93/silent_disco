@@ -6,9 +6,9 @@ usage() {
 usage: validate-block47-android-interoperability.sh \
   <bundle-dir> <android-apk> <device-a-serial> <device-b-serial> [evidence-dir]
 
-Run this on a graphical Ubuntu 22.04 amd64 machine with two physical Android
-listeners attached through adb. The runner records the complete Block 47 matrix
-and exits non-zero unless every acceptance item is explicitly PASS.
+Run this on a graphical Ubuntu 22.04 or Ubuntu 24.04 amd64 machine with two
+physical Android listeners attached through adb. The runner records the complete
+Block 47 matrix and exits non-zero unless every acceptance item is explicitly PASS.
 USAGE
 }
 
@@ -22,7 +22,7 @@ device_a="$3"
 device_b="$4"
 evidence_dir="${5:-$HOME/silent-disco-block47-evidence-$(date -u +%Y%m%dT%H%M%SZ)}"
 [[ "$device_a" != "$device_b" ]] || fail "device serials must be distinct"
-for cmd in adb dpkg-deb find python3 sha256sum sudo apt-get; do need "$cmd"; done
+for cmd in adb dpkg dpkg-deb find python3 sha256sum sudo apt-get; do need "$cmd"; done
 [[ -d "$bundle_dir" ]] || fail "bundle directory not found: $bundle_dir"
 [[ -f "$apk" ]] || fail "APK not found: $apk"
 mkdir -p "$evidence_dir"
@@ -31,11 +31,20 @@ steps="$evidence_dir/steps.jsonl"
 commands="$evidence_dir/commands.txt"
 : >"$steps"; : >"$commands"
 
-# Block 46 established this release baseline; Block 47 inherits it.
+# Block 46 accepts Ubuntu 22.04 or Ubuntu 24.04 on amd64; Block 47 inherits
+# the same fail-closed release baseline.
 # shellcheck disable=SC1091
 source /etc/os-release
-[[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 22.04 ]] \
-  || fail "requires Ubuntu 22.04; found ${ID:-unknown} ${VERSION_ID:-unknown}"
+host_architecture="$(dpkg --print-architecture)"
+[[ "${ID:-}" == "ubuntu" ]] \
+  || fail "requires Ubuntu 22.04 or 24.04; found ${ID:-unknown} ${VERSION_ID:-unknown}"
+case "${VERSION_ID:-}" in
+  22.04|24.04) ;;
+  *) fail "requires Ubuntu 22.04 or 24.04; found ${ID:-unknown} ${VERSION_ID:-unknown}" ;;
+esac
+[[ "${host_architecture}" == amd64 ]] \
+  || fail "host architecture must be amd64; got ${host_architecture}"
+host_baseline="${ID}-${VERSION_ID}-${host_architecture}"
 [[ -n "${DISPLAY:-}" ]] || fail "DISPLAY is unset; use a graphical session"
 [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] \
   || fail "D-Bus user session is unavailable; secure-store acceptance would be invalid"
@@ -47,7 +56,16 @@ mapfile -t appimages < <(find "$bundle_dir/appimage" -maxdepth 1 -type f -name '
 deb="${debs[0]}"; appimage="${appimages[0]}"
 package="$(dpkg-deb -f "$deb" Package)"
 desktop_version="$(dpkg-deb -f "$deb" Version)"
-[[ "$(dpkg-deb -f "$deb" Architecture)" == amd64 ]] || fail "desktop package is not amd64"
+package_architecture="$(dpkg-deb -f "$deb" Architecture)"
+[[ "${package_architecture}" == amd64 ]] || fail "desktop package is not amd64"
+{
+  printf 'timestamp_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'baseline=%s\n' "${host_baseline}"
+  printf 'os=%s %s\n' "${ID}" "${VERSION_ID}"
+  printf 'host_architecture=%s\n' "${host_architecture}"
+  printf 'package_architecture=%s\n' "${package_architecture}"
+  uname -a
+} >"$evidence_dir/environment.txt"
 
 run() {
   printf '%q ' "$@" >>"$commands"; printf '\n' >>"$commands"
@@ -169,13 +187,62 @@ printf '%s\n' "$limitations" >"$evidence_dir/known-limitations.txt"
 
 python3 - "$evidence_dir/block47-android-interoperability-evidence.json" "$steps" \
   "$desktop_version" "$deb_sha" "$appimage_sha" "$apk_version_a" "$apk_sha" \
-  "$device_a" "$device_b" "$topology" "$measured_sync" "$limitations" "$diagnostics_sha" <<'PY'
+  "$device_a" "$device_b" "$topology" "$measured_sync" "$limitations" "$diagnostics_sha" \
+  "$host_baseline" "$ID" "$VERSION_ID" "$host_architecture" "$package_architecture" <<'PY'
 import json,sys
-(out,steps,desktop_version,deb_sha,appimage_sha,apk_version,apk_sha,a,b,topology,sync,limits,diag_sha)=sys.argv[1:]
-with open(steps,encoding="utf-8") as f: rows=[json.loads(x) for x in f if x.strip()]
-counts={k:sum(r["status"]==k for r in rows) for k in ("PASS","FAIL","BLOCKED","NOT RUN")}
-payload={"schemaVersion":1,"baseline":"ubuntu-22.04-amd64","desktopPackage":{"version":desktop_version,"debSha256":deb_sha,"appImageSha256":appimage_sha},"androidPackage":{"version":apk_version,"apkSha256":apk_sha,"deviceSerials":[a,b]},"networkTopology":topology,"measuredSynchronization":sync,"knownLimitations":limits,"diagnosticsSha256":diag_sha,"resultCounts":counts,"steps":rows}
-with open(out,"w",encoding="utf-8") as f: json.dump(payload,f,indent=2,sort_keys=True); f.write("\n")
+(
+    out,
+    steps,
+    desktop_version,
+    deb_sha,
+    appimage_sha,
+    apk_version,
+    apk_sha,
+    a,
+    b,
+    topology,
+    sync,
+    limits,
+    diag_sha,
+    baseline,
+    host_os_id,
+    host_os_version,
+    host_architecture,
+    package_architecture,
+) = sys.argv[1:]
+with open(steps, encoding="utf-8") as f:
+    rows = [json.loads(x) for x in f if x.strip()]
+counts = {
+    key: sum(row["status"] == key for row in rows)
+    for key in ("PASS", "FAIL", "BLOCKED", "NOT RUN")
+}
+payload = {
+    "schemaVersion": 1,
+    "baseline": baseline,
+    "hostOsId": host_os_id,
+    "hostOsVersion": host_os_version,
+    "hostArchitecture": host_architecture,
+    "desktopPackage": {
+        "version": desktop_version,
+        "architecture": package_architecture,
+        "debSha256": deb_sha,
+        "appImageSha256": appimage_sha,
+    },
+    "androidPackage": {
+        "version": apk_version,
+        "apkSha256": apk_sha,
+        "deviceSerials": [a, b],
+    },
+    "networkTopology": topology,
+    "measuredSynchronization": sync,
+    "knownLimitations": limits,
+    "diagnosticsSha256": diag_sha,
+    "resultCounts": counts,
+    "steps": rows,
+}
+with open(out, "w", encoding="utf-8") as f:
+    json.dump(payload, f, indent=2, sort_keys=True)
+    f.write("\n")
 PY
 
 echo "Evidence: $evidence_dir"
