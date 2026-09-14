@@ -51,6 +51,11 @@ jobs:
             echo "Block 46.3 staging requires amd64; found ${architecture}." >&2
             exit 1
           }
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${GITHUB_SHA}" ]] || {
+            echo "Checkout SHA ${actual_sha} does not match triggering SHA ${GITHUB_SHA}." >&2
+            exit 1
+          }
           printf 'source_sha=%s\n' "${GITHUB_SHA}"
           printf 'runner=%s\n' "${RUNNER_NAME:-unknown}"
           printf 'os=%s %s\n' "${ID}" "${VERSION_ID}"
@@ -76,6 +81,25 @@ jobs:
           set -euo pipefail
           rustup toolchain install "${RUST_VERSION}" --profile minimal
           rustup default "${RUST_VERSION}"
+
+      - name: Resolve Android SDK root
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "${sdk_root}" ]] && command -v adb >/dev/null 2>&1; then
+            adb_path="$(readlink -f "$(command -v adb)")"
+            candidate="$(cd "$(dirname "${adb_path}")/.." && pwd -P)"
+            if [[ -x "${candidate}/cmdline-tools/latest/bin/sdkmanager" ]]; then
+              sdk_root="${candidate}"
+            fi
+          fi
+          [[ -n "${sdk_root}" && -x "${sdk_root}/cmdline-tools/latest/bin/sdkmanager" ]] || {
+            echo "A complete Android SDK with cmdline-tools/latest/bin/sdkmanager is required on the self-hosted runner." >&2
+            exit 1
+          }
+          printf 'ANDROID_SDK_ROOT=%s\nANDROID_HOME=%s\n' "${sdk_root}" "${sdk_root}" >> "${GITHUB_ENV}"
+          printf 'Android SDK root: %s\n' "${sdk_root}"
 
       - name: Install desktop and Android build prerequisites
         shell: bash
