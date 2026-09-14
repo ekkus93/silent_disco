@@ -136,7 +136,7 @@ Do not infer completion from this handoff alone.
 
 Required for release acceptance:
 
-- graphical **Ubuntu 22.04 amd64** machine or VM;
+- graphical **Ubuntu 22.04 amd64 or Ubuntu 24.04 amd64** machine or VM;
 - active graphical `DISPLAY`;
 - active user D-Bus session;
 - working Secret Service/keyring provider;
@@ -145,7 +145,7 @@ Required for release acceptance:
 - ability to reversibly disrupt the desktop network interface;
 - ability to make the desktop audio output temporarily unavailable for monitor-failure testing.
 
-A newer Ubuntu machine can be useful for debugging, but it does not satisfy the accepted Block 46/47 baseline.
+Ubuntu versions other than 22.04 or 24.04 can be useful for debugging, but they do not satisfy the accepted Block 46/47 baseline.
 
 ## 4.2 Android hardware
 
@@ -301,7 +301,7 @@ The runner intentionally requires interaction. Do not automate away its physical
 
 The script fail-closes on the release baseline and verifies:
 
-1. Ubuntu 22.04 amd64.
+1. Ubuntu 22.04 or Ubuntu 24.04 amd64.
 2. Graphical session and user D-Bus availability.
 3. Silent Disco is not already installed.
 4. Exactly one `.deb` and one AppImage are present.
@@ -340,7 +340,7 @@ Preserve that directory even when the run fails.
 
 ## 6.3 Acceptance condition
 
-Block 46.3 is complete only when the script exits successfully on the real Ubuntu 22.04 graphical baseline with the physical Android join explicitly confirmed.
+Block 46.3 is complete only when the script exits successfully on a real supported Ubuntu 22.04 or Ubuntu 24.04 amd64 graphical baseline with the physical Android join explicitly confirmed.
 
 After a pass:
 
@@ -673,7 +673,7 @@ Use this order unless a real failure forces a detour:
 
 1. Pull current `master` and record SHA.
 2. Read the authoritative files listed above.
-3. Confirm Ubuntu 22.04 graphical/Secret-Service baseline.
+3. Confirm an Ubuntu 22.04 or Ubuntu 24.04 amd64 graphical/Secret-Service baseline.
 4. Build fresh Android and production desktop artifacts from the same SHA.
 5. Run package verification/lifecycle smoke.
 6. Run **Block 46.3** fresh-machine acceptance with one physical Android listener.
@@ -694,7 +694,7 @@ Use this order unless a real failure forces a detour:
 
 The hardware phase is done only when all of the following are true:
 
-- Block 46.3 passes on graphical Ubuntu 22.04 amd64 using the packaged production desktop app and a physical Android listener.
+- Block 46.3 passes on graphical Ubuntu 22.04 or Ubuntu 24.04 amd64 using the packaged production desktop app and a physical Android listener.
 - Block 47's runner reports every matrix item `PASS` with two physical Android devices.
 - Two-listener synchronization is physically measured/observed and documented, not merely inferred from automated tests.
 - Previously device-only startup/sync/audio-route concerns have been revalidated on current `master` artifacts.
