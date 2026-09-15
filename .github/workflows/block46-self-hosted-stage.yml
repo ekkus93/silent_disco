@@ -101,30 +101,69 @@ jobs:
           printf 'ANDROID_SDK_ROOT=%s\nANDROID_HOME=%s\n' "${sdk_root}" "${sdk_root}" >> "${GITHUB_ENV}"
           printf 'Android SDK root: %s\n' "${sdk_root}"
 
-      - name: Install desktop and Android build prerequisites
+      - name: Install desktop build prerequisites when missing
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            curl \
-            dbus-x11 \
-            file \
-            libasound2-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget \
-            xauth \
+          required_packages=(
+            build-essential
+            curl
+            dbus-x11
+            file
+            libasound2-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
+            libssl-dev
+            libwebkit2gtk-4.1-dev
+            libxdo-dev
+            patchelf
+            wget
+            xauth
             xvfb
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;28.2.13676358"
+          )
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "${package}" 2>/dev/null | grep -Fq 'install ok installed'; then
+              missing_packages+=("${package}")
+            fi
+          done
+
+          if (( ${#missing_packages[@]} == 0 )); then
+            echo "All desktop build prerequisites are already installed; skipping apt."
+          else
+            printf 'Missing desktop build prerequisites: %s\n' "${missing_packages[*]}"
+            sudo -n true || {
+              echo "Passwordless sudo is required to install missing Block 46.3 build prerequisites." >&2
+              exit 1
+            }
+            timeout --signal=TERM --kill-after=30s 10m \
+              sudo -n env DEBIAN_FRONTEND=noninteractive apt-get \
+                -o Acquire::Retries=3 \
+                -o DPkg::Lock::Timeout=120 \
+                update
+            timeout --signal=TERM --kill-after=30s 20m \
+              sudo -n env DEBIAN_FRONTEND=noninteractive apt-get \
+                -o Acquire::Retries=3 \
+                -o DPkg::Lock::Timeout=120 \
+                install --yes --no-install-recommends "${missing_packages[@]}"
+          fi
+
+      - name: Install Android build prerequisites when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_packages=()
+          [[ -d "${ANDROID_HOME}/platforms/android-36" ]] || sdk_packages+=("platforms;android-36")
+          [[ -d "${ANDROID_HOME}/build-tools/36.0.0" ]] || sdk_packages+=("build-tools;36.0.0")
+          [[ -d "${ANDROID_HOME}/ndk/28.2.13676358" ]] || sdk_packages+=("ndk;28.2.13676358")
+
+          if (( ${#sdk_packages[@]} == 0 )); then
+            echo "All required Android SDK packages are already installed; skipping sdkmanager."
+          else
+            printf 'Missing Android SDK packages: %s\n' "${sdk_packages[*]}"
+            timeout --signal=TERM --kill-after=30s 20m \
+              "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "${sdk_packages[@]}"
+          fi
 
       - name: Build production Linux bundles
         working-directory: desktop
