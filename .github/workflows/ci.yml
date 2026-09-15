@@ -207,6 +207,37 @@ jobs:
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
+      - name: Reclaim unused Android SDK disk for emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Disk before Android SDK cleanup:'
+          df -h /
+
+          keep_only() {
+            local root="$1"
+            local keep="$2"
+            [[ -d "${root}" ]] || return 0
+            for entry in "${root}"/*; do
+              [[ -e "${entry}" ]] || continue
+              [[ "$(basename "${entry}")" == "${keep}" ]] && continue
+              sudo rm -rf "${entry}"
+            done
+          }
+
+          keep_only "${ANDROID_HOME}/ndk" "28.2.13676358"
+          keep_only "${ANDROID_HOME}/platforms" "android-36"
+          keep_only "${ANDROID_HOME}/build-tools" "36.0.0"
+          sudo rm -rf \
+            "${ANDROID_HOME}/system-images" \
+            "${ANDROID_HOME}/sources" \
+            "${ANDROID_HOME}/extras" \
+            /var/lib/apt/lists/* \
+            /var/cache/apt/archives/*
+
+          echo 'Disk after Android SDK cleanup:'
+          df -h /
+
       - name: Run instrumentation suite on snapshot-free API 29 emulator
         id: connected-tests
         uses: reactivecircus/android-emulator-runner@v2.38.0
