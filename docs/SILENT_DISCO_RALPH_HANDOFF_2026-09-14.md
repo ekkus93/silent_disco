@@ -128,18 +128,34 @@ If the application, packaging, desktop integration, D-Bus/keyring interaction, o
 
 Do **not** require the user to replace the Ubuntu 24.04 self-hosted host with 22.04 merely to satisfy Block 46.3.
 
-## Validation-harness reconciliation
+## Known validation-harness bug
 
-The source tree now reconciles the executable Block 46.3 and Block 47 validators with the Ubuntu 22.04/24.04 policy:
+The current `master` version of:
 
-- `desktop/scripts/validate-block46-fresh-machine.sh` accepts Ubuntu 22.04 or 24.04 on amd64 and rejects unsupported distro/version/architecture combinations explicitly;
-- `desktop/scripts/validate-block47-android-interoperability.sh` inherits the same fail-closed host policy;
-- both validators record the actual detected OS version and host architecture in structured evidence instead of hardcoding `ubuntu-22.04-amd64`;
-- current README and hardware-validation instructions describe both supported baselines.
+```text
+desktop/scripts/validate-block46-fresh-machine.sh
+```
 
-The large authoritative `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` still contains one historical 22.04-only Block 46.3 acceptance sentence. Ralph Bridge exposes whole-file replacement rather than a bounded line-patch operation for that 254 KB ledger, so that sentence has deliberately not been rewritten independently of the physical result. Keep the Block 46.3 checkboxes open and reconcile that sentence together with the exact Ubuntu 24.04 run evidence once the physical validation completes.
+still assumes Ubuntu 22.04 only. It currently hard-fails if `/etc/os-release` does not report 22.04 and its evidence metadata hardcodes the baseline as `ubuntu-22.04-amd64`.
 
-This reconciliation still requires exact-head CI qualification before authoritative Block 46.3 evidence is collected on the Ubuntu 24.04 host.
+This must be corrected before authoritative Block 46.3 evidence is collected on the Ubuntu 24.04 host.
+
+The intended behavior is:
+
+- accept Ubuntu 22.04 amd64;
+- accept Ubuntu 24.04 amd64;
+- reject unsupported distro/version/architecture combinations explicitly;
+- record the **actual detected OS version and architecture** in evidence rather than hardcoding 22.04.
+
+The Block 47 Android interoperability validator has the same 22.04-only assumption and should be reconciled at the same time so the acceptance policy is consistent.
+
+Relevant file:
+
+```text
+desktop/scripts/validate-block47-android-interoperability.sh
+```
+
+Documentation that still describes fresh-machine validation as 22.04-only should also be updated to state 22.04 or 24.04 where the text is normative/current.
 
 ---
 
@@ -147,58 +163,50 @@ This reconciliation still requires exact-head CI qualification before authoritat
 
 Resume with **Block 46.3 fresh-machine validation**.
 
-The Ubuntu 22.04/24.04 validator/documentation reconciliation is implemented in the current source tree except for the explicitly noted stale sentence in the large authoritative TODO. The immediate next step is to qualify that exact source head, stage same-head release artifacts on the self-hosted Ubuntu 24.04 environment, and perform the interactive fresh-machine run.
+The first implementation task is to reconcile the validation harness and current documentation with the supported Ubuntu 22.04/24.04 policy.
 
 Recommended sequence:
 
 1. Connect to `ekkus93/silent_disco` with **Ralph Bridge**.
 2. Reload current `master`; do not assume the SHA in this document is still HEAD after the handoff commit.
-3. Run exact-head CI and fix failures until green.
-4. Use `.github/workflows/block46-self-hosted-stage.yml` to build and stage the exact-head Linux bundle and Android APK on the self-hosted runner. The workflow is also configured to run automatically the first time it lands on `master`.
-5. On the Ubuntu 24.04 self-hosted machine, from a normal graphical terminal, execute the staged `validate-block46-fresh-machine.sh` against the staged desktop bundle.
-6. Use the attached A54 as the real Android listener.
-7. Preserve the validator evidence JSON, diagnostics export, environment information, launch logs, package metadata/hashes, and any other generated evidence.
-8. If the validation fails, diagnose and fix the real failure, rerun exact-head CI, restage artifacts, and repeat Block 46.3 until it passes or a genuine user-dependent blocker is identified.
-9. Once Block 46.3 genuinely passes, update the authoritative TODO/acceptance ledger with the exact commit/run/evidence and move immediately to the remaining physical/release gates.
+3. Inspect:
+   - `desktop/scripts/validate-block46-fresh-machine.sh`
+   - `desktop/scripts/validate-block47-android-interoperability.sh`
+   - current README / acceptance TODO language that defines the Linux baseline.
+4. Change the validators to accept Ubuntu 22.04 or Ubuntu 24.04 amd64 and to report the actual detected baseline in evidence.
+5. Update only the current normative documentation needed to make the acceptance contract consistent.
+6. Run shell syntax checks and any relevant repository validation locally/through CI.
+7. Commit/push the fix through Ralph Bridge.
+8. Run exact-head CI and fix failures until green.
+9. Obtain/stage the exact-head desktop Linux release bundle and Android release-candidate APK produced by CI.
+10. On the Ubuntu 24.04 self-hosted machine, from a normal graphical terminal, execute the Block 46.3 validator manually against those exact-head artifacts.
+11. Use the attached A54 as the real Android listener.
+12. Preserve the validator evidence JSON, diagnostics export, environment information, launch logs, package metadata/hashes, and any other generated evidence.
+13. If the validation fails, diagnose and fix the real failure, rerun exact-head CI, restage artifacts, and repeat Block 46.3 until it passes or a genuine user-dependent blocker is identified.
+14. Once Block 46.3 genuinely passes, update the authoritative TODO/acceptance ledger with the exact commit/run/evidence and move immediately to the remaining physical/release gates.
 
 Do not mark Block 46.3 complete from CI build success alone. The manual graphical/physical acceptance portion is part of the block.
+
+The detailed Block 46.3 execution/evidence checklist is now:
+
+```text
+docs/BLOCK_46_3_FRESH_MACHINE_CLOSEOUT_TODO_2026-09-15.md
+```
+
+That closeout TODO is authoritative for the current Ubuntu 24.04 amd64 self-hosted-runner + Samsung Galaxy A54 procedure, exact-SHA staging, manual graphical validation, evidence preservation, and the boundary with Block 47. One physical A54 is sufficient for Block 46.3; Block 47 still requires two distinct physical Android devices for its two-listener acceptance cases. Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64 are both supported Block 46.3 acceptance baselines.
 
 ---
 
 # 5. Artifact staging for Block 46.3
 
-The dedicated self-hosted staging workflow is:
-
-```text
-.github/workflows/block46-self-hosted-stage.yml
-```
-
-It builds the Linux desktop bundle and Android debug APK from one exact source SHA, verifies the supported Ubuntu/amd64 host baseline, confirms that at least one physical Android device is reachable through ADB, and stages the resulting files under:
-
-```text
-$HOME/silent-disco-block46-stage/<SOURCE_SHA>/
-```
-
-The stage includes:
-
-```text
-desktop-bundle/deb/*.deb
-desktop-bundle/appimage/*.AppImage
-android/app-debug.apk
-validate-block46-fresh-machine.sh
-STAGE_MANIFEST.txt
-SHA256SUMS
-RUN_BLOCK46.txt
-```
-
-The workflow intentionally does **not** install the `.deb`, launch the GUI, or synthesize any manual `PASS` response. Those remain part of the real graphical acceptance run.
-
-Existing CI also publishes the release-candidate artifact names:
+Existing CI already publishes the release-candidate artifacts needed for this work. The current artifact names observed in the project are:
 
 ```text
 desktop-linux-bundle
 android-release-candidate
 ```
+
+These should come from the exact candidate SHA being validated.
 
 Do not mix a desktop package from one commit with an APK from another commit.
 
@@ -297,6 +305,6 @@ When reconciling the final acceptance ledger, verify the current code/tests and 
 
 The next session should begin with the equivalent of:
 
-> Use Ralph Bridge with `https://github.com/ekkus93/silent_disco`. Read `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md`. Resume Block 46.3. Qualify exact-head CI, stage the same-head release artifacts on the Ubuntu 24.04 self-hosted runner machine, and proceed to the manual fresh-machine validation there with the attached Samsung A54.
+> Use Ralph Bridge with `https://github.com/ekkus93/silent_disco`. Read `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md`. Resume Block 46.3. First reconcile the Ubuntu 22.04/24.04 acceptance policy in the validators and current docs, then qualify exact-head CI and proceed to the manual fresh-machine validation on the Ubuntu 24.04 self-hosted runner machine with the attached Samsung A54.
 
 That is the current project resume point.
