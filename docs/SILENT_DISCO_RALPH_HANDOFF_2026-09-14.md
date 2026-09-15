@@ -187,6 +187,14 @@ Recommended sequence:
 
 Do not mark Block 46.3 complete from CI build success alone. The manual graphical/physical acceptance portion is part of the block.
 
+The detailed Block 46.3 execution/evidence checklist is now:
+
+```text
+docs/BLOCK_46_3_FRESH_MACHINE_CLOSEOUT_TODO_2026-09-15.md
+```
+
+That closeout TODO is authoritative for the current Ubuntu 24.04 amd64 self-hosted-runner + Samsung Galaxy A54 procedure, exact-SHA staging, manual graphical validation, evidence preservation, and the boundary with Block 47. One physical A54 is sufficient for Block 46.3; Block 47 still requires two distinct physical Android devices for its two-listener acceptance cases. Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64 are both supported Block 46.3 acceptance baselines.
+
 ---
 
 # 5. Artifact staging for Block 46.3

@@ -8,7 +8,8 @@ usage: validate-block46-fresh-machine.sh <bundle-dir> [evidence-dir]
 Runs the Block 46.3 fresh-machine acceptance sequence against the packaged
 Linux desktop. This is intentionally interactive because one acceptance step
 requires a physical Android listener and two steps use native file dialogs.
-Run it from a graphical Ubuntu 22.04 desktop/VM with a Secret Service provider.
+Run it from a graphical Ubuntu 22.04 or Ubuntu 24.04 amd64 desktop/VM with a
+Secret Service provider.
 USAGE
 }
 
@@ -37,7 +38,7 @@ fi
 bundle_dir="$1"
 evidence_dir="${2:-${HOME}/silent-disco-block46-evidence-$(date -u +%Y%m%dT%H%M%SZ)}"
 
-for command in dpkg-deb dpkg-query find python3 sha256sum uname; do
+for command in dpkg dpkg-deb dpkg-query find python3 sha256sum uname; do
   require_command "${command}"
 done
 require_command sudo
@@ -57,19 +58,27 @@ deb="${debs[0]}"
 appimage="${appimages[0]}"
 package="$(dpkg-deb -f "${deb}" Package)"
 version="$(dpkg-deb -f "${deb}" Version)"
-architecture="$(dpkg-deb -f "${deb}" Architecture)"
+package_architecture="$(dpkg-deb -f "${deb}" Architecture)"
+host_architecture="$(dpkg --print-architecture)"
 main_binary="silent-disco-desktop"
 app_identifier="com.ekkus.silentdisco.desktop"
 
-# Block 46 selected Ubuntu 22.04 as the package/fresh-machine baseline. An
-# exploratory run elsewhere is useful, but it must not silently count as the
-# release acceptance run.
+# Block 46 accepts either Ubuntu 22.04 or Ubuntu 24.04 on amd64. Runs on any
+# other distro/version/architecture are useful for exploration but must not
+# silently count as release acceptance evidence.
 # shellcheck disable=SC1091
 source /etc/os-release
-if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "22.04" ]]; then
-  fail "acceptance baseline is Ubuntu 22.04; found ${ID:-unknown} ${VERSION_ID:-unknown}"
-fi
-[[ "${architecture}" == "amd64" ]] || fail "acceptance package must be amd64; got ${architecture}"
+[[ "${ID:-}" == "ubuntu" ]] \
+  || fail "acceptance baseline requires Ubuntu; found ${ID:-unknown} ${VERSION_ID:-unknown}"
+case "${VERSION_ID:-}" in
+  22.04|24.04) ;;
+  *) fail "acceptance baseline is Ubuntu 22.04 or 24.04; found ${ID:-unknown} ${VERSION_ID:-unknown}" ;;
+esac
+[[ "${host_architecture}" == "amd64" ]] \
+  || fail "acceptance host architecture must be amd64; got ${host_architecture}"
+[[ "${package_architecture}" == "amd64" ]] \
+  || fail "acceptance package must be amd64; got ${package_architecture}"
+host_baseline="${ID}-${VERSION_ID}-${host_architecture}"
 [[ -n "${DISPLAY:-}" ]] || fail "DISPLAY is unset; run from a graphical desktop session"
 [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "D-Bus session is unavailable"
 
@@ -118,7 +127,9 @@ appimage_sha256="$(sha256sum "${appimage}" | awk '{print $1}')"
   printf 'timestamp_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'package=%s\n' "${package}"
   printf 'version=%s\n' "${version}"
-  printf 'architecture=%s\n' "${architecture}"
+  printf 'host_architecture=%s\n' "${host_architecture}"
+  printf 'package_architecture=%s\n' "${package_architecture}"
+  printf 'baseline=%s\n' "${host_baseline}"
   printf 'deb_sha256=%s\n' "${deb_sha256}"
   printf 'appimage_sha256=%s\n' "${appimage_sha256}"
   printf 'source_sha256=%s\n' "${source_sha256}"
@@ -243,7 +254,12 @@ python3 - \
   "${appimage_sha256}" \
   "${source_sha256}" \
   "${staged_sha256}" \
-  "${diagnostics_sha256}" <<'PY'
+  "${diagnostics_sha256}" \
+  "${host_baseline}" \
+  "${ID}" \
+  "${VERSION_ID}" \
+  "${host_architecture}" \
+  "${package_architecture}" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -256,12 +272,21 @@ from datetime import datetime, timezone
     source_sha256,
     staged_sha256,
     diagnostics_sha256,
+    baseline,
+    host_os_id,
+    host_os_version,
+    host_architecture,
+    package_architecture,
 ) = sys.argv[1:]
 payload = {
     "schemaVersion": 1,
     "completedAtUtc": datetime.now(timezone.utc).isoformat(),
-    "baseline": "ubuntu-22.04-amd64",
+    "baseline": baseline,
+    "hostOsId": host_os_id,
+    "hostOsVersion": host_os_version,
+    "hostArchitecture": host_architecture,
     "packageVersion": version,
+    "packageArchitecture": package_architecture,
     "debSha256": deb_sha256,
     "appImageSha256": appimage_sha256,
     "profileCreated": True,

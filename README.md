@@ -6,7 +6,7 @@
 
 Silent Disco is an offline local-network synchronized-audio system with a shared Rust core, an Android listener/host application, and a Tauri Linux desktop host.
 
-The current desktop release target is **Ubuntu 22.04 amd64**. Windows, macOS, and iOS are future-platform work unless a later acceptance record explicitly says otherwise.
+The current desktop release targets are **Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64**. Windows, macOS, and iOS are future-platform work unless a later acceptance record explicitly says otherwise.
 
 ## Authoritative project documents
 
@@ -52,7 +52,7 @@ Set `ANDROID_SDK_ROOT` or `ANDROID_HOME`, or provide `sdk.dir` in `local.propert
 
 ### Linux desktop host
 
-The accepted production baseline is Ubuntu 22.04 amd64. The desktop package build needs Node **>=22.13.0 <23** plus the Tauri/Linux development packages used by CI:
+The accepted production baselines are Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64. The desktop package build needs Node **>=22.13.0 <23** plus the Tauri/Linux development packages used by CI:
 
 ```bash
 sudo apt-get update
@@ -177,7 +177,7 @@ A physical Android acceptance run is not interchangeable with instrumentation or
 
 ## Physical desktop-to-Android interoperability
 
-Block 47 requires a **packaged Ubuntu 22.04 desktop build and two physical Android devices**. Use a desktop bundle and Android debug APK built from the exact same accepted commit; when using Desktop CI, its `desktop-linux-bundle` artifact is suitable for the Linux side. Connect both phones through `adb`, then run:
+Block 47 requires a **packaged Ubuntu 22.04 or Ubuntu 24.04 amd64 desktop build and two physical Android devices**. Use a desktop bundle and Android debug APK built from the exact same accepted commit; when using Desktop CI, its `desktop-linux-bundle` artifact is suitable for the Linux side. Connect both phones through `adb`, then run:
 
 ```bash
 bash desktop/scripts/validate-block47-android-interoperability.sh \

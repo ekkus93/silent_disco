@@ -1,0 +1,268 @@
+name: Stage Block 46.3 release candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/block46-self-hosted-stage.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage-block46-fresh-machine
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.16.0"
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  stage:
+    name: Build and stage exact-head Block 46.3 artifacts
+    runs-on: self-hosted
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out exact dispatched revision
+        uses: actions/checkout@v5
+
+      - name: Verify supported self-hosted baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source /etc/os-release
+          architecture="$(dpkg --print-architecture)"
+          [[ "${ID:-}" == "ubuntu" ]] || {
+            echo "Block 46.3 staging requires Ubuntu; found ${ID:-unknown} ${VERSION_ID:-unknown}." >&2
+            exit 1
+          }
+          case "${VERSION_ID:-}" in
+            22.04|24.04) ;;
+            *)
+              echo "Block 46.3 staging requires Ubuntu 22.04 or 24.04; found ${VERSION_ID:-unknown}." >&2
+              exit 1
+              ;;
+          esac
+          [[ "${architecture}" == "amd64" ]] || {
+            echo "Block 46.3 staging requires amd64; found ${architecture}." >&2
+            exit 1
+          }
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${GITHUB_SHA}" ]] || {
+            echo "Checkout SHA ${actual_sha} does not match triggering SHA ${GITHUB_SHA}." >&2
+            exit 1
+          }
+          printf 'source_sha=%s\n' "${GITHUB_SHA}"
+          printf 'runner=%s\n' "${RUNNER_NAME:-unknown}"
+          printf 'os=%s %s\n' "${ID}" "${VERSION_ID}"
+          printf 'architecture=%s\n' "${architecture}"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+
+      - name: Resolve Android SDK root
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "${sdk_root}" ]] && command -v adb >/dev/null 2>&1; then
+            adb_path="$(readlink -f "$(command -v adb)")"
+            candidate="$(cd "$(dirname "${adb_path}")/.." && pwd -P)"
+            if [[ -x "${candidate}/cmdline-tools/latest/bin/sdkmanager" ]]; then
+              sdk_root="${candidate}"
+            fi
+          fi
+          [[ -n "${sdk_root}" && -x "${sdk_root}/cmdline-tools/latest/bin/sdkmanager" ]] || {
+            echo "A complete Android SDK with cmdline-tools/latest/bin/sdkmanager is required on the self-hosted runner." >&2
+            exit 1
+          }
+          printf 'ANDROID_SDK_ROOT=%s\nANDROID_HOME=%s\n' "${sdk_root}" "${sdk_root}" >> "${GITHUB_ENV}"
+          printf 'Android SDK root: %s\n' "${sdk_root}"
+
+      - name: Install desktop and Android build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            dbus-x11 \
+            file \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget \
+            xauth \
+            xvfb
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Build production Linux bundles
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          combined_log="../block46-desktop-build.log"
+          : > "${combined_log}"
+          for attempt in 1 2 3; do
+            attempt_log="$(mktemp)"
+            printf '=== Tauri bundle attempt %d/3 ===\n' "${attempt}" | tee -a "${combined_log}"
+            set +e
+            npm run tauri build 2>&1 | tee "${attempt_log}" | tee -a "${combined_log}"
+            status="${PIPESTATUS[0]}"
+            set -e
+            if [[ "${status}" -eq 0 ]]; then
+              rm -f "${attempt_log}"
+              break
+            fi
+            if ! grep -Fq 'Peer disconnected' "${attempt_log}" || [[ "${attempt}" -eq 3 ]]; then
+              rm -f "${attempt_log}"
+              exit "${status}"
+            fi
+            rm -f "${attempt_log}"
+            sleep "$((attempt * 10))"
+          done
+
+      - name: Verify Linux bundle payloads without installing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 desktop/scripts/verify-linux-bundles.py \
+            --bundle-dir desktop/src-tauri/target/release/bundle \
+            --tauri-config desktop/src-tauri/tauri.conf.json \
+            --cargo-manifest desktop/src-tauri/Cargo.toml
+
+      - name: Build Android release-candidate APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug --stacktrace --console=plain
+          test -f app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Confirm a physical Android device is still reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v adb >/dev/null 2>&1; then
+            ADB="$(command -v adb)"
+          else
+            ADB="${ANDROID_HOME}/platform-tools/adb"
+          fi
+          "${ADB}" start-server >/dev/null
+          mapfile -t serials < <("${ADB}" devices | awk 'NR > 1 && $2 == "device" {print $1}')
+          (( ${#serials[@]} > 0 )) || {
+            echo "No authorized online Android device is visible to adb." >&2
+            exit 1
+          }
+          found_physical=0
+          for serial in "${serials[@]}"; do
+            fingerprint="$("${ADB}" -s "${serial}" shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r')"
+            qemu="$("${ADB}" -s "${serial}" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')"
+            boot_qemu="$("${ADB}" -s "${serial}" shell getprop ro.boot.qemu 2>/dev/null | tr -d '\r')"
+            if [[ "${qemu}" != "1" && "${boot_qemu}" != "1" && "${fingerprint}" != *generic* ]]; then
+              found_physical=1
+            fi
+          done
+          (( found_physical == 1 )) || {
+            echo "ADB is reachable, but no physical Android device was detected." >&2
+            exit 1
+          }
+
+      - name: Stage exact-head artifacts for the graphical acceptance run
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 022
+          stage_root="${HOME}/silent-disco-block46-stage"
+          stage_dir="${stage_root}/${GITHUB_SHA}"
+          rm -rf "${stage_dir}"
+          mkdir -p "${stage_dir}/desktop-bundle/deb" "${stage_dir}/desktop-bundle/appimage" "${stage_dir}/android"
+
+          cp desktop/src-tauri/target/release/bundle/deb/*.deb "${stage_dir}/desktop-bundle/deb/"
+          cp desktop/src-tauri/target/release/bundle/appimage/*.AppImage "${stage_dir}/desktop-bundle/appimage/"
+          cp app/build/outputs/apk/debug/app-debug.apk "${stage_dir}/android/app-debug.apk"
+          cp desktop/scripts/validate-block46-fresh-machine.sh "${stage_dir}/validate-block46-fresh-machine.sh"
+          chmod 0755 "${stage_dir}/validate-block46-fresh-machine.sh"
+
+          {
+            printf 'source_sha=%s\n' "${GITHUB_SHA}"
+            printf 'workflow_run_id=%s\n' "${GITHUB_RUN_ID}"
+            printf 'workflow_run_attempt=%s\n' "${GITHUB_RUN_ATTEMPT}"
+            # shellcheck disable=SC1091
+            source /etc/os-release
+            printf 'host_os=%s %s\n' "${ID:-unknown}" "${VERSION_ID:-unknown}"
+            printf 'host_architecture=%s\n' "$(dpkg --print-architecture)"
+            printf 'staged_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "${stage_dir}/STAGE_MANIFEST.txt"
+
+          (
+            cd "${stage_dir}"
+            sha256sum \
+              desktop-bundle/deb/*.deb \
+              desktop-bundle/appimage/*.AppImage \
+              android/app-debug.apk \
+              validate-block46-fresh-machine.sh > SHA256SUMS
+          )
+
+          {
+            echo "Run these commands from a normal terminal in the graphical desktop session on this same machine:"
+            echo
+            printf '  cd %q\n' "${stage_dir}"
+            echo "  cat STAGE_MANIFEST.txt"
+            echo "  sha256sum -c SHA256SUMS"
+            echo "  adb devices -l"
+            echo "  adb install -r android/app-debug.apk"
+            echo "  bash ./validate-block46-fresh-machine.sh ./desktop-bundle"
+            echo
+            echo "Do not pipe PASS into the validator. Confirm its manual prompts from observed application/device behavior."
+          } > "${stage_dir}/RUN_BLOCK46.txt"
+
+          mkdir -p "${stage_root}"
+          printf '%s\n' "${GITHUB_SHA}" > "${stage_root}/latest-sha"
+          printf 'Block 46.3 stage directory: %s\n' "${stage_dir}"
+          cat "${stage_dir}/STAGE_MANIFEST.txt"
+          cat "${stage_dir}/SHA256SUMS"
+          cat "${stage_dir}/RUN_BLOCK46.txt"
+
+      - name: Upload staging manifest and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: block46-self-hosted-stage-${{ github.sha }}
+          path: |
+            block46-desktop-build.log
+            app/build/outputs/apk/debug/app-debug.apk
+            desktop/src-tauri/target/release/bundle/deb/
+            desktop/src-tauri/target/release/bundle/appimage/
+          if-no-files-found: warn
+          retention-days: 7

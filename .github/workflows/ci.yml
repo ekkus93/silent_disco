@@ -78,7 +78,7 @@ jobs:
         if: always()
         run: |
           cd rust
-          cargo test --workspace --all-features
+          cargo test --workspace --all-features -- --test-threads=1
 
   android:
     name: Android build, unit tests, and lint
@@ -207,16 +207,60 @@ jobs:
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Run Gradle-managed instrumentation suite
-        id: managed-tests
+      - name: Reclaim unused Android SDK disk for emulator
         shell: bash
         run: |
-          set -o pipefail
-          ./gradlew pixel2api29DebugAndroidTest \
-            -Pandroid.testoptions.manageddevices.emulator.gpu=software \
-            --stacktrace \
-            --console=plain \
-            2>&1 | tee android-instrumentation-tests.log
+          set -euo pipefail
+          echo 'Disk before Android SDK cleanup:'
+          df -h /
+
+          keep_only() {
+            local root="$1"
+            local keep="$2"
+            [[ -d "${root}" ]] || return 0
+            for entry in "${root}"/*; do
+              [[ -e "${entry}" ]] || continue
+              [[ "$(basename "${entry}")" == "${keep}" ]] && continue
+              sudo rm -rf "${entry}"
+            done
+          }
+
+          keep_only "${ANDROID_HOME}/ndk" "28.2.13676358"
+          keep_only "${ANDROID_HOME}/platforms" "android-36"
+          keep_only "${ANDROID_HOME}/build-tools" "36.0.0"
+          sudo rm -rf \
+            "${ANDROID_HOME}/system-images" \
+            "${ANDROID_HOME}/sources" \
+            "${ANDROID_HOME}/extras" \
+            /var/lib/apt/lists/* \
+            /var/cache/apt/archives/*
+
+          echo 'Disk after Android SDK cleanup:'
+          df -h /
+
+      - name: Run instrumentation suite on snapshot-free API 29 emulator
+        id: connected-tests
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 29
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disk-size: 2048M
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -no-snapshot
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
+          disable-animations: true
+          emulator-boot-timeout: 600
+          script: >-
+            bash -o pipefail -c './gradlew connectedDebugAndroidTest
+            --stacktrace --console=plain 2>&1 |
+            tee android-instrumentation-tests.log'
 
       - name: Upload instrumentation diagnostics
         if: always()
@@ -225,8 +269,7 @@ jobs:
           name: android-instrumentation-diagnostics
           path: |
             android-instrumentation-tests.log
-            app/build/outputs/androidTest-results/managedDevice/
-            app/build/reports/androidTests/managedDevice/
-            app/build/outputs/managed_device_android_test_additional_output/
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
           if-no-files-found: warn
           retention-days: 1
