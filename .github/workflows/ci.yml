@@ -207,39 +207,28 @@ jobs:
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Run Gradle-managed instrumentation suite
-        id: managed-tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          combined_log=android-instrumentation-tests.log
-          : > "${combined_log}"
-          for attempt in 1 2; do
-            attempt_log="$(mktemp)"
-            printf '=== Gradle managed-device attempt %d/2 ===\n' "${attempt}" | tee -a "${combined_log}"
-            set +e
-            ./gradlew pixel2api29DebugAndroidTest \
-              -Pandroid.testoptions.manageddevices.emulator.gpu=software \
-              --stacktrace \
-              --console=plain \
-              2>&1 | tee "${attempt_log}" | tee -a "${combined_log}"
-            status="${PIPESTATUS[0]}"
-            set -e
-            if [[ "${status}" -eq 0 ]]; then
-              rm -f "${attempt_log}"
-              exit 0
-            fi
-            if [[ "${attempt}" -eq 2 ]] || ! grep -Fq 'EmulatorSnapshotCannotCreatedException' "${attempt_log}"; then
-              rm -f "${attempt_log}"
-              exit "${status}"
-            fi
-            echo 'Managed-device snapshot setup failed before tests; retrying once on the same fresh runner.' | tee -a "${combined_log}"
-            ./gradlew --stop || true
-            adb kill-server || true
-            rm -rf "${HOME}/.android/avd"
-            rm -f "${attempt_log}"
-            sleep 5
-          done
+      - name: Run instrumentation suite on snapshot-free API 29 emulator
+        id: connected-tests
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 29
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -no-snapshot
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
+          disable-animations: true
+          emulator-boot-timeout: 600
+          script: >-
+            bash -o pipefail -c './gradlew connectedDebugAndroidTest
+            --stacktrace --console=plain 2>&1 |
+            tee android-instrumentation-tests.log'
 
       - name: Upload instrumentation diagnostics
         if: always()
@@ -248,8 +237,7 @@ jobs:
           name: android-instrumentation-diagnostics
           path: |
             android-instrumentation-tests.log
-            app/build/outputs/androidTest-results/managedDevice/
-            app/build/reports/androidTests/managedDevice/
-            app/build/outputs/managed_device_android_test_additional_output/
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
           if-no-files-found: warn
           retention-days: 1
