@@ -78,7 +78,7 @@ jobs:
         if: always()
         run: |
           cd rust
-          cargo test --workspace --all-features
+          cargo test --workspace --all-features -- --test-threads=1
 
   android:
     name: Android build, unit tests, and lint
