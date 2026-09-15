@@ -7,12 +7,17 @@ on:
       - master
     paths:
       - ".github/workflows/block46-self-hosted-stage.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/block46-self-hosted-stage.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: stage-block46-fresh-machine
+  group: stage-block46-fresh-machine-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -101,30 +106,74 @@ jobs:
           printf 'ANDROID_SDK_ROOT=%s\nANDROID_HOME=%s\n' "${sdk_root}" "${sdk_root}" >> "${GITHUB_ENV}"
           printf 'Android SDK root: %s\n' "${sdk_root}"
 
-      - name: Install desktop and Android build prerequisites
+      - name: Record desktop build prerequisite state
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            curl \
-            dbus-x11 \
-            file \
-            libasound2-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget \
-            xauth \
-            xvfb
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+          log="${GITHUB_WORKSPACE}/block46-prereqs.log"
+          : > "${log}"
+          packages=(
+            build-essential
+            curl
+            file
+            libasound2-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
+            libssl-dev
+            libwebkit2gtk-4.1-dev
+            libxdo-dev
+            patchelf
+            wget
+          )
+
+          echo 'Recording desktop build prerequisite package state.' | tee -a "${log}"
+          for package in "${packages[@]}"; do
+            set +e
+            status="$(timeout 5 dpkg-query -W -f='${Status}' "${package}" 2>/dev/null)"
+            code="$?"
+            set -e
+            if [[ "${code}" -eq 0 && "${status}" == "install ok installed" ]]; then
+              printf 'installed: %s\n' "${package}" | tee -a "${log}"
+            else
+              printf 'not-confirmed: %s (dpkg-query status %s)\n' "${package}" "${code}" | tee -a "${log}"
+            fi
+          done
+
+          echo 'Runtime sudo/apt is intentionally not used in this self-hosted staging workflow.' | tee -a "${log}"
+          echo 'If a native dependency is missing, the subsequent Tauri build step must fail with the concrete compiler/pkg-config diagnostic.' | tee -a "${log}"
+
+      - name: Accept Android SDK licenses
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="${GITHUB_WORKSPACE}/block46-prereqs.log"
+          sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          echo 'Accepting Android SDK licenses noninteractively.' | tee -a "${log}"
+          set +e
+          yes | timeout 300 "${sdkmanager}" --licenses 2>&1 | tee -a "${log}"
+          status="${PIPESTATUS[1]}"
+          set -e
+          if [[ "${status}" -ne 0 ]]; then
+            echo "Android SDK license acceptance failed or timed out with status ${status}." | tee -a "${log}" >&2
+            exit "${status}"
+          fi
+
+      - name: Install Android SDK packages
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="${GITHUB_WORKSPACE}/block46-prereqs.log"
+          sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          echo 'Installing Android SDK packages with bounded runtime.' | tee -a "${log}"
+          timeout 1200 "${sdkmanager}" --verbose \
+            "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
-            "ndk;28.2.13676358"
+            "ndk;28.2.13676358" \
+            2>&1 | tee -a "${log}"
 
       - name: Build production Linux bundles
         working-directory: desktop
@@ -218,6 +267,7 @@ jobs:
             printf 'source_sha=%s\n' "${GITHUB_SHA}"
             printf 'workflow_run_id=%s\n' "${GITHUB_RUN_ID}"
             printf 'workflow_run_attempt=%s\n' "${GITHUB_RUN_ATTEMPT}"
+            printf 'runner=%s\n' "${RUNNER_NAME:-unknown}"
             # shellcheck disable=SC1091
             source /etc/os-release
             printf 'host_os=%s %s\n' "${ID:-unknown}" "${VERSION_ID:-unknown}"
@@ -260,6 +310,7 @@ jobs:
         with:
           name: block46-self-hosted-stage-${{ github.sha }}
           path: |
+            block46-prereqs.log
             block46-desktop-build.log
             app/build/outputs/apk/debug/app-debug.apk
             desktop/src-tauri/target/release/bundle/deb/
