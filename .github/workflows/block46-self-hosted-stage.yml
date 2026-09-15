@@ -106,20 +106,16 @@ jobs:
           printf 'ANDROID_SDK_ROOT=%s\nANDROID_HOME=%s\n' "${sdk_root}" "${sdk_root}" >> "${GITHUB_ENV}"
           printf 'Android SDK root: %s\n' "${sdk_root}"
 
-      - name: Ensure desktop build prerequisites
-        timeout-minutes: 25
+      - name: Record desktop build prerequisite state
+        timeout-minutes: 2
         shell: bash
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
           log="${GITHUB_WORKSPACE}/block46-prereqs.log"
           : > "${log}"
-
           packages=(
             build-essential
             curl
-            dbus-x11
             file
             libasound2-dev
             libayatana-appindicator3-dev
@@ -129,57 +125,23 @@ jobs:
             libxdo-dev
             patchelf
             wget
-            xauth
-            xvfb
           )
 
-          check_missing_packages() {
-            local missing=()
-            local package
-            for package in "${packages[@]}"; do
-              if ! dpkg-query -W -f='${Status}' "${package}" 2>/dev/null | grep -Fxq 'install ok installed'; then
-                missing+=("${package}")
-              fi
-            done
-            printf '%s\n' "${missing[@]}"
-          }
+          echo 'Recording desktop build prerequisite package state.' | tee -a "${log}"
+          for package in "${packages[@]}"; do
+            set +e
+            status="$(timeout 5 dpkg-query -W -f='${Status}' "${package}" 2>/dev/null)"
+            code="$?"
+            set -e
+            if [[ "${code}" -eq 0 && "${status}" == "install ok installed" ]]; then
+              printf 'installed: %s\n' "${package}" | tee -a "${log}"
+            else
+              printf 'not-confirmed: %s (dpkg-query status %s)\n' "${package}" "${code}" | tee -a "${log}"
+            fi
+          done
 
-          echo 'Checking desktop build prerequisites already installed on the self-hosted runner.' | tee -a "${log}"
-          mapfile -t missing < <(check_missing_packages)
-          if (( ${#missing[@]} == 0 )); then
-            echo 'All desktop build prerequisites are already installed; skipping sudo/apt.' | tee -a "${log}"
-            exit 0
-          fi
-
-          echo 'Missing desktop build prerequisites:' | tee -a "${log}"
-          printf '  %s\n' "${missing[@]}" | tee -a "${log}"
-
-          echo 'Verifying bounded passwordless sudo for self-hosted package installation.' | tee -a "${log}"
-          if ! timeout 30 sudo -n true 2>&1 | tee -a "${log}"; then
-            {
-              echo 'Passwordless sudo is unavailable or hung on the self-hosted runner.'
-              echo 'Install the missing packages above on the runner, or repair sudo, then rerun the staging workflow.'
-            } | tee -a "${log}" >&2
-            exit 1
-          fi
-
-          echo 'Running apt-get update with a bounded dpkg lock wait.' | tee -a "${log}"
-          timeout 600 sudo -n env DEBIAN_FRONTEND=noninteractive \
-            apt-get -o DPkg::Lock::Timeout=120 update \
-            2>&1 | tee -a "${log}"
-
-          echo 'Installing missing desktop build prerequisites with bounded runtime.' | tee -a "${log}"
-          timeout 900 sudo -n env DEBIAN_FRONTEND=noninteractive \
-            apt-get -o DPkg::Lock::Timeout=120 install --yes --no-install-recommends \
-              "${missing[@]}" \
-            2>&1 | tee -a "${log}"
-
-          mapfile -t still_missing < <(check_missing_packages)
-          if (( ${#still_missing[@]} > 0 )); then
-            echo 'Desktop build prerequisites are still missing after apt installation:' | tee -a "${log}" >&2
-            printf '  %s\n' "${still_missing[@]}" | tee -a "${log}" >&2
-            exit 1
-          fi
+          echo 'Runtime sudo/apt is intentionally not used in this self-hosted staging workflow.' | tee -a "${log}"
+          echo 'If a native dependency is missing, the subsequent Tauri build step must fail with the concrete compiler/pkg-config diagnostic.' | tee -a "${log}"
 
       - name: Accept Android SDK licenses
         timeout-minutes: 5
