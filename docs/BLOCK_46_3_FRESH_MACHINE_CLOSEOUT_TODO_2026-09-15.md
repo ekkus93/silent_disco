@@ -119,6 +119,27 @@ stage directory generated above.
 
 ---
 
+## 3a. Desktop UI changes since the first staging attempt
+
+Blocks 49 and 50 reworked the desktop shell after the `a3beac2` stage was
+built. The validator script itself needs no change -- its prompts reference
+"Select audio file", "Open Diagnostics", and window close/reopen, none of
+which moved -- but two things follow.
+
+- [ ] Any stage built before those blocks is invalid for acceptance. The
+      `a3beac2` stage predates them and every commit since touches
+      `desktop/src`, so both the desktop bundles and the APK must be rebuilt
+      and restaged from one current `master` SHA.
+- [ ] Network interface selection now lives on the Settings destination, not
+      in the host-setup form. If the acceptance host needs an explicit
+      interface choice, make it there before starting the session; host setup
+      shows only a read-only readiness summary and a "Configure in Settings"
+      handoff.
+- [ ] Destinations (Host control / Diagnostics / Storage / Settings) are now
+      mutually exclusive tabs rather than panels appended below the active
+      screen. Opening Diagnostics replaces the host view instead of extending
+      the page.
+
 ## 4. Manual graphical fresh-machine validator
 
 Run:
