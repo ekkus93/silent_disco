@@ -4940,3 +4940,67 @@ here.
 - [x] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
 - [x] All referenced files exist.
 - [ ] `memory.md` records final evidence and limitations.
+
+---
+
+## Block 51 — Shared address space (carrier-grade NAT) opt-in
+
+Venue and ISP networks commonly hand out RFC 6598 shared address space
+(`100.64.0.0/10`) instead of a private LAN address. `Ipv4Addr::is_private` is
+strictly RFC 1918, so such a host had no selectable interface at all and could
+not host a session. Shared address space is genuinely not a private LAN -- on a
+carrier-NAT segment an address may belong to another subscriber -- so this is an
+explicit operator opt-in, never a default.
+
+### 51.1 Persist the policy in the shared core
+
+- [x] migration v3 adds `allow_shared_address_space` to `app_settings`,
+      defaulting to 0 so an upgraded profile keeps refusing;
+- [x] `StoredSettings` carries it as network policy, separate from
+      `TuningSettings`;
+- [x] saving tuning preserves it rather than resetting the row;
+- [x] the Android JNI settings contract carries no such field and sets false
+      explicitly; if Android host mode gains one, that conversion must carry
+      the value instead of resetting it.
+
+### 51.2 Classify and gate selection
+
+- [x] `SharedAddressSpace` classification for `100.64.0.0/10`, ordered after
+      the VPN/container/private-LAN checks so interface-based verdicts win;
+- [x] refused entirely without the opt-in, with a rejection reason naming the
+      setting that changes it;
+- [x] selectable with the opt-in, and the snapshot reports the real class
+      rather than claiming `PrivateLan`;
+- [x] automatic selection considers only the best class present, so a private
+      LAN on a secondary interface still outranks carrier-NAT on the default
+      route.
+
+### 51.3 Command, persistence, and UI
+
+- [x] persist-then-apply, so a failed write leaves no phantom opt-in;
+- [x] seed the policy from storage when the profile opens;
+- [x] refuse a policy change while a host endpoint is active, matching the
+      bind preference;
+- [x] Settings toggle explaining what shared address space is.
+
+### 51.4 Tests
+
+- [x] classifier tests, in a file that previously had none, covering the
+      RFC 6598 boundaries and interface precedence;
+- [x] selection tests for refusal, opt-in, private-LAN precedence, explicit
+      selection, and container bridges;
+- [x] core tests for the migration default and opt-in survival across reopen;
+- [x] UI test that the toggle round-trips through the authoritative snapshot.
+
+### 51.5 Device verification
+
+- [ ] Android has not exercised schema v3. `buildRustAndroidDebug` is wired to
+      `mergeDebugJniLibFolders`, not to `test`, so the Android unit/lint gate
+      does not load the native library or open a database. Verify with
+      `connectedDebugAndroidTest` or a real profile open on a physical device
+      before treating the migration as validated on Android.
+- [ ] verify the opt-in end to end on a real carrier-NAT network.
+
+**Acceptance:** A desktop host on a carrier-NAT network can advertise its
+address after an explicit opt-in that survives restart, without weakening the
+default refusal on any other network.

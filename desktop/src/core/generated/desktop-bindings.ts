@@ -32,7 +32,7 @@ export type ListenerCommandRequest = { expectedRevision: string, listenerId: str
 
 export type UpdateHostDraftRequest = { expectedRevision: string, sessionName: string, approvalMode: string, inviteCode: string | null, rememberApprovedDevices: boolean, };
 
-export type NetworkAddressClassDto = "loopback" | "link_local" | "private_lan" | "vpn" | "container" | "other";
+export type NetworkAddressClassDto = "loopback" | "link_local" | "private_lan" | "vpn" | "container" | "shared_address_space" | "other";
 
 export type NetworkAddressCandidateDto = { interfaceName: string, interfaceIndex: number, address: string, prefixLength: number, classification: NetworkAddressClassDto, isDefaultRoute: boolean, isActive: boolean, isPhysical: boolean, selectable: boolean, rejectionReason: string | null, };
 
@@ -80,7 +80,12 @@ active: boolean, failureReason: string | null, };
 
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, mdns: MdnsStatusDto, };
 
-export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null, };
+export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null, 
+/**
+ * The current shared-address-space opt-in, so the UI renders the
+ * authoritative value rather than tracking its own copy.
+ */
+allowSharedAddressSpace: boolean, };
 
 export type CommandReceiptDto = { operationId: string, acceptedAtRevision: string, };
 

@@ -4,7 +4,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error};
 
-pub const LATEST_SCHEMA_VERSION: u32 = 2;
+pub const LATEST_SCHEMA_VERSION: u32 = 3;
 
 const MIGRATION_V1_SQL: &str = r"
 CREATE TABLE schema_migrations (
@@ -113,6 +113,16 @@ CREATE TABLE legacy_imports (
 ) STRICT;
 ";
 
+// Host network policy, not tuning: whether the operator has opted in to
+// advertising an RFC 6598 shared-address-space (carrier-grade NAT) address.
+// Defaults to 0 so an upgraded profile keeps refusing them, exactly as it did
+// before this column existed.
+const MIGRATION_V3_SQL: &str = r"
+ALTER TABLE app_settings
+    ADD COLUMN allow_shared_address_space INTEGER NOT NULL DEFAULT 0
+    CHECK (allow_shared_address_space IN (0, 1));
+";
+
 #[derive(Debug, Clone, Copy)]
 struct Migration {
     version: u32,
@@ -133,6 +143,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 2,
         sql: MIGRATION_V2_SQL,
+    },
+    Migration {
+        version: 3,
+        sql: MIGRATION_V3_SQL,
     },
 ];
 
@@ -435,7 +449,7 @@ THIS IS NOT VALID SQL;
         let mut connection = Connection::open(test_path.path()).expect("open temporary database");
         let first = run_migrations(&mut connection).expect("empty database migrates");
         assert_eq!(first.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(first.records.len(), 2);
+        assert_eq!(first.records.len(), 3);
         drop(connection);
 
         let mut reopened = Connection::open(test_path.path()).expect("reopen temporary database");

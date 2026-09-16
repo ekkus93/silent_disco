@@ -17,6 +17,7 @@ struct RawSettings {
     hard_resync_threshold_ms: i64,
     sync_drift_threshold_ms: f64,
     scan_window_ms: i64,
+    allow_shared_address_space: i64,
     updated_at_ms: i64,
 }
 
@@ -34,6 +35,7 @@ pub(crate) fn load(
                  hard_resync_threshold_ms,
                  sync_drift_threshold_ms,
                  scan_window_ms,
+                 allow_shared_address_space,
                  updated_at_ms
              FROM app_settings
              WHERE id = 1",
@@ -47,7 +49,8 @@ pub(crate) fn load(
                     hard_resync_threshold_ms: row.get(4)?,
                     sync_drift_threshold_ms: row.get(5)?,
                     scan_window_ms: row.get(6)?,
-                    updated_at_ms: row.get(7)?,
+                    allow_shared_address_space: row.get(7)?,
+                    updated_at_ms: row.get(8)?,
                 })
             },
         )
@@ -114,8 +117,9 @@ pub(crate) fn save(
                  hard_resync_threshold_ms,
                  sync_drift_threshold_ms,
                  scan_window_ms,
+                 allow_shared_address_space,
                  updated_at_ms
-             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                  sync_sample_window = excluded.sync_sample_window,
                  sync_cadence_ms = excluded.sync_cadence_ms,
@@ -124,6 +128,7 @@ pub(crate) fn save(
                  hard_resync_threshold_ms = excluded.hard_resync_threshold_ms,
                  sync_drift_threshold_ms = excluded.sync_drift_threshold_ms,
                  scan_window_ms = excluded.scan_window_ms,
+                 allow_shared_address_space = excluded.allow_shared_address_space,
                  updated_at_ms = excluded.updated_at_ms",
             params![
                 i64::from(settings.tuning.sync_sample_window),
@@ -133,6 +138,7 @@ pub(crate) fn save(
                 hard_resync_threshold_ms,
                 settings.tuning.sync_drift_threshold_ms,
                 scan_window_ms,
+                i64::from(settings.allow_shared_address_space),
                 updated_at_ms,
             ],
         )
@@ -184,6 +190,19 @@ fn decode(raw: RawSettings, schema_version: u32) -> Result<StoredSettings, Stora
                 schema_version,
                 "scan_window_ms",
             )?,
+        },
+        // Stored as 0/1 by the column's CHECK constraint; anything else means
+        // the row was written by something that bypassed it.
+        allow_shared_address_space: match raw.allow_shared_address_space {
+            0 => false,
+            1 => true,
+            other => {
+                return Err(corrupt_row(
+                    StorageOperation::Query,
+                    schema_version,
+                    format!("allow_shared_address_space must be 0 or 1, found {other}"),
+                ));
+            }
         },
         updated_at_ms: from_sql_u64(
             raw.updated_at_ms,

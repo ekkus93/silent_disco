@@ -6,14 +6,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NetworkInterfaceSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostNetworkPolicyCard } from "./HostNetworkPolicyCard";
 
-const { getHostNetworkState, setHostNetworkPreference } = vi.hoisted(() => ({
-  getHostNetworkState: vi.fn(),
-  setHostNetworkPreference: vi.fn(),
-}));
+const { getHostNetworkState, setHostNetworkPreference, setAllowSharedAddressSpace } = vi.hoisted(
+  () => ({
+    getHostNetworkState: vi.fn(),
+    setHostNetworkPreference: vi.fn(),
+    setAllowSharedAddressSpace: vi.fn(),
+  }),
+);
 
 vi.mock("../core/client", async () => {
   const actual = await vi.importActual<typeof import("../core/client")>("../core/client");
-  return { ...actual, getHostNetworkState, setHostNetworkPreference };
+  return {
+    ...actual,
+    getHostNetworkState,
+    setHostNetworkPreference,
+    setAllowSharedAddressSpace,
+  };
 });
 
 function candidate(interfaceName: string, address: string, isDefaultRoute: boolean) {
@@ -43,6 +51,7 @@ function networkSnapshot(overrides: Partial<NetworkInterfaceSnapshotDto> = {}) {
     activeBinding: null,
     activeBindingValid: false,
     interfaceChange: null,
+    allowSharedAddressSpace: false,
     ...overrides,
   } satisfies NetworkInterfaceSnapshotDto;
 }
@@ -197,5 +206,52 @@ describe("HostNetworkPolicyCard", () => {
       await screen.findByText("the requested address is no longer active"),
     ).toBeInTheDocument();
     expect(screen.getByText("the active interface snapshot changed")).toBeInTheDocument();
+  });
+  // The CGNAT opt-in is persisted by the backend, so the card must send the
+  // command and adopt the returned authoritative snapshot rather than keeping
+  // its own copy of the flag.
+  it("sends the shared-address-space opt-in and adopts the returned snapshot", async () => {
+    const cgnat = {
+      interfaceName: "wlo1",
+      interfaceIndex: 3,
+      address: "100.64.64.132",
+      prefixLength: 22,
+      classification: "shared_address_space" as const,
+      isDefaultRoute: true,
+      isActive: true,
+      isPhysical: true,
+      selectable: false,
+      rejectionReason:
+        "shared address space (carrier-grade NAT) is not advertised unless it is enabled in Settings",
+    };
+    getHostNetworkState.mockResolvedValue(
+      networkSnapshot({
+        candidates: [cgnat],
+        automaticSelection: null,
+        resolvedSelection: null,
+        selectionError: "no active private-LAN IPv4 address is available for the desktop host",
+      }),
+    );
+    setAllowSharedAddressSpace.mockResolvedValue(
+      networkSnapshot({
+        candidates: [{ ...cgnat, selectable: true, rejectionReason: null }],
+        automaticSelection: { ...cgnat, selectable: true, rejectionReason: null },
+        resolvedSelection: { ...cgnat, selectable: true, rejectionReason: null },
+        allowSharedAddressSpace: true,
+      }),
+    );
+
+    render(<HostNetworkPolicyCard available disabled={false} />);
+
+    const toggle = await screen.findByLabelText(/Allow shared address space/);
+    expect(toggle).not.toBeChecked();
+    // The refusal must name the setting that changes it.
+    expect(screen.getByText(/enabled in Settings/)).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setAllowSharedAddressSpace).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(screen.getByLabelText(/Allow shared address space/)).toBeChecked());
+    expect(await screen.findByText(/Ready to bind wlo1 at 100\.64\.64\.132/)).toBeInTheDocument();
   });
 });

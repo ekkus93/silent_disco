@@ -177,8 +177,15 @@ fn persist_settings(
     database: &DatabaseClient,
     settings: silent_disco_core::domain::TuningSettings,
 ) -> Result<StorageCompletion, StorageError> {
+    // `save_settings` writes the whole row, so the network-policy opt-in must
+    // be carried forward explicitly. Without this, saving tuning would
+    // silently revoke an opt-in the operator made in Settings.
+    let allow_shared_address_space = database
+        .load_settings()?
+        .is_some_and(|existing| existing.allow_shared_address_space);
     database.save_settings(&StoredSettings {
         tuning: settings,
+        allow_shared_address_space,
         updated_at_ms: unix_time_ms(),
     })?;
     Ok(StorageCompletion::SettingsSaved)

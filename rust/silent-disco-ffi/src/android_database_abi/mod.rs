@@ -286,6 +286,11 @@ fn settings_from_jni(fields: JniSettingsFields) -> Result<StoredSettings, Androi
             scan_window_ms: u64::try_from(fields.scan_window_ms)
                 .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
         },
+        // The JNI settings contract carries no network-policy field, so this
+        // is false rather than preserved: Android has no surface that opts in
+        // to shared address space. If Android host mode ever gains one, this
+        // conversion must carry the value instead of resetting it.
+        allow_shared_address_space: false,
         updated_at_ms: u64::try_from(fields.updated_at_ms)
             .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
     })

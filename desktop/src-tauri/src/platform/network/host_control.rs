@@ -58,6 +58,12 @@ pub(super) struct ActiveBinding {
 
 pub(super) struct NetworkState {
     preference: BindPreference,
+    /// Operator opt-in to advertising RFC 6598 shared address space.
+    ///
+    /// Seeded from persisted settings when the profile opens and updated by
+    /// the Settings command, so a restart does not silently revert to
+    /// refusing an address the operator deliberately chose.
+    pub(super) allow_shared_address_space: bool,
     pub(super) active: Option<ActiveBinding>,
 }
 
@@ -95,6 +101,7 @@ impl DesktopHostNetworkControl {
             monitor: DesktopMonitorControl::new(Arc::new(NullAudioOutputBackend)),
             state: Mutex::new(NetworkState {
                 preference: BindPreference::Automatic,
+                allow_shared_address_space: false,
                 active: None,
             }),
         }
@@ -157,7 +164,32 @@ impl DesktopHostNetworkControl {
             &interfaces,
             &state.preference,
             state.active.as_ref(),
+            state.allow_shared_address_space,
         ))
+    }
+
+    /// Applies the persisted shared-address-space opt-in.
+    ///
+    /// Called when the profile opens (seeding from storage) and whenever the
+    /// Settings command changes it. Refused while a host endpoint is active,
+    /// for the same reason the bind preference is: the advertised address must
+    /// not change under a live session.
+    pub(crate) fn set_allow_shared_address_space(
+        &self,
+        allow: bool,
+    ) -> Result<(), DesktopErrorDto> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        if state.active.is_some() && state.allow_shared_address_space != allow {
+            return Err(DesktopNetworkError::invalid_state(
+                "shared address space policy cannot change while a host endpoint is active",
+            )
+            .dto());
+        }
+        state.allow_shared_address_space = allow;
+        Ok(())
     }
 
     /// Replaces the bind preference after validating it against the current interface snapshot.
@@ -170,13 +202,14 @@ impl DesktopHostNetworkControl {
             .interfaces()
             .map_err(DesktopNetworkError::dto)?;
         let preference = parse_preference(request).map_err(DesktopNetworkError::dto)?;
-        if let BindPreference::Explicit { .. } = &preference {
-            select_address(&interfaces, &preference).map_err(DesktopNetworkError::dto)?;
-        }
         let mut state = self
             .state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        if let BindPreference::Explicit { .. } = &preference {
+            select_address(&interfaces, &preference, state.allow_shared_address_space)
+                .map_err(DesktopNetworkError::dto)?;
+        }
         if state.active.is_some() {
             return Err(DesktopNetworkError::invalid_state(
                 "network bind preference cannot change while a host endpoint is active",
@@ -184,7 +217,12 @@ impl DesktopHostNetworkControl {
             .dto());
         }
         state.preference = preference;
-        Ok(snapshot_from(&interfaces, &state.preference, None))
+        Ok(snapshot_from(
+            &interfaces,
+            &state.preference,
+            None,
+            state.allow_shared_address_space,
+        ))
     }
 
     pub(in crate::platform) fn start_host(
@@ -222,9 +260,13 @@ impl DesktopHostNetworkControl {
             ));
         }
         let initial = self.provider.interfaces()?;
-        let selected = select_address(&initial, &state.preference)?;
+        let selected = select_address(
+            &initial,
+            &state.preference,
+            state.allow_shared_address_space,
+        )?;
         let refreshed = self.provider.interfaces()?;
-        validate_selected(&refreshed, &selected)?;
+        validate_selected(&refreshed, &selected, state.allow_shared_address_space)?;
 
         let mut config = HostTransportConfig::loopback(advertisement.session_id.clone());
         config.bind_address = IpAddr::V4(selected.address);

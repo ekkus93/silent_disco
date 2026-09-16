@@ -10,6 +10,11 @@ pub enum NetworkAddressClassDto {
     PrivateLan,
     Vpn,
     Container,
+    /// RFC 6598 shared address space (100.64.0.0/10), used for carrier-grade
+    /// NAT. Not a private LAN: on such a segment an address may belong to
+    /// another subscriber entirely, so it is never selected automatically and
+    /// is offered only when the operator has opted in.
+    SharedAddressSpace,
     Other,
 }
 
@@ -102,4 +107,7 @@ pub struct NetworkInterfaceSnapshotDto {
     pub active_binding: Option<NetworkBindingDto>,
     pub active_binding_valid: bool,
     pub interface_change: Option<String>,
+    /// The current shared-address-space opt-in, so the UI renders the
+    /// authoritative value rather than tracking its own copy.
+    pub allow_shared_address_space: bool,
 }

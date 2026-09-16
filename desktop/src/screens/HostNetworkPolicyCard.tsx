@@ -1,6 +1,10 @@
 import { useMemo, useState } from "react";
 
-import { setHostNetworkPreference, toDesktopBridgeError } from "../core/client";
+import {
+  setAllowSharedAddressSpace,
+  setHostNetworkPreference,
+  toDesktopBridgeError,
+} from "../core/client";
 import type {
   NetworkAddressCandidateDto,
   NetworkInterfaceSnapshotDto,
@@ -72,6 +76,19 @@ export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicy
       setSnapshot(await setHostNetworkPreference(request));
     } catch (cause: unknown) {
       setError(toDesktopBridgeError(cause, "set host network preference").message);
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changeSharedAddressSpace = async (allow: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      setSnapshot(await setAllowSharedAddressSpace(allow));
+    } catch (cause: unknown) {
+      setError(toDesktopBridgeError(cause, "set shared address space policy").message);
       await refresh();
     } finally {
       setSaving(false);
@@ -193,6 +210,28 @@ export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicy
               {snapshot.interfaceChange}
             </p>
           ) : null}
+
+          <div className="rounded-xl border border-violet-200/15 bg-black/20 p-3">
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={snapshot.allowSharedAddressSpace}
+                disabled={controlsDisabled}
+                onChange={(event) => void changeSharedAddressSpace(event.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <span className="font-semibold">
+                  Allow shared address space (carrier-grade NAT)
+                </span>
+                <span className="mt-1 block text-violet-100/65">
+                  Some venue and ISP networks hand out 100.64.0.0/10 instead of a private LAN
+                  address. These are not private-LAN addresses and are never selected automatically
+                  while a real private LAN is available. Enable only on a network you trust.
+                </span>
+              </span>
+            </label>
+          </div>
         </div>
       ) : null}
 

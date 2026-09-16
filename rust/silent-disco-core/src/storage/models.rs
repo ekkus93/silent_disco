@@ -18,6 +18,13 @@ pub const MAX_DIAGNOSTIC_EXPORT_LIMIT: u32 = 32;
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredSettings {
     pub tuning: TuningSettings,
+    /// Whether the host may advertise an RFC 6598 shared-address-space
+    /// (carrier-grade NAT) address.
+    ///
+    /// Separate from [`TuningSettings`] because it is network policy, not a
+    /// synchronization parameter. Defaults to `false`: shared address space is
+    /// not a private LAN, and opting in is an explicit operator decision.
+    pub allow_shared_address_space: bool,
     pub updated_at_ms: u64,
 }
 
@@ -499,6 +506,7 @@ mod tests {
     fn validates_settings_and_diagnostic_bounds() {
         let settings = StoredSettings {
             tuning: TuningSettings::default(),
+            allow_shared_address_space: false,
             updated_at_ms: 1,
         };
         assert_eq!(settings.validate(), Ok(()));

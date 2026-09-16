@@ -512,6 +512,60 @@ mod tests {
         test_support::TestDatabasePath,
     };
 
+    // Migration v3 adds host network policy. An existing profile must keep
+    // refusing shared address space across the upgrade -- a silent opt-in
+    // would start advertising a carrier-NAT address the operator never chose.
+    #[test]
+    fn upgraded_profile_defaults_to_refusing_shared_address_space() {
+        let test_path = TestDatabasePath::new("database-v3-default");
+        let config = DatabaseConfig::new(test_path.path()).expect("valid config");
+        let mut connection = DatabaseConnection::open(&config).expect("database opens");
+
+        let settings = StoredSettings {
+            tuning: TuningSettings::default(),
+            allow_shared_address_space: false,
+            updated_at_ms: 7,
+        };
+        connection
+            .save_settings(&settings)
+            .expect("settings persist");
+        let loaded = connection
+            .load_settings()
+            .expect("settings reload")
+            .expect("settings row exists");
+        assert!(!loaded.allow_shared_address_space);
+
+        let _ = connection.checkpoint_and_close();
+    }
+
+    #[test]
+    fn shared_address_space_opt_in_survives_reopen() {
+        let test_path = TestDatabasePath::new("database-v3-optin");
+        let config = DatabaseConfig::new(test_path.path()).expect("valid config");
+        let mut connection = DatabaseConnection::open(&config).expect("database opens");
+
+        let settings = StoredSettings {
+            tuning: TuningSettings::default(),
+            allow_shared_address_space: true,
+            updated_at_ms: 11,
+        };
+        connection
+            .save_settings(&settings)
+            .expect("settings persist");
+        let _ = connection.checkpoint_and_close();
+
+        // A persisted opt-in is only useful if it is still there next launch.
+        let reopened = DatabaseConnection::open(&config).expect("database reopens");
+        let loaded = reopened
+            .load_settings()
+            .expect("settings reload")
+            .expect("settings row exists");
+        assert!(loaded.allow_shared_address_space);
+        assert_eq!(loaded, settings);
+
+        let _ = reopened.checkpoint_and_close();
+    }
+
     #[test]
     fn verifies_durable_connection_policy_and_latest_schema() {
         let test_path = TestDatabasePath::new("database-policy");
@@ -524,7 +578,7 @@ mod tests {
         assert_eq!(u64::from(metadata.busy_timeout_ms), DEFAULT_BUSY_TIMEOUT_MS);
         assert_eq!(metadata.synchronous_policy, SynchronousPolicy::Full);
         assert_eq!(metadata.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(metadata.applied_migrations.len(), 2);
+        assert_eq!(metadata.applied_migrations.len(), 3);
         assert_eq!(metadata.integrity_check, "ok");
         assert!(!metadata.owner_thread_name.is_empty());
         connection
@@ -712,6 +766,7 @@ mod tests {
 
         let settings = StoredSettings {
             tuning: TuningSettings::default(),
+            allow_shared_address_space: false,
             updated_at_ms: 5,
         };
         let error = connection.save_settings(&settings).expect_err(

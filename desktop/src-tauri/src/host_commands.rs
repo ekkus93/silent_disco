@@ -356,6 +356,16 @@ pub fn set_host_network_preference(
     state.set_host_network_preference(&request)
 }
 
+/// Persists and applies the shared-address-space (carrier-grade NAT) opt-in.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_allow_shared_address_space(
+    state: State<'_, DesktopAppState>,
+    allow: bool,
+) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+    state.set_allow_shared_address_space(allow)
+}
+
 fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopErrorDto> {
     if value.is_empty()
         || (value.len() > 1 && value.starts_with('0'))

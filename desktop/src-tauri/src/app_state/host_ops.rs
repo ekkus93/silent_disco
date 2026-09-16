@@ -14,9 +14,20 @@ use crate::platform::invitation::{build_signed_invitation, current_wall_clock_ms
 use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
 use crate::platform::storage_inspection::inspect_database_client;
 use crate::runtime_dto::{CommandReceiptDto, CoreSnapshotDto};
+use silent_disco_core::domain::TuningSettings;
 use silent_disco_core::runtime::{CoreCommand, CoreCommandRequest, SnapshotRevision};
+use silent_disco_core::storage::StoredSettings;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn wall_clock_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
 
 impl DesktopAppState {
     pub(super) fn current_snapshot(&self) -> Result<CoreSnapshotDto, DesktopErrorDto> {
@@ -453,6 +464,60 @@ impl DesktopAppState {
             }
         };
         network.stop_playback()
+    }
+
+    /// Persists the shared-address-space opt-in, then applies it.
+    ///
+    /// Persist-then-apply: if the write fails the in-memory policy is
+    /// unchanged, so the UI never shows an opt-in that would silently vanish
+    /// on the next launch.
+    pub(crate) fn set_allow_shared_address_space(
+        &self,
+        allow: bool,
+    ) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+        let (network, database) = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => {
+                    (Arc::clone(&ready.network), ready.owned.database.client())
+                }
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+
+        let existing = database
+            .load_settings()
+            .map_err(|error| DesktopErrorDto::from(error.to_core_error()))?;
+        let settings = existing.map_or_else(
+            || StoredSettings {
+                tuning: TuningSettings::default(),
+                allow_shared_address_space: allow,
+                updated_at_ms: wall_clock_ms(),
+            },
+            |current| StoredSettings {
+                allow_shared_address_space: allow,
+                updated_at_ms: wall_clock_ms(),
+                ..current
+            },
+        );
+        database
+            .save_settings(&settings)
+            .map_err(|error| DesktopErrorDto::from(error.to_core_error()))?;
+        network.set_allow_shared_address_space(allow)?;
+        network.snapshot()
     }
 
     pub(crate) fn set_host_network_preference(

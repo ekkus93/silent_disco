@@ -392,6 +392,12 @@ export async function setHostNetworkPreference(
   return invokeDesktop<NetworkInterfaceSnapshotDto>("set_host_network_preference", { request });
 }
 
+export async function setAllowSharedAddressSpace(
+  allow: boolean,
+): Promise<NetworkInterfaceSnapshotDto> {
+  return invokeDesktop<NetworkInterfaceSnapshotDto>("set_allow_shared_address_space", { allow });
+}
+
 export async function createHostInvitation(): Promise<HostInvitationDto> {
   return invokeDesktop<HostInvitationDto>("create_host_invitation");
 }

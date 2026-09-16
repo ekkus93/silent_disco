@@ -19,21 +19,26 @@ pub(super) fn snapshot_from(
     interfaces: &[InterfaceRecord],
     preference: &BindPreference,
     active: Option<&ActiveBinding>,
+    allow_shared_address_space: bool,
 ) -> NetworkInterfaceSnapshotDto {
-    let mut candidates = address_candidates(interfaces);
+    let mut candidates = address_candidates(interfaces, allow_shared_address_space);
     candidates.sort_by(|left, right| {
         left.interface_name
             .cmp(&right.interface_name)
             .then(left.interface_index.cmp(&right.interface_index))
             .then(left.address.cmp(&right.address))
     });
-    let automatic = select_address(interfaces, &BindPreference::Automatic);
+    let automatic = select_address(
+        interfaces,
+        &BindPreference::Automatic,
+        allow_shared_address_space,
+    );
     let (automatic_selection, requires_explicit_selection) = match &automatic {
         Ok(selected) => (Some(selected.dto()), false),
         Err(error) if error.kind == NetworkErrorKind::Ambiguous => (None, true),
         Err(_) => (None, false),
     };
-    let resolved = select_address(interfaces, preference);
+    let resolved = select_address(interfaces, preference, allow_shared_address_space);
     let resolved_selection = resolved.as_ref().ok().map(SelectedAddress::dto);
     let selection_error = resolved.err().map(|error| error.message);
     let active_binding = active.map(|binding| NetworkBindingDto {
@@ -44,8 +49,9 @@ pub(super) fn snapshot_from(
         audio_port: binding.runtime.endpoint().audio_port,
         mdns: mdns_status_dto(&binding.mdns),
     });
-    let active_binding_valid =
-        active.is_none_or(|binding| validate_selected(interfaces, &binding.selected).is_ok());
+    let active_binding_valid = active.is_none_or(|binding| {
+        validate_selected(interfaces, &binding.selected, allow_shared_address_space).is_ok()
+    });
     let interface_change = if active.is_some() && !active_binding_valid {
         Some("the active network interface or address is no longer available".to_owned())
     } else {
@@ -61,6 +67,7 @@ pub(super) fn snapshot_from(
         active_binding,
         active_binding_valid,
         interface_change,
+        allow_shared_address_space,
     }
 }
 
