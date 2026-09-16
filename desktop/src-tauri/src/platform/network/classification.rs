@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn loopback_and_link_local_still_outrank_everything() {
         assert_eq!(
-            class_of("lo", Ipv4Addr::new(127, 0, 0, 1)),
+            class_of("lo", Ipv4Addr::LOCALHOST),
             NetworkAddressClassDto::Loopback
         );
         assert_eq!(

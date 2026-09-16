@@ -310,10 +310,24 @@ pub(super) fn parse_preference(
 /// is production's own, so the two cannot drift apart again.
 #[cfg(test)]
 pub(in crate::platform) fn first_bindable_private_lan_address() -> Option<(String, u32, Ipv4Addr)> {
-    let records = normalize_interfaces(netdev::get_interfaces()).ok()?;
     // This helper exists to hand tests production's own answer, and production
     // defaults to refusing shared address space.
-    let selected = select_address(&records, &BindPreference::Automatic, false).ok()?;
+    first_bindable_address(false)
+}
+
+/// Production's own automatic selection, optionally with the shared-address-
+/// space opt-in, for manual device tests run on a carrier-NAT network.
+#[cfg(test)]
+pub(in crate::platform) fn first_bindable_address(
+    allow_shared_address_space: bool,
+) -> Option<(String, u32, Ipv4Addr)> {
+    let records = normalize_interfaces(netdev::get_interfaces()).ok()?;
+    let selected = select_address(
+        &records,
+        &BindPreference::Automatic,
+        allow_shared_address_space,
+    )
+    .ok()?;
     Some((
         selected.interface_name,
         selected.interface_index,

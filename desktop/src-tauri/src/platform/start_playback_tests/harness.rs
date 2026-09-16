@@ -92,6 +92,9 @@ pub(super) fn start_host_session(
         Arc::new(production_transport_factory()),
         TestHostPorts::default(),
     ));
+    network
+        .set_allow_shared_address_space(device_test_allows_shared_address_space())
+        .expect("apply shared address space policy");
     let endpoint = network
         .start_host(&advertisement, handle.clone())
         .expect("start desktop host transport");
@@ -218,7 +221,14 @@ impl crate::platform::network::NetworkInterfaceProvider for FixedInterfaceProvid
 /// bridge often enough to fail three runs in four. Delegating means a device
 /// test can never advertise an address a phone cannot reach.
 pub(super) fn real_private_lan_address() -> Option<(String, u32, Ipv4Addr)> {
-    crate::platform::network::first_bindable_private_lan_address()
+    crate::platform::network::first_bindable_address(device_test_allows_shared_address_space())
+}
+
+/// Manual device tests on a carrier-NAT (RFC 6598) network must opt in, just
+/// as an operator does in Settings; without the variable the harness keeps
+/// production's default refusal.
+pub(super) fn device_test_allows_shared_address_space() -> bool {
+    std::env::var_os("SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE").is_some()
 }
 
 pub(super) fn submit(

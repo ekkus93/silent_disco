@@ -34,6 +34,6 @@ pub(super) use interfaces::{AddressRecord, InterfaceRecord, NetworkInterfaceProv
 pub(crate) use playback_control::{StreamDiagnostics, StreamDiagnosticsSnapshot};
 
 #[cfg(test)]
-pub(super) use bind_selection::first_bindable_private_lan_address;
+pub(super) use bind_selection::{first_bindable_address, first_bindable_private_lan_address};
 #[cfg(test)]
 pub(super) use host_control::HostPorts as TestHostPorts;
