@@ -4,7 +4,12 @@ import { Button } from "../components/Button";
 import { Detail } from "../components/Detail";
 import { ErrorAlert } from "../components/ErrorAlert";
 import { Panel } from "../components/Panel";
-import { getHostDiagnostics, getStorageInspection, toDesktopBridgeError } from "../core/client";
+import {
+  getHostDiagnostics,
+  getLabModeAvailable,
+  getStorageInspection,
+  toDesktopBridgeError,
+} from "../core/client";
 import type {
   DesktopDiagnosticsDto,
   DesktopErrorDto,
@@ -27,6 +32,7 @@ export function SettingsScreen() {
   const [diagnostics, setDiagnostics] = useState<DesktopDiagnosticsDto | null>(null);
   const [storageError, setStorageError] = useState<DesktopErrorDto | null>(null);
   const [diagnosticsError, setDiagnosticsError] = useState<DesktopErrorDto | null>(null);
+  const [labAvailable, setLabAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
@@ -51,7 +57,12 @@ export function SettingsScreen() {
         setDiagnostics(null);
         setDiagnosticsError(toDesktopBridgeError(error, "settings diagnostics"));
       });
-    void Promise.allSettled([storageLoad, diagnosticsLoad]).then(() => setLoading(false));
+    // Fail-closed, matching the shell: a transport failure leaves this at
+    // `null` and it is never reported as available.
+    const labLoad = getLabModeAvailable()
+      .then((available) => setLabAvailable(available))
+      .catch(() => setLabAvailable(null));
+    void Promise.allSettled([storageLoad, diagnosticsLoad, labLoad]).then(() => setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -72,7 +83,7 @@ export function SettingsScreen() {
       {/* Network policy is machine configuration, not session configuration.
           Hosting it here is what makes the active binding and mDNS status
           observable during a live session. */}
-      <HostNetworkPolicyCard available disabled={false} onReadinessChange={() => {}} />
+      <HostNetworkPolicyCard available disabled={false} />
 
       <Panel title="Tuning">
         {storageError ? (
@@ -145,6 +156,16 @@ export function SettingsScreen() {
             />
             <Detail label="Profile" value={diagnostics.profile.profileId} wrap="all" />
             <Detail label="Platform" value={diagnostics.profile.platform} />
+            <Detail
+              label="Core version"
+              value={`${diagnostics.versions.coreVersion.major}.${diagnostics.versions.coreVersion.minor}.${diagnostics.versions.coreVersion.patch}`}
+            />
+            <Detail
+              label="Lab Mode build"
+              value={
+                labAvailable === null ? "unknown" : labAvailable ? "available" : "not available"
+              }
+            />
           </dl>
         ) : null}
         {!diagnostics && !diagnosticsError ? (

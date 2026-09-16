@@ -4817,12 +4817,11 @@ Depends on Block 49.
 
 ### 50.2 Move app-wide configuration onto it
 
-- [ ] move network interface policy out of the host-setup form. Settings now
-      owns a full instance, which is what makes the binding and mDNS status
-      reachable mid-session, but host setup still renders its own because
-      `canCreateHostSession` is gated on that card's readiness callback.
-      Finishing this needs a shared readiness hook plus a compact
-      status-and-link summary in setup, so the control exists exactly once;
+- [x] move network interface policy out of the host-setup form. Settings owns
+      the only control; setup renders a read-only readiness summary that hands
+      off via "Configure in Settings". The readiness rule is extracted to
+      `networkReadiness` in `useHostNetworkState` so setup's
+      `canCreateHostSession` gate and the Settings control cannot drift;
 - [x] confirm the active binding and mDNS advertising status are reachable
       during an active session after the move;
 - [ ] mirror mDNS advertising status next to the address it qualifies in the

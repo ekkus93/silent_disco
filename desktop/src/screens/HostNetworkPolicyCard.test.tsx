@@ -64,11 +64,9 @@ beforeEach(() => {
 
 describe("HostNetworkPolicyCard", () => {
   it("reports a single automatic private-LAN address as ready", async () => {
-    const readiness = vi.fn();
-    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={readiness} />);
+    render(<HostNetworkPolicyCard available disabled={false} />);
 
     expect(await screen.findByText(/Ready to bind enp1s0 at 192\.168\.1\.20/)).toBeInTheDocument();
-    await waitFor(() => expect(readiness).toHaveBeenLastCalledWith(true));
   });
 
   it("requires an explicit choice when automatic selection is ambiguous", async () => {
@@ -83,13 +81,11 @@ describe("HostNetworkPolicyCard", () => {
         selectionError: "multiple private-LAN addresses require an explicit selection",
       }),
     );
-    const readiness = vi.fn();
-    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={readiness} />);
+    render(<HostNetworkPolicyCard available disabled={false} />);
 
     const select = await screen.findByLabelText("Host network interface");
     expect(select).toHaveValue("automatic");
     expect(screen.getByRole("alert")).toHaveTextContent("explicit selection");
-    await waitFor(() => expect(readiness).toHaveBeenLastCalledWith(false));
 
     fireEvent.change(select, { target: { value: "wlp2s0\u0000192.168.2.30" } });
     await waitFor(() =>
@@ -99,7 +95,6 @@ describe("HostNetworkPolicyCard", () => {
         address: "192.168.2.30",
       }),
     );
-    await waitFor(() => expect(readiness).toHaveBeenLastCalledWith(true));
   });
 
   it("shows rejected VPN and container addresses without allowing selection", async () => {
@@ -128,7 +123,7 @@ describe("HostNetworkPolicyCard", () => {
       }),
     );
 
-    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
+    render(<HostNetworkPolicyCard available disabled={false} />);
     const select = await screen.findByLabelText("Host network interface");
     const rejected = Array.from((select as HTMLSelectElement).options).filter(
       (option) => option.value !== "automatic",
@@ -152,7 +147,7 @@ describe("HostNetworkPolicyCard", () => {
       }),
     );
 
-    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
+    render(<HostNetworkPolicyCard available disabled={false} />);
     expect(
       await screen.findByText("Auto-discovery (mDNS): advertising this session."),
     ).toBeInTheDocument();
@@ -173,7 +168,7 @@ describe("HostNetworkPolicyCard", () => {
       }),
     );
 
-    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
+    render(<HostNetworkPolicyCard available disabled={false} />);
     const failure = await screen.findByText(/Auto-discovery \(mDNS\) unavailable/);
     expect(failure).toHaveAttribute("role", "alert");
     expect(failure).toHaveTextContent("multicast socket busy");
@@ -197,7 +192,7 @@ describe("HostNetworkPolicyCard", () => {
       }),
     );
 
-    render(<HostNetworkPolicyCard available disabled={false} onReadinessChange={vi.fn()} />);
+    render(<HostNetworkPolicyCard available disabled={false} />);
     expect(
       await screen.findByText("the requested address is no longer active"),
     ).toBeInTheDocument();

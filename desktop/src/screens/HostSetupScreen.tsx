@@ -7,6 +7,7 @@ import {
   selectPendingCommandReceipts,
 } from "../app/selectors";
 import { useAppDispatch, useAppSelector } from "../app/store";
+import { uiActions } from "../app/uiSlice";
 import { selectAudioSource } from "../core/audioSourceClient";
 import {
   createHostSession,
@@ -15,7 +16,7 @@ import {
   updateHostDraft,
 } from "../core/client";
 import type { UpdateHostDraftRequest } from "../core/generated/desktop-bindings";
-import { HostNetworkPolicyCard } from "./HostNetworkPolicyCard";
+import { HostNetworkReadinessSummary } from "./HostNetworkReadinessSummary";
 
 type ApprovalMode = "manual" | "trusted_devices" | "invite_code";
 
@@ -383,10 +384,10 @@ export function HostSetupScreen() {
             ) : null}
           </SummaryCard>
 
-          <HostNetworkPolicyCard
+          <HostNetworkReadinessSummary
             available={snapshot.capabilities.localNetworkAvailable}
-            disabled={!lifecycleAllowsSetup || pending}
             onReadinessChange={setNetworkReady}
+            onConfigure={() => dispatch(uiActions.activeViewChanged("settings"))}
           />
 
           {snapshot.capabilities.audioOutputAvailable ? (

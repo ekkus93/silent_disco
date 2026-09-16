@@ -1,20 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
-import {
-  getHostNetworkState,
-  setHostNetworkPreference,
-  toDesktopBridgeError,
-} from "../core/client";
+import { setHostNetworkPreference, toDesktopBridgeError } from "../core/client";
 import type {
   NetworkAddressCandidateDto,
   NetworkInterfaceSnapshotDto,
   SetNetworkBindPreferenceRequest,
 } from "../core/generated/desktop-bindings";
+import { useHostNetworkState } from "./useHostNetworkState";
 
 interface HostNetworkPolicyCardProps {
   available: boolean;
   disabled: boolean;
-  onReadinessChange: (ready: boolean) => void;
 }
 
 const AUTOMATIC_VALUE = "automatic";
@@ -41,53 +37,10 @@ function selectedValue(snapshot: NetworkInterfaceSnapshotDto | null): string {
   return `${interfaceName}\u0000${address}`;
 }
 
-function readiness(snapshot: NetworkInterfaceSnapshotDto | null, available: boolean): boolean {
-  if (!available || snapshot === null) {
-    return false;
-  }
-  return (
-    snapshot.resolvedSelection !== null &&
-    !snapshot.requiresExplicitSelection &&
-    snapshot.selectionError === null &&
-    (snapshot.activeBinding === null || snapshot.activeBindingValid)
-  );
-}
-
-export function HostNetworkPolicyCard({
-  available,
-  disabled,
-  onReadinessChange,
-}: HostNetworkPolicyCardProps) {
-  const [snapshot, setSnapshot] = useState<NetworkInterfaceSnapshotDto | null>(null);
-  const [loading, setLoading] = useState(false);
+export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicyCardProps) {
+  const { snapshot, loading, error, refresh, setSnapshot, setError } =
+    useHostNetworkState(available);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!available) {
-      setSnapshot(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      setSnapshot(await getHostNetworkState());
-    } catch (cause: unknown) {
-      setSnapshot(null);
-      setError(toDesktopBridgeError(cause, "inspect host network interfaces").message);
-    } finally {
-      setLoading(false);
-    }
-  }, [available]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    onReadinessChange(readiness(snapshot, available));
-  }, [available, onReadinessChange, snapshot]);
 
   const candidatesByValue = useMemo(() => {
     const map = new Map<string, NetworkAddressCandidateDto>();

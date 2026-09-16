@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -441,5 +441,61 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
     expect(getHostNetworkStateMock).toHaveBeenCalled();
+  });
+
+  // Block 50.2: the control lives on Settings now, but host setup still gates
+  // session creation on network readiness, so the handoff must actually work.
+  it("hands off from host setup to Settings for network configuration", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    // Setup shows the outcome, not a second copy of the control.
+    expect(await screen.findByText(/Ready to bind enp1s0 at 192\.168\.1\.20/)).toBeVisible();
+    expect(screen.queryByLabelText("Host network interface")).not.toBeInTheDocument();
+    // Paired with the unresolved-policy test below: together these prove the
+    // readiness gate actually toggles rather than being permanently disabled.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create session/i })).toBeEnabled(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Configure in Settings" }));
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+    // The actual control is here.
+    expect(await screen.findByLabelText("Host network interface")).toBeVisible();
+  });
+
+  // The readiness gate must still block creation when the policy does not
+  // resolve -- that is the only reason setup keeps a readiness signal at all.
+  it("blocks session creation while network policy does not resolve", async () => {
+    getHostNetworkStateMock.mockResolvedValue({
+      ...networkSnapshot,
+      automaticSelection: null,
+      resolvedSelection: null,
+      requiresExplicitSelection: true,
+      selectionError: "multiple private-LAN addresses require an explicit selection",
+    });
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    expect(
+      await screen.findByText(/multiple private-LAN addresses require an explicit selection/),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create session/i })).toBeDisabled(),
+    );
+  });
+
+  it("reports Lab Mode availability in Settings", async () => {
+    getLabModeAvailableMock.mockResolvedValue(true);
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+
+    expect(await screen.findByText("Lab Mode build")).toBeVisible();
+    expect(await screen.findByText("available")).toBeVisible();
   });
 });
