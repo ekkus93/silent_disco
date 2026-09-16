@@ -5183,7 +5183,34 @@ One refused effect quietly broke the rest of the session.
     state as a labeled detail. Nothing on the desktop ever advances an
     approved listener past the core's `connecting`, so the raw value was
     never informative. Tests in `HostSessionScreen/domain.test.ts`.
-  - [ ] Device-verify both on the next desktop package and APK.
+  - [x] Device-verified 2026-09-16 13:20-13:25 (desktop package and APK built
+        from `9a8767f`; installed desktop binary sha256 prefix `5b510f36`, APK
+        `55859964`), A54 over carrier-NAT, mDNS "Join", session Test6:
+    - Phone before approval: "Waiting for host approval" in progress, not
+      ticked; after approval: ticked, "Waiting for the host to start
+      playback" in progress; after Play: "Playing in sync", audio heard.
+    - Desktop listener row: "Approved -- waiting for the host to start
+      playback", raw `connecting` shown only as the labeled detail.
+    - Phone left mid-stream: desktop showed the red "Streaming to nobody"
+      alert, "Audio this stream: 9302 of 24827 frames reached every
+      listener; 11 partially, 15514 to nobody, 0 failed." (amber), and
+      "Last control message (approval, rejection, or removal): 1 of 1
+      delivered; 0 failed (ok)."
+  - [ ] Follow-ups seen during that run:
+    - The host sent the approval at about 13:22:02 (host socket
+      `lastsnd`), while the operator reported approving before 13:21.
+      Unconfirmed: the click time is not recorded anywhere. Log the
+      decision time and the send time so this can be settled.
+    - 11 frames "partially" delivered with a single listener; one
+      listener cannot be partially reached (see the 52.1 partial-delivery
+      anomaly).
+    - The frame counts imply about 200 frames per second (24827 at 2:04),
+      not the 50 expected from 20 ms packets. Confirm what a "frame" is in
+      the broadcast counters before labeling it for operators.
+    - "Playback start requested." stays under the session header long
+      after playback started.
+    - The empty listener text "No listeners have completed delivery-confirmed
+      approval." is jargon.
 - [ ] The desktop network card still says only private-LAN addresses can be
       advertised while bound to a shared-address-space address.
 - [ ] "session name is invalid" is shown on an untouched empty field.

@@ -5601,3 +5601,12 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Gates: Android `./gradlew test lintDebug` 966 runs, 0 failures; desktop
   `npm run check` 114 tests. Not device-verified (needs new APK + desktop package).
 - Also fixed TODO layout: Blocks 51-52 now sit after Block 50, before "Future phases".
+
+## 2026-09-16T20:26:26Z - Claude Opus 5 - Block 52.5 fixes device-verified
+- Build 9a8767f (desktop binary 5b510f36, APK 55859964), A54 over CGNAT, mDNS join,
+  session Test6: Android join steps and desktop listener wording correct before and
+  after approval; audio played in sync; after the phone left mid-stream the desktop
+  showed "Streaming to nobody" plus the per-stream frame line.
+- Follow-ups recorded under 52.5: possible ~1 min approval send delay (unconfirmed,
+  click time unrecorded), 11 "partial" frames with one listener, frame counter runs
+  ~200/s (unit unclear), stale "Playback start requested." banner, jargon empty text.
