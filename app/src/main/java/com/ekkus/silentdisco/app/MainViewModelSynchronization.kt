@@ -327,12 +327,18 @@ private const val SYNC_ACQUIRE_CADENCE_MS = 250L
                 if (_uiState.value.canManualResync()) {
                     requestListenerSyncProbe(source = "Periodic listener resync")
                 }
-                wifiDirectService.recordHeartbeat()
-                if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
-                    wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
-                ) {
-                    handleListenerDisconnect("Transport disconnected during playback")
-                    return@launch
+                // Wi-Fi Direct state only describes the session when the
+                // session actually runs over it. On an mDNS or manual join it
+                // is idle or scanning, and treating that as a disconnect
+                // would end a healthy session (Block 52.6).
+                if (listenerTransportRidesWifiDirect) {
+                    wifiDirectService.recordHeartbeat()
+                    if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
+                        wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
+                    ) {
+                        handleListenerDisconnect("Transport disconnected during playback")
+                        return@launch
+                    }
                 }
             }
         }

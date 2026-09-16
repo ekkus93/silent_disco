@@ -139,6 +139,14 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
+
+    /**
+     * Whether the joined session's transport runs over a Wi-Fi Direct group.
+     * Only then is Wi-Fi Direct's own connection state evidence about the
+     * session; a desktop host joined via mDNS or a manual endpoint never uses
+     * it, and its disconnects arrive as Rust transport events instead.
+     */
+    internal var listenerTransportRidesWifiDirect: Boolean = false
     internal var pendingStartAdvertisingOperationId: String? = null
     internal var hostTransportEventLoopStarted: Boolean = false
     internal var listenerTransportEventLoopStarted: Boolean = false

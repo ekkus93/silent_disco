@@ -104,6 +104,7 @@ internal fun MainViewModel.establishRustListenerNetwork(
     val syncPort = effect.syncPort
     val audioPort = effect.audioPort
     if (address != null && controlPort != null && syncPort != null && audioPort != null) {
+        listenerTransportRidesWifiDirect = false
         val session = _uiState.value.discoveredSessions.firstOrNull { it.id == effect.sessionId }
         if (session == null) {
             controller.platformOperationFailed(
@@ -138,6 +139,7 @@ internal fun MainViewModel.establishRustListenerNetwork(
         return
     }
     pendingEstablishNetworkOperationId = effect.operationId
+    listenerTransportRidesWifiDirect = true
     wifiDirectService.connectToSession(session)
 }
 
@@ -146,6 +148,7 @@ internal fun MainViewModel.releaseRustListenerNetwork(
     effect: FfiPlatformEffect.ReleaseNetwork,
 ) {
     pendingEstablishNetworkOperationId = null
+    listenerTransportRidesWifiDirect = false
     viewModelScope.launch {
         var firstFailure: Throwable? = null
         try {

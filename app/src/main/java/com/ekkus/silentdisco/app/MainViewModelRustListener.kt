@@ -495,6 +495,11 @@ private fun MainViewModel.startListenerPlaybackFromTransportNow(
         listenerPlaybackState = PlaybackState.BUFFERING,
     )
     startListenerPlaybackDiagnostics(runtime)
+    // The runtime gates playback on an accepted clock-sync sample, so it
+    // needs probes from the moment it exists. This path never started any:
+    // every packet was dropped "before lock", and the host rightly evicted a
+    // listener that never probed (Block 52.6).
+    startPeriodicListenerResync()
 }
 
 /**
