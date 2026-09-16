@@ -39,6 +39,9 @@ pub(super) fn stage_melody_source(
     total_seconds: u32,
     container: AudioContainer,
 ) -> AudioSourceDescriptor {
+    if let Some(path) = std::env::var_os("SILENT_DISCO_DEVICE_TEST_SOURCE") {
+        return stage_real_file(temp, registry, source_id, std::path::Path::new(&path));
+    }
     let wav_bytes = melody_pcm_wav(notes_hz, note_seconds, total_seconds);
     let (extension, bytes) = match container {
         AudioContainer::Wav => ("wav", wav_bytes),
@@ -49,6 +52,52 @@ pub(super) fn stage_melody_source(
     fs::write(&source_path, &bytes).expect("write source");
     let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
     let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
+    let descriptor = AudioSourceDescriptor::new(
+        format!("desktop-block-playback-manual-{source_id}"),
+        format!("{source_id}.{extension}"),
+        Some(byte_length),
+        None,
+    )
+    .expect("descriptor");
+    registry
+        .replace(InspectedAudioSource::from_staged(
+            descriptor.clone(),
+            canonical_path,
+            container,
+        ))
+        .expect("register staged source");
+    descriptor
+}
+
+/// Stages a caller-supplied audio file instead of the generated melody, so a
+/// device session can reproduce what a real source does on the wire -- a
+/// failure that only happens with one particular file is otherwise
+/// indistinguishable from a failure in the path that played it.
+fn stage_real_file(
+    temp: &TempDir,
+    registry: &SelectedSourceRegistry,
+    source_id: &str,
+    path: &std::path::Path,
+) -> AudioSourceDescriptor {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .expect("SILENT_DISCO_DEVICE_TEST_SOURCE must have a file extension");
+    let container = match extension.as_str() {
+        "wav" => AudioContainer::Wav,
+        "flac" => AudioContainer::Flac,
+        "mp3" => AudioContainer::Mp3,
+        other => panic!("unsupported SILENT_DISCO_DEVICE_TEST_SOURCE extension: {other}"),
+    };
+    let source_path = temp.path().join(format!("{source_id}.{extension}"));
+    fs::copy(path, &source_path).expect("copy SILENT_DISCO_DEVICE_TEST_SOURCE");
+    let canonical_path = fs::canonicalize(&source_path).expect("canonical source");
+    let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
+    eprintln!(
+        "streaming real file {} ({byte_length} bytes)",
+        path.display()
+    );
     let descriptor = AudioSourceDescriptor::new(
         format!("desktop-block-playback-manual-{source_id}"),
         format!("{source_id}.{extension}"),

@@ -287,6 +287,27 @@ pub(super) fn exercise_pause_resume(
 /// the host side actually knows (sync offset/RTT/confidence per listener,
 /// plus broadcast delivery and queue pressure from Block 26.3); read the
 /// rest from the Android app's own diagnostics screen.
+/// Fails the manual session when the stream reached no listener.
+///
+/// This test printed delivery counters but never checked them, so a session
+/// that streamed every frame to nobody still reported `ok` -- which hid
+/// Block 52.1 until the counters were read by hand.
+pub(super) fn assert_stream_reached_a_listener(network: &DesktopHostNetworkControl, label: &str) {
+    let active = network
+        .active_host_session()
+        .expect("read active host session")
+        .expect("host session is still active");
+    let broadcast = active.broadcast;
+    assert!(
+        broadcast.frames_fully_delivered > 0,
+        "[{label}] the stream reached no listener: attempted={} fully_delivered={} \
+         without_recipients={}",
+        broadcast.frames_attempted,
+        broadcast.frames_fully_delivered,
+        broadcast.frames_without_recipients,
+    );
+}
+
 pub(super) fn print_diagnostics(
     handle: &silent_disco_core::runtime::CoreActorHandle,
     network: &DesktopHostNetworkControl,

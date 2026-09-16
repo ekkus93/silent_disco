@@ -10,8 +10,9 @@ use super::harness::{real_private_lan_address, start_host_session, submit, wait_
 use crate::platform::file_picker::{AudioContainer, SelectedSourceRegistry};
 use crate::platform::start_playback;
 use automation::{
-    automate_manual_connect, connection_payload_json, exercise_pause_resume,
-    print_connection_payload, print_diagnostics, wait_for_real_join_and_approve,
+    assert_stream_reached_a_listener, automate_manual_connect, connection_payload_json,
+    exercise_pause_resume, print_connection_payload, print_diagnostics,
+    wait_for_real_join_and_approve,
 };
 use melody::{C_MAJOR_SCALE_HZ, stage_melody_source};
 use silent_disco_core::domain::PlaybackState;
@@ -182,6 +183,7 @@ fn run_manual_single_format_session(source_id: &str, container: AudioContainer, 
     eprintln!("=== {label} manual device test ===");
     print_connection_payload(address, &endpoint, &advertisement);
     wait_for_real_join_and_approve(&handle, &receiver, &network);
+    hold_before_playback();
 
     eprintln!("=== starting {label} playback: ascending C major scale ===");
     start_playback::start(&handle, &network, &registry).expect("start playback");
@@ -194,6 +196,7 @@ fn run_manual_single_format_session(source_id: &str, container: AudioContainer, 
     eprintln!("playing for 20 more seconds...");
     std::thread::sleep(Duration::from_secs(20));
     print_diagnostics(&handle, &network, &format!("{label}-before-stop"));
+    assert_stream_reached_a_listener(&network, label);
 
     eprintln!("stopping playback...");
     network.stop_playback().expect("stop playback");
@@ -311,4 +314,20 @@ fn manual_two_emulator_listeners_play_together() {
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");
     eprintln!("done.");
+}
+
+/// Optionally idles between approval and playback start.
+///
+/// A human operating the GUI approves and then presses Play some time later,
+/// while this harness starts playback immediately; this reproduces that gap
+/// so a failure that depends on it can be told apart from one in the GUI path.
+fn hold_before_playback() {
+    let Some(seconds) = std::env::var("SILENT_DISCO_DEVICE_TEST_PLAY_DELAY_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return;
+    };
+    eprintln!("holding {seconds}s between approval and playback...");
+    std::thread::sleep(Duration::from_secs(seconds));
 }
