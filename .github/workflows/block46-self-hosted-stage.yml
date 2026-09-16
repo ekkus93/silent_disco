@@ -105,24 +105,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            curl \
-            dbus-x11 \
-            file \
-            libasound2-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget \
-            xauth \
-            xvfb
+          echo "Checking non-interactive sudo access."
+          sudo -n true || {
+            echo "The self-hosted runner requires passwordless non-interactive sudo for Block 46.3 staging." >&2
+            exit 1
+          }
+
+          echo "Updating apt package metadata."
+          timeout --signal=TERM --kill-after=30s 5m \
+            sudo -n env DEBIAN_FRONTEND=noninteractive \
+            apt-get -o DPkg::Lock::Timeout=60 update
+
+          echo "Installing desktop build prerequisites."
+          timeout --signal=TERM --kill-after=30s 10m \
+            sudo -n env DEBIAN_FRONTEND=noninteractive \
+            apt-get -o DPkg::Lock::Timeout=60 install --yes --no-install-recommends \
+              build-essential \
+              curl \
+              dbus-x11 \
+              file \
+              libasound2-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev \
+              libssl-dev \
+              libwebkit2gtk-4.1-dev \
+              libxdo-dev \
+              patchelf \
+              wget \
+              xauth \
+              xvfb
 
           sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          echo "Accepting Android SDK licenses."
           set +o pipefail
           yes | timeout --signal=TERM --kill-after=30s 5m "${sdkmanager}" --licenses >/dev/null
           license_status="${PIPESTATUS[1]}"
@@ -132,6 +146,7 @@ jobs:
             exit "${license_status}"
           }
 
+          echo "Ensuring required Android SDK packages are installed."
           timeout --signal=TERM --kill-after=30s 20m "${sdkmanager}" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
