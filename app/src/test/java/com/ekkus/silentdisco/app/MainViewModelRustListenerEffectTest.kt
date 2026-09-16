@@ -426,6 +426,10 @@ class MainViewModelRustListenerEffectTest {
     fun mdnsAdvertisementReplacesBleFallbackForTheSameSessionId() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustListenerCore()
+        // Discovery results are only reconciled while the core is discovering.
+        harness.listenerCoreController.publishSnapshot(
+            listenerCoreSnapshot(discoveryActive = true, known = emptyList(), selected = null),
+        )
         advanceUntilIdle()
         harness.bleService.setSessions(
             listOf(

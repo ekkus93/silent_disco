@@ -5,6 +5,20 @@ use super::{
     resource_limit,
 };
 
+/// Listener states in which a join is in progress or established, so the
+/// selected session is owned by the connection rather than by discovery.
+const LISTENER_JOINED_LIFECYCLES: &[ListenerLifecycle] = &[
+    ListenerLifecycle::JoinRequested,
+    ListenerLifecycle::AwaitingApproval,
+    ListenerLifecycle::Approved,
+    ListenerLifecycle::Connecting,
+    ListenerLifecycle::SyncingClock,
+    ListenerLifecycle::Buffering,
+    ListenerLifecycle::Playing,
+    ListenerLifecycle::Reconnecting,
+    ListenerLifecycle::Desynced,
+];
+
 impl ActorState {
     pub(super) fn apply_platform(
         &mut self,
@@ -89,6 +103,26 @@ impl ActorState {
         &mut self,
         session_id: &SessionId,
     ) -> Result<ApplyOutcome, CoreError> {
+        // Once joined, the connection -- not mDNS presence -- owns the
+        // session (Block 52.3). An advertisement dropping out of a scan says
+        // nothing about a live connection, and acting on it reset connected
+        // listeners to Idle. A host that really left surfaces as a transport
+        // failure instead. The entry stays listed because the snapshot
+        // requires the selected session to be a discovered one.
+        if self.snapshot.selected_session.as_ref() == Some(session_id)
+            && LISTENER_JOINED_LIFECYCLES.contains(&self.snapshot.listener_lifecycle)
+        {
+            return self.diagnostic(
+                "session_expiry_ignored_while_joined",
+                vec![
+                    Self::field("session_id", session_id.as_str())?,
+                    Self::field(
+                        "listener_lifecycle",
+                        &format!("{:?}", self.snapshot.listener_lifecycle),
+                    )?,
+                ],
+            );
+        }
         let previous = self.snapshot.discovered_sessions.len();
         self.snapshot
             .discovered_sessions
@@ -183,5 +217,120 @@ impl ActorState {
         self.remove_pending(&operation_id);
         self.clear_failure();
         Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod session_expiry_tests {
+    use super::{ActorState, ListenerLifecycle, SessionAdvertisement, SessionId};
+    use crate::domain::{AppRole, ApprovalMode, DeviceId};
+    use crate::runtime::CoreNotification;
+
+    fn advertisement(id: &str) -> SessionAdvertisement {
+        SessionAdvertisement::new(
+            SessionId::new(id).expect("valid session ID"),
+            DeviceId::new("desktop-host").expect("valid device ID"),
+            "Patio Mix",
+            ApprovalMode::Manual,
+            2,
+            None,
+        )
+        .expect("valid advertisement")
+    }
+
+    fn listener_with(selected: &str, lifecycle: ListenerLifecycle) -> ActorState {
+        let mut state = ActorState::new(DeviceId::new("listener").expect("valid device ID"));
+        state.snapshot.selected_role = Some(AppRole::Listener);
+        state.snapshot.discovered_sessions = vec![advertisement(selected), advertisement("other")];
+        state.snapshot.selected_session = Some(SessionId::new(selected).expect("valid ID"));
+        state.snapshot.listener_lifecycle = lifecycle;
+        state
+    }
+
+    /// Block 52.3: once a listener has joined, mDNS presence no longer decides
+    /// whether the session exists -- the connection does. A host's
+    /// advertisement dropping out of a scan (Android keeps reconciling after
+    /// discovery stops) used to clear the selection and reset a connected
+    /// listener to Idle, leaving it on "No session selected -- Unknown host".
+    #[test]
+    fn expiry_of_the_joined_session_is_ignored_in_every_joined_state() {
+        for lifecycle in [
+            ListenerLifecycle::JoinRequested,
+            ListenerLifecycle::Connecting,
+            ListenerLifecycle::AwaitingApproval,
+            ListenerLifecycle::Approved,
+            ListenerLifecycle::SyncingClock,
+            ListenerLifecycle::Buffering,
+            ListenerLifecycle::Playing,
+            ListenerLifecycle::Reconnecting,
+            ListenerLifecycle::Desynced,
+        ] {
+            let mut state = listener_with("joined", lifecycle);
+            let outcome = state
+                .expire_session(&SessionId::new("joined").expect("valid ID"))
+                .expect("expiry of a joined session is not an error");
+
+            assert_eq!(
+                state.snapshot.listener_lifecycle, lifecycle,
+                "{lifecycle:?}"
+            );
+            assert_eq!(
+                state.snapshot.selected_session,
+                Some(SessionId::new("joined").expect("valid ID")),
+                "{lifecycle:?}"
+            );
+            // Kept in the list: the snapshot requires the selected session to
+            // be a discovered one, and the UI resolves its name from there.
+            assert!(
+                state
+                    .snapshot
+                    .discovered_sessions
+                    .iter()
+                    .any(|session| session.session_id.as_str() == "joined"),
+                "{lifecycle:?}"
+            );
+            assert!(!outcome.changed, "{lifecycle:?}");
+            assert!(
+                outcome
+                    .notifications
+                    .iter()
+                    .any(|notification| matches!(notification, CoreNotification::Diagnostic(_))),
+                "an ignored expiry must stay observable ({lifecycle:?})"
+            );
+        }
+    }
+
+    /// Before a join, a vanished advertisement really does make the selection
+    /// stale, so it is still cleared.
+    #[test]
+    fn expiry_of_a_selected_but_unjoined_session_clears_the_selection() {
+        let mut state = listener_with("picked", ListenerLifecycle::SessionSelected);
+        state
+            .expire_session(&SessionId::new("picked").expect("valid ID"))
+            .expect("expiry succeeds");
+
+        assert_eq!(state.snapshot.selected_session, None);
+        assert_eq!(state.snapshot.listener_lifecycle, ListenerLifecycle::Idle);
+        assert!(
+            !state
+                .snapshot
+                .discovered_sessions
+                .iter()
+                .any(|session| session.session_id.as_str() == "picked")
+        );
+    }
+
+    #[test]
+    fn expiry_of_another_session_still_removes_it_while_joined() {
+        let mut state = listener_with("joined", ListenerLifecycle::Playing);
+        state
+            .expire_session(&SessionId::new("other").expect("valid ID"))
+            .expect("expiry succeeds");
+
+        assert_eq!(state.snapshot.discovered_sessions.len(), 1);
+        assert_eq!(
+            state.snapshot.listener_lifecycle,
+            ListenerLifecycle::Playing
+        );
     }
 }

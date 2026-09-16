@@ -42,6 +42,15 @@ class FakeListenerCoreController : ListenerCoreController {
     var callLog: MutableList<String>? = null
     var closeCallCount = 0
 
+    /**
+     * Publishes [snapshot] the way the real controller does: [snapshots] is
+     * updated before the matching notification is delivered.
+     */
+    fun publishSnapshot(snapshot: FfiCoreSnapshot) {
+        _snapshots.value = snapshot
+        emit(FfiCoreNotification.Snapshot(snapshot))
+    }
+
     /** Pushes a notification into [notifications], as the real Rust actor would. */
     fun emit(notification: FfiCoreNotification) {
         check(notificationChannel.trySend(notification).isSuccess) {

@@ -177,6 +177,12 @@ import kotlinx.coroutines.launch
      */
     internal fun MainViewModel.refreshDiscoveredSessions() {
         val controller = listenerCoreController ?: return
+        // Only reconcile while the core is discovering (Block 52.3). Stopping
+        // mDNS clears its list, so reconciling afterwards expired the session
+        // the listener had just joined, and resubmitted results the core
+        // rejects once discovery is inactive. Results already found when
+        // discovery starts are submitted by the snapshot handler instead.
+        if (controller.snapshots.value?.discoveryActive != true) return
         val mdnsSessions = mdnsService.discoveredSessions.value
             .distinctBy { it.sessionId }
             .sortedBy { it.sessionName }
