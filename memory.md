@@ -5575,3 +5575,14 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - The discovery-path checklist marks "Waiting for host approval" complete and
   shows "Connecting" with a spinner while actually approved and waiting for
   Play -- user read it as stuck (52.5).
+
+## 2026-09-16T19:29:44Z - Claude Opus 5 - Block 52.4: a refused effect silently killed core notification delivery
+- Root cause: desktop runners return an error from the core observer when they
+  cannot accept an effect; run_notification_worker exited on any observer error,
+  so all later effects (e.g. join approvals) were silently never delivered and
+  current_snapshot() began failing. Now a refused platform/transport/storage
+  effect is fed back to the actor as that operation's failure and delivery
+  continues. tests/refused_effect.rs locks both cases.
+- Desktop: accepted join decisions/removals time out after 15 s
+  (DELIVERY_CONFIRMATION_TIMEOUT_MS) into a retryable visible failure.
+- LabScreen.test.tsx link-fault test is flaky: 1 of 3 isolated runs failed.

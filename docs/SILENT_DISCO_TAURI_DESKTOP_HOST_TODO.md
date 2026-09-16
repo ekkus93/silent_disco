@@ -5201,13 +5201,45 @@ therefore never been able to play audio from a desktop host.
 
 ### 52.4 Approval delivery can hang forever without a visible failure
 
-- [ ] At 10:00 the host showed "Waiting for approval delivery confirmation..."
-      for over three minutes while writing nothing to the listener's socket
-      (109 bytes sent, `lastsnd` == `lastrcv`). Stopping playback did not
-      clear it, so streaming is not the cause; the listener app had been
-      restarted mid-attempt just before, which is the leading suspect.
-- [ ] Whatever the cause, a pending delivery must time out into a visible
-      failure rather than wait indefinitely.
+At 10:00 on 2026-09-16 the host showed "Waiting for approval delivery
+confirmation..." for over three minutes while writing nothing to the listener's
+socket. The exact trigger was not captured (the desktop was not logging), but
+the code allowed exactly this outcome.
+
+Root cause: the desktop hands core effects to its platform, transport, and
+storage runners inside the core's notification observer, and returns the
+runner's error when an effect cannot be accepted (transport shutting down,
+effect queue full, effect worker unavailable, or no active host session). The
+core's `run_notification_worker` treated any observer error as fatal and
+exited. From then on no effect was ever delivered -- a join approval was
+accepted, then silently never sent -- and `current_snapshot()` began failing.
+One refused effect quietly broke the rest of the session.
+
+- [x] Core: an effect the platform refuses now fails only its own operation.
+      The notification worker reports it back to the actor (platform ->
+      `OperationFailed`, transport -> a failed `DeliveryCompleted`, storage ->
+      `OperationFailed`) and keeps delivering. Refusals of snapshots, errors,
+      and diagnostics remain fatal, and so does a refusal the actor queue
+      cannot take.
+- [x] Desktop: an accepted join decision or listener removal that receives no
+      confirmation within `DELIVERY_CONFIRMATION_TIMEOUT_MS` (15 s) is shown
+      as a retryable failure and stays actionable. This also covers causes not
+      yet identified, and a repeated failure that looks identical to the
+      previous one and so produces no new error to compare against.
+- [x] Tests: `tests/refused_effect.rs` (a refused platform effect fails its
+      operation while notifications keep flowing and the handle stays
+      usable; a refused join approval fails visibly, leaves the request
+      pending, and a second approval then admits the listener). Both fail
+      with the fix disabled. `HostSessionScreen/domain.test.ts` covers the
+      timeout window, a repeated identical failure, and operations not yet
+      accepted. Rust gate 447 tests; desktop gate 108 tests.
+- [ ] Not device-verified: a refused effect cannot be provoked on demand from
+      the GUI. Re-check that approvals behave normally on the next packaged
+      build.
+- [ ] Unrelated flake seen while gating: `LabScreen.test.tsx` "edits a loaded
+      link fault profile through the backend command" failed 1 of 3 isolated
+      runs (`setLabLinkFaults` never observed). Neither the test nor LabScreen
+      changed today; it will eventually fail CI.
 
 ### 52.5 Diagnostics that misreport or are missing
 
