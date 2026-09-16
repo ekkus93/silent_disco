@@ -122,20 +122,45 @@ jobs:
             xauth \
             xvfb
 
-          sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          set +o pipefail
-          yes | timeout --signal=TERM --kill-after=30s 5m "${sdkmanager}" --licenses >/dev/null
-          license_status="${PIPESTATUS[1]}"
-          set -o pipefail
-          [[ "${license_status}" -eq 0 ]] || {
-            echo "Android SDK license acceptance failed or timed out with status ${license_status}." >&2
-            exit "${license_status}"
-          }
-
-          timeout --signal=TERM --kill-after=30s 20m "${sdkmanager}" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
+          required_packages=(
+            "platforms;android-36"
+            "build-tools;36.0.0"
             "ndk;28.2.13676358"
+          )
+          required_paths=(
+            "platforms/android-36/android.jar"
+            "build-tools/36.0.0/aapt2"
+            "ndk/28.2.13676358/source.properties"
+          )
+          missing_packages=()
+          for index in "${!required_packages[@]}"; do
+            if [[ -e "${ANDROID_HOME}/${required_paths[$index]}" ]]; then
+              printf 'Using installed Android SDK package %s\n' "${required_packages[$index]}"
+            else
+              missing_packages+=("${required_packages[$index]}")
+            fi
+          done
+
+          if (( ${#missing_packages[@]} > 0 )); then
+            sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+            printf 'Installing missing Android SDK packages: %s\n' "${missing_packages[*]}"
+            set +o pipefail
+            yes | timeout --signal=TERM --kill-after=30s 5m "${sdkmanager}" --licenses >/dev/null
+            license_status="${PIPESTATUS[1]}"
+            set -o pipefail
+            [[ "${license_status}" -eq 0 ]] || {
+              echo "Android SDK license acceptance failed or timed out with status ${license_status}." >&2
+              exit "${license_status}"
+            }
+            timeout --signal=TERM --kill-after=30s 20m "${sdkmanager}" "${missing_packages[@]}"
+          fi
+
+          for required_path in "${required_paths[@]}"; do
+            [[ -e "${ANDROID_HOME}/${required_path}" ]] || {
+              echo "Required Android SDK payload is still missing: ${required_path}" >&2
+              exit 1
+            }
+          done
 
       - name: Build production Linux bundles
         working-directory: desktop
