@@ -5110,8 +5110,23 @@ harness started playback immediately.
       `record_awaiting_approval` rejects it ("awaiting approval arrived outside
       an active connection attempt"). Observed at 09:43:52, 105 ms after the
       request; not observed on the 10:00 attempt, consistent with a race.
-- [ ] Report the endpoint ready before sending the join request; add a test
-      with an immediate `Hello`.
+- [x] Fixed: `connectRustListenerEndpoint` now reports `NetworkEndpointReady`
+      after the socket connects and before the join request is sent. The core
+      applies submissions in order, so the host's reply can no longer reach it
+      while it is still `JoinRequested`. The Wi-Fi Direct completion path uses
+      the same function and its docstring, which described the old order as
+      intended, was corrected.
+- [x] A join request that fails to send after readiness was reported is now a
+      `transportFailed` (the establishment operation already completed),
+      which the core maps to listener `Error` with `Reconnect`.
+- [x] Tests in `MainViewModelRustListenerEffectTest`: readiness is recorded
+      before the join request (asserted in order across the core and
+      transport fakes), and a post-readiness send failure is a transport
+      failure. Both failed before the fix. Android gate: 945 unit-test runs,
+      lint clean.
+- [ ] Not yet device-verified. The race fired on 1 of 2 real mDNS joins, so a
+      clean device run is weak evidence on its own; the ordering test is the
+      primary guard.
 
 ### 52.3 mDNS expiry resets an already-joined listener
 
