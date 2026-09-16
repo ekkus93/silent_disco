@@ -5201,12 +5201,26 @@ One refused effect quietly broke the rest of the session.
       `lastsnd`), while the operator reported approving before 13:21.
       Unconfirmed: the click time is not recorded anywhere. Log the
       decision time and the send time so this can be settled.
-    - 11 frames "partially" delivered with a single listener; one
-      listener cannot be partially reached (see the 52.1 partial-delivery
-      anomaly).
-    - The frame counts imply about 200 frames per second (24827 at 2:04),
-      not the 50 expected from 20 ms packets. Confirm what a "frame" is in
-      the broadcast counters before labeling it for operators.
+    - [x] 11 frames "partially" delivered with a single listener. Root
+      cause: `BroadcastCounters::record_delivery` counted every
+      `successful < intended` frame as partial, including frames that
+      reached *none* of their recipients; with one listener every miss
+      landed there. Added `frames_undelivered` (DTO `framesUndelivered`),
+      so partial now means "at least one, not all". Tests
+      `broadcast_counter_tests` (both fail without the fix) and
+      `DeliveryAndTransportAlerts.test.tsx`. This also explains the 52.1
+      single-listener "partial" anomaly.
+    - [x] The counts run at about 200 per second (24827 at 2:04 = 124.1 s x
+      200). Not a counting bug: a counted "frame" is one broadcast packet,
+      audio packets are 5 ms (`DEFAULT_PACKET_DURATION_MS`), and the few
+      control messages queued on the same path are counted too. The
+      counters also live for the whole host session, not one stream. The
+      line now reads "Packets sent this session: X of Y reached every
+      listener; P reached only some; U reached no listener; N sent with no
+      listener connected; F failed to send." Not device-verified.
+    - [ ] Why about 11 packets missed the only listener is still unknown
+      (likely the window between the phone leaving and eviction; the host
+      does not log which packets failed or when).
     - "Playback start requested." stays under the session header long
       after playback started.
     - The empty listener text "No listeners have completed delivery-confirmed

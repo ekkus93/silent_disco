@@ -37,6 +37,7 @@ export function DeliveryAndTransportAlerts({
   const framesImperfect =
     Number(broadcast?.framesFailed ?? 0) +
     Number(broadcast?.framesPartiallyDelivered ?? 0) +
+    Number(broadcast?.framesUndelivered ?? 0) +
     framesWithoutRecipients;
   return (
     <>
@@ -56,9 +57,12 @@ export function DeliveryAndTransportAlerts({
               : "border-slate-700 bg-slate-900 text-slate-200"
           }`}
         >
-          Audio this stream: {broadcast.framesFullyDelivered} of {broadcast.framesAttempted} frames
-          reached every listener; {broadcast.framesPartiallyDelivered} partially,{" "}
-          {broadcast.framesWithoutRecipients} to nobody, {broadcast.framesFailed} failed.
+          {/* A "frame" here is one broadcast packet (an audio packet is 5 ms), and
+              the counters run for the whole host session, not one stream. */}
+          Packets sent this session: {broadcast.framesFullyDelivered} of {broadcast.framesAttempted}{" "}
+          reached every listener; {broadcast.framesPartiallyDelivered} reached only some;{" "}
+          {broadcast.framesUndelivered} reached no listener; {broadcast.framesWithoutRecipients}{" "}
+          sent with no listener connected; {broadcast.framesFailed} failed to send.
         </p>
       ) : null}
       {lastDelivery ? (
@@ -86,7 +90,7 @@ export function DeliveryAndTransportAlerts({
         >
           Broadcast queue: {broadcast.queueDepth} queued (peak {broadcast.queuePeakDepth})
           {Number(broadcast.queueOverflows) > 0
-            ? `; ${broadcast.queueOverflows} frame(s) dropped for a full queue.`
+            ? `; ${broadcast.queueOverflows} packet(s) dropped for a full queue.`
             : "."}
         </p>
       ) : null}

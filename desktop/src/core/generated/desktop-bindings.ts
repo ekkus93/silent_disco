@@ -48,7 +48,7 @@ export type ConnectedListenerDto = { deviceId: string, displayName: string, trus
 
 export type DeliveryReportDto = { intendedPeers: number, successfulPeers: number, failedPeers: number, severity: string, };
 
-export type BroadcastDeliveryDto = { framesAttempted: string, framesFailed: string, framesFullyDelivered: string, framesPartiallyDelivered: string, framesWithoutRecipients: string, recipientsIntended: string, recipientsDelivered: string, queueDepth: string, queuePeakDepth: string, queueOverflows: string, };
+export type BroadcastDeliveryDto = { framesAttempted: string, framesFailed: string, framesFullyDelivered: string, framesPartiallyDelivered: string, framesUndelivered: string, framesWithoutRecipients: string, recipientsIntended: string, recipientsDelivered: string, queueDepth: string, queuePeakDepth: string, queueOverflows: string, };
 
 export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, playbackPositionMs: string, 
 /**

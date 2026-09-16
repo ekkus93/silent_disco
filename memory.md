@@ -5610,3 +5610,13 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Follow-ups recorded under 52.5: possible ~1 min approval send delay (unconfirmed,
   click time unrecorded), 11 "partial" frames with one listener, frame counter runs
   ~200/s (unit unclear), stale "Playback start requested." banner, jargon empty text.
+
+## 2026-09-16T20:32:59Z - Claude Opus 5 - Block 52.5: broadcast counter partial/undelivered split
+- record_delivery counted frames that reached none of their recipients as
+  "partial"; new frames_undelivered counter/DTO field separates them. Explains the
+  "11 partially" seen with a single listener and the older 52.1 anomaly.
+- Counter rate of ~200/s is correct: one count per broadcast packet, audio packets
+  are 5 ms (DEFAULT_PACKET_DURATION_MS), counters are per host session. UI line now
+  "Packets sent this session: ..." with five distinct outcomes.
+- Gates: desktop npm run check (115 tests), clippy --all-targets -D warnings,
+  desktop cargo test 233 passed. No core changes. Not device-verified.

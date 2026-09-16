@@ -335,10 +335,11 @@ pub(super) fn print_diagnostics(
         let broadcast = active.broadcast;
         eprintln!(
             "[{label}] broadcast: attempted={} fully_delivered={} partially_delivered={} \
-             without_recipients={} queue_depth={} queue_peak={} queue_overflows={}",
+             undelivered={} without_recipients={} queue_depth={} queue_peak={} queue_overflows={}",
             broadcast.frames_attempted,
             broadcast.frames_fully_delivered,
             broadcast.frames_partially_delivered,
+            broadcast.frames_undelivered,
             broadcast.frames_without_recipients,
             broadcast.queue_depth,
             broadcast.queue_peak_depth,

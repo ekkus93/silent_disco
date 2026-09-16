@@ -86,8 +86,12 @@ pub(crate) struct BroadcastDiagnostics {
     pub(crate) frames_failed: u64,
     /// Frames that reached every intended recipient.
     pub(crate) frames_fully_delivered: u64,
-    /// Frames that reached some but not all intended recipients.
+    /// Frames that reached at least one, but not every, intended recipient.
     pub(crate) frames_partially_delivered: u64,
+    /// Frames that had recipients but reached none of them. Kept apart from
+    /// partial delivery: with a single listener every miss lands here, and
+    /// calling it "partial" suggested someone still heard it (Block 52.5).
+    pub(crate) frames_undelivered: u64,
     /// Frames broadcast while no listener was connected. Not a failure of the
     /// transport, but not delivery either, and it must stay visible.
     pub(crate) frames_without_recipients: u64,
@@ -128,6 +132,7 @@ struct BroadcastCounters {
     frames_failed: AtomicU64,
     frames_fully_delivered: AtomicU64,
     frames_partially_delivered: AtomicU64,
+    frames_undelivered: AtomicU64,
     frames_without_recipients: AtomicU64,
     recipients_intended: AtomicU64,
     recipients_delivered: AtomicU64,
@@ -143,6 +148,7 @@ impl BroadcastCounters {
             frames_failed: self.frames_failed.load(Ordering::Relaxed),
             frames_fully_delivered: self.frames_fully_delivered.load(Ordering::Relaxed),
             frames_partially_delivered: self.frames_partially_delivered.load(Ordering::Relaxed),
+            frames_undelivered: self.frames_undelivered.load(Ordering::Relaxed),
             frames_without_recipients: self.frames_without_recipients.load(Ordering::Relaxed),
             recipients_intended: self.recipients_intended.load(Ordering::Relaxed),
             recipients_delivered: self.recipients_delivered.load(Ordering::Relaxed),
@@ -195,6 +201,8 @@ impl BroadcastCounters {
                 .fetch_add(1, Ordering::Relaxed);
         } else if successful == intended {
             self.frames_fully_delivered.fetch_add(1, Ordering::Relaxed);
+        } else if successful == 0 {
+            self.frames_undelivered.fetch_add(1, Ordering::Relaxed);
         } else {
             self.frames_partially_delivered
                 .fetch_add(1, Ordering::Relaxed);
@@ -210,3 +218,51 @@ impl BroadcastCounters {
 include!("host_transport/runtime.rs");
 include!("host_transport/worker.rs");
 include!("host_transport/effects.rs");
+
+#[cfg(test)]
+mod broadcast_counter_tests {
+    use super::{BroadcastCounters, DeliveryReport, TransportDelivery};
+
+    fn delivery(intended: u32, successful: u32) -> TransportDelivery {
+        TransportDelivery {
+            report: DeliveryReport::new(intended, successful, intended - successful)
+                .expect("valid delivery report"),
+            bytes_sent: 0,
+        }
+    }
+
+    /// Block 52.5: with one listener, a missed packet was reported as
+    /// "partially delivered", which reads as if someone still heard it.
+    #[test]
+    fn a_frame_that_reached_none_of_its_recipients_is_undelivered_not_partial() {
+        let counters = BroadcastCounters::default();
+        counters.record_delivery(&delivery(1, 0));
+        counters.record_delivery(&delivery(3, 0));
+
+        let snapshot = counters.snapshot();
+        assert_eq!(snapshot.frames_undelivered, 2);
+        assert_eq!(snapshot.frames_partially_delivered, 0);
+        assert_eq!(snapshot.frames_fully_delivered, 0);
+        assert_eq!(snapshot.frames_attempted, 2);
+    }
+
+    #[test]
+    fn every_delivery_outcome_lands_in_exactly_one_bucket() {
+        let counters = BroadcastCounters::default();
+        counters.record_delivery(&delivery(0, 0));
+        counters.record_delivery(&delivery(2, 2));
+        counters.record_delivery(&delivery(2, 1));
+        counters.record_delivery(&delivery(2, 0));
+        counters.record_failure();
+
+        let snapshot = counters.snapshot();
+        assert_eq!(snapshot.frames_without_recipients, 1);
+        assert_eq!(snapshot.frames_fully_delivered, 1);
+        assert_eq!(snapshot.frames_partially_delivered, 1);
+        assert_eq!(snapshot.frames_undelivered, 1);
+        assert_eq!(snapshot.frames_failed, 1);
+        assert_eq!(snapshot.frames_attempted, 5);
+        assert_eq!(snapshot.recipients_intended, 6);
+        assert_eq!(snapshot.recipients_delivered, 3);
+    }
+}

@@ -212,6 +212,7 @@ mod tests {
                 frames_failed: 0,
                 frames_fully_delivered: 10,
                 frames_partially_delivered: 0,
+                frames_undelivered: 0,
                 frames_without_recipients: 0,
                 recipients_intended: 10,
                 recipients_delivered: 10,

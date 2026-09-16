@@ -126,6 +126,7 @@ pub struct BroadcastDeliveryDto {
     pub frames_failed: String,
     pub frames_fully_delivered: String,
     pub frames_partially_delivered: String,
+    pub frames_undelivered: String,
     pub frames_without_recipients: String,
     pub recipients_intended: String,
     pub recipients_delivered: String,
@@ -312,6 +313,7 @@ pub(crate) fn broadcast_delivery_dto(active: &ActiveHostSessionSnapshot) -> Broa
         frames_failed: active.broadcast.frames_failed.to_string(),
         frames_fully_delivered: active.broadcast.frames_fully_delivered.to_string(),
         frames_partially_delivered: active.broadcast.frames_partially_delivered.to_string(),
+        frames_undelivered: active.broadcast.frames_undelivered.to_string(),
         frames_without_recipients: active.broadcast.frames_without_recipients.to_string(),
         recipients_intended: active.broadcast.recipients_intended.to_string(),
         recipients_delivered: active.broadcast.recipients_delivered.to_string(),
@@ -405,8 +407,9 @@ mod tests {
             broadcast: crate::platform::host_transport::BroadcastDiagnostics {
                 frames_attempted: 400,
                 frames_failed: 1,
-                frames_fully_delivered: 380,
+                frames_fully_delivered: 376,
                 frames_partially_delivered: 12,
+                frames_undelivered: 4,
                 frames_without_recipients: 7,
                 recipients_intended: 800,
                 recipients_delivered: 772,
@@ -435,6 +438,7 @@ mod tests {
         let broadcast = dto.broadcast.as_ref().expect("broadcast diagnostics");
         assert_eq!(broadcast.frames_attempted, "400");
         assert_eq!(broadcast.frames_partially_delivered, "12");
+        assert_eq!(broadcast.frames_undelivered, "4");
         assert_eq!(broadcast.frames_without_recipients, "7");
         assert_eq!(broadcast.recipients_delivered, "772");
         assert_eq!(broadcast.queue_peak_depth, "41");
