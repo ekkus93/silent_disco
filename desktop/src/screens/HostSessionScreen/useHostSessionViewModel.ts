@@ -232,6 +232,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       const submitting: PendingOperation = {
         kind,
         acceptedAtRevision: null,
+        acceptedAtMs: null,
         baselineDelivery: deliveryKey(current),
         baselineError: errorKey(current.lastError),
       };
@@ -254,6 +255,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
         const waiting = {
           ...submitting,
           acceptedAtRevision: receipt.acceptedAtRevision,
+          acceptedAtMs: Date.now(),
         };
         updateDecisionOperations({
           ...decisionOperationsRef.current,
@@ -293,6 +295,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       const submitting: PendingOperation = {
         kind: "remove",
         acceptedAtRevision: null,
+        acceptedAtMs: null,
         baselineDelivery: deliveryKey(current),
         baselineError: errorKey(current.lastError),
       };
@@ -310,6 +313,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
           [listenerId]: {
             ...submitting,
             acceptedAtRevision: receipt.acceptedAtRevision,
+            acceptedAtMs: Date.now(),
           },
         });
         setAnnouncement("Disconnect queued. Waiting for delivery confirmation.");

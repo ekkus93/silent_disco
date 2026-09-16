@@ -11,9 +11,21 @@ export type DecisionKind = "approve" | "reject";
 export interface PendingOperation {
   kind: DecisionKind | "remove";
   acceptedAtRevision: string | null;
+  /** Wall-clock time the core accepted the command; `null` until it does. */
+  acceptedAtMs: number | null;
   baselineDelivery: string;
   baselineError: string;
 }
+
+/**
+ * How long an accepted join decision or removal may wait for its delivery
+ * confirmation before it is reported as failed. Confirmation normally takes
+ * well under a second; without a bound, an operation whose confirmation never
+ * arrives showed "Waiting for ... delivery confirmation" forever (Block 52.4),
+ * including when an identical failure left no new error or delivery report to
+ * compare against.
+ */
+export const DELIVERY_CONFIRMATION_TIMEOUT_MS = 15_000;
 
 export function errorKey(error: DesktopErrorDto | null): string {
   return error ? `${error.code}\u0000${error.message}` : "";
@@ -36,6 +48,7 @@ export function revisionIsNewer(current: string, baseline: string): boolean {
 export function operationFailure(
   next: HostSessionSnapshotDto,
   operation: PendingOperation,
+  nowMs: number = Date.now(),
 ): DesktopErrorDto | null {
   if (
     operation.acceptedAtRevision === null ||
@@ -58,6 +71,20 @@ export function operationFailure(
       severity: "error",
       retryable: true,
       message: "The control message was not delivered to the listener.",
+    };
+  }
+  if (
+    operation.acceptedAtMs !== null &&
+    nowMs - operation.acceptedAtMs >= DELIVERY_CONFIRMATION_TIMEOUT_MS
+  ) {
+    return {
+      code: "desktop.delivery_confirmation_timeout",
+      subsystem: "transport",
+      severity: "error",
+      retryable: true,
+      message: `No delivery confirmation arrived within ${
+        DELIVERY_CONFIRMATION_TIMEOUT_MS / 1000
+      } seconds. The listener may not have received it; try again.`,
     };
   }
   return null;
