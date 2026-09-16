@@ -9,7 +9,8 @@ use super::records::{
     AudioEvent, CommandReceipt, CoreActorInput, CoreCommand, CoreCommandRequest, CoreNotification,
     CoreSnapshot, PlatformEvent, StorageEvent, TransportEvent,
 };
-use crate::domain::{DeviceId, OperationId};
+use super::types::DeliveryReport;
+use crate::domain::{DeliverySeverity, DeviceId, OperationId};
 use crate::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -142,6 +143,10 @@ impl CoreActorRuntime {
             sync_channel(config.notification_queue_capacity);
         let notification_failure = Arc::new(Mutex::new(None));
         let worker_notification_failure = Arc::clone(&notification_failure);
+        // Created before the notification worker so it can report an effect
+        // the platform refused back to the actor as that operation's failure.
+        let (sender, receiver) = sync_channel(config.actor_queue_capacity);
+        let refusal_sender = sender.clone();
         let notification_join = thread::Builder::new()
             .name("silent-disco-notifications".to_owned())
             .spawn(move || {
@@ -149,6 +154,7 @@ impl CoreActorRuntime {
                     &observer,
                     &notification_receiver,
                     &worker_notification_failure,
+                    &refusal_sender,
                 );
             })
             .map_err(|error| {
@@ -161,7 +167,6 @@ impl CoreActorRuntime {
                 )
             })?;
 
-        let (sender, receiver) = sync_channel(config.actor_queue_capacity);
         let shared = Arc::new(ActorShared {
             accepting: AtomicBool::new(true),
             snapshot: Mutex::new(CoreSnapshot::default()),
@@ -508,15 +513,30 @@ fn run_notification_worker<O: CoreObserver>(
     observer: &O,
     receiver: &Receiver<NotificationMessage>,
     failure: &Mutex<Option<CoreError>>,
+    actor_sender: &SyncSender<ActorMessage>,
 ) {
     while let Ok(message) = receiver.recv() {
         match message {
             NotificationMessage::Notify(notification) => {
+                let refusable = RefusableEffect::of(&notification);
                 let result =
                     catch_unwind(AssertUnwindSafe(|| observer.on_notification(*notification)));
                 match result {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
+                        // A platform that cannot accept an effect fails that
+                        // operation, not notification delivery (Block 52.4).
+                        // Exiting here used to leave every later effect --
+                        // such as a join approval -- silently undelivered.
+                        if let Some(effect) = refusable
+                            && actor_sender
+                                .try_send(ActorMessage(Box::new(
+                                    effect.failure_input(error.clone()),
+                                )))
+                                .is_ok()
+                        {
+                            continue;
+                        }
                         record_failure(failure, error);
                         return;
                     }
@@ -539,6 +559,63 @@ fn run_notification_worker<O: CoreObserver>(
         }
     }
     record_failure(failure, worker_stopped(None));
+}
+
+/// An effect whose refusal by the platform can be reported back to the actor
+/// as the failure of its own operation.
+enum RefusableEffect {
+    Platform(OperationId),
+    Transport(OperationId),
+    Storage(OperationId),
+}
+
+impl RefusableEffect {
+    fn of(notification: &CoreNotification) -> Option<Self> {
+        match notification {
+            CoreNotification::Effect(effect) => Some(Self::Platform(effect.operation_id.clone())),
+            CoreNotification::TransportEffect(effect) => {
+                Some(Self::Transport(effect.operation_id.clone()))
+            }
+            CoreNotification::StorageEffect(effect) => {
+                Some(Self::Storage(effect.operation_id.clone()))
+            }
+            CoreNotification::Snapshot(_)
+            | CoreNotification::Error(_)
+            | CoreNotification::Diagnostic(_) => None,
+        }
+    }
+
+    fn failure_input(self, mut error: CoreError) -> CoreActorInput {
+        match self {
+            Self::Platform(operation_id) => {
+                error.operation_id = Some(operation_id.clone());
+                CoreActorInput::Platform(PlatformEvent::OperationFailed {
+                    operation_id,
+                    error,
+                })
+            }
+            // Transport effects complete through a delivery report; a refused
+            // one reached none of its single intended recipient.
+            Self::Transport(operation_id) => {
+                CoreActorInput::Transport(TransportEvent::DeliveryCompleted {
+                    operation_id,
+                    report: DeliveryReport {
+                        intended_peers: 1,
+                        successful_peers: 0,
+                        failed_peers: 1,
+                        severity: DeliverySeverity::PartialFailure,
+                    },
+                })
+            }
+            Self::Storage(operation_id) => {
+                error.operation_id = Some(operation_id.clone());
+                CoreActorInput::Storage(StorageEvent::OperationFailed {
+                    operation_id,
+                    error,
+                })
+            }
+        }
+    }
 }
 
 fn send_notification(
