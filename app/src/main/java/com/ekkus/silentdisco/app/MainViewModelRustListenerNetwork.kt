@@ -205,7 +205,6 @@ private fun MainViewModel.connectRustListenerEndpoint(
                 localListenerDeviceId,
                 LOCAL_LISTENER_BIND_ADDRESS,
             )
-            listenerTransportController.sendJoinRequest(LISTENER_DISPLAY_NAME, inviteCode)
         } catch (error: FfiListenerTransportException) {
             controller.platformOperationFailed(
                 operationId,
@@ -221,20 +220,34 @@ private fun MainViewModel.connectRustListenerEndpoint(
             )
             return@launch
         }
-        ensureListenerTransportEventLoop()
+        // Report the endpoint ready before soliciting any reply. The core only
+        // accepts the host's "awaiting approval" once it is `Connecting`, and it
+        // applies submissions in order, so this must be queued before the join
+        // request can provoke a reply (Block 52.2). The transport's event
+        // channel is buffered, so starting the forwarding loop afterwards
+        // cannot lose that reply.
         controller.platformOperationSucceeded(
             operationId,
             FfiPlatformCompletion.NetworkEndpointReady(address, controlPort, syncPort, audioPort),
         )
+        ensureListenerTransportEventLoop()
+        try {
+            listenerTransportController.sendJoinRequest(LISTENER_DISPLAY_NAME, inviteCode)
+        } catch (error: FfiListenerTransportException) {
+            // Establishment already completed, so this is a transport failure.
+            controller.transportFailed(error.message ?: "join request failed", true)
+        } catch (error: RuntimeException) {
+            controller.transportFailed(error.message ?: "join request failed", true)
+        }
     }
 }
 
 /**
  * Called from the existing Wi-Fi Direct snapshot collector once the
  * transport reaches CONNECTED -- opens the real Rust listener transport
- * against the endpoint Wi-Fi Direct actually resolved, sends the join
- * request over it, and only then completes the pending EstablishNetwork
- * operation. Mirrors `completeRustHostAdvertising`'s async-completion shape
+ * against the endpoint Wi-Fi Direct actually resolved, completes the pending
+ * EstablishNetwork operation, and only then sends the join request, so the
+ * host's reply cannot reach the core before it is `Connecting`. Mirrors `completeRustHostAdvertising`'s async-completion shape
  * on the host side.
  */
 internal fun MainViewModel.completeRustListenerNetworkEstablishment(

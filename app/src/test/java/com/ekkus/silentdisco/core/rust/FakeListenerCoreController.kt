@@ -37,6 +37,9 @@ class FakeListenerCoreController : ListenerCoreController {
     val transportFailedCalls = mutableListOf<Pair<String, Boolean>>()
     val platformOperationSucceededCalls = mutableListOf<RecordedCompletion>()
     val platformOperationFailedCalls = mutableListOf<RecordedFailure>()
+
+    /** Shared with [FakeListenerTransport.callLog] to assert cross-object call order. */
+    var callLog: MutableList<String>? = null
     var closeCallCount = 0
 
     /** Pushes a notification into [notifications], as the real Rust actor would. */
@@ -96,6 +99,7 @@ class FakeListenerCoreController : ListenerCoreController {
 
     override fun platformOperationSucceeded(operationId: String, completion: FfiPlatformCompletion) {
         platformOperationSucceededCalls += RecordedCompletion(operationId, completion)
+        callLog?.add("core.platformOperationSucceeded:${completion::class.simpleName}")
     }
 
     override fun platformOperationFailed(operationId: String, message: String, retryable: Boolean) {

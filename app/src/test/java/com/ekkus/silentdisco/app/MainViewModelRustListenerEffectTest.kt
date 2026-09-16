@@ -179,7 +179,7 @@ class MainViewModelRustListenerEffectTest {
     }
 
     @Test
-    fun establishNetworkWithMdnsEndpointOpensRustTransportAndSendsJoinBeforeCompleting() = runTest(dispatcher) {
+    fun establishNetworkWithMdnsEndpointOpensRustTransportAndSendsJoin() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         val session = SessionInfo(
             id = "session-1",
@@ -222,6 +222,80 @@ class MainViewModelRustListenerEffectTest {
             ),
         )
     }
+
+    /**
+     * Block 52.2, observed on a physical A54 2026-09-16: the join request went
+     * out before the core was told the endpoint was ready. A fast host's reply
+     * then reached the core while it was still `JoinRequested`, and the core
+     * rejected it ("awaiting approval arrived outside an active connection
+     * attempt"). The core applies submissions in order, so reporting readiness
+     * before the request is sent guarantees any reply lands after `Connecting`.
+     */
+    @Test
+    fun establishNetworkReportsTheEndpointReadyBeforeSendingTheJoinRequest() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        val callLog = mutableListOf<String>()
+        harness.listenerCoreController.callLog = callLog
+        harness.listenerTransport.callLog = callLog
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
+            discoveredSessions = listOf(mdnsSession()),
+        )
+        harness.viewModel.ensureRustListenerCore()
+        advanceUntilIdle()
+
+        harness.listenerCoreController.emit(mdnsEstablishEffect("op-order"))
+        advanceUntilIdle()
+
+        assertThat(callLog)
+            .containsExactly(
+                "core.platformOperationSucceeded:NetworkEndpointReady",
+                "transport.sendJoinRequest",
+            )
+            .inOrder()
+    }
+
+    /**
+     * Once readiness has been reported the establishment operation is
+     * complete, so a join request that then fails to send is a transport
+     * failure -- not a second outcome for an operation that already succeeded.
+     */
+    @Test
+    fun aJoinRequestThatFailsAfterReadinessIsReportedAsATransportFailure() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.listenerTransport.joinRequestFailure = RuntimeException("join send failed")
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
+            discoveredSessions = listOf(mdnsSession()),
+        )
+        harness.viewModel.ensureRustListenerCore()
+        advanceUntilIdle()
+
+        harness.listenerCoreController.emit(mdnsEstablishEffect("op-join-fails"))
+        advanceUntilIdle()
+
+        assertThat(harness.listenerCoreController.platformOperationSucceededCalls).hasSize(1)
+        assertThat(harness.listenerCoreController.platformOperationFailedCalls).isEmpty()
+        assertThat(harness.listenerCoreController.transportFailedCalls)
+            .containsExactly("join send failed" to true)
+    }
+
+    private fun mdnsSession() = SessionInfo(
+        id = "session-1",
+        name = "Patio Mix",
+        hostDeviceName = "host-1",
+        approvalMode = ApprovalMode.MANUAL,
+        inviteCodeRequired = false,
+    )
+
+    private fun mdnsEstablishEffect(operationId: String) = FfiCoreNotification.PlatformEffect(
+        FfiPlatformEffect.EstablishNetwork(
+            operationId = operationId,
+            sessionId = "session-1",
+            address = "192.168.1.50",
+            controlPort = 41_000u,
+            syncPort = 41_001u,
+            audioPort = 41_002u,
+        ),
+    )
 
     @Test
     fun establishNetworkFailsWhenTheSelectedSessionHasDisappeared() = runTest(dispatcher) {

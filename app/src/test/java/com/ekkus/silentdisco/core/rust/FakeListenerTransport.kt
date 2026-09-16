@@ -25,6 +25,12 @@ class FakeListenerTransport : ListenerTransport {
     var attachCallCount: Int = 0
     var detachCallCount: Int = 0
 
+    /** Shared with [FakeListenerCoreController.callLog] to assert cross-object call order. */
+    var callLog: MutableList<String>? = null
+
+    /** When set, [sendJoinRequest] records the call and then throws this. */
+    var joinRequestFailure: RuntimeException? = null
+
     override suspend fun connect(
         scope: CoroutineScope,
         rawEndpoint: String,
@@ -36,6 +42,8 @@ class FakeListenerTransport : ListenerTransport {
 
     override suspend fun sendJoinRequest(displayName: String, inviteCode: String?) {
         joinRequestCalls += displayName to inviteCode
+        callLog?.add("transport.sendJoinRequest")
+        joinRequestFailure?.let { throw it }
     }
 
     override suspend fun sendDisconnect(reason: String) {
