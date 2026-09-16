@@ -62,6 +62,7 @@ export function HostSessionScreen() {
 
       <ListenerList
         listeners={snapshot.connectedListeners}
+        playbackState={snapshot.playbackState}
         selectedListenerId={vm.selectedListenerId}
         onSelectListener={vm.setSelectedListenerId}
         lastDelivery={snapshot.lastDelivery}
@@ -86,6 +87,8 @@ export function HostSessionScreen() {
       <DeliveryAndTransportAlerts
         lastDelivery={snapshot.lastDelivery}
         broadcast={snapshot.broadcast}
+        playbackState={snapshot.playbackState}
+        connectedListenerCount={snapshot.connectedListeners.length}
         transportError={snapshot.transportError}
         lastError={snapshot.lastError}
         refreshFailure={vm.refreshFailure}

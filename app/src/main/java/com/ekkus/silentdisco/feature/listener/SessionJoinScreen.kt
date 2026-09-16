@@ -179,9 +179,10 @@ fun SessionJoinScreen(
 private fun JoinProgressCard(activeStep: JoinUiStep) {
     val steps = listOf(
         JoinUiStep.FINDING_HOST to "Finding the host",
+        JoinUiStep.CONNECTING to "Connecting",
         JoinUiStep.REQUESTING_ACCESS to "Requesting access",
         JoinUiStep.WAITING_FOR_APPROVAL to "Waiting for host approval",
-        JoinUiStep.CONNECTING to "Connecting",
+        JoinUiStep.WAITING_FOR_PLAYBACK to "Waiting for the host to start playback",
         JoinUiStep.SYNCING_AUDIO to "Getting audio in sync",
     )
     val activeIndex = when (activeStep) {
@@ -261,9 +262,11 @@ private fun JoinProgressCard(activeStep: JoinUiStep) {
 
 private fun activeStepDetail(step: JoinUiStep): String = when (step) {
     JoinUiStep.FINDING_HOST -> "Checking that the nearby host is still available."
+    JoinUiStep.CONNECTING -> "Opening a connection to the host."
     JoinUiStep.REQUESTING_ACCESS -> "Sending your request to the host."
     JoinUiStep.WAITING_FOR_APPROVAL -> "The host has not responded yet."
-    JoinUiStep.CONNECTING -> "Creating the nearby connection."
+    JoinUiStep.WAITING_FOR_PLAYBACK ->
+        "The host approved this device. Audio starts when the host presses Play."
     JoinUiStep.SYNCING_AUDIO -> "Buffering audio and matching the host’s timing."
     JoinUiStep.COMPLETE -> "Playback is ready."
 }

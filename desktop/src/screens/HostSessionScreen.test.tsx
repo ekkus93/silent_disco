@@ -247,7 +247,11 @@ describe("HostSessionScreen Block 23", () => {
     await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
 
-    expect(await screen.findByText(/Last delivery: 1 of 2 succeeded/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        /Last control message \(approval, rejection, or removal\): 1 of 2 delivered/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Request request-1")).not.toBeInTheDocument();
   });
 

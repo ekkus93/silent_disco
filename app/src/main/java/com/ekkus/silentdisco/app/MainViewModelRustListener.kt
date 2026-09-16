@@ -39,14 +39,17 @@ private val REQUESTED_OR_LATER = setOf(
     ListenerLifecycleState.APPROVED,
     ListenerLifecycleState.CONNECTING,
 )
+// The core's join order is JOIN_REQUESTED -> CONNECTING (endpoint ready) ->
+// AWAITING_APPROVAL -> APPROVED. CONNECTING precedes approval, so it must not
+// count as approved: doing so ticked "Waiting for host approval" before the
+// host had decided anything (Block 52.5).
 private val CONNECTED_OR_LATER = setOf(
+    ListenerLifecycleState.CONNECTING,
     ListenerLifecycleState.AWAITING_APPROVAL,
     ListenerLifecycleState.APPROVED,
-    ListenerLifecycleState.CONNECTING,
 )
 private val APPROVED_OR_LATER = setOf(
     ListenerLifecycleState.APPROVED,
-    ListenerLifecycleState.CONNECTING,
 )
 
 /**

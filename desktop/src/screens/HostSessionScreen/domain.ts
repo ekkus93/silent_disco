@@ -1,4 +1,5 @@
 import type {
+  ConnectedListenerDto,
   DesktopErrorDto,
   HostInvitationDto,
   HostSessionSnapshotDto,
@@ -126,4 +127,27 @@ export function formatWallClock(ms: string): string {
 export function isInvitationExpired(invitation: HostInvitationDto): boolean {
   const expiresAtMs = Number(invitation.expiresAtMs);
   return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now();
+}
+
+/**
+ * What an approved listener is doing, in operator terms.
+ *
+ * The core records an approved listener's transport state as `connecting` and
+ * nothing on the desktop ever advances it, so showing that raw value made a
+ * listener that was approved and waiting -- or even playing in sync -- look
+ * stuck (Block 52.5). Every listener in the list has already completed
+ * delivery-confirmed approval, so its progress is read from whether a stream
+ * is running and whether it has reported sync.
+ */
+export function listenerProgress(
+  listener: Pick<ConnectedListenerDto, "syncConfidence">,
+  playbackState: string,
+): string {
+  if (listener.syncConfidence !== null) {
+    return `Connected — sync ${listener.syncConfidence}`;
+  }
+  if (playbackState === "buffering" || playbackState === "playing") {
+    return "Approved — waiting for its first clock sync";
+  }
+  return "Approved — waiting for the host to start playback";
 }

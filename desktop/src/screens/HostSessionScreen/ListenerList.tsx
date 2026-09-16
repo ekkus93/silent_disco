@@ -3,11 +3,12 @@ import type {
   DeliveryReportDto,
   DesktopErrorDto,
 } from "../../core/generated/desktop-bindings";
-import type { PendingOperation } from "./domain";
+import { listenerProgress, type PendingOperation } from "./domain";
 import { ListenerDetailScreen } from "../ListenerDetailScreen";
 
 interface ListenerListProps {
   listeners: ConnectedListenerDto[];
+  playbackState: string;
   selectedListenerId: string | null;
   onSelectListener: (deviceId: string | null) => void;
   lastDelivery: DeliveryReportDto | null;
@@ -18,6 +19,7 @@ interface ListenerListProps {
 
 export function ListenerList({
   listeners,
+  playbackState,
   selectedListenerId,
   onSelectListener,
   lastDelivery,
@@ -55,11 +57,12 @@ export function ListenerList({
           {listeners.map((listener) => (
             <li key={listener.deviceId} className="rounded-xl bg-slate-900 p-4">
               <p className="font-semibold">{listener.displayName}</p>
-              <p className="mt-1 text-xs text-slate-400">
-                {listener.transportState} · {listener.trustState}
+              <p className="mt-1 text-sm text-slate-200">
+                {listenerProgress(listener, playbackState)}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                Sync: {listener.syncConfidence ?? "not available"}
+                Trust: {listener.trustState} · core transport state:{" "}
+                <span className="font-mono">{listener.transportState}</span>
               </p>
               <button
                 type="button"

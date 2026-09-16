@@ -10,11 +10,13 @@ enum class HostSetupStep {
     ACCESS,
 }
 
+/** Join progress in the order it actually happens on the Rust join path. */
 enum class JoinUiStep {
     FINDING_HOST,
+    CONNECTING,
     REQUESTING_ACCESS,
     WAITING_FOR_APPROVAL,
-    CONNECTING,
+    WAITING_FOR_PLAYBACK,
     SYNCING_AUDIO,
     COMPLETE,
 }
@@ -106,17 +108,23 @@ fun AppUiState.joinUiStep(): JoinUiStep = when {
     ) || connectionProgress.synced || connectionProgress.buffered ->
         JoinUiStep.SYNCING_AUDIO
 
+    // Approved and connected, with no stream yet: the listener is waiting for
+    // the host to press Play. This used to show "Connecting" with a spinner,
+    // which read as stuck (Block 52.5).
     connectionProgress.approved || listenerState == ListenerLifecycleState.APPROVED ->
-        JoinUiStep.CONNECTING
+        JoinUiStep.WAITING_FOR_PLAYBACK
 
-    connectionProgress.requested && !connectionProgress.approved ->
+    listenerState == ListenerLifecycleState.AWAITING_APPROVAL ->
         JoinUiStep.WAITING_FOR_APPROVAL
 
-    listenerState == ListenerLifecycleState.JOIN_REQUESTED ->
+    // The endpoint is ready and the join request is being sent. The core
+    // reaches CONNECTING before the host replies, so this must never be
+    // presented as approved.
+    listenerState == ListenerLifecycleState.CONNECTING ->
         JoinUiStep.REQUESTING_ACCESS
 
     listenerState in setOf(
-        ListenerLifecycleState.CONNECTING,
+        ListenerLifecycleState.JOIN_REQUESTED,
         ListenerLifecycleState.RECONNECTING,
         ListenerLifecycleState.DISCONNECTED,
         ListenerLifecycleState.ERROR,

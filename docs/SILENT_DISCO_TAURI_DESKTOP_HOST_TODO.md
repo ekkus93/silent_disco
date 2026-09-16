@@ -4853,96 +4853,6 @@ configuration, and host network state is observable during a live session.
 
 ---
 
-# Future phases — Not part of Linux desktop-host completion
-
-## Future A — Windows platform adapters
-
-Do not begin until the Linux acceptance block passes.
-
-Future work includes:
-
-- Windows credential protection;
-- firewall prompts and network profile behavior;
-- Windows audio-device validation;
-- mDNS behavior;
-- installer/signing;
-- native interoperability measurements.
-
-## Future B — macOS platform adapters
-
-Do not begin until Linux acceptance passes.
-
-Future work includes:
-
-- Keychain;
-- local-network permission;
-- audio-device validation;
-- signing/notarization;
-- package behavior;
-- coordination with the Apple/iOS Rust packaging work.
-
-## Future C — Production desktop listener
-
-A production desktop listener requires a separate reviewed scope. Reuse the same actor, transport, scheduler, render ring, and desktop audio adapter. Do not infer completion from Lab virtual listener support.
-
-This block is the home for the honest, fail-loud
-`"desktop native audio output is not implemented yet"` error returned by
-`desktop/src-tauri/src/platform/audio_device.rs`'s `unsupported_effect` for
-`StartAudioOutput`/`StopAudioOutput` -- confirmed via a 2026-08-02 codebase
-sweep that this correctly returns a real error rather than silently claiming
-success. Desktop can *host* (broadcast) real audio today; it cannot yet
-*receive and play* audio as a listener, and that is what this block covers.
-
-**Consume the shared listener playback runtime (2026-08-03).** Do not build a
-desktop-specific scheduler, concealment policy, or ring pump. Android's
-listener now runs entirely on `silent-disco-core`'s `audio::PlaybackPump` plus
-`silent-disco-ffi`'s `ListenerPlaybackRuntime`, which own ordering,
-concealment, presentation-time pacing, clock-sync estimation, PCM conversion,
-diagnostics, and an optional debug WAV capture. A desktop listener should open
-the same runtime, hand its engine token to a desktop audio adapter (the only
-genuinely platform-specific piece), and forward packets and raw sync
-exchanges. Everything else is already built and device-validated; see
-`docs/SILENT_DISCO_LISTENER_PLAYBACK_RUST_MIGRATION_TODO.md`.
-
-This is the whole reason that migration was done: the audio-quality work had
-been fixed once in Kotlin and would otherwise have had to be reimplemented
-here.
-
----
-
-# Final completion checklist
-
-- [x] Tauri 2 desktop application exists under `desktop/`.
-- [x] React/TypeScript/Tailwind frontend passes all gates.
-- [x] Tauri backend directly uses `silent-disco-core`.
-- [x] Shared actor and host lifecycle are Rust-authoritative.
-- [x] Profiles and databases are isolated and locked.
-- [x] Production identity has no insecure silent fallback.
-- [x] Source selection and staging are safe and atomic.
-- [x] Decoder is streaming, bounded, and explicit.
-- [x] Manual LAN hosting works.
-- [x] Android control interoperability works.
-- [x] Bounded Rust audio transmission works.
-- [x] One Android listener plays desktop-hosted audio. `ManualEndpointScreen.kt`'s
-      playback wiring is now fixed and confirmed reaching real `Streaming`/
-      `Buffering` state live on-device (see Block 28) -- what remains is a
-      human actually listening to confirm audible, in-sync sound, plus the
-      still-unfixed `stop_playback` bug noted in Block 28.
-- [ ] At least two Android listeners pass recorded validation.
-- [ ] mDNS and QR convenience work without replacing manual connection.
-- [x] Optional local monitor uses the shared timeline.
-- [x] PCM and packet payloads never cross Tauri IPC.
-- [x] Diagnostics are useful and secret-safe.
-- [ ] Shutdown is deterministic.
-- [x] Lab Mode is deterministic, isolated, and visibly labeled.
-- [ ] Fault injection, recording, replay, and assertions pass.
-- [ ] Linux package passes fresh-machine validation.
-- [x] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
-- [x] All referenced files exist.
-- [ ] `memory.md` records final evidence and limitations.
-
----
-
 ## Block 51 — Shared address space (carrier-grade NAT) opt-in
 
 Venue and ISP networks commonly hand out RFC 6598 shared address space
@@ -5103,7 +5013,7 @@ harness started playback immediately.
 
 ### 52.2 Android sends the join request before reporting the network ready
 
-- [ ] `connectRustListenerEndpoint` (`MainViewModelRustListenerNetwork.kt`)
+- [x] `connectRustListenerEndpoint` (`MainViewModelRustListenerNetwork.kt`)
       calls `sendJoinRequest` and starts the event loop before
       `platformOperationSucceeded(NetworkEndpointReady)`. A fast host `Hello`
       reaches the core while it is still `JoinRequested`, and
@@ -5243,17 +5153,37 @@ One refused effect quietly broke the rest of the session.
 
 ### 52.5 Diagnostics that misreport or are missing
 
-- [ ] "Last delivery: 1 of 1 succeeded (ok)" stayed on screen for 3 minutes of
+- [x] "Last delivery: 1 of 1 succeeded (ok)" stayed on screen for 3 minutes of
       streaming to zero listeners; it describes the last control delivery, not
-      the audio. Zero recipients is not success.
+      the audio. Zero recipients is not success. Fixed: the line is labeled
+      "Last control message (approval, rejection, or removal)"; the stream's
+      audio frame counts (fully/partially delivered, to nobody, failed) are
+      shown separately; and "Streaming to nobody" is raised as an alert when
+      audio is playing with no listener connected. Tests in
+      `DeliveryAndTransportAlerts.test.tsx`.
 - [ ] Android's manual-connect path emits nothing to logcat, so a failed
       session leaves no listener-side evidence and listener loss/underruns
       cannot be read.
 - [ ] Host display name is shown as a raw 64-hex device identifier on Android.
-- [ ] The Android mDNS "Join" path and the desktop listener list keep
+- [x] The Android mDNS "Join" path and the desktop listener list keep
       showing "connecting" after approval. (Android's manual-connect path does
       say "The host approved this device. Waiting for the host to start
-      playback.")
+      playback.") Fixed on both sides:
+  - Android: the checklist now follows the real core order (connecting ->
+    requesting access -> waiting for approval -> waiting for the host to
+    start playback -> syncing). Worse than wording, `APPROVED_OR_LATER`
+    included `CONNECTING`, which the core reaches *before* the host replies,
+    so "Waiting for host approval" was ticked before the host had approved
+    anything (seen on the Test5 run). `CONNECTING` now counts as connected,
+    not approved. Tests in `AppPresentationTest` and
+    `MainViewModelDiscoveryReconcileTest`; the latter fails with the old set.
+  - Desktop: the listener list shows progress in operator terms ("Approved --
+    waiting for the host to start playback", "... waiting for its first
+    clock sync", "Connected -- sync ...") and keeps the raw core transport
+    state as a labeled detail. Nothing on the desktop ever advances an
+    approved listener past the core's `connecting`, so the raw value was
+    never informative. Tests in `HostSessionScreen/domain.test.ts`.
+  - [ ] Device-verify both on the next desktop package and APK.
 - [ ] The desktop network card still says only private-LAN addresses can be
       advertised while bound to a shared-address-space address.
 - [ ] "session name is invalid" is shown on an untouched empty field.
@@ -5261,3 +5191,93 @@ One refused effect quietly broke the rest of the session.
 **Acceptance:** A listener that joins the packaged desktop GUI host, by either
 join path, stays connected through playback start and hears audio, and every
 failure above is either fixed or surfaces as a visible, actionable error.
+
+---
+
+# Future phases — Not part of Linux desktop-host completion
+
+## Future A — Windows platform adapters
+
+Do not begin until the Linux acceptance block passes.
+
+Future work includes:
+
+- Windows credential protection;
+- firewall prompts and network profile behavior;
+- Windows audio-device validation;
+- mDNS behavior;
+- installer/signing;
+- native interoperability measurements.
+
+## Future B — macOS platform adapters
+
+Do not begin until Linux acceptance passes.
+
+Future work includes:
+
+- Keychain;
+- local-network permission;
+- audio-device validation;
+- signing/notarization;
+- package behavior;
+- coordination with the Apple/iOS Rust packaging work.
+
+## Future C — Production desktop listener
+
+A production desktop listener requires a separate reviewed scope. Reuse the same actor, transport, scheduler, render ring, and desktop audio adapter. Do not infer completion from Lab virtual listener support.
+
+This block is the home for the honest, fail-loud
+`"desktop native audio output is not implemented yet"` error returned by
+`desktop/src-tauri/src/platform/audio_device.rs`'s `unsupported_effect` for
+`StartAudioOutput`/`StopAudioOutput` -- confirmed via a 2026-08-02 codebase
+sweep that this correctly returns a real error rather than silently claiming
+success. Desktop can *host* (broadcast) real audio today; it cannot yet
+*receive and play* audio as a listener, and that is what this block covers.
+
+**Consume the shared listener playback runtime (2026-08-03).** Do not build a
+desktop-specific scheduler, concealment policy, or ring pump. Android's
+listener now runs entirely on `silent-disco-core`'s `audio::PlaybackPump` plus
+`silent-disco-ffi`'s `ListenerPlaybackRuntime`, which own ordering,
+concealment, presentation-time pacing, clock-sync estimation, PCM conversion,
+diagnostics, and an optional debug WAV capture. A desktop listener should open
+the same runtime, hand its engine token to a desktop audio adapter (the only
+genuinely platform-specific piece), and forward packets and raw sync
+exchanges. Everything else is already built and device-validated; see
+`docs/SILENT_DISCO_LISTENER_PLAYBACK_RUST_MIGRATION_TODO.md`.
+
+This is the whole reason that migration was done: the audio-quality work had
+been fixed once in Kotlin and would otherwise have had to be reimplemented
+here.
+
+---
+
+# Final completion checklist
+
+- [x] Tauri 2 desktop application exists under `desktop/`.
+- [x] React/TypeScript/Tailwind frontend passes all gates.
+- [x] Tauri backend directly uses `silent-disco-core`.
+- [x] Shared actor and host lifecycle are Rust-authoritative.
+- [x] Profiles and databases are isolated and locked.
+- [x] Production identity has no insecure silent fallback.
+- [x] Source selection and staging are safe and atomic.
+- [x] Decoder is streaming, bounded, and explicit.
+- [x] Manual LAN hosting works.
+- [x] Android control interoperability works.
+- [x] Bounded Rust audio transmission works.
+- [x] One Android listener plays desktop-hosted audio. `ManualEndpointScreen.kt`'s
+      playback wiring is now fixed and confirmed reaching real `Streaming`/
+      `Buffering` state live on-device (see Block 28) -- what remains is a
+      human actually listening to confirm audible, in-sync sound, plus the
+      still-unfixed `stop_playback` bug noted in Block 28.
+- [ ] At least two Android listeners pass recorded validation.
+- [ ] mDNS and QR convenience work without replacing manual connection.
+- [x] Optional local monitor uses the shared timeline.
+- [x] PCM and packet payloads never cross Tauri IPC.
+- [x] Diagnostics are useful and secret-safe.
+- [ ] Shutdown is deterministic.
+- [x] Lab Mode is deterministic, isolated, and visibly labeled.
+- [ ] Fault injection, recording, replay, and assertions pass.
+- [ ] Linux package passes fresh-machine validation.
+- [x] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
+- [x] All referenced files exist.
+- [ ] `memory.md` records final evidence and limitations.

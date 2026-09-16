@@ -96,6 +96,27 @@ class MainViewModelDiscoveryReconcileTest {
             .containsExactly("waiting")
     }
 
+    /**
+     * Block 52.5: CONNECTING precedes the host's reply, so it must not set the
+     * approved flag -- that ticked "Waiting for host approval" before the host
+     * had approved anything.
+     */
+    @Test
+    fun aConnectingListenerIsNotReportedAsApproved() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustListenerCore()
+        harness.listenerCoreController.publishSnapshot(
+            listenerCoreSnapshot(discoveryActive = false, known = listOf("s"), selected = "s"),
+        )
+        advanceUntilIdle()
+
+        val progress = harness.viewModel.uiState.value.connectionProgress
+        assertThat(progress.connected).isTrue()
+        assertThat(progress.approved).isFalse()
+        assertThat(harness.viewModel.uiState.value.joinUiStep())
+            .isEqualTo(JoinUiStep.REQUESTING_ACCESS)
+    }
+
     private fun mdns(id: String) = MdnsSessionAdvertisement(
         sessionId = id,
         hostDeviceId = "desktop-host",

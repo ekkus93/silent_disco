@@ -5,6 +5,7 @@ import {
   DELIVERY_CONFIRMATION_TIMEOUT_MS,
   deliveryKey,
   errorKey,
+  listenerProgress,
   operationFailure,
   type PendingOperation,
 } from "./domain";
@@ -98,5 +99,30 @@ describe("operationFailure delivery confirmation timeout", () => {
     const next = snapshot();
     const submitting = { ...accepted(next), acceptedAtRevision: null, acceptedAtMs: null };
     expect(operationFailure(next, submitting, ACCEPTED_AT + 10 * 60_000)).toBeNull();
+  });
+});
+
+// Block 52.5: approved listeners were shown with the raw core state
+// "connecting" -- including while playing in sync -- and read as stuck.
+describe("listenerProgress", () => {
+  it("says an approved listener is waiting for playback while stopped", () => {
+    expect(listenerProgress({ syncConfidence: null }, "stopped")).toBe(
+      "Approved — waiting for the host to start playback",
+    );
+  });
+
+  it("says it is waiting for its first sync once a stream is running", () => {
+    expect(listenerProgress({ syncConfidence: null }, "playing")).toBe(
+      "Approved — waiting for its first clock sync",
+    );
+    expect(listenerProgress({ syncConfidence: null }, "buffering")).toBe(
+      "Approved — waiting for its first clock sync",
+    );
+  });
+
+  it("reports the listener as connected once it has reported sync", () => {
+    expect(listenerProgress({ syncConfidence: "excellent" }, "playing")).toBe(
+      "Connected — sync excellent",
+    );
   });
 });

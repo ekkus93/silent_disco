@@ -26,8 +26,11 @@ class AppPresentationTest {
         ).isEqualTo(JoinUiStep.SYNCING_AUDIO)
     }
 
+    // Block 52.5: the core reaches CONNECTING (endpoint ready) *before* the
+    // host replies, so a connecting listener is still asking for access and
+    // must not be shown as approved.
     @Test
-    fun requestedButNotApprovedMapsToWaitingForHostApproval() {
+    fun connectingBeforeTheHostRepliesMapsToRequestingAccess() {
         val state = AppUiState(
             listenerState = ListenerLifecycleState.CONNECTING,
             connectionProgress = ConnectionProgressState(
@@ -38,22 +41,32 @@ class AppPresentationTest {
             ),
         )
 
-        assertThat(state.joinUiStep()).isEqualTo(JoinUiStep.WAITING_FOR_APPROVAL)
+        assertThat(state.joinUiStep()).isEqualTo(JoinUiStep.REQUESTING_ACCESS)
     }
 
     @Test
-    fun approvedConnectionMapsToConnecting() {
+    fun awaitingApprovalMapsToWaitingForHostApproval() {
+        assertThat(
+            AppUiState(listenerState = ListenerLifecycleState.AWAITING_APPROVAL).joinUiStep(),
+        ).isEqualTo(JoinUiStep.WAITING_FOR_APPROVAL)
+    }
+
+    // Approved with no stream yet used to show "Connecting -- Creating the
+    // nearby connection" with a spinner, which read as stuck.
+    @Test
+    fun approvedWithoutAStreamMapsToWaitingForPlayback() {
         val state = AppUiState(
-            listenerState = ListenerLifecycleState.CONNECTING,
+            listenerState = ListenerLifecycleState.APPROVED,
             connectionProgress = ConnectionProgressState(
-                currentState = ListenerLifecycleState.CONNECTING,
+                currentState = ListenerLifecycleState.APPROVED,
                 discovered = true,
                 requested = true,
+                connected = true,
                 approved = true,
             ),
         )
 
-        assertThat(state.joinUiStep()).isEqualTo(JoinUiStep.CONNECTING)
+        assertThat(state.joinUiStep()).isEqualTo(JoinUiStep.WAITING_FOR_PLAYBACK)
     }
 
     @Test

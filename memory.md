@@ -5586,3 +5586,18 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Desktop: accepted join decisions/removals time out after 15 s
   (DELIVERY_CONFIRMATION_TIMEOUT_MS) into a retryable visible failure.
 - LabScreen.test.tsx link-fault test is flaky: 1 of 3 isolated runs failed.
+
+## 2026-09-16T20:00:58Z - Claude Opus 5 - Block 52.5: misleading delivery banner and "connecting" after approval
+- Desktop: "Last delivery" was the last *control* message, not audio. Now labeled
+  "Last control message (approval, rejection, or removal)"; per-stream audio frame
+  counts shown separately; red "Streaming to nobody" alert when buffering/playing
+  with 0 connected listeners (DeliveryAndTransportAlerts.test.tsx).
+- Desktop listener list shows listenerProgress() (domain.ts) instead of the raw core
+  `connecting`, which the core never advances past for an approved listener.
+- Android: APPROVED_OR_LATER wrongly contained CONNECTING (reached before the host
+  replies), so "Waiting for host approval" ticked before approval. Removed; join
+  checklist now follows core order and adds "Waiting for the host to start playback".
+  MainViewModelDiscoveryReconcileTest fails with the old set.
+- Gates: Android `./gradlew test lintDebug` 966 runs, 0 failures; desktop
+  `npm run check` 114 tests. Not device-verified (needs new APK + desktop package).
+- Also fixed TODO layout: Blocks 51-52 now sit after Block 50, before "Future phases".
