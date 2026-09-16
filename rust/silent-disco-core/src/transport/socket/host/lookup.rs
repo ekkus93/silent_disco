@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::domain::DeviceId;
+use crate::protocol::ControlMessage;
 
 use super::super::super::{TransportChannel, TransportError, TransportErrorKind};
 use super::SocketHostTransport;
@@ -91,6 +92,16 @@ impl SocketHostTransport {
             })
             .map(|(device_id, route)| (device_id.clone(), route.clone()))
             .collect())
+    }
+
+    /// Arms or disarms a peer's silence clock according to a control
+    /// message just delivered to it -- see [`super::peer::PeerState::silence_armed`].
+    pub(super) fn update_silence_clock(&self, peer: &PeerState, message: &ControlMessage) {
+        match message {
+            ControlMessage::StreamStart(_) => peer.arm_silence_clock(self.clock.now()),
+            ControlMessage::Stop(_) => peer.disarm_silence_clock(),
+            _ => {}
+        }
     }
 
     pub(super) fn record_peer_result(

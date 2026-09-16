@@ -109,6 +109,7 @@ impl HostTransportNode for SocketHostTransport {
         self.record_peer_result(&peer, &result);
         match result {
             Ok(written) => {
+                self.update_silence_clock(&peer, message);
                 TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
             }
             Err(error) => {
@@ -137,6 +138,7 @@ impl HostTransportNode for SocketHostTransport {
         self.record_peer_result(&peer, &result);
         match result {
             Ok(written) => {
+                self.update_silence_clock(&peer, message);
                 TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
             }
             Err(error) => {
@@ -179,6 +181,7 @@ impl HostTransportNode for SocketHostTransport {
             self.record_peer_result(&peer, &result);
             match result {
                 Ok(written) => {
+                    self.update_silence_clock(&peer, message);
                     successful = successful.saturating_add(1);
                     sent_bytes =
                         sent_bytes.saturating_add(u64::try_from(written).unwrap_or(u64::MAX));

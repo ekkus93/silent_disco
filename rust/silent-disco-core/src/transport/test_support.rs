@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use crate::domain::{DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
 use crate::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame,
+    AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame, Stop,
+    StreamStart,
 };
 
 use super::{
@@ -86,6 +87,25 @@ pub(super) fn wait_for_control_target(
             } if &value.listener_id == device_id
         )
     }));
+}
+
+pub(super) fn stream_start(session_id: &SessionId, host_start_time_ms: u64) -> ControlMessage {
+    ControlMessage::StreamStart(StreamStart {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("test stream ID is valid"),
+        host_start_time_ms: MonotonicMillis::new(host_start_time_ms),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 960,
+    })
+}
+
+pub(super) fn stream_stop(session_id: &SessionId, host_stop_time_ms: u64) -> ControlMessage {
+    ControlMessage::Stop(Stop {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("test stream ID is valid"),
+        host_stop_time_ms: MonotonicMillis::new(host_stop_time_ms),
+    })
 }
 
 pub(super) fn wait_for_frame(

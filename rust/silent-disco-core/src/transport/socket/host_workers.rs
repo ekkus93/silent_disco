@@ -156,6 +156,7 @@ fn register_peer(
         // hasn't had a chance to send its first sync probe yet must not
         // read as already stale (see the field's own doc comment).
         last_inbound_millis: AtomicU64::new(clock.now().get()),
+        silence_armed: AtomicBool::new(false),
     });
     peers
         .lock()
@@ -455,7 +456,7 @@ pub(super) fn spawn_udp_receiver(
                             Ok(frame) if datagram_matches_channel(channel, &frame) => {
                                 counters.datagram_received(channel, length);
                                 let received_at = clock.now();
-                                peer.mark_inbound_activity(received_at);
+                                peer.mark_inbound_datagram(received_at);
                                 send_event(
                                     &event_sender,
                                     &counters,
