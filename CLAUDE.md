@@ -240,7 +240,7 @@ Unless the user explicitly changes scope, do not prematurely implement:
 
 ## Ralph Loop workflow
 
-The project is currently in a release-acceptance / physical-validation phase (Block 46: Ubuntu fresh-machine + physical Android device hosting), not new Rust-core feature migration. Before picking up work, check `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md` for the current handoff and active closeout TODO.
+The project is currently in a release-acceptance / physical-validation phase (Block 46: Ubuntu fresh-machine + physical Android device hosting), not new Rust-core feature migration. Block 46.3 is paused while device-found UI and join defects (Blocks 49–52) are fixed; start from `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md`. For the Block 46 closeout itself, see `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md` and `docs/CLAUDE_CODE_BLOCK_46_3_HANDOFF_2026-09-16.md`.
 
 For the Rust migration, use `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`:
 

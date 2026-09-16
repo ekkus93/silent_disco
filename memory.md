@@ -5620,3 +5620,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   "Packets sent this session: ..." with five distinct outcomes.
 - Gates: desktop npm run check (115 tests), clippy --all-targets -D warnings,
   desktop cargo test 233 passed. No core changes. Not device-verified.
+
+## 2026-09-16T20:35:45Z - Claude Opus 5 - Session handoff written
+- Handoff for the next session: docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md
+  (status of Blocks 49-52, open items, release path, how to work on arisu + A54).
+  CLAUDE.md Ralph Loop section now points at it.
+- 52.1 "8 of 7123 partial" item marked explained by ea0dd37.

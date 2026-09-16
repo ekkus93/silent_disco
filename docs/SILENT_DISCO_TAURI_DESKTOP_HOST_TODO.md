@@ -5008,8 +5008,11 @@ harness started playback immediately.
 - [ ] Pause was not changed: the guard stays armed while paused. Confirm the
       Android listener keeps probing through a long pause, or disarm on pause
       too.
-- [ ] 8 of 7123 frames were reported as partially delivered with a single
+- [x] 8 of 7123 frames were reported as partially delivered with a single
       listener, which should not be possible; investigate the accounting.
+      Explained in 52.5 (`ea0dd37`): frames that reached no recipient were
+      counted as partial. They are now counted as undelivered. Why those
+      frames missed the listener is tracked in 52.5.
 
 ### 52.2 Android sends the join request before reporting the network ready
 
