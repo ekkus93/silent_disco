@@ -5054,16 +5054,46 @@ desktop GUI (`9aa075e`), on a carrier-NAT network. None is caused by Block 51:
 the production host playback path streamed cleanly to the same phone on the
 same network from the device-test harness (Block 51.5).
 
-### 52.1 Packaged GUI host disconnects the listener when playback starts
+### 52.1 Approved listeners were evicted when playback started
 
-- [ ] Reproduced twice, via mDNS "Join" (09:50) and via "Connect manually"
-      (10:06): pressing Play drops the listener. The phone reports "Host
-      disconnected -- runtime transport ShuttingDown: transport event channel is
-      closed"; the listener's control connection closes cleanly
-      (`PeerDisconnected { error: None }`), so neither side logs a reason.
-- [ ] The device-test harness runs the same core transport and playback
-      streamer without this, so the difference is in the GUI command /
-      platform-effect path. Diff the two paths first.
+Root cause, 2026-09-16: not the GUI path. The host's inbound-silence guard
+(`peer_inbound_silence_timeout`, 8 s, added 2026-08-10 for listeners that
+vanish mid-stream) applied from registration. A listener only sends sync
+probes once it has a stream to synchronize to, so an approved listener waiting
+for Play is legitimately silent. The guard is evaluated lazily when the host
+looks up recipients, and the first lookup is the stream start itself -- so
+every listener approved more than 8 s before Play was evicted by the stream
+start that would have made it begin probing. The GUI only appeared to be the
+difference because a human takes longer than 8 s to press Play; the device
+harness started playback immediately.
+
+- [x] Reproduced without the GUI: the device harness with a 120 s and a 240 s
+      hold between approval and playback delivered 0 of 7122 frames
+      (`without_recipients` = 7122). Host-side TCP went ESTAB -> TIME-WAIT at
+      stream start, so the host initiated the close.
+- [x] Fix: the silence clock is armed only by an inbound sync/audio datagram or
+      by delivering a stream start, and disarmed by delivering a stream stop
+      (`PeerState::silence_armed`). Any inbound frame still refreshes the time,
+      but a join request no longer arms eviction. Departure before playback is
+      still observed through the control connection closing.
+- [x] Regression tests in `transport/liveness_tests.rs`: an approved listener
+      idle for four minutes receives the stream start, is still evicted if it
+      never probes afterwards, and a listener idle after a stop still receives
+      the next start. Both fail with the fix disabled; the existing
+      mid-stream eviction tests still pass.
+- [x] The manual device harness now asserts that the stream reached a
+      listener. It previously printed zero deliveries and still passed, which
+      is how this stayed hidden.
+- [x] Verified on the A54 over carrier-NAT with a 60 s hold before playback:
+      7115 of 7123 frames fully delivered, 0 without recipients, sync
+      Excellent, audible to a human.
+- [ ] Re-verify through the packaged GUI (approve, wait, then Play) after the
+      next desktop package build.
+- [ ] Pause was not changed: the guard stays armed while paused. Confirm the
+      Android listener keeps probing through a long pause, or disarm on pause
+      too.
+- [ ] 8 of 7123 frames were reported as partially delivered with a single
+      listener, which should not be possible; investigate the accounting.
 
 ### 52.2 Android sends the join request before reporting the network ready
 
@@ -5084,8 +5114,9 @@ same network from the device-test harness (Block 51.5).
       Android keeps reconciling mDNS results after discovery stops
       (`MainViewModelTransport.kt`), which also produces repeated "discovery
       result arrived while discovery was inactive" errors. Once joined, the
-      connection -- not mDNS presence -- must own the session. Not yet proven
-      to be the trigger of any drop observed today.
+      connection -- not mDNS presence -- must own the session. The 09:50
+      drop originally suspected here was 52.1; this path remains a real
+      defect in the code but has not been observed causing a drop.
 
 ### 52.4 Approval delivery can hang forever without a visible failure
 
@@ -5106,8 +5137,10 @@ same network from the device-test harness (Block 51.5).
       session leaves no listener-side evidence and listener loss/underruns
       cannot be read.
 - [ ] Host display name is shown as a raw 64-hex device identifier on Android.
-- [ ] Neither app says "approved, waiting for the host to start playback";
-      both keep showing "connecting".
+- [ ] The Android mDNS "Join" path and the desktop listener list keep
+      showing "connecting" after approval. (Android's manual-connect path does
+      say "The host approved this device. Waiting for the host to start
+      playback.")
 - [ ] The desktop network card still says only private-LAN addresses can be
       advertised while bound to a shared-address-space address.
 - [ ] "session name is invalid" is shown on an untouched empty field.

@@ -5465,3 +5465,85 @@ open. Per user workflow, do not monitor CI; the user will report CI failures.
   must be restored to 1 by the user.
 - Fixed a pedantic clippy warning (ip_constant) shipped in 9aa075e's tests;
   earlier clippy run predated those tests.
+
+## 2026-09-16T18:19:31Z - Claude Opus 5 - Block 52.1 root-caused and fixed: silence guard evicted listeners waiting for Play
+- Not a GUI bug. Core host's peer_inbound_silence_timeout (8 s) applied from
+  registration; listeners only probe once a stream starts; the guard runs lazily
+  on the first recipient lookup, which is the stream start. Any listener approved
+  >8 s before Play was evicted by the stream start itself.
+- Proof: device harness with SILENT_DISCO_DEVICE_TEST_PLAY_DELAY_SECS=120/240
+  delivered 0/7122; host TCP ESTAB -> TIME-WAIT (host closed). Fix: silence clock
+  armed only by inbound sync/audio datagram or delivered StreamStart, disarmed by
+  delivered Stop. After fix, 60 s hold: 7115/7123 delivered, heard by user.
+- Harness additions (test-only env vars): SILENT_DISCO_DEVICE_TEST_SOURCE=<file>
+  streams a real file; SILENT_DISCO_DEVICE_TEST_PLAY_DELAY_SECS holds before Play.
+  Harness now asserts frames_fully_delivered > 0.
+- The user's 16 kHz mono 66-min MP3 streams fine; file format was ruled out.
+- Diagnostic technique that settled direction: sample State  Recv-Q Send-Q      Local Address:Port     Peer Address:PortProcess
+LISTEN 0      4096              0.0.0.0:5432          0.0.0.0:*          
+LISTEN 0      128         100.64.64.132:43217         0.0.0.0:*          
+LISTEN 0      64                0.0.0.0:46309         0.0.0.0:*          
+LISTEN 0      4096              0.0.0.0:54305         0.0.0.0:*          
+LISTEN 0      511             127.0.0.1:6463          0.0.0.0:*          
+LISTEN 0      4096            127.0.0.1:8008          0.0.0.0:*          
+LISTEN 0      128               0.0.0.0:22            0.0.0.0:*          
+LISTEN 0      4096              0.0.0.0:111           0.0.0.0:*          
+LISTEN 0      4096            127.0.0.1:11434         0.0.0.0:*          
+LISTEN 0      4096              0.0.0.0:48391         0.0.0.0:*          
+LISTEN 0      4096            127.0.0.1:5002          0.0.0.0:*          
+LISTEN 0      128             127.0.0.1:5037          0.0.0.0:*          
+LISTEN 0      128             127.0.0.1:631           0.0.0.0:*          
+LISTEN 0      4096              0.0.0.0:35083         0.0.0.0:*          
+LISTEN 0      64                0.0.0.0:2049          0.0.0.0:*          
+LISTEN 0      4096              0.0.0.0:39025         0.0.0.0:*          
+LISTEN 0      4096        127.0.0.53%lo:53            0.0.0.0:*          
+ESTAB  0      0           100.64.64.132:47322  172.64.148.235:443        
+ESTAB  0      0           100.64.64.132:41944  57.144.220.141:443        
+ESTAB  0      0           100.64.64.132:49090    104.18.32.47:443        
+ESTAB  0      0           100.64.64.132:54106     3.17.45.182:443        
+ESTAB  0      0           100.64.64.132:41802   35.186.224.36:443        
+ESTAB  0      0           100.64.64.132:40452   160.79.104.10:443        
+ESTAB  0      0           100.64.64.132:33836     3.17.45.182:443        
+ESTAB  0      0           100.64.64.132:38994  57.144.220.145:443        
+ESTAB  0      0           100.64.64.132:33586  172.64.148.235:443        
+ESTAB  0      0           100.64.64.132:43122  57.144.221.134:443        
+ESTAB  0      0           100.64.64.132:39868  57.144.220.145:443        
+ESTAB  0      0           100.64.64.132:43710  172.64.148.235:443        
+ESTAB  0      0           100.64.64.132:42764   35.186.224.31:443        
+ESTAB  0      0           100.64.64.132:34020  57.144.220.145:443        
+ESTAB  0      0           100.64.64.132:54278   140.82.112.26:443        
+ESTAB  0      0           100.64.64.132:34476  74.125.137.188:5228       
+ESTAB  0      0           100.64.64.132:60728   34.149.66.165:443        
+ESTAB  0      0           100.64.64.132:40050     18.97.36.62:443        
+ESTAB  0      0           100.64.64.132:52486  57.144.220.145:443        
+ESTAB  0      0           100.64.64.132:53526    140.82.113.3:443        
+ESTAB  0      0           100.64.64.132:44996   160.79.104.10:443        
+ESTAB  0      0           100.64.64.132:41570  172.64.148.235:443        
+ESTAB  0      0           100.64.64.132:35544     3.17.45.182:443        
+ESTAB  0      0           100.64.64.132:52394 162.159.130.234:443        
+ESTAB  0      0           100.64.64.132:50466   160.79.104.10:443        
+ESTAB  0      0           100.64.64.132:57744    104.18.39.21:443        
+ESTAB  0      0           100.64.64.132:43570  172.64.148.235:443        
+ESTAB  0      0           100.64.64.132:39174   35.186.224.39:443        
+ESTAB  0      0           100.64.64.132:39392  57.144.220.141:443        
+ESTAB  0      0           100.64.64.132:53016  142.251.214.37:443        
+ESTAB  0      0           100.64.64.132:44886  172.64.148.235:443        
+ESTAB  0      0           100.64.64.132:38714  24.130.173.209:5122       
+ESTAB  0      0           100.64.64.132:43166   104.20.30.124:443        
+ESTAB  0      0           100.64.64.132:46162   54.190.152.57:443        
+LISTEN 0      4096                 [::]:58839            [::]:*          
+LISTEN 0      4096                 [::]:5432             [::]:*          
+LISTEN 0      50     [::ffff:127.0.0.1]:35087               *:*          
+LISTEN 0      50                      *:1716                *:*          
+LISTEN 0      4096                 [::]:57625            [::]:*          
+LISTEN 0      128                  [::]:22               [::]:*          
+LISTEN 0      4096                 [::]:111              [::]:*          
+LISTEN 0      128                 [::1]:631              [::]:*          
+LISTEN 0      50     [::ffff:127.0.0.1]:33287               *:*          
+LISTEN 0      64                   [::]:40027            [::]:*          
+LISTEN 0      4096                 [::]:56967            [::]:*          
+LISTEN 0      4096                 [::]:60931            [::]:*          
+LISTEN 0      64                   [::]:2049             [::]:*           on the
+  host port every 0.5 s; host ending in TIME-WAIT means host sent the first FIN.
+- Open: re-verify via packaged GUI; guard still armed during pause; 8/7123
+  frames reported partially delivered with one listener.
