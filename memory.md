@@ -5547,3 +5547,13 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   host port every 0.5 s; host ending in TIME-WAIT means host sent the first FIN.
 - Open: re-verify via packaged GUI; guard still armed during pause; 8/7123
   frames reported partially delivered with one listener.
+
+## 2026-09-16T18:33:54Z - Claude Opus 5 - Block 52.1 verified through the packaged GUI
+- Package from 4041b95 (deb sha256 4d688994..., binary 4daa0afb...) installed
+  and running; A54 joined Test3 via Connect manually; user approved, waited as
+  asked, pressed Play, and heard audio. Phone "Playing", host receiving sync
+  traffic, no desktop errors. Gap not independently timed on this path.
+- Useful: launch the GUI as `silent-disco-desktop 2>&1 | tee ~/silent-disco-desktop.log`
+  so its output is readable afterwards.
+- Earlier today the user restarted the GUI before installing the new .deb;
+  always confirm /usr/bin/silent-disco-desktop matches the new bundle's binary.

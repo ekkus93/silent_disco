@@ -5087,8 +5087,14 @@ harness started playback immediately.
 - [x] Verified on the A54 over carrier-NAT with a 60 s hold before playback:
       7115 of 7123 frames fully delivered, 0 without recipients, sync
       Excellent, audible to a human.
-- [ ] Re-verify through the packaged GUI (approve, wait, then Play) after the
-      next desktop package build.
+- [x] Re-verified through the packaged GUI built from `4041b95` (installed
+      binary sha256 prefix `4daa0afb`), 2026-09-16 11:31, over carrier-NAT:
+      listener joined via "Connect manually", operator approved, was asked to
+      wait at least 30 s, then pressed Play. The phone reached "Playing", the
+      control connection stayed established, the host received the
+      listener's sync traffic, the desktop logged no errors, and audio was
+      heard. The approval-to-Play gap was not independently timed on this
+      path; the timed 60 s gap is the harness run above.
 - [ ] Pause was not changed: the guard stays armed while paused. Confirm the
       Android listener keeps probing through a long pause, or disarm on pause
       too.
