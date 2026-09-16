@@ -292,6 +292,13 @@ jobs:
 
           mkdir -p "${stage_root}"
           printf '%s\n' "${GITHUB_SHA}" > "${stage_root}/latest-sha"
+
+          rm -rf block46-stage-evidence
+          mkdir -p block46-stage-evidence
+          cp "${stage_dir}/STAGE_MANIFEST.txt" block46-stage-evidence/
+          cp "${stage_dir}/SHA256SUMS" block46-stage-evidence/
+          cp "${stage_dir}/RUN_BLOCK46.txt" block46-stage-evidence/
+
           printf 'Block 46.3 stage directory: %s\n' "${stage_dir}"
           cat "${stage_dir}/STAGE_MANIFEST.txt"
           cat "${stage_dir}/SHA256SUMS"
@@ -304,6 +311,7 @@ jobs:
           name: block46-self-hosted-stage-${{ github.sha }}
           path: |
             block46-desktop-build.log
+            block46-stage-evidence/
             app/build/outputs/apk/debug/app-debug.apk
             desktop/src-tauri/target/release/bundle/deb/
             desktop/src-tauri/target/release/bundle/appimage/
