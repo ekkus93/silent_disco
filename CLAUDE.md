@@ -9,7 +9,7 @@ This repository currently contains an Android proof of concept for an offline si
 - a future native iOS presentation and platform-adapter shell implemented with Swift and SwiftUI;
 - a Rust-owned real-time render ring consumed by platform-native audio callbacks.
 
-The Android application began as a viability-focused proof of concept. The current repository also contains the Linux Tauri desktop-host implementation, whose active release goal is production-capable Ubuntu 22.04 hosting for physical Android listeners with executable interoperability evidence. Android host-mode viability and future iOS/desktop-listener work remain separately scoped.
+The Android application began as a viability-focused proof of concept. The current repository also contains the Linux Tauri desktop-host implementation, whose active release goal is production-capable Ubuntu 22.04 and 24.04 amd64 hosting for physical Android listeners with executable interoperability evidence. Android host-mode viability and future iOS/desktop-listener work remain separately scoped.
 
 ## Authoritative migration documents
 
@@ -61,6 +61,8 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
+
+`tools/decoder-spike/` is a separate Cargo crate outside the `rust/` workspace — `scripts/check-rust.sh` and the commands above do not cover it.
 
 `app/build.gradle.kts` also wires custom Gradle `Exec` tasks (`buildRustAndroidDebug`, `buildRustAndroidRelease`, via `cargo-ndk` for 4 ABIs) into `mergeXJniLibFolders`/`clean` — Android builds invoke the Rust build automatically.
 
@@ -237,6 +239,8 @@ Unless the user explicitly changes scope, do not prematurely implement:
 - Do not add `Co-Authored-By:` lines to commit messages; the repository rejects them.
 
 ## Ralph Loop workflow
+
+The project is currently in a release-acceptance / physical-validation phase (Block 46: Ubuntu fresh-machine + physical Android device hosting), not new Rust-core feature migration. Before picking up work, check `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md` for the current handoff and active closeout TODO.
 
 For the Rust migration, use `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`:
 

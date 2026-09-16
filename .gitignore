@@ -43,8 +43,9 @@ google-services.json
 # Android Profiling
 *.hprof
 
-run_copilot.sh
-run_claude.sh*
+run_copilot*.sh*
+run_claude*.sh*
+*~
 
 # TypeScript incremental build state
 *.tsbuildinfo
