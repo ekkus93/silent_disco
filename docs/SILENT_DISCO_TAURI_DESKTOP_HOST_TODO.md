@@ -5130,14 +5130,33 @@ harness started playback immediately.
 
 ### 52.3 mDNS expiry resets an already-joined listener
 
-- [ ] `expire_session` clears `selected_session` and resets the listener to
-      Idle/Scanning without checking for an active connection to that host.
-      Android keeps reconciling mDNS results after discovery stops
-      (`MainViewModelTransport.kt`), which also produces repeated "discovery
-      result arrived while discovery was inactive" errors. Once joined, the
-      connection -- not mDNS presence -- must own the session. The 09:50
-      drop originally suspected here was 52.1; this path remains a real
-      defect in the code but has not been observed causing a drop.
+Mechanism, confirmed in code 2026-09-16: joining stops discovery, and
+`MdnsDiscoveryService.stopDiscovery()` clears its session list. Android's
+`refreshDiscoveredSessions` kept reconciling regardless of the core's
+discovery state, so the emptied list expired the session the listener had just
+joined, and the core's `expire_session` cleared the selection and reset the
+listener to Idle ("No session selected -- Unknown host"). The same
+reconciliation resubmitted results the core rejects once discovery is inactive
+("discovery result arrived while discovery was inactive").
+
+- [x] Core: `expire_session` ignores expiry of the selected session while the
+      listener is joined (`JoinRequested` through `Desynced`) and emits a
+      `session_expiry_ignored_while_joined` diagnostic; the entry stays listed
+      because the snapshot requires the selected session to be discovered. A
+      host that really left surfaces as a transport failure. Expiry before a
+      join (`SessionSelected`) still clears the selection.
+- [x] Android: reconciliation runs only while the core reports discovery
+      active, and results already found are submitted when discovery starts.
+- [x] Tests: core `session_expiry_tests` (joined states ignored, unjoined
+      selection cleared, other sessions still removed) and Android
+      `MainViewModelDiscoveryReconcileTest` (no reconciliation while
+      inactive, reconciliation while active, results submitted on start).
+      The joined-state and gating tests failed before the fix. An existing
+      test that reconciled without the core discovering gained that
+      precondition. Rust gate 445 tests; Android gate 954 unit-test runs.
+- [ ] Device-verify with 52.1/52.2: join a desktop host via mDNS "Join",
+      approve, wait several minutes, then play; expect no reset to "No
+      session selected" and no "discovery ... inactive" errors in logcat.
 
 ### 52.4 Approval delivery can hang forever without a visible failure
 
