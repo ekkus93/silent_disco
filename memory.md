@@ -5402,3 +5402,66 @@ distribution DNS is blocked, and the desktop npm cache lacks required tarballs f
 offline install. Physical,
 fresh-machine, performance-measurement, and final evidence-ledger items remain
 open. Per user workflow, do not monitor CI; the user will report CI failures.
+
+## 2026-09-16T16:33:37Z - Claude Opus 5 - Desktop shell rework, Settings, CGNAT opt-in (Blocks 49-51); Block 46.3 paused
+- Block 46.3 acceptance paused mid-run by user choice. The a3beac2 stage
+  (~/silent-disco-block46-stage/a3beac2.../) is now INVALID: every later commit
+  touches desktop/src, so desktop bundles and APK must be rebuilt from one
+  current master SHA. Recorded as closeout TODO section 3a.
+- Acceptance host is `arisu` (Ubuntu 22.04.5 amd64), not `kawa`/24.04 as the
+  2026-09-16 handoff claimed; user confirmed. Release path pins Node 22.16.0
+  (nvm) and Java 17 (/usr/lib/jvm/java-17-openjdk-amd64); this machine defaults
+  to Node 24 / Java 21, which mismatch.
+- Validator gotchas hit: it requires selecting its *generated* WAV (byte-identity
+  check, not a format check -- MP3 is supported); it refuses to run while
+  `silent-disco` is installed, and any failed run leaves it installed.
+- Venue Wi-Fi "Revival Hall" hands out 100.64.0.0/10 (CGNAT) to both laptop
+  (100.64.64.132) and A54 (100.64.65.39); peers can ping each other (no client
+  isolation) but ping jitter was high (mdev ~50 ms).
+- 2ec12b5 (Blocks 49-50): revived dead uiSlice as single activeView router,
+  first shared components in desktop/src/components, Settings destination,
+  fixed storage-gated-on-ready, discarded recoverableAction, unrendered
+  retryable. d761921: network policy control lives only on Settings; setup shows
+  a readiness summary; rule extracted to networkReadiness.
+- 9aa075e (Block 51): CGNAT opt-in. Core migration v3 adds
+  app_settings.allow_shared_address_space (default 0). Bugs caught by own tests:
+  persist_settings writes the whole row and would have revoked the opt-in;
+  automatic selection picks by default route, so class ranking in the sort was
+  ineffective until selection was restricted to the best class present.
+- Device results 2026-09-16: A54 (R5CW31AX4FL, Android 16/API 36) upgraded a
+  real v2 profile to v3 via `adb install -r` -- user_version 2->3, integrity ok,
+  row counts unchanged, opt-in 0. Desktop profile (from Aug 1) also migrated to
+  v3 at launch 09:31 PDT. Production classifier on this host's real interfaces:
+  wlo1 100.64.64.132 = SharedAddressSpace, refused without opt-in, auto-selected
+  with it; all Docker bridges stayed Container.
+- IMPORTANT: `./gradlew test lintDebug` does NOT validate Rust schema changes --
+  buildRustAndroidDebug is wired to mergeDebugJniLibFolders, not test.
+- Desktop GUI cannot be automated here: GNOME Wayland session, xdotool sees no
+  app windows. Android side is fully drivable via adb/uiautomator.
+- LabScreen.test.tsx has a latent timing flake (setLabLinkFaults waitFor); seen
+  once in ~7 full runs, not investigated.
+- Still unverified: an actual audio session over CGNAT (Block 51.5 last item).
+  Rebuilt desktop package from 9aa075e is installed and running on arisu.
+
+## 2026-09-16T17:14:12Z - Claude Opus 5 - Carrier-NAT device session: audio works via harness, GUI host drops listener on Play
+- Desktop->A54 audio over carrier-NAT (100.64.64.132 -> 100.64.65.39) confirmed
+  by ear via the device-test harness, now opt-in capable with
+  SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE=1 (manual_real_android_
+  listener_plays_mp3): 7119/7119 frames delivered, sync Excellent, RTT 3.75-6.17
+  ms, drift 35 ppm. Recorded as Block 51.5.
+- The packaged GUI host (9aa075e) dropped the listener on Play twice (mDNS join
+  and manual join). Harness path is fine, so the bug is in the GUI command /
+  platform-effect path, not network or core transport. Block 52.1 -- start here.
+- Other device findings in Block 52: Android join-before-endpoint-ready race
+  (52.2, seen once), mDNS expiry resetting a joined listener (52.3, suspected),
+  approval delivery hung >3 min with no visible failure after a listener app
+  restart (52.4), stale "1 of 1 succeeded" banner while streaming to nobody,
+  and no logcat output from Android's manual-connect path (52.5).
+- Clean-close disconnects log nothing on either side; the GUI app's stderr goes
+  to the launching terminal. Launch it from a terminal Claude can read next time.
+- Phone automation helper: scratchpad a54.sh (tap-by-text via uiautomator).
+  Careful: a BACK keyevent on an app root screen exits to the launcher.
+- A54 Battery Saver (settings global low_power) was set to 0 for testing and
+  must be restored to 1 by the user.
+- Fixed a pedantic clippy warning (ip_constant) shipped in 9aa075e's tests;
+  earlier clippy run predated those tests.

@@ -4994,13 +4994,124 @@ explicit operator opt-in, never a default.
 
 ### 51.5 Device verification
 
-- [ ] Android has not exercised schema v3. `buildRustAndroidDebug` is wired to
-      `mergeDebugJniLibFolders`, not to `test`, so the Android unit/lint gate
-      does not load the native library or open a database. Verify with
-      `connectedDebugAndroidTest` or a real profile open on a physical device
-      before treating the migration as validated on Android.
-- [ ] verify the opt-in end to end on a real carrier-NAT network.
+Note for future migrations: the Android unit/lint gate does not validate
+schema changes. `buildRustAndroidDebug` is wired to `mergeDebugJniLibFolders`,
+not to `test`, so `./gradlew test lintDebug` never loads the native library or
+opens a database. A schema change needs a real profile open on a device.
+
+- [x] schema v3 upgrade verified on the physical Samsung Galaxy A54
+      (`R5CW31AX4FL`, Android 16 / API 36) on 2026-09-16. A genuine upgrade,
+      not a fresh install: the device held a v2 profile from the previous
+      build, the new APK was installed with `adb install -r` to preserve it,
+      and launching the app ran the migration.
+  - `PRAGMA user_version` 2 -> 3;
+  - `schema_migrations` gained version 3, checksum
+    `fnv1a64:6b3077f49c040fdb`;
+  - `app_settings` gained `allow_shared_address_space`, value `0`, so the
+    upgraded profile keeps refusing;
+  - `PRAGMA integrity_check` = `ok`;
+  - row counts identical before and after across `app_settings`,
+    `trusted_devices`, `session_history`, `diagnostic_runs`, and
+    `legacy_imports`;
+  - no errors or exceptions in logcat, process alive after launch.
+- [x] classification verified against this host's real interfaces on
+      2026-09-16, using production's own enumeration and selection over a live
+      carrier-NAT network (`wlo1` at `100.64.64.132/22`).
+  - without the opt-in: classified `SharedAddressSpace`, `selectable=false`,
+    rejection reason names the setting, automatic selection refused;
+  - with the opt-in: `selectable=true`, automatic resolved to
+    `wlo1 100.64.64.132`, reported as `SharedAddressSpace` rather than
+    claiming `PrivateLan`;
+  - all five Docker bridges stayed `Container` and excluded in both cases, so
+    interface precedence holds against real interfaces, not only synthetic
+    test records.
+- [x] real session over carrier-NAT end to end, 2026-09-16, confirmed by ear
+      on the A54. Run with the production host playback path via
+      `SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE=1 cargo test --lib
+      manual_real_android_listener_plays_mp3 -- --ignored --nocapture` (the
+      variable is the harness's equivalent of the Settings opt-in), joined via
+      "Connect manually", host bound to `100.64.64.132`:
+  - 7119 of 7119 audio frames fully delivered; 0 partial, 0 without
+    recipients, 0 queue overflows (peak depth 110);
+  - sync confidence Excellent throughout, RTT 3.75-6.17 ms, drift settled
+    from 118 to 35 ppm;
+  - play, pause, resume, and stop all observed; the listener stayed connected;
+  - listener-side loss/underrun/concealment were not captured: the manual
+    connect path logs nothing to logcat (see Block 52).
+  - The same session driven from the packaged desktop GUI did NOT work; see
+    Block 52. The network and core transport are therefore not the cause.
 
 **Acceptance:** A desktop host on a carrier-NAT network can advertise its
 address after an explicit opt-in that survives restart, without weakening the
 default refusal on any other network.
+
+---
+
+## Block 52 — Join and playback defects found on device, 2026-09-16
+
+Found while verifying Block 51 on the physical A54 against the packaged
+desktop GUI (`9aa075e`), on a carrier-NAT network. None is caused by Block 51:
+the production host playback path streamed cleanly to the same phone on the
+same network from the device-test harness (Block 51.5).
+
+### 52.1 Packaged GUI host disconnects the listener when playback starts
+
+- [ ] Reproduced twice, via mDNS "Join" (09:50) and via "Connect manually"
+      (10:06): pressing Play drops the listener. The phone reports "Host
+      disconnected -- runtime transport ShuttingDown: transport event channel is
+      closed"; the listener's control connection closes cleanly
+      (`PeerDisconnected { error: None }`), so neither side logs a reason.
+- [ ] The device-test harness runs the same core transport and playback
+      streamer without this, so the difference is in the GUI command /
+      platform-effect path. Diff the two paths first.
+
+### 52.2 Android sends the join request before reporting the network ready
+
+- [ ] `connectRustListenerEndpoint` (`MainViewModelRustListenerNetwork.kt`)
+      calls `sendJoinRequest` and starts the event loop before
+      `platformOperationSucceeded(NetworkEndpointReady)`. A fast host `Hello`
+      reaches the core while it is still `JoinRequested`, and
+      `record_awaiting_approval` rejects it ("awaiting approval arrived outside
+      an active connection attempt"). Observed at 09:43:52, 105 ms after the
+      request; not observed on the 10:00 attempt, consistent with a race.
+- [ ] Report the endpoint ready before sending the join request; add a test
+      with an immediate `Hello`.
+
+### 52.3 mDNS expiry resets an already-joined listener
+
+- [ ] `expire_session` clears `selected_session` and resets the listener to
+      Idle/Scanning without checking for an active connection to that host.
+      Android keeps reconciling mDNS results after discovery stops
+      (`MainViewModelTransport.kt`), which also produces repeated "discovery
+      result arrived while discovery was inactive" errors. Once joined, the
+      connection -- not mDNS presence -- must own the session. Not yet proven
+      to be the trigger of any drop observed today.
+
+### 52.4 Approval delivery can hang forever without a visible failure
+
+- [ ] At 10:00 the host showed "Waiting for approval delivery confirmation..."
+      for over three minutes while writing nothing to the listener's socket
+      (109 bytes sent, `lastsnd` == `lastrcv`). Stopping playback did not
+      clear it, so streaming is not the cause; the listener app had been
+      restarted mid-attempt just before, which is the leading suspect.
+- [ ] Whatever the cause, a pending delivery must time out into a visible
+      failure rather than wait indefinitely.
+
+### 52.5 Diagnostics that misreport or are missing
+
+- [ ] "Last delivery: 1 of 1 succeeded (ok)" stayed on screen for 3 minutes of
+      streaming to zero listeners; it describes the last control delivery, not
+      the audio. Zero recipients is not success.
+- [ ] Android's manual-connect path emits nothing to logcat, so a failed
+      session leaves no listener-side evidence and listener loss/underruns
+      cannot be read.
+- [ ] Host display name is shown as a raw 64-hex device identifier on Android.
+- [ ] Neither app says "approved, waiting for the host to start playback";
+      both keep showing "connecting".
+- [ ] The desktop network card still says only private-LAN addresses can be
+      advertised while bound to a shared-address-space address.
+- [ ] "session name is invalid" is shown on an untouched empty field.
+
+**Acceptance:** A listener that joins the packaged desktop GUI host, by either
+join path, stays connected through playback start and hears audio, and every
+failure above is either fixed or surfaces as a visible, actionable error.
