@@ -1,43 +1,29 @@
+import { Button } from "../../components/Button";
+import { Detail as SharedDetail } from "../../components/Detail";
+import { ErrorAlert as SharedErrorAlert } from "../../components/ErrorAlert";
 import type { DesktopErrorDto } from "../../core/generated/desktop-bindings";
 
-export function StatusCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-700 bg-slate-900 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-2 break-words text-lg font-semibold">{value}</p>
-    </div>
-  );
-}
+export { StatusCard } from "../../components/StatusCard";
 
+/// This screen's `Detail` broke long values on any character; the shared one
+/// defaults to word boundaries, so the behaviour is requested explicitly here
+/// rather than forked into a second implementation.
 export function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-slate-900 p-3">
-      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
-      <dd className="mt-1 break-all text-sm text-slate-100">{value}</dd>
-    </div>
-  );
+  return <SharedDetail label={label} value={value} wrap="all" />;
 }
 
 export function CopyButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-lg border border-slate-600 px-3 py-2 text-sm font-semibold hover:border-slate-400"
-    >
+    <Button onClick={onClick} className="px-3">
       {label}
-    </button>
+    </Button>
   );
 }
 
 export function ErrorAlert({ error }: { error: DesktopErrorDto }) {
   return (
-    <div
-      role="alert"
-      className="mt-4 rounded-xl border border-rose-500/60 bg-rose-950/40 p-4 text-rose-100"
-    >
-      <p className="font-semibold">{error.message}</p>
-      <p className="mt-1 font-mono text-xs">{error.code}</p>
+    <div className="mt-4">
+      <SharedErrorAlert error={error} />
     </div>
   );
 }

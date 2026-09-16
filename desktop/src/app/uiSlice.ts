@@ -1,26 +1,27 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 
-export type DesktopPanel = "connection" | "diagnostics";
+/// The shell's destinations. Exactly one is rendered at a time.
+///
+/// `host` is the working destination and resolves to either the setup or the
+/// session screen from the authoritative host lifecycle -- the shell does not
+/// model that split, because the core already owns it. The rest are peer
+/// destinations reached from the header.
+export type DesktopView = "host" | "diagnostics" | "storage" | "settings" | "lab";
 
 export interface UiState {
-  activePanel: DesktopPanel;
-  diagnosticsExpanded: boolean;
+  activeView: DesktopView;
 }
 
 const initialState: UiState = {
-  activePanel: "connection",
-  diagnosticsExpanded: false,
+  activeView: "host",
 };
 
 export const uiSlice = createSlice({
   name: "ui",
   initialState,
   reducers: {
-    activePanelChanged(state, action: PayloadAction<DesktopPanel>) {
-      state.activePanel = action.payload;
-    },
-    diagnosticsExpandedChanged(state, action: PayloadAction<boolean>) {
-      state.diagnosticsExpanded = action.payload;
+    activeViewChanged(state, action: PayloadAction<DesktopView>) {
+      state.activeView = action.payload;
     },
   },
 });

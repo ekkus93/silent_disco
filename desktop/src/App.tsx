@@ -1,19 +1,24 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { coreActions } from "./app/coreSlice";
 import {
+  selectActiveView,
   selectBridgeLifecycle,
   selectCoreSnapshot,
   selectLatestCoreError,
   selectStaleNotificationCounters,
 } from "./app/selectors";
 import { useAppDispatch, useAppSelector } from "./app/store";
+import { type DesktopView, uiActions } from "./app/uiSlice";
+import { ErrorAlert } from "./components/ErrorAlert";
+import { RecoverableActionNotice } from "./components/RecoverableActionNotice";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
 import { getAppShutdownState, getLabModeAvailable, toDesktopBridgeError } from "./core/client";
 import type { AppShutdownPhaseDto } from "./core/generated/desktop-bindings";
 import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
+import { SettingsScreen } from "./screens/SettingsScreen";
 import { StorageInspectionScreen } from "./screens/StorageInspectionScreen";
 
 // Standard production builds compile the condition to `false`, so Rollup
@@ -100,6 +105,14 @@ interface ShellConnectionState {
   subscriptionId: string;
 }
 
+const DESTINATIONS: ReadonlyArray<{ id: DesktopView; label: string }> = [
+  { id: "host", label: "Host control" },
+  { id: "diagnostics", label: "Diagnostics" },
+  { id: "storage", label: "Storage" },
+  { id: "settings", label: "Settings" },
+  { id: "lab", label: "Lab Mode" },
+];
+
 const ACTIVE_HOST_LIFECYCLES = new Set([
   "creating_session",
   "advertising",
@@ -117,11 +130,11 @@ export function App() {
   const lifecycle = useAppSelector(selectBridgeLifecycle);
   const latestError = useAppSelector(selectLatestCoreError);
   const staleNotifications = useAppSelector(selectStaleNotificationCounters);
+  const activeView = useAppSelector(selectActiveView);
   const [labModeAvailable, setLabModeAvailable] = useState<boolean | null>(null);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [showStorage, setShowStorage] = useState(false);
-  const [showLab, setShowLab] = useState(false);
+  const destinationRef = useRef<HTMLDivElement | null>(null);
+  const previousViewRef = useRef<DesktopView>(activeView);
 
   useEffect(() => {
     const profileId = "main";
@@ -167,6 +180,15 @@ export function App() {
     };
   }, []);
 
+  // Activating a destination used to append it below the active screen, so on
+  // a tall session page the click appeared to do nothing. Exactly one
+  // destination now renders, and focus follows the switch.
+  useEffect(() => {
+    if (previousViewRef.current === activeView) return;
+    previousViewRef.current = activeView;
+    destinationRef.current?.focus();
+  }, [activeView]);
+
   const ready = lifecycle.kind === "ready" && snapshot !== null && connection !== null;
   const failed = lifecycle.kind === "failed";
 
@@ -192,78 +214,93 @@ export function App() {
             </div>
             <h1 className="mt-2 text-4xl font-bold tracking-tight">Host control</h1>
           </div>
-          <div className="flex items-center gap-4">
-            {ready ? (
-              <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-violet-100/65">
-                <dt>Revision</dt>
-                <dd className="font-mono text-right text-cyan-200">{snapshot.revision}</dd>
-                <dt>Lifecycle</dt>
-                <dd className="font-mono text-right">{snapshot.hostLifecycle}</dd>
-                <dt>Stale rejected</dt>
-                <dd className="font-mono text-right">{staleNotifications.snapshots}</dd>
-              </dl>
-            ) : null}
-            {labModeAvailable && LabScreen ? (
-              <button
-                type="button"
-                onClick={() => setShowLab((current) => !current)}
-                aria-pressed={showLab}
-                className="rounded-lg border border-amber-400/50 px-4 py-2 text-sm font-semibold text-amber-100 hover:border-amber-300"
-              >
-                {showLab ? "Hide Lab Mode" : "Lab Mode"}
-              </button>
-            ) : null}
-            {ready ? (
-              <button
-                type="button"
-                onClick={() => setShowStorage((current) => !current)}
-                aria-pressed={showStorage}
-                className="rounded-lg border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 hover:border-cyan-200"
-              >
-                {showStorage ? "Hide storage" : "Storage"}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setShowDiagnostics((current) => !current)}
-              aria-pressed={showDiagnostics}
-              className="rounded-lg border border-violet-300/40 px-4 py-2 text-sm font-semibold text-violet-100 hover:border-violet-200"
-            >
-              {showDiagnostics ? "Hide diagnostics" : "Diagnostics"}
-            </button>
-          </div>
+          {/* Stale-rejected is a shell-level counter about the notification
+              stream itself, so it stays here. Revision and lifecycle do not:
+              they were also rendered by the session screen from a separately
+              polled source, and the two could disagree on screen. */}
+          {ready ? (
+            <dl className="text-xs text-violet-100/65">
+              <dt className="inline">Stale rejected </dt>
+              <dd className="inline font-mono">{staleNotifications.snapshots}</dd>
+            </dl>
+          ) : null}
         </header>
 
-        <div className="mt-7">
-          {!ready && !failed ? (
-            <p role="status" aria-live="polite">
-              Opening or reattaching the main profile…
-            </p>
+        <div role="tablist" aria-label="Destinations" className="mt-5 flex flex-wrap gap-2">
+          {DESTINATIONS.filter(
+            (destination) =>
+              destination.id !== "lab" || (labModeAvailable === true && LabScreen !== null),
+          ).map((destination) => {
+            const selected = activeView === destination.id;
+            return (
+              <button
+                key={destination.id}
+                type="button"
+                role="tab"
+                id={`destination-tab-${destination.id}`}
+                aria-selected={selected}
+                aria-controls="active-destination"
+                onClick={() => dispatch(uiActions.activeViewChanged(destination.id))}
+                className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
+                  selected
+                    ? "border-cyan-300/70 bg-cyan-500/10 text-cyan-100"
+                    : "border-violet-300/30 text-violet-100/80 hover:border-violet-200"
+                }`}
+              >
+                {destination.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          id="active-destination"
+          role="tabpanel"
+          aria-labelledby={`destination-tab-${activeView}`}
+          ref={destinationRef}
+          tabIndex={-1}
+          className="mt-7 outline-none"
+        >
+          {activeView === "host" ? (
+            <>
+              {!ready && !failed ? (
+                <p role="status" aria-live="polite">
+                  Opening or reattaching the main profile…
+                </p>
+              ) : null}
+              {failed && latestError ? (
+                <ErrorAlert error={latestError} title="Desktop bridge startup failed" />
+              ) : null}
+              {failed && !latestError ? (
+                <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/40 p-4">
+                  <p className="font-semibold">Desktop bridge startup failed</p>
+                  <p className="mt-2 text-sm">No structured error was returned.</p>
+                </div>
+              ) : null}
+              {ready ? (
+                <>
+                  <RecoverableActionNotice action={snapshot.recoverableAction} />
+                  {ACTIVE_HOST_LIFECYCLES.has(snapshot.hostLifecycle) ? (
+                    <HostSessionScreen />
+                  ) : (
+                    <HostSetupScreen />
+                  )}
+                </>
+              ) : null}
+            </>
           ) : null}
-          {ready && ACTIVE_HOST_LIFECYCLES.has(snapshot.hostLifecycle) ? (
-            <HostSessionScreen />
-          ) : null}
-          {ready && !ACTIVE_HOST_LIFECYCLES.has(snapshot.hostLifecycle) ? (
-            <HostSetupScreen />
-          ) : null}
-          {failed ? (
-            <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/40 p-4">
-              <p className="font-semibold">Desktop bridge startup failed</p>
-              <p className="mt-2 text-sm">
-                {latestError?.message ?? "No structured error was returned."}
-              </p>
-            </div>
-          ) : null}
-          {/* Available even when the bridge failed to open -- diagnosing a
-              startup failure is exactly when this screen matters most. */}
-          {ready && showStorage ? <StorageInspectionScreen /> : null}
-          {showDiagnostics ? <DiagnosticsScreen /> : null}
+          {/* Reachable even when the bridge failed to open -- diagnosing a
+              startup failure is exactly when this screen matters most. It
+              renders its own failure state, so it does not need `ready`. */}
+          {activeView === "storage" ? <StorageInspectionScreen /> : null}
+          {activeView === "diagnostics" ? <DiagnosticsScreen /> : null}
+          {activeView === "settings" ? <SettingsScreen /> : null}
           {/* Block 42 "production build absence": two independent gates.
               `LabScreen` is literally null in the standard production
               bundle (its dynamic import is compile-time dead), and a Lab
               frontend still requires the backend to truthfully report that
               Rust was compiled with `lab-mode`. */}
-          {showLab && labModeAvailable && LabScreen ? (
+          {activeView === "lab" && labModeAvailable && LabScreen ? (
             <Suspense fallback={<p role="status">Loading Lab Mode…</p>}>
               <LabScreen />
             </Suspense>

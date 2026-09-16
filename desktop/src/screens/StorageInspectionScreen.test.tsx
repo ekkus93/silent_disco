@@ -73,9 +73,15 @@ describe("StorageInspectionScreen", () => {
     });
     render(<StorageInspectionScreen />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "core.storage_query_failed: stored session row is corrupt",
-    );
+    // The shared ErrorAlert renders every DesktopErrorDto field, including
+    // `retryable`, rather than the flattened `code: message` string this
+    // screen used to build by hand.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("stored session row is corrupt");
+    expect(alert).toHaveTextContent("core.storage_query_failed");
+    expect(alert).toHaveTextContent("storage");
+    expect(alert).toHaveTextContent("Retryable");
+    expect(alert).toHaveTextContent("no");
     expect(screen.queryByText("No session history.")).not.toBeInTheDocument();
   });
 

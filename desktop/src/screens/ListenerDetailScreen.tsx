@@ -1,3 +1,5 @@
+import { Detail } from "../components/Detail";
+import { ErrorAlert as SharedErrorAlert } from "../components/ErrorAlert";
 import type {
   ConnectedListenerDto,
   DeliveryReportDto,
@@ -124,24 +126,10 @@ export function ListenerDetailScreen({
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-slate-900 p-3">
-      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
-      <dd className="mt-1 break-words text-sm text-slate-100">{value}</dd>
-    </div>
-  );
-}
-
 function ErrorAlert({ title, error }: { title: string; error: DesktopErrorDto }) {
   return (
-    <div
-      role="alert"
-      className="mt-4 rounded-lg border border-rose-500/60 bg-rose-950/40 p-3 text-sm text-rose-100"
-    >
-      <p className="font-semibold">{title}</p>
-      <p className="mt-1">{error.message}</p>
-      <p className="mt-1 font-mono text-xs">{error.code}</p>
+    <div className="mt-4">
+      <SharedErrorAlert error={error} title={title} />
     </div>
   );
 }

@@ -1,4 +1,30 @@
+import type { StatusSeverity } from "../../components/StatusCard";
 import { StatusCard } from "./shared";
+
+// These map the core's own state names onto severity. They are deliberately
+// exhaustive-by-listing rather than defaulting to "good": an unrecognised
+// state reads as neutral, never as healthy.
+function lifecycleSeverity(value: string): StatusSeverity {
+  if (value === "error") return "critical";
+  if (value === "streaming" || value === "ready" || value === "waiting_for_listeners") {
+    return "good";
+  }
+  return "neutral";
+}
+
+function transportSeverity(value: string): StatusSeverity {
+  if (value === "failed" || value === "disconnected") return "critical";
+  if (value === "retrying") return "warning";
+  if (value === "connected") return "good";
+  return "neutral";
+}
+
+function playbackSeverity(value: string): StatusSeverity {
+  if (value === "error") return "critical";
+  if (value === "underrun") return "warning";
+  if (value === "playing") return "good";
+  return "neutral";
+}
 
 interface SessionHeaderAndStatusProps {
   sessionName: string;
@@ -34,7 +60,7 @@ export function SessionHeaderAndStatus({
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300">
             Rust-authoritative desktop host
           </p>
-          <h1 className="mt-1 text-3xl font-bold">{sessionName}</h1>
+          <h2 className="mt-1 text-3xl font-bold">{sessionName}</h2>
           <p className="mt-2 text-sm text-slate-400">Snapshot revision {revision}</p>
         </div>
         <div className="flex gap-2">
@@ -64,12 +90,25 @@ export function SessionHeaderAndStatus({
         <h2 id="host-status-title" className="sr-only">
           Host status
         </h2>
-        <StatusCard label="Host lifecycle" value={hostLifecycle} />
-        <StatusCard label="Transport" value={transportState} />
-        <StatusCard label="Playback" value={playbackState} />
+        <StatusCard
+          label="Host lifecycle"
+          value={hostLifecycle}
+          severity={lifecycleSeverity(hostLifecycle)}
+        />
+        <StatusCard
+          label="Transport"
+          value={transportState}
+          severity={transportSeverity(transportState)}
+        />
+        <StatusCard
+          label="Playback"
+          value={playbackState}
+          severity={playbackSeverity(playbackState)}
+        />
         <StatusCard
           label="Transport worker"
           value={transportWorkerRunning ? "running" : "not running"}
+          severity={transportWorkerRunning ? "good" : "critical"}
         />
       </section>
     </>

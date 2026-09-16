@@ -14,16 +14,16 @@ export function HostSessionScreen() {
 
   if (!snapshot) {
     return (
-      <main className="mx-auto max-w-6xl p-6 text-slate-100">
-        <h1 className="text-2xl font-semibold">Host session</h1>
+      <section className="mx-auto max-w-6xl p-6 text-slate-100">
+        <h2 className="text-2xl font-semibold">Host session</h2>
         <p className="mt-3">Loading authoritative host state…</p>
         {vm.refreshFailure ? <ErrorAlert error={vm.refreshFailure} /> : null}
-      </main>
+      </section>
     );
   }
 
   return (
-    <main className="mx-auto max-w-6xl p-6 text-slate-100">
+    <section className="mx-auto max-w-6xl p-6 text-slate-100">
       <SessionHeaderAndStatus
         sessionName={snapshot.sessionName}
         revision={snapshot.revision}
@@ -90,6 +90,6 @@ export function HostSessionScreen() {
         lastError={snapshot.lastError}
         refreshFailure={vm.refreshFailure}
       />
-    </main>
+    </section>
   );
 }

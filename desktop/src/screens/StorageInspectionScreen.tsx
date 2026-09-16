@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { ErrorAlert } from "../components/ErrorAlert";
 import { getStorageInspection, toDesktopBridgeError } from "../core/client";
-import type { StorageInspectionDto } from "../core/generated/desktop-bindings";
+import type { DesktopErrorDto, StorageInspectionDto } from "../core/generated/desktop-bindings";
 
 export function StorageInspectionScreen() {
   const [inspection, setInspection] = useState<StorageInspectionDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DesktopErrorDto | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -16,7 +17,7 @@ export function StorageInspectionScreen() {
     } catch (cause: unknown) {
       const failure = toDesktopBridgeError(cause, "load storage inspection");
       setInspection(null);
-      setError(`${failure.code}: ${failure.message}`);
+      setError(failure);
     } finally {
       setLoading(false);
     }
@@ -56,12 +57,9 @@ export function StorageInspectionScreen() {
         </p>
       ) : null}
       {error ? (
-        <p
-          role="alert"
-          className="mt-4 rounded-lg border border-red-300/30 bg-red-950/40 p-3 text-sm text-red-100"
-        >
-          {error}
-        </p>
+        <div className="mt-4">
+          <ErrorAlert error={error} title="Storage inspection failed" />
+        </div>
       ) : null}
 
       {inspection ? (

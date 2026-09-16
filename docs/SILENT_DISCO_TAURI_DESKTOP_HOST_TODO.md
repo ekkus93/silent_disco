@@ -4729,6 +4729,127 @@ Confirm:
 - [x] every referenced file exists at the exact path;
 - [ ] `memory.md` contains the final ledger.
 
+---
+
+## Block 49 — Desktop shell and shared component vocabulary
+
+Blocks 14, 23, 27, 35, and 42 each added a screen. No block owned the shell, so
+navigation, landmarks, and cross-screen primitives were never composed. This
+block owns the whole.
+
+Complete before Block 48.3 final gates.
+
+### 49.1 Establish a single navigation model
+
+`app/uiSlice.ts` already models `activePanel`, is registered in the store, and
+has selectors, but nothing dispatches or reads it; `App.tsx` uses three local
+booleans instead. Diagnostics/Storage/Lab render as siblings appended below the
+active host screen, so activating Diagnostics during a live session appears to
+do nothing.
+
+- [x] replace the local booleans with one `activeView` in `uiSlice`;
+- [x] render exactly one destination at a time;
+- [x] give the header controls `role="tab"`/`aria-selected` and `aria-controls`;
+- [x] move focus to the newly activated destination;
+- [x] delete any `uiSlice` state left unused after the migration.
+
+### 49.2 Fix landmarks, headings, and duplicated state readouts
+
+- [x] one `<main>` per render (`HostSessionScreen/index.tsx` currently opens a
+      second `<main>` inside `App.tsx`'s);
+- [x] one `<h1>` per render;
+- [x] remove the duplicated `revision`/`hostLifecycle` readout so those values
+      are not rendered from two independently polled sources that can disagree
+      on screen.
+
+### 49.3 Create the first shared component vocabulary
+
+`src/components/` currently contains only `.gitkeep`. Six primitives express one
+"labeled value" concept and three near-identical `Detail` implementations exist.
+
+- [x] `Panel` (replaces the panel-chrome utility string repeated verbatim 8x);
+- [x] `Button` (replaces the duplicated secondary-button utility string);
+- [x] `Detail` (single implementation);
+- [x] `StatusCard` with explicit severity, so "failed" and "streaming" no longer
+      render identically;
+- [x] one `ErrorAlert` replacing the five divergent error renderings, rendering
+      every `DesktopErrorDto` field including `retryable`;
+- [x] adopt these in every screen that hand-rolled an equivalent.
+
+### 49.4 Make failure states reachable and actionable
+
+- [x] `StorageInspectionScreen` reachable when the bridge failed to open,
+      resolving the contradiction between its gate and its own code comment;
+- [x] render `recoverableAction`, which the core publishes on both
+      `CoreSnapshotDto` and `HostSessionSnapshotDto` and the UI discards;
+- [ ] record an observation timestamp for core errors and provide dismissal, so
+      one transient failure does not pin an error banner permanently.
+
+### 49.5 Tests
+
+- [x] navigation renders exactly one destination and moves focus;
+- [x] each shared component renders its states, including `ErrorAlert`
+      rendering `retryable`;
+- [x] storage inspection is reachable in the bridge-failed state;
+- [x] `recoverableAction` is rendered when present.
+
+**Acceptance:** The desktop app has one navigation model, one component
+vocabulary, no duplicated or conflicting state readouts, and every failure state
+is reachable and actionable.
+
+---
+
+## Block 50 — Desktop Settings screen
+
+The desktop has no Settings surface; Android has one. App-wide configuration
+lives inside the host-setup form, which unmounts once a session starts, so the
+active binding readout and the mDNS advertising status become unreachable during
+a live session. "Is mDNS advertising working?" is currently unanswerable while
+hosting.
+
+Depends on Block 49.
+
+### 50.1 Add Settings as a peer destination
+
+- [x] new `settings` destination in the Block 49 navigation model;
+- [x] reachable in every lifecycle, including when the bridge failed to open;
+- [x] not a modal and not nested inside host setup.
+
+### 50.2 Move app-wide configuration onto it
+
+- [ ] move network interface policy out of the host-setup form. Settings now
+      owns a full instance, which is what makes the binding and mDNS status
+      reachable mid-session, but host setup still renders its own because
+      `canCreateHostSession` is gated on that card's readiness callback.
+      Finishing this needs a shared readiness hook plus a compact
+      status-and-link summary in setup, so the control exists exactly once;
+- [x] confirm the active binding and mDNS advertising status are reachable
+      during an active session after the move;
+- [ ] mirror mDNS advertising status next to the address it qualifies in the
+      connection details panel;
+- [x] display persisted tuning values (read-only until a typed tuning command
+      exists);
+- [x] trusted-device policy;
+- [ ] profile identity, which is currently hardcoded;
+- [x] about/versions: core, app, export schema, platform, Lab availability.
+
+### 50.3 Leave session-scoped controls where they are
+
+Session name, approval mode, invite code, audio source selection, the live
+monitor toggle, playback transport, approve/reject/remove, invitation
+create/refresh, and diagnostics filters remain screen-local.
+
+- [x] confirm no session-scoped control was moved onto Settings.
+
+### 50.4 Tests
+
+- [x] Settings is reachable in every lifecycle including bridge-failed;
+- [x] network policy and mDNS status render during an active session;
+- [x] no session-scoped control appears on Settings.
+
+**Acceptance:** Desktop has a Settings destination owning app-wide
+configuration, and host network state is observable during a live session.
+
 **Acceptance:** The implementation satisfies `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md` with executable evidence and no known silent fallback.
 
 ---

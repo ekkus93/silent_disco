@@ -26,6 +26,8 @@ const {
   setHostNetworkPreferenceMock,
   getLabModeAvailableMock,
   getLabStateMock,
+  getStorageInspectionMock,
+  getHostDiagnosticsMock,
 } = vi.hoisted(() => ({
   ensureDesktopBridgeMock: vi.fn(),
   subscribeDesktopNotificationsMock: vi.fn(),
@@ -39,6 +41,8 @@ const {
   setHostNetworkPreferenceMock: vi.fn(),
   getLabModeAvailableMock: vi.fn(),
   getLabStateMock: vi.fn(),
+  getStorageInspectionMock: vi.fn(),
+  getHostDiagnosticsMock: vi.fn(),
 }));
 
 let notificationListener: ((notification: CoreNotificationDto) => void) | undefined;
@@ -60,6 +64,8 @@ vi.mock("./core/client", async () => {
     setHostNetworkPreference: setHostNetworkPreferenceMock,
     getLabModeAvailable: getLabModeAvailableMock,
     getLabState: getLabStateMock,
+    getStorageInspection: getStorageInspectionMock,
+    getHostDiagnostics: getHostDiagnosticsMock,
   };
 });
 
@@ -163,6 +169,30 @@ const connection = {
   notifications: { subscriptionId: "17", channel: {} },
 };
 
+const storageInspection = {
+  sqliteVersion: "3.45.0",
+  foreignKeysEnabled: true,
+  journalMode: "wal",
+  busyTimeoutMs: 5000,
+  synchronousPolicy: "full",
+  schemaVersion: 2,
+  appliedMigrations: [],
+  integrityCheck: "ok",
+  settings: null,
+  trustedDevices: [],
+  recentSessions: [],
+  p2StoreApplicable: true,
+};
+
+const hostDiagnostics = {
+  versions: {
+    coreVersion: { major: 0, minor: 1, patch: 0 },
+    appVersion: "0.1.0",
+    exportSchemaVersion: 1,
+  },
+  profile: { profileId: "main", platform: "linux" },
+};
+
 function renderApp() {
   const store = createAppStore();
   return {
@@ -190,6 +220,10 @@ describe("App", () => {
     setHostNetworkPreferenceMock.mockReset();
     getLabModeAvailableMock.mockReset();
     getLabStateMock.mockReset();
+    getStorageInspectionMock.mockReset();
+    getHostDiagnosticsMock.mockReset();
+    getStorageInspectionMock.mockResolvedValue(storageInspection);
+    getHostDiagnosticsMock.mockResolvedValue(hostDiagnostics);
     getLabStateMock.mockResolvedValue({
       nowMs: "0",
       running: false,
@@ -307,7 +341,7 @@ describe("App", () => {
     renderApp();
 
     await screen.findByRole("heading", { name: "Create a silent disco" });
-    expect(screen.queryByRole("button", { name: /lab mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /lab mode/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/developer testing tool/i)).not.toBeInTheDocument();
     expect(getLabStateMock).not.toHaveBeenCalled();
   });
@@ -321,11 +355,91 @@ describe("App", () => {
     getLabModeAvailableMock.mockResolvedValue(true);
     renderApp();
 
-    const labButton = await screen.findByRole("button", { name: "Lab Mode" });
+    const labButton = await screen.findByRole("tab", { name: "Lab Mode" });
     expect(screen.queryByText(/developer testing tool/i)).not.toBeInTheDocument();
 
     fireEvent.click(labButton);
 
     expect(await screen.findByText(/developer testing tool/i)).toBeVisible();
+  });
+  // Block 49.1: activating a destination used to append it below the active
+  // screen, so on a tall session page the click appeared to do nothing.
+  // Exactly one destination renders, and focus follows the switch.
+  it("renders exactly one destination at a time and moves focus on switch", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+    // The host destination is gone, not merely scrolled past.
+    expect(
+      screen.queryByRole("heading", { name: "Create a silent disco" }),
+    ).not.toBeInTheDocument();
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Host control" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  });
+
+  // Block 49.4: the previous render gated this screen on `ready`, contradicting
+  // its own code comment -- it was unavailable in exactly the state it was
+  // written for.
+  it("keeps storage inspection reachable when the bridge failed to open", async () => {
+    ensureDesktopBridgeMock.mockRejectedValue(new Error("native bridge unavailable"));
+    renderApp();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Desktop bridge startup failed");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Storage" }));
+
+    expect(await screen.findByRole("tabpanel")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Storage" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  // Block 49.4: the core publishes a recovery hint on the snapshot and every
+  // screen previously discarded it.
+  it("renders the core's recoverable action when one is published", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue({
+      ...connection,
+      snapshot: { ...snapshot, recoverableAction: "Reconnect the audio output device" },
+    });
+    renderApp();
+
+    expect(await screen.findByText("Reconnect the audio output device")).toBeVisible();
+  });
+
+  // Block 49.3: `retryable` tells an operator whether trying again is worth
+  // anything, and no previous error renderer showed it.
+  it("renders every error field including retryable on bridge failure", async () => {
+    ensureDesktopBridgeMock.mockRejectedValue(new Error("native bridge unavailable"));
+    renderApp();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Retryable");
+    expect(alert).toHaveTextContent("Subsystem");
+    expect(alert).toHaveTextContent("Severity");
+  });
+
+  // Block 50.2: network policy and mDNS status were unreachable during a live
+  // session because they lived inside the host-setup form, which unmounts.
+  it("exposes network policy from Settings during an active session", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue({
+      ...connection,
+      snapshot: { ...snapshot, hostLifecycle: "streaming" },
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+    expect(getHostNetworkStateMock).toHaveBeenCalled();
   });
 });

@@ -15,5 +15,4 @@ export const selectStaleNotificationCounters = (state: RootState) => state.core.
 export const selectLatestCoreError = (state: RootState) => state.core.errors.at(-1) ?? null;
 export const selectAuthoritativeRevision = (state: RootState) =>
   state.core.snapshot?.revision ?? null;
-export const selectActivePanel = (state: RootState) => state.ui.activePanel;
-export const selectDiagnosticsExpanded = (state: RootState) => state.ui.diagnosticsExpanded;
+export const selectActiveView = (state: RootState) => state.ui.activeView;
