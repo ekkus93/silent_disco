@@ -105,35 +105,52 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Checking non-interactive sudo access."
-          sudo -n true || {
-            echo "The self-hosted runner requires passwordless non-interactive sudo for Block 46.3 staging." >&2
-            exit 1
-          }
+          required_packages=(
+            build-essential
+            curl
+            dbus-x11
+            file
+            libasound2-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
+            libssl-dev
+            libwebkit2gtk-4.1-dev
+            libxdo-dev
+            patchelf
+            wget
+            xauth
+            xvfb
+          )
 
-          echo "Updating apt package metadata."
-          timeout --signal=TERM --kill-after=30s 5m \
-            sudo -n env DEBIAN_FRONTEND=noninteractive \
-            apt-get -o DPkg::Lock::Timeout=60 update
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}\n' "${package}" 2>/dev/null | grep -qx 'install ok installed'; then
+              missing_packages+=("${package}")
+            fi
+          done
 
-          echo "Installing desktop build prerequisites."
-          timeout --signal=TERM --kill-after=30s 10m \
-            sudo -n env DEBIAN_FRONTEND=noninteractive \
-            apt-get -o DPkg::Lock::Timeout=60 install --yes --no-install-recommends \
-              build-essential \
-              curl \
-              dbus-x11 \
-              file \
-              libasound2-dev \
-              libayatana-appindicator3-dev \
-              librsvg2-dev \
-              libssl-dev \
-              libwebkit2gtk-4.1-dev \
-              libxdo-dev \
-              patchelf \
-              wget \
-              xauth \
-              xvfb
+          if (( ${#missing_packages[@]} > 0 )); then
+            printf 'Missing desktop prerequisites: %s\n' "${missing_packages[*]}"
+            echo "Checking non-interactive sudo access because package installation is required."
+            sudo -n true || {
+              echo "Missing required packages and the self-hosted runner cannot install them because passwordless non-interactive sudo is unavailable." >&2
+              echo "Install the missing packages manually or configure passwordless sudo for the runner account, then retry." >&2
+              exit 1
+            }
+
+            echo "Updating apt package metadata."
+            timeout --signal=TERM --kill-after=30s 5m \
+              sudo -n env DEBIAN_FRONTEND=noninteractive \
+              apt-get -o DPkg::Lock::Timeout=60 update
+
+            echo "Installing missing desktop build prerequisites."
+            timeout --signal=TERM --kill-after=30s 10m \
+              sudo -n env DEBIAN_FRONTEND=noninteractive \
+              apt-get -o DPkg::Lock::Timeout=60 install --yes --no-install-recommends \
+                "${missing_packages[@]}"
+          else
+            echo "All desktop build prerequisites are already installed; sudo is not required."
+          fi
 
           sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           echo "Accepting Android SDK licenses."
