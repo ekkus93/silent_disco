@@ -5124,9 +5124,14 @@ harness started playback immediately.
       transport fakes), and a post-readiness send failure is a transport
       failure. Both failed before the fix. Android gate: 945 unit-test runs,
       lint clean.
-- [ ] Not yet device-verified. The race fired on 1 of 2 real mDNS joins, so a
-      clean device run is weak evidence on its own; the ordering test is the
-      primary guard.
+- [x] Device run clean -- no "outside an active connection attempt" error --
+      on two further mDNS joins (Test4, Test5). The race fired on 1 of 2 real
+      joins before the fix, so this is supporting evidence; the ordering test
+      is the primary guard.
+      Device-verified 2026-09-16 12:15 on the A54 over carrier-NAT
+      (APK `2d5ddbfe`, desktop package from `4041b95`), joining "Test5" via
+      mDNS "Join" with manual approval and a ~42 s wait before Play: no join
+      or discovery errors in logcat, audio heard.
 
 ### 52.3 mDNS expiry resets an already-joined listener
 
@@ -5154,9 +5159,45 @@ reconciliation resubmitted results the core rejects once discovery is inactive
       The joined-state and gating tests failed before the fix. An existing
       test that reconciled without the core discovering gained that
       precondition. Rust gate 445 tests; Android gate 954 unit-test runs.
-- [ ] Device-verify with 52.1/52.2: join a desktop host via mDNS "Join",
-      approve, wait several minutes, then play; expect no reset to "No
-      session selected" and no "discovery ... inactive" errors in logcat.
+- [x] Device-verified: joined via mDNS "Join" and stayed on the session for
+      over four minutes without resetting (Test4), then again through
+      playback (Test5), with no "discovery ... inactive" errors.
+      Device-verified 2026-09-16 12:15 on the A54 over carrier-NAT
+      (APK `2d5ddbfe`, desktop package from `4041b95`), joining "Test5" via
+      mDNS "Join" with manual approval and a ~42 s wait before Play: no join
+      or discovery errors in logcat, audio heard.
+
+### 52.6 The discovered-session listener never started clock sync
+
+Found during the 52.1-52.3 device run, 2026-09-16 12:04: on the mDNS path,
+audio arrived after Play but every packet was "dropped before lock", and the
+host evicted the listener 8-12 s later -- the 52.1 guard doing its job on a
+listener that never probed. `startListenerPlaybackFromTransportNow` created
+the playback runtime, opened Oboe, and attached the transport, but never
+started the sync probe loop; the only caller of
+`startPeriodicListenerResync` was demo playback. The manual-connect path
+starts its own probe loop, which is why it worked. The discovery path had
+therefore never been able to play audio from a desktop host.
+
+- [x] Start the periodic sync probe loop when the playback runtime starts.
+- [x] The loop's Wi-Fi Direct liveness check (and heartbeat) now applies only
+      when the session actually rides Wi-Fi Direct
+      (`listenerTransportRidesWifiDirect`, set by `establishRustListenerNetwork`
+      and cleared on release). On an mDNS or manual join Wi-Fi Direct is idle
+      or scanning, and the unscoped check would end a healthy session.
+- [x] Tests in `MainViewModelListenerResyncTest`: Wi-Fi Direct state does not
+      end a session that does not ride it (fails with the scoping removed),
+      and still ends one that does. Starting the loop from the playback
+      runtime cannot be unit-tested (native runtime), so it is device-
+      verified. Android gate 960 unit-test runs, lint clean.
+- [x] Device-verified 2026-09-16 12:16 (Test5, mDNS join, ~42 s wait): clock
+      sync locked 6 ms after the first probe, confidence Excellent, RTT
+      5-8 ms, 2 s cadence; phone showed "Playing in sync"; audio heard; no
+      errors on either side.
+- [ ] The first ~1 s is lost: 140-180 packets dropped before lock and 423
+      render-ring underruns while the ring filled, because probing starts
+      only at stream start. Probing from approval would lock before the first
+      packet.
 
 ### 52.4 Approval delivery can hang forever without a visible failure
 

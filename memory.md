@@ -5557,3 +5557,21 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   so its output is readable afterwards.
 - Earlier today the user restarted the GUI before installing the new .deb;
   always confirm /usr/bin/silent-disco-desktop matches the new bundle's binary.
+
+## 2026-09-16T19:17:03Z - Claude Opus 5 - Blocks 52.2/52.3 device-verified; 52.6 found and fixed; mDNS path plays end to end
+- 52.3 (f58b1ab): joining stops discovery and MdnsDiscoveryService.stopDiscovery()
+  clears its list; Android reconciled anyway and expired the joined session.
+  Core now ignores expiry of a joined session (diagnostic
+  session_expiry_ignored_while_joined); Android reconciles only while the core
+  is discovering and resubmits on discovery start.
+- 52.6 (uncommitted at time of writing): the mDNS/discovery listener path never
+  started the sync probe loop, so it had never played audio from a desktop host
+  (packets "dropped before lock", then evicted by the 52.1 guard). Now started
+  when the playback runtime starts; the loop's Wi-Fi Direct liveness check is
+  scoped to sessions that ride Wi-Fi Direct (listenerTransportRidesWifiDirect).
+- Device run 12:15-12:16 (Test5, mDNS Join, manual approval, ~42 s wait):
+  sync locked 6 ms after first probe, RTT 5-8 ms, "Playing in sync", heard.
+  First ~1 s lost to pre-lock drops/underruns (follow-up: probe from approval).
+- The discovery-path checklist marks "Waiting for host approval" complete and
+  shows "Connecting" with a spinner while actually approved and waiting for
+  Play -- user read it as stuck (52.5).
