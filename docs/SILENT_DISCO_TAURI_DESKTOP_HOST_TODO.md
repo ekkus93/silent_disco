@@ -5130,7 +5130,8 @@ therefore never been able to play audio from a desktop host.
       at 13-42 ms RTT without a sync failure. At playback start the runtime
       logged `accepted=true`, `locked=true`, Excellent confidence, 72,401 ms
       offset, and 12 ms RTT. No "dropped before lock" diagnostic appeared;
-      the physical mDNS harness passed its listener-delivery assertion.
+      the physical mDNS harness passed its listener-delivery assertion, and
+      the operator confirmed the test audio was audible.
       Initial acquisition now compares drift with the previous estimate,
       because independent monotonic clock epochs can have a large valid
       initial offset.
