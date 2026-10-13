@@ -16,6 +16,7 @@ use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, RequestId};
 use silent_disco_core::runtime::{
     AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch, SnapshotRevision,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 
 /// Selects the host role through the revision-aware authoritative actor.
@@ -184,13 +185,25 @@ pub fn approve_join_request(
     state: State<'_, DesktopAppState>,
     request: ApproveJoinRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    state.submit_core_command(
+    let decision_received_unix_ms = unix_time_ms();
+    let receipt = state.submit_core_command(
         parse_snapshot_revision(&request.expected_revision)?,
         CoreCommand::ApproveJoin {
             request_id: parse_request_id(&request.request_id)?,
             remember_for_future: request.remember_for_future,
         },
-    )
+    )?;
+    eprintln!(
+        "join_approval_decision_accepted operation_id={} decision_received_unix_ms={decision_received_unix_ms}",
+        receipt.operation_id
+    );
+    Ok(receipt)
+}
+
+fn unix_time_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
 }
 
 /// Requests delivery-first rejection of one pending listener.

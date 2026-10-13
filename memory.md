@@ -5742,3 +5742,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   locked all-feature suite passed (330 tests passed, 5 manual-device tests
   ignored). The broader two-listener and packaged acceptance matrix remains
   open.
+- Implemented the Block 52.5 approval-timing follow-up: the Tauri approval
+  command logs receipt time and the transport worker logs send-start time,
+  correlated by the accepted operation ID. Formatting, strict Clippy, and the
+  full desktop all-feature suite passed again (330 passed, 5 ignored).

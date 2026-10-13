@@ -38,6 +38,10 @@ fn process_effect(
             if let Some((sync_port, audio_port)) = processor.take_pending_ports(&listener_id) {
                 authorize = Some((listener_id.clone(), sync_port, audio_port));
             }
+            eprintln!(
+                "join_approval_send_started operation_id={operation_id} send_started_unix_ms={}",
+                unix_time_ms()
+            );
             node.send_pending_control(
                 &listener_id.clone(),
                 &ControlMessage::JoinApproval(JoinApproval {
@@ -95,6 +99,12 @@ fn process_effect(
         }
     };
     submit_delivery(sink, operation_id, report)
+}
+
+fn unix_time_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
 }
 
 fn submit_delivery(

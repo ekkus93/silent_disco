@@ -5241,10 +5241,13 @@ One refused effect quietly broke the rest of the session.
       "Last control message (approval, rejection, or removal): 1 of 1
       delivered; 0 failed (ok)."
   - [ ] Follow-ups seen during that run:
-    - The host sent the approval at about 13:22:02 (host socket
+    - [x] The host sent the approval at about 13:22:02 (host socket
       `lastsnd`), while the operator reported approving before 13:21.
-      Unconfirmed: the click time is not recorded anywhere. Log the
-      decision time and the send time so this can be settled.
+      The Tauri command now logs `join_approval_decision_accepted` with
+      `decision_received_unix_ms`; the transport worker logs
+      `join_approval_send_started` with `send_started_unix_ms`. Both include
+      the same operation ID so the timestamps can be compared in desktop
+      stderr/journal logs on the next packaged run.
     - [x] 11 frames "partially" delivered with a single listener. Root
       cause: `BroadcastCounters::record_delivery` counted every
       `successful < intended` frame as partial, including frames that
