@@ -74,7 +74,7 @@ fun ListenerPlaybackV2Screen(
                 style = MaterialTheme.typography.headlineMedium,
             )
             Text(
-                "Hosted by ${uiState.selectedSession?.hostDeviceName ?: "Unknown host"}",
+                "Hosted by ${uiState.selectedSession?.displayHostName ?: "Unknown host"}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

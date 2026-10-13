@@ -235,7 +235,7 @@ private fun NearbySessionCard(
                 contentDescription = buildString {
                     append(session.name)
                     append(", hosted by ")
-                    append(session.hostDeviceName)
+                    append(session.displayHostName)
                     append(", ")
                     append(badgeText)
                     if (verifiedTrustedHost) append(", verified trusted host key")
@@ -250,7 +250,7 @@ private fun NearbySessionCard(
         ) {
             Text(session.name, style = MaterialTheme.typography.titleLarge)
             Text(
-                "Hosted by ${session.hostDeviceName}",
+                "Hosted by ${session.displayHostName}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (verifiedTrustedHost) {

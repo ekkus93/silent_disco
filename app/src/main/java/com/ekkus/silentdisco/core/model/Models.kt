@@ -90,7 +90,20 @@ data class SessionInfo(
     val hostDeviceName: String,
     val approvalMode: ApprovalMode,
     val inviteCodeRequired: Boolean,
-)
+) {
+    /** Keep a stable identity useful for protocol operations while showing a compact label in UI. */
+    val displayHostName: String
+        get() = if (hostDeviceName.matches(HOST_DEVICE_ID_PATTERN)) {
+            "Host ${hostDeviceName.take(HOST_DEVICE_ID_DISPLAY_LENGTH)}"
+        } else {
+            hostDeviceName
+        }
+
+    private companion object {
+        val HOST_DEVICE_ID_PATTERN = Regex("[0-9a-fA-F]{64}")
+        const val HOST_DEVICE_ID_DISPLAY_LENGTH = 8
+    }
+}
 
 data class HostInfo(
     val deviceId: String,

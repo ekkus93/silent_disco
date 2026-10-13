@@ -5,6 +5,33 @@ import org.junit.Test
 
 class ManualEndpointModelsTest {
     @Test
+    fun sessionDisplayUsesCompactLabelForOpaqueHostIdentity() {
+        val session = SessionInfo(
+            id = "session",
+            name = "Friday set",
+            hostDeviceName = "0123456789abcdef".repeat(4),
+            approvalMode = ApprovalMode.MANUAL,
+            inviteCodeRequired = false,
+        )
+
+        assertThat(session.displayHostName).isEqualTo("Host 01234567")
+        assertThat(session.hostDeviceName).isEqualTo("0123456789abcdef".repeat(4))
+    }
+
+    @Test
+    fun sessionDisplayPreservesFriendlyHostName() {
+        val session = SessionInfo(
+            id = "session",
+            name = "Friday set",
+            hostDeviceName = "Studio Mac",
+            approvalMode = ApprovalMode.MANUAL,
+            inviteCodeRequired = false,
+        )
+
+        assertThat(session.displayHostName).isEqualTo("Studio Mac")
+    }
+
+    @Test
     fun cannotConnectUntilValidatedWithoutError() {
         assertThat(ManualEndpointFormState().canConnect()).isFalse()
         assertThat(

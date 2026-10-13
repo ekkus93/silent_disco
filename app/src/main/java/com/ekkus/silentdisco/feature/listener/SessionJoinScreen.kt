@@ -101,7 +101,7 @@ fun SessionJoinScreen(
                 style = MaterialTheme.typography.headlineMedium,
             )
             Text(
-                "Hosted by ${session?.hostDeviceName ?: "Unknown host"}",
+                "Hosted by ${session?.displayHostName ?: "Unknown host"}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
