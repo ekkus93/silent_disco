@@ -5711,6 +5711,12 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - These local gates do not satisfy Block 46.3/47, which require a clean
   supported graphical Linux machine and physical listener interoperability
   evidence.
+- The historical `LabScreen.test.tsx` flake (one failure in three isolated
+  runs on 2026-09-16) did not reproduce in ten isolated reruns or the complete
+  frontend suite. No related code changed, so leave it tracked for CI rather
+  than claiming a root-cause fix.
+- Block 24 firewall configuration remains uninspected: `sudo -n ufw status
+  verbose` reports that a password is required.
 - Remaining work requires either lab resources or product direction: a second
   physical Android listener for Blocks 29/47; a clean Ubuntu graphical VM for
   Block 46.3; profile identity, listener/cadence limits, UI rendered update
