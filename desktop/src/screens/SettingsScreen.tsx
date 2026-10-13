@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { Button } from "../components/Button";
 import { Detail } from "../components/Detail";
@@ -15,6 +15,11 @@ import type {
   DesktopErrorDto,
   StorageInspectionDto,
 } from "../core/generated/desktop-bindings";
+import {
+  isValidProfileIdPreference,
+  readProfileIdPreference,
+  saveProfileIdPreference,
+} from "../core/profilePreference";
 import { HostNetworkPolicyCard } from "./HostNetworkPolicyCard";
 
 /// App-wide configuration.
@@ -34,6 +39,9 @@ export function SettingsScreen() {
   const [diagnosticsError, setDiagnosticsError] = useState<DesktopErrorDto | null>(null);
   const [labAvailable, setLabAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileId, setProfileId] = useState(readProfileIdPreference);
+  const [profileIdMessage, setProfileIdMessage] = useState<string | null>(null);
+  const [profileIdError, setProfileIdError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -71,6 +79,26 @@ export function SettingsScreen() {
 
   const settings = storage?.settings ?? null;
 
+  function saveProfileId(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setProfileIdMessage(null);
+    if (!isValidProfileIdPreference(profileId)) {
+      setProfileIdError(
+        "Use 1–64 lowercase letters, digits, hyphens, or underscores. Start and end with a letter or digit.",
+      );
+      return;
+    }
+    try {
+      saveProfileIdPreference(profileId);
+      setProfileIdError(null);
+      setProfileIdMessage(
+        `Saved. Restart Silent Disco to open profile “${profileId}”. The current session stays on ${diagnostics?.profile.profileId ?? "the active profile"}.`,
+      );
+    } catch {
+      setProfileIdError("The profile preference could not be saved in this app window.");
+    }
+  }
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6 text-slate-100">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -84,6 +112,46 @@ export function SettingsScreen() {
           Hosting it here is what makes the active binding and mDNS status
           observable during a live session. */}
       <HostNetworkPolicyCard available disabled={false} />
+
+      <Panel title="Profile identity">
+        <p className="mb-3 text-sm text-slate-300">
+          Current profile:{" "}
+          <span className="font-mono">{diagnostics?.profile.profileId ?? "unavailable"}</span>
+        </p>
+        <form className="flex flex-col items-start gap-3" onSubmit={saveProfileId}>
+          <label className="flex w-full max-w-md flex-col gap-1 text-sm font-medium text-slate-200">
+            Profile ID for next startup
+            <input
+              autoComplete="off"
+              className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 font-mono text-slate-100"
+              maxLength={64}
+              onChange={(event) => {
+                setProfileId(event.currentTarget.value);
+                setProfileIdError(null);
+                setProfileIdMessage(null);
+              }}
+              value={profileId}
+              aria-invalid={profileIdError !== null}
+              aria-describedby="profile-id-help profile-id-feedback"
+            />
+          </label>
+          <p id="profile-id-help" className="max-w-2xl text-xs text-slate-400">
+            1–64 lowercase letters, digits, hyphens, or underscores; the first and last character
+            must be a letter or digit. This selects an isolated profile directory. Restart the app
+            to switch profiles.
+          </p>
+          <Button type="submit" variant="primary">
+            Save profile ID
+          </Button>
+          <p
+            id="profile-id-feedback"
+            className={profileIdError ? "text-sm text-red-300" : "text-sm text-emerald-300"}
+            role={profileIdError ? "alert" : profileIdMessage ? "status" : undefined}
+          >
+            {profileIdError ?? profileIdMessage}
+          </p>
+        </form>
+      </Panel>
 
       <Panel title="Tuning">
         {storageError ? (

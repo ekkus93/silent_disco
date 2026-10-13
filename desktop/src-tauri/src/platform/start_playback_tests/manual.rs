@@ -285,16 +285,19 @@ fn run_manual_single_format_session(source_id: &str, container: AudioContainer, 
 /// against two genuinely independent OS processes/network stacks instead
 /// of the automated suite's single in-process loopback listener.
 ///
-/// Requires two already-running emulators with the app already installed,
-/// reachable via the given `adb` serials, and `ffmpeg`-free (WAV only, to
-/// keep the two-listener join timing predictable) -- override the serials
-/// below if your local setup differs. Run explicitly with:
+/// Requires two already-running Android devices with the app installed and
+/// `ffmpeg`-free (WAV only, to keep the two-listener join timing predictable).
+/// It defaults to two emulators; override the ADB serials to include physical
+/// devices with `SILENT_DISCO_DEVICE_TEST_FIRST_ADB_SERIAL` and
+/// `SILENT_DISCO_DEVICE_TEST_SECOND_ADB_SERIAL`. Run explicitly with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_two_emulator_listeners_play_together -- --ignored --nocapture`
 #[test]
-#[ignore = "reason: requires two running Android emulators with the app installed and adb automation; owner: desktop Android interoperability / Block 47"]
+#[ignore = "reason: requires two running Android devices with the app installed and adb automation; owner: desktop Android interoperability / Block 47"]
 fn manual_two_emulator_listeners_play_together() {
-    const FIRST_SERIAL: &str = "emulator-5554";
-    const SECOND_SERIAL: &str = "emulator-5556";
+    let first_serial = std::env::var("SILENT_DISCO_DEVICE_TEST_FIRST_ADB_SERIAL")
+        .unwrap_or_else(|_| "emulator-5554".to_owned());
+    let second_serial = std::env::var("SILENT_DISCO_DEVICE_TEST_SECOND_ADB_SERIAL")
+        .unwrap_or_else(|_| "emulator-5556".to_owned());
 
     let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
         panic!("no private LAN interface available for the manual device test");
@@ -313,14 +316,12 @@ fn manual_two_emulator_listeners_play_together() {
     let (actor, handle, receiver, advertisement, network, endpoint) =
         start_host_session(descriptor, interface_name, interface_index, address);
     let payload = connection_payload_json(address, &endpoint, &advertisement);
-    eprintln!("connection payload: {payload}");
-
-    eprintln!("=== driving {FIRST_SERIAL} through Connect manually ===");
-    automate_manual_connect(FIRST_SERIAL, &payload);
+    eprintln!("=== driving {first_serial} through Connect manually ===");
+    automate_manual_connect(&first_serial, &payload);
     wait_for_real_join_and_approve(&handle, &receiver, &network);
     let after_first = handle.current_snapshot().expect("current snapshot");
     eprintln!(
-        "=== {FIRST_SERIAL} approved -- listeners now: {:?} ===",
+        "=== {first_serial} approved -- listeners now: {:?} ===",
         after_first
             .listeners
             .iter()
@@ -328,12 +329,12 @@ fn manual_two_emulator_listeners_play_together() {
             .collect::<Vec<_>>()
     );
 
-    eprintln!("=== driving {SECOND_SERIAL} through Connect manually ===");
-    automate_manual_connect(SECOND_SERIAL, &payload);
+    eprintln!("=== driving {second_serial} through Connect manually ===");
+    automate_manual_connect(&second_serial, &payload);
     wait_for_real_join_and_approve(&handle, &receiver, &network);
     let after_second = handle.current_snapshot().expect("current snapshot");
     eprintln!(
-        "=== {SECOND_SERIAL} approved -- listeners now: {:?} ===",
+        "=== {second_serial} approved -- listeners now: {:?} ===",
         after_second
             .listeners
             .iter()

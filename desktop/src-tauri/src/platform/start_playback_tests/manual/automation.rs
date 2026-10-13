@@ -42,23 +42,6 @@ pub(super) fn print_connection_payload(
     );
 }
 
-/// Backslash-escapes the JSON special characters `adb shell input text`
-/// otherwise silently drops. Confirmed empirically: an unescaped payload
-/// arrived in the app's `EditText` missing every `{`, `}`, `"`, and `,`,
-/// which the app then correctly rejected as invalid JSON -- a good example
-/// of the app doing the right thing with bad input, but useless for driving
-/// it automatically. Escaping fixes the input path, not the app.
-fn escape_for_adb_input_text(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len() * 2);
-    for ch in text.chars() {
-        if matches!(ch, '{' | '}' | '"' | ',') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
-}
-
 /// Drives the app's "Connect manually" flow on a real Android
 /// emulator/device via `adb` + `uiautomator dump` text lookup -- not
 /// hardcoded coordinates, so it tolerates whichever permission dialogs
@@ -70,13 +53,12 @@ fn escape_for_adb_input_text(text: &str) -> String {
 /// failure (missing `adb`, or the automation script itself exiting
 /// non-zero) rather than silently giving up partway through.
 pub(super) fn automate_manual_connect(serial: &str, payload_json: &str) {
-    let escaped = escape_for_adb_input_text(payload_json);
     let status = Command::new("bash")
         .arg("-c")
         .arg(AUTOMATE_CONNECT_SCRIPT)
         .arg("automate_connect") // becomes $0 inside the script
         .arg(serial)
-        .arg(&escaped)
+        .arg(payload_json)
         .status();
     let status = match status {
         Ok(status) => status,
@@ -96,7 +78,8 @@ pub(super) fn automate_manual_connect(serial: &str, payload_json: &str) {
 /// relaunches the app, navigates role selection -> "Find a session",
 /// tolerantly taps through whichever of the nearby-access/location/nearby-
 /// devices dialogs actually appear (in order, skipping any that don't),
-/// reaches "Connect manually", types the escaped payload, dismisses the
+/// reaches "Connect manually", types the payload in short escaped chunks,
+/// dismisses the
 /// keyboard (it otherwise visually covers the Connect button -- confirmed
 /// empirically, not a guess), and taps Connect.
 const AUTOMATE_CONNECT_SCRIPT: &str = r#"
@@ -107,8 +90,32 @@ DUMP="$(mktemp)"
 trap 'rm -f "$DUMP"' EXIT
 
 dump_ui() {
-  adb -s "$SERIAL" shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1
-  adb -s "$SERIAL" pull /sdcard/window_dump.xml "$DUMP" >/dev/null 2>&1
+  adb -s "$SERIAL" shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 || return 1
+  adb -s "$SERIAL" pull /sdcard/window_dump.xml "$DUMP" >/dev/null 2>&1 || return 1
+}
+
+input_payload_chunked() {
+  local text="$1"
+  local chunk=""
+  local character
+  for ((index = 0; index < ${#text}; index++)); do
+    character="${text:index:1}"
+    case "$character" in
+      '{'|'}'|'"'|',') chunk+="\\$character" ;;
+      *) chunk+="$character" ;;
+    esac
+    if [ "$character" = "," ] || [ "$character" = "}" ] || [ ${#chunk} -ge 8 ]; then
+      adb -s "$SERIAL" shell input text "$chunk"
+      chunk=""
+      # Compose's text field can drop key events when a long `input text`
+      # command is delivered on a cold emulator. Keep chunks small and let
+      # the IME settle before sending the next one.
+      sleep 0.25
+    fi
+  done
+  if [ -n "$chunk" ]; then
+    adb -s "$SERIAL" shell input text "$chunk"
+  fi
 }
 
 tap_exact_text() {
@@ -134,7 +141,10 @@ tap_exact_text() {
 try_tap_any() {
   local deadline=$((SECONDS + 10))
   while [ $SECONDS -lt $deadline ]; do
-    dump_ui
+    if ! dump_ui; then
+      sleep 1
+      continue
+    fi
     for candidate in "$@"; do
       if tap_exact_text "$candidate"; then
         sleep 1
@@ -163,11 +173,11 @@ try_tap_any "Allow"
 echo "[$SERIAL] nearby-session screen -> Connect manually"
 try_tap_any "Connect manually"
 
-dump_ui
+dump_ui || { echo "[$SERIAL] could not read the Android UI hierarchy"; exit 1; }
 echo "[$SERIAL] tapping payload field"
 tap_exact_text "Connection payload" || echo "  [$SERIAL] payload field not found by exact text; trying anyway"
 sleep 1
-adb -s "$SERIAL" shell input text "$PAYLOAD"
+input_payload_chunked "$PAYLOAD"
 sleep 1
 adb -s "$SERIAL" shell input keyevent KEYCODE_BACK
 sleep 1
@@ -181,6 +191,10 @@ while [ $SECONDS -lt $deadline ]; do
   fi
   sleep 1
 done
+if ! grep -q 'text="Protocol version: ' "$DUMP"; then
+  echo "[$SERIAL] connection payload did not validate; refusing to tap Connect"
+  exit 1
+fi
 
 echo "[$SERIAL] tapping Connect"
 tap_exact_text "Connect" || { echo "[$SERIAL] Connect button not found"; exit 1; }

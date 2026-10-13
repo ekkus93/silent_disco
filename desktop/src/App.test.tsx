@@ -208,6 +208,7 @@ function renderApp() {
 
 describe("App", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     notificationListener = undefined;
     ensureDesktopBridgeMock.mockReset();
     subscribeDesktopNotificationsMock.mockReset();
@@ -255,6 +256,43 @@ describe("App", () => {
     expect(screen.getByLabelText("Session name")).toHaveValue("Oakland Night");
     expect(store.getState().core.snapshot).toEqual(snapshot);
     expect(ensureDesktopBridgeMock).toHaveBeenCalledWith("main");
+  });
+
+  it("opens the profile ID saved for this startup", async () => {
+    window.localStorage.setItem("silent-disco.profile-id", "oakland-night");
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    expect(ensureDesktopBridgeMock).toHaveBeenCalledWith("oakland-night");
+  });
+
+  it("saves a valid next-start profile ID in Settings", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+
+    const field = await screen.findByRole("textbox", { name: "Profile ID for next startup" });
+    fireEvent.change(field, { target: { value: "oakland-night" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile ID" }));
+
+    expect(window.localStorage.getItem("silent-disco.profile-id")).toBe("oakland-night");
+    expect(screen.getByText(/Restart Silent Disco to open profile/)).toHaveTextContent(
+      "The current session stays on main.",
+    );
+  });
+
+  it("rejects an invalid profile ID in Settings without saving it", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+
+    const field = await screen.findByRole("textbox", { name: "Profile ID for next startup" });
+    fireEvent.change(field, { target: { value: "Oakland Night" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile ID" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Use 1–64 lowercase letters");
+    expect(window.localStorage.getItem("silent-disco.profile-id")).toBeNull();
   });
 
   it("renders only a newer complete authoritative snapshot", async () => {

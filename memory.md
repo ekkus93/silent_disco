@@ -5746,3 +5746,20 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   command logs receipt time and the transport worker logs send-start time,
   correlated by the accepted operation ID. Formatting, strict Clippy, and the
   full desktop all-feature suite passed again (330 passed, 5 ignored).
+
+## 2026-10-13 — Profile identity and mixed-device follow-up
+- Implemented Block 50 profile identity as a startup-selected profile ID. The
+  preference defaults to `main`, validates the backend's path-safe ID format,
+  and Settings explains the restart needed to close the current profile first.
+  `npm run check` passed with 136 frontend tests; `cargo +1.97.1 fmt --all
+  -- --check`, strict Clippy, and the full locked all-feature desktop suite
+  passed (330 passed, 5 ignored).
+- Made the two-listener manual test accept configurable ADB serials and reject
+  invalid payload entry before tapping Connect. Small escaped input chunks
+  fixed a dropped `n` in `protocolVersion` on emulator-5554.
+- Mixed run with A54 R5CW31AX4FL and emulator-5554: both distinct IDs joined
+  and were approved. Host reported Excellent sync, 8,120 attempted and fully
+  delivered packets, then one listener disappeared. Emulator log showed
+  `received=0 accepted=0` plus virtual audio I/O errors. Treat the run as
+  inconclusive; two physical listeners and per-device diagnostics are needed
+  before Block 29/47 can pass.

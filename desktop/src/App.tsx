@@ -15,6 +15,7 @@ import { RecoverableActionNotice } from "./components/RecoverableActionNotice";
 import { ensureDesktopBridge, subscribeDesktopNotifications } from "./core/bridge";
 import { getAppShutdownState, getLabModeAvailable, toDesktopBridgeError } from "./core/client";
 import type { AppShutdownPhaseDto } from "./core/generated/desktop-bindings";
+import { readProfileIdPreference } from "./core/profilePreference";
 import { DiagnosticsScreen } from "./screens/DiagnosticsScreen";
 import { HostSessionScreen } from "./screens/HostSessionScreen";
 import { HostSetupScreen } from "./screens/HostSetupScreen";
@@ -137,7 +138,7 @@ export function App() {
   const previousViewRef = useRef<DesktopView>(activeView);
 
   useEffect(() => {
-    const profileId = "main";
+    const profileId = readProfileIdPreference();
     let active = true;
     dispatch(coreActions.bridgeOpening({ profileId }));
     const unsubscribe = subscribeDesktopNotifications((notification) => {

@@ -1915,6 +1915,17 @@ single-listener run that motivated it) rather than a protocol bug, but this
 was not investigated further and should not be assumed benign until a real
 device confirms sync actually completes under the same load.
 
+**Follow-up mixed-device attempt 2026-10-13, still not accepted:** the updated
+manual harness joined an A54 (SM-A546E, Android 16) and emulator-5554 to one
+host session. Both distinct listeners were approved and appeared in the host
+snapshot. The host reported Excellent sync and 8,120/8,120 fully delivered
+broadcast packets, but one listener had disconnected by the final snapshot.
+The emulator log reported `received=0 accepted=0` and repeated virtual audio
+device I/O errors. This does not satisfy physical two-listener acceptance and
+does not establish whether the cause is emulator audio, networking, or host
+transport. Repeat with two physical listeners and capture both listener
+diagnostics before checking the remaining-listener behavior.
+
 ### 29.1 Two Android listeners
 
 - [ ] both join and approve;
@@ -4843,7 +4854,9 @@ Depends on Block 49.
 - [x] display persisted tuning values (read-only until a typed tuning command
       exists);
 - [x] trusted-device policy;
-- [ ] profile identity, which is currently hardcoded;
+- [x] profile identity: Settings saves a validated profile ID for the next
+      startup, and the app opens that selected profile. Switching profiles
+      requires restarting the app so the existing profile is shut down first.
 - [x] about/versions: core, app, export schema, platform, Lab availability.
 
 ### 50.3 Leave session-scoped controls where they are
@@ -4859,6 +4872,8 @@ create/refresh, and diagnostics filters remain screen-local.
 - [x] Settings is reachable in every lifecycle including bridge-failed;
 - [x] network policy and mDNS status render during an active session;
 - [x] no session-scoped control appears on Settings.
+- [x] saved profile ID is used on startup; Settings rejects invalid IDs and
+      explains that changing profiles takes effect after restart.
 
 **Acceptance:** Desktop has a Settings destination owning app-wide
 configuration, and host network state is observable during a live session.
