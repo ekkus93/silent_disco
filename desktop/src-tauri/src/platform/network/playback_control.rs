@@ -140,14 +140,24 @@ impl DesktopHostNetworkControl {
             .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
             .map_err(DesktopErrorDto::from)?;
         let host_pause_time_ms = active.runtime.observed_at();
-        active
-            .runtime
-            .broadcast_frame(ProtocolFrame::Control(ControlMessage::Pause(Pause {
-                session_id: playback.session_id.clone(),
-                stream_id: playback.stream_id.clone(),
-                host_pause_time_ms,
-            })))
-            .map_err(DesktopNetworkError::dto)?;
+        if let Err(error) =
+            active
+                .runtime
+                .broadcast_frame(ProtocolFrame::Control(ControlMessage::Pause(Pause {
+                    session_id: playback.session_id.clone(),
+                    stream_id: playback.stream_id.clone(),
+                    host_pause_time_ms,
+                })))
+        {
+            // The actor accepted the pause first; compensate it if the control
+            // frame could not even enter the outbound queue. The pump remains
+            // running until both operations have been accepted.
+            playback
+                .handle
+                .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+                .map_err(DesktopErrorDto::from)?;
+            return Err(DesktopNetworkError::dto(error));
+        }
         playback
             .paused_at_ms
             .store(host_pause_time_ms.get(), Ordering::Release);
@@ -196,16 +206,16 @@ impl DesktopHostNetworkControl {
         // and corrupt the anchor instead of fixing it; broadcasting here
         // would also contend with the pump's own real-time frames on the
         // same bounded queue for no reason.
-        if !playback.paused.swap(false, Ordering::AcqRel) {
+        if !playback.paused.load(Ordering::Acquire) {
             return Ok(());
         }
 
         let now = active.runtime.observed_at();
-        let paused_at_ms = playback.paused_at_ms.swap(0, Ordering::AcqRel);
+        let paused_at_ms = playback.paused_at_ms.load(Ordering::Acquire);
         let elapsed_ms = now.get().saturating_sub(paused_at_ms);
         let total_offset_ms = playback
             .accumulated_pause_offset_ms
-            .fetch_add(elapsed_ms, Ordering::AcqRel)
+            .load(Ordering::Acquire)
             .saturating_add(elapsed_ms);
         let reanchored_start = StreamStart {
             host_start_time_ms: MonotonicMillis::new(
@@ -217,12 +227,25 @@ impl DesktopHostNetworkControl {
             ),
             ..playback.stream_start.clone()
         };
-        active
-            .runtime
-            .broadcast_frame(ProtocolFrame::Control(ControlMessage::StreamStart(
-                reanchored_start,
-            )))
-            .map_err(DesktopNetworkError::dto)?;
+        if let Err(error) =
+            active
+                .runtime
+                .broadcast_frame(ProtocolFrame::Control(ControlMessage::StreamStart(
+                    reanchored_start,
+                )))
+        {
+            playback
+                .handle
+                .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+                .map_err(DesktopErrorDto::from)?;
+            return Err(DesktopNetworkError::dto(error));
+        }
+
+        playback
+            .accumulated_pause_offset_ms
+            .store(total_offset_ms, Ordering::Release);
+        playback.paused_at_ms.store(0, Ordering::Release);
+        playback.paused.store(false, Ordering::Release);
 
         Ok(())
     }
