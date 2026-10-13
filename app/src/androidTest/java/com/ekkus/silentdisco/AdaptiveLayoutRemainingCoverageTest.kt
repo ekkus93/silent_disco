@@ -7,7 +7,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -77,8 +76,8 @@ class AdaptiveLayoutRemainingCoverageTest {
             }
         }
 
-        composeRule.onNode(hasScrollAction()).performScrollToIndex(4)
-        composeRule.onNodeWithText("Always allow").assertIsDisplayed()
+        composeRule.onNodeWithTag("host-dashboard-list").performScrollToIndex(4)
+        composeRule.onNodeWithText("Always allow").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Reject").performScrollTo().assertIsDisplayed()
     }
 

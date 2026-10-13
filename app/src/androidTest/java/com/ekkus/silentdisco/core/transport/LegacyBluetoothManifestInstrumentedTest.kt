@@ -2,9 +2,11 @@ package com.ekkus.silentdisco.core.transport
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -19,6 +21,7 @@ import org.junit.runner.RunWith
 class LegacyBluetoothManifestInstrumentedTest {
     @Test
     fun installedPackageDeclaresLegacyBluetoothPermissions() {
+        assumeTrue("Legacy permissions are only operational through API 30", Build.VERSION.SDK_INT <= 30)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val packageInfo = context.packageManager.getPackageInfo(
             context.packageName,
