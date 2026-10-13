@@ -5763,3 +5763,11 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   `received=0 accepted=0` plus virtual audio I/O errors. Treat the run as
   inconclusive; two physical listeners and per-device diagnostics are needed
   before Block 29/47 can pass.
+
+## 2026-10-13 — Diagnostics UI commit cadence
+- Extended `DiagnosticsScreen.test.tsx` with React Profiler measurement. Across
+  three separately advanced two-second poll periods, each diagnostics refresh
+  produces at least one committed render (0.5 Hz state-driven updates in the
+  controlled jsdom harness). This closes Block 45.2's component update cadence
+  measurement; it does not measure native paint time or frame cost, which still
+  needs a graphical-machine profile.
