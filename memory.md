@@ -5771,3 +5771,18 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   controlled jsdom harness). This closes Block 45.2's component update cadence
   measurement; it does not measure native paint time or frame cost, which still
   needs a graphical-machine profile.
+
+## 2026-10-13 — TODO acceptance audit without second Android device
+- Reconciled stale Blocks 34, 39, 40, 41, and 42 acceptance prose with their
+  implemented code and tests. In particular, receiver-side raw-byte decoding,
+  reconnect delays, live link mutation, packet-hash/fault traces, live monitor
+  errors, and production Lab tree-shaking were already implemented but still
+  described as open. Marked the final shutdown and Lab fault/replay checklist
+  items complete based on their detailed checked sections and all-feature test
+  results.
+- Confirmed static UFW configuration is `ENABLED=no`, but runtime firewall
+  state remains unverified because both `ufw status` and nftables inspection
+  require privileges unavailable in this session.
+- Remaining unchecked work now reflects physical-device/clean-VM evidence,
+  runtime firewall inspection, historical flake monitoring, and performance
+  limit decisions that are not justified by the available single-machine data.

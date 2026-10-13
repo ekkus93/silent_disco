@@ -3901,7 +3901,7 @@ already carries for the identical shape; `clippy::enum_variant_names` on
 `Divergence`, resolved by deliberately varying the five variant names
 instead of a uniform `*Changed` postfix).
 
-**Acceptance:** A difficult failure can be saved and replayed against a later core build. Met for the persisted scenario/core trace: `recording::save_recording_to_path`/`load_recording_from_path` round-trip a versioned, bounded, redacted recording through a real file, and `replay::replay` reports the first bounded divergence. **Not fully complete for live transport evidence:** packet metadata/payload hashes and actual fault-decision records are still absent even though `LiveTransportDriver` now carries live cross-node traffic.
+**Acceptance:** Met for persisted scenario and live-transport traces. `recording::save_recording_to_path`/`load_recording_from_path` round-trip versioned, bounded, redacted recordings through real files; replay reports the first bounded divergence. Live transport traces include packet metadata, payload hashes, and fault decisions, with focused record/replay tests.
 
 ---
 
@@ -4024,7 +4024,7 @@ carries for the identical Tauri-extraction reason; `clippy::format_push_string` 
 resolved with `write!` instead of `push_str(&format!(...))`). `cd desktop && npm run check` all green
 (see test counts above).
 
-**Acceptance:** Partially met. Developers can run deterministic multi-node scenarios without physical devices. The UI supports cooperative pause/resume at deterministic step boundaries, editable link faults, and tested mid-run fault changes; production builds tree-shake the Lab screen and its commands. A pause that interrupts an executing step is not supported and remains outside the current runner model.
+**Acceptance:** Met for this block's UI requirements. Developers can run deterministic multi-node scenarios without physical devices. The UI supports cooperative pause/resume at deterministic step boundaries, editable link faults, and tested mid-run fault changes; production builds tree-shake the Lab screen and its commands. A pause does not interrupt an executing atomic scenario step. Replay/import of saved recordings remains a separate follow-up beyond this block's controls.
 `LabScreen.tsx` opens a validated scenario, runs it to completion through the exact production
 `scenario::run_scenario_with_trace` entry point Block 40 already proved deterministic for a given
 scenario and seed, and renders its bounded timeline/assertion results/step results -- all without a
