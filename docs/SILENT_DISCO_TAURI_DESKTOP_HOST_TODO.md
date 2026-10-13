@@ -4574,27 +4574,44 @@ measurement/result boxes, which remain open until real artifacts are evaluated.
 
 ### 45.2 Measure
 
-- [ ] CPU;
-- [ ] resident memory;
-- [ ] decoder throughput;
-- [ ] packetizer throughput;
-- [ ] transport queue high-water marks;
-- [ ] notification backlog;
-- [ ] UI update rate;
-- [ ] packet delivery severity;
-- [ ] sync confidence and offset;
-- [ ] underrun/concealment;
-- [ ] callback duration;
-- [ ] shutdown time;
-- [ ] database latency outside real-time paths.
+- [x] CPU;
+- [x] resident memory;
+- [x] decoder throughput;
+- [x] packetizer throughput;
+- [x] transport queue high-water marks;
+- [x] notification backlog;
+- [ ] UI update rate (configured poll cadence is known, but observed rendered
+      update rate has not been measured);
+- [x] packet delivery severity;
+- [x] sync confidence and offset;
+- [x] underrun/concealment;
+- [x] callback duration;
+- [x] shutdown time;
+- [x] database latency outside real-time paths.
+
+**2026-10-13 local evidence:** Three paired Release baselines and one 60 s
+16-listener soak ran on Ubuntu 24.04.4, x86_64, Ryzen 7 5825U (16 logical
+CPUs). Decoder real-time multiples were 222–250x WAV, 250x FLAC, and 626x MP3;
+packetizer throughput was 171k–176k packets/s. The desktop transport queue
+peaked at 196–198/256 frames with no overflow; notification backlog peaked at
+49/64. Monitor callback averages were 390–429 ns and maxima 1.0–11.1 us; one
+ring underrun was observed. The runtime sync probe reported Excellent
+confidence, 12 ms offset, and 20 ms RTT. Five-listener transport delivered all
+packets without loss; configured 50‰ loss measured 52‰ at 5 and 16 listeners.
+The 60 s soak used 16 listeners, measured 24‰ loss with 0 send failures, 37.1
+MiB maximum RSS, 3% CPU, and 8.4 MiB RSS at end. Database reads averaged
+15–16 us; writes 2.0–5.7 ms (one outlier retained). Shutdown measured 18.3–19.5
+ms. Full repeated reports and `/usr/bin/time -v` output are retained in the
+session evidence directory `/tmp/silent-disco-block45-20261013`; the configured
+2 s diagnostics poll is not treated as a measured performance limit.
 
 ### 45.3 Enforce evidence-based limits
 
 - [ ] choose maximum supported listener count only from results;
 - [ ] choose diagnostic/UI aggregation cadence from results;
 - [ ] add performance regression thresholds where stable;
-- [ ] record environment and raw summaries in `memory.md`;
-- [ ] do not hide outliers.
+- [x] record environment and raw summaries in `memory.md`;
+- [x] do not hide outliers.
 
 **Acceptance:** Release expectations are based on measured operation rather than desktop hardware assumptions.
 
@@ -4708,17 +4725,14 @@ Confirm:
 
 ### 48.3 Run final gates
 
-- [ ] shared Rust format;
-- [ ] shared Rust strict Clippy;
-- [ ] shared Rust tests;
-- [ ] Android tests;
-- [ ] Android lint;
-- [ ] Android instrumentation;
-- [ ] frontend format/lint/typecheck/tests/build;
-- [ ] Tauri format/strict Clippy/tests/check;
-- [ ] Linux bundle build;
-- [ ] deterministic Lab scenarios;
-- [ ] loopback transport integration;
+- [x] shared Rust format, strict Clippy, and workspace tests (`bash scripts/check-rust.sh`);
+- [x] Android tests and lint (`./gradlew test lintDebug --stacktrace --console=plain`);
+- [x] Android instrumentation on SM-A546E / Android 16 (98 tests, one API-inapplicable legacy permission test skipped);
+- [x] frontend format/lint/typecheck/tests/build (`cd desktop && npm run check`, 121 tests);
+- [x] Tauri format, strict Clippy, tests, and check (330 passed, 4 ignored);
+- [x] Linux AppImage and `.deb` build plus package-content verification;
+- [x] deterministic Lab scenarios (covered by shared and Tauri Rust test suites);
+- [x] loopback transport integration (covered by shared Rust workspace tests);
 - [ ] physical Android acceptance.
 
 ### 48.4 Mark completion honestly
@@ -4727,7 +4741,7 @@ Confirm:
 - [x] Windows/macOS are not claimed unless validated;
 - [x] every skipped test has a reason and owner;
 - [x] every referenced file exists at the exact path;
-- [ ] `memory.md` contains the final ledger.
+- [x] `memory.md` records the completed local gates and remaining device/product limitations.
 
 ---
 
@@ -4782,7 +4796,7 @@ do nothing.
       resolving the contradiction between its gate and its own code comment;
 - [x] render `recoverableAction`, which the core publishes on both
       `CoreSnapshotDto` and `HostSessionSnapshotDto` and the UI discards;
-- [ ] record an observation timestamp for core errors and provide dismissal, so
+- [x] record an observation timestamp for core errors and provide dismissal, so
       one transient failure does not pin an error banner permanently.
 
 ### 49.5 Tests
@@ -4824,7 +4838,7 @@ Depends on Block 49.
       `canCreateHostSession` gate and the Settings control cannot drift;
 - [x] confirm the active binding and mDNS advertising status are reachable
       during an active session after the move;
-- [ ] mirror mDNS advertising status next to the address it qualifies in the
+- [x] mirror mDNS advertising status next to the address it qualifies in the
       connection details panel;
 - [x] display persisted tuning values (read-only until a typed tuning command
       exists);
@@ -4887,7 +4901,9 @@ explicit operator opt-in, never a default.
 
 ### 51.3 Command, persistence, and UI
 
-- [x] persist-then-apply, so a failed write leaves no phantom opt-in;
+- [x] apply only after policy validation, then persist; restore the previous
+      in-memory value if storage fails, and never persist a change refused
+      during an active host session;
 - [x] seed the policy from storage when the profile opens;
 - [x] refuse a policy change while a host endpoint is active, matching the
       bind preference;
@@ -5005,9 +5021,10 @@ harness started playback immediately.
       listener's sync traffic, the desktop logged no errors, and audio was
       heard. The approval-to-Play gap was not independently timed on this
       path; the timed 60 s gap is the harness run above.
-- [ ] Pause was not changed: the guard stays armed while paused. Confirm the
-      Android listener keeps probing through a long pause, or disarm on pause
-      too.
+- [x] The pause path preserves the listener lifecycle state, so the periodic
+      sync loop remains active while audio is paused. Added
+      `pausedPlaybackKeepsTheListenerSyncProbeLoopActive` as a regression test.
+- [ ] Physical long-pause verification on the A54 remains part of Block 47.
 - [x] 8 of 7123 frames were reported as partially delivered with a single
       listener, which should not be possible; investigate the accounting.
       Explained in 52.5 (`ea0dd37`): frames that reached no recipient were
@@ -5107,10 +5124,10 @@ therefore never been able to play audio from a desktop host.
       sync locked 6 ms after the first probe, confidence Excellent, RTT
       5-8 ms, 2 s cadence; phone showed "Playing in sync"; audio heard; no
       errors on either side.
-- [ ] The first ~1 s is lost: 140-180 packets dropped before lock and 423
-      render-ring underruns while the ring filled, because probing starts
-      only at stream start. Probing from approval would lock before the first
-      packet.
+- [ ] Device verification: the listener now starts periodic sync probes as
+      soon as approval arrives, before the playback runtime exists. A JVM
+      regression test covers the pre-runtime probe path; verify the first
+      audio packet arrives after sync lock on the A54.
 
 ### 52.4 Approval delivery can hang forever without a visible failure
 
@@ -5164,10 +5181,15 @@ One refused effect quietly broke the rest of the session.
       shown separately; and "Streaming to nobody" is raised as an alert when
       audio is playing with no listener connected. Tests in
       `DeliveryAndTransportAlerts.test.tsx`.
-- [ ] Android's manual-connect path emits nothing to logcat, so a failed
-      session leaves no listener-side evidence and listener loss/underruns
-      cannot be read.
-- [ ] Host display name is shown as a raw 64-hex device identifier on Android.
+- [x] Android's manual-connect path now logs endpoint attempt/success/failure
+      and join-request send/failure with monotonic timestamps, without logging
+      invite codes or endpoint addresses. Compiled and covered by the Android
+      test/lint gate; packaged-device logcat verification remains part of
+      Block 47.
+- [x] Android now displays a compact host label for opaque 64-hex identities
+      (`Host <first eight hex characters>`) while preserving the full identity
+      for protocol/trust operations; supplied friendly names remain unchanged.
+      Covered by `ManualEndpointModelsTest`.
 - [x] The Android mDNS "Join" path and the desktop listener list keep
       showing "connecting" after approval. (Android's manual-connect path does
       say "The host approved this device. Waiting for the host to start
@@ -5224,13 +5246,15 @@ One refused effect quietly broke the rest of the session.
     - [ ] Why about 11 packets missed the only listener is still unknown
       (likely the window between the phone leaving and eviction; the host
       does not log which packets failed or when).
-    - "Playback start requested." stays under the session header long
-      after playback started.
-    - The empty listener text "No listeners have completed delivery-confirmed
-      approval." is jargon.
-- [ ] The desktop network card still says only private-LAN addresses can be
-      advertised while bound to a shared-address-space address.
-- [ ] "session name is invalid" is shown on an untouched empty field.
+    - [x] "Playback start requested." stays under the session header long
+      after playback started. It now clears when the Rust snapshot reflects
+      the requested playback state; covered by `HostSessionScreen.test.tsx`.
+    - [x] The empty listener text "No listeners have completed delivery-confirmed
+      approval." is jargon. It now says "No listeners have joined yet."
+- [x] The desktop network readiness summary incorrectly implied only private-LAN
+      addresses can be advertised. It now describes eligible IPv4 selection.
+- [x] "session name is invalid" appeared on an untouched field. Validation now
+      appears after the field is touched.
 
 **Acceptance:** A listener that joins the packaged desktop GUI host, by either
 join path, stays connected through playback start and hears audio, and every
@@ -5308,11 +5332,10 @@ here.
 - [x] Manual LAN hosting works.
 - [x] Android control interoperability works.
 - [x] Bounded Rust audio transmission works.
-- [x] One Android listener plays desktop-hosted audio. `ManualEndpointScreen.kt`'s
-      playback wiring is now fixed and confirmed reaching real `Streaming`/
-      `Buffering` state live on-device (see Block 28) -- what remains is a
-      human actually listening to confirm audible, in-sync sound, plus the
-      still-unfixed `stop_playback` bug noted in Block 28.
+- [x] One Android listener plays desktop-hosted audio. Block 28 records human
+      audible playback for WAV and FLAC and successful MP3 playback with an
+      unresolved quality gap. The `stop_playback` silent-failure bug described
+      in Block 28 was fixed and regression-tested on 2026-08-03.
 - [ ] At least two Android listeners pass recorded validation.
 - [ ] mDNS and QR convenience work without replacing manual connection.
 - [x] Optional local monitor uses the shared timeline.

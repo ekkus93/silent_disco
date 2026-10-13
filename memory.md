@@ -5626,3 +5626,93 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   (status of Blocks 49-52, open items, release path, how to work on arisu + A54).
   CLAUDE.md Ralph Loop section now points at it.
 - 52.1 "8 of 7123 partial" item marked explained by ea0dd37.
+
+## 2026-10-13 — Desktop host TODO continuation (Blocks 4, 23, 26, 49–52)
+- Repaired the strict all-target desktop Rust build: both `StoredSettings`
+  literals in `performance_probe.rs` now supply the shared-address-space field.
+  `cargo check --locked --all-features`, strict Clippy, and desktop Rust tests
+  passed (330 passed, 4 device tests ignored, plus integration tests).
+- Fixed playback control enqueue failure handling. Pause/resume now compensate
+  the actor transition if the control frame cannot enter the outbound queue;
+  resume commits its offset and unpauses the pump only after enqueue succeeds.
+- Shared-address-space changes validate against the live network policy before
+  persistence and restore the previous policy on storage read/write failure.
+  Updated Block 51.3 to reflect the actual transaction behavior.
+- Host Session refresh now ignores non-newer snapshots. Accepted end-session
+  requests clear the pending UI state when a newer core revision reports the
+  lifecycle left `ending_session`. Disappearing requests/listeners are no longer
+  automatically announced as delivered; ambiguous cases surface a retryable
+  confirmation error.
+- Connected core error entries now include an observation time and stable ID;
+  Host Setup renders the time and permits dismissal. Session-name validation is
+  shown after the field is touched. mDNS status is displayed beside the active
+  host address. Playback request announcements clear when a newer snapshot
+  confirms the requested state; empty-listener text is now plain language.
+- Android Block 52.6 follow-up: pre-runtime sync probes can now use an active
+  mDNS/manual endpoint and begin after admission, before the host starts audio.
+  Added a JVM test for a probe at approval. Physical A54 verification is still
+  pending.
+- Checks run: `desktop/npm run check` passed (118 frontend tests, production
+  build); `desktop/src-tauri cargo clippy --locked --all-targets --all-features
+  -- -D warnings` and `cargo test --locked --all-features` passed; Android
+  `./gradlew test lintDebug --stacktrace --console=plain` passed (323 unit tests
+  for each Debug, PocDebug, and Release variant; lint clean).
+- Preliminary single-run Block 45 probe on Linux x86_64 / 16 logical CPUs:
+  WAV/FLAC decoder 12M frames/s each, MP3 30.05M frames/s, packetizer 176.5k
+  packets/s with queue high-water 11/32 and no backpressure; virtual transport
+  delivered 500 packets to 1, 2, 5, and 16 listeners without loss; 50-permille
+  configured loss measured 52/52 permille at 5/16 listeners; DB reads averaged
+  13 us and writes 2,023 us. Raw JSON was written to
+  `/tmp/silent-disco-performance-20261013.json`; this is one run, without soak,
+  so no performance limits are claimed.
+
+## 2026-10-13 — Block 45 paired performance evidence
+- Ran 3 paired release baselines and a 60 s 16-listener soak on `kawa`, Ubuntu
+  24.04.4, x86_64, AMD Ryzen 7 5825U, 16 logical CPUs; `CLK_TCK=100`.
+- Decoder real-time multiples: WAV 222–250x, FLAC 250x, MP3 626x. Packetizer
+  171,428–176,470 packets/s. Transport peer-delivery throughput medians:
+  55,555/s (1 listener), 111,111/s (2), 227,272/s (5), 421,052/s (16),
+  208,333/s (5 with 50‰ loss), and 421,052/s (16 with 50‰ loss).
+- Runtime queue peak 196–198 / 256, no overflow; notification backlog 49 / 64.
+  Monitor callback average 390–429 ns; max 1.0–11.1 us; one ring underrun.
+  Runtime synchronization reported Excellent confidence, 12 ms offset, 20 ms RTT.
+  Core scheduler concealed one packet without rebuffering.
+- Soak: 60.86 s wall time, 1.97 s user CPU + 0.15 s system CPU (3%), max RSS
+  37,100 KiB, RSS at end 8,428 KiB, 2,774 packets, 16 listeners, configured
+  25‰ loss / observed 24‰, 0 transport send failures. Database read median
+  16 us (15–16); writes median 2,010 us (2,002–5,658), preserving the outlier.
+  Transport shutdown median 19,342 us (18,340–19,512).
+- Repeated JSON, runtime JSON, soak JSON, and `/usr/bin/time -v` artifacts live
+  at `/tmp/silent-disco-block45-20261013` for this session. Do not set platform
+  support limits from this single machine; UI rendered-update rate remains
+  unmeasured. Block 45.3's listener limit, cadence selection, and stable timing
+  thresholds remain open.
+
+## 2026-10-13 — Final local gate rerun and A54 instrumentation
+- Android `./gradlew test lintDebug --stacktrace --console=plain` passed after
+  the final Kotlin and instrumentation-test edits.
+- Connected instrumentation passed on Samsung SM-A546E / Android 16: 98 tests
+  completed, 0 failed; the legacy Bluetooth permission test was skipped because
+  that manifest permission is capped at API 30.
+- Desktop `npm run check` passed: generated bindings, format, lint, typecheck,
+  121 frontend tests, and production build. Biome printed one informational
+  configuration deprecation (`linter.recommended`); there were no lint errors.
+- `bash scripts/check-rust.sh` passed: shared Rust formatting, strict Clippy,
+  and workspace tests. Desktop Rust `cargo check --locked --all-features`,
+  strict Clippy, and tests passed (330 passed, 4 ignored).
+- `npm run tauri build` produced both AppImage and `.deb` packages; the
+  repository's `verify-linux-bundles.py` passed, confirming the package set,
+  desktop entry/icon, declared dependencies, and exclusion of performance probes.
+- Android now renders opaque 64-hex host identities as `Host <8 hex chars>` in
+  listener-facing UI, preserving the complete identity for protocol and trust
+  operations. `./gradlew test lintDebug` passed again, and connected tests on
+  the A54 passed again (98 completed, one legacy-permission test skipped on
+  API 36).
+- These local gates do not satisfy Block 46.3/47, which require a clean
+  supported graphical Linux machine and physical listener interoperability
+  evidence.
+- Remaining work requires either lab resources or product direction: a second
+  physical Android listener for Blocks 29/47; a clean Ubuntu graphical VM for
+  Block 46.3; profile identity, listener/cadence limits, UI rendered update
+  rate, and stable performance thresholds. Block 47 additionally requires the
+  real host/join/audio/disruption matrix and exact package/APK/network evidence.
