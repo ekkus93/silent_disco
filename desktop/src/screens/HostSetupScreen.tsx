@@ -17,6 +17,7 @@ import {
 } from "../core/client";
 import type { UpdateHostDraftRequest } from "../core/generated/desktop-bindings";
 import { HostNetworkReadinessSummary } from "./HostNetworkReadinessSummary";
+import { ErrorAlert } from "../components/ErrorAlert";
 
 type ApprovalMode = "manual" | "trusted_devices" | "invite_code";
 
@@ -62,6 +63,7 @@ export function HostSetupScreen() {
   const [selectingSource, setSelectingSource] = useState(false);
   const [networkReady, setNetworkReady] = useState(false);
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
+  const [sessionNameTouched, setSessionNameTouched] = useState(false);
 
   useEffect(() => {
     if (snapshot === null || snapshot.revision === draftRevision) return;
@@ -107,6 +109,7 @@ export function HostSetupScreen() {
     }
     return map;
   }, [snapshot]);
+  const sessionNameError = sessionNameTouched ? validationByField.get("sessionName") : undefined;
 
   if (snapshot === null || draft === null) {
     return <p role="status">Waiting for the authoritative Rust host draft…</p>;
@@ -246,14 +249,13 @@ export function HostSetupScreen() {
                 setDraft({ ...draft, sessionName: event.target.value });
                 setDirty(true);
               }}
-              aria-describedby={
-                validationByField.has("sessionName") ? "session-name-error" : undefined
-              }
+              onBlur={() => setSessionNameTouched(true)}
+              aria-describedby={sessionNameError ? "session-name-error" : undefined}
               className="mt-2 w-full rounded-xl border border-violet-200/25 bg-slate-950 px-3 py-2"
             />
-            {validationByField.has("sessionName") ? (
+            {sessionNameError ? (
               <p id="session-name-error" className="mt-2 text-sm text-amber-200">
-                {validationByField.get("sessionName")}
+                {sessionNameError}
               </p>
             ) : null}
           </div>
@@ -414,10 +416,12 @@ export function HostSetupScreen() {
       ) : null}
 
       {latestError !== null ? (
-        <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/35 p-4">
-          <p className="font-semibold">Host setup command failed</p>
-          <p className="mt-1 text-sm text-red-100/80">{latestError.message}</p>
-        </div>
+        <ErrorAlert
+          title="Host setup command failed"
+          error={latestError}
+          observedAtMs={latestError.observedAtMs}
+          onDismiss={() => dispatch(coreActions.errorDismissed({ id: latestError.id }))}
+        />
       ) : null}
 
       {!lifecycleAllowsSetup ? (

@@ -40,7 +40,7 @@ export function HostNetworkReadinessSummary({
             Network interface
           </h3>
           <p className="mt-1 text-sm text-violet-100/65">
-            Configured in Settings. Only an intentional private-LAN IPv4 address can be advertised.
+            Configured in Settings. An eligible IPv4 address must be selected before hosting.
           </p>
         </div>
         <Button onClick={onConfigure} className="px-3">
@@ -63,7 +63,7 @@ export function HostNetworkReadinessSummary({
       ) : snapshot !== null ? (
         <p role="alert" className="mt-3 text-sm text-amber-200">
           {snapshot.selectionError ??
-            "No private-LAN address is selected. Choose one in Settings before starting a session."}
+            "No eligible IPv4 address is selected. Choose one in Settings before starting a session."}
         </p>
       ) : null}
 

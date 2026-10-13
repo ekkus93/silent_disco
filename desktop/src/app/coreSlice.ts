@@ -22,6 +22,11 @@ export interface PendingCommandReceipt {
   observedEffectKind: string | null;
 }
 
+export interface ObservedCoreError extends DesktopErrorDto {
+  id: number;
+  observedAtMs: number;
+}
+
 export interface StaleNotificationCounters {
   snapshots: number;
   effects: number;
@@ -34,7 +39,8 @@ export interface CoreState {
   snapshot: CoreSnapshotDto | null;
   bridgeLifecycle: BridgeLifecycleDto;
   pendingCommandReceipts: Record<string, PendingCommandReceipt>;
-  errors: DesktopErrorDto[];
+  errors: ObservedCoreError[];
+  nextErrorId: number;
   diagnostics: CoreDiagnosticDto[];
   staleNotifications: StaleNotificationCounters;
 }
@@ -44,6 +50,7 @@ const initialState: CoreState = {
   bridgeLifecycle: { kind: "closed" },
   pendingCommandReceipts: {},
   errors: [],
+  nextErrorId: 1,
   diagnostics: [],
   staleNotifications: {
     snapshots: 0,
@@ -99,7 +106,13 @@ function pushBounded<T>(items: T[], value: T, limit: number): boolean {
 }
 
 function recordError(state: CoreState, error: DesktopErrorDto): void {
-  if (pushBounded(state.errors, error, MAX_ERRORS)) {
+  const entry: ObservedCoreError = {
+    ...error,
+    id: state.nextErrorId,
+    observedAtMs: Date.now(),
+  };
+  state.nextErrorId += 1;
+  if (pushBounded(state.errors, entry, MAX_ERRORS)) {
     state.staleNotifications.droppedErrors += 1;
   }
 }
@@ -320,6 +333,9 @@ export const coreSlice = createSlice({
         delete state.pendingCommandReceipts[operationId];
       }
       recordError(state, error);
+    },
+    errorDismissed(state, action: PayloadAction<{ id: number }>) {
+      state.errors = state.errors.filter((error) => error.id !== action.payload.id);
     },
   },
 });

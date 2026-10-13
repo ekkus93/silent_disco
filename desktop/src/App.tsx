@@ -269,7 +269,11 @@ export function App() {
                 </p>
               ) : null}
               {failed && latestError ? (
-                <ErrorAlert error={latestError} title="Desktop bridge startup failed" />
+                <ErrorAlert
+                  error={latestError}
+                  title="Desktop bridge startup failed"
+                  observedAtMs={latestError.observedAtMs}
+                />
               ) : null}
               {failed && !latestError ? (
                 <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/40 p-4">

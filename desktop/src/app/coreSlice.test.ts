@@ -201,7 +201,17 @@ describe("authoritative core slice", () => {
     );
 
     expect(state.pendingCommandReceipts["operation-2"]).toBeUndefined();
-    expect(state.errors.at(-1)).toEqual(commandError);
+    expect(state.errors.at(-1)).toMatchObject(commandError);
+    expect(state.errors.at(-1)?.observedAtMs).toEqual(expect.any(Number));
+    expect(state.errors.at(-1)?.id).toBeGreaterThan(0);
+  });
+
+  it("allows a visible error to be dismissed by its stable identifier", () => {
+    let state = coreReducer(undefined, coreActions.commandInvocationFailed(commandError));
+    const error = state.errors[0];
+    if (!error) throw new Error("expected the failure to be recorded");
+    state = coreReducer(state, coreActions.errorDismissed({ id: error.id }));
+    expect(state.errors).toEqual([]);
   });
 
   it("rejects an out-of-sequence ready result with a visible error", () => {

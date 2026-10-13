@@ -167,11 +167,31 @@ describe("HostSetupScreen", () => {
         ],
       }),
     );
+    expect(screen.queryByText("session name is invalid")).not.toBeInTheDocument();
+    fireEvent.blur(screen.getByLabelText("Session name"));
     expect(screen.getByText("session name is invalid")).toBeInTheDocument();
     expect(screen.getByLabelText("Session name")).toHaveAttribute(
       "aria-describedby",
       "session-name-error",
     );
+  });
+
+  it("timestamps and dismisses a transient core error", async () => {
+    const store = renderScreen();
+    store.dispatch(
+      coreActions.commandInvocationFailed({
+        code: "core.source.failed",
+        subsystem: "audio",
+        severity: "error",
+        retryable: true,
+        message: "The source could not be opened.",
+      }),
+    );
+
+    expect(await screen.findByText("The source could not be opened.")).toBeInTheDocument();
+    expect(screen.getByText("Observed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("The source could not be opened.")).not.toBeInTheDocument();
   });
 
   it("registers an inspected source without displaying it optimistically", async () => {
