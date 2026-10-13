@@ -4672,6 +4672,14 @@ Evaluate and record selected initial formats, for example:
 - [ ] shut down and reopen;
 - [ ] verify package uninstall behavior.
 
+**2026-10-13 local VM attempt:** A clean Ubuntu 22.04 VM accepted the `.deb`
+package install, but the package was built on this Ubuntu 24.04 host. Its
+binary requires `GLIBC_2.39`, so it cannot launch on Ubuntu 22.04 (`GLIBC_2.35`).
+This is not a release-build result: the Linux bundle CI job builds on
+`ubuntu-22.04`. Profile creation, source staging, diagnostics export, reopen,
+and uninstall were not exercised in this VM. Keep Block 46.3 open until the
+Ubuntu 22.04-built CI/release artifact completes the full fresh-machine flow.
+
 **Acceptance:** Block 46.2 is complete on the supported Ubuntu 22.04 CI baseline: package contents, clean install, synthetic-version upgrade, no-development-server launch, uninstall, and profile-local user-data preservation all pass. Block 46.3 fresh-machine validation with a graphical Ubuntu 22.04 machine/VM and a physical Android listener remains open.
 
 ---

@@ -5804,3 +5804,13 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - The focused test passed 20 isolated runs. `cd desktop && npm run check`
   passed all gates and 136 frontend tests. This is a test synchronization fix;
   no production behavior changed.
+
+## 2026-10-13 — Ubuntu 22.04 fresh-VM attempt
+- Created a clean Jammy VM, installed the locally built desktop `.deb`, and
+  confirmed its SHA-256 matched the host artifact. Launch failed because the
+  artifact was built on this Ubuntu 24.04 host and requires `GLIBC_2.39`, while
+  Jammy provides `GLIBC_2.35`. The repository's bundle CI builds on Ubuntu
+  22.04, so this does not establish a release-bundle regression.
+- Profile creation, source staging, diagnostics export, reopen, and uninstall
+  were not validated. The disposable VM and its SSH key were removed. Block
+  46.3 remains open pending a fresh run with the Ubuntu 22.04-built artifact.
