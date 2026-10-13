@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { coreActions } from "../app/coreSlice";
 import {
@@ -64,6 +64,10 @@ export function HostSetupScreen() {
   const [networkReady, setNetworkReady] = useState(false);
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   const [sessionNameTouched, setSessionNameTouched] = useState(false);
+  const roleSelectionRequest = useRef<{
+    revision: string;
+    request: ReturnType<typeof selectHostRole>;
+  } | null>(null);
 
   useEffect(() => {
     if (snapshot === null || snapshot.revision === draftRevision) return;
@@ -76,8 +80,14 @@ export function HostSetupScreen() {
 
   useEffect(() => {
     if (snapshot === null || snapshot.selectedRole !== null) return;
+    const existing = roleSelectionRequest.current;
+    const request =
+      existing?.revision === snapshot.revision
+        ? existing.request
+        : selectHostRole(snapshot.revision);
+    roleSelectionRequest.current = { revision: snapshot.revision, request };
     let active = true;
-    selectHostRole(snapshot.revision)
+    request
       .then((receipt) => {
         if (active) {
           dispatch(
@@ -94,6 +104,9 @@ export function HostSetupScreen() {
           dispatch(
             coreActions.commandInvocationFailed(toDesktopBridgeError(error, "select host role")),
           );
+        }
+        if (roleSelectionRequest.current?.request === request) {
+          roleSelectionRequest.current = null;
         }
       });
     return () => {

@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
+import { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -128,6 +129,28 @@ beforeEach(() => {
 });
 
 describe("HostSetupScreen", () => {
+  it("selects the host role only once when StrictMode replays effects", async () => {
+    const store = createAppStore();
+    store.dispatch(coreActions.bridgeOpening({ profileId: "main" }));
+    store.dispatch(
+      coreActions.bridgeReady({
+        profileId: "main",
+        snapshot: snapshot({ selectedRole: null }),
+      }),
+    );
+
+    render(
+      <StrictMode>
+        <Provider store={store}>
+          <HostSetupScreen />
+        </Provider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(selectHostRole).toHaveBeenCalledTimes(1));
+    expect(selectHostRole).toHaveBeenCalledWith("4");
+  });
+
   it("uses native labelled controls in keyboard order", () => {
     renderScreen();
     const session = screen.getByLabelText("Session name");

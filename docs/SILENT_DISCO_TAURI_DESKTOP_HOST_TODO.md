@@ -875,6 +875,8 @@ Include:
 - [x] create rejection;
 - [x] no transition to hosting without newer snapshot;
 - [x] screen-reader labels.
+- [x] StrictMode's effect replay does not submit host-role selection twice;
+      `HostSetupScreen.test.tsx` verifies one native command per revision.
 
 **Acceptance:** A desktop user can edit and submit a real Rust-owned host draft.
 
