@@ -466,11 +466,10 @@ impl DesktopAppState {
         network.stop_playback()
     }
 
-    /// Persists the shared-address-space opt-in, then applies it.
+    /// Applies the shared-address-space opt-in, then persists it.
     ///
-    /// Persist-then-apply: if the write fails the in-memory policy is
-    /// unchanged, so the UI never shows an opt-in that would silently vanish
-    /// on the next launch.
+    /// Apply first so an invalid change (for example, while hosting) cannot be
+    /// persisted. If storage then fails, restore the previous in-memory value.
     pub(crate) fn set_allow_shared_address_space(
         &self,
         allow: bool,
@@ -498,9 +497,19 @@ impl DesktopAppState {
             }
         };
 
+        let previous = network.snapshot()?.allow_shared_address_space;
+        network.set_allow_shared_address_space(allow)?;
+
         let existing = database
             .load_settings()
-            .map_err(|error| DesktopErrorDto::from(error.to_core_error()))?;
+            .map_err(|error| DesktopErrorDto::from(error.to_core_error()));
+        let existing = match existing {
+            Ok(existing) => existing,
+            Err(error) => {
+                network.set_allow_shared_address_space(previous)?;
+                return Err(error);
+            }
+        };
         let settings = existing.map_or_else(
             || StoredSettings {
                 tuning: TuningSettings::default(),
@@ -513,10 +522,10 @@ impl DesktopAppState {
                 ..current
             },
         );
-        database
-            .save_settings(&settings)
-            .map_err(|error| DesktopErrorDto::from(error.to_core_error()))?;
-        network.set_allow_shared_address_space(allow)?;
+        if let Err(error) = database.save_settings(&settings) {
+            network.set_allow_shared_address_space(previous)?;
+            return Err(DesktopErrorDto::from(error.to_core_error()));
+        }
         network.snapshot()
     }
 
