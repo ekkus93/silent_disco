@@ -139,6 +139,7 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
+    internal var listenerTransportConnected: Boolean = false
 
     /**
      * Whether the joined session's transport runs over a Wi-Fi Direct group.

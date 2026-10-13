@@ -99,6 +99,7 @@ internal fun MainViewModel.establishRustListenerNetwork(
     controller: ListenerCoreController,
     effect: FfiPlatformEffect.EstablishNetwork,
 ) {
+    listenerTransportConnected = false
     val address = effect.address
     val controlPort = effect.controlPort
     val syncPort = effect.syncPort
@@ -149,6 +150,7 @@ internal fun MainViewModel.releaseRustListenerNetwork(
 ) {
     pendingEstablishNetworkOperationId = null
     listenerTransportRidesWifiDirect = false
+    listenerTransportConnected = false
     viewModelScope.launch {
         var firstFailure: Throwable? = null
         try {
@@ -187,6 +189,10 @@ private fun MainViewModel.connectRustListenerEndpoint(
     audioPort: UShort,
     protocolVersion: Int = LISTENER_DISCOVERY_PROTOCOL_VERSION,
 ) {
+    logger.i(
+        "listener.endpoint_connect",
+        "Opening listener endpoint for session ${session.id} (Wi-Fi Direct=$listenerTransportRidesWifiDirect)",
+    )
     val rawEndpoint = Json.encodeToString(
         ManualHostEndpointPayload.serializer(),
         ManualHostEndpointPayload(
@@ -209,6 +215,11 @@ private fun MainViewModel.connectRustListenerEndpoint(
                 LOCAL_LISTENER_BIND_ADDRESS,
             )
         } catch (error: FfiListenerTransportException) {
+            logger.e(
+                "listener.endpoint_connect_failed",
+                error.message ?: "listener transport connection failed",
+                error,
+            )
             controller.platformOperationFailed(
                 operationId,
                 error.message ?: "listener transport connection failed",
@@ -216,6 +227,11 @@ private fun MainViewModel.connectRustListenerEndpoint(
             )
             return@launch
         } catch (error: RuntimeException) {
+            logger.e(
+                "listener.endpoint_connect_failed",
+                error.message ?: "listener transport connection failed",
+                error,
+            )
             controller.platformOperationFailed(
                 operationId,
                 error.message ?: "listener transport connection failed",
@@ -223,6 +239,11 @@ private fun MainViewModel.connectRustListenerEndpoint(
             )
             return@launch
         }
+        listenerTransportConnected = true
+        logger.i(
+            "listener.endpoint_connected",
+            "Listener endpoint connected; reporting readiness to Rust",
+        )
         // Report the endpoint ready before soliciting any reply. The core only
         // accepts the host's "awaiting approval" once it is `Connecting`, and it
         // applies submissions in order, so this must be queued before the join
@@ -236,10 +257,24 @@ private fun MainViewModel.connectRustListenerEndpoint(
         ensureListenerTransportEventLoop()
         try {
             listenerTransportController.sendJoinRequest(LISTENER_DISPLAY_NAME, inviteCode)
+            logger.i(
+                "listener.join_request_sent",
+                "Join request sent; waiting for the host decision",
+            )
         } catch (error: FfiListenerTransportException) {
             // Establishment already completed, so this is a transport failure.
+            logger.e(
+                "listener.join_request_failed",
+                error.message ?: "join request failed",
+                error,
+            )
             controller.transportFailed(error.message ?: "join request failed", true)
         } catch (error: RuntimeException) {
+            logger.e(
+                "listener.join_request_failed",
+                error.message ?: "join request failed",
+                error,
+            )
             controller.transportFailed(error.message ?: "join request failed", true)
         }
     }

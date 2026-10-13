@@ -20,6 +20,7 @@ class FakeListenerTransport : ListenerTransport {
     val connectCalls = mutableListOf<ConnectCall>()
     val joinRequestCalls = mutableListOf<Pair<String, String?>>()
     val disconnectCalls = mutableListOf<String>()
+    val syncRequestCalls = mutableListOf<Pair<ULong, ULong>>()
     var closeCallCount: Int = 0
     var attachedPlayback: FfiListenerPlaybackHandle? = null
     var attachCallCount: Int = 0
@@ -50,7 +51,9 @@ class FakeListenerTransport : ListenerTransport {
         disconnectCalls += reason
     }
 
-    override suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong) = Unit
+    override suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong) {
+        syncRequestCalls += correlationId to localSendElapsedMs
+    }
 
     override fun attachPlayback(playback: FfiListenerPlaybackHandle) {
         attachedPlayback = playback

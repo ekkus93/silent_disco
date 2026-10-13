@@ -19,6 +19,7 @@ internal fun listenerCoreSnapshot(
     discoveryActive: Boolean,
     known: List<String>,
     selected: String?,
+    listenerLifecycle: FfiListenerLifecycle? = null,
 ) = FfiCoreSnapshot(
     revision = 1uL,
     selectedRole = null,
@@ -39,7 +40,7 @@ internal fun listenerCoreSnapshot(
         ),
     ),
     hostLifecycle = FfiHostLifecycle.IDLE,
-    listenerLifecycle = if (selected != null) {
+    listenerLifecycle = listenerLifecycle ?: if (selected != null) {
         FfiListenerLifecycle.CONNECTING
     } else if (discoveryActive) {
         FfiListenerLifecycle.SCANNING

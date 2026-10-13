@@ -99,8 +99,9 @@ internal fun MainViewModel.ensureRustListenerCore(): ListenerCoreController {
     return controller
 }
 
-private fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) {
+internal fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) {
     val discoveryJustStarted = snapshot.discoveryActive && !_uiState.value.isScanning
+    val wasApproved = _uiState.value.listenerState in APPROVED_OR_LATER
     val incoming = snapshot.listenerLifecycle.toAppListenerLifecycle()
     val nextState = nextListenerState(_uiState.value.listenerState, incoming)
     val discoveredSessions = snapshot.discoveredSessions.map { it.toAppSessionInfo() }
@@ -119,6 +120,11 @@ private fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) {
         ),
         lastError = snapshot.lastError?.message,
     )
+    if (!wasApproved && nextState in APPROVED_OR_LATER && listenerTransportConnected) {
+        // Start acquiring the host clock as soon as admission completes. This
+        // lets a listener lock sync while the host waits before pressing Play.
+        startPeriodicListenerResync()
+    }
     // Reconciliation is gated on the core discovering, so hand it anything
     // the platform scanners already found at the moment discovery starts.
     if (discoveryJustStarted) {

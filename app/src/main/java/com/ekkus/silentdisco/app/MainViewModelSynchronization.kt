@@ -74,7 +74,9 @@ internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): 
         val request = newListenerSyncProbeRequest(SessionId(session.id))
         pendingSyncCorrelationId = request.correlationId
 
-        if (wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED) {
+        if (listenerTransportConnected ||
+            wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED
+        ) {
             val nextState = nextStateForSyncProbe(_uiState.value.listenerState)
             val nextProgressState = if (nextState == ListenerLifecycleState.SYNCING_CLOCK) {
                 ListenerLifecycleState.SYNCING_CLOCK
