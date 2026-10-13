@@ -4624,7 +4624,11 @@ still require a graphical-machine profile.
 ### 45.3 Enforce evidence-based limits
 
 - [ ] choose maximum supported listener count only from results;
-- [ ] choose diagnostic/UI aggregation cadence from results;
+- [x] choose diagnostic/UI aggregation cadence from results: retain the
+      2,000 ms Diagnostics poll, which produced one committed UI update per
+      poll (0.5 Hz) in the Profiler harness. Diagnostics are status summaries,
+      not a real-time control path; the 5 s stale threshold tolerates one
+      delayed poll without immediately labeling the snapshot stale.
 - [ ] add performance regression thresholds where stable;
 - [x] record environment and raw summaries in `memory.md`;
 - [x] do not hide outliers.

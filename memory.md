@@ -5786,3 +5786,11 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Remaining unchecked work now reflects physical-device/clean-VM evidence,
   runtime firewall inspection, historical flake monitoring, and performance
   limit decisions that are not justified by the available single-machine data.
+
+## 2026-10-13 — Diagnostics cadence decision
+- Retained the 2,000 ms diagnostics refresh interval based on the observed
+  one-commit-per-poll result (0.5 Hz) in the controlled Profiler test. The
+  screen presents status summaries rather than a real-time control path, and
+  its 5 s stale threshold tolerates a delayed poll. Listener ceilings and
+  performance regression thresholds remain unset until repeated, broader
+  machine data supports them.
