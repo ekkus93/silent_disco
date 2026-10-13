@@ -29,20 +29,14 @@ internal fun RustSyncConfidence.toAppSyncQuality(): SyncQualityBadge = when (thi
     RustSyncConfidence.EXCELLENT -> SyncQualityBadge.EXCELLENT
 }
 
-/**
- * Preserves the pre-Rust drift-threshold gate from
- * `ListenerSyncController.shouldResync`. Its other half (re-probing once
- * `cadenceMs` has elapsed since the last sample) is dropped deliberately, not
- * lost: it was only ever evaluated synchronously right after a fresh sample
- * was recorded, so elapsed time at that call site was always ~0 and the
- * check was already an inert no-op in production; the periodic probe cadence
- * itself is owned by [startPeriodicListenerResync], unrelated to this
- * per-sample gate. Extracted as a pure function so it stays covered by a JVM
- * unit test even though `RustSyncEstimator` itself cannot load in one (see
- * `SyncEstimateMappingTest`).
- */
-internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): Boolean =
-    kotlin.math.abs(offsetMs) > driftThresholdMs
+/** Returns true when an existing host-clock mapping has moved beyond the drift gate. */
+internal fun shouldResyncForOffset(
+    offsetMs: Double,
+    previousOffsetMs: Double?,
+    driftThresholdMs: Double,
+): Boolean = previousOffsetMs?.let {
+    kotlin.math.abs(offsetMs - it) > driftThresholdMs
+} ?: false
 
     internal fun MainViewModel.requestListenerSyncProbe(source: String) {
         val session = _uiState.value.selectedSession
@@ -245,8 +239,12 @@ internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): 
             confidence = snapshot.confidence.toAppSyncQuality(),
             resyncCount = _uiState.value.listenerSyncState.resyncCount + 1,
         )
+        val previousOffsetMs = _uiState.value.listenerSyncState
+            .takeIf { it.confidence != SyncQualityBadge.UNKNOWN }
+            ?.offsetMs
         val shouldResync = shouldResyncForOffset(
             offsetMs = syncState.offsetMs,
+            previousOffsetMs = previousOffsetMs,
             driftThresholdMs = _uiState.value.tuningSettings.syncDriftThresholdMs,
         )
         if (shouldResync && !_uiState.value.connectionProgress.synced) {
@@ -256,6 +254,8 @@ internal fun shouldResyncForOffset(offsetMs: Double, driftThresholdMs: Double): 
         _uiState.value = _uiState.value.copy(
             listenerSyncState = syncState,
             listenerState = if (shouldResync) ListenerLifecycleState.DESYNCED else _uiState.value.listenerState,
+            // The first accepted exchange establishes a mapping between two
+            // independent monotonic clocks even when their epochs differ.
             connectionProgress = _uiState.value.connectionProgress.copy(synced = !shouldResync),
             lastMessage = if (!shouldResync && observation.degradedLock) {
                 "Clock sync locked after ${observation.acquisitionRejectedSampleCount} rejected samples " +
@@ -318,7 +318,8 @@ private const val SYNC_ACQUIRE_CADENCE_MS = 250L
                 // the estimator discards any sample whose round trip is too
                 // long, so the steady cadence would turn a few unlucky probes
                 // into seconds of silence. Probe hard until it locks.
-                val locked = listenerPlayback?.diagnostics()?.syncLocked == true
+                val locked = listenerPlayback?.diagnostics()?.syncLocked
+                    ?: _uiState.value.connectionProgress.synced
                 delay(
                     if (locked) {
                         _uiState.value.tuningSettings.syncCadenceMs

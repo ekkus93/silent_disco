@@ -33,23 +33,53 @@ class SyncEstimateMappingTest {
     }
 
     @Test
-    fun `shouldResyncForOffset is false within the configured drift threshold`() {
-        assertThat(shouldResyncForOffset(offsetMs = 0.0, driftThresholdMs = 18.0)).isFalse()
-        assertThat(shouldResyncForOffset(offsetMs = 17.9, driftThresholdMs = 18.0)).isFalse()
-        assertThat(shouldResyncForOffset(offsetMs = -17.9, driftThresholdMs = 18.0)).isFalse()
+    fun `initial offset establishes the mapping even when clock epochs differ`() {
+        assertThat(
+            shouldResyncForOffset(
+                offsetMs = 185_355.0,
+                previousOffsetMs = null,
+                driftThresholdMs = 18.0,
+            ),
+        ).isFalse()
     }
 
     @Test
-    fun `shouldResyncForOffset is true once the magnitude exceeds the threshold, either sign`() {
-        assertThat(shouldResyncForOffset(offsetMs = 18.1, driftThresholdMs = 18.0)).isTrue()
-        assertThat(shouldResyncForOffset(offsetMs = -18.1, driftThresholdMs = 18.0)).isTrue()
+    fun `stable host offset does not trigger resync`() {
+        assertThat(
+            shouldResyncForOffset(
+                offsetMs = 185_355.0,
+                previousOffsetMs = 185_354.9,
+                driftThresholdMs = 18.0,
+            ),
+        ).isFalse()
     }
 
     @Test
-    fun `shouldResyncForOffset is false exactly at the threshold boundary`() {
-        // Matches ListenerSyncControllerTest's original semantics: the
-        // comparison is strictly-greater-than, so an offset exactly equal to
-        // the threshold does not trigger a resync.
-        assertThat(shouldResyncForOffset(offsetMs = 18.0, driftThresholdMs = 18.0)).isFalse()
+    fun `host offset movement beyond threshold triggers resync in either direction`() {
+        assertThat(
+            shouldResyncForOffset(
+                offsetMs = 18.1,
+                previousOffsetMs = 0.0,
+                driftThresholdMs = 18.0,
+            ),
+        ).isTrue()
+        assertThat(
+            shouldResyncForOffset(
+                offsetMs = -18.1,
+                previousOffsetMs = 0.0,
+                driftThresholdMs = 18.0,
+            ),
+        ).isTrue()
+    }
+
+    @Test
+    fun `host offset movement exactly at threshold does not trigger resync`() {
+        assertThat(
+            shouldResyncForOffset(
+                offsetMs = 18.0,
+                previousOffsetMs = 0.0,
+                driftThresholdMs = 18.0,
+            ),
+        ).isFalse()
     }
 }

@@ -16,11 +16,9 @@ use automation::{
     wait_for_real_join_and_approve,
 };
 use melody::{C_MAJOR_SCALE_HZ, stage_melody_source};
-use silent_disco_core::domain::{PlaybackState, SyncConfidence};
-use silent_disco_core::runtime::{
-    AudioSourcePatch, CoreCommand, CoreSnapshot, HostDraftPatch, InviteCodePatch,
-};
-use std::time::{Duration, Instant};
+use silent_disco_core::domain::PlaybackState;
+use silent_disco_core::runtime::{AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch};
+use std::time::Duration;
 use tempfile::TempDir;
 
 /// Timeout for state-transition waits in manual device tests only. Real
@@ -165,12 +163,13 @@ fn manual_real_android_listener_plays_mp3() {
     run_manual_single_format_session("mp3-song", AudioContainer::Mp3, "MP3");
 }
 
-/// Physical mDNS-path check for Block 52.6: an approved Android listener
-/// must acquire a host clock estimate before audio playback creates its
-/// runtime. Navigate to Nearby Sessions on the connected phone and select
-/// "Streaming playback host" while this test waits for the join. Optional
-/// `SILENT_DISCO_DEVICE_TEST_PLAY_DELAY_SECS` keeps the session idle after
-/// sync has locked. Run explicitly with:
+/// Physical mDNS-path check for Block 52.6. Navigate to Nearby Sessions on
+/// the connected phone and select "Streaming playback host" while this test
+/// waits for the join. During the optional
+/// `SILENT_DISCO_DEVICE_TEST_PLAY_DELAY_SECS` hold, verify on the phone that
+/// the pre-runtime sync probe loop locks before playback starts; host-side
+/// diagnostics cannot see that estimate until the playback runtime exists.
+/// Run explicitly with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_discovery_syncs_before_playback -- --ignored --nocapture`
 #[test]
 #[ignore = "reason: requires an Android device on the same mDNS network and interactive join; owner: desktop Android interoperability / Block 47"]
@@ -199,12 +198,8 @@ fn manual_real_android_discovery_syncs_before_playback() {
     eprintln!("mDNS session published; select it on the Android device");
     wait_for_real_join_and_approve(&handle, &receiver, &network);
 
-    let before_delay = wait_for_host_sync(&handle);
-    print_diagnostics(&handle, &network, "mdns-sync-before-delay");
-    eprintln!("pre-play sync acquired: {before_delay:?}");
+    eprintln!("verify the A54 reports sync lock before playback starts");
     hold_before_playback();
-    let after_delay = wait_for_host_sync(&handle);
-    eprintln!("pre-play sync retained after wait: {after_delay:?}");
 
     start_playback::start(&handle, &network, &registry).expect("start playback after sync lock");
     print_diagnostics(&handle, &network, "mdns-playback-started");
@@ -221,28 +216,6 @@ fn manual_real_android_discovery_syncs_before_playback() {
     registration.withdraw().expect("withdraw mDNS service");
     publisher.shutdown().expect("shut down mDNS publisher");
     actor.shutdown().expect("actor shutdown");
-}
-
-fn wait_for_host_sync(handle: &silent_disco_core::runtime::CoreActorHandle) -> CoreSnapshot {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let snapshot = handle.current_snapshot().expect("current snapshot");
-        if snapshot.listeners.iter().any(|listener| {
-            listener.synchronization.is_some_and(|sync| {
-                matches!(
-                    sync.confidence,
-                    SyncConfidence::Good | SyncConfidence::Excellent
-                )
-            })
-        }) {
-            return snapshot;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "Android listener did not sync before playback"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
 }
 
 fn run_manual_single_format_session(source_id: &str, container: AudioContainer, label: &str) {

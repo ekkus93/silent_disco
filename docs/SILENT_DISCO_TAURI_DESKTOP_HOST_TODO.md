@@ -5124,10 +5124,16 @@ therefore never been able to play audio from a desktop host.
       sync locked 6 ms after the first probe, confidence Excellent, RTT
       5-8 ms, 2 s cadence; phone showed "Playing in sync"; audio heard; no
       errors on either side.
-- [ ] Device verification: the listener now starts periodic sync probes as
-      soon as approval arrives, before the playback runtime exists. A JVM
-      regression test covers the pre-runtime probe path; verify the first
-      audio packet arrives after sync lock on the A54.
+- [x] Device verification 2026-10-13 on the A54 (SM-A546E, Android 16):
+      mDNS join on `ElephantStone` (`192.168.87.215/24`), 30 s between
+      approval and Play. The pre-runtime probe loop logged accepted samples
+      at 13-42 ms RTT without a sync failure. At playback start the runtime
+      logged `accepted=true`, `locked=true`, Excellent confidence, 72,401 ms
+      offset, and 12 ms RTT. No "dropped before lock" diagnostic appeared;
+      the physical mDNS harness passed its listener-delivery assertion.
+      Initial acquisition now compares drift with the previous estimate,
+      because independent monotonic clock epochs can have a large valid
+      initial offset.
 
 ### 52.4 Approval delivery can hang forever without a visible failure
 
