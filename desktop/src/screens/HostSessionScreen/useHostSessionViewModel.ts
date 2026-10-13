@@ -26,6 +26,8 @@ import {
   operationFailure,
   type PendingOperation,
   POLL_INTERVAL_MS,
+  revisionIsNewer,
+  unconfirmedDisappearanceError,
 } from "./domain";
 
 export interface HostSessionViewModel {
@@ -85,6 +87,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
   const [monitorPending, setMonitorPending] = useState(false);
 
   const snapshotRef = useRef(snapshot);
+  const endAcceptedAtRevisionRef = useRef<string | null>(null);
   const decisionOperationsRef = useRef(decisionOperations);
   const removalOperationsRef = useRef(removalOperations);
 
@@ -112,17 +115,27 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       const decisions = { ...decisionOperationsRef.current };
       for (const [requestId, operation] of Object.entries(decisions)) {
         if (!pendingIds.has(requestId)) {
+          const approvedListenerIsPresent =
+            operation.kind === "approve" &&
+            operation.targetDeviceId.length > 0 &&
+            listenerIds.has(operation.targetDeviceId);
           delete decisions[requestId];
-          setDecisionFailures((current) => {
-            const failures = { ...current };
-            delete failures[requestId];
-            return failures;
-          });
-          setAnnouncement(
-            operation.kind === "approve"
-              ? "Listener approval was confirmed by the Rust core."
-              : "Listener rejection was confirmed by the Rust core.",
-          );
+          if (approvedListenerIsPresent) {
+            setDecisionFailures((current) => {
+              const failures = { ...current };
+              delete failures[requestId];
+              return failures;
+            });
+            setAnnouncement("Listener approval was confirmed by the Rust core.");
+          } else {
+            const failure =
+              operationFailure(next, operation) ??
+              unconfirmedDisappearanceError(
+                operation.kind === "approve" ? "The join request" : "The rejection",
+              );
+            setDecisionFailures((current) => ({ ...current, [requestId]: failure }));
+            setAnnouncement("The join request disappeared before its decision was confirmed.");
+          }
           continue;
         }
         const failure = operationFailure(next, operation);
@@ -141,12 +154,11 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       for (const [listenerId, operation] of Object.entries(removals)) {
         if (!listenerIds.has(listenerId)) {
           delete removals[listenerId];
-          setRemovalFailures((current) => {
-            const failures = { ...current };
-            delete failures[listenerId];
-            return failures;
-          });
-          setAnnouncement("Listener removal was confirmed by the Rust core.");
+          const failure =
+            operationFailure(next, operation) ??
+            unconfirmedDisappearanceError("The listener removal");
+          setRemovalFailures((current) => ({ ...current, [listenerId]: failure }));
+          setAnnouncement("The listener disconnected before removal delivery was confirmed.");
           continue;
         }
         const failure = operationFailure(next, operation);
@@ -171,14 +183,42 @@ export function useHostSessionViewModel(): HostSessionViewModel {
   const refresh = useCallback(async () => {
     try {
       const next = await getHostSessionState();
+      const previous = snapshotRef.current;
+      if (previous && !revisionIsNewer(next.revision, previous.revision)) {
+        return;
+      }
       reconcile(next);
       snapshotRef.current = next;
       setSnapshot(next);
+      setAnnouncement((current) => {
+        const pendingPlaybackAction = current?.match(
+          /^Playback (start|pause|resume|stop) requested\.$/,
+        )?.[1];
+        const completedPlaybackState =
+          pendingPlaybackAction === "start" || pendingPlaybackAction === "resume"
+            ? "playing"
+            : pendingPlaybackAction === "pause"
+              ? "paused"
+              : pendingPlaybackAction === "stop"
+                ? "stopped"
+                : null;
+        return completedPlaybackState === next.playbackState ? null : current;
+      });
+      const endAcceptedAtRevision = endAcceptedAtRevisionRef.current;
+      if (
+        endPending &&
+        endAcceptedAtRevision !== null &&
+        revisionIsNewer(next.revision, endAcceptedAtRevision) &&
+        next.hostLifecycle !== "ending_session"
+      ) {
+        endAcceptedAtRevisionRef.current = null;
+        setEndPending(false);
+      }
       setRefreshFailure(null);
     } catch (error) {
       setRefreshFailure(error as DesktopErrorDto);
     }
-  }, [reconcile]);
+  }, [endPending, reconcile]);
 
   useEffect(() => {
     void refresh();
@@ -231,6 +271,9 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       });
       const submitting: PendingOperation = {
         kind,
+        targetDeviceId:
+          current.pendingJoinRequests.find((request) => request.requestId === requestId)
+            ?.deviceId ?? "",
         acceptedAtRevision: null,
         acceptedAtMs: null,
         baselineDelivery: deliveryKey(current),
@@ -294,6 +337,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       });
       const submitting: PendingOperation = {
         kind: "remove",
+        targetDeviceId: listenerId,
         acceptedAtRevision: null,
         acceptedAtMs: null,
         baselineDelivery: deliveryKey(current),
@@ -370,7 +414,8 @@ export function useHostSessionViewModel(): HostSessionViewModel {
     }
     setEndPending(true);
     try {
-      await endHostSession(current.revision);
+      const receipt = await endHostSession(current.revision);
+      endAcceptedAtRevisionRef.current = receipt.acceptedAtRevision;
       setAnnouncement("End-session request queued.");
     } catch (error) {
       setRefreshFailure(error as DesktopErrorDto);

@@ -22,6 +22,19 @@ export function HostSessionScreen() {
     );
   }
 
+  const pendingRequestIds = new Set(
+    snapshot.pendingJoinRequests.map((request) => request.requestId),
+  );
+  const connectedListenerIds = new Set(
+    snapshot.connectedListeners.map((listener) => listener.deviceId),
+  );
+  const orphanDecisionFailures = Object.entries(vm.decisionFailures).filter(
+    ([requestId]) => !pendingRequestIds.has(requestId),
+  );
+  const orphanRemovalFailures = Object.entries(vm.removalFailures).filter(
+    ([listenerId]) => !connectedListenerIds.has(listenerId),
+  );
+
   return (
     <section className="mx-auto max-w-6xl p-6 text-slate-100">
       <SessionHeaderAndStatus
@@ -39,6 +52,13 @@ export function HostSessionScreen() {
       />
 
       <ConnectionDetailsPanel connection={snapshot.connection} onCopy={vm.copyValue} />
+
+      {orphanDecisionFailures.map(([requestId, error]) => (
+        <ErrorAlert key={`decision-${requestId}`} error={error} />
+      ))}
+      {orphanRemovalFailures.map(([listenerId, error]) => (
+        <ErrorAlert key={`removal-${listenerId}`} error={error} />
+      ))}
 
       {snapshot.connection ? (
         <QrInvitationPanel

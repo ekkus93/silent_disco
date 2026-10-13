@@ -84,6 +84,25 @@ function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSn
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(client.getHostSessionState).mockResolvedValue(fixture());
+  vi.mocked(client.getHostNetworkState).mockResolvedValue({
+    preference: { mode: "automatic", interfaceName: null, address: null },
+    candidates: [],
+    automaticSelection: null,
+    resolvedSelection: null,
+    requiresExplicitSelection: false,
+    selectionError: null,
+    activeBinding: {
+      interfaceName: "wlan0",
+      address: "192.168.1.50",
+      controlPort: 4100,
+      syncPort: 4101,
+      audioPort: 4102,
+      mdns: { active: true, failureReason: null },
+    },
+    activeBindingValid: true,
+    interfaceChange: null,
+    allowSharedAddressSpace: false,
+  });
   vi.mocked(client.approveJoinRequest).mockResolvedValue({
     operationId: "command-1",
     acceptedAtRevision: "12",
@@ -131,6 +150,7 @@ describe("HostSessionScreen Block 23", () => {
     );
     render(<HostSessionScreen />);
     await screen.findByText("Listener One");
+    expect(await screen.findByText("Advertising")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
@@ -192,6 +212,44 @@ describe("HostSessionScreen Block 23", () => {
     expect(screen.queryByText("Request request-1")).not.toBeInTheDocument();
   });
 
+  it("does not call a disconnected pending request a confirmed decision", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({ revision: "13", pendingJoinRequests: [], connectedListeners: [] }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+
+    expect(
+      await screen.findByText("The join request disappeared before its decision was confirmed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/disappeared from the current session before delivery could be confirmed/),
+    ).toBeInTheDocument();
+  });
+
+  it("releases End session after a newer snapshot reports the effect failed", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValue(fixture());
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    const endButton = screen.getByRole("button", { name: "End session" });
+    fireEvent.click(endButton);
+    await waitFor(() => expect(client.endHostSession).toHaveBeenCalled());
+    await waitFor(() => expect(endButton).toBeDisabled());
+
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ revision: "13", hostLifecycle: "ready" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(endButton).toBeEnabled());
+  });
+
   it("keeps a zero-recipient approval actionable and visible", async () => {
     vi.mocked(client.getHostSessionState)
       .mockResolvedValueOnce(fixture())
@@ -220,8 +278,8 @@ describe("HostSessionScreen Block 23", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
 
     expect(
-      await screen.findByText("transport control delivery had no intended recipients"),
-    ).toBeInTheDocument();
+      (await screen.findAllByText("transport control delivery had no intended recipients")).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("Request request-1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
@@ -342,6 +400,19 @@ describe("HostSessionScreen playback controls", () => {
     await waitFor(() => expect(client.startHostPlayback).toHaveBeenCalled());
   });
 
+  it("clears the playback request announcement when Rust reports playback started", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture({ playbackControlsEnabled: true }))
+      .mockResolvedValue(fixture({ revision: "13", playbackState: "playing" }));
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(await screen.findByText("Playback start requested.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(screen.queryByText("Playback start requested.")).toBeNull());
+  });
+
   it("shows Resume instead of Play once paused, and pauses only while playing", async () => {
     vi.mocked(client.getHostSessionState).mockResolvedValue(
       fixture({ playbackState: "playing", playbackControlsEnabled: true }),
@@ -353,7 +424,7 @@ describe("HostSessionScreen playback controls", () => {
     await waitFor(() => expect(client.pauseHostPlayback).toHaveBeenCalled());
 
     vi.mocked(client.getHostSessionState).mockResolvedValue(
-      fixture({ playbackState: "paused", playbackControlsEnabled: true }),
+      fixture({ revision: "13", playbackState: "paused", playbackControlsEnabled: true }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
     const resumeButton = await screen.findByRole("button", { name: "Resume" });
@@ -442,6 +513,7 @@ describe("HostSessionScreen local monitor (Block 34)", () => {
       .mockResolvedValueOnce(fixture())
       .mockResolvedValue(
         fixture({
+          revision: "13",
           monitor: { enabled: true, active: true, failureReason: null },
         }),
       );

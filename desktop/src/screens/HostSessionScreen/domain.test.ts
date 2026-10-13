@@ -7,6 +7,7 @@ import {
   errorKey,
   listenerProgress,
   operationFailure,
+  unconfirmedDisappearanceError,
   type PendingOperation,
 } from "./domain";
 
@@ -40,6 +41,7 @@ const ACCEPTED_AT = 1_000_000;
 function accepted(current: HostSessionSnapshotDto): PendingOperation {
   return {
     kind: "approve",
+    targetDeviceId: "device-1",
     acceptedAtRevision: "9",
     acceptedAtMs: ACCEPTED_AT,
     baselineDelivery: deliveryKey(current),
@@ -99,6 +101,14 @@ describe("operationFailure delivery confirmation timeout", () => {
     const next = snapshot();
     const submitting = { ...accepted(next), acceptedAtRevision: null, acceptedAtMs: null };
     expect(operationFailure(next, submitting, ACCEPTED_AT + 10 * 60_000)).toBeNull();
+  });
+});
+
+describe("unconfirmed operation disappearance", () => {
+  it("keeps a disconnect from being reported as confirmed delivery", () => {
+    expect(unconfirmedDisappearanceError("Listener removal").code).toBe(
+      "desktop.operation_confirmation_missing",
+    );
   });
 });
 

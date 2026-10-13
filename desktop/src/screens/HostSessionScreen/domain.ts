@@ -11,11 +11,22 @@ export type DecisionKind = "approve" | "reject";
 
 export interface PendingOperation {
   kind: DecisionKind | "remove";
+  targetDeviceId: string;
   acceptedAtRevision: string | null;
   /** Wall-clock time the core accepted the command; `null` until it does. */
   acceptedAtMs: number | null;
   baselineDelivery: string;
   baselineError: string;
+}
+
+export function unconfirmedDisappearanceError(action: string): DesktopErrorDto {
+  return {
+    code: "desktop.operation_confirmation_missing",
+    subsystem: "transport",
+    severity: "error",
+    retryable: true,
+    message: `${action} disappeared from the current session before delivery could be confirmed. Check the listener state before retrying.`,
+  };
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { HostConnectionDto } from "../../core/generated/desktop-bindings";
+import { useHostNetworkState } from "../useHostNetworkState";
 import { CopyButton, Detail } from "./shared";
 
 interface ConnectionDetailsPanelProps {
@@ -7,6 +8,7 @@ interface ConnectionDetailsPanelProps {
 }
 
 export function ConnectionDetailsPanel({ connection, onCopy }: ConnectionDetailsPanelProps) {
+  const network = useHostNetworkState(connection !== null);
   if (!connection) {
     return (
       <p className="mt-6 rounded-xl border border-amber-500/50 bg-amber-950/30 p-4 text-amber-100">
@@ -37,6 +39,16 @@ export function ConnectionDetailsPanel({ connection, onCopy }: ConnectionDetails
       <p className="mt-2 text-sm text-slate-400">Listeners can enter these details without mDNS.</p>
       <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Detail label="Host address" value={connection.hostAddress} />
+        <Detail
+          label="mDNS status"
+          value={
+            network.snapshot?.activeBinding?.mdns.active
+              ? "Advertising"
+              : network.snapshot?.activeBinding?.mdns.failureReason
+                ? `Unavailable: ${network.snapshot.activeBinding.mdns.failureReason}`
+                : "Status unavailable"
+          }
+        />
         <Detail label="Control port" value={String(connection.controlPort)} />
         <Detail label="Sync port" value={String(connection.syncPort)} />
         <Detail label="Audio port" value={String(connection.audioPort)} />

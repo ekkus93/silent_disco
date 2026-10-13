@@ -49,9 +49,7 @@ export function ListenerList({
           />
         </div>
       ) : listeners.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-400">
-          No listeners have completed delivery-confirmed approval.
-        </p>
+        <p className="mt-3 text-sm text-slate-400">No listeners have joined yet.</p>
       ) : (
         <ul className="mt-4 grid gap-3 md:grid-cols-2">
           {listeners.map((listener) => (
