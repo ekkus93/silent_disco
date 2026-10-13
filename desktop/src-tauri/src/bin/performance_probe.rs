@@ -468,6 +468,7 @@ fn measure_database(root: &Path) -> ProbeResult<DatabaseMetric> {
     let write_iterations = 100_u32;
     let settings = StoredSettings {
         tuning: TuningSettings::default(),
+        allow_shared_address_space: false,
         updated_at_ms: 1,
     };
     client.save_settings(&settings)?;
@@ -485,6 +486,7 @@ fn measure_database(root: &Path) -> ProbeResult<DatabaseMetric> {
     for index in 0..write_iterations {
         client.save_settings(&StoredSettings {
             tuning: TuningSettings::default(),
+            allow_shared_address_space: false,
             updated_at_ms: u64::from(index).saturating_add(2),
         })?;
     }
