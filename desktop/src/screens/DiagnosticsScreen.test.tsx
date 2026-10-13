@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { act, render } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopDiagnosticsDto } from "../core/generated/desktop-bindings";
@@ -69,22 +70,40 @@ describe("DiagnosticsScreen Block 45 cadence", () => {
     vi.useFakeTimers();
     getHostDiagnostics.mockReset();
     exportHostDiagnostics.mockReset();
-    getHostDiagnostics.mockResolvedValue(diagnosticsFixture());
+    getHostDiagnostics.mockImplementation(async () => diagnosticsFixture());
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("polls diagnostics at the measured two-second UI update cadence", async () => {
-    const view = render(<DiagnosticsScreen />);
+  it("measures rendered updates alongside the two-second diagnostics poll", async () => {
+    const commitTimes: number[] = [];
+    const view = render(
+      <Profiler
+        id="diagnostics-screen"
+        onRender={(_id, _phase, _actualDuration, _baseDuration, _startTime, commitTime) => {
+          commitTimes.push(commitTime);
+        }}
+      >
+        <DiagnosticsScreen />
+      </Profiler>,
+    );
     await act(async () => Promise.resolve());
     expect(getHostDiagnostics).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(6_000);
-    });
+    const baselineCommits = commitTimes.length;
+    const pollCommitCounts: number[] = [];
+    for (let poll = 0; poll < 3; poll += 1) {
+      const before = commitTimes.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      pollCommitCounts.push(commitTimes.length - before);
+    }
     expect(getHostDiagnostics).toHaveBeenCalledTimes(4);
+    expect(commitTimes.length).toBeGreaterThan(baselineCommits);
+    expect(pollCommitCounts.every((count) => count >= 1)).toBe(true);
 
     view.unmount();
   });

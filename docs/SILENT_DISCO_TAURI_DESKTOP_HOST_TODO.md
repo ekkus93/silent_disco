@@ -4591,8 +4591,10 @@ measurement/result boxes, which remain open until real artifacts are evaluated.
 - [x] packetizer throughput;
 - [x] transport queue high-water marks;
 - [x] notification backlog;
-- [ ] UI update rate (configured poll cadence is known, but observed rendered
-      update rate has not been measured);
+- [x] UI update rate: a React Profiler test advances three separate two-second
+      diagnostics poll intervals and observes at least one committed render per
+      poll. This confirms a 0.5 Hz state-driven UI update in the controlled
+      component harness; it does not measure native paint timing or frame cost.
 - [x] packet delivery severity;
 - [x] sync confidence and offset;
 - [x] underrun/concealment;
@@ -4615,6 +4617,12 @@ MiB maximum RSS, 3% CPU, and 8.4 MiB RSS at end. Database reads averaged
 ms. Full repeated reports and `/usr/bin/time -v` output are retained in the
 session evidence directory `/tmp/silent-disco-block45-20261013`; the configured
 2 s diagnostics poll is not treated as a measured performance limit.
+
+**Controlled UI commit measurement:** `DiagnosticsScreen.test.tsx` wraps the
+screen in React Profiler, advances three distinct 2 s intervals, and verifies
+each poll produces a committed render (0.5 Hz in this controlled harness).
+This measures component update cadence; native paint timing and frame cost
+still require a graphical-machine profile.
 
 ### 45.3 Enforce evidence-based limits
 
