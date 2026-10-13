@@ -1323,9 +1323,11 @@ Record:
 - [x] Wi-Fi access point/router (same private-LAN subnet, no isolation confirmed by IP/ping);
 - [x] desktop connection type;
 - [x] IP addresses;
-- [ ] firewall configuration (not independently inspected; no interactive `sudo` available in this
-      session — no interference observed in any scenario, but the configuration itself is
-      unverified);
+- [ ] firewall configuration: `/etc/ufw/ufw.conf` says `ENABLED=no`, but
+      runtime status could not be inspected (`ufw status` requires root, and
+      netlink inspection is denied). No interference was observed; active
+      firewall configuration remains unverified because this session has no
+      interactive `sudo` access.
 - [x] exact commands.
 
 ### 24.2 Run control tests
@@ -2664,7 +2666,7 @@ ran `cargo clippy --all-targets --all-features` manually for
 `desktop/src-tauri` (still not part of the enforced gate) -- zero
 deny-level errors; only pre-existing/precedented pedantic warnings.
 
-**Acceptance:** Partially met. Optional desktop monitoring uses the same scheduled Rust timeline and the real-time callback remains bounded, but live CPAL errors are still discarded instead of reaching the non-real-time/core-visible failure path.
+**Acceptance:** Met for the software path. Optional desktop monitoring uses the same scheduled Rust timeline, the real-time callback remains bounded, and live CPAL errors reach host diagnostics through a non-real-time callback path. Physical hot-unplug remains useful Block 47 evidence.
 
 ---
 
@@ -3508,7 +3510,7 @@ new lint this block's own code introduced (`clippy::doc_markdown`,
 deny-level errors are the identical, unrelated pre-existing set noted in
 the Block 35-38 memory entries.
 
-**Acceptance:** Partially met. Implemented faults are deterministic and exercise real protocol/state-machine code, but the virtual receive boundary still carries decoded frames rather than raw wire bytes through the production receive/decode path, and reconnect delay plus disconnect/reconnect coverage remain open.
+**Acceptance:** Met for the implemented fault model. Encoded bytes cross the virtual link and are decoded by the production decoder at the receiver; deterministic reconnect delay and disconnect/reconnect tests pass. Corruption is intentionally limited to audio frames, whose wire format guarantees checksum failure, and bandwidth is a cumulative encoded-byte budget rather than a rate limiter; both limits are documented above.
 
 ---
 
@@ -3563,16 +3565,11 @@ Include:
       independent bound).
 - [x] links -- `Scenario::links: Vec<ScenarioLink>` (from/to/latencyMs/jitterMs/lossPermille),
       bounded and validated (`MAX_LINKS`, `MAX_LINK_LATENCY_MS`,
-      `MAX_LINK_JITTER_MS`, `MAX_LOSS_PERMILLE`, node-reference integrity)
-      but **not yet wired into any node's live transport** -- `LabRuntime`
-      has never connected a Lab node to the shared core's virtual
-      transport/fault-injection stack (`super::fault`,
-      `silent_disco_core::transport::virtual_transport`/`virtual_fault`);
-      that wiring, and scenario steps that change a link's fault
-      configuration mid-run, remain a later Lab Mode block's concern, exactly
-      as `lab/mod.rs`'s own doc comment has said since Block 37 and Block 39
-      left true. See `scenario.rs`'s "Deliberate scope boundaries" doc
-      section for the full reasoning.
+      `MAX_LINK_JITTER_MS`, `MAX_LOSS_PERMILLE`, node-reference integrity),
+      initialized into `LiveTransportDriver`, and exercised through the shared
+      virtual transport/fault stack. Scenario `setLinkFaults` actions update a
+      connected link during the run; `mid_run_loss_mutation_applies_to_an_already_connected_listener`
+      proves this path.
 - [x] clocks -- `Scenario::clocks: HashMap<String, ScenarioClock>` (offsetMs/driftPpm),
       applied for real through `LabRuntime::start_node_with_clock_and_observer`
       (Block 38's own clock machinery, not duplicated).
@@ -3714,7 +3711,7 @@ into five focused `validate_*` helpers -- `collapsible_match`,
 `collapsible_if`, `redundant_closure`, three `map_unwrap_or` call sites
 unified into one `current_revision` helper, and `match_same_arms`).
 
-**Acceptance:** Scenarios are executable specifications, not ad hoc UI macros. Met: a scenario document is parsed once into a closed, versioned, bounded schema and then *executed* against real Lab nodes through the exact real `CoreActorHandle` production entry points (`submit_command`/`submit_audio_event`/`submit_transport_event`), producing a deterministic, typed report with typed assertion outcomes -- not a sequence of ad hoc UI clicks replayed blind. Static cross-node `ScenarioLink` latency/jitter/loss profiles are now wired through `LiveTransportDriver`; only **mid-run fault mutation** remains open under 40.2.
+**Acceptance:** Met: a scenario document is parsed once into a closed, versioned, bounded schema and then *executed* against real Lab nodes through the exact real `CoreActorHandle` production entry points (`submit_command`/`submit_audio_event`/`submit_transport_event`), producing a deterministic, typed report with typed assertion outcomes -- not a sequence of ad hoc UI clicks replayed blind. Static cross-node `ScenarioLink` profiles and mid-run fault mutations run through `LiveTransportDriver` and have focused tests.
 
 ---
 
@@ -4027,7 +4024,7 @@ carries for the identical Tauri-extraction reason; `clippy::format_push_string` 
 resolved with `write!` instead of `push_str(&format!(...))`). `cd desktop && npm run check` all green
 (see test counts above).
 
-**Acceptance:** Partially met. Developers can run deterministic multi-node scenarios without physical devices, but true in-flight pause, editable/mid-run fault configuration, and complete production-bundle exclusion of the frontend Lab code remain open.
+**Acceptance:** Partially met. Developers can run deterministic multi-node scenarios without physical devices. The UI supports cooperative pause/resume at deterministic step boundaries, editable link faults, and tested mid-run fault changes; production builds tree-shake the Lab screen and its commands. A pause that interrupts an executing step is not supported and remains outside the current runner model.
 `LabScreen.tsx` opens a validated scenario, runs it to completion through the exact production
 `scenario::run_scenario_with_trace` entry point Block 40 already proved deterministic for a given
 scenario and seed, and renders its bounded timeline/assertion results/step results -- all without a
@@ -5386,9 +5383,11 @@ here.
 - [x] Optional local monitor uses the shared timeline.
 - [x] PCM and packet payloads never cross Tauri IPC.
 - [x] Diagnostics are useful and secret-safe.
-- [ ] Shutdown is deterministic.
+- [x] Shutdown is deterministic (Block 36.1–36.4 lifecycle, ordered teardown,
+      bounded failure behavior, and shutdown tests all pass).
 - [x] Lab Mode is deterministic, isolated, and visibly labeled.
-- [ ] Fault injection, recording, replay, and assertions pass.
+- [x] Fault injection, recording, replay, and assertions pass (Blocks 39–41
+      focused tests and the locked all-feature desktop suite).
 - [ ] Linux package passes fresh-machine validation.
 - [x] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
 - [x] All referenced files exist.
