@@ -5207,12 +5207,13 @@ One refused effect quietly broke the rest of the session.
 - [ ] Not device-verified: a refused effect cannot be provoked on demand from
       the GUI. Re-check that approvals behave normally on the next packaged
       build.
-- [ ] Historical unrelated flake: `LabScreen.test.tsx` "edits a loaded link
-      fault profile through the backend command" failed 1 of 3 isolated runs
-      on 2026-09-16 (`setLabLinkFaults` never observed). It passed ten isolated
-      reruns and the complete 121-test frontend suite on 2026-10-13; neither
-      `LabScreen.tsx` nor this test changed, so the original cause remains
-      unknown and should be monitored in CI.
+- [x] Historical test flake: `LabScreen.test.tsx` "edits a loaded link
+      fault profile through the backend command" occasionally submitted the
+      prior numeric value plus the replacement (`30125`). The test now uses
+      stateful backend mocks and waits for each numeric field to clear and
+      render its replacement before applying. It passed 20 isolated reruns
+      and the full frontend check (136 tests) on 2026-10-13. No production
+      behavior changed.
 
 ### 52.5 Diagnostics that misreport or are missing
 

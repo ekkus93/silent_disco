@@ -331,10 +331,12 @@ describe("LabScreen", () => {
         },
       ],
     };
-    getLabState
-      .mockResolvedValueOnce(emptyState({ loadedScenario: initialScenario }))
-      .mockResolvedValueOnce(emptyState({ loadedScenario: editedScenario }));
-    setLabLinkFaults.mockResolvedValue(editedScenario);
+    let currentState = emptyState({ loadedScenario: initialScenario });
+    getLabState.mockImplementation(async () => currentState);
+    setLabLinkFaults.mockImplementation(async () => {
+      currentState = emptyState({ loadedScenario: editedScenario });
+      return editedScenario;
+    });
     const user = userEvent.setup();
     renderScreen();
 
@@ -346,11 +348,17 @@ describe("LabScreen", () => {
       name: "Loss permille for host → listener",
     });
     await user.clear(latency);
+    await waitFor(() => expect(latency).toHaveValue(null));
     await user.type(latency, "125");
+    await waitFor(() => expect(latency).toHaveValue(125));
     await user.clear(jitter);
+    await waitFor(() => expect(jitter).toHaveValue(null));
     await user.type(jitter, "12");
+    await waitFor(() => expect(jitter).toHaveValue(12));
     await user.clear(loss);
+    await waitFor(() => expect(loss).toHaveValue(null));
     await user.type(loss, "25");
+    await waitFor(() => expect(loss).toHaveValue(25));
     await user.click(screen.getByRole("button", { name: "Apply faults for host → listener" }));
 
     await waitFor(() =>

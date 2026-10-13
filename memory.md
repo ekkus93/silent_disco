@@ -5794,3 +5794,13 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   its 5 s stale threshold tolerates a delayed poll. Listener ceilings and
   performance regression thresholds remain unset until repeated, broader
   machine data supports them.
+
+## 2026-10-13 — Stabilize the Lab fault-editor test
+- The historical `LabScreen.test.tsx` failure was reproduced: its numeric
+  latency editor submitted `30125` after clearing `30` and typing `125`.
+  Changed the mock to return current state instead of consuming one-shot
+  replies, and made the test wait for each number input to render empty and
+  then the replacement before Apply.
+- The focused test passed 20 isolated runs. `cd desktop && npm run check`
+  passed all gates and 136 frontend tests. This is a test synchronization fix;
+  no production behavior changed.
