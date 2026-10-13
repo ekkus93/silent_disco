@@ -5024,7 +5024,17 @@ harness started playback immediately.
 - [x] The pause path preserves the listener lifecycle state, so the periodic
       sync loop remains active while audio is paused. Added
       `pausedPlaybackKeepsTheListenerSyncProbeLoopActive` as a regression test.
-- [ ] Physical long-pause verification on the A54 remains part of Block 47.
+- [x] Physical long-pause verification on the A54 (SM-A546E, Android 16),
+      2026-10-13: `manual_real_android_listener_plays_a_song_change` passed
+      over `ElephantStone` with a 120 s paused hold and ADB-driven manual join.
+      The harness confirmed playback remained paused and the joined listener
+      remained present through the hold; after resume it still reported
+      Excellent sync confidence (9.67 ms RTT). The first song delivered all
+      7,121 attempted packets; the second song completed with 15,128 packets
+      delivered to every listener across the session. The operator confirmed
+      the scale notes were audible after resume. The manual harness now accepts
+      `SILENT_DISCO_DEVICE_TEST_PAUSE_SECS` to set the hold and
+      `SILENT_DISCO_DEVICE_TEST_ADB_SERIAL` to automate a real device join.
 - [x] 8 of 7123 frames were reported as partially delivered with a single
       listener, which should not be possible; investigate the accounting.
       Explained in 52.5 (`ea0dd37`): frames that reached no recipient were

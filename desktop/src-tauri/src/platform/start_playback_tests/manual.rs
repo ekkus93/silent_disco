@@ -29,7 +29,7 @@ use tempfile::TempDir;
 const MANUAL_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Not part of the automated suite: binds a real desktop host on this
-/// machine's real LAN address, prints a real connection payload, and waits
+/// machine's real LAN address, joins a real external listener, and waits
 /// for an actual external listener (e.g. a phone on the same Wi-Fi network,
 /// pasting the printed payload into the app's "Connect manually" screen) to
 /// join before streaming a first long "song" (an ascending C major scale),
@@ -40,6 +40,8 @@ const MANUAL_TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// 28.1's full one-listener checklist for the WAV container. Run explicitly
 /// with:
 /// `cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener_plays_a_song_change -- --ignored --nocapture`
+/// `SILENT_DISCO_DEVICE_TEST_PAUSE_SECS` extends the pause hold, and
+/// `SILENT_DISCO_DEVICE_TEST_ADB_SERIAL` enables the existing ADB join flow.
 #[test]
 #[ignore = "reason: requires a real external listener device on the same LAN and human observation; owner: desktop Android interoperability / Block 47"]
 fn manual_real_android_listener_plays_a_song_change() {
@@ -60,7 +62,12 @@ fn manual_real_android_listener_plays_a_song_change() {
     let (actor, handle, receiver, advertisement, network, endpoint) =
         start_host_session(descriptor_a, interface_name, interface_index, address);
 
-    print_connection_payload(address, &endpoint, &advertisement);
+    let payload = connection_payload_json(address, &endpoint, &advertisement);
+    if let Ok(serial) = std::env::var("SILENT_DISCO_DEVICE_TEST_ADB_SERIAL") {
+        automate_manual_connect(&serial, &payload);
+    } else {
+        print_connection_payload(address, &endpoint, &advertisement);
+    }
     wait_for_real_join_and_approve(&handle, &receiver, &network);
 
     eprintln!(

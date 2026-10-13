@@ -260,6 +260,13 @@ pub(super) fn exercise_pause_resume(
     network: &DesktopHostNetworkControl,
     label: &str,
 ) {
+    let connected_before_pause = handle
+        .current_snapshot()
+        .expect("snapshot before pause")
+        .listeners
+        .into_iter()
+        .map(|listener| listener.device_id)
+        .collect::<Vec<_>>();
     eprintln!("=== pausing -- you should hear the audio stop ===");
     network.pause_playback().expect("pause playback");
     wait_snapshot_for(
@@ -268,7 +275,27 @@ pub(super) fn exercise_pause_resume(
         MANUAL_TEST_TIMEOUT,
     );
     print_diagnostics(handle, network, &format!("{label}-paused"));
-    std::thread::sleep(Duration::from_secs(1));
+    let pause_seconds = std::env::var("SILENT_DISCO_DEVICE_TEST_PAUSE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(1);
+    eprintln!("holding playback paused for {pause_seconds}s...");
+    std::thread::sleep(Duration::from_secs(pause_seconds));
+    let after_pause = handle.current_snapshot().expect("snapshot after pause");
+    assert_eq!(
+        after_pause.playback_state,
+        PlaybackState::Paused,
+        "playback did not remain paused for the full hold"
+    );
+    for device_id in connected_before_pause {
+        assert!(
+            after_pause
+                .listeners
+                .iter()
+                .any(|listener| listener.device_id == device_id),
+            "listener {device_id} disconnected during the paused hold"
+        );
+    }
 
     eprintln!("=== resuming -- audio should continue from where it paused, not restart ===");
     network.resume_playback().expect("resume playback");

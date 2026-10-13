@@ -5724,3 +5724,21 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   Block 46.3; profile identity, listener/cadence limits, UI rendered update
   rate, and stable performance thresholds. Block 47 additionally requires the
   real host/join/audio/disruption matrix and exact package/APK/network evidence.
+
+## 2026-10-13 — A54 long-pause acceptance
+- Ran `SILENT_DISCO_DEVICE_TEST_ADB_SERIAL=R5CW31AX4FL
+  SILENT_DISCO_DEVICE_TEST_PAUSE_SECS=120 cargo +1.97.1 test --locked
+  --manifest-path desktop/src-tauri/Cargo.toml --lib
+  manual_real_android_listener_plays_a_song_change -- --ignored --nocapture`
+  against Samsung SM-A546E / Android 16 on `ElephantStone` (`192.168.87.0/24`).
+- The test passed. During a 120-second pause the listener remained in the
+  authoritative host snapshot and playback remained paused. After resume the
+  host reported Excellent sync confidence and 9.67 ms RTT; all 7,121 first-song
+  packets reached the listener, and the song-change run ended with 15,128
+  fully delivered packets in the session. The operator confirmed the scale
+  notes were audible after resume.
+- The manual harness now supports configurable pause duration and optional
+  ADB-driven connection. Desktop Rust formatting, strict Clippy, and the full
+  locked all-feature suite passed (330 tests passed, 5 manual-device tests
+  ignored). The broader two-listener and packaged acceptance matrix remains
+  open.
