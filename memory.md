@@ -5717,6 +5717,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
   than claiming a root-cause fix.
 - Block 24 firewall configuration remains uninspected: `sudo -n ufw status
   verbose` reports that a password is required.
+- Repository branch is `master`; the implementation and evidence commits were
+  pushed to `origin/master` (latest at this entry: `8f045cc`).
 - Remaining work requires either lab resources or product direction: a second
   physical Android listener for Blocks 29/47; a clean Ubuntu graphical VM for
   Block 46.3; profile identity, listener/cadence limits, UI rendered update

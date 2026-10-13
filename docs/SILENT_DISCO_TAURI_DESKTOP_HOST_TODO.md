@@ -5349,4 +5349,5 @@ here.
 - [ ] Linux package passes fresh-machine validation.
 - [x] No silent fallback, fake success, destructive recovery, or log-only operational failure remains.
 - [x] All referenced files exist.
-- [ ] `memory.md` records final evidence and limitations.
+- [x] `memory.md` records current local gate results, measurements, and remaining
+      evidence limitations; physical acceptance remains open.
