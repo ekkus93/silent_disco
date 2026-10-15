@@ -151,6 +151,7 @@ const hostSessionSnapshot: HostSessionSnapshotDto = {
   pendingJoinRequests: [],
   connectedListeners: [],
   lastDelivery: null,
+  lastDeliveryOperationId: null,
   recoverableAction: null,
   playbackControlsEnabled: false,
   transportWorkerRunning: true,

@@ -1,7 +1,7 @@
 use rusqlite::{Connection, params};
 
 use super::{
-    error::{StorageError, StorageOperation, map_sqlite_error},
+    error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error},
     models::{SessionEnd, SessionStart, SessionUpdate},
     repository_support::{invalid_model, to_sql_i64},
 };
@@ -116,4 +116,45 @@ pub(crate) fn end(
         map_sqlite_error(StorageOperation::Transaction, Some(schema_version), &error)
     })?;
     Ok(affected == 1)
+}
+
+pub(crate) fn interrupt_active_hosts(
+    connection: &mut Connection,
+    ended_at_ms: u64,
+    schema_version: u32,
+) -> Result<u32, StorageError> {
+    let ended_at_ms = to_sql_i64(
+        ended_at_ms,
+        StorageOperation::Transaction,
+        schema_version,
+        "ended_at_ms",
+    )?;
+    let transaction = connection.transaction().map_err(|error| {
+        map_sqlite_error(StorageOperation::Transaction, Some(schema_version), &error)
+    })?;
+    let affected = transaction
+        .execute(
+            "UPDATE session_history
+             SET ended_at_ms = MAX(?1, started_at_ms),
+                 outcome = 'failed',
+                 failure_code = 'desktop.host_session.interrupted',
+                 failure_message = 'The desktop closed before the host session ended.'
+             WHERE role = 'host' AND outcome = 'active'",
+            [ended_at_ms],
+        )
+        .map_err(|error| {
+            map_sqlite_error(StorageOperation::Transaction, Some(schema_version), &error)
+        })?;
+    let affected = u32::try_from(affected).map_err(|_| {
+        StorageError::new(
+            StorageErrorKind::InvalidConfiguration,
+            StorageOperation::Transaction,
+            "interrupted host session count exceeds the supported range",
+            Some(schema_version),
+        )
+    })?;
+    transaction.commit().map_err(|error| {
+        map_sqlite_error(StorageOperation::Transaction, Some(schema_version), &error)
+    })?;
+    Ok(affected)
 }

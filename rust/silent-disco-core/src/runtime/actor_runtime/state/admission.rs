@@ -66,7 +66,7 @@ impl ActorState {
                     persistence_failed: false,
                 }),
             JoinRequestDisposition::AutoReject { reason } => {
-                self.start_rejection_delivery(&request, reason)
+                self.start_rejection_delivery(&request, reason, None)
             }
         }
     }
@@ -107,7 +107,11 @@ impl ActorState {
             .pending_join_request(&request_id, &operation_id)?
             .clone();
         self.ensure_request_operation_idle(&request_id, &operation_id)?;
-        self.start_rejection_delivery(&request, JoinRejectionReason::HostRejected)
+        self.start_rejection_delivery(
+            &request,
+            JoinRejectionReason::HostRejected,
+            Some(operation_id),
+        )
     }
 
     pub(super) fn remove_listener(
@@ -228,6 +232,7 @@ impl ActorState {
                 )
             })?;
         self.snapshot.last_delivery = Some(report);
+        self.snapshot.last_delivery_operation_id = Some(operation_id.clone());
         let disposition = classify_delivery(report);
         if !disposition.commits_domain_decision() {
             let message = match disposition {
@@ -260,7 +265,11 @@ impl ActorState {
             PendingTransportOperation::RejectJoin {
                 request_id,
                 listener_id,
+                confirmation_operation_id,
             } => {
+                if let Some(confirmation_operation_id) = confirmation_operation_id {
+                    self.snapshot.last_delivery_operation_id = Some(confirmation_operation_id);
+                }
                 let _ = self.remove_pending_request(&request_id, &listener_id)?;
             }
             PendingTransportOperation::DisconnectListener { listener_id } => {
@@ -501,6 +510,7 @@ impl ActorState {
         &mut self,
         request: &JoinRequestSummary,
         reason: JoinRejectionReason,
+        confirmation_operation_id: Option<OperationId>,
     ) -> Result<ApplyOutcome, CoreError> {
         let session_id = self
             .host_session_id
@@ -516,6 +526,7 @@ impl ActorState {
             PendingTransportOperation::RejectJoin {
                 request_id: request.request_id.clone(),
                 listener_id: request.device_id.clone(),
+                confirmation_operation_id,
             },
         )?;
         Ok(ApplyOutcome::transport_effect(effect))

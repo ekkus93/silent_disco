@@ -68,6 +68,10 @@ enum DatabaseCommand {
         end: SessionEnd,
         reply: DatabaseReply<bool>,
     },
+    InterruptActiveHostSessions {
+        ended_at_ms: u64,
+        reply: DatabaseReply<u32>,
+    },
     GetSession {
         session_id: SessionId,
         reply: DatabaseReply<Option<SessionHistory>>,
@@ -220,6 +224,9 @@ fn process_command(
         }
         DatabaseCommand::EndSession { end, reply } => {
             process_end_session(&reply, &end, connection, version)?;
+        }
+        DatabaseCommand::InterruptActiveHostSessions { ended_at_ms, reply } => {
+            process_interrupt_active_host_sessions(&reply, ended_at_ms, connection, version)?;
         }
         DatabaseCommand::GetSession { session_id, reply } => {
             process_get_session(&reply, &session_id, connection, version)?;
@@ -429,6 +436,23 @@ fn process_end_session(
 ) -> Result<(), StorageError> {
     let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
         .and_then(|database| database.end_session(end));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_interrupt_active_host_sessions(
+    reply: &DatabaseReply<u32>,
+    ended_at_ms: u64,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.interrupt_active_host_sessions(ended_at_ms));
     send_reply(
         reply,
         result,

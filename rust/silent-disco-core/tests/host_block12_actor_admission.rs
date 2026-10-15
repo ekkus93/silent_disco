@@ -194,6 +194,55 @@ fn trust_write_failure_is_visible_and_approval_becomes_session_only() {
 }
 
 #[test]
+fn rejection_snapshot_correlates_the_delivery_to_its_operation() {
+    let (runtime, handle, receiver) = start_host(ApprovalMode::Manual, false);
+    let request = join_request(
+        "reject-request",
+        "reject-listener",
+        TrustState::SessionOnly,
+        true,
+    );
+    handle
+        .submit_transport_event(TransportEvent::JoinRequested(request.clone()))
+        .expect("submit join request");
+    let pending = next_snapshot(&receiver, 5);
+    let receipt = handle
+        .submit_command(
+            CoreCommandRequest::new(
+                pending.revision,
+                CoreCommand::RejectJoin {
+                    request_id: request.request_id,
+                },
+            )
+            .expect("valid rejection command"),
+        )
+        .expect("queue rejection command");
+    let awaiting_delivery = next_snapshot(&receiver, pending.revision.get() + 1);
+    assert_eq!(awaiting_delivery.pending_join_requests.len(), 1);
+    let effect = next_transport_effect(&receiver);
+    let operation_id = effect.operation_id.clone();
+    assert!(matches!(
+        effect.request,
+        TransportEffectRequest::DeliverJoinRejection { .. }
+    ));
+
+    handle
+        .submit_transport_event(TransportEvent::DeliveryCompleted {
+            operation_id: operation_id.clone(),
+            report: DeliveryReport::new(1, 1, 0).expect("successful rejection delivery"),
+        })
+        .expect("complete rejection delivery");
+    let rejected = next_snapshot(&receiver, awaiting_delivery.revision.get() + 1);
+    assert!(rejected.pending_join_requests.is_empty());
+    assert_ne!(receipt.operation_id, operation_id);
+    assert_eq!(
+        rejected.last_delivery_operation_id,
+        Some(receipt.operation_id)
+    );
+    runtime.shutdown().expect("shutdown host actor");
+}
+
+#[test]
 fn trusted_policy_auto_approves_but_waits_for_delivery() {
     let (runtime, handle, receiver) = start_host(ApprovalMode::TrustedDevices, false);
     let request = join_request("request-3", "listener-3", TrustState::Trusted, true);

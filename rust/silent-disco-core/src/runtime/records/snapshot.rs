@@ -52,6 +52,9 @@ pub struct CoreSnapshot {
     pub synchronization: Option<SynchronizationSummary>,
     pub tuning: TuningSettings,
     pub last_delivery: Option<DeliveryReport>,
+    /// Operation that produced `last_delivery`, when the report came from a
+    /// correlated transport effect rather than an unsolicited event.
+    pub last_delivery_operation_id: Option<OperationId>,
     pub recoverable_action: Option<RecoverableAction>,
     pub last_error: Option<CoreError>,
     pub shutting_down: bool,
@@ -78,6 +81,7 @@ impl Default for CoreSnapshot {
             synchronization: None,
             tuning: TuningSettings::default(),
             last_delivery: None,
+            last_delivery_operation_id: None,
             recoverable_action: None,
             last_error: None,
             shutting_down: false,

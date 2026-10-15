@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   advanceLabVirtualTime,
@@ -75,8 +75,27 @@ function FaultLinkEditor({ link, index, disabled, onApply }: FaultLinkEditorProp
   const [latencyMs, setLatencyMs] = useState(link.latencyMs);
   const [jitterMs, setJitterMs] = useState(link.jitterMs);
   const [lossPermille, setLossPermille] = useState(link.lossPermille.toString());
+  const previousLinkValues = useRef({
+    latencyMs: link.latencyMs,
+    jitterMs: link.jitterMs,
+    lossPermille: link.lossPermille,
+  });
 
   useEffect(() => {
+    const previous = previousLinkValues.current;
+    if (
+      previous.latencyMs === link.latencyMs &&
+      previous.jitterMs === link.jitterMs &&
+      previous.lossPermille === link.lossPermille
+    ) {
+      return;
+    }
+
+    previousLinkValues.current = {
+      latencyMs: link.latencyMs,
+      jitterMs: link.jitterMs,
+      lossPermille: link.lossPermille,
+    };
     setLatencyMs(link.latencyMs);
     setJitterMs(link.jitterMs);
     setLossPermille(link.lossPermille.toString());

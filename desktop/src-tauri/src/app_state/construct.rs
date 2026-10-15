@@ -112,6 +112,17 @@ pub(super) fn open_runtime(
         }
     };
 
+    if let Err(error) = crate::platform::recover_interrupted_host_sessions(&database.client()) {
+        let primary = DesktopErrorDto::new(
+            "desktop.storage.recover_host_history_failed",
+            "storage",
+            "fatal",
+            false,
+            &error.to_string(),
+        );
+        return Err(cleanup_without_actor(database, lease, primary));
+    }
+
     let network = Arc::new(DesktopHostNetworkControl::production());
     let (platform_dispatcher, platform_inbox) = DesktopPlatformEffectDispatcher::channel();
     let (storage_dispatcher, storage_inbox) = DesktopStorageEffectDispatcher::channel();
@@ -177,6 +188,7 @@ pub(super) fn open_runtime(
         handle.clone(),
         paths.clone(),
         Arc::clone(&network),
+        database.client(),
     ) {
         Ok(started) => started,
         Err(error) => {

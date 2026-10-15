@@ -6,7 +6,6 @@ use super::{
     StorageEffectRequest, TransportEffect, TransportEffectRequest, TransportState,
     invalid_argument, invalid_state, resource_limit,
 };
-
 impl ActorState {
     pub(super) fn start_platform_operation(
         &mut self,
@@ -159,8 +158,11 @@ impl ActorState {
         self.next_session_sequence = sequence
             .checked_add(1)
             .ok_or_else(|| resource_limit("session identifier overflow", None))?;
-        SessionId::new(format!("session-{sequence}"))
-            .map_err(|error| CoreError::from_identifier_validation(&error, None))
+        let value = self.session_id_namespace.as_ref().map_or_else(
+            || format!("session-{sequence}"),
+            |namespace| format!("session-{namespace}-{sequence}"),
+        );
+        SessionId::new(value).map_err(|error| CoreError::from_identifier_validation(&error, None))
     }
 
     pub(super) fn next_export_id(&mut self) -> Result<String, CoreError> {
@@ -220,6 +222,7 @@ impl ActorState {
         self.snapshot.playback_state = PlaybackState::Stopped;
         self.snapshot.playback_position_ms = 0;
         self.snapshot.last_delivery = None;
+        self.snapshot.last_delivery_operation_id = None;
     }
 
     pub(super) fn reset_listener_connection(&mut self) {
@@ -251,5 +254,30 @@ impl ActorState {
             changed: false,
             stop_requested: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActorState;
+    use crate::domain::DeviceId;
+
+    #[test]
+    fn session_ids_are_unique_across_fresh_actor_states() {
+        let mut first_actor = ActorState::new_with_session_id_namespace(
+            DeviceId::new("desktop-device").expect("device ID"),
+            Some("first-process".to_owned()),
+        );
+        let mut restarted_actor = ActorState::new_with_session_id_namespace(
+            DeviceId::new("desktop-device").expect("device ID"),
+            Some("restarted-process".to_owned()),
+        );
+
+        let first = first_actor.next_session_id().expect("first session ID");
+        let after_restart = restarted_actor
+            .next_session_id()
+            .expect("session ID after actor restart");
+
+        assert_ne!(first, after_restart);
     }
 }

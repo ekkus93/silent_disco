@@ -1,10 +1,21 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render as renderScreen, screen, waitFor } from "@testing-library/react";
+import { Provider } from "react-redux";
+import type { ReactNode } from "react";
+import QRCode from "qrcode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { coreActions } from "../app/coreSlice";
+import { createAppStore } from "../app/store";
 import * as client from "../core/client";
 import type { DesktopErrorDto, HostSessionSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostSessionScreen } from "./HostSessionScreen";
 
 vi.mock("../core/client");
+
+let appStore = createAppStore();
+
+function render(ui: ReactNode) {
+  return renderScreen(<Provider store={appStore}>{ui}</Provider>);
+}
 
 const invokeError: DesktopErrorDto = {
   code: "core.invalid_state_transition",
@@ -67,6 +78,7 @@ function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSn
       failedPeers: 0,
       severity: "ok",
     },
+    lastDeliveryOperationId: null,
     recoverableAction: null,
     playbackControlsEnabled: false,
     transportWorkerRunning: true,
@@ -82,6 +94,7 @@ function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSn
 }
 
 beforeEach(() => {
+  appStore = createAppStore();
   vi.clearAllMocks();
   vi.mocked(client.getHostSessionState).mockResolvedValue(fixture());
   vi.mocked(client.getHostNetworkState).mockResolvedValue({
@@ -232,6 +245,76 @@ describe("HostSessionScreen Block 23", () => {
     ).toBeInTheDocument();
   });
 
+  it("confirms rejection only when the matching transport delivery is recorded", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({
+          revision: "14",
+          pendingJoinRequests: [],
+          lastDeliveryOperationId: "command-2",
+        }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(client.rejectJoinRequest).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+
+    expect(
+      await screen.findByText("Listener rejection was confirmed by transport delivery."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/disappeared from the current session/)).not.toBeInTheDocument();
+  });
+
+  it("reconciles a delivered rejection snapshot that arrives before its command receipt", async () => {
+    let resolveRejection = (_receipt: { operationId: string; acceptedAtRevision: string }) => {};
+    vi.mocked(client.rejectJoinRequest).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRejection = resolve;
+        }),
+    );
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({
+          revision: "14",
+          pendingJoinRequests: [],
+          lastDeliveryOperationId: "command-2",
+        }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(client.rejectJoinRequest).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(screen.queryByText("Request request-1")).not.toBeInTheDocument());
+    expect(screen.queryByText(/disappeared from the current session/)).not.toBeInTheDocument();
+
+    resolveRejection({ operationId: "command-2", acceptedAtRevision: "12" });
+    expect(
+      await screen.findByText("Listener rejection was confirmed by transport delivery."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not confirm rejection from an earlier delivery report", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValueOnce(
+        fixture({ revision: "13", pendingJoinRequests: [], lastDeliveryOperationId: "old-op" }),
+      );
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(client.rejectJoinRequest).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+
+    expect(
+      await screen.findByText("The join request disappeared before its decision was confirmed."),
+    ).toBeInTheDocument();
+  });
+
   it("releases End session after a newer snapshot reports the effect failed", async () => {
     vi.mocked(client.getHostSessionState)
       .mockResolvedValueOnce(fixture())
@@ -244,10 +327,70 @@ describe("HostSessionScreen Block 23", () => {
     await waitFor(() => expect(endButton).toBeDisabled());
 
     vi.mocked(client.getHostSessionState).mockResolvedValue(
-      fixture({ revision: "13", hostLifecycle: "ready" }),
+      fixture({ revision: "13", hostLifecycle: "error" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
     await waitFor(() => expect(endButton).toBeEnabled());
+  });
+
+  it("keeps End session pending while playback shutdown reports an intermediate ready state", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValue(fixture());
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await waitFor(() => expect(client.endHostSession).toHaveBeenCalled());
+    const endButton = screen.getByRole("button", { name: "Ending session…" });
+
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ revision: "13", hostLifecycle: "ready", playbackState: "stopped" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(endButton).toBeDisabled());
+
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ revision: "14", hostLifecycle: "idle", playbackState: "stopped" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "End session" })).toBeEnabled());
+  });
+
+  it("retries End once when the actor rejects a stale snapshot revision", async () => {
+    vi.mocked(client.getHostSessionState)
+      .mockResolvedValueOnce(fixture())
+      .mockResolvedValue(fixture({ revision: "13" }));
+    vi.mocked(client.endHostSession)
+      .mockResolvedValueOnce({ operationId: "command-4", acceptedAtRevision: "12" })
+      .mockResolvedValueOnce({ operationId: "command-5", acceptedAtRevision: "13" });
+    render(<HostSessionScreen />);
+    await screen.findByText("Listener One");
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    const endButton = await screen.findByRole("button", { name: "Ending session…" });
+
+    appStore.dispatch(
+      coreActions.notificationReceived({
+        kind: "error",
+        details: {
+          code: "core.invalid_state_transition",
+          subsystem: "validation",
+          severity: "error",
+          retryable: false,
+          message: "command expected snapshot revision 12, but current revision is 13",
+          operationId: "command-4",
+        },
+      }),
+    );
+
+    await waitFor(() => expect(client.endHostSession).toHaveBeenCalledTimes(2));
+    expect(client.endHostSession).toHaveBeenLastCalledWith("13");
+    expect(endButton).toBeDisabled();
+
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({ revision: "14", hostLifecycle: "idle" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "End session" })).toBeEnabled());
   });
 
   it("keeps a zero-recipient approval actionable and visible", async () => {
@@ -449,6 +592,7 @@ describe("HostSessionScreen playback controls", () => {
 
 describe("HostSessionScreen QR invitation (Block 31)", () => {
   it("creates and renders a signed QR invitation with a copyable text fallback", async () => {
+    const renderQr = vi.spyOn(QRCode, "toDataURL");
     vi.mocked(client.createHostInvitation).mockResolvedValue({
       payload: '{"v":1,"alg":"ES256","sig":"fake"}',
       expiresAtMs: String(Date.now() + 5 * 60 * 1_000),
@@ -460,6 +604,18 @@ describe("HostSessionScreen QR invitation (Block 31)", () => {
     await waitFor(() => expect(client.createHostInvitation).toHaveBeenCalledTimes(1));
 
     expect(await screen.findByAltText("Signed Silent Disco join QR code")).toBeInTheDocument();
+    expect(renderQr).toHaveBeenCalledWith(
+      '{"v":1,"alg":"ES256","sig":"fake"}',
+      expect.objectContaining({
+        errorCorrectionLevel: "M",
+        margin: 4,
+        width: 1024,
+      }),
+    );
+    expect(screen.getByAltText("Signed Silent Disco join QR code")).toHaveClass(
+      "max-w-2xl",
+      "w-full",
+    );
     expect(screen.getByRole("button", { name: "Refresh QR invitation" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Copy invitation text" })).toBeInTheDocument();
   });

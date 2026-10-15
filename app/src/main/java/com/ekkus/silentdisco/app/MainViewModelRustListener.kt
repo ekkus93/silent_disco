@@ -201,7 +201,7 @@ internal fun MainViewModel.ensureListenerTransportEventLoop() {
     }
 }
 
-private fun MainViewModel.handleListenerTransportEvent(
+internal fun MainViewModel.handleListenerTransportEvent(
     controller: ListenerCoreController,
     event: FfiListenerTransportEvent,
 ) {
@@ -209,8 +209,19 @@ private fun MainViewModel.handleListenerTransportEvent(
         is FfiListenerTransportEvent.Hello -> controller.submitAwaitingApproval()
         is FfiListenerTransportEvent.JoinApproved -> controller.submitJoinApproved(event.trustedForFuture)
         is FfiListenerTransportEvent.JoinRejected -> controller.submitJoinRejected(event.reason)
-        is FfiListenerTransportEvent.HostDisconnected -> controller.transportFailed(event.reason, true)
-        is FfiListenerTransportEvent.ConnectionClosed -> controller.transportFailed(event.message ?: "Connection closed", true)
+        is FfiListenerTransportEvent.HostDisconnected -> leaveSession()
+        is FfiListenerTransportEvent.ConnectionClosed -> {
+            val message = event.message
+            if (message == null) {
+                // A clean peer close is the normal result when a host ends its
+                // session. Release the listener network and return to the
+                // nearby-session flow instead of presenting a recoverable
+                // playback error for an intentional shutdown.
+                leaveSession()
+            } else {
+                controller.transportFailed(message, true)
+            }
+        }
         is FfiListenerTransportEvent.Rejected -> controller.transportFailed(event.message, false)
         is FfiListenerTransportEvent.StreamStarted -> handleTransportStreamStarted(event)
         is FfiListenerTransportEvent.Paused -> propagateListenerPlaybackState(
@@ -249,14 +260,27 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
     )
 }
 
-private fun MainViewModel.handleTransportStreamStopped() {
+internal fun MainViewModel.handleTransportStreamStopped() {
     // The runtime drains its own buffered tail while stopping, so the
     // stream's final moments play rather than being discarded.
+    // A runtime's clock has a per-runtime epoch. Keep its periodic loop
+    // from switching to the pre-runtime estimator after Stop: comparing
+    // that estimator's Android elapsed-realtime offset with the runtime's
+    // offset falsely marks an otherwise healthy listener DESYNCED. The next
+    // StreamStart creates a new runtime and starts its own probe loop.
+    resyncJob?.cancel()
+    resyncJob = null
     stopListenerPlayback()
     propagateListenerPlaybackState(
         playbackState = PlaybackState.STOPPED,
-        listenerState = ListenerLifecycleState.CONNECTING,
+        listenerState = ListenerLifecycleState.APPROVED,
         message = "Host stopped the stream",
+    )
+    _uiState.value = _uiState.value.copy(
+        connectionProgress = _uiState.value.connectionProgress.copy(
+            currentState = ListenerLifecycleState.APPROVED,
+            synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
+        ),
     )
     diagnosticsStore.updateListener {
         it.copy(endOfStreamReached = true, playbackState = PlaybackState.STOPPED)
@@ -287,6 +311,15 @@ private fun MainViewModel.handleTransportSyncResponse(event: FfiListenerTranspor
                 t3HostSendElapsedMs = event.t3HostSendElapsedMs.toLong(),
             ),
         )
+        val sync = _uiState.value.listenerSyncState
+        if (sync.confidence != SyncQualityBadge.UNKNOWN) {
+            reportListenerSyncToHost(
+                sync.confidence.toFfiSyncConfidence(),
+                sync.offsetMs,
+                sync.rttMs,
+                sync.skewPpm,
+            )
+        }
         return
     }
     val outcome = runCatching {
@@ -301,7 +334,39 @@ private fun MainViewModel.handleTransportSyncResponse(event: FfiListenerTranspor
         logger.w("sync.rejected", error.message ?: "sync response rejected")
         return
     }
+    reportListenerSyncToHost(
+        outcome.confidence,
+        outcome.offsetMs,
+        outcome.roundTripTimeMs,
+        outcome.skewPpm,
+    )
     applyRuntimeSyncOutcome(outcome)
+}
+
+internal fun MainViewModel.reportListenerSyncToHost(
+    confidence: FfiSyncConfidence,
+    offsetMs: Double,
+    roundTripMs: Double,
+    driftPpm: Double,
+) {
+    try {
+        listenerTransportController.sendSynchronizationReport(
+            confidence,
+            offsetMs,
+            roundTripMs,
+            driftPpm,
+        )
+    } catch (error: RuntimeException) {
+        logger.w("sync.report_send_failed", error.message ?: "synchronization report send failed")
+    }
+}
+
+internal fun SyncQualityBadge.toFfiSyncConfidence(): FfiSyncConfidence = when (this) {
+    SyncQualityBadge.UNKNOWN -> FfiSyncConfidence.UNKNOWN
+    SyncQualityBadge.POOR -> FfiSyncConfidence.POOR
+    SyncQualityBadge.FAIR -> FfiSyncConfidence.FAIR
+    SyncQualityBadge.GOOD -> FfiSyncConfidence.GOOD
+    SyncQualityBadge.EXCELLENT -> FfiSyncConfidence.EXCELLENT
 }
 
 /** Mirrors the runtime's own estimate into the UI and diagnostics. */

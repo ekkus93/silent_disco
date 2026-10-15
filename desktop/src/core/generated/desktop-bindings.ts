@@ -4,7 +4,7 @@ export type CoreVersionDto = { major: number, minor: number, patch: number, };
 
 export type ProfileSummaryDto = { profileId: string, displayName: string, };
 
-export type DesktopErrorDto = { code: string, subsystem: string, severity: string, retryable: boolean, message: string, };
+export type DesktopErrorDto = { code: string, subsystem: string, severity: string, retryable: boolean, message: string, operationId?: string, };
 
 export type MigrationSummaryDto = { version: number, appliedAtMs: string, checksum: string, };
 
@@ -56,7 +56,7 @@ export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, 
  * distinct from an explicit stop -- both otherwise present as the same
  * generic `playback_state` of `stopped`.
  */
-streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, 
+streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, lastDeliveryOperationId: string | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, 
 /**
  * Local monitor status (Block 34). Independent of `connection`/network
  * state -- monitor audio affects only what is heard at this desktop

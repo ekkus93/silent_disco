@@ -13,6 +13,7 @@ mod failure;
 pub mod file_picker;
 mod host_join_projection;
 mod host_pending_handshake;
+mod host_session_history;
 pub(crate) mod host_transport;
 pub(crate) mod host_transport_events;
 pub mod identity;
@@ -44,6 +45,12 @@ pub(crate) mod storage_effect_runner;
     reason = "the test keeps complete result variants visually separate"
 )]
 pub mod storage_inspection;
+
+pub(crate) fn recover_interrupted_host_sessions(
+    database: &silent_disco_core::storage::DatabaseClient,
+) -> Result<u32, silent_disco_core::storage::StorageError> {
+    host_session_history::recover_interrupted(database)
+}
 
 #[cfg(test)]
 mod audio_decode_tests;

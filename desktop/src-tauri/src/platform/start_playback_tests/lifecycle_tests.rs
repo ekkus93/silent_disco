@@ -14,6 +14,7 @@ use super::harness::{
 use crate::platform::start_playback;
 use silent_disco_core::domain::PlaybackState;
 use silent_disco_core::protocol::ControlMessage;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -119,6 +120,49 @@ fn stopping_after_the_source_has_already_ended_still_leaves_the_actor_stopped() 
 
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// Ending the host while the playback pump is live must release the network
+/// state lock before joining that pump. The pump reads transport time during
+/// pacing, so joining while holding the same lock deadlocks shutdown.
+#[test]
+fn ending_host_during_playback_does_not_hold_network_lock_while_joining() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor, registry) = stage_long_source(&temp);
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+    start_playback::start(&handle, &network, &registry).expect("start playback");
+    wait_for_control(&mut *listener, |message| {
+        matches!(message, ControlMessage::StreamStart(_))
+    });
+    wait_for_audio(&mut *listener);
+
+    let (finished, result) = std::sync::mpsc::channel();
+    let network_to_stop = Arc::clone(&network);
+    let shutdown = std::thread::spawn(move || {
+        let _ = finished.send(network_to_stop.stop_host_inner());
+    });
+    let outcome = result
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("host shutdown must not deadlock while joining the playback pump");
+    outcome.expect("host shutdown");
+    shutdown.join().expect("shutdown worker");
+
+    listener.shutdown().expect("listener shutdown");
     actor.shutdown().expect("actor shutdown");
 }
 

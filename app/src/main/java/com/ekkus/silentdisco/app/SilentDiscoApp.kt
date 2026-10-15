@@ -468,7 +468,11 @@ fun SilentDiscoApp(
 
             composable(AppRoutes.SessionJoin) {
                 val cancelJoin: () -> Unit = {
-                    discoveryLifecycleController.cancelJoinTransport(workflowViewModel::showTransientMessage)
+                    if (viewModel.listenerHasPendingWifiDirectJoin) {
+                        discoveryLifecycleController.cancelJoinTransport(
+                            workflowViewModel::showTransientMessage,
+                        )
+                    }
                     viewModel.cancelJoin()
                     val returned = navController.popBackStack(AppRoutes.NearbySessions, inclusive = false)
                     if (!returned) navController.navigateSingleTop(AppRoutes.NearbySessions)
@@ -664,7 +668,11 @@ fun SilentDiscoApp(
         onDismiss = { showLeaveSessionConfirmation = false },
         onConfirm = {
             showLeaveSessionConfirmation = false
-            discoveryLifecycleController.cancelJoinTransport(workflowViewModel::showTransientMessage)
+            if (viewModel.listenerHasPendingWifiDirectJoin) {
+                discoveryLifecycleController.cancelJoinTransport(
+                    workflowViewModel::showTransientMessage,
+                )
+            }
             viewModel.leaveSession()
             workflowViewModel.navigateHome()
         },

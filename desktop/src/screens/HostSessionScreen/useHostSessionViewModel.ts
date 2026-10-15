@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { selectLatestCoreError } from "../../app/selectors";
+import { useAppSelector } from "../../app/store";
 import {
   approveJoinRequest,
   createHostInvitation,
@@ -85,9 +87,12 @@ export function useHostSessionViewModel(): HostSessionViewModel {
   const [invitationPending, setInvitationPending] = useState(false);
   const [invitationError, setInvitationError] = useState<DesktopErrorDto | null>(null);
   const [monitorPending, setMonitorPending] = useState(false);
+  const latestCoreError = useAppSelector(selectLatestCoreError);
 
   const snapshotRef = useRef(snapshot);
   const endAcceptedAtRevisionRef = useRef<string | null>(null);
+  const endOperationIdRef = useRef<string | null>(null);
+  const endRevisionRetryRef = useRef(false);
   const decisionOperationsRef = useRef(decisionOperations);
   const removalOperationsRef = useRef(removalOperations);
 
@@ -114,6 +119,9 @@ export function useHostSessionViewModel(): HostSessionViewModel {
 
       const decisions = { ...decisionOperationsRef.current };
       for (const [requestId, operation] of Object.entries(decisions)) {
+        if (operation.acceptedAtRevision === null) {
+          continue;
+        }
         if (!pendingIds.has(requestId)) {
           const approvedListenerIsPresent =
             operation.kind === "approve" &&
@@ -127,6 +135,18 @@ export function useHostSessionViewModel(): HostSessionViewModel {
               return failures;
             });
             setAnnouncement("Listener approval was confirmed by the Rust core.");
+          } else if (
+            operation.kind === "reject" &&
+            operation.operationId !== null &&
+            next.lastDeliveryOperationId === operation.operationId &&
+            (next.lastDelivery?.successfulPeers ?? 0) > 0
+          ) {
+            setDecisionFailures((current) => {
+              const failures = { ...current };
+              delete failures[requestId];
+              return failures;
+            });
+            setAnnouncement("Listener rejection was confirmed by transport delivery.");
           } else {
             const failure =
               operationFailure(next, operation) ??
@@ -152,6 +172,9 @@ export function useHostSessionViewModel(): HostSessionViewModel {
 
       const removals = { ...removalOperationsRef.current };
       for (const [listenerId, operation] of Object.entries(removals)) {
+        if (operation.acceptedAtRevision === null) {
+          continue;
+        }
         if (!listenerIds.has(listenerId)) {
           delete removals[listenerId];
           const failure =
@@ -209,9 +232,10 @@ export function useHostSessionViewModel(): HostSessionViewModel {
         endPending &&
         endAcceptedAtRevision !== null &&
         revisionIsNewer(next.revision, endAcceptedAtRevision) &&
-        next.hostLifecycle !== "ending_session"
+        (next.hostLifecycle === "idle" || next.hostLifecycle === "error")
       ) {
         endAcceptedAtRevisionRef.current = null;
+        endOperationIdRef.current = null;
         setEndPending(false);
       }
       setRefreshFailure(null);
@@ -219,6 +243,47 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       setRefreshFailure(error as DesktopErrorDto);
     }
   }, [endPending, reconcile]);
+
+  useEffect(() => {
+    const operationId = endOperationIdRef.current;
+    if (!endPending || operationId === null || latestCoreError?.operationId !== operationId) {
+      return;
+    }
+    const isStaleRevision =
+      latestCoreError.code === "core.invalid_state_transition" &&
+      latestCoreError.message.startsWith("command expected snapshot revision ");
+    if (isStaleRevision && !endRevisionRetryRef.current) {
+      endRevisionRetryRef.current = true;
+      void getHostSessionState()
+        .then(async (next) => {
+          reconcile(next);
+          snapshotRef.current = next;
+          setSnapshot(next);
+          if (next.hostLifecycle === "idle" || next.hostLifecycle === "error") {
+            endOperationIdRef.current = null;
+            endAcceptedAtRevisionRef.current = null;
+            setEndPending(false);
+            setRefreshFailure(latestCoreError);
+            return;
+          }
+          const receipt = await endHostSession(next.revision);
+          endAcceptedAtRevisionRef.current = receipt.acceptedAtRevision;
+          endOperationIdRef.current = receipt.operationId;
+          setAnnouncement("End-session request queued.");
+        })
+        .catch((error: unknown) => {
+          endOperationIdRef.current = null;
+          endAcceptedAtRevisionRef.current = null;
+          setRefreshFailure(error as DesktopErrorDto);
+          setEndPending(false);
+        });
+      return;
+    }
+    endOperationIdRef.current = null;
+    endAcceptedAtRevisionRef.current = null;
+    setRefreshFailure(latestCoreError);
+    setEndPending(false);
+  }, [endPending, latestCoreError, reconcile]);
 
   useEffect(() => {
     void refresh();
@@ -235,7 +300,11 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       return;
     }
     let cancelled = false;
-    QRCode.toDataURL(invitation.payload)
+    QRCode.toDataURL(invitation.payload, {
+      errorCorrectionLevel: "M",
+      margin: 4,
+      width: 1024,
+    })
       .then((dataUrl) => {
         if (!cancelled) setInvitationQrDataUrl(dataUrl);
       })
@@ -274,6 +343,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
         targetDeviceId:
           current.pendingJoinRequests.find((request) => request.requestId === requestId)
             ?.deviceId ?? "",
+        operationId: null,
         acceptedAtRevision: null,
         acceptedAtMs: null,
         baselineDelivery: deliveryKey(current),
@@ -297,6 +367,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
               });
         const waiting = {
           ...submitting,
+          operationId: receipt.operationId,
           acceptedAtRevision: receipt.acceptedAtRevision,
           acceptedAtMs: Date.now(),
         };
@@ -309,6 +380,10 @@ export function useHostSessionViewModel(): HostSessionViewModel {
             ? "Approval queued. Waiting for delivery confirmation."
             : "Rejection queued. Waiting for delivery confirmation.",
         );
+        const latest = snapshotRef.current;
+        if (latest && revisionIsNewer(latest.revision, receipt.acceptedAtRevision)) {
+          reconcile(latest);
+        }
       } catch (error) {
         const failure = error as DesktopErrorDto;
         const next = { ...decisionOperationsRef.current };
@@ -321,7 +396,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
         setAnnouncement("The join decision was rejected before delivery.");
       }
     },
-    [remember, updateDecisionOperations],
+    [remember, reconcile, updateDecisionOperations],
   );
 
   const requestRemoval = useCallback(
@@ -338,6 +413,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       const submitting: PendingOperation = {
         kind: "remove",
         targetDeviceId: listenerId,
+        operationId: null,
         acceptedAtRevision: null,
         acceptedAtMs: null,
         baselineDelivery: deliveryKey(current),
@@ -356,11 +432,16 @@ export function useHostSessionViewModel(): HostSessionViewModel {
           ...removalOperationsRef.current,
           [listenerId]: {
             ...submitting,
+            operationId: receipt.operationId,
             acceptedAtRevision: receipt.acceptedAtRevision,
             acceptedAtMs: Date.now(),
           },
         });
         setAnnouncement("Disconnect queued. Waiting for delivery confirmation.");
+        const latest = snapshotRef.current;
+        if (latest && revisionIsNewer(latest.revision, receipt.acceptedAtRevision)) {
+          reconcile(latest);
+        }
       } catch (error) {
         const failure = error as DesktopErrorDto;
         const next = { ...removalOperationsRef.current };
@@ -373,7 +454,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
         setAnnouncement("Listener removal was rejected before delivery.");
       }
     },
-    [updateRemovalOperations],
+    [reconcile, updateRemovalOperations],
   );
 
   const copyValue = useCallback(async (label: string, value: string) => {
@@ -413,12 +494,16 @@ export function useHostSessionViewModel(): HostSessionViewModel {
       return;
     }
     setEndPending(true);
+    endRevisionRetryRef.current = false;
     try {
       const receipt = await endHostSession(current.revision);
       endAcceptedAtRevisionRef.current = receipt.acceptedAtRevision;
+      endOperationIdRef.current = receipt.operationId;
       setAnnouncement("End-session request queued.");
     } catch (error) {
       setRefreshFailure(error as DesktopErrorDto);
+      endAcceptedAtRevisionRef.current = null;
+      endOperationIdRef.current = null;
       setEndPending(false);
     }
   }, [endPending]);

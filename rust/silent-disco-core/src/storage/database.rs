@@ -256,6 +256,17 @@ impl DatabaseConnection {
         session_write_repository::end(&mut self.connection, end, self.metadata.schema_version)
     }
 
+    pub(crate) fn interrupt_active_host_sessions(
+        &mut self,
+        ended_at_ms: u64,
+    ) -> Result<u32, StorageError> {
+        session_write_repository::interrupt_active_hosts(
+            &mut self.connection,
+            ended_at_ms,
+            self.metadata.schema_version,
+        )
+    }
+
     pub(crate) fn get_session(
         &self,
         session_id: &SessionId,

@@ -112,6 +112,32 @@ fn host_lifecycle_transitions_are_rust_authoritative() {
 }
 
 #[test]
+fn stale_revision_end_command_ends_the_current_host_session() {
+    let (runtime, handle, receiver) = start_actor();
+    let (creating, _) = create_host(&handle, &receiver, "Stale end host");
+
+    handle
+        .submit_transport_event(TransportEvent::StateChanged(TransportState::Advertising))
+        .expect("submit advertising state");
+    let advertising = next_snapshot(&receiver, creating.revision.get() + 1);
+
+    handle
+        .submit_command(
+            CoreCommandRequest::new(creating.revision, CoreCommand::EndHostSession)
+                .expect("valid stale end request"),
+        )
+        .expect("queue stale end request");
+    let ending = next_snapshot(&receiver, advertising.revision.get() + 1);
+    assert_eq!(ending.host_lifecycle, HostLifecycle::EndingSession);
+    assert!(matches!(
+        next_platform_effect(&receiver).request,
+        PlatformEffectRequest::StopAdvertising
+    ));
+
+    runtime.shutdown().expect("shutdown actor");
+}
+
+#[test]
 fn retryable_host_start_failure_reissues_the_real_effect() {
     let (runtime, handle, receiver) = start_actor();
     let (creating, first_effect) = create_host(&handle, &receiver, "Retry host");

@@ -12,6 +12,7 @@ export type DecisionKind = "approve" | "reject";
 export interface PendingOperation {
   kind: DecisionKind | "remove";
   targetDeviceId: string;
+  operationId: string | null;
   acceptedAtRevision: string | null;
   /** Wall-clock time the core accepted the command; `null` until it does. */
   acceptedAtMs: number | null;

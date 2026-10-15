@@ -22,6 +22,7 @@ function snapshot(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionS
     pendingJoinRequests: [],
     connectedListeners: [],
     lastDelivery: null,
+    lastDeliveryOperationId: null,
     recoverableAction: null,
     playbackControlsEnabled: false,
     transportWorkerRunning: true,
@@ -42,6 +43,7 @@ function accepted(current: HostSessionSnapshotDto): PendingOperation {
   return {
     kind: "approve",
     targetDeviceId: "device-1",
+    operationId: "operation-1",
     acceptedAtRevision: "9",
     acceptedAtMs: ACCEPTED_AT,
     baselineDelivery: deliveryKey(current),

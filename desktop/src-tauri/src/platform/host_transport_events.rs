@@ -3,11 +3,12 @@
 use super::host_join_projection::PendingJoinProjection;
 use super::host_pending_handshake::send_pending_hello;
 use super::network_error::DesktopNetworkError;
+use silent_disco_core::domain::{TransportState, TrustState};
 use silent_disco_core::error::CoreError;
 use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, SyncResponse};
 use silent_disco_core::runtime::{
-    AudioEvent, CoreActorHandle, CoreSnapshot, SessionAdvertisement, SynchronizationSummary,
-    TransportEvent as CoreTransportEvent,
+    AudioEvent, CoreActorHandle, CoreSnapshot, ListenerSummary, SessionAdvertisement,
+    SynchronizationSummary, TransportEvent as CoreTransportEvent,
 };
 use silent_disco_core::transport::{
     HostTransportNode, TransportChannel, TransportClock, TransportEvent as RuntimeTransportEvent,
@@ -57,6 +58,30 @@ impl HostTransportEventProcessor {
         self.pending.take_ports(device_id)
     }
 
+    pub(crate) fn take_pending_listener(
+        &mut self,
+        device_id: &silent_disco_core::domain::DeviceId,
+    ) -> Option<(u16, u16, String)> {
+        self.pending.take_pending_listener(device_id)
+    }
+
+    pub(crate) fn connected_listener(
+        device_id: silent_disco_core::domain::DeviceId,
+        display_name: String,
+        trusted_for_future: bool,
+    ) -> Result<ListenerSummary, silent_disco_core::runtime::RuntimeRecordValidationError> {
+        ListenerSummary::new(
+            device_id,
+            display_name,
+            if trusted_for_future {
+                TrustState::Trusted
+            } else {
+                TrustState::SessionOnly
+            },
+            TransportState::Connected,
+        )
+    }
+
     pub(super) fn process(
         &mut self,
         event: RuntimeTransportEvent,
@@ -71,9 +96,9 @@ impl HostTransportEventProcessor {
                 received_at,
                 ..
             } => {
-                let device_id = self
-                    .pending
-                    .register(request, received_at, advertisement, sink)?;
+                let device_id =
+                    self.pending
+                        .register(&request, received_at, advertisement, sink)?;
                 Ok(send_pending_hello(node, &device_id, advertisement))
             }
             RuntimeTransportEvent::FrameReceived {

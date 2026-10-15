@@ -69,6 +69,7 @@ internal fun listenerCoreSnapshot(
     playbackPositionMs = 0uL,
     streamEndedNaturally = false,
     lastDelivery = null,
+    lastDeliveryOperationId = null,
     recoverableAction = null,
     lastError = null,
     shuttingDown = false,

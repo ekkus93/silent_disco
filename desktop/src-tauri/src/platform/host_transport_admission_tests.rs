@@ -112,6 +112,17 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
                 && report.successful_peers == 1
                 && report.failed_peers == 0
     ));
+    let connected = receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("connected listener event");
+    assert!(matches!(
+        connected,
+        CoreTransportEvent::ListenerConnected(listener)
+            if listener.device_id == listener_id
+                && listener.display_name == "Block 23 listener"
+                && listener.trust_state == silent_disco_core::domain::TrustState::Trusted
+                && listener.transport_state == silent_disco_core::domain::TransportState::Connected
+    ));
 
     listener.shutdown().expect("listener shutdown");
     runtime.shutdown().expect("runtime shutdown");
@@ -191,6 +202,7 @@ fn connect_listener(
 }
 
 fn send_join(listener: &dyn ListenerTransportNode, session_id: &SessionId, listener_id: &DeviceId) {
+    let routes = listener.local_routes();
     listener
         .send_control(&ControlMessage::JoinRequest(JoinRequest {
             session_id: session_id.clone(),
@@ -199,8 +211,8 @@ fn send_join(listener: &dyn ListenerTransportNode, session_id: &SessionId, liste
                 display_name: "Block 23 listener".to_owned(),
             },
             invite_code: None,
-            sync_port: 0,
-            audio_port: 0,
+            sync_port: routes.synchronization.port(),
+            audio_port: routes.audio.port(),
         }))
         .expect("send join");
 }

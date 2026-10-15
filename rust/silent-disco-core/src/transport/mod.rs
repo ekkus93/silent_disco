@@ -31,10 +31,11 @@ pub use socket::{SocketHostTransport, SocketListenerTransport, SocketTransportFa
 pub use types::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,
     DEFAULT_OPERATION_TIMEOUT, DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
-    DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY, HostTransportConfig,
-    ListenerDatagramRoutes, ListenerTransportConfig, MAX_TRANSPORT_EVENT_CAPACITY,
-    MAX_TRANSPORT_PEERS, MAX_TRANSPORT_QUEUE_CAPACITY, TransportChannel, TransportCounters,
-    TransportDelivery, TransportError, TransportErrorKind, TransportEvent, TransportPeer,
+    DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY, DatagramSendFailures,
+    HostTransportConfig, ListenerDatagramRoutes, ListenerTransportConfig,
+    MAX_TRANSPORT_EVENT_CAPACITY, MAX_TRANSPORT_PEERS, MAX_TRANSPORT_QUEUE_CAPACITY,
+    TransportChannel, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
+    TransportEvent, TransportPeer,
 };
 pub use virtual_fault::{
     DeterministicPrng, FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig,

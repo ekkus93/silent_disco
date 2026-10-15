@@ -106,6 +106,9 @@ pub struct DesktopErrorDto {
     pub severity: String,
     pub retryable: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub operation_id: Option<Box<String>>,
 }
 
 impl DesktopErrorDto {
@@ -123,7 +126,14 @@ impl DesktopErrorDto {
             severity: severity.to_owned(),
             retryable,
             message: bounded_message(message),
+            operation_id: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_operation_id(mut self, operation_id: Option<String>) -> Self {
+        self.operation_id = operation_id.map(Box::new);
+        self
     }
 
     /// Folds an optional cleanup/teardown failure into this (primary)
@@ -145,6 +155,7 @@ impl DesktopErrorDto {
             self.retryable,
             &format!("{}; {}", self.message, cleanup.message),
         )
+        .with_operation_id(self.operation_id.map(|value| *value))
     }
 }
 

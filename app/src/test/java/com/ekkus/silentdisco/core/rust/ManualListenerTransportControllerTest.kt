@@ -20,7 +20,12 @@ class ManualListenerTransportControllerTest {
 
         for (exception in exceptions) {
             val state = mapPostConnectionFailure(exception)
-            assertThat(state).isEqualTo(ManualConnectUiState.Disconnected(exception.message))
+            val expectedMessage = if (exception is FfiListenerTransportException.Closed) {
+                null
+            } else {
+                exception.message
+            }
+            assertThat(state).isEqualTo(ManualConnectUiState.Disconnected(expectedMessage))
         }
     }
 
@@ -30,7 +35,21 @@ class ManualListenerTransportControllerTest {
             FfiListenerTransportException.Closed("transport event channel is closed"),
         )
 
-        assertThat(state).isNotInstanceOf(ManualConnectUiState.Failed::class.java)
+        assertThat(state).isEqualTo(ManualConnectUiState.Disconnected(message = null))
+    }
+
+    @Test
+    fun postConnectionFailureReportsCleanupFailureInsteadOfClaimingCleanDisconnect() {
+        val state = mapPostConnectionFailure(
+            FfiListenerTransportException.Closed("transport event channel is closed"),
+            IllegalStateException("network lock release failed"),
+        )
+
+        assertThat(state).isEqualTo(
+            ManualConnectUiState.Failed(
+                "transport event channel is closed; listener cleanup failed: network lock release failed",
+            ),
+        )
     }
 
     @Test

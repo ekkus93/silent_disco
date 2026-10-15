@@ -27,7 +27,7 @@ fn process_effect(
     processor: &mut HostTransportEventProcessor,
 ) -> Result<(), DesktopNetworkError> {
     let operation_id = effect.operation_id;
-    let mut authorize: Option<(silent_disco_core::domain::DeviceId, u16, u16)> = None;
+    let mut approved_listener: Option<(silent_disco_core::domain::DeviceId, bool)> = None;
     let delivery = match effect.request {
         TransportEffectRequest::DeliverJoinApproval {
             session_id,
@@ -35,9 +35,7 @@ fn process_effect(
             trusted_for_future,
             ..
         } => {
-            if let Some((sync_port, audio_port)) = processor.take_pending_ports(&listener_id) {
-                authorize = Some((listener_id.clone(), sync_port, audio_port));
-            }
+            approved_listener = Some((listener_id.clone(), trusted_for_future));
             eprintln!(
                 "join_approval_send_started operation_id={operation_id} send_started_unix_ms={}",
                 unix_time_ms()
@@ -84,13 +82,6 @@ fn process_effect(
         }
     };
 
-    if let (Ok(delivery), Some((listener_id, sync_port, audio_port))) = (&delivery, authorize)
-        && delivery.report.successful_peers > 0
-        && let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port)
-    {
-        set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
-    }
-
     let report = match delivery {
         Ok(delivery) => delivery.report,
         Err(error) => {
@@ -98,7 +89,28 @@ fn process_effect(
             failed_delivery_report()
         }
     };
-    submit_delivery(sink, operation_id, report)
+    submit_delivery(sink, operation_id, report)?;
+
+    if report.successful_peers > 0
+        && let Some((listener_id, trusted_for_future)) = approved_listener
+        && let Some((sync_port, audio_port, display_name)) =
+            processor.take_pending_listener(&listener_id)
+    {
+        if let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port) {
+            set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+            return Ok(());
+        }
+        let listener = HostTransportEventProcessor::connected_listener(
+            listener_id,
+            display_name,
+            trusted_for_future,
+        )
+        .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
+        sink.submit_transport_event(CoreTransportEvent::ListenerConnected(listener))
+            .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
+    }
+
+    Ok(())
 }
 
 fn unix_time_ms() -> u128 {

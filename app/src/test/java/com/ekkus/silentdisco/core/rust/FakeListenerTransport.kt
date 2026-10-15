@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.rust
 
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +22,13 @@ class FakeListenerTransport : ListenerTransport {
     val joinRequestCalls = mutableListOf<Pair<String, String?>>()
     val disconnectCalls = mutableListOf<String>()
     val syncRequestCalls = mutableListOf<Pair<ULong, ULong>>()
+    data class SyncReportCall(
+        val confidence: FfiSyncConfidence,
+        val offsetMs: Double,
+        val roundTripMs: Double,
+        val driftPpm: Double,
+    )
+    val syncReportCalls = mutableListOf<SyncReportCall>()
     var closeCallCount: Int = 0
     var attachedPlayback: FfiListenerPlaybackHandle? = null
     var attachCallCount: Int = 0
@@ -53,6 +61,15 @@ class FakeListenerTransport : ListenerTransport {
 
     override suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong) {
         syncRequestCalls += correlationId to localSendElapsedMs
+    }
+
+    override fun sendSynchronizationReport(
+        confidence: FfiSyncConfidence,
+        offsetMs: Double,
+        roundTripMs: Double,
+        driftPpm: Double,
+    ) {
+        syncReportCalls += SyncReportCall(confidence, offsetMs, roundTripMs, driftPpm)
     }
 
     override fun attachPlayback(playback: FfiListenerPlaybackHandle) {

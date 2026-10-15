@@ -17,6 +17,7 @@ use std::collections::HashMap;
 struct PendingJoinPorts {
     sync_port: u16,
     audio_port: u16,
+    display_name: String,
 }
 
 pub(super) struct PendingJoinProjection {
@@ -34,7 +35,7 @@ impl PendingJoinProjection {
 
     pub(super) fn register(
         &mut self,
-        request: JoinRequest,
+        request: &JoinRequest,
         received_at: silent_disco_core::domain::MonotonicMillis,
         advertisement: &SessionAdvertisement,
         sink: &dyn DesktopHostTransportEventSink,
@@ -51,10 +52,11 @@ impl PendingJoinProjection {
         self.next_sequence = self.next_sequence.saturating_add(1);
         let invite_code_valid = advertisement.approval_mode != ApprovalMode::InviteCode
             || request.invite_code.as_deref() == snapshot.host_draft.invite_code.as_deref();
+        let display_name = request.device.display_name.clone();
         let summary = JoinRequestSummary::new(
             request_id,
             device_id.clone(),
-            request.device.display_name,
+            display_name.clone(),
             TrustState::SessionOnly,
             invite_code_valid,
             received_at,
@@ -67,6 +69,7 @@ impl PendingJoinProjection {
             PendingJoinPorts {
                 sync_port: request.sync_port,
                 audio_port: request.audio_port,
+                display_name,
             },
         );
         Ok(device_id)
@@ -85,5 +88,14 @@ impl PendingJoinProjection {
         self.requests
             .remove(device_id)
             .map(|ports| (ports.sync_port, ports.audio_port))
+    }
+
+    pub(super) fn take_pending_listener(
+        &mut self,
+        device_id: &DeviceId,
+    ) -> Option<(u16, u16, String)> {
+        self.requests
+            .remove(device_id)
+            .map(|pending| (pending.sync_port, pending.audio_port, pending.display_name))
     }
 }

@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.rust
 
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
@@ -31,6 +32,12 @@ interface ListenerTransport : AutoCloseable {
     suspend fun sendJoinRequest(displayName: String, inviteCode: String?)
     suspend fun sendDisconnect(reason: String)
     suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong)
+    fun sendSynchronizationReport(
+        confidence: FfiSyncConfidence,
+        offsetMs: Double,
+        roundTripMs: Double,
+        driftPpm: Double,
+    )
     fun attachPlayback(playback: FfiListenerPlaybackHandle)
     fun detachPlayback()
 
@@ -80,6 +87,15 @@ class ListenerTransportController : ListenerTransport {
         withHandle { it.sendSyncRequest(correlationId, localSendElapsedMs) }
     }
 
+    override fun sendSynchronizationReport(
+        confidence: FfiSyncConfidence,
+        offsetMs: Double,
+        roundTripMs: Double,
+        driftPpm: Double,
+    ) {
+        handleRef.get()?.sendSynchronizationReport(confidence, offsetMs, roundTripMs, driftPpm)
+    }
+
     override fun attachPlayback(playback: FfiListenerPlaybackHandle) {
         val handle = handleRef.get() ?: error("listener transport is not connected")
         handle.attachPlayback(playback)
@@ -109,9 +125,28 @@ class ListenerTransportController : ListenerTransport {
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
-                    eventChannel.trySend(
-                        FfiListenerTransportEvent.ConnectionClosed(message = error.message),
+                    // A host's explicit Disconnect is handled by the consumer,
+                    // which closes this handle. The blocking poll can then
+                    // unblock with a native channel-closed/Broken pipe error.
+                    // That is cleanup fallout, not a second transport failure.
+                    if (shouldForwardPolledListenerEvent(
+                            loopActive = isActive,
+                            handleIsCurrent = handleRef.get() === handle,
+                        )
+                    ) {
+                        eventChannel.trySend(
+                            FfiListenerTransportEvent.ConnectionClosed(
+                                message = polledConnectionClosedMessage(error),
+                            ),
+                        )
+                    }
+                    break
+                }
+                if (!shouldForwardPolledListenerEvent(
+                        loopActive = isActive,
+                        handleIsCurrent = handleRef.get() === handle,
                     )
+                ) {
                     break
                 }
                 if (event != null) {
@@ -147,7 +182,9 @@ class ListenerTransportController : ListenerTransport {
             try {
                 handle.sendDisconnect(reason)
             } catch (error: FfiListenerTransportException) {
-                recordFailure(error)
+                if (!isPeerClosedDisconnectWriteFailure(error)) {
+                    recordFailure(error)
+                }
             }
         }
         try {
@@ -164,4 +201,23 @@ class ListenerTransportController : ListenerTransport {
     }
 
     private fun nowMs(): ULong = System.currentTimeMillis().toULong()
+}
+
+internal fun shouldForwardPolledListenerEvent(
+    loopActive: Boolean,
+    handleIsCurrent: Boolean,
+): Boolean = loopActive && handleIsCurrent
+
+/** A typed Closed result from an active poll means the peer/runtime ended the connection. */
+internal fun polledConnectionClosedMessage(error: FfiListenerTransportException): String? =
+    if (error is FfiListenerTransportException.Closed) null else error.message
+
+/** A peer that already closed its TCP stream cannot receive our final Leave frame. */
+internal fun isPeerClosedDisconnectWriteFailure(error: FfiListenerTransportException): Boolean {
+    if (error !is FfiListenerTransportException.Io) return false
+    val message = error.message ?: return false
+    val prefix = "control transport Delivery: failed to write control frame:"
+    if (!message.startsWith(prefix, ignoreCase = true)) return false
+    val detail = message.substring(prefix.length).lowercase()
+    return listOf("broken pipe", "connection reset", "connection aborted").any(detail::contains)
 }

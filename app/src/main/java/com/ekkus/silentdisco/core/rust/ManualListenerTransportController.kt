@@ -221,9 +221,10 @@ class ManualListenerTransportController(
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
-                    if (stopPlayback() == null) {
-                        _connectState.value = mapPostConnectionFailure(error)
-                    }
+                    val playbackFailure = stopPlayback()
+                    val transportFailure = closeExistingHandle()
+                    val cleanupFailure = playbackFailure ?: transportFailure
+                    _connectState.value = mapPostConnectionFailure(error, cleanupFailure)
                     break
                 }
                 if (event != null) {
@@ -309,11 +310,21 @@ class ManualListenerTransportController(
  * Maps any exception surfaced while polling an already-connected transport.
  *
  * The poll loop only starts after `connect()` and `sendJoinRequest()` have already
- * succeeded, so every exception it can observe - including `Closed`/`ShuttingDown` -
- * represents the connection ending, never a fresh configuration failure. Mapping any
- * of them to `Failed` would render a real "host ended session" as an indistinguishable
- * connection error.
+ * succeeded, so every exception it can observe represents the connection ending,
+ * never a fresh configuration failure. A typed `Closed` is the normal peer/runtime
+ * shutdown path, so keep that state but omit its low-level channel detail. Preserve
+ * diagnostics for other transport failures and all listener cleanup failures.
  */
 internal fun mapPostConnectionFailure(
     error: FfiListenerTransportException,
-): ManualConnectUiState.Disconnected = ManualConnectUiState.Disconnected(error.message)
+    cleanupFailure: Throwable? = null,
+): ManualConnectUiState = if (cleanupFailure == null) {
+    ManualConnectUiState.Disconnected(
+        message = if (error is FfiListenerTransportException.Closed) null else error.message,
+    )
+} else {
+    ManualConnectUiState.Failed(
+        "${error.message ?: "connection ended"}; listener cleanup failed: " +
+            (cleanupFailure.message ?: cleanupFailure::class.simpleName.orEmpty()),
+    )
+}

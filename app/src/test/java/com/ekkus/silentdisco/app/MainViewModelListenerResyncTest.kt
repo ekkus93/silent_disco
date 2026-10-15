@@ -4,9 +4,15 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
+import com.ekkus.silentdisco.core.model.SyncState
 import com.ekkus.silentdisco.core.model.TransportConnectionState
+import com.ekkus.silentdisco.core.rust.FakeListenerTransport
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
+import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
+import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
+import com.ekkus.silentdisco.feature.listener.listenerPlaybackStatus
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -117,6 +123,121 @@ class MainViewModelListenerResyncTest {
         assertThat(harness.viewModel._uiState.value.listenerPlaybackState)
             .isEqualTo(PlaybackState.PAUSED)
         harness.viewModel.resyncJob?.cancel()
+    }
+
+    @Test
+    fun hostStopReturnsToApprovedAndCancelsTheRuntimeClockProbeLoop() = runTest(dispatcher) {
+        val harness = bufferingListener()
+        harness.viewModel.listenerTransportConnected = true
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
+            listenerState = ListenerLifecycleState.PLAYING,
+            listenerPlaybackState = PlaybackState.PLAYING,
+        )
+        harness.viewModel.startPeriodicListenerResync()
+        runCurrent()
+        assertThat(harness.viewModel.resyncJob?.isActive).isTrue()
+
+        harness.viewModel.handleTransportStreamStopped()
+        runCurrent()
+
+        assertThat(harness.viewModel._uiState.value.listenerState)
+            .isEqualTo(ListenerLifecycleState.APPROVED)
+        assertThat(harness.viewModel._uiState.value.listenerPlaybackState)
+            .isEqualTo(PlaybackState.STOPPED)
+        assertThat(harness.viewModel._uiState.value.connectionProgress.currentState)
+            .isEqualTo(ListenerLifecycleState.APPROVED)
+        assertThat(harness.viewModel.resyncJob).isNull()
+        assertThat(listenerPlaybackStatus(harness.viewModel._uiState.value))
+            .isEqualTo("Playback stopped")
+    }
+
+    @Test
+    fun syncAcquisitionFailureClearsTheOldClockMappingBeforeRetry() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustListenerCore()
+        harness.viewModel.pendingSyncCorrelationId = 47L
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
+            listenerSyncState = SyncState(
+                offsetMs = -15_100_405.5,
+                rttMs = 93.0,
+                confidence = SyncQualityBadge.POOR,
+                resyncCount = 3,
+            ),
+            connectionProgress = harness.viewModel._uiState.value.connectionProgress.copy(synced = true),
+        )
+
+        harness.viewModel.handleSyncFailure("Unable to establish a stable sync estimate")
+
+        assertThat(harness.viewModel.pendingSyncCorrelationId).isNull()
+        assertThat(harness.viewModel.listenerSyncEstimator).isNull()
+        assertThat(harness.viewModel._uiState.value.listenerSyncState.offsetMs).isEqualTo(0.0)
+        assertThat(harness.viewModel._uiState.value.listenerSyncState.confidence)
+            .isEqualTo(SyncQualityBadge.UNKNOWN)
+        assertThat(harness.viewModel._uiState.value.listenerSyncState.resyncCount).isEqualTo(3)
+        assertThat(harness.viewModel._uiState.value.connectionProgress.synced).isFalse()
+        assertThat(harness.listenerCoreController.transportFailedCalls)
+            .containsExactly("Unable to establish a stable sync estimate" to true)
+    }
+
+    @Test
+    fun cleanHostCloseLeavesTheSessionWithoutShowingAConnectionFailure() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustListenerCore()
+        harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
+            selectedSession = SessionInfo(
+                id = "session-1",
+                name = "Patio Mix",
+                hostDeviceName = "desktop-host",
+                approvalMode = ApprovalMode.MANUAL,
+                inviteCodeRequired = false,
+            ),
+            listenerState = ListenerLifecycleState.PLAYING,
+            listenerPlaybackState = PlaybackState.PLAYING,
+        )
+
+        harness.viewModel.handleListenerTransportEvent(
+            harness.listenerCoreController,
+            FfiListenerTransportEvent.ConnectionClosed(message = null),
+        )
+
+        assertThat(harness.listenerCoreController.cancelJoinCallCount).isEqualTo(1)
+        assertThat(harness.listenerCoreController.transportFailedCalls).isEmpty()
+        assertThat(harness.viewModel._uiState.value.listenerPlaybackState).isEqualTo(PlaybackState.STOPPED)
+    }
+
+    @Test
+    fun discoveredListenerRelaysItsSyncSummaryToTheHostTransport() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+
+        harness.viewModel.reportListenerSyncToHost(
+            FfiSyncConfidence.EXCELLENT,
+            offsetMs = 72_401.0,
+            roundTripMs = 12.0,
+            driftPpm = 3.5,
+        )
+
+        assertThat(harness.listenerTransport.syncReportCalls).containsExactly(
+            FakeListenerTransport.SyncReportCall(
+                FfiSyncConfidence.EXCELLENT,
+                72_401.0,
+                12.0,
+                3.5,
+            ),
+        )
+    }
+
+    @Test
+    fun wifiDirectCleanupIsLimitedToActiveOrPendingWifiDirectJoins() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+
+        assertThat(harness.viewModel.listenerHasPendingWifiDirectJoin).isFalse()
+
+        harness.viewModel.pendingEstablishNetworkOperationId = "pending-wifi-direct-join"
+        assertThat(harness.viewModel.listenerHasPendingWifiDirectJoin).isTrue()
+
+        harness.viewModel.pendingEstablishNetworkOperationId = null
+        harness.viewModel.listenerTransportRidesWifiDirect = true
+        assertThat(harness.viewModel.listenerHasPendingWifiDirectJoin).isTrue()
     }
 
     private fun kotlinx.coroutines.test.TestScope.bufferingListener(): MainViewModelHarness {

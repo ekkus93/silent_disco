@@ -249,6 +249,95 @@ fn recent_session_history_is_bounded_and_deterministically_ordered() {
 }
 
 #[test]
+fn interrupted_host_sessions_are_failed_transactionally_without_touching_other_rows() {
+    let test_path = TestDatabasePath::new("worker-interrupted-host-sessions");
+    let worker =
+        DatabaseWorker::start(DatabaseConfig::new(test_path.path()).expect("valid worker config"))
+            .expect("worker starts");
+    let client = worker.client();
+    let host_id = SessionId::new("host-left-active").expect("valid host session id");
+    let listener_id = SessionId::new("listener-left-active").expect("valid listener session id");
+    let completed_id = SessionId::new("host-already-completed").expect("valid completed id");
+
+    for (session_id, role, started_at_ms) in [
+        (host_id.clone(), AppRole::Host, 1_000),
+        (listener_id.clone(), AppRole::Listener, 1_100),
+        (completed_id.clone(), AppRole::Host, 1_200),
+    ] {
+        client
+            .begin_session(&SessionStart {
+                session_id,
+                role,
+                session_name: "Restart Recovery".to_owned(),
+                started_at_ms,
+            })
+            .expect("begin test session");
+    }
+    client
+        .update_session(&SessionUpdate {
+            session_id: host_id.clone(),
+            listener_count: 3,
+        })
+        .expect("update host listener count");
+    client
+        .end_session(&SessionEnd {
+            session_id: completed_id.clone(),
+            ended_at_ms: 1_300,
+            listener_count: 1,
+            outcome: SessionOutcome::Completed,
+            failure_code: None,
+            failure_message: None,
+        })
+        .expect("complete prior session");
+
+    assert_eq!(
+        client
+            .interrupt_active_host_sessions(900)
+            .expect("recover stale host sessions"),
+        1
+    );
+    let interrupted = client
+        .get_session(&host_id)
+        .expect("read recovered row")
+        .expect("recovered host row exists");
+    assert_eq!(interrupted.outcome, SessionOutcome::Failed);
+    assert_eq!(interrupted.ended_at_ms, Some(1_000));
+    assert_eq!(interrupted.listener_count, 3);
+    assert_eq!(
+        interrupted.failure_code.as_deref(),
+        Some("desktop.host_session.interrupted")
+    );
+    assert_eq!(
+        interrupted.failure_message.as_deref(),
+        Some("The desktop closed before the host session ended.")
+    );
+    assert_eq!(
+        client
+            .get_session(&listener_id)
+            .expect("read listener row")
+            .expect("listener row exists")
+            .outcome,
+        SessionOutcome::Active,
+        "listener history is not owned by desktop host recovery"
+    );
+    assert_eq!(
+        client
+            .get_session(&completed_id)
+            .expect("read completed row")
+            .expect("completed row exists")
+            .outcome,
+        SessionOutcome::Completed
+    );
+    assert_eq!(
+        client
+            .interrupt_active_host_sessions(1_400)
+            .expect("recovery is idempotent"),
+        0
+    );
+    worker.stop_and_join().expect("worker closes and joins");
+}
+
+#[test]
 fn duplicate_session_maps_to_constraint_violation() {
     let test_path = TestDatabasePath::new("worker-constraint");
     let worker =

@@ -8,6 +8,292 @@
 **Shared-core specification:** `docs/SILENT_DISCO_RUST_CORE_ARCHITECTURE_SPEC.md`  
 **Shared-core TODO:** `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`
 
+## Current handoff for desktop/A54 acceptance (2026-10-15)
+
+**Latest connected-End retest (2026-10-15, 13:32 PDT):** On the clean
+packaged AppImage SHA-256
+`3e18179038321a68dfb474f8ffed03b341a11289bf6fb94dc1f176285b79ab99`, the
+A54 (`R5CW31AX4FL`, Android 16/API 36) joined `End Fix Packaged` by manual
+endpoint payload, was approved, and showed `Connected` then `Playing` after
+host playback started. One End action returned the desktop to Host Setup and
+closed the host ports; Android displayed `Host disconnected` and the normal
+message `The connection was closed.` with no technical error. This retest used
+the updated Android APK SHA-256
+`bb859c8af22308b9f8c55708ae510fd9c24408af136124f7d766cdc8488cd0ec`. Closing
+the idle packaged desktop window exited its process; relaunch reopened Host
+Setup with no host ports listening. This closes connected End/clean listener
+teardown and package clean shutdown for the single-A54 manual-connection path.
+Screenshots: `desktop/src-tauri/target/a54-manual-end-disconnected.png` and
+`desktop/src-tauri/target/a54-manual-end-host-setup.png`. No second phone was
+used.
+
+**Network-drop recovery retest (2026-10-15, 13:42 PDT):** On the same
+packaged AppImage and A54, a fresh `ReconnectProbe` session reached `Playing
+in sync`. Disabling both phone Wi-Fi and mobile data stopped playback and
+changed the screen to `Playback stopped` / `Unknown host`; desktop delivery
+counters showed no connected listener after audio finished. Re-enabling Wi-Fi
+restored `ElephantStone`, but after 15 seconds the phone remained stopped and
+did not reacquire the host. Explicit Leave returned to the app's home screen.
+One desktop End returned to Host Setup and closed the host control port. This
+confirms interruption detection and clean cleanup, while automatic
+reconnection/resynchronization still fails or is not implemented. The physical
+reconnect acceptance remains open.
+The lost-host playback screen previously showed `Playback stopped` / `Unknown
+host` without a recovery action because the lifecycle had not yet become
+`DISCONNECTED`. `listenerConnectionHealthSummary()` now identifies a stopped,
+cleared-session state on the listener route and exposes the existing `Fix
+connection` route to retry or return to sessions.
+`AppPresentationTest.stoppedListenerWithLostHostOffersConnectionRecovery`
+passes; `lintDebug` and `assembleDebug` pass. Installed APK SHA-256:
+`dd0e4df80f6eab32b8f449c9b45bf6dd8f2b2fe912c65ee0fdc0afc521bd0413`. The
+physical interruption was run on the preceding APK, so the new recovery button
+has not yet been exercised during a second network-drop run. Connection Help
+now uses the same lost-host predicate to show its `Reconnect` action for this
+state; `AppPresentationTest` verifies the predicate. Follow-up commit
+`4641fa3` contains this route completion. APK SHA-256 after the change:
+`dd0e4df80f6eab32b8f449c9b45bf6dd8f2b2fe912c65ee0fdc0afc521bd0413`.
+The Android recovery-affordance code and regression test were committed and
+pushed as `2609475` (`fix(android): expose lost host recovery action`). The
+TODO and memory evidence were updated separately in the working tree; the
+pre-existing TODO history has unrelated uncommitted edits, so it was not
+included in that code commit.
+
+**Recovery-action retest setup (2026-10-15, 13:54–13:58 PDT):** Installed APK
+`ea3890dc4856deb92b29dd832403fb0b05756cf59feee0b8d3e70795ef38afe7` and
+started a fresh host session on the packaged AppImage. The host reported mDNS
+`Advertising` and listened on `192.168.87.161:34329` (control), `56376` (sync),
+and `51819` (audio). A54 Nearby Sessions remained empty after an 8-second
+scan. A new QR invitation was generated, but the phone camera view could not
+decode the displayed invitation in this automated setup. No listener joined,
+so this did not exercise the recovery action. The zero-listener host session
+was ended; its listening ports closed. The phone was returned from the scanner.
+This retry attempt is recorded as a discovery/automation limitation, not a
+product pass or an additional reconnect failure.
+
+**Reconnect action usability follow-up (2026-10-15):** On the A54 lost-host
+screen, `Fix connection` exposed `Reconnect`; tapping it emitted the
+`listener.retry` event and started discovery, but left the app on Connection
+Help, where discovered sessions could not be selected. The Reconnect callback
+now opens Nearby Sessions, and that route skips a duplicate scan when retry
+already started discovery. Focused Android presentation tests, `lintDebug`,
+and `assembleDebug` passed; updated APK SHA-256:
+`a18ab2844fff505e5f56b9f0418d24e10f9e7350f7f55752863fe13e5b3faeca`. The
+route fix is committed and pushed as `9d31ec0`
+(`fix(android): route host reconnect to nearby sessions`). Installed this APK
+on the phone. On the rebuilt-app retest, Help-to-Nearby navigation
+worked; the A54 discovered and rejoined the host after approval,
+then showed `Playing in sync` / `Clock sync locked` after the host restarted
+the source. Desktop showed `Connected — sync good`. One End closed host ports
+and Android returned home. This verifies explicit user-driven recovery;
+automatic reconnection without user action remains unverified.
+
+**Core diagnosis and package evidence (2026-10-15, 13:04 PDT):** The connected End trace captured
+the actual rejection: the actor received `command-6` with expected snapshot
+revision 110 while its serialized current revision was 112. It emitted only
+that stale-revision error, so `StopAdvertising` was never scheduled. Core now
+treats End as a terminal intent on the currently active session and retains
+revision checks for all other commands. A focused actor regression test proves
+a stale End transitions to `ending_session` and emits `StopAdvertising`.
+`cargo test --locked --all-features` passed (335 passed, 5 ignored), strict
+Tauri Clippy passed, and the release executable rebuilt cleanly. Its SHA-256
+is `0c32e9e26b1a74553de5d2d64a4adecdd6ef4a6bde55b21a41f23d924ce53199`; it
+contains no `shutdown_probe` marker. Rebuilt the AppImage; its SHA-256 is
+`3e18179038321a68dfb474f8ffed03b341a11289bf6fb94dc1f176285b79ab99`, and
+Linux bundle verification passed. A one-action End on both the release binary
+and packaged AppImage with zero listeners returned to Host Setup and closed the
+host port. At that time the connected-listener packaged acceptance had not yet
+been rerun; the 13:21 PDT connected manual-endpoint retest above supersedes
+that gap for host shutdown. Android's clean return-to-home behavior remains
+open.
+
+Earlier 11:22 attempt notes below describe a separate build/run and are
+historical, not current state.
+
+**Read this before retrying desktop/A54 acceptance.** The user wants the agent
+to execute the test autonomously. Asking the user to run scripts or operate
+the app does not satisfy that request. The earlier successful desktop
+automation was real; the session's execution permissions subsequently changed.
+
+**Fresh acceptance update (2026-10-15, 02:05 PDT):** The rebuilt AppImage
+`cddf011fe8a230142f50ec57fcb4ce9d853da8e9a0f14763ac921bd3ad525589` was
+launched and controlled with desktop automation. On A54 `R5CW31AX4FL`
+(Android 16/API 36), a manual-endpoint connection was approved, the phone
+reached “Playing in sync,” and the desktop reported “sync excellent” while
+delivering all 1,252 observed frames to its one listener. The first End during
+playback returned the desktop to Host Setup and closed its control port; the
+phone showed a host-disconnected screen with the event-channel-closed detail,
+then returned to Nearby Sessions with Back. That run did not show the desired
+clean listener route.
+
+After installing the Android cleanup change (`app-debug.apk` SHA-256
+`c0a310862de48108b9ca549bf02ae5ba03a2a3f3074232d9fa1113b6c49955d7`), a
+second mDNS join again reached “Playing in sync.” One End stopped phone
+playback, but after more than a minute the desktop remained at lifecycle
+`ready`, transport `advertising`, and worker `running`, with control port
+`34603` still listening and End pending. The desktop process was terminated
+to release the stuck socket. Android then reported that it could not continue
+the listener workflow; explicit Leave returned it to the app home screen. This
+is a repeatable host teardown failure despite the `stop_host_inner` mutex fix,
+so one-action graceful teardown remains open. Do not mark Block 47 or Block
+52.8 complete. The AppImage is currently not running.
+
+**Shutdown-stage probe attempt (2026-10-15):** The focused real-LAN regression
+test for `stop_host_inner` passed again. I temporarily added stage markers and
+rebuilt an AppImage (SHA-256
+`88b7e69f1650505ceb0b49fe15957cb4c245ea24f9605910947091f7d2a90614`) to locate
+the physical stall. Desktop automation drifted into Settings after the file
+picker closed, before a host session was created, so the markers produced no
+shutdown evidence. The temporary source markers have been removed; the
+AppImage artifact still contains them and must not be used for acceptance.
+That AppImage was terminated without hosting. The phone remains at app home
+and no host ports are open.
+
+The temporary artifact was replaced by a clean-source rebuild after removing
+the markers. Current packaged AppImage SHA-256 is
+`165fa88baeae18ddfc2167b63dcc282f88dd5baea6d1c4d0c3017af5ba4fddd7`; it was
+not run through device acceptance. The desktop app remains closed.
+
+### Confirmed cause and evidence
+
+The saved conversation log is:
+`/home/phil/.codex/sessions/2026/10/14/rollout-2026-10-14T01-20-06-01a1397f-4b28-7c31-a09b-a5f75585d14b.jsonl`.
+Its turn-context records show:
+
+| Record | Local time (PDT) | Sandbox | Approval policy |
+| --- | --- | --- | --- |
+| Line 8 | October 14, 01:20:15 | `danger-full-access` | `never` |
+| Line 12388 | October 14, 09:04:28 | `workspace-write`, network disabled | `never` |
+
+Earlier tool calls in that log used `xdotool` and GNOME screenshots for desktop
+automation. In the restricted session, direct connections to the X11 socket,
+Wayland socket, and GNOME session bus return `Operation not permitted`.
+Changing models did not restore those permissions. The log establishes the
+permission transition; it does not establish who or what changed the setting.
+
+### ADB works when invoked directly
+
+The user's existing `/home/phil/.codex/rules/default.rules` contains
+`prefix_rule(pattern=["adb"], decision="allow")`. Direct ADB commands worked
+repeatedly during Astra's investigation. Shell output redirection and commands
+inside Python/bash wrappers did not inherit that rule and ran in the restricted
+context. This explains the recent apparent ADB intermittency; it is not evidence
+that the phone or USB cable disconnected.
+
+Run these as **separate direct tool commands**, without host-side redirection,
+environment assignments, or a wrapper script:
+
+```sh
+adb -s R5CW31AX4FL get-state
+adb -s R5CW31AX4FL shell screencap -p /sdcard/silent-disco-astra.png
+adb -s R5CW31AX4FL pull /sdcard/silent-disco-astra.png /home/phil/work/silent_disco/desktop/src-tauri/target/a54-astra.png
+```
+
+These capture and pull commands succeeded twice. A direct
+`adb -s R5CW31AX4FL shell input keyevent 4` also succeeded, returning the phone
+from the QR scanner to Nearby Sessions; the second capture verified the change.
+Inspect the pulled image with the image-viewing tool. Do not restart ADB servers
+or request another cable change merely because a sandboxed wrapper fails.
+Official explanation of rule matching and shell wrappers:
+<https://learn.chatgpt.com/docs/agent-configuration/rules>.
+
+### Resume conditions and current acceptance state
+
+**End correlation follow-up (2026-10-15):** The prior instrumented run showed
+End queued with no newer snapshot, while the actor validates the command's
+expected snapshot revision asynchronously. That is consistent with a stale
+revision rejection, but the error notification was not captured directly.
+`DesktopErrorDto` previously discarded the async error's operation ID, so the
+UI could not associate the failure with the pending End command. Core error
+DTO conversion now preserves that ID, and the host view model retries End once
+after fetching the current snapshot when the matching error reports a stale
+revision. Regression tests cover operation-ID propagation, a single retry at
+the latest revision, and keeping End pending through an intermediate `ready`
+snapshot. `npm run check` passed (143 frontend tests); Tauri
+`cargo test --locked --all-features` and strict Clippy passed. This retry path
+was superseded by the direct actor fix after the command rejection was
+captured: End now executes on the serialized active session without relying
+on a stale UI snapshot revision. The packaged connected-End retest above
+confirms desktop shutdown; Android clean return-to-home remains unverified.
+
+On AppImage SHA-256
+`fc4691f4aea8a2db68484b49233ee7c7f12b7d74821e640ecd9306396c47c0d7`, started
+`FinalEndCheck`. The A54 at home did not discover its mDNS advertisement in
+Nearby Sessions. The desktop showed mDNS Advertising and supplied manual
+connection details; the Android manual form rejected the `adb input text`
+payload because that path does not reliably type JSON punctuation. Created a
+fresh QR invitation and opened the in-app scanner, but it was not decoded; no
+listener joined in this attempt. End with no connected listener returned the
+desktop to Host Setup and closed its host port. The phone returned to app home.
+This does not test End while connected. Keep Block 47 and Block 52.8 open.
+
+The previous physical attempt left the desktop app itself running in Host
+Setup; it is idle and no host control port is listening. The QR attempt did
+not require a second phone. The remaining single-phone connected End test
+still needs a completed join and playback before it can validate this retry.
+
+**Update (2026-10-15):** Desktop GUI control and direct ADB are available.
+The packaged AppImage is running and has been controlled directly. The A54
+debug APK was rebuilt and installed in place (SHA-256
+`e68295247226d2e5f5107646ce25e5340dfac338592551ef53b1bc479b9b1957`); the
+previous user-authorized uninstall already erased prior app data. The physical
+QR scan/join is complete. The rebuilt app rejoined over mDNS, locked sync, and
+played the 60-second test WAV; host Stop appeared correctly on the phone. The
+new sync-estimator reset fixed the poor-sync retry. A clean host-close handler
+was added after reproducing the teardown error. The phone's approval request
+was below the desktop viewport, then it was approved. The clean-close route
+has now been exercised on device: after the first host End during playback the
+phone showed Playback stopped without an error but remained on its monitor
+screen while the desktop port remained open for at least 40 seconds. A second
+End action closed the port and Android returned home with `QR Probe` in Recent
+without an error. One-action teardown remains unresolved. See Block 47,
+Block 52.8, and
+`memory.md`.
+
+**Discovered-session close follow-up (2026-10-15):** The connected A54 logs
+identified a typed `FfiListenerTransportException.Closed` poll exception
+(`transport event channel is closed`) reaching `ConnectionClosed` with a
+non-null message. The shared event handler correctly treats a null-message
+peer close as a normal leave, so `ListenerTransportController` now maps the
+typed `Closed` poll result to a null message while preserving diagnostics for
+other poll errors. Added lifecycle tests for both mappings. The focused JVM
+test and `./gradlew testDebugUnitTest lintDebug assembleDebug --stacktrace
+--console=plain` passed; the rebuilt APK SHA-256 is
+`b9713eb892d21fdd8fccec8a67e7079547b5255795b51e82f6e053094b80aa13` and was
+installed on the A54. Physical retest verified mDNS discovery, request,
+approval, and connection, but playback was not restarted. Closing the desktop
+while the listener was connected led Android into its reconnect attempt and
+then “The nearby connection failed”; this does not verify graceful listener
+teardown. Keep Block 47 and Block 52.8 open. Desktop is closed and no host
+ports are listening; the phone was backed out to Nearby Sessions.
+
+**Scope note (2026-10-15):** Per the user's direction, omit any acceptance
+task that requires a second physical Android phone. Keep those items unchecked
+and label them as skipped by scope; continue single-phone, desktop, and
+environment checks independently.
+
+**End-pending UI follow-up (2026-10-15):** A newer snapshot reporting
+`ready` can be playback shutdown progress, not proof that End completed. The
+host view model now keeps End disabled until a newer snapshot reports `idle`
+or `error`. Added a test for the intermediate `ready` state; all 142 desktop
+tests pass, as do bindings, format, lint, typecheck, and production frontend
+build. A new AppImage was built with SHA-256
+`6d8b8046d50e1359d16618e5746afe8044de48db9e7fc2319f3a61dcab92278f`; the
+one-action physical behavior still needs revalidation on this updated build.
+
+- Current host: after the 2026-10-15 interface-disruption session failed to
+  recover its listener and End did not release the host, the desktop process
+  was terminated. The same packaged AppImage was relaunched; it opened to Host
+  Setup with no active session or host control port. The A54 explicitly left
+  and is at the app home screen. AppImage SHA-256:
+  `165fa88baeae18ddfc2167b63dcc282f88dd5baea6d1c4d0c3017af5ba4fddd7`.
+  The A54 is now at app home after explicit Leave. LAN address was
+  `192.168.87.161`; the A54 is `R5CW31AX4FL`, Android 16/API 36, on the same
+  Wi-Fi LAN.
+- Prepared audio: `/tmp/silent-disco-acceptance-tone-60s.wav`. Recent device
+  captures are under `desktop/src-tauri/target/`.
+- One physical A54 is available; the user has already said no second phone
+  exists, so two-listener acceptance cannot be completed on this setup.
+
 ---
 
 ## 0. How to execute this TODO
@@ -1325,11 +1611,25 @@ Record:
 - [x] Wi-Fi access point/router (same private-LAN subnet, no isolation confirmed by IP/ping);
 - [x] desktop connection type;
 - [x] IP addresses;
-- [ ] firewall configuration: `/etc/ufw/ufw.conf` says `ENABLED=no`, but
-      runtime status could not be inspected (`ufw status` requires root, and
-      netlink inspection is denied). No interference was observed; active
-      firewall configuration remains unverified because this session has no
-      interactive `sudo` access.
+- [ ] firewall configuration: `/etc/ufw/ufw.conf` says `ENABLED=no`, while
+      `ufw.service` is `active (exited)` and enabled. Retried unprivileged on
+      2026-10-14: `nft list ruleset` failed to initialize its netlink socket
+      (`Operation not permitted`), `iptables -S` failed to initialize nft
+      (`Operation not permitted`), and `ufw status verbose` reported that root
+      is required. `sudo -n` is unavailable in this managed session because
+      no-new-privileges is set. A fresh read-only probe confirms the UFW config
+      remains `ENABLED=no`, but denies reads of `/etc/ufw/user.rules` and
+      `user6.rules`. `/etc/nftables.conf` contains only empty base chains and
+      no explicit policy; the systemd bus is also inaccessible, so this does
+      not prove whether that file is loaded or what runtime rules are active.
+      The active firewall rules remain unverified. mDNS and listener traffic
+      were observed over the test LAN; no interference was seen, but that does
+      not prove the effective firewall policy.
+      Rechecked 2026-10-15: `nft list ruleset`, `iptables -S`, and
+      `/proc/net/ip_tables_names` remain denied to this user; `sudo -n`
+      explicitly reports that a password is required. Effective runtime
+      firewall rules therefore remain unverified and need a privileged
+      read-only inspection.
 - [x] exact commands.
 
 ### 24.2 Run control tests
@@ -1961,7 +2261,32 @@ Do not claim a maximum skew without measurement.
 - [ ] record CPU, memory, queue high-water marks, and delivery failures;
 - [ ] define only evidence-backed limits.
 
+**Hardware availability (2026-10-14):** Only one physical Android phone is
+available; the user confirmed that a second phone cannot be connected for this
+run. Prior mixed A54/emulator evidence does not satisfy the two-physical-device
+criteria above. Two-device playback, skew measurement, disconnect policy, and
+scaling checks remain open.
+
+**Scope note (2026-10-15):** The user directed us to skip tasks requiring a
+second Android phone. The two-physical-listener matrix, inter-device skew,
+two-device disconnect policy, and two-device scaling results are therefore
+intentionally omitted for this run, not treated as passes.
+
 **Acceptance:** At least two Android listeners receive and control the desktop-hosted stream with recorded evidence.
+
+**Existing automated coverage (not physical acceptance):**
+`rust/silent-disco-core/src/transport/handshake_tests.rs::socket_runtime_completes_multi_listener_join_sync_and_audio_exchange`
+exercises two independent listener identities through join, authorization,
+sync request/response, control delivery, and audio fan-out, and asserts that
+both recipients are included in successful delivery accounting.
+`rust/silent-disco-core/src/transport/liveness_tests.rs::a_silent_peer_is_evicted_and_stops_being_reported_as_delivered`
+checks that a silent peer stops being counted and delivery becomes explicitly
+zero-recipient; `transport/virtual_reconnect_tests.rs` checks reconnect delay
+and reconnection; `tests/host_block12_actor_lifecycle.rs` checks that listener
+disconnect/reconnect and playback state changes are reflected by the core.
+These tests cover software behavior only. They do not prove that two Android
+devices complete sync, render the same stream, respond to controls, or remain
+audible after one leaves; the physical items above remain open.
 
 ---
 
@@ -2235,7 +2560,9 @@ before this block, mirroring Android's Keystore-backed
       caches an invitation (`create_host_invitation` always builds a
       fresh nonce/expiry), and the frontend shows an expired invitation
       as a visible "This invitation expired" state instead of the QR
-      image, rather than continuing to display it as valid.
+      image. `QrInvitationPanel` schedules a render at the signed expiry,
+      so a QR already on screen disappears without requiring another
+      interaction.
 
 ### 31.3 Tests
 
@@ -2245,7 +2572,8 @@ before this block, mirroring Android's Keystore-backed
       `creates and renders a signed QR invitation with a copyable text fallback`.
 - [x] expired invitation -- `p2::tests::qr_signature_expiry_tampering_and_replay_are_enforced`
       (shared validator, reused as-is) and the Vitest
-      `shows an expired invitation as stale rather than silently reusing it`.
+      `shows an expired invitation as stale rather than silently reusing it`,
+      plus `QrInvitationPanel`'s timer-driven expiry regression.
 - [x] tampered invitation -- `p2::tests::qr_with_a_tampered_connection_payload_is_rejected`
       (new, specific to the embedded connection field) alongside the
       pre-existing general tampering case in the same test module.
@@ -2256,15 +2584,114 @@ before this block, mirroring Android's Keystore-backed
       falling back to the same copyable text control shown in the
       success path (mirrors Android's own `QrHostInvitationDialog`
       failure branch, `onFailure` in `QrInvitationDialogs.kt`).
-- [ ] Android scan/join physical test -- blocked on physical hardware,
-      same as A7/Block 29 and D3. Desktop-side generation and Android-side
+- [x] Android scan/join physical test -- desktop generation and Android
       wiring (`P2ValidatedInvitation.connectionPayloadJson`,
       `VerifiedQrInvitationDialog`'s "Connect" action,
       `MainViewModel.prefillManualEndpointFromInvitation`) are implemented
       and unit/instrumented-tested (`P2PresentationTest.kt`,
       `P2UiTest.kt`'s `verifiedInvitationWithADesktopEndpointOffersConnectInsteadOfDiscovery`),
-      but no physical Android device has scanned a real desktop-issued QR
-      and connected end to end.
+      Physical Android scan/join completion is recorded in the Block 47
+      packaged QR and playback retest below. The following ADB access notes
+      record earlier failed attempts. The SM-A546E appeared in an `adb devices -l`
+      probe on 2026-10-14, and one `adb shell getprop ro.build.version.release`
+      returned Android 16 / API 36. `dumpsys package` reported the installed
+      `com.ekkus.silentdisco` as version 0.1.0, versionCode 1. Later APK-pull
+      and screen-capture attempts could not reconnect because the sandbox ADB
+      daemon failed to bind `tcp:5037` (`Operation not permitted`), so access
+      from this process is intermittent. Retried after the user restarted the
+      A54 on 2026-10-14: `adb devices -l` listed `R5CW31AX4FL` and an ADB shell
+      query returned API 36, but the subsequent package-version and screenshot
+      requests could not start the ADB server (`could not install *smartsocket*
+      listener: Operation not permitted`); the capture file was empty. An
+      alternate `localfilesystem:` ADB server socket failed to start with the
+      same listener error. The fresh restart therefore did not provide a
+      readable screen or app-version result. On the next retry, the user
+      successfully started the ADB server in the host terminal and confirmed
+      `R5CW31AX4FL device` with `adb devices -l`. The runner still could not
+      reuse that server: its next ADB invocation reported that no daemon was
+      running and again failed to bind its own `tcp:5037` listener with
+      `Operation not permitted`; no screenshot or package-version result was
+      produced. This indicates the host ADB server is not reachable from the
+      runner's execution namespace. The host then started a server on
+      `localfilesystem:/tmp/silent-disco-adb.sock` and confirmed the A54 through
+      that socket, but the socket path was absent from the runner's `/tmp`; its
+      client again tried to start its own server and hit the listener denial.
+      A subsequent host server on
+      `desktop/src-tauri/target/silent-disco-adb.sock` also listed the A54, but
+      that socket path was absent from the runner's view of the shared workspace;
+      its client again could not connect and attempted the denied server bind.
+      Host ADB is therefore not reachable through these Unix sockets across the
+      execution boundary. The collection script was switched back to the normal
+      host ADB server, but after that server restart `adb devices` returned an
+      empty list, so it stopped before writing the details or screen capture.
+      A follow-up host-terminal `adb devices` check at 15:58 PDT also showed an
+      empty list. After the user unplugged and reconnected the A54, the updated
+      collection script stopped both prior ADB endpoints, restarted the default
+      host server, waited 20 seconds, and still received only an empty device
+      list. The user replaced the USB cable and reran the same
+      helper at 16:12 PDT; it again started the default ADB daemon successfully
+      but returned only `List of devices attached`, with no serial, and wrote
+      no capture. The managed runner independently cannot initialize libusb
+      (`-99`) or bind its own ADB server socket (`Operation not permitted`),
+      but can read USB sysfs: at 16:21 PDT Linux enumerated `04e8:6860`, serial
+      `R5CW31AX4FL`, configuration `mtp_acm_adb`, with an ADB `ff/42/01`
+      interface. The ADB log shows an older custom-socket server still handling
+      this serial and then recording a USB timeout after the default server was
+      restarted. Multiple ADB servers competing for the same phone are now a
+      plausible cause of the empty default-server list; host USB-node permissions
+      and server ownership await a host-terminal diagnostic. The collection
+      helper now probes the existing default and known custom servers without
+      killing them. A host diagnostic at 16:25 PDT confirmed the A54's USB node
+      `/dev/bus/usb/001/011` is readable and writable by `phil`, and the
+      normal `tcp:5037` ADB server now lists `R5CW31AX4FL device`. It also
+      found three surviving ADB server processes (normal TCP plus both custom
+      sockets); the `/tmp` socket path was absent and the target socket probe
+      started a fresh empty server. The diagnostic helper was corrected to skip
+      custom sockets when the normal server already sees the A54 and to avoid
+      probing stale socket files. At 16:27 PDT the host capture helper used the
+      normal server and saved a valid 1080×2340 PNG showing Android USB settings
+      with "Transferring files / Android Auto" selected. `getprop` returned API
+      36 and `dumpsys package` confirmed Silent Disco 0.1.0, versionCode 1.
+      At 16:33 PDT `collect-a54-screen.sh --launch-app` opened the installed
+      app to its home screen and recaptured it; the installed APK SHA-256 is
+      `2616c6eca3236e8b13090d3006f6535c60e8a58fa18d98c8a1514f86fe7198bd`.
+      Phone enumeration, permissions, app launch, and screen capture are now
+      confirmed; generating a fresh desktop QR and physically scanning it remain
+      pending. This
+      process also cannot access the
+      desktop display: `xdpyinfo` and `gnome-screenshot` fail on `DISPLAY=:0` even with
+      `/home/phil/.Xauthority`, and `gnome-screenshot` still cannot open a
+      display with `DISPLAY` unset and `GDK_BACKEND=wayland`. The live QR screen
+      therefore cannot be observed or driven from this process to complete the
+      camera scan itself.
+
+The host runner confirmed that it cannot launch the GUI itself: direct AppImage
+launch fails because FUSE is unavailable, and the installed binary cannot
+initialize GTK from the restricted display namespace. Prepared
+`desktop/src-tauri/target/start-qr-acceptance-host.sh` for the user's real host
+terminal. It launches the current AppImage with its built-in extract-and-run
+mode (so it does not require FUSE), avoids a duplicate running instance, and
+prints the generated 60-second 440 Hz WAV source path for Host Setup. The QR
+acceptance run can continue once that window is open.
+
+**Scan-readability adjustment (2026-10-14):** The saved packaged screenshot's
+728-character invitation rendered at about 248 px across, and OpenCV did not
+decode it at that size. QR rendering now uses a 1024 px source image and a
+responsive display up to 672 px (`max-w-2xl`). Re-rendering that exact saved
+invitation with the new QR options decoded in OpenCV at 640 px; this is a
+desktop image check, not an Android camera scan. The focused HostSessionScreen
+suite passes 27/27; `npm run check` passes all 141 frontend tests and other
+frontend gates. The updated AppImage and `.deb` were rebuilt and passed the
+bundle verifier. Physical scan/join remains open.
+
+**Packaged expiry-timer observation (2026-10-14):** AppImage SHA-256
+`d86d030a19d05ed1c05917ec40058e9788089a33b8dae1634ca5706fdf8f04fa`
+hosted `QR-Physical-Oct-14` and created a signed invitation expiring at
+04:58:01 PDT. Without any other interaction, the packaged UI removed the QR
+and displayed “This invitation expired. Create a new one -- an expired
+invitation is never reused automatically.” at 04:59:13 PDT. The A54 scanner
+remained open but no physical scan or join occurred; this confirms the
+timer-driven expiry behavior in the package, not Android scan/join acceptance.
 
 All three quality gates run and green: `bash scripts/check-rust.sh`,
 `cd desktop && npm run check` (bindings-check, biome, tsc, 64/64 Vitest,
@@ -2273,7 +2700,8 @@ production build), and `./gradlew test lintDebug`.
 **Acceptance:** Android can join the desktop host through a Rust-generated invitation QR code.
 Structurally satisfied end to end (signed generation through Android-side
 connect wiring); the physical-device half of "join" is unverified,
-identically to this project's other hardware-blocked items.
+      Block 47 records the 2026-10-14 physical end-to-end scan, host approval,
+      and subsequent playback on the packaged AppImage with the Samsung A54.
 
 ---
 
@@ -2416,12 +2844,30 @@ With CPAL 0.18.x or current approved candidate, test:
       direct ALSA hardware access confirmed blocked by the `audio`-group
       permission gap. Both recorded as real, asymmetric findings, not
       papered over.
-- [ ] device removal -- not exercised. No removable/hot-unpluggable audio
-      device was available in this session, and deliberately killing the
-      user's live `PipeWire` session to force a disconnect would disrupt
-      their actual desktop -- an honest, documented gap, matching this
-      project's established pattern for hardware this session cannot
-      safely or actually reach (LG G6 physical device, ThreadSanitizer).
+- [x] virtual endpoint removal smoke -- a temporary PulseAudio null sink was
+      created without changing the default output, opened directly through
+      CPAL's PulseAudio host with a silent stream, then unloaded while the
+      stream was active. The CPAL error callback did not fire. The desktop's
+      default output remained unchanged, and the temporary sink disappeared.
+      This shows that this PulseAudio compatibility path does not report
+      virtual sink removal as a stream error; it is not physical unplug
+      evidence, and it does not exercise the production ALSA-default CPAL
+      selection.
+- [ ] physical device removal -- no removable/hot-unpluggable audio device
+      was available. Deliberately killing the user's live `PipeWire` session
+      would disrupt their desktop. The virtual endpoint smoke above does not
+      replace this hardware check; this remains an explicit physical gap,
+      matching the project's established pattern for hardware this session
+      cannot safely or actually reach (LG G6 physical device,
+      ThreadSanitizer). Rechecked on 2026-10-14 in the managed runner:
+      `/proc/asound/cards` lists only onboard AMD HDA/ACP devices, their sysfs
+      paths resolve under the PCI bus, `/dev/snd` has no device nodes, USB
+      enumeration fails (`libusb: -99`), and the PulseAudio/PipeWire client
+      cannot connect. No physical hot-unplug target is exposed to this process.
+      Current 2026-10-15 inventory differs from that managed-runner snapshot:
+      onboard AMD capture devices and `/dev/snd` nodes are now visible, but
+      `lsusb` lists only hubs, Bluetooth, webcam, and the Android phone; no
+      removable USB audio device is attached. No hot-unplug test was attempted.
 - [x] stream error callback -- not triggered via a live device-loss event
       (see "device removal" above), but its reachability was proven a
       different way: `build_output_stream` with a deliberately absurd
@@ -4625,15 +5071,42 @@ still require a graphical-machine profile.
 
 ### 45.3 Enforce evidence-based limits
 
-- [ ] choose maximum supported listener count only from results;
+- [ ] choose maximum supported listener count only from results; existing
+      probes measured up to 16 virtual listeners, including one 60 s soak, but
+      three repeated scaling runs now also exist (see 2026-10-14 evidence
+      below). These measurements use one host and virtual listeners, so they
+      do not establish a supported production maximum. Do not treat the core's
+      256-listener resource ceiling as a tested support claim. Physical
+      listener runs are still required before setting a product limit.
 - [x] choose diagnostic/UI aggregation cadence from results: retain the
       2,000 ms Diagnostics poll, which produced one committed UI update per
       poll (0.5 Hz) in the Profiler harness. Diagnostics are status summaries,
       not a real-time control path; the 5 s stale threshold tolerates one
       delayed poll without immediately labeling the snapshot stale.
-- [ ] add performance regression thresholds where stable;
+- [x] add performance regression thresholds where stable: the current evidence
+      is three repeated runs on one host plus a single 60 s soak. It supports
+      correctness bounds (queue capacity, overflow/failure counts, and
+      confidence classification), which are already enforced by tests, but it
+      does not establish portable timing or resource regression thresholds.
+      Keep collecting paired baselines across CI runs and hardware before
+      introducing numeric throughput/latency limits.
 - [x] record environment and raw summaries in `memory.md`;
 - [x] do not hide outliers.
+
+**2026-10-14 repeated virtual scaling evidence:** Rebuilt both release probes
+with Rust 1.97.1 on Ubuntu 22.04.5, x86_64, AMD Ryzen 5 5500U (6 cores / 12
+logical CPUs). Three baseline/runtime pairs cover 1/2/5/16 virtual listeners
+without loss and 5/16 with configured 50‰ loss; all had zero transport send
+failures, with observed receive loss 0‰ at zero loss and 52‰ at configured
+50‰. The 16-listener, 60 s soak configured 25‰ loss and observed 24‰, with
+zero transport send failures, 37,248 KiB maximum RSS, 8,544 KiB RSS at end,
+2.68 s user CPU over 61.32 s elapsed, and orderly shutdown. Across the three
+desktop runtime probes, five virtual listeners received all 1,000 intended
+deliveries, queue overflows were zero, queue peak was 193–197/256, and
+notification backlog peak was 49/64. `analyze-block45-performance.py` passed.
+Raw JSON, analyzer summary, environment, and `/usr/bin/time -v` reports are in
+`/tmp/silent-disco-block45-20261014-repeat`. These are one-host virtual
+measurements and do not establish a physical listener maximum.
 
 **Acceptance:** Release expectations are based on measured operation rather than desktop hardware assumptions.
 
@@ -4682,6 +5155,26 @@ This is not a release-build result: the Linux bundle CI job builds on
 and uninstall were not exercised in this VM. Keep Block 46.3 open until the
 Ubuntu 22.04-built CI/release artifact completes the full fresh-machine flow.
 
+**2026-10-14 local package follow-up:** On Ubuntu 22.04.5 amd64, built both
+the AppImage and `.deb` from the current working tree after the
+rejection-correlation fix. `verify-linux-bundles.py` passed for both; the AppImage
+launched for a 15-second isolated Xvfb smoke. That smoke emitted portal/FUSE
+permission warnings in the temporary session, so it is launch evidence only.
+The fresh-machine install/upgrade/uninstall flow and profile lifecycle remain
+unverified. AppImage SHA-256:
+`f89135036c8734dc0deb3a7f2796f14649f61fc741eab7cfca3ddc396c18899d`; `.deb`
+SHA-256: `9c2bd2833d991505b989419220dc059465be176cec0cc735ecfc7d03041c43a4`.
+
+**2026-10-15 clean-container launch smoke:** Ran the current AppImage
+(`3e18179038321a68dfb474f8ffed03b341a11289bf6fb94dc1f176285b79ab99`) inside
+a newly pulled Ubuntu 22.04.5 container after installing its GTK/WebKit,
+AppIndicator, FUSE compatibility, and Xvfb runtime packages. The AppImage
+started under Xvfb and remained running until the 12-second smoke timeout
+(`124`), with no startup error output. This confirms dependency resolution and
+basic packaged startup in an isolated Ubuntu userspace. The container had no
+physical audio device or Android connectivity and did not exercise graphical
+profile/source/diagnostics flows or package uninstall; Block 46.3 remains open.
+
 **Acceptance:** Block 46.2 is complete on the supported Ubuntu 22.04 CI baseline: package contents, clean install, synthetic-version upgrade, no-development-server launch, uninstall, and profile-local user-data preservation all pass. Block 46.3 fresh-machine validation with a graphical Ubuntu 22.04 machine/VM and a physical Android listener remains open.
 
 ---
@@ -4690,34 +5183,397 @@ Ubuntu 22.04-built CI/release artifact completes the full fresh-machine flow.
 
 Run the complete production matrix using packaged Linux build and physical Android devices.
 
-- [ ] manual endpoint join;
-- [ ] mDNS discovery;
-- [ ] QR invitation;
-- [ ] approval/rejection;
-- [ ] one listener audio;
+Per the user's 2026-10-15 direction, omit the two-listener audio row and any
+other validation that requires a second physical Android phone. Continue all
+single-phone checks in this block.
+
+- [x] manual endpoint join;
+- [x] mDNS discovery;
+- [x] QR invitation;
+- [x] approval/rejection;
+- [x] one listener audio;
 - [ ] two listener audio;
-- [ ] pause/resume/stop/end;
-- [ ] Android disconnect/reconnect;
-- [ ] desktop interface disruption;
-- [ ] host source failure;
-- [ ] local monitor failure with transmit policy;
-- [ ] desktop restart;
-- [ ] diagnostics export;
-- [ ] clean shutdown;
-- [ ] reopen profile and session history.
+- [x] pause/resume/stop playback controls;
+- [x] graceful end while connected and clean listener teardown (fixed
+      packaged AppImage SHA-256
+      `3e18179038321a68dfb474f8ffed03b341a11289bf6fb94dc1f176285b79ab99`:
+      A54 manual endpoint join was approved; phone showed `Playing` during
+      host playback. One End returned desktop to Host Setup and closed its
+      ports. With updated APK SHA-256
+      `bb859c8af22308b9f8c55708ae510fd9c24408af136124f7d766cdc8488cd0ec`,
+      Android showed `Host disconnected` / `The connection was closed.` with
+      no transport error. Its manual page offered retry/back, as expected for
+      that route. The former expected-revision 110/current 112 race has a core
+      regression test. See screenshots in `desktop/src-tauri/target`);
+- [x] Android disconnect/reconnect by explicit recovery (2026-10-15 packaged
+      AppImage / A54 `R5CW31AX4FL`, Android 16/API 36, session `ReconnectProbe`):
+      the initial 13:42 PDT drop test stopped playback and changed the listener
+      to `Playback stopped` / `Unknown host`; restoring Wi-Fi did not resume
+      automatically. The lost-host screen now exposes `Fix connection`, and
+      `Connection Help` exposes `Reconnect`. On the rebuilt APK
+      (`a18ab2844fff505e5f56b9f0418d24e10f9e7350f7f55752863fe13e5b3faeca`),
+      the 14:21–14:25 PDT retest disabled Wi-Fi and mobile data while the A54
+      showed `Playing in sync`. Restoring Wi-Fi and selecting `Fix connection`
+      → `Reconnect` opened Nearby Sessions; mDNS found `ReconnectProbe`. The
+      A54 selected it, requested access, and was approved. The 60-second source
+      finished during sync acquisition; restarting playback led Android to
+      `Playing in sync` / `Clock sync locked`, while desktop showed
+      `Connected — sync good`. One End returned Host Setup, closed host ports,
+      and returned Android home. This passes explicit user-driven recovery and
+      resynchronization; automatic reconnection without user action remains
+      unverified. Packaged AppImage SHA-256:
+      `3e18179038321a68dfb474f8ffed03b341a11289bf6fb94dc1f176285b79ab99`;
+      `AppPresentationTest.stoppedListenerWithLostHostOffersConnectionRecovery`
+      passes. The earlier `Connecting` note was from a separate pre-playback
+      attempt and remains historical only);
+- [ ] desktop interface disruption (2026-10-15 single-A54 attempt on the
+      packaged AppImage SHA-256
+      `165fa88baeae18ddfc2167b63dcc282f88dd5baea6d1c4d0c3017af5ba4fddd7`:
+      with the listener showing `Playing in sync`, disconnected the host's
+      `wlo1` Wi-Fi interface for about 8 seconds and restored the
+      `ElephantStone` connection. The A54 capture during the outage still
+      showed `Playing in sync`; after restoration it showed `Playback stopped`
+      and `Unknown host`. The desktop remained alive and kept its session, but
+      its connected-listener panel showed none and its transport worker
+      reported `synchronization transport Unauthorized: datagram source is not
+      an authorized peer route`. Broadcast diagnostics after the attempt showed
+      6,350/12,002 frames sent to every connected listener, 5,649 with no
+      listener, and 0 failed before send. The WAV finished. This verifies the
+      host process survives the interface drop, but listener recovery failed;
+      the desktop End action did not complete after retries, so the process
+      required forced cleanup. Keep the row open.)
+- [ ] host source failure (automated production-path coverage exists in
+      `desktop/src-tauri/src/platform/start_playback_tests/lifecycle_tests.rs::a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streaming`
+      and `desktop/src-tauri/src/platform/source_staging_tests.rs::source_read_failure_is_visible_and_never_publishes`; physical packaged acceptance remains
+      open);
+- [ ] local monitor failure with transmit policy (deterministic monitor
+      delivery-failure coverage exists in
+      `desktop/src-tauri/src/platform/monitor_tests.rs::a_locally_rejected_monitor_datagram_fails_visibly_and_disable_propagates_teardown`; physical packaged
+      acceptance that confirms transmission continues remains open);
+- [x] desktop restart: after the 2026-10-15 interface-disruption attempt,
+      terminated the packaged AppImage process with SIGTERM while its host
+      session was still active and End had not released the transport. The A54
+      showed Playback stopped / Unknown host, then explicit Leave returned it
+      to the app home screen. Relaunched the same AppImage SHA-256
+      `165fa88baeae18ddfc2167b63dcc282f88dd5baea6d1c4d0c3017af5ba4fddd7`;
+      it opened to Host Setup and the session's host control port was no longer
+      listening. This verifies process restart recovery, not graceful shutdown.
+- [x] diagnostics export: on 2026-10-15, packaged AppImage SHA-256
+      `165fa88baeae18ddfc2167b63dcc282f88dd5baea6d1c4d0c3017af5ba4fddd7`
+      exported from the Diagnostics screen; the success message appeared and
+      the 1,182-byte output parsed as a JSON object with the expected sections.
+- [x] clean shutdown: after connected End returned to Host Setup and closed
+      host ports, closing the idle AppImage window exited the desktop process.
+      Relaunching the same AppImage reopened Host Setup with no host ports
+      listening (AppImage SHA-256
+      `3e18179038321a68dfb474f8ffed03b341a11289bf6fb94dc1f176285b79ab99`).
+- [x] reopen profile and session history.
 
 Record exact:
 
-- [ ] desktop package version and SHA;
-- [ ] Android APK version and SHA;
-- [ ] devices and OS versions;
-- [ ] network topology;
-- [ ] commands;
-- [ ] pass/fail;
-- [ ] measured synchronization;
-- [ ] known limitations.
+- [x] desktop package version and SHA;
+- [x] Android APK version and SHA;
+- [x] devices and OS versions;
+- [x] network topology;
+- [x] commands;
+- [x] pass/fail;
+- [x] measured synchronization (latest reconnect attempt was poor; see below);
+- [x] known limitations.
 
 **Acceptance:** The packaged Linux desktop is a production-capable Silent Disco host for Android listeners.
+
+**Physical acceptance update (2026-10-14):** AppImage `0.1.0`, SHA-256
+`dad27afb838e330951dd589da8c91c1675b7efc2f2ec0e3cb7bd16e2d01f0ffc`; `.deb`
+`0.1.0`, SHA-256
+`e37bcb30733dc0f6bd944e65b727f2c258f456550aa2916de3196a92da5c82a8`; Android
+APK `0.1.0`/versionCode 1, SHA-256
+`8d9b9a96b1159f66524b585679c22f9a048615399d10ca33baf37a6ba19ed1f8`. Host:
+Ubuntu 24.04 x86_64, `wlo1`/`192.168.87.161`; listener: Samsung Galaxy A54
+SM-A546E, Android 16/API 36, `192.168.87.215`; same `192.168.87.0/24` Wi-Fi
+LAN. A54 mDNS discovery, one-listener audio, approval/rejection, and
+pause/resume/stop were physically observed. A subsequent approved listener
+was waiting for sync when the host ended; Android displayed a nearby-connection
+failure, though the earlier Wi-Fi Direct BUSY warning did not recur. Manual
+endpoint JSON entry was attempted but Android ADB text injection dropped
+punctuation, so it did not count as a join. QR scan/join, clean listener
+teardown, second listener, sync offset measurement, restart/failure scenarios,
+and clean-machine package validation remain open. The current TODO and
+`memory.md` contain the command/test details and platform results.
+
+**Packaged QR and playback retest (2026-10-14):** The A54 scanned a fresh
+signed invitation displayed by the running AppImage. It connected to the
+active `QR Probe` session, the host approved the listener, and the listener
+reached “Connected — sync excellent.” Starting the selected 60-second 440 Hz
+acceptance WAV in the desktop app changed the A54 to “Playing.” At the captured
+desktop state the source was at 0:07, the host reported 1,526/1,530 local
+frames delivered to every connected listener and four frames delivered to
+none, with zero partial sends, failed sends, or no-listener sends. The
+listener card remained sync excellent. This closes the physical QR scan/join
+item and adds a QR-path playback pass; it does not measure numeric sync offset
+or verify that the tone was audible. The host page also displayed a transport
+worker `Unauthorized` message alongside the successful listener/sync status;
+investigate before claiming a clean diagnostics state. Other Block 47 gaps,
+including full graceful teardown, a second listener, and failure/restart cases,
+remain open.
+
+**End and reconnect follow-up (2026-10-15):** After the earlier failed retry,
+the A54 rejoined a fresh `QR Probe` session over mDNS, received host approval,
+and reached “Playing in sync.” Ending the host while playback was active
+stopped desktop playback; Android eventually showed “Playback stopped” without
+a workflow error or Wi-Fi Direct BUSY warning. After 40 seconds it remained on
+the host-monitor screen and the desktop port was still open. A second End
+action closed the host port and Android returned home with `QR Probe` in Recent
+without error. An earlier manual Android Leave had also returned home without
+error. This does not pass one-action graceful teardown because the first End
+did not close the host; investigate the delayed/retry behavior. The poor sync
+evidence from the earlier retry below remains a failure, not a pass.
+
+The desktop listener detail recorded sync confidence `poor`, offset
+`-15,100,405.5 ms`, round-trip time `93 ms`, drift `0 ppm`, and last contact
+`Not observed`. Treat this as failed synchronization evidence, not an
+acceptable alignment measurement; the app was still showing a playback problem
+while reporting the listener connected.
+
+**Sync retry fix and close-path follow-up (2026-10-15):** Android logcat showed
+the retry's first accepted sample still belonged to a 187,224 ms-old
+acquisition. The old sync estimator and UI mapping survived the prior sync
+failure, so its offset from the previous host epoch was compared against the
+new mapping and rejected as unstable. Android now closes and resets the
+estimator, pending probe, and lock state on sync failure, transport teardown,
+leave, and retry. A JVM regression test covers clearing the previous
+`-15,100,405.5 ms` mapping. Android unit tests, `lintDebug`, and `assembleDebug`
+passed. With the sync reset installed, the A54 rejoined the active packaged
+AppImage session over mDNS, the desktop showed “Connected — sync good,” and
+the A54 reached “Playing in sync.” Host Stop changed the phone to “Playback
+stopped.” This was observed on the build before the clean-close handler was
+added; physical host-End verification remains open.
+
+Android now treats an explicit host disconnect and a clean peer close as a
+session leave, while a close carrying an error remains a retryable failure.
+A regression test checks the clean-close path calls `cancelJoin` without
+reporting transport failure. The final installed debug APK hash is
+`e68295247226d2e5f5107646ce25e5340dfac338592551ef53b1bc479b9b1957` and its
+unit tests, lint, and build pass. The latest physical attempt after installing
+it reached “Waiting for host approval.” The request was below the desktop
+viewport; scrolling down revealed it, and approval succeeded. On the connected
+playback End run, Android stopped playback without a workflow error but did not
+leave its host-monitor page during a 40-second observation. The desktop showed
+lifecycle `ready` and playback `stopped`, while the transport indicator still
+read `advertising` and the transport worker remained running. Manual Android
+Leave returned home and Recent without an error. The clean-close routing has
+been device-exercised, but automatic listener teardown and desktop transport
+state remain unresolved; Block 47 and Block 52.8 stay open.
+
+**Physical progress evidence (2026-10-14; partial, not Block 47 completion):** On
+Ubuntu 24.04 x86_64, launched the release desktop binary directly (the `.deb`
+was built but not installed) and hosted session `A54 Acceptance Oct 14` on
+`wlo1` at `192.168.87.161`. Samsung Galaxy A54 (`SM-A546E`, Android 16/API 36,
+`R5CW31AX4FL`, `192.168.87.215`) discovered the host over mDNS on the same
+`192.168.87.0/24` Wi-Fi LAN. Desktop package artifact SHA-256:
+`a48d5188ae54a1d5c8d0725a3fca4b3ab2acbba56d40856b9d2289c2919a8ea4`;
+Android debug APK SHA-256:
+`4108123f4abe7c4e28ec5b09d733e9ee79180bf6bfd231ceac36c1b404180003`
+(installed app was existing version `0.1.0`, versionCode 1; APK was not
+installed because its signature differs). Generated 12-second and 60-second
+WAV tones were used as sources. The A54 joined through discovery and a host
+approval, played in sync with clock sync locked, and reflected host pause,
+resume, and stop. On a later fresh mDNS join, the A54 reached “Waiting for host
+approval,” but the desktop reported `desktop.operation_confirmation_missing`
+and “The join request disappeared before its decision was confirmed.” A second
+request attempt reproduced that host state. The rejection action was clicked
+once, but rejection is not counted as passed because delivery was unconfirmed.
+During the 60-second run, a sample reported 2,762/2,762 packets
+reaching every listener, zero partial deliveries, zero no-listener packets,
+and zero failed sends; the stop sample reported 5,185/5,185 with the same zero
+failure counts. The short run ended naturally before a pause test. No sync
+offset measurement was captured. Manual endpoint join was not completed: the
+ADB text-entry attempts stripped the JSON key quotes and were rejected by
+input validation. QR, second-listener, reconnect, interface/source/monitor
+failures, restart, diagnostics export, and profile-history scenarios remain
+unverified. After ending the host session, the desktop process exited through
+the window close protocol. Android briefly reported that cancellation was blocked
+because Wi-Fi Direct was busy; force-stopping and relaunching the app restored
+discovery without clearing app data. Desktop's listener card continued to say
+"waiting for its first clock sync" / `connecting` while Android reported
+locked clock sync and full packet delivery; that was the unresolved UI status
+discrepancy before the Android fix. This evidence does not satisfy the
+packaged-build or full matrix acceptance criteria above.
+
+**Follow-up device/control run (2026-10-14, same host session):** The current
+AppImage was open under GUI control, session `QR Probe` was active on
+`192.168.87.161`, and the A54 was on the same `192.168.87.0/24` Wi-Fi LAN.
+The A54 discovered the host over mDNS, joined, and was manually approved. The
+60-second 440 Hz WAV played; the phone showed locked sync and audible playback.
+Host Pause and Resume were reflected by the phone. With the previously
+installed APK, host Stop left the phone showing “Audio is out of sync” despite
+the listener transport remaining active. Logcat continued to show accepted
+low-RTT sync samples, so the link itself remained alive. This reproduced the
+stale runtime/pre-runtime clock epoch issue described in Block 52.7. Desktop
+still displayed “Approved — waiting for its first clock sync” although Android
+reported locked sync; this exposed the missing Android-to-host synchronization
+report on the discovered-session path, also fixed in Block 52.7.
+
+The fixes compile and pass Android unit tests/lint, but a physical retest was
+not possible: `adb install -r app/build/outputs/apk/debug/app-debug.apk`
+returned `INSTALL_FAILED_UPDATE_INCOMPATIBLE` because the installed package
+signature differs. Installing would require uninstalling the existing app and
+removing its local data. Current package artifacts are AppImage SHA-256
+`dad27afb838e330951dd589da8c91c1675b7efc2f2ec0e3cb7bd16e2d01f0ffc`, `.deb`
+SHA-256 `e37bcb30733dc0f6bd944e65b727f2c258f456550aa2916de3196a92da5c82a8`,
+and newly built debug APK SHA-256
+`8e10000934a88d20f98fdb111407c8919dd9661bff6b1cb11d335fc37f37d710`.
+
+**Updated Android retest (2026-10-14, after user-authorized uninstall):** The
+same AppImage session `QR Probe` was reused on Ubuntu 24.04 x86_64 and the A54
+on `192.168.87.215/24`. The updated installed APK hash matches the built APK:
+`8e10000934a88d20f98fdb111407c8919dd9661bff6b1cb11d335fc37f37d710`, version
+0.1.0 (versionCode 1), Android 16/API 36. The phone discovered the session by
+mDNS, requested access, and was approved. The host listener card changed to
+“Connected — sync excellent,” matching Android “Clock sync locked.” Starting
+the 440 Hz test WAV showed “Playing in sync.” Pause showed “Playback paused”;
+Resume returned to “Playing in sync.” Stop showed “Playback stopped” and
+remained stopped after an 8-second wait; the desktop still reported sync
+excellent. Ending the desktop session returned the phone to its home screen
+and recorded the session as recent, but Android displayed “Could not cancel
+the pending connection (Wi-Fi Direct is busy).” Therefore Stop and playback
+control pass on the updated APK; graceful end/cleanup is exercised but its
+Wi-Fi Direct warning remains open for investigation. One physical listener
+only; the other Block 47 scenarios remain open.
+
+**Follow-up teardown correction and device check (2026-10-14):** The Wi-Fi
+Direct BUSY warning came from `cancelJoinTransport()` being called
+unconditionally by both the join-cancel and leave-session UI paths. The A54
+was using the desktop's standard-IP mDNS transport, so no Wi-Fi Direct join
+existed to cancel. Added `listenerHasPendingWifiDirectJoin` and now invoke
+Wi-Fi Direct discovery/connect cleanup only for an active or pending
+Wi-Fi Direct join. The test `wifiDirectCleanupIsLimitedToActiveOrPendingWifiDirectJoins`
+covers both positive states and the standard-IP case. After `./gradlew test
+lintDebug --stacktrace --console=plain` and `./gradlew assembleDebug
+--stacktrace --console=plain` passed, the new APK was installed over the
+user-authorized build with `adb install -r`. The mDNS listener returned to the
+home screen after Leave without the previous Wi-Fi Direct BUSY warning. Its
+current APK SHA-256 is
+`8d9b9a96b1159f66524b585679c22f9a048615399d10ca33baf37a6ba19ed1f8`.
+
+### 52.8 Standard-IP listener leave attempted unrelated Wi-Fi Direct cleanup
+
+After the host ended a desktop mDNS session, Android returned to the home
+screen but surfaced `Could not cancel the pending connection (Wi-Fi Direct is
+busy)`. `SilentDiscoApp` called `DiscoveryLifecycleController.cancelJoinTransport`
+for every listener session. The mDNS path had no Wi-Fi Direct connection to
+cancel, so Android BUSY was an unrelated cleanup operation.
+
+- [x] Track active or pending Wi-Fi Direct listener joins in `MainViewModel`.
+- [x] Guard both Session Join cancellation and listener Leave cleanup so
+      standard-IP sessions do not call Wi-Fi Direct cancellation.
+- [x] Add unit coverage distinguishing standard-IP, pending Wi-Fi Direct, and
+      active Wi-Fi Direct states.
+- [x] Physical A54 check after rebuilding/installing the updated APK: joined
+      the desktop session via mDNS, then left while connected; returned to home
+      without the prior Wi-Fi Direct BUSY warning.
+- [x] Treat a typed `Closed` poll result after a manual endpoint connection as
+      a normal disconnect without displaying the low-level event-channel
+      shutdown detail. `./gradlew assembleDebug --stacktrace --console=plain`
+      passed and the updated APK was installed on the A54 (SHA-256
+      `bb859c8af22308b9f8c55708ae510fd9c24408af136124f7d766cdc8488cd0ec`).
+      The physical End observation that motivated this presentation fix was on
+      the prior APK; the updated message has not been separately observed on
+      device.
+- [x] Full end-while-connected teardown: fixed packaged AppImage SHA-256
+      retest joined and played with the A54, then one End action returned the
+      desktop to Host Setup and closed its ports. After installing Android APK
+      SHA-256 `bb859c8af22308b9f8c55708ae510fd9c24408af136124f7d766cdc8488cd0ec`,
+      a repeat run reached Playing and the phone showed `Host disconnected` /
+      `The connection was closed.` without an error. The manual-connect screen
+      offered retry/back; its transport handle and network lock were released.
+      The actor revision race is fixed and regression-tested. This pass covers
+      the manual endpoint path; discovered-session clean return-home remains
+      distinct and is not claimed here.
+
+**Manual endpoint attempt (2026-10-14, not accepted):** Started a new
+`QR Probe` session and opened Android's `Connect manually` form. The desktop
+connection-payload copy action produced the current session's JSON. Android
+`adb shell input text` does not emit the JSON punctuation (`{}`, quotes, and
+commas) reliably; the field contained malformed text and correctly rejected
+it as invalid JSON. No manual join was established. The test requires a real
+clipboard paste or QR scan on the A54 and is still open. Final package hashes
+for this run: AppImage `dad27afb838e330951dd589da8c91c1675b7efc2f2ec0e3cb7bd16e2d01f0ffc`,
+`.deb` `e37bcb30733dc0f6bd944e65b727f2c258f456550aa2916de3196a92da5c82a8`;
+debug APK `8d9b9a96b1159f66524b585679c22f9a048615399d10ca33baf37a6ba19ed1f8`
+(version 0.1.0/code 1).
+
+**QR scan setup (2026-10-14, completed by physical retest above):** The
+invitation expired during setup and was explicitly refreshed; the fresh
+invitation was then scanned with the A54's in-app QR scanner. The listener
+connected and was approved by the host, completing the join path. Expired
+invitations are not reused.
+
+**Follow-up investigation (2026-10-14):** The rejection banner was a frontend
+false negative: reconciliation treated every disappearing rejected request as
+unconfirmed, because the snapshot exposed delivery counts but not which
+operation produced them. The first correlation attempt used the transport
+effect ID, which differs from the accepted host command ID. The final fix
+threads the originating reject command ID through the pending transport effect
+and reports that ID with its completed delivery; automatic rejections use the
+effect ID. The desktop confirms rejection only when the ID matches the accepted
+reject command and at least one recipient received it. Reconciliation also
+waits for the command receipt if the completed snapshot arrives first. Rust
+actor and frontend regression tests cover matching, stale, and raced reports.
+On a fresh desktop session (`A54 Reject Test 2`), the host cleared the pending
+request after rejection and the A54 changed from “Waiting for host approval”
+to “The host did not approve this request.” This confirms the rejection
+delivery path on the A54; it does not close the packaged-build or full matrix
+acceptance items above.
+
+**Package and gate follow-up (2026-10-14):** Built the AppImage on Ubuntu
+22.04.5 amd64, rebuilt the `.deb` from the same working tree, verified both
+package payloads, and completed an isolated AppImage launch smoke. The complete
+Block 47 runner remains unavailable: only
+one physical Android device is attached, and replacing the existing phone
+installation with the locally signed debug APK would require uninstalling its
+user data. Rust workspace tests passed serially. The desktop full check has
+one repeatable suite-only failure in unrelated Lab test
+`edits a loaded link fault profile through the backend command` (139/140
+tests); its file passed alone (11/11). Block 47 and clean package lifecycle
+acceptance remain open.
+
+**Packaged approval recheck (2026-10-14; partial):** Launched the Ubuntu
+22.04.5 AppImage (`f89135036c8734dc0deb3a7f2796f14649f61fc741eab7cfca3ddc396c18899d`)
+in the graphical session and hosted `Test` on `192.168.87.161`. The A54
+(`SM-A546E`, Android 16/API 36) discovered it over mDNS, sent a join request,
+and reached the post-approval “Waiting for the host to start playback” stage;
+the packaged host announced “Listener approval was confirmed by the Rust
+core.” The phone then remained in initial sync with the host listener card at
+`connecting`; playback was not verified in this run. The app window became
+blank after a later interaction, so this is approval-path evidence only, not a
+packaged playback pass. The session was closed and the phone app force-stopped
+without clearing its data. This closes Block 52.4's packaged approval recheck;
+the complete playback and interoperability matrix remains open.
+
+**Interrupted host-history recovery (2026-10-14; implementation evidence):**
+The `QR-Physical-Oct-14` row remained `active` after its desktop process was
+gone. Profile startup now transactionally marks any prior active host-history
+rows `failed` with `desktop.host_session.interrupted`, preserving the last
+listener count and leaving listener-role and terminal rows unchanged. The
+storage-worker test covers those cases and idempotence; the app-state test
+seeds an active row, opens the real profile pipeline, then verifies the row is
+terminal. Both focused tests pass. This closes stale `active` history recovery
+in code; it does not complete the packaged desktop-restart/Android matrix.
+
+The updated release binary and `.deb` built successfully on Ubuntu 22.04.5.
+AppImage packaging initially failed because `appimagetool` could not download
+its runtime from GitHub in this restricted runner. Supplying the runtime
+extracted from cached `linuxdeploy` let Tauri finish both targets. That cached
+runtime cannot read the new tool's default Zstandard SquashFS, so the final
+AppImage was regenerated from the same staged release AppDir with XZ
+compression using the host `mksquashfs`. `verify-linux-bundles.py` passed for
+both final artifacts. AppImage SHA-256:
+`d0858718dbd4b4f7990f503680864b32209a9ebd33790218f89dc4a472784cbf`; `.deb`
+SHA-256: `c0098703cb0b6b2f0f9c2110919b3cd64210aeea99a368c07c0874ab49dcbc79`.
+The standard Tauri bundler was subsequently rerun with the newer cached runtime;
+the resulting AppImage extracts successfully and the bundle verifier passes.
+Graphical runtime launch remains unavailable here, so profile-recovery has
+focused test evidence but no packaged launch observation in this run.
 
 ---
 
@@ -4755,15 +5611,47 @@ Confirm:
 
 ### 48.3 Run final gates
 
-- [x] shared Rust format, strict Clippy, and workspace tests (`bash scripts/check-rust.sh`);
+- [x] shared Rust format, strict Clippy, and workspace tests (`bash scripts/check-rust.sh`); passed 2026-10-14.
 - [x] Android tests and lint (`./gradlew test lintDebug --stacktrace --console=plain`);
 - [x] Android instrumentation on SM-A546E / Android 16 (98 tests, one API-inapplicable legacy permission test skipped);
-- [x] frontend format/lint/typecheck/tests/build (`cd desktop && npm run check`, 121 tests);
-- [x] Tauri format, strict Clippy, tests, and check (330 passed, 4 ignored);
-- [x] Linux AppImage and `.deb` build plus package-content verification;
+- [x] frontend format/lint/typecheck/tests/build (`cd desktop && npm run check`, 141 tests on 2026-10-14);
+- [x] Tauri format, strict Clippy, tests, and check. On 2026-10-14,
+      `cargo fmt --all -- --check`, strict all-target/all-feature Clippy,
+      `cargo test --locked --all-features` (333 passed, 5 ignored), and
+      `cargo check --locked --all-targets --all-features` all passed in the
+      current host session.
+- [x] Linux AppImage and `.deb` build plus package-content verification. The
+      current source produced both artifacts using a cached AppImage runtime
+      because network access was unavailable. The complete two-format verifier
+      passed; the AppImage also extracted successfully. After adding
+      packet-sequence send-failure diagnostics (including error categories),
+      transport-wide counter wording, and the Block 31 QR scan-readability
+      adjustment, the latest AppImage and `.deb` were rebuilt and verified
+      again.
+      AppImage SHA-256
+      `63929088fe1a2e5edda74231a07fda2f0d9ef5be932da0cec8e9bef1767084ca`;
+      `.deb` SHA-256
+      `90fb149300ba1a6278fb4ba56635f99a9b47a554cc89a3375016eb82e8041b77`.
+      AppImage extraction passed, and the extracted binary contains the new
+      transport diagnostic event and failure-category strings.
 - [x] deterministic Lab scenarios (covered by shared and Tauri Rust test suites);
 - [x] loopback transport integration (covered by shared Rust workspace tests);
 - [ ] physical Android acceptance.
+
+**Current shared Rust gate results (2026-10-14):** Retried `bash
+scripts/check-rust.sh` after the latest changes. Formatting and strict Clippy
+passed; the core suite ran 341 tests, with 333 passing and 8 socket integration
+tests failing because TCP bind returns `Operation not permitted`. Keep the
+shared workspace gate open until these tests pass in a host environment that
+allows local socket binds.
+Earlier session evidence about denied GUI and ADB access is superseded by the
+later 2026-10-14 and 2026-10-15 host runs; GUI and direct ADB interaction
+worked, and the updated debug APK was installed on the A54. Per the user's
+2026-10-15 direction, tasks requiring a second physical Android phone are
+skipped. Remaining single-phone physical acceptance includes reliable one-
+action host teardown and the outstanding Block 47 failure/recovery matrix.
+Graphical fresh-machine validation and physical hot-unplug checks also remain
+open.
 
 ### 48.4 Mark completion honestly
 
@@ -5180,6 +6068,30 @@ therefore never been able to play audio from a desktop host.
       because independent monotonic clock epochs can have a large valid
       initial offset.
 
+### 52.7 Discovered-session sync reports never reached the desktop; Stop used a stale clock epoch
+
+The 2026-10-14 packaged-host run showed Android reporting locked clock sync
+while the desktop listener card remained in “waiting for its first clock
+sync.” The manual transport path already sent the sync summary, but the
+discovered-session listener path did not. In the same run, Stop left the phone
+in an out-of-sync UI state while its transport continued to exchange accepted
+sync probes. The playback runtime owns a distinct clock epoch; after Stop,
+the old periodic loop compared its offset with the pre-runtime estimator and
+incorrectly marked the session desynchronized.
+
+- [x] Add synchronization-report forwarding to the shared Android listener
+      transport interface and concrete controller.
+- [x] Relay accepted sync outcomes from both the pre-runtime and runtime
+      discovered-session paths to the host.
+- [x] On host Stop, cancel the runtime probe loop and return the listener UI to
+      Approved / Stopped while waiting for a new stream runtime.
+- [x] Add unit coverage for host sync-report forwarding and Stop state/loop
+      handling.
+- [x] `./gradlew test lintDebug --stacktrace --console=plain` passed on
+      2026-10-14. `./gradlew assembleDebug --stacktrace --console=plain` also
+      passed; physical verification is pending because the device's existing
+      app has a different signing key and uninstalling it would erase app data.
+
 ### 52.4 Approval delivery can hang forever without a visible failure
 
 At 10:00 on 2026-09-16 the host showed "Waiting for approval delivery
@@ -5214,9 +6126,11 @@ One refused effect quietly broke the rest of the session.
       with the fix disabled. `HostSessionScreen/domain.test.ts` covers the
       timeout window, a repeated identical failure, and operations not yet
       accepted. Rust gate 447 tests; desktop gate 108 tests.
-- [ ] Not device-verified: a refused effect cannot be provoked on demand from
-      the GUI. Re-check that approvals behave normally on the next packaged
-      build.
+- [x] Re-checked on the packaged Ubuntu 22.04.5 AppImage (2026-10-14): mDNS
+      discovery and the A54 join request reached the host, and the desktop
+      confirmed the approval through the Rust core. The phone moved beyond its
+      approval wait. It remained in initial sync, so this confirms the approval
+      behavior only; playback is still tracked in Block 47.
 - [x] Historical test flake: `LabScreen.test.tsx` "edits a loaded link
       fault profile through the backend command" occasionally submitted the
       prior numeric value plus the replacement (`30125`). The test now uses
@@ -5297,12 +6211,27 @@ One refused effect quietly broke the rest of the session.
       audio packets are 5 ms (`DEFAULT_PACKET_DURATION_MS`), and the few
       control messages queued on the same path are counted too. The
       counters also live for the whole host session, not one stream. The
-      line now reads "Packets sent this session: X of Y reached every
-      listener; P reached only some; U reached no listener; N sent with no
-      listener connected; F failed to send." Not device-verified.
-    - [ ] Why about 11 packets missed the only listener is still unknown
-      (likely the window between the phone leaving and eviction; the host
-      does not log which packets failed or when).
+      line now describes local broadcast send-call outcomes, not remote
+      listener receipt: X of Y frames had successful local sends to every
+      connected listener; P to some; U to none; N had no listener connected;
+      F failed before a send. Not device-verified.
+    - [ ] The old counter showed 11 frames with no successful local send while
+      one listener was still registered. It combined audio/sync datagrams and
+      control sends, so the historical count does not identify the channel or
+      error. A successful local send also cannot prove remote receipt. The
+      prior display overstated local send results as listener delivery, now
+      corrected. The likely race between the phone leaving and transport
+      eviction is still unverified because that run has no per-frame failure
+      timestamps or listener-side sequence-gap correlation. Desktop transport
+      now emits a failure-only stderr record
+      with frame kind/sequence, monotonic timestamp, intended/successful-local/
+      failed peer counts, and the datagram error split (`WouldBlock`, other I/O,
+      partial write), without addresses or audio data. The split is classified
+      in the shared socket transport and covered by
+      `transport::types::datagram_send_failure_tests` plus the existing
+      `send_timeout_classification_tests`. Both new category tests pass under
+      pinned Rust 1.97.1, as do shared-core and Tauri strict Clippy; device
+      correlation is still needed to close this item.
     - [x] "Playback start requested." stays under the session header long
       after playback started. It now clears when the Rust snapshot reflects
       the requested playback state; covered by `HostSessionScreen.test.tsx`.
@@ -5393,8 +6322,11 @@ here.
       audible playback for WAV and FLAC and successful MP3 playback with an
       unresolved quality gap. The `stop_playback` silent-failure bug described
       in Block 28 was fixed and regression-tested on 2026-08-03.
-- [ ] At least two Android listeners pass recorded validation.
-- [ ] mDNS and QR convenience work without replacing manual connection.
+- [ ] At least two Android listeners pass recorded validation (intentionally
+      skipped per the user's 2026-10-15 direction).
+- [x] mDNS and QR convenience work without replacing manual connection. The
+      2026-10-14 packaged A54 run verified mDNS discovery and the physical QR
+      scan/join; manual endpoint hosting remains available and was also tested.
 - [x] Optional local monitor uses the shared timeline.
 - [x] PCM and packet payloads never cross Tauri IPC.
 - [x] Diagnostics are useful and secret-safe.
@@ -5408,3 +6340,226 @@ here.
 - [x] All referenced files exist.
 - [x] `memory.md` records current local gate results, measurements, and remaining
       evidence limitations; physical acceptance remains open.
+
+**Packaged AppImage follow-up (2026-10-14; partial evidence):** On Ubuntu
+22.04.5 amd64, launched AppImage SHA-256
+`f89135036c8734dc0deb3a7f2796f14649f61fc741eab7cfca3ddc396c18899d` and
+hosted `ResumeTest`. The A54 (`SM-A546E`, Android 16/API 36) joined using a
+manually copied endpoint payload after the packaged app's mDNS scan did not
+show the session. Host approval, sync lock, host playback, pause/resume, explicit
+stop, diagnostics export, host disconnect, and clean app shutdown were observed.
+The A54 recorded 58.695 s of a 60 s stream at 48 kHz stereo 16-bit; 5,632,138
+of 5,634,720 samples were nonzero. Desktop diagnostics reported 12,004 frames
+attempted, 12,003 fully delivered, one undelivered, zero partial deliveries,
+zero queue overflows, and a peak queue depth of 122. The listener diagnostics
+also recorded ring underruns and silence-filled frames across pause/resume, so
+this does not establish uninterrupted audible quality. Diagnostics export
+contained no last error. Reopening profile `main` showed SQLite integrity OK
+but zero recent sessions after the completed host run. This exposed a session-history persistence gap despite storage inspection
+support. A Rust desktop platform-adapter hook now begins the history row after
+advertising starts and completes it after advertising stops, using the existing
+SQLite worker. Its focused database-worker test passes. Packaged AppImage profile
+reopen then showed `SessionHistoryProbe — host / completed; listeners 0`; the
+Block 47 history item is complete. The AppImage run does not complete Block 47: mDNS was not
+confirmed in that package run, QR, second listener, failure/recovery cases, and
+clean-machine validation remain open.
+
+
+**Session-history implementation build (2026-10-14):** Added Rust desktop
+adapter persistence around successful `StartAdvertising`/`StopAdvertising`,
+with host role, session name/ID, start/end timestamps, final connected-listener
+count, and completed outcome stored through `DatabaseClient`. A failed begin
+write attempts to stop advertising and reports both errors if cleanup fails.
+The database-worker persistence test passes; strict Tauri Rust Clippy and
+formatting pass. A release AppImage built successfully (SHA-256
+`e24f642d97536028426b2b3983febdd3a7a4c934a8ca080ac8a86449164f6e66`). Its UI
+rendered normally in the GNOME compositor; the earlier black X11 framebuffer
+captures omitted composited webview output. Packaged reopen verification follows
+below. Other Block 47 items remain open.
+
+
+**Packaged history lifecycle verified (2026-10-14):** The release AppImage
+(`0.1.0`, SHA-256
+`e24f642d97536028426b2b3983febdd3a7a4c934a8ca080ac8a86449164f6e66`) rendered
+normally in the GNOME compositor. With profile `main`, created the WAV-backed
+`SessionHistoryProbe` host session, saw `host / active` in Storage while hosting,
+ended it, exited, relaunched the same AppImage, and saw
+`SessionHistoryProbe — host / completed; listeners 0` with SQLite integrity
+`ok`. Marked the corresponding Block 47 reopen/history checkbox complete. The
+X11 framebuffer capture used earlier missed the composited accelerated window
+and was not evidence of a blank product UI. This does not close other physical
+acceptance items or Block 47 as a whole.
+
+**Packaged mDNS retest (2026-10-14; failed startup):** On the same Ubuntu
+22.04.5 host and Galaxy A54 (`R5CW31AX4FL`, Android 16/API 36, same
+`192.168.87.0/24` LAN), launched that AppImage and selected
+`/tmp/silent-disco-acceptance-tone-60s.wav` for session `MdnSPackageProbe`.
+The session entered `error` immediately; transport was `failed`, its worker
+was `not running`, playback was `stopped`, and the UI said “The core has not
+published an active manual endpoint.” No mDNS advertisement or Android
+discovery was established. This run is a failed package startup retest, not
+evidence of an mDNS discovery regression by itself; investigate the startup
+error before repeating discovery. The earlier successful A54 discovery against
+the release binary remains the positive mDNS evidence.
+
+**Packaged mDNS and playback retest (2026-10-14; pass with follow-up defects):**
+The failure above was caused by the core restarting its session-ID counter at
+`session-1` while profile history retained that ID as a unique primary key.
+Diagnostics showed `UNIQUE constraint failed: session_history.session_id`;
+the history write failed, so startup correctly cleaned up the bound transport.
+Changed shared-core session IDs to include Unix nanoseconds, process ID, and a
+process-wide atomic nonce. The regression test
+`session_ids_are_unique_across_fresh_actor_states` passes, as does core Clippy.
+
+Rebuilt and launched the Ubuntu 22.04.5 x86_64 AppImage (`0.1.0`, SHA-256
+`df878722e2f1f1bf1be80cb05f53e276784f9a8f964901599856e07771fb6f48`) using
+profile `main` and the existing history database. The Samsung Galaxy A54
+(`SM-A546E`, Android 16/API 36, `R5CW31AX4FL`, Android app 0.1.0/versionCode 1,
+installed APK SHA-256
+`2616c6eca3236e8b13090d3006f6535c60e8a58fa18d98c8a1514f86fe7198bd`) was on
+the same `192.168.87.0/24` Wi-Fi LAN (`192.168.87.215`; desktop
+`192.168.87.161`). Created `MdnSPackageProbe` from
+`/tmp/silent-disco-acceptance-tone-60s.wav`. Android discovered the advertised
+session by mDNS, joined, and received desktop approval. After starting playback,
+Android reported “Playing in sync” and “Clock sync locked.” Desktop diagnostics
+reported 7,027/7,030 packets reaching every listener, zero partial deliveries,
+three packets with no listener, zero failed sends, and broadcast queue peak 122.
+Pause and resume were reflected on Android. The host session ended, the Storage
+database recorded the session as completed, and SQLite `integrity_check` was
+`ok`; closing the idle packaged app exited its process.
+
+This verifies packaged mDNS discovery and a one-listener synchronized-playback
+run. Follow-up defects remain: after the desktop Stop control, Android reported
+“Audio is out of sync” / “Fix connection”; before playback and during streaming,
+the desktop listener card remained “Approved — waiting for its first clock
+sync” / `connecting` while Android reported locked sync and then “Playing in
+sync.” Thus the Block 47 pause/resume/stop/end item remains open, and no
+synchronization offset or human audibility measurement was captured. QR,
+rejection on this package, and two-listener coverage also remain open.
+
+**Connected-listener and session-ID follow-up (2026-10-14; partial):** The
+desktop transport adapter now submits `ListenerConnected` after confirmed
+approval delivery and successful UDP-port authorization. This fixes the
+previous packaged UI discrepancy where the listener remained `connecting`
+despite successful approval. The updated AppImage (`0.1.0`, SHA-256
+`319ec73de959e508d7e7f5a3bbc0b3df9c66c203e27a8bab8be7535e6c26c52c`) showed
+`session_only` trust and core transport state `connected` for the A54; Android
+again reported `Clock sync locked` and `Playing in sync`. The host card still
+waited for its first clock-sync summary. The first End Session request did not
+appear complete at the initial database check; after returning to Host control
+and submitting End Session again, the view returned to Host Setup and SQLite
+recorded the run as `completed`, with listener count 0. This confirms the
+eventual end path, but the zero final listener count does not establish
+connected-listener count persistence for this run. The profile database passes
+`PRAGMA integrity_check` (`ok`).
+
+The session-ID fix was refined so production actors receive a unique per-actor
+namespace while deterministic Lab runtimes keep `session-1` fixtures. All 8
+`live_transport_proof_tests` passed, strict Tauri Rust Clippy passed, and the
+full Tauri suite passed (331 passed, 5 ignored). `cd desktop && npm run check`
+passed bindings, formatting, lint, typecheck, 140 frontend tests, production
+build, and Lab-code exclusion. These software gates do not close the packaged
+Stop behavior discrepancy or establish sync offset/audibility. The second-phone
+and clean-machine acceptance items remain open.
+
+**Full shared Rust rerun (2026-10-14):** `bash scripts/check-rust.sh` passed
+formatting, strict workspace Clippy, and all workspace tests, including the
+updated actor session-ID coverage (338 core unit tests and all integration
+tests passed). `git diff --check` only reports the known generated binding
+trailing whitespace; generated output is verified by `npm run bindings:check`
+and is not hand-edited to suppress that diff warning.
+
+**QR expiry and Lab editor follow-up (2026-10-14):** A packaged screen
+observation showed that an invitation past its displayed expiration time
+continued to render until another state update. `QrInvitationPanel` now
+schedules a rerender at the invitation expiry, removing the QR without an
+interaction. Its fake-clock regression passes. The full frontend gate then
+exposed an existing race in the loaded Lab fault editor: its mount effect
+could overwrite a just-cleared field with the initial prop value. The editor
+now resynchronizes only when backend link values change. After that fix,
+`npm run check` passed with 141 frontend tests and a production build that
+excludes Lab code. A fresh Ubuntu AppImage and `.deb` were built; AppImage
+SHA-256 `d86d030a19d05ed1c05917ec40058e9788089a33b8dae1634ca5706fdf8f04fa`,
+`.deb` SHA-256 `d9cdb5d08a2a5afead67baeeb69312791995c31d5d72a68580bfff87db5d6a1f`.
+`python3 desktop/scripts/verify-linux-bundles.py --bundle-dir
+desktop/src-tauri/target/release/bundle --tauri-config
+desktop/src-tauri/tauri.conf.json --cargo-manifest
+desktop/src-tauri/Cargo.toml` passed for both artifacts.
+The rebuilt AppImage was subsequently relaunched on this host and its
+`Silent Disco` window remained visible. Profile `main` passed SQLite
+`integrity_check`; the latest session-history rows are completed with zero
+listeners. This confirms package launch and persisted-state integrity, but the
+timed QR expiry has not been observed in the packaged UI. Physical Android
+scan/join and the root-only firewall check remain open.
+
+## 2026-10-15 — End teardown retest and diagnostic follow-up
+
+A further single-A54 run on packaged AppImage SHA-256
+`165fa88baeae18ddfc2167b63dcc282f88dd5baea6d1c4d0c3017af5ba4fddd7` again
+reproduced the open one-action teardown item: `Interface Probe` was approved,
+Android reached “Playing in sync,” and after End remained pending for more than
+40 seconds the desktop still reported lifecycle `streaming` with control port
+`192.168.87.161:38717` open. SIGTERM stopped Android playback, but Android then
+reported that it could not continue the listener workflow. This is not graceful
+teardown evidence; Block 47 and 52.8 remain unchecked.
+
+GDB attach was blocked by this host's Yama ptrace policy. A temporary
+instrumented AppImage (`bbee4702cf835e8833d775b6fed41b489eb27a2a50e3e50e45834406a7cf271c`)
+was built, but the subsequent connected-device run did not produce a controlled
+End-with-playback attempt or stage output. The `shutdown_probe` source markers
+were removed. Do not use that artifact for acceptance. No shutdown fix was
+established. Continue diagnosis with a run that captures the worker stage where
+End stalls; do not claim the real-LAN `stop_host_inner` regression test covers
+this UI-to-device failure.
+
+After removing the temporary markers, `npm run tauri build -- --bundles
+appimage` completed successfully. The clean-source AppImage SHA-256 is
+`f20cfaa678354c7ca96989299429c1ea484848ead3529c63470c8eb36db796f1`. Confirmed
+no temporary `shutdown_probe` marker remains in Tauri source and no desktop host
+ports/process remain. This clean artifact has not been revalidated on the
+phone; the physical teardown item stays open.
+
+**Clean AppImage physical retest (2026-10-15):** On clean-source SHA-256
+`f20cfaa678354c7ca96989299429c1ea484848ead3529c63470c8eb36db796f1`, the A54
+again discovered and joined `Interface Probe` by mDNS, was approved, reached
+`Clock sync locked`, and started the 60-second test WAV. One End action stayed
+queued for more than 35 seconds while lifecycle remained `streaming` and
+`192.168.87.161:33021` remained open. SIGTERM stopped Android playback; Android
+then reported it could not continue the listener workflow until explicit Leave
+returned it home. This confirms the issue on the current clean package. Keep
+Block 47 and Block 52.8 unchecked.
+
+**Android peer-close cleanup and latest physical retest (2026-10-15):** The
+A54 log from an earlier shutdown-stage probe showed the listener received the
+host close, then its final `sendDisconnect` failed with `Broken pipe`. Updated
+`ListenerTransportController.closeExistingHandle` to ignore only the expected
+delivery-channel disconnect-write errors (`Broken pipe`, connection reset, or
+connection aborted) while still shutting down the handle; unrelated cleanup
+failures remain reportable. Added lifecycle tests covering the expected peer
+close and unrelated errors. `./gradlew testDebugUnitTest lintDebug
+assembleDebug --stacktrace --console=plain` passed, and APK SHA-256
+`a83b8f875be9dac53b7df5d4a9f47ee83f9e93acef6ba169c6c20a3e7485e8d6` was
+installed on `R5CW31AX4FL`.
+
+On the instrumented AppImage, created `ShutdownTrace`, joined and approved the
+A54 over mDNS, confirmed Android `Playing in sync` and desktop `sync excellent`,
+then clicked End once during playback. Playback stopped and the host lifecycle
+snapshot reached `ready`, but after more than 45 seconds the UI still showed
+`End-session request queued`, the desktop TCP listener remained open at
+`192.168.87.161:46469`, and Android remained on its monitor screen with
+“Playback stopped” and “Silent Disco is monitoring the host connection.” No
+listener workflow error appeared in logcat during this interval. This is not a
+graceful teardown pass: host effect completion and phone cleanup are still
+unconfirmed. The instrumented AppImage was stopped and its temporary
+`shutdown_probe` source markers removed. A clean-source rebuild is in progress;
+its output must be separately checked before any packaged acceptance. Keep
+Block 47 and Block 52.8 unchecked.
+
+The instrumented AppImage used for this run had SHA-256
+`34b72f3f0fd77c3f65d418684875a46987b35fb033cd2ba6b7bf56352b9a9f9b`. After
+removing the markers, `npm run tauri build -- --bundles appimage` completed
+successfully. Clean AppImage SHA-256:
+`c28a891eb401131d602d04019cab13f510b7d878c8baf168f1313270a51d6cb8`. Verified
+the clean package contains no `shutdown_probe` string, launches to Host Setup,
+and leaves no host port listening when idle. This is package smoke evidence,
+not phone teardown acceptance.

@@ -40,8 +40,12 @@ impl ActorState {
             TransportEvent::ListenerDisconnected { device_id, error } => {
                 self.record_listener_disconnect(&device_id, error)
             }
-            TransportEvent::DeliveryCompleted { report, .. } => {
+            TransportEvent::DeliveryCompleted {
+                operation_id,
+                report,
+            } => {
                 self.snapshot.last_delivery = Some(report);
+                self.snapshot.last_delivery_operation_id = Some(operation_id);
                 Ok(ApplyOutcome::changed())
             }
             TransportEvent::SessionEnded { session_id } => {

@@ -18,7 +18,9 @@ fn run_transport_worker(
             primary_error = Some(error);
             break;
         }
-        if let Err(error) = process_broadcast_frames(&*node, broadcast_receiver, status) {
+        if let Err(error) =
+            process_broadcast_frames(&*node, broadcast_receiver, status, clock.as_ref())
+        {
             primary_error = Some(error);
             break;
         }
@@ -69,6 +71,7 @@ fn process_broadcast_frames(
     node: &dyn HostTransportNode,
     receiver: &Receiver<ProtocolFrame>,
     status: &SharedStatus,
+    clock: &dyn TransportClock,
 ) -> Result<(), DesktopNetworkError> {
     for _ in 0..MAX_BROADCAST_FRAMES_PER_TICK {
         let frame = match receiver.try_recv() {
@@ -88,13 +91,41 @@ fn process_broadcast_frames(
             ProtocolFrame::SyncRequest(_) => continue, // the host never sends this frame kind
         };
         match delivery {
-            Ok(delivery) => status.broadcast.record_delivery(&delivery),
+            Ok(delivery) => {
+                status.broadcast.record_delivery(&delivery);
+                if delivery.report.failed_peers > 0 {
+                    let (kind, sequence) = broadcast_frame_identity(&frame);
+                    eprintln!(
+                        "host_transport_send_failure kind={kind} sequence={sequence} observed_monotonic_ms={} intended={} successful_local_sends={} failed_local_sends={} datagram_failure_categories={:?}",
+                        clock.now().get(),
+                        delivery.report.intended_peers,
+                        delivery.report.successful_peers,
+                        delivery.report.failed_peers,
+                        delivery.datagram_send_failures,
+                    );
+                }
+            }
             Err(error) => {
                 status.broadcast.record_failure();
+                let (kind, sequence) = broadcast_frame_identity(&frame);
+                eprintln!(
+                    "host_transport_broadcast_error kind={kind} sequence={sequence} observed_monotonic_ms={} error_kind={:?}",
+                    clock.now().get(),
+                    error.kind,
+                );
                 set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
             }
         }
     }
     Ok(())
+}
+
+fn broadcast_frame_identity(frame: &ProtocolFrame) -> (&'static str, String) {
+    match frame {
+        ProtocolFrame::Audio(packet) => ("audio", packet.sequence.get().to_string()),
+        ProtocolFrame::SyncRequest(_) => ("sync_request", "none".to_owned()),
+        ProtocolFrame::SyncResponse(_) => ("sync_response", "none".to_owned()),
+        ProtocolFrame::Control(_) => ("control", "none".to_owned()),
+    }
 }
 

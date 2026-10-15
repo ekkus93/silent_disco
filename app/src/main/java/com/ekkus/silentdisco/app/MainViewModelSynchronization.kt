@@ -287,6 +287,9 @@ internal fun shouldResyncForOffset(
     internal fun MainViewModel.handleSyncFailure(message: String) {
         logger.w("sync.error", message)
         metrics.increment("sync_establish_failure")
+        resyncJob?.cancel()
+        stopListenerPlayback()
+        resetListenerSyncAcquisition()
         // Reported into Rust (rather than written locally) so a later Rust
         // snapshot cannot silently revert this back to an earlier state.
         listenerCoreController?.transportFailed(message, retryable = true)
@@ -305,6 +308,25 @@ internal fun shouldResyncForOffset(
             )
         }
         refreshListenerDiagnostics()
+    }
+
+    /**
+     * A failed acquisition cannot seed the next connection. In particular,
+     * Android and a restarted desktop process have independent monotonic
+     * epochs, so carrying the previous offset across a reconnect looks like
+     * an enormous clock jump and prevents the new estimate from locking.
+     */
+    internal fun MainViewModel.resetListenerSyncAcquisition() {
+        closeListenerSyncEstimator()
+        pendingSyncCorrelationId = null
+        _uiState.value = _uiState.value.copy(
+            listenerSyncState = SyncState(resyncCount = _uiState.value.listenerSyncState.resyncCount),
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                synced = false,
+                buffered = false,
+                playing = false,
+            ),
+        )
     }
 
 /** Probe interval while the listener clock is still unlocked. */

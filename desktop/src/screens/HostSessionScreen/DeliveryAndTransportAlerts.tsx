@@ -59,10 +59,11 @@ export function DeliveryAndTransportAlerts({
         >
           {/* A "frame" here is one broadcast packet (an audio packet is 5 ms), and
               the counters run for the whole host session, not one stream. */}
-          Packets sent this session: {broadcast.framesFullyDelivered} of {broadcast.framesAttempted}{" "}
-          reached every listener; {broadcast.framesPartiallyDelivered} reached only some;{" "}
-          {broadcast.framesUndelivered} reached no listener; {broadcast.framesWithoutRecipients}{" "}
-          sent with no listener connected; {broadcast.framesFailed} failed to send.
+          Broadcast send calls this session: {broadcast.framesFullyDelivered} of{" "}
+          {broadcast.framesAttempted} frames had successful local sends to every connected listener;{" "}
+          {broadcast.framesPartiallyDelivered} to some; {broadcast.framesUndelivered} to none;{" "}
+          {broadcast.framesWithoutRecipients} had no listener connected; {broadcast.framesFailed}{" "}
+          failed before a send.
         </p>
       ) : null}
       {lastDelivery ? (

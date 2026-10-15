@@ -542,6 +542,13 @@ Use `deny_unknown_fields` where forward-compatibility does not require permissiv
 
 Commands that act on visible state should include the snapshot revision on which the user acted when stale intent could be dangerous. The core remains the final authority and may reject stale commands.
 
+`EndHostSession` is a terminal intent for the currently active host session.
+Because playback and transport workers can advance revisions between a UI poll
+and actor processing, the actor applies End to its serialized current state
+instead of rejecting it solely for a stale sampled revision. It still rejects
+End when there is no active session. All other revision-aware commands retain
+their stale-intent guard.
+
 ### 11.4 Notification channel
 
 Use a Tauri IPC channel for the long-lived notification stream.

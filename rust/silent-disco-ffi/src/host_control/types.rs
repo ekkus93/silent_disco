@@ -219,6 +219,7 @@ pub struct FfiCoreSnapshot {
     pub playback_position_ms: u64,
     pub stream_ended_naturally: bool,
     pub last_delivery: Option<FfiDeliveryReport>,
+    pub last_delivery_operation_id: Option<String>,
     pub recoverable_action: Option<String>,
     pub last_error: Option<FfiCoreError>,
     pub shutting_down: bool,

@@ -313,11 +313,39 @@ impl DesktopHostNetworkControl {
     }
 
     pub(in crate::platform) fn stop_host_inner(&self) -> Result<(), DesktopNetworkError> {
-        let mut state = self
+        // Take playback ownership without removing the binding, then release
+        // the state mutex before joining. The pump still needs the active
+        // runtime to read transport time as it exits; removing the binding
+        // first would turn that final read into a spurious shutdown failure.
+        let playback = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| DesktopNetworkError::poisoned())?;
+            let Some(active) = state.active.as_mut() else {
+                return Err(DesktopNetworkError::invalid_state(
+                    "desktop host network endpoint is not active",
+                ));
+            };
+            active.playback.take()
+        };
+        let playback_result = match playback {
+            Some(playback) => {
+                playback.request_stop();
+                playback.join()
+            }
+            None => Ok(()),
+        };
+
+        // Playback has finished making runtime calls. Now detach the binding
+        // under the mutex and shut down its independent resources outside it.
+        let Some(active) = self
             .state
             .lock()
-            .map_err(|_| DesktopNetworkError::poisoned())?;
-        let Some(mut active) = state.active.take() else {
+            .map_err(|_| DesktopNetworkError::poisoned())?
+            .active
+            .take()
+        else {
             return Err(DesktopNetworkError::invalid_state(
                 "desktop host network endpoint is not active",
             ));
@@ -333,13 +361,6 @@ impl DesktopHostNetworkControl {
         // The transport runtime is shut down even when the pump failed to stop
         // cleanly -- leaving it running would leak a bound socket -- but a
         // failing pump must not be reported as a clean host shutdown.
-        let playback_result = match active.playback.take() {
-            Some(playback) => {
-                playback.request_stop();
-                playback.join()
-            }
-            None => Ok(()),
-        };
         active.runtime.shutdown()?;
         playback_result
             .map_err(|error| {

@@ -144,6 +144,20 @@ impl DatabaseClient {
         })
     }
 
+    /// Marks any host sessions left active by an earlier desktop process as failed.
+    ///
+    /// This is safe to call after the profile lock is acquired and before the new runtime starts:
+    /// no other process can still own an active host session in the profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible timestamp, queue, transaction, or worker lifecycle error.
+    pub fn interrupt_active_host_sessions(&self, ended_at_ms: u64) -> Result<u32, StorageError> {
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::InterruptActiveHostSessions { ended_at_ms, reply }
+        })
+    }
+
     /// Loads one session-history row by identifier.
     ///
     /// # Errors

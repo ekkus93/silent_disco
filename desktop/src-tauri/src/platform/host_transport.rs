@@ -228,6 +228,7 @@ mod broadcast_counter_tests {
             report: DeliveryReport::new(intended, successful, intended - successful)
                 .expect("valid delivery report"),
             bytes_sent: 0,
+            datagram_send_failures: None,
         }
     }
 

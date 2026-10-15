@@ -349,7 +349,7 @@ impl LabRuntime {
         })?;
 
         let actor = match CoreActorRuntime::start(
-            CoreActorConfig::new(identity.device_id().clone()),
+            CoreActorConfig::new(identity.device_id().clone()).with_deterministic_session_ids(),
             observer,
         ) {
             Ok(actor) => actor,

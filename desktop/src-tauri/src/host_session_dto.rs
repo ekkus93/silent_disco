@@ -2,7 +2,7 @@ use crate::dto::DesktopErrorDto;
 use crate::platform::host_transport::ActiveHostSessionSnapshot;
 use crate::platform::network_dto::MonitorStatusDto;
 use crate::runtime_dto::AudioSourceSummaryDto;
-use silent_disco_core::domain::HostLifecycle;
+use silent_disco_core::domain::{HostLifecycle, OperationId};
 use silent_disco_core::runtime::{
     CoreSnapshot, DeliveryReport, JoinRequestSummary, ListenerSummary, RecoverableAction,
 };
@@ -99,6 +99,7 @@ pub struct HostSessionSnapshotDto {
     pub pending_join_requests: Vec<PendingJoinRequestDto>,
     pub connected_listeners: Vec<ConnectedListenerDto>,
     pub last_delivery: Option<DeliveryReportDto>,
+    pub last_delivery_operation_id: Option<String>,
     pub recoverable_action: Option<String>,
     pub playback_controls_enabled: bool,
     pub transport_worker_running: bool,
@@ -205,6 +206,10 @@ impl HostSessionSnapshotDto {
                 })
                 .collect(),
             last_delivery: snapshot.last_delivery.map(DeliveryReportDto::from),
+            last_delivery_operation_id: snapshot
+                .last_delivery_operation_id
+                .clone()
+                .map(OperationId::into_string),
             recoverable_action: snapshot
                 .recoverable_action
                 .map(recoverable_action_name)

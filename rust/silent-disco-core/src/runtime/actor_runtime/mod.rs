@@ -22,6 +22,15 @@ pub const DEFAULT_ACTOR_QUEUE_CAPACITY: usize = 64;
 pub const DEFAULT_NOTIFICATION_QUEUE_CAPACITY: usize = 64;
 pub const MAX_ACTOR_QUEUE_CAPACITY: usize = 4_096;
 pub const MAX_NOTIFICATION_QUEUE_CAPACITY: usize = 4_096;
+static NEXT_SESSION_NAMESPACE_NONCE: AtomicU64 = AtomicU64::new(1);
+
+fn new_session_id_namespace() -> String {
+    let unix_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let nonce = NEXT_SESSION_NAMESPACE_NONCE.fetch_add(1, Ordering::Relaxed);
+    format!("{unix_nanos}-{}-{nonce}", std::process::id())
+}
 
 /// Consumer of serialized core notifications.
 pub trait CoreObserver: Send + Sync + 'static {
@@ -49,6 +58,7 @@ pub struct CoreActorConfig {
     pub local_device_id: DeviceId,
     pub actor_queue_capacity: usize,
     pub notification_queue_capacity: usize,
+    deterministic_session_ids: bool,
 }
 
 impl CoreActorConfig {
@@ -58,7 +68,15 @@ impl CoreActorConfig {
             local_device_id,
             actor_queue_capacity: DEFAULT_ACTOR_QUEUE_CAPACITY,
             notification_queue_capacity: DEFAULT_NOTIFICATION_QUEUE_CAPACITY,
+            deterministic_session_ids: false,
         }
+    }
+
+    /// Uses deterministic `session-1`, `session-2`, … identifiers for isolated simulations.
+    #[must_use]
+    pub fn with_deterministic_session_ids(mut self) -> Self {
+        self.deterministic_session_ids = true;
+        self
     }
 
     /// Validates bounded nonzero queue capacities.
@@ -139,6 +157,8 @@ impl CoreActorRuntime {
     /// notification worker is shut down and joined before returning.
     pub fn start<O: CoreObserver>(config: CoreActorConfig, observer: O) -> Result<Self, CoreError> {
         config.validate()?;
+        let session_id_namespace =
+            (!config.deterministic_session_ids).then(new_session_id_namespace);
         let (notification_sender, notification_receiver) =
             sync_channel(config.notification_queue_capacity);
         let notification_failure = Arc::new(Mutex::new(None));
@@ -180,6 +200,7 @@ impl CoreActorRuntime {
             .spawn(move || {
                 run_actor_worker(
                     config.local_device_id,
+                    session_id_namespace,
                     &receiver,
                     &actor_shared,
                     &actor_notification_sender,
@@ -479,11 +500,13 @@ impl CoreActorHandle {
 
 fn run_actor_worker(
     local_device_id: DeviceId,
+    session_id_namespace: Option<String>,
     receiver: &Receiver<ActorMessage>,
     shared: &ActorShared,
     notification_sender: &SyncSender<NotificationMessage>,
 ) -> Result<(), CoreError> {
-    let mut state = ActorState::new(local_device_id);
+    let mut state =
+        ActorState::new_with_session_id_namespace(local_device_id, session_id_namespace);
     send_notification(
         notification_sender,
         CoreNotification::Snapshot(state.snapshot.clone()),

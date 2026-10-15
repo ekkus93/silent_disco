@@ -46,6 +46,7 @@ pub(super) struct ActorState {
     next_effect_sequence: u64,
     next_session_sequence: u64,
     next_export_sequence: u64,
+    session_id_namespace: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +66,7 @@ enum PendingTransportOperation {
     RejectJoin {
         request_id: RequestId,
         listener_id: DeviceId,
+        confirmation_operation_id: Option<OperationId>,
     },
     DisconnectListener {
         listener_id: DeviceId,
@@ -123,7 +125,15 @@ pub(super) struct ProcessResult {
 }
 
 impl ActorState {
+    #[cfg(test)]
     pub(super) fn new(local_device_id: DeviceId) -> Self {
+        Self::new_with_session_id_namespace(local_device_id, None)
+    }
+
+    pub(super) fn new_with_session_id_namespace(
+        local_device_id: DeviceId,
+        session_id_namespace: Option<String>,
+    ) -> Self {
         Self {
             snapshot: CoreSnapshot::default(),
             local_device_id,
@@ -134,6 +144,7 @@ impl ActorState {
             next_effect_sequence: 1,
             next_session_sequence: 1,
             next_export_sequence: 1,
+            session_id_namespace,
         }
     }
 
@@ -185,7 +196,14 @@ impl ActorState {
                 operation_id,
                 request,
             } => {
-                if request.expected_revision != self.snapshot.revision {
+                // End is a terminal intent for the currently active host session. Playback and
+                // transport workers can advance the snapshot between a desktop poll and this
+                // serialized command, so requiring the UI's sampled revision here can reject
+                // the only shutdown request while leaving the host advertised. The actor still
+                // validates that a session is active in `end_host_session`; all other commands
+                // retain optimistic revision checks to protect against stale edits.
+                let is_terminal_host_end = matches!(&request.command, CoreCommand::EndHostSession);
+                if request.expected_revision != self.snapshot.revision && !is_terminal_host_end {
                     return Err(invalid_state(
                         format!(
                             "command expected snapshot revision {}, but current revision is {}",

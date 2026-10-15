@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use crate::protocol::{ProtocolFrame, encode_frame};
 
 use super::super::super::{
-    TransportChannel, TransportDelivery, TransportError, TransportErrorKind,
+    DatagramSendFailures, TransportChannel, TransportDelivery, TransportError, TransportErrorKind,
 };
 use super::SocketHostTransport;
 
@@ -58,6 +58,7 @@ impl SocketHostTransport {
         let mut successful = 0_u32;
         let mut failed = 0_u32;
         let mut sent_bytes = 0_u64;
+        let mut send_failures = DatagramSendFailures::default();
         for (_, route) in routes {
             let destination = match channel {
                 TransportChannel::Synchronization => route.routes.synchronization,
@@ -80,6 +81,7 @@ impl SocketHostTransport {
                 }
                 Ok(_) => {
                     failed = failed.saturating_add(1);
+                    send_failures.partial_write = send_failures.partial_write.saturating_add(1);
                     self.counters.delivery_failure();
                     self.record_peer_result(
                         &route.peer,
@@ -109,8 +111,10 @@ impl SocketHostTransport {
                     // visible delivery failure either way; only the
                     // auto-disconnect vote is skipped.
                     if is_datagram_send_timeout(&error) {
+                        send_failures.would_block = send_failures.would_block.saturating_add(1);
                         continue;
                     }
+                    send_failures.other_io = send_failures.other_io.saturating_add(1);
                     self.record_peer_result(
                         &route.peer,
                         &Err(TransportError::io(
@@ -123,7 +127,13 @@ impl SocketHostTransport {
                 }
             }
         }
-        TransportDelivery::new(intended, successful, failed, sent_bytes)
+        TransportDelivery::new_with_datagram_send_failures(
+            intended,
+            successful,
+            failed,
+            sent_bytes,
+            send_failures,
+        )
     }
 }
 

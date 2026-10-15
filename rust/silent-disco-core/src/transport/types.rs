@@ -335,6 +335,17 @@ pub struct TransportCounters {
 pub struct TransportDelivery {
     pub report: DeliveryReport,
     pub bytes_sent: u64,
+    /// Present when the socket host transport can classify its per-recipient
+    /// UDP send failures. Other transports leave this unclassified.
+    pub datagram_send_failures: Option<DatagramSendFailures>,
+}
+
+/// Failure categories for one socket-host datagram broadcast.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DatagramSendFailures {
+    pub would_block: u32,
+    pub other_io: u32,
+    pub partial_write: u32,
 }
 
 impl TransportDelivery {
@@ -351,6 +362,84 @@ impl TransportDelivery {
                 error.to_string(),
             )
         })?;
-        Ok(Self { report, bytes_sent })
+        Ok(Self {
+            report,
+            bytes_sent,
+            datagram_send_failures: None,
+        })
+    }
+
+    pub(crate) fn new_with_datagram_send_failures(
+        intended: u32,
+        successful: u32,
+        failed: u32,
+        bytes_sent: u64,
+        failures: DatagramSendFailures,
+    ) -> Result<Self, TransportError> {
+        let categorized_failures = failures
+            .would_block
+            .checked_add(failures.other_io)
+            .and_then(|count| count.checked_add(failures.partial_write));
+        if categorized_failures != Some(failed) {
+            return Err(TransportError::new(
+                TransportErrorKind::Delivery,
+                TransportChannel::Runtime,
+                "datagram send failure categories do not match failed peer count",
+            ));
+        }
+        let mut delivery = Self::new(intended, successful, failed, bytes_sent)?;
+        delivery.datagram_send_failures = Some(failures);
+        Ok(delivery)
+    }
+}
+
+#[cfg(test)]
+mod datagram_send_failure_tests {
+    use super::{DatagramSendFailures, TransportDelivery};
+
+    #[test]
+    fn datagram_send_failure_categories_are_retained() {
+        let delivery = TransportDelivery::new_with_datagram_send_failures(
+            4,
+            1,
+            3,
+            64,
+            DatagramSendFailures {
+                would_block: 1,
+                other_io: 1,
+                partial_write: 1,
+            },
+        )
+        .expect("failure categories match delivery counts");
+
+        assert_eq!(
+            delivery.datagram_send_failures,
+            Some(DatagramSendFailures {
+                would_block: 1,
+                other_io: 1,
+                partial_write: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn datagram_send_failure_categories_must_match_failed_peer_count() {
+        let error = TransportDelivery::new_with_datagram_send_failures(
+            2,
+            1,
+            1,
+            64,
+            DatagramSendFailures {
+                would_block: 0,
+                other_io: 0,
+                partial_write: 0,
+            },
+        )
+        .expect_err("uncategorized failed peer must be rejected");
+
+        assert_eq!(
+            error.message,
+            "datagram send failure categories do not match failed peer count"
+        );
     }
 }

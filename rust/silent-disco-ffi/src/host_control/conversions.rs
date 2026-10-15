@@ -392,6 +392,9 @@ impl From<CoreSnapshot> for FfiCoreSnapshot {
             playback_position_ms: value.playback_position_ms,
             stream_ended_naturally: value.stream_ended_naturally,
             last_delivery: value.last_delivery.map(Into::into),
+            last_delivery_operation_id: value
+                .last_delivery_operation_id
+                .map(OperationId::into_string),
             recoverable_action: value.recoverable_action.map(recoverable_action_name),
             last_error: value.last_error.map(Into::into),
             shutting_down: value.shutting_down,

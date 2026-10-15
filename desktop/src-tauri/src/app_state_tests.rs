@@ -9,6 +9,10 @@ use crate::platform::paths::DesktopProfilePaths;
 use crate::platform::profile_lock::{ProfileLease, ProfileLockError};
 use crate::profile::ProfileId;
 use crate::shutdown::shutdown_owned_resources;
+use silent_disco_core::{
+    domain::{AppRole, SessionId},
+    storage::{DatabaseConfig, DatabaseWorker, SessionOutcome, SessionStart},
+};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -324,6 +328,59 @@ fn a_profile_reopens_cleanly_after_a_full_close() {
         .expect("profile reopens cleanly after a full close");
     assert_eq!(second_open.snapshot.revision, "1");
     state.close_sync().expect("close again");
+}
+
+#[test]
+fn opening_a_profile_recovers_host_sessions_left_active_by_a_previous_process() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    paths.prepare_directories().expect("prepare profile paths");
+    let database = DatabaseWorker::start(
+        DatabaseConfig::new(paths.domain_database()).expect("database config"),
+    )
+    .expect("seed database worker");
+    let session_id = SessionId::new("left-active-before-restart").expect("session id");
+    database
+        .client()
+        .begin_session(&SessionStart {
+            session_id: session_id.clone(),
+            role: AppRole::Host,
+            session_name: "Previous Process Session".to_owned(),
+            started_at_ms: 1_000,
+        })
+        .expect("seed active host session");
+    database.stop_and_join().expect("close seed database");
+
+    let state = DesktopAppState::new();
+    state
+        .open_profile_sync(
+            &paths,
+            id,
+            &FixedIdentityProvider([12; 32]),
+            &FixedSigningIdentityProvider(12),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("open recovers previous host session");
+    state.close_sync().expect("close opened profile");
+
+    let database = DatabaseWorker::start(
+        DatabaseConfig::new(paths.domain_database()).expect("database config"),
+    )
+    .expect("reopen database worker");
+    let recovered = database
+        .client()
+        .get_session(&session_id)
+        .expect("read recovered session")
+        .expect("session history row");
+    assert_eq!(recovered.outcome, SessionOutcome::Failed);
+    assert_eq!(
+        recovered.failure_code.as_deref(),
+        Some("desktop.host_session.interrupted")
+    );
+    assert!(recovered.ended_at_ms.expect("ended timestamp") >= 1_000);
+    database
+        .stop_and_join()
+        .expect("close reopened database worker");
 }
 
 /// Always fails, standing in for a genuinely unavailable OS credential

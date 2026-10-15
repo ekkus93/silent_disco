@@ -385,6 +385,7 @@ fn storage_effect_name(request: &StorageEffectRequest) -> &'static str {
 
 impl From<CoreError> for DesktopErrorDto {
     fn from(value: CoreError) -> Self {
+        let operation_id = value.operation_id.as_ref().map(ToString::to_string);
         Self::new(
             &format!("core.{}", value.code.stable_name()),
             value.subsystem.stable_name(),
@@ -392,6 +393,7 @@ impl From<CoreError> for DesktopErrorDto {
             value.retryable,
             &value.message,
         )
+        .with_operation_id(operation_id)
     }
 }
 
@@ -459,6 +461,7 @@ fn recoverable_action_name(action: silent_disco_core::runtime::RecoverableAction
 mod tests {
     use super::{AttachNotificationResponse, CoreNotificationDto, CoreSnapshotDto};
     use silent_disco_core::domain::{AppRole, HostLifecycle, OperationId, TransportState};
+    use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
     use silent_disco_core::runtime::{
         CoreNotification, CoreSnapshot, PlatformEffect, PlatformEffectRequest, SnapshotRevision,
     };
@@ -498,6 +501,29 @@ mod tests {
         };
         assert_eq!(dto.operation_id, "operation-1");
         assert_eq!(dto.effect_kind, "stop_advertising");
+    }
+
+    #[test]
+    fn asynchronous_core_errors_preserve_operation_identity() {
+        let operation_id = OperationId::new("command-end-1").expect("operation ID");
+        let error = CoreError::new(
+            CoreErrorCode::InvalidStateTransition,
+            "command expected a newer snapshot revision",
+            ErrorSeverity::Error,
+            false,
+            Some(operation_id),
+        )
+        .expect("core error");
+
+        let CoreNotificationDto::Error(dto) =
+            CoreNotificationDto::from(CoreNotification::Error(error))
+        else {
+            panic!("core error notification must remain an error");
+        };
+        assert_eq!(
+            dto.operation_id.as_deref().map(String::as_str),
+            Some("command-end-1")
+        );
     }
 
     #[test]

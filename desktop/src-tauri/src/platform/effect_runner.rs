@@ -3,6 +3,7 @@ use super::capabilities::{desktop_capabilities, publish_desktop_capabilities};
 use super::diagnostics_export;
 use super::discovery;
 use super::failure::{DesktopPlatformFailure, core_error};
+use super::host_session_history;
 use super::network::DesktopHostNetworkControl;
 use super::paths::DesktopProfilePaths;
 use super::storage_effect_runner::DesktopStorageEffectDispatcher;
@@ -13,6 +14,7 @@ use silent_disco_core::runtime::{
     CapabilitySnapshot, CoreActorHandle, CoreNotification, CoreObserver, CoreSnapshot,
     PlatformEffect, PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion,
 };
+use silent_disco_core::storage::DatabaseClient;
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -217,6 +219,7 @@ impl DesktopPlatformEffectRunner {
         handle: CoreActorHandle,
         paths: DesktopProfilePaths,
         network: Arc<DesktopHostNetworkControl>,
+        database: DatabaseClient,
     ) -> Result<(Self, CoreSnapshot), CoreError> {
         let capability_handle = handle.clone();
         let mut runner = Self::start_with_components(
@@ -227,6 +230,7 @@ impl DesktopPlatformEffectRunner {
                 paths,
                 Arc::clone(&network),
                 capability_handle.clone(),
+                Some(database),
             )),
         )?;
         runner.network = Some(network);
@@ -349,6 +353,8 @@ pub(super) struct DesktopPlatformAdapters {
     capabilities: CapabilitySnapshot,
     network: Arc<DesktopHostNetworkControl>,
     transport_events: Option<CoreActorHandle>,
+    database: Option<DatabaseClient>,
+    active_host_session: std::sync::Mutex<Option<(silent_disco_core::domain::SessionId, String)>>,
 }
 
 impl DesktopPlatformAdapters {
@@ -359,6 +365,8 @@ impl DesktopPlatformAdapters {
             capabilities: desktop_capabilities(),
             network: Arc::new(DesktopHostNetworkControl::production()),
             transport_events: None,
+            database: None,
+            active_host_session: std::sync::Mutex::new(None),
         }
     }
 
@@ -366,17 +374,24 @@ impl DesktopPlatformAdapters {
         paths: DesktopProfilePaths,
         network: Arc<DesktopHostNetworkControl>,
         transport_events: CoreActorHandle,
+        database: Option<DatabaseClient>,
     ) -> Self {
         Self {
             paths,
             capabilities: desktop_capabilities(),
             network,
             transport_events: Some(transport_events),
+            database,
+            active_host_session: std::sync::Mutex::new(None),
         }
     }
 }
 
 impl DesktopPlatformEffectExecutor for DesktopPlatformAdapters {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "host advertising owns the platform start and its required durable history record"
+    )]
     fn execute(
         &self,
         effect: &PlatformEffect,
@@ -386,9 +401,8 @@ impl DesktopPlatformEffectExecutor for DesktopPlatformAdapters {
             PlatformEffectRequest::RequestCapabilities(_) => Ok(
                 PlatformOperationCompletion::CapabilitiesResolved(self.capabilities),
             ),
-            PlatformEffectRequest::StartAdvertising(advertisement) => self
-                .network
-                .start_host(
+            PlatformEffectRequest::StartAdvertising(advertisement) => {
+                self.network.start_host(
                     advertisement,
                     self.transport_events.clone().ok_or_else(|| {
                         DesktopPlatformFailure::new(
@@ -398,12 +412,71 @@ impl DesktopPlatformEffectExecutor for DesktopPlatformAdapters {
                             true,
                         )
                     })?,
-                )
-                .map(|_| PlatformOperationCompletion::AdvertisingStarted),
-            PlatformEffectRequest::StopAdvertising => self
-                .network
-                .stop_host()
-                .map(|()| PlatformOperationCompletion::AdvertisingStopped),
+                )?;
+                if let Some(database) = &self.database {
+                    if let Err(history_error) = host_session_history::begin(
+                        database,
+                        advertisement.session_id.clone(),
+                        advertisement.session_name.clone(),
+                    ) {
+                        return match self.network.stop_host() {
+                            Ok(()) => Err(history_error),
+                            Err(cleanup_error) => Err(DesktopPlatformFailure::new(
+                                CoreErrorCode::PlatformOperationFailed,
+                                format!(
+                                    "{history_error:?}; host transport cleanup also failed: {cleanup_error:?}"
+                                ),
+                                ErrorSeverity::Fatal,
+                                false,
+                            )),
+                        };
+                    }
+                    *self.active_host_session.lock().map_err(|_| {
+                        DesktopPlatformFailure::new(
+                            CoreErrorCode::PlatformOperationFailed,
+                            "host session history lock is poisoned",
+                            ErrorSeverity::Fatal,
+                            false,
+                        )
+                    })? = Some((
+                        advertisement.session_id.clone(),
+                        advertisement.session_name.clone(),
+                    ));
+                }
+                Ok(PlatformOperationCompletion::AdvertisingStarted)
+            }
+            PlatformEffectRequest::StopAdvertising => {
+                self.network.stop_host()?;
+                if let Some(database) = &self.database {
+                    let active = self
+                        .active_host_session
+                        .lock()
+                        .map_err(|_| {
+                            DesktopPlatformFailure::new(
+                                CoreErrorCode::PlatformOperationFailed,
+                                "host session history lock is poisoned",
+                                ErrorSeverity::Fatal,
+                                false,
+                            )
+                        })?
+                        .clone();
+                    if let Some((session_id, _)) = active {
+                        let listener_count = snapshot.map_or(0, |value| {
+                            u32::try_from(value.listeners.len()).unwrap_or(u32::MAX)
+                        });
+                        host_session_history::end(database, session_id, listener_count)?;
+                        *self.active_host_session.lock().map_err(|_| {
+                            DesktopPlatformFailure::new(
+                                CoreErrorCode::PlatformOperationFailed,
+                                "host session history lock is poisoned",
+                                ErrorSeverity::Fatal,
+                                false,
+                            )
+                        })? = None;
+                    }
+                }
+                Ok(PlatformOperationCompletion::AdvertisingStopped)
+            }
             PlatformEffectRequest::StartDiscovery(_)
             | PlatformEffectRequest::StopDiscovery
             | PlatformEffectRequest::EstablishNetwork(_)

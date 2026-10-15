@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { DesktopErrorDto, HostInvitationDto } from "../../core/generated/desktop-bindings";
 import { formatWallClock, isInvitationExpired } from "./domain";
 import { CopyButton, Detail, ErrorAlert } from "./shared";
@@ -19,6 +20,25 @@ export function QrInvitationPanel({
   onRefreshInvitation,
   onCopy,
 }: QrInvitationPanelProps) {
+  const [, setExpirationTick] = useState(0);
+  const expiresAtMs = invitation ? Number(invitation.expiresAtMs) : null;
+
+  useEffect(() => {
+    if (expiresAtMs === null) {
+      return;
+    }
+
+    if (!Number.isFinite(expiresAtMs)) {
+      return;
+    }
+
+    const timeout = window.setTimeout(
+      () => setExpirationTick((tick) => tick + 1),
+      Math.max(0, expiresAtMs - Date.now()),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [expiresAtMs]);
+
   return (
     <section
       aria-labelledby="invitation-title"
@@ -65,7 +85,7 @@ export function QrInvitationPanel({
               <img
                 src={invitationQrDataUrl}
                 alt="Signed Silent Disco join QR code"
-                className="h-56 w-56 rounded-xl bg-white p-2"
+                className="h-auto w-full max-w-2xl rounded-xl bg-white p-2"
               />
             ) : (
               <p

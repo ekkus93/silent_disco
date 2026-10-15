@@ -148,6 +148,8 @@ class MainViewModel @JvmOverloads constructor(
      * it, and its disconnects arrive as Rust transport events instead.
      */
     internal var listenerTransportRidesWifiDirect: Boolean = false
+    internal val listenerHasPendingWifiDirectJoin: Boolean
+        get() = listenerTransportRidesWifiDirect || pendingEstablishNetworkOperationId != null
     internal var pendingStartAdvertisingOperationId: String? = null
     internal var hostTransportEventLoopStarted: Boolean = false
     internal var listenerTransportEventLoopStarted: Boolean = false
@@ -293,6 +295,7 @@ class MainViewModel @JvmOverloads constructor(
 
     fun retryJoin() {
         logger.i("listener.retry", "Retrying listener connection")
+        resetListenerSyncAcquisition()
         wifiDirectService.retry()
         diagnosticsStore.updateListener {
             it.copy(
@@ -357,8 +360,7 @@ class MainViewModel @JvmOverloads constructor(
         hostStreamJob?.cancel()
         stopListenerPlayback()
         resyncJob?.cancel()
-        pendingSyncCorrelationId = null
-        closeListenerSyncEstimator()
+        resetListenerSyncAcquisition()
         pendingEstablishNetworkOperationId = null
         logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(listenerPlaybackState = PlaybackState.STOPPED)
