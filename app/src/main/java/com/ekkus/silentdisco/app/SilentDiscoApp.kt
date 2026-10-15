@@ -424,8 +424,8 @@ fun SilentDiscoApp(
                     }
                 }
                 val permissionRequired = !uiState.hasPermissions(PermissionRequestContext.LISTENER_NEARBY)
-                LaunchedEffect(permissionRequired) {
-                    if (!permissionRequired) viewModel.scanForSessions()
+                LaunchedEffect(permissionRequired, uiState.isScanning) {
+                    if (!permissionRequired && !uiState.isScanning) viewModel.scanForSessions()
                 }
                 NearbySessionsScreen(
                     uiState = uiState,
@@ -503,7 +503,10 @@ fun SilentDiscoApp(
                     uiState = uiState,
                     onBack = { navController.popBackStack() },
                     onResynchronize = viewModel::manualResync,
-                    onReconnect = viewModel::retryJoin,
+                    onReconnect = {
+                        viewModel.retryJoin()
+                        navController.navigateSingleTop(AppRoutes.NearbySessions)
+                    },
                     onShareSupportReport = ::shareSupportReport,
                     onAdvancedDiagnostics = {
                         navController.navigateSingleTop(AppRoutes.AdvancedDiagnostics)
