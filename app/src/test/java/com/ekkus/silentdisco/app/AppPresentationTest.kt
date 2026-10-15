@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.core.model.AppRole
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
@@ -105,6 +106,20 @@ class AppPresentationTest {
         )
 
         assertThat(state.listenerConnectionHealthSummary().level).isEqualTo(SessionHealthLevel.GOOD)
+    }
+
+    @Test
+    fun stoppedListenerWithLostHostOffersConnectionRecovery() {
+        val state = AppUiState(
+            selectedRole = AppRole.LISTENER,
+            listenerPlaybackState = PlaybackState.STOPPED,
+        )
+
+        val summary = state.listenerConnectionHealthSummary()
+
+        assertThat(summary.level).isEqualTo(SessionHealthLevel.CRITICAL)
+        assertThat(summary.title).isEqualTo("Host connection lost")
+        assertThat(summary.detail).contains("Reconnect")
     }
 
     @Test

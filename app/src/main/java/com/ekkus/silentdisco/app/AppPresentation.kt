@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.core.model.AppRole
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
@@ -201,6 +202,23 @@ fun AppUiState.listenerConnectionHealthSummary(): SessionHealthSummary {
             level = SessionHealthLevel.CRITICAL,
             title = "Connection lost",
             detail = "Reconnect to continue listening.",
+            affectedListenerCount = 1,
+        )
+    }
+
+    // A lost desktop host clears the selected session before the transport
+    // lifecycle necessarily reaches DISCONNECTED. On the listener route,
+    // keep recovery available instead of presenting a stopped player with no
+    // actionable way to retry or return to session discovery.
+    if (
+        selectedRole == AppRole.LISTENER &&
+        selectedSession == null &&
+        listenerPlaybackState == PlaybackState.STOPPED
+    ) {
+        return SessionHealthSummary(
+            level = SessionHealthLevel.CRITICAL,
+            title = "Host connection lost",
+            detail = "The host is no longer available. Reconnect or return to sessions.",
             affectedListenerCount = 1,
         )
     }
