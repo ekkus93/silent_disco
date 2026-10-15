@@ -120,6 +120,7 @@ class AppPresentationTest {
         assertThat(summary.level).isEqualTo(SessionHealthLevel.CRITICAL)
         assertThat(summary.title).isEqualTo("Host connection lost")
         assertThat(summary.detail).contains("Reconnect")
+        assertThat(state.canReconnectToHost()).isTrue()
     }
 
     @Test

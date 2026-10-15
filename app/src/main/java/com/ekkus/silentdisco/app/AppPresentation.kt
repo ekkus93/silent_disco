@@ -260,6 +260,18 @@ fun AppUiState.listenerConnectionHealthSummary(): SessionHealthSummary {
     )
 }
 
+fun AppUiState.canReconnectToHost(): Boolean =
+    listenerState in setOf(
+        ListenerLifecycleState.DISCONNECTED,
+        ListenerLifecycleState.RECONNECTING,
+        ListenerLifecycleState.DESYNCED,
+        ListenerLifecycleState.ERROR,
+    ) || (
+        selectedRole == AppRole.LISTENER &&
+            selectedSession == null &&
+            listenerPlaybackState == PlaybackState.STOPPED
+        )
+
 private fun String?.normalizedProblemText(): String = orEmpty().lowercase()
 
 private fun AppUiState.listenerErrorProblem(): UserFacingProblem {

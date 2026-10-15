@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.SessionHealthLevel
+import com.ekkus.silentdisco.app.canReconnectToHost
 import com.ekkus.silentdisco.app.canManualResync
 import com.ekkus.silentdisco.app.hostSessionHealthSummary
 import com.ekkus.silentdisco.app.listenerConnectionHealthSummary
@@ -133,12 +134,7 @@ fun ConnectionHelpScreen(
                 }
             }
 
-            val canReconnect = !hostContext && uiState.listenerState in setOf(
-                ListenerLifecycleState.DISCONNECTED,
-                ListenerLifecycleState.RECONNECTING,
-                ListenerLifecycleState.DESYNCED,
-                ListenerLifecycleState.ERROR,
-            )
+            val canReconnect = !hostContext && uiState.canReconnectToHost()
             if (canReconnect) {
                 Button(
                     onClick = onReconnect,
