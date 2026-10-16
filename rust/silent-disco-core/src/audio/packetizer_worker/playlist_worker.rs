@@ -2,6 +2,8 @@
 
 use super::super::decoder::StreamingDecodeHandle;
 use super::super::packetizer::Packetizer;
+use super::super::types::DecodedPcmChunk;
+use crate::domain::SampleIndex;
 use super::super::types::{DecodeError, DecodeErrorKind};
 use super::{
     PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
@@ -52,6 +54,7 @@ pub(super) fn run_playlist_packetizer_worker(
         apply_playlist_update(updates, &mut upcoming)?;
         let mut next = open_next_track(&mut upcoming);
         let has_ready_successor = next.as_ref().is_some_and(|(_, opened)| opened.is_ok());
+        let outgoing_format = decoder.stream_info().format;
         let track_result = packetize_playlist_track(
             &decoder,
             &mut packetizer,
@@ -93,12 +96,35 @@ pub(super) fn run_playlist_packetizer_worker(
         }
         let Some(((next_entry_id, next_display_name), next_decoder)) = next else {
             if had_successor {
-                // The previous track was packetized as non-final; silently
-                // claiming EOF here would discard its partial last packet.
-                return Err(PacketizerWorkerError::new(
-                    PacketizerWorkerErrorKind::Packetize,
-                    "playlist successor removed after the last decoded chunk; stop and replay",
-                ));
+                // The outgoing decoder was processed as non-final, so its
+                // final partial packet remains in the packetizer carry.
+                // Finalize *without adding samples* at this new queue end.
+                if packetizer.is_finished() {
+                    return Err(PacketizerWorkerError::new(
+                        PacketizerWorkerErrorKind::Packetize,
+                        "cannot retarget a playlist whose packetizer already finished",
+                    ));
+                }
+                let outcome = packetizer.push_contiguous_chunk(DecodedPcmChunk {
+                    format: outgoing_format,
+                    first_sample_index: SampleIndex::new(0),
+                    frames: Vec::new(),
+                    end_of_stream: true,
+                })?;
+                for frame in outcome.frames {
+                    send_with_backpressure(
+                        sender,
+                        frame,
+                        cancellation,
+                        statistics,
+                        config.queue_capacity,
+                    )?;
+                }
+                return Ok(PacketizerSummary {
+                    state: PacketizerWorkerState::Completed,
+                    emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
+                    backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
+                });
             }
             return Ok(PacketizerSummary {
                 state: PacketizerWorkerState::Completed,

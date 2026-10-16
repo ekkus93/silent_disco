@@ -253,3 +253,41 @@ fn an_empty_update_while_current_audio_is_backpressured_does_not_leak_a_boundary
     packetizer.join().expect("playlist completed after clearing next track");
     assert!(!saw_removed);
 }
+
+#[test]
+fn empty_final_contiguous_chunk_flushes_only_the_retained_partial_packet() {
+    let mut packetizer = Packetizer::new(
+        SessionId::new("session-final-removal").expect("session"),
+        StreamId::new("stream-final-removal").expect("stream"),
+        AudioFormat::CANONICAL,
+        5,
+        MonotonicMillis::new(5_000),
+    )
+    .expect("packetizer");
+    let first = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format: AudioFormat::CANONICAL,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![42; 241 * 2],
+            end_of_stream: false,
+        })
+        .expect("non-final outgoing source");
+    assert_eq!(first.frames.len(), 1);
+    assert!(!first.end_of_stream);
+    let final_outcome = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format: AudioFormat::CANONICAL,
+            first_sample_index: SampleIndex::new(0),
+            frames: Vec::new(),
+            end_of_stream: true,
+        })
+        .expect("finish without another source");
+    assert!(final_outcome.end_of_stream);
+    assert_eq!(final_outcome.frames.len(), 1);
+    let ProtocolFrame::Audio(tail) = &final_outcome.frames[0] else {
+        panic!("expected final padded audio packet");
+    };
+    assert_eq!(tail.first_sample_index.get(), 240);
+    assert_eq!(tail.sequence.get(), 1);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 241);
+}
