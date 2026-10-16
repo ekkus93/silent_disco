@@ -103,3 +103,7 @@ The Rust actor already limits the authoritative host queue to 100 entries with u
 Direct packetizer/UniFFI live updates previously checked duplicate IDs only *within* the upcoming list, not against the active track. The shared updater now tracks current identity under the same lock as pending edits, rejects duplicate-current IDs before accepting an update, and revalidates at consumption. Promotion updates the identity and removes the just-promoted entry from an already-accepted pending edit, preserving the remaining order rather than replaying the same song. Core, promotion-state, and UniFFI regressions cover these cases.
 
 **Scope:** This closes a direct-updater identity bypass, **not** the producer/actor boundary-commit race. An already-enqueued boundary can still conflict with an actor-accepted queue edit; the producer-side reservation protocol and physical playback qualification remain open.
+
+### Direct packetizer entry-ID validation
+
+The direct playlist factory now also enforces the authoritative queue's 128-byte entry-ID limit, no leading/trailing whitespace, and no control characters. This prevents direct core/UniFFI callers from bypassing queue ID validation even before playback starts. A core regression exercises oversized, whitespace-padded, and control-character IDs. This is distinct from the still-open boundary reservation race.

@@ -356,3 +356,16 @@ fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
     assert!(saw_second);
     packetizer.join().expect("rejected edits do not interrupt playback");
 }
+
+#[test]
+fn playlist_factory_enforces_actor_queue_entry_identity_rules() {
+    let oversized = "x".repeat(crate::runtime::MAX_QUEUE_ENTRY_ID_BYTES + 1);
+    for invalid in [" leading", "trailing ", "bad\nline", oversized.as_str()] {
+        let error = StreamingPlaylistTrackFactory::new(invalid, "Track", || {
+            unreachable!("invalid identity must be rejected before decoder open")
+        })
+        .err()
+        .expect("invalid queue identity must be rejected");
+        assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
+    }
+}

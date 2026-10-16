@@ -23,7 +23,10 @@ pub(super) fn validate_track_identity(
     display_name: &str,
 ) -> Result<(), PacketizerWorkerError> {
     if entry_id.is_empty()
+        || entry_id.len() > crate::runtime::MAX_QUEUE_ENTRY_ID_BYTES
         || entry_id.len() > crate::protocol::MAX_PROTOCOL_STRING_BYTES
+        || entry_id.trim() != entry_id
+        || entry_id.chars().any(char::is_control)
         || display_name.is_empty()
         || display_name.len() > MAX_DISPLAY_NAME_BYTES
     {
