@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -74,6 +75,7 @@ impl std::error::Error for FfiHostPlaylistError {}
 #[derive(uniffi::Object)]
 pub struct FfiHostPlaylistStreamer {
     inner: Mutex<Option<StreamingPacketizeHandle>>,
+    closed: AtomicBool,
     updater: StreamingPlaylistUpdater,
     stream_start: FfiPlaylistStreamStart,
 }
@@ -157,6 +159,7 @@ impl FfiHostPlaylistStreamer {
         })?;
         Ok(Arc::new(Self {
             inner: Mutex::new(Some(packetizer)),
+            closed: AtomicBool::new(false),
             updater,
             stream_start,
         }))
@@ -170,6 +173,11 @@ impl FfiHostPlaylistStreamer {
         &self,
         sources: Vec<FfiPlaylistSource>,
     ) -> Result<(), FfiHostPlaylistError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(FfiHostPlaylistError::Closed(
+                "playlist stream has already stopped".to_owned(),
+            ));
+        }
         let decode_config = StreamingDecodeConfig::default();
         let factories = sources
             .into_iter()
@@ -203,6 +211,7 @@ impl FfiHostPlaylistStreamer {
             Ok(frame) => frame_to_ffi(frame).map(Some),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                self.closed.store(true, Ordering::Release);
                 let Some(packetizer) = inner.take() else {
                     return Ok(None);
                 };
@@ -215,6 +224,7 @@ impl FfiHostPlaylistStreamer {
     }
 
     pub fn cancel(&self) -> Result<(), FfiHostPlaylistError> {
+        self.closed.store(true, Ordering::Release);
         let mut inner = self.inner.lock().map_err(|_| {
             FfiHostPlaylistError::Closed("playlist stream lock was poisoned".to_owned())
         })?;
@@ -324,6 +334,9 @@ mod tests {
             .expect_err("live update must reject duplicate upcoming IDs");
         assert!(error.to_string().contains("duplicate entry IDs"));
         stream.cancel().expect("cancel stream");
+        let error = stream.replace_upcoming(Vec::new())
+            .expect_err("closed stream must not silently accept queue edits");
+        assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
         fs::remove_dir_all(root).expect("remove temp directory");
     }
 
@@ -348,6 +361,7 @@ mod tests {
                 FfiPlaylistSource {
                     entry_id: "entry-first".to_owned(),
                     display_name: "First".to_owned(),
+
                     staged_path: first.to_string_lossy().into_owned(),
                 },
                 FfiPlaylistSource {
@@ -421,6 +435,9 @@ mod tests {
             boundary_position.expect("boundary") < next_track_audio_position.expect("next audio")
         );
         assert!(sequence.windows(2).all(|pair| pair[1] == pair[0] + 1));
+        let error = stream.replace_upcoming(Vec::new())
+            .expect_err("completed stream must not accept queue edits");
+        assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
         fs::remove_dir_all(root).expect("remove temp directory");
     }
 

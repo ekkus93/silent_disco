@@ -107,3 +107,7 @@ Direct packetizer/UniFFI live updates previously checked duplicate IDs only *wit
 ### Direct packetizer entry-ID validation
 
 The direct playlist factory now also enforces the authoritative queue's 128-byte entry-ID limit, no leading/trailing whitespace, and no control characters. This prevents direct core/UniFFI callers from bypassing queue ID validation even before playback starts. A core regression exercises oversized, whitespace-padded, and control-character IDs. This is distinct from the still-open boundary reservation race.
+
+## 2026-10-16 — UniFFI live-updater terminal-state guard
+
+The Android-facing `FfiHostPlaylistStreamer` now records an atomic terminal flag on explicit cancellation and after the worker output disconnects. `replace_upcoming` rejects updates to an observed closed stream with `FfiHostPlaylistError::Closed` instead of silently reporting success for a stream that cannot consume the edit. Existing FFI fixture tests now cover cancellation and natural EOF. This is a lifecycle safety guard, not a solution to the producer/actor boundary reservation race: a concurrent close can still race an already-started update, and production boundary commitment remains open in TODO §3. The new regressions await an executable exact-head Rust gate.
