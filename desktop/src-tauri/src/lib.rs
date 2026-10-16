@@ -12,6 +12,7 @@ pub mod diagnostics_dto;
 pub mod dto;
 mod host_commands;
 pub mod host_session_dto;
+mod host_workflow_ops;
 #[cfg(feature = "lab-mode")]
 #[allow(
     dead_code,

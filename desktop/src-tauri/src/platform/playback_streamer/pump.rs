@@ -200,7 +200,14 @@ fn run_pump(
         .as_ref()
         .map(|error| error.message.clone())
         .or_else(|| packetizer_result.as_ref().err().map(|error| error.message.clone()));
-    let failure_tail_result = if terminal_failure.is_some() && !stop.load(Ordering::Acquire) {
+    // Both a natural queue end and a late failure leave already-sent audio
+    // still ahead of its presentation time (up to the send-ahead horizon plus
+    // the startup buffer). `Stop` and the end/failure report must wait for the
+    // last valid packet to become audible, or listeners cut off the tail of
+    // the final song and the host reports the queue finished early.
+    let failure_tail_result = if (ended_naturally || terminal_failure.is_some())
+        && !stop.load(Ordering::Acquire)
+    {
         last_audible_audio_end_ms
             .map(|deadline| wait_until_audio_tail(deadline, network, stop))
             .transpose()

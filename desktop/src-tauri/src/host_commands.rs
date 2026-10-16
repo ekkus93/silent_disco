@@ -2,12 +2,12 @@ use crate::app_state::DesktopAppState;
 use crate::diagnostics_dto::DesktopDiagnosticsDto;
 use crate::dto::DesktopErrorDto;
 use crate::host_session_dto::{HostInvitationDto, HostSessionSnapshotDto};
-use crate::platform::audio_decode::validate_staged_audio_source;
+use crate::host_workflow_ops;
 use crate::platform::file_picker::{
-    SelectedSourceRegistry, named_source_error, pick_and_inspect, pick_and_inspect_files,
+    SelectedSourceRegistry, pick_and_inspect, pick_and_inspect_files,
 };
 use crate::platform::network_dto::{NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest};
-use crate::platform::source_staging::{StagingResult, stage_audio_source};
+use crate::platform::source_staging::stage_audio_source;
 use crate::platform::source_staging_control::{
     SourceStagingControl, TauriSourceStagingProgressSink,
 };
@@ -18,14 +18,10 @@ use crate::runtime_dto::{
 };
 use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, RequestId};
 use silent_disco_core::runtime::{
-    AudioSourceDescriptor, AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch,
-    QueueEntry, SnapshotRevision,
+    AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch, SnapshotRevision,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
-
-static NEXT_QUEUE_ENTRY_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Selects the host role through the revision-aware authoritative actor.
 #[allow(clippy::needless_pass_by_value)] // Tauri command extraction requires State by value.
@@ -123,7 +119,6 @@ pub async fn add_host_audio_sources(
     app: AppHandle,
 ) -> Result<Option<CommandReceiptDto>, DesktopErrorDto> {
     let state = app.state::<DesktopAppState>();
-    let before = state.current_snapshot()?;
     let inspect_app = app.clone();
     let inspected =
         tauri::async_runtime::spawn_blocking(move || pick_and_inspect_files(inspect_app))
@@ -146,19 +141,12 @@ pub async fn add_host_audio_sources(
     let staging_app = app.clone();
     let staged = tauri::async_runtime::spawn_blocking(move || {
         let progress = TauriSourceStagingProgressSink::new(staging_app);
-        inspected
-            .iter()
-            .map(|source| {
-                let staged = stage_audio_source(source, &sources_directory, &operation, &progress)
-                    .map_err(|error| {
-                        named_source_error(&error, &source.descriptor().display_name)
-                    })?;
-                validate_staged_audio_source(&staged.source, &operation).map_err(|error| {
-                    named_source_error(&error, &source.descriptor().display_name)
-                })?;
-                Ok::<StagingResult, DesktopErrorDto>(staged)
-            })
-            .collect::<Result<Vec<_>, _>>()
+        host_workflow_ops::stage_and_validate_sources(
+            &inspected,
+            &sources_directory,
+            &operation,
+            &progress,
+        )
     })
     .await
     .map_err(|error| {
@@ -170,41 +158,8 @@ pub async fn add_host_audio_sources(
             &format!("audio source staging worker failed: {error}"),
         )
     })??;
-
-    let registry = app.state::<SelectedSourceRegistry>();
-    let mut entries = Vec::with_capacity(staged.len());
-    let mut newly_registered = Vec::new();
-    for StagingResult { source, .. } in staged {
-        let descriptor = source.descriptor().clone();
-        if registry.register(source)?.is_none() {
-            newly_registered.push(descriptor.source_id.clone());
-        }
-        let sequence = NEXT_QUEUE_ENTRY_ID.fetch_add(1, Ordering::Relaxed);
-        let entry_id = format!("queue-entry-{sequence}");
-        entries.push(
-            QueueEntry::new(entry_id, descriptor)
-                .map_err(|error| queue_validation_error(&error.to_string()))?,
-        );
-    }
-
-    let revision = parse_snapshot_revision(&before.revision)?;
-    let queue_revision = parse_queue_revision(&before.host_queue.revision)?;
-    let receipt = state.submit_core_command(
-        revision,
-        CoreCommand::AppendHostQueue {
-            expected_queue_revision: queue_revision,
-            entries,
-        },
-    );
-    match receipt {
-        Ok(receipt) => Ok(Some(receipt)),
-        Err(error) => {
-            for source_id in newly_registered {
-                registry.remove(&source_id)?;
-            }
-            Err(error)
-        }
-    }
+    host_workflow_ops::append_staged_sources(&state, &app.state::<SelectedSourceRegistry>(), staged)
+        .map(Some)
 }
 
 /// Requests cancellation of the active bounded source-staging operation.
@@ -257,117 +212,41 @@ pub fn update_host_draft(
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn append_host_queue(
-    app: AppHandle,
     state: State<'_, DesktopAppState>,
+    registry: State<'_, SelectedSourceRegistry>,
     request: AppendHostQueueRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    let revision = parse_snapshot_revision(&request.expected_revision)?;
-    let queue_revision = parse_queue_revision(&request.expected_queue_revision)?;
-    let registry = app.state::<SelectedSourceRegistry>();
-    let mut entries = Vec::with_capacity(request.entries.len());
-    for item in request.entries {
-        let descriptor = AudioSourceDescriptor::new(
-            item.source.source_id,
-            item.source.display_name,
-            item.source
-                .byte_length
-                .as_deref()
-                .map(parse_queue_revision)
-                .transpose()?,
-            item.source
-                .duration_ms
-                .as_deref()
-                .map(parse_queue_revision)
-                .transpose()?,
-        )
-        .map_err(|error| queue_validation_error(&error.to_string()))?;
-        let staged = registry.resolve(&descriptor.source_id)?.ok_or_else(|| {
-            queue_validation_error("queue source is not staged in this desktop profile")
-        })?;
-        if staged.descriptor() != &descriptor {
-            return Err(queue_validation_error(
-                "staged queue source metadata does not match the request",
-            ));
-        }
-        entries.push(
-            QueueEntry::new(item.entry_id, descriptor)
-                .map_err(|error| queue_validation_error(&error.to_string()))?,
-        );
-    }
-    let previous_queue_revision = request.expected_queue_revision;
-    let receipt = state.submit_core_command(
-        revision,
-        CoreCommand::AppendHostQueue {
-            expected_queue_revision: queue_revision,
-            entries,
-        },
-    )?;
-    if let Some(snapshot) = state.wait_for_queue_revision_change(&previous_queue_revision)? {
-        state.retarget_active_host_queue(&snapshot, &registry)?;
-    }
-    Ok(receipt)
+    host_workflow_ops::append_host_queue(&state, &registry, request)
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn reorder_host_queue(
-    app: AppHandle,
     state: State<'_, DesktopAppState>,
+    registry: State<'_, SelectedSourceRegistry>,
     request: ReorderHostQueueRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    let previous_queue_revision = request.expected_queue_revision.clone();
-    let receipt = state.submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
-        CoreCommand::ReorderHostQueue {
-            expected_queue_revision: parse_queue_revision(&request.expected_queue_revision)?,
-            ordered_entry_ids: request.ordered_entry_ids,
-        },
-    )?;
-    if let Some(snapshot) = state.wait_for_queue_revision_change(&previous_queue_revision)? {
-        state.retarget_active_host_queue(&snapshot, &app.state::<SelectedSourceRegistry>())?;
-    }
-    Ok(receipt)
+    host_workflow_ops::reorder_host_queue(&state, &registry, request)
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn remove_host_queue_entry(
-    app: AppHandle,
     state: State<'_, DesktopAppState>,
+    registry: State<'_, SelectedSourceRegistry>,
     request: HostQueueEntryCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    let previous_queue_revision = request.expected_queue_revision.clone();
-    let receipt = state.submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
-        CoreCommand::RemoveHostQueueEntry {
-            expected_queue_revision: parse_queue_revision(&request.expected_queue_revision)?,
-            entry_id: request.entry_id,
-        },
-    )?;
-    if let Some(snapshot) = state.wait_for_queue_revision_change(&previous_queue_revision)? {
-        state.retarget_active_host_queue(&snapshot, &app.state::<SelectedSourceRegistry>())?;
-    }
-    Ok(receipt)
+    host_workflow_ops::remove_host_queue_entry(&state, &registry, request)
 }
 
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn clear_host_queue(
-    app: AppHandle,
     state: State<'_, DesktopAppState>,
+    registry: State<'_, SelectedSourceRegistry>,
     request: HostQueueClearRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    let previous_queue_revision = request.expected_queue_revision.clone();
-    let receipt = state.submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
-        CoreCommand::ClearHostQueue {
-            expected_queue_revision: parse_queue_revision(&request.expected_queue_revision)?,
-        },
-    )?;
-    if let Some(snapshot) = state.wait_for_queue_revision_change(&previous_queue_revision)? {
-        state.retarget_active_host_queue(&snapshot, &app.state::<SelectedSourceRegistry>())?;
-    }
-    Ok(receipt)
+    host_workflow_ops::clear_host_queue(&state, &registry, &request)
 }
 
 /// Requests host-session creation. Queue admission is not reported as session success.
@@ -455,16 +334,11 @@ pub fn remove_listener(
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn end_host_session(
-    app: AppHandle,
     state: State<'_, DesktopAppState>,
+    registry: State<'_, SelectedSourceRegistry>,
     request: RevisionCommandRequest,
 ) -> Result<CommandReceiptDto, DesktopErrorDto> {
-    let receipt = state.submit_core_command(
-        parse_snapshot_revision(&request.expected_revision)?,
-        CoreCommand::EndHostSession,
-    )?;
-    app.state::<SelectedSourceRegistry>().clear()?;
-    Ok(receipt)
+    host_workflow_ops::end_host_session(&state, &registry, &request)
 }
 
 /// Starts real-time playback of the host draft's selected audio source:
@@ -597,7 +471,7 @@ pub fn set_allow_shared_address_space(
     state.set_allow_shared_address_space(allow)
 }
 
-fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopErrorDto> {
+pub(crate) fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopErrorDto> {
     if value.is_empty()
         || (value.len() > 1 && value.starts_with('0'))
         || !value.bytes().all(|byte| byte.is_ascii_digit())
@@ -622,30 +496,6 @@ fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopError
                 &format!("expected revision is outside the supported range: {error}"),
             )
         })
-}
-
-fn parse_queue_revision(value: &str) -> Result<u64, DesktopErrorDto> {
-    if value.is_empty()
-        || (value.len() > 1 && value.starts_with('0'))
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return Err(queue_validation_error(
-            "expected queue revision must be a canonical unsigned decimal string",
-        ));
-    }
-    value.parse::<u64>().map_err(|error| {
-        queue_validation_error(&format!("queue revision is out of range: {error}"))
-    })
-}
-
-fn queue_validation_error(message: &str) -> DesktopErrorDto {
-    DesktopErrorDto::new(
-        "desktop.host_queue.invalid_request",
-        "validation",
-        "error",
-        false,
-        message,
-    )
 }
 
 fn parse_request_id(value: &str) -> Result<RequestId, DesktopErrorDto> {

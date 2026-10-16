@@ -50,6 +50,7 @@ use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::notification_channel::TauriNotificationSink;
 use crate::platform::identity::SystemDesktopIdentityProvider;
 use crate::platform::invitation_identity::SystemDesktopHostSigningIdentityProvider;
+use crate::platform::network::DesktopHostNetworkControl;
 use crate::platform::paths::resolve_profile_paths;
 use crate::profile::ProfileId;
 use crate::runtime_dto::{
@@ -128,6 +129,7 @@ pub async fn open_profile(
             &provider,
             &signing_provider,
             notifications,
+            Arc::new(DesktopHostNetworkControl::production()),
         )
     });
     let result = task.await.map_err(|error| {
