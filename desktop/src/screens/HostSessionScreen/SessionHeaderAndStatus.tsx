@@ -133,8 +133,11 @@ export function SessionHeaderAndStatus({
         {announcement ?? copyStatus}
       </div>
 
+      {/* Polled authoritative state; a change (for example to Reconnecting or
+          Action needed) is announced politely rather than only recolored. */}
       <section
         aria-labelledby="host-status-title"
+        aria-live="polite"
         className="desktop-host-status-grid mt-6 grid gap-3 md:grid-cols-4"
       >
         <h2 id="host-status-title" className="sr-only">

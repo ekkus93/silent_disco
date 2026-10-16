@@ -67,6 +67,9 @@ export function HostSetupScreen() {
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   const [sessionNameTouched, setSessionNameTouched] = useState(false);
   const [setupStage, setSetupStage] = useState<"music" | "access" | "ready">("music");
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const advancedHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const focusedViewRef = useRef<string | null>(null);
   const roleSelectionRequest = useRef<{
     revision: string;
     request: ReturnType<typeof selectHostRole>;
@@ -116,6 +119,24 @@ export function HostSetupScreen() {
       active = false;
     };
   }, [dispatch, snapshot]);
+
+  // A step change unmounts the control that triggered it (Enter in a field,
+  // or a step button), which used to drop keyboard focus onto the page body.
+  // Focus moves to the new step's first control instead; the initial render
+  // leaves focus alone.
+  const focusedView = showAdvancedTuning ? "advanced" : setupStage;
+  const setupRendered = snapshot !== null && draft !== null;
+  useEffect(() => {
+    if (!setupRendered) return;
+    const previous = focusedViewRef.current;
+    focusedViewRef.current = focusedView;
+    if (previous === null || previous === focusedView) return;
+    if (focusedView === "advanced") {
+      advancedHeadingRef.current?.focus();
+    } else {
+      formRef.current?.querySelector<HTMLElement>("[data-step-focus]")?.focus();
+    }
+  }, [focusedView, setupRendered]);
 
   const pending = pendingCommands.length > 0;
   const validationByField = useMemo(() => {
@@ -225,7 +246,12 @@ export function HostSetupScreen() {
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300">
             Shared settings
           </p>
-          <h2 id="advanced-tuning-title" className="mt-2 text-2xl font-bold">
+          <h2
+            id="advanced-tuning-title"
+            ref={advancedHeadingRef}
+            tabIndex={-1}
+            className="mt-2 text-2xl font-bold outline-none"
+          >
             Advanced tuning
           </h2>
           <p className="mt-3 text-violet-100/75">Audio tuning is unavailable in this version.</p>
@@ -270,6 +296,7 @@ export function HostSetupScreen() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <form
+          ref={formRef}
           className="sd-workflow-card space-y-5 p-5"
           onSubmit={(event) => {
             event.preventDefault();
@@ -283,6 +310,7 @@ export function HostSetupScreen() {
               </label>
               <input
                 id="session-name"
+                data-step-focus
                 value={draft.sessionName}
                 onChange={(event) => {
                   setDraft({ ...draft, sessionName: event.target.value });
@@ -307,6 +335,7 @@ export function HostSetupScreen() {
               </label>
               <select
                 id="approval-mode"
+                data-step-focus
                 value={draft.approvalMode}
                 onChange={(event) => {
                   setDraft({ ...draft, approvalMode: event.target.value as ApprovalMode });
@@ -373,7 +402,9 @@ export function HostSetupScreen() {
 
           {setupStage === "ready" ? (
             <section aria-label="Session review" className="space-y-3">
-              <h3 className="text-lg font-semibold">Ready to host</h3>
+              <h3 data-step-focus tabIndex={-1} className="text-lg font-semibold outline-none">
+                Ready to host
+              </h3>
               <p>{snapshot.hostDraft.sessionName}</p>
               <p>{snapshot.hostQueue.entries.length} songs queued</p>
               <p>
@@ -475,6 +506,7 @@ export function HostSetupScreen() {
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         type="button"
+                        aria-label={`Move ${entry.source.displayName} up`}
                         disabled={pending || index === 0}
                         onClick={() => {
                           const ids = snapshot.hostQueue.entries.map((item) => item.entryId);
@@ -502,6 +534,7 @@ export function HostSetupScreen() {
                       </button>
                       <button
                         type="button"
+                        aria-label={`Move ${entry.source.displayName} down`}
                         disabled={pending || index === snapshot.hostQueue.entries.length - 1}
                         onClick={() => {
                           const ids = snapshot.hostQueue.entries.map((item) => item.entryId);
@@ -529,6 +562,7 @@ export function HostSetupScreen() {
                       </button>
                       <button
                         type="button"
+                        aria-label={`Remove ${entry.source.displayName}`}
                         disabled={pending}
                         onClick={() =>
                           void removeHostQueueEntry({

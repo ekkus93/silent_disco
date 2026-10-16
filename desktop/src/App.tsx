@@ -190,6 +190,27 @@ export function App() {
     destinationRef.current?.focus();
   }, [activeView]);
 
+  // Starting or ending a session swaps Host Setup for the live session screen
+  // (and back), unmounting the button that caused it. Focus used to fall onto
+  // the page body; it now lands on the host destination, unless the user has
+  // already moved it somewhere else that still exists.
+  const hostScreen =
+    snapshot === null
+      ? null
+      : ACTIVE_HOST_LIFECYCLES.has(snapshot.hostLifecycle)
+        ? "session"
+        : "setup";
+  const previousHostScreenRef = useRef(hostScreen);
+  useEffect(() => {
+    const previous = previousHostScreenRef.current;
+    previousHostScreenRef.current = hostScreen;
+    if (previous === null || hostScreen === null || previous === hostScreen) return;
+    const focused = document.activeElement;
+    if (activeView === "host" && (focused === null || focused === document.body)) {
+      destinationRef.current?.focus();
+    }
+  }, [activeView, hostScreen]);
+
   const ready = lifecycle.kind === "ready" && snapshot !== null && connection !== null;
   const failed = lifecycle.kind === "failed";
 

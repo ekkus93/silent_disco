@@ -43,7 +43,17 @@ export function PlaybackControls({
       {audioSource ? (
         <div className="mt-3 [@media(max-height:700px)]:mt-1">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-            <span className="font-semibold text-slate-100">{audioSource.displayName}</span>
+            {/* Polite live region: a gapless track boundary changes this title
+                without any navigation, so it is the only cue a screen-reader
+                user gets that the current song changed. */}
+            <span
+              role="status"
+              aria-live="polite"
+              aria-label="Now playing"
+              className="font-semibold text-slate-100"
+            >
+              {audioSource.displayName}
+            </span>
             <span className="font-mono text-slate-400">
               {formatTimestamp(playbackPositionMs)} / {formatTimestamp(audioSource.durationMs)}
             </span>
