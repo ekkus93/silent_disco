@@ -105,6 +105,60 @@ class GaplessEvidenceTests(unittest.TestCase):
         trace["host"]["boundary_scheduled"] = True
         self.assert_invalid(trace, "nonnegative integer")
 
+    def test_independent_golden_boundary_matches(self) -> None:
+        trace = good_trace()
+        trace["expected_boundaries"] = copy.deepcopy(trace["host"]["boundaries"])
+        verifier.check_capture(trace, require_golden_boundaries=True)
+
+    def test_wrong_host_song_rejected_even_when_listeners_agree(self) -> None:
+        trace = good_trace()
+        trace["host"]["boundaries"][0]["entry_id"] = "stale-removed-track"
+        trace["listeners"][0]["boundaries"][0]["entry_id"] = "stale-removed-track"
+        trace["expected_boundaries"] = [{"entry_id": "replacement-track", "first_sample_index": 10601}]
+        self.assert_invalid(trace, "independent expected boundaries")
+
+    def test_off_by_one_boundary_rejected_against_golden(self) -> None:
+        trace = good_trace()
+        trace["expected_boundaries"] = [{"entry_id": "second-track", "first_sample_index": 10602}]
+        self.assert_invalid(trace, "independent expected boundaries")
+
+    def test_expected_boundaries_required_in_strict_mode(self) -> None:
+        with self.assertRaisesRegex(verifier.InvalidEvidence, "expected_boundaries"):
+            verifier.check_capture(good_trace(), require_golden_boundaries=True)
+
+    def test_forbidden_removed_song_rejected(self) -> None:
+        trace = good_trace()
+        trace["forbidden_entry_ids"] = ["second-track"]
+        self.assert_invalid(trace, "removed or forbidden track")
+
+    def test_unexpected_listener_runtime_replacement_rejected(self) -> None:
+        trace = good_trace()
+        trace["listeners"][0]["output_runtime_id_before"] = "oboe-01"
+        trace["listeners"][0]["output_runtime_id_after"] = "oboe-02"
+        self.assert_invalid(trace, "output_runtime_id changed")
+
+    def test_listener_stream_identity_must_match_host(self) -> None:
+        trace = good_trace()
+        trace["listeners"][0]["stream_id_before"] = "different-stream"
+        trace["listeners"][0]["stream_id_after"] = "different-stream"
+        self.assert_invalid(trace, "stream_id differs")
+
+    def test_strict_sink_identity_requires_fields(self) -> None:
+        with self.assertRaisesRegex(verifier.InvalidEvidence, "output_device_id_before"):
+            verifier.check_capture(good_trace(), require_sink_identity=True)
+
+    def test_strict_sink_identity_passes_unchanged(self) -> None:
+        trace = good_trace()
+        listener = trace["listeners"][0]
+        for stem, value in (
+            ("output_device_id", "speaker-A"),
+            ("output_runtime_id", "oboe-01"),
+            ("stream_id", trace["stream_id"]),
+        ):
+            listener[f"{stem}_before"] = value
+            listener[f"{stem}_after"] = value
+        verifier.check_capture(trace, require_sink_identity=True)
+
     def test_zero_listeners_rejected(self) -> None:
         trace = good_trace()
         trace["listeners"] = []
