@@ -20,6 +20,8 @@ use crate::platform::identity::DesktopIdentityProvider;
 #[cfg(test)]
 use crate::platform::invitation_identity::DesktopHostSigningIdentityProvider;
 #[cfg(test)]
+use crate::platform::network::DesktopHostNetworkControl;
+#[cfg(test)]
 use crate::platform::paths::DesktopProfilePaths;
 #[cfg(test)]
 use crate::shutdown::shutdown_owned_resources;
@@ -165,8 +167,39 @@ impl DesktopAppState {
         signing_provider: &dyn DesktopHostSigningIdentityProvider,
         notifications: Arc<DesktopNotificationBuffer>,
     ) -> Result<OpenProfileResponse, DesktopErrorDto> {
+        self.open_profile_sync_with_network(
+            paths,
+            profile_id,
+            provider,
+            signing_provider,
+            notifications,
+            Arc::new(DesktopHostNetworkControl::production()),
+        )
+    }
+
+    /// As [`Self::open_profile_sync`], but with an injected host network
+    /// control so integration tests can drive the full production profile
+    /// (actor, effect runners, storage, staging) without publishing mDNS on
+    /// the developer's LAN or opening a monitor audio device.
+    #[cfg(test)]
+    pub(crate) fn open_profile_sync_with_network(
+        &self,
+        paths: &DesktopProfilePaths,
+        profile_id: ProfileId,
+        provider: &dyn DesktopIdentityProvider,
+        signing_provider: &dyn DesktopHostSigningIdentityProvider,
+        notifications: Arc<DesktopNotificationBuffer>,
+        network: Arc<DesktopHostNetworkControl>,
+    ) -> Result<OpenProfileResponse, DesktopErrorDto> {
         self.begin_open(&profile_id)?;
-        match open_runtime(paths, profile_id, provider, signing_provider, notifications) {
+        match open_runtime(
+            paths,
+            profile_id,
+            provider,
+            signing_provider,
+            notifications,
+            network,
+        ) {
             Ok((ready, snapshot)) => match self.install_ready(ready, snapshot) {
                 Ok(response) => Ok(response),
                 Err(boxed) => {
@@ -186,8 +219,28 @@ impl DesktopAppState {
         }
     }
 
+    /// The ready runtime's actor handle, for integration tests that need to
+    /// observe authoritative state the Tauri DTOs only summarize.
     #[cfg(test)]
-    pub(super) fn close_sync(&self) -> Result<(), DesktopErrorDto> {
+    pub(crate) fn ready_actor_handle(
+        &self,
+    ) -> Result<silent_disco_core::runtime::CoreActorHandle, DesktopErrorDto> {
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        if let DesktopRuntimeState::Ready(ready) = &*state {
+            Ok(ready.handle.clone())
+        } else {
+            Err(DesktopErrorDto::new(
+                "desktop.profile.not_ready",
+                "runtime",
+                "error",
+                true,
+                "no desktop profile is ready",
+            ))
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_sync(&self) -> Result<(), DesktopErrorDto> {
         match self.take_for_close()? {
             CloseAction::AlreadyClosed | CloseAction::AlreadyInProgress => Ok(()),
             CloseAction::Shutdown(ready) => {

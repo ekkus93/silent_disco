@@ -42,6 +42,7 @@ pub(super) fn open_runtime(
     provider: &dyn DesktopIdentityProvider,
     signing_provider: &dyn DesktopHostSigningIdentityProvider,
     notifications: Arc<DesktopNotificationBuffer>,
+    network: Arc<DesktopHostNetworkControl>,
 ) -> Result<(ReadyRuntime, CoreSnapshotDto), DesktopErrorDto> {
     let lease = ProfileLease::acquire(paths, &profile_id).map_err(|error| {
         DesktopErrorDto::new(
@@ -123,7 +124,6 @@ pub(super) fn open_runtime(
         return Err(cleanup_without_actor(database, lease, primary));
     }
 
-    let network = Arc::new(DesktopHostNetworkControl::production());
     let (platform_dispatcher, platform_inbox) = DesktopPlatformEffectDispatcher::channel();
     let (storage_dispatcher, storage_inbox) = DesktopStorageEffectDispatcher::channel();
     let observer = DesktopCoreObserver::new(

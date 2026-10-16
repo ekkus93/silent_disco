@@ -189,6 +189,63 @@ fn verified_existing_content_is_reused_without_overwrite() {
     assert_eq!(fs::read(first_path).expect("reused bytes"), first_bytes);
 }
 
+/// Regression: identical audio selected under two file names shared one
+/// source ID, so registering the second overwrote the first queue entry's
+/// descriptor and its playback failed as a "changed" source.
+#[test]
+fn identical_content_under_two_names_shares_the_file_but_not_the_source_id() {
+    let root = TestDirectory::new();
+    let sources = root.join("sources");
+    fs::create_dir(&sources).expect("sources");
+    let bytes = wav_bytes(0x33, 512);
+    let first_path = root.join("first-name.wav");
+    let second_path = root.join("second-name.wav");
+    fs::write(&first_path, &bytes).expect("first");
+    fs::write(&second_path, &bytes).expect("second");
+    let control = SourceStagingControl::new();
+    let progress = RecordingProgress::default();
+
+    let operation = control.begin().expect("first operation");
+    let first = stage_audio_source(
+        &inspected_source(&first_path, &bytes),
+        &sources,
+        &operation,
+        &progress,
+    )
+    .expect("stage first");
+    drop(operation);
+    let operation = control.begin().expect("second operation");
+    let second = stage_audio_source(
+        &inspected_source(&second_path, &bytes),
+        &sources,
+        &operation,
+        &progress,
+    )
+    .expect("stage second");
+    let again = stage_audio_source(
+        &inspected_source(&first_path, &bytes),
+        &sources,
+        &operation,
+        &progress,
+    )
+    .expect("stage first again");
+
+    assert!(second.reused_existing, "content is staged only once");
+    assert_eq!(
+        first.source.canonical_path(),
+        second.source.canonical_path()
+    );
+    assert_ne!(
+        first.source.descriptor().source_id,
+        second.source.descriptor().source_id
+    );
+    assert_eq!(
+        first.source.descriptor(),
+        again.source.descriptor(),
+        "the same file and name keep a stable source ID"
+    );
+}
+
 #[test]
 fn content_address_collision_fails_without_replacing_existing_file() {
     let root = TestDirectory::new();

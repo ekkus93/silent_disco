@@ -62,14 +62,14 @@ fn replace_wav_source(
     descriptor
 }
 
-fn pcm_wav() -> Vec<u8> {
+pub(super) fn pcm_wav() -> Vec<u8> {
     square_wave_pcm_wav(4_410)
 }
 
 /// 3 real seconds -- comfortably longer than the playback pump's send-ahead
 /// horizon, so playback is still genuinely running (not yet at natural
 /// end-of-file) by the time a mid-stream check runs.
-fn long_pcm_wav() -> Vec<u8> {
+pub(super) fn long_pcm_wav() -> Vec<u8> {
     square_wave_pcm_wav(44_100 * 3)
 }
 

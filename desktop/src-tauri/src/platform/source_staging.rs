@@ -211,8 +211,15 @@ fn build_staged_descriptor(
     copied: &CopySummary,
     digest_hex: &str,
 ) -> Result<AudioSourceDescriptor, DesktopErrorDto> {
+    // The staged file is shared by content, but the opaque source identity
+    // also covers the display name: the registry holds one descriptor per
+    // source ID, so identical audio selected under two file names would
+    // otherwise overwrite the first queue entry's descriptor and fail its
+    // preparation as a "changed" source.
+    let name_digest = Sha256::digest(source.descriptor().display_name.as_bytes());
+    let name_tag = encode_hex(&name_digest.into());
     AudioSourceDescriptor::new(
-        format!("{CONTENT_SOURCE_PREFIX}{digest_hex}"),
+        format!("{CONTENT_SOURCE_PREFIX}{digest_hex}-{}", &name_tag[..16]),
         source.descriptor().display_name.clone(),
         Some(copied.byte_length),
         source.descriptor().duration_ms,
