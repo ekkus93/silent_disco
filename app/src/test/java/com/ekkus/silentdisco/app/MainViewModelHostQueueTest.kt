@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -73,6 +74,20 @@ class MainViewModelHostQueueTest {
         assertThat(harness.hostCoreController.playbackFailureCalls)
             .containsExactly("Second song could not be decoded")
         assertThat(harness.hostCoreController.playbackStateChangedCalls).isEmpty()
+    }
+
+    @Test
+    fun stoppingPlaybackCancelsPendingBoundaryApplicationsBeforeSubmittingStop() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        val pendingBoundary = Job()
+        harness.viewModel.hostBoundaryJobs += pendingBoundary
+        harness.viewModel._uiState.value = AppUiState(hostPlaybackState = PlaybackState.PLAYING)
+
+        harness.viewModel.stopHostPlaybackImpl()
+
+        assertThat(pendingBoundary.isCancelled).isTrue()
+        assertThat(harness.viewModel.hostBoundaryJobs).isEmpty()
+        assertThat(harness.hostCoreController.transitionPlaybackStateCalls).isEmpty()
     }
 
 }

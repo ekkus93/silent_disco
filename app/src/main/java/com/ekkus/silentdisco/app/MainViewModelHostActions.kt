@@ -226,6 +226,9 @@ internal fun MainViewModel.pauseHostPlaybackImpl() {
 }
 
 internal fun MainViewModel.stopHostPlaybackImpl() {
+    // Boundary jobs are independent of the stream coroutine. Cancel them before
+    // submitting STOP so none can apply a stale queue transition during teardown.
+    cancelHostBoundaryJobs()
     launchHostPlaybackCommand("stop host playback", cancelExisting = true) {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.STOPPED) {
             logger.i("stream.stop", "Stopping host stream")

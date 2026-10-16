@@ -280,8 +280,7 @@ internal fun MainViewModel.startHostStreamingLoop(
             }
             handleHostPlaybackEngineFailure(error)
         } finally {
-            hostBoundaryJobs.toList().forEach(Job::cancel)
-            hostBoundaryJobs.clear()
+            cancelHostBoundaryJobs()
             if (hostPlaylistStreamer === streamer) {
                 clearHostPlaylistStream()
             }
@@ -395,6 +394,12 @@ internal suspend fun awaitHostQueueBoundary(
         if (remainingMs <= 0L) return dueAtMs
         wait(min(remainingMs, PAUSE_POLL_INTERVAL_MS))
     }
+}
+
+internal fun MainViewModel.cancelHostBoundaryJobs() {
+    val pendingJobs = hostBoundaryJobs.toList()
+    hostBoundaryJobs.clear()
+    pendingJobs.forEach(Job::cancel)
 }
 
 private const val PAUSE_POLL_INTERVAL_MS = 20L
