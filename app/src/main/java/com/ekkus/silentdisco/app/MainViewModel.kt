@@ -2,8 +2,6 @@ package com.ekkus.silentdisco.app
 
 import android.app.Application
 import android.net.Uri
-import android.content.Intent
-import android.content.SharedPreferences
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -101,11 +99,10 @@ class MainViewModel @JvmOverloads constructor(
     )
     internal val hostTransportController = HostTransportController()
     internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
-    private val audioGrantLedger: SharedPreferences = application.getSharedPreferences(
-        AUDIO_GRANT_LEDGER_PREFERENCES,
-        Application.MODE_PRIVATE,
+    private val persistedAudioReadGrants = PersistedAudioReadGrants(
+        application.contentResolver,
+        application.getSharedPreferences(AUDIO_GRANT_LEDGER_PREFERENCES, Application.MODE_PRIVATE),
     )
-    private val audioGrantLedgerLock = Any()
 
     internal val _uiState = MutableStateFlow(
         AppUiState(
@@ -344,46 +341,15 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private fun retainAudioReadGrant(uri: Uri, newlyRetained: MutableSet<Uri>) {
-        val resolver = getApplication<Application>().contentResolver
-        val alreadyRetained = resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
-        if (!alreadyRetained && uri !in newlyRetained) {
-            resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            newlyRetained += uri
-        }
-        synchronized(audioGrantLedgerLock) {
-            val grants = audioGrantLedger.getStringSet(AUDIO_GRANT_LEDGER_KEY, emptySet()).orEmpty().toMutableSet()
-            if (grants.add(uri.toString())) {
-                audioGrantLedger.edit().putStringSet(AUDIO_GRANT_LEDGER_KEY, grants).apply()
-            }
-        }
+        persistedAudioReadGrants.retain(uri, newlyRetained)
     }
 
     private fun releaseAudioReadGrant(uri: Uri) {
-        runCatching {
-            getApplication<Application>().contentResolver.releasePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION,
-            )
-        }
-        synchronized(audioGrantLedgerLock) {
-            val grants = audioGrantLedger.getStringSet(AUDIO_GRANT_LEDGER_KEY, emptySet()).orEmpty().toMutableSet()
-            if (grants.remove(uri.toString())) {
-                if (grants.isEmpty()) {
-                    audioGrantLedger.edit().remove(AUDIO_GRANT_LEDGER_KEY).apply()
-                } else {
-                    audioGrantLedger.edit().putStringSet(AUDIO_GRANT_LEDGER_KEY, grants).apply()
-                }
-            }
-        }
+        persistedAudioReadGrants.release(uri)
     }
 
     private fun cleanupOrphanedAudioReadGrants() {
-        val grants = synchronized(audioGrantLedgerLock) {
-            audioGrantLedger.getStringSet(AUDIO_GRANT_LEDGER_KEY, emptySet()).orEmpty().toList()
-        }
-        grants.forEach { grant ->
-            runCatching { releaseAudioReadGrant(Uri.parse(grant)) }
-        }
+        persistedAudioReadGrants.releaseOrphans()
     }
 
     private fun cleanupOrphanedHostStagedFiles() {
@@ -700,7 +666,6 @@ class MainViewModel @JvmOverloads constructor(
 /** Prefix for [MainViewModel.demoSessions], a BuildConfig.DEBUG-only simulation that never touches Rust. */
 internal const val DEMO_SESSION_ID_PREFIX = "demo-session-"
 private const val AUDIO_GRANT_LEDGER_PREFERENCES = "host-audio-grant-ledger"
-private const val AUDIO_GRANT_LEDGER_KEY = "persisted-read-grants"
 
 internal fun RustStoredTuningSettings.toAppTuningSettings(): TuningSettings = TuningSettings(
     syncSampleWindow = syncSampleWindow,

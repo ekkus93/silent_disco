@@ -46,6 +46,30 @@ class SyncEstimateMappingTest {
     }
 
     @Test
+    fun `host and listener boundary deadlines agree across the sample timeline`() {
+        val hostStartMs = 73_000L
+        val hostOffsetMs = 186.25
+        val boundarySamples = listOf(0L, 1L, 241L, 24_001L, 48_000L, 1_234_567L, 17_280_000L)
+
+        boundarySamples.forEach { firstSampleIndex ->
+            // Desktop's scheduler uses integer division; listener presentation
+            // retains the fractional millisecond before converting its delay.
+            val hostDeadlineMs = hostStartMs + firstSampleIndex * 1_000L / 48_000L
+            val listenerDeadlineMs = listenerBoundaryLocalTimeMs(
+                hostStartTimeMs = hostStartMs,
+                firstSampleIndex = firstSampleIndex,
+                hostOffsetMs = hostOffsetMs,
+            )
+            val hostDeadlineInListenerClock = hostDeadlineMs - hostOffsetMs
+
+            assertThat(listenerDeadlineMs - hostDeadlineInListenerClock)
+                .isAtLeast(0.0)
+            assertThat(listenerDeadlineMs - hostDeadlineInListenerClock)
+                .isLessThan(1.0)
+        }
+    }
+
+    @Test
     fun `negative host offset advances the local boundary deadline`() {
         assertThat(
             listenerBoundaryLocalTimeMs(

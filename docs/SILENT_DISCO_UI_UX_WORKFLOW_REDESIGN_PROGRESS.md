@@ -123,3 +123,5 @@ Until those results are recorded:
 - **Automated acceptance:** Complete.
 - **Physical-device acceptance:** Pending.
 - **Overall device/release acceptance:** Pending physical verification.
+
+**Additional follow-on evidence:** API 36 instrumentation now exercises actual Android persisted URI grant retention, explicit release, and cleanup through the recovery ledger using a provider-issued grant. Android's helper and desktop's integer-millisecond boundary calculation are compared across seven sample positions in JVM tests (within 1 ms). The latest Android combined gate passed JVM tests, lint, debug/release assembly, and 112 instrumentation cases (111 passed, one skip). The user has no physical devices available; real audio qualification remains pending.

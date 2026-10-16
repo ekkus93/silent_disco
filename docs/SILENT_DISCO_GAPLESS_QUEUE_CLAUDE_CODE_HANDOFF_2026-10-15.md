@@ -54,3 +54,9 @@ At the time this handoff was prepared, the available Android target was an API 3
 - Keep Lab Mode out of ordinary production bundles.
 - Do not mark physical playback, gapless acceptance, or overall release acceptance complete based on unit, UI, emulator, or virtual tests alone.
 - Keep raw device logs, screenshots, and APKs out of Git unless the user explicitly asks to store them; summarize evidence in docs and preserve artifacts in the agreed evidence location.
+
+## Follow-up work after the handoff commit
+
+Android document-grant ownership was extracted to `PersistedAudioReadGrants` so the lifecycle could be exercised directly. A test-only provider now issues real Android persistable URI read grants; API 36 tests verify both explicit release and recovery-ledger cleanup release the underlying OS permission. Host/client boundary deadline parity also has a JVM regression at seven sample positions comparing desktop's integer-millisecond scheduler formula with Android's offset-adjusted listener deadline; the remaining production-scheduler integration and race permutations are still open.
+
+After this follow-up, `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease connectedDebugAndroidTest --stacktrace --console=plain` completed successfully. The API 36 instrumentation XML reports 112 tests, 111 passed, 1 skipped, 0 failed. The focused boundary mapping test and focused persisted-grant tests also passed. The full managed suite remains emulator evidence; the user confirmed no physical devices are available, so physical Android and packaged desktop-to-Android audio qualification remain pending.
