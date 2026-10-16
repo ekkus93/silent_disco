@@ -160,6 +160,20 @@ impl ActorState {
                         None,
                     ));
                 }
+                // An EOF with upcoming entries is not a completed playlist.
+                // It can occur if the producer finished just as the host
+                // appended a song, or if a pending boundary was not applied.
+                // Stop the exhausted stream but keep the authoritative queue
+                // and source alias available for an explicit replay.
+                if !self.snapshot.host_queue.upcoming().is_empty()
+                    || self.snapshot.host_queue_next_boundary.is_some()
+                {
+                    self.snapshot.playback_state = PlaybackState::Stopped;
+                    self.snapshot.playback_position_ms = 0;
+                    self.snapshot.host_queue_next_boundary = None;
+                    self.snapshot.stream_ended_naturally = false;
+                    return Ok(ApplyOutcome::changed());
+                }
                 let queue_revision = self.snapshot.host_queue.revision();
                 self.snapshot
                     .host_queue

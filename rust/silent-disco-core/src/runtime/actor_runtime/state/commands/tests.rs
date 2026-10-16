@@ -456,13 +456,87 @@ mod host_queue_actor_tests {
     }
 
     #[test]
+    fn eof_after_late_append_stops_without_erasing_unplayed_song() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-current-before-eof").expect("operation ID"),
+                0,
+                vec![entry("one", "source-one")],
+            )
+            .expect("start with one song");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        // The packetizer may already have produced its final frame before
+        // this authoritative append, leaving no way to emit the new song.
+        state
+            .append_host_queue(
+                OperationId::new("append-after-producer-finished").expect("operation ID"),
+                1,
+                vec![entry("two", "source-two")],
+            )
+            .expect("late append is accepted");
+        let revision = state.snapshot.host_queue.revision();
+        state
+            .apply_audio_control(AudioEvent::EndOfStream {
+                stream_id: StreamId::new("old-stream").expect("stream ID"),
+            })
+            .expect("exhausted producer stops but cannot clear unplayed queue");
+
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
+        assert!(!state.snapshot.stream_ended_naturally);
+        assert_eq!(state.snapshot.host_queue.revision(), revision);
+        assert_eq!(state.snapshot.host_queue.entries().len(), 2);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+        assert_eq!(
+            state.snapshot.host_draft.audio_source.as_ref().unwrap().source_id,
+            "source-one"
+        );
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("queue remains replayable");
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "two");
+    }
+
+    #[test]
+    fn eof_before_a_scheduled_boundary_applies_preserves_the_queue() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-boundary-before-eof").expect("operation ID"),
+                0,
+                vec![entry("one", "source-one"), entry("two", "source-two")],
+            )
+            .expect("append");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        state
+            .apply_audio(AudioEvent::TrackBoundaryScheduled {
+                entry_id: "two".into(),
+                first_sample_index: 48_000,
+            })
+            .expect("schedule next song");
+        let revision = state.snapshot.host_queue.revision();
+        state
+            .apply_audio_control(AudioEvent::EndOfStream {
+                stream_id: StreamId::new("stream-with-pending-boundary").expect("stream ID"),
+            })
+            .expect("premature EOF stops transport without consuming queue");
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
+        assert!(!state.snapshot.stream_ended_naturally);
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+        assert_eq!(state.snapshot.host_queue.revision(), revision);
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "two");
+    }
+
+    #[test]
     fn natural_end_clears_completed_queue_and_preserves_host_session() {
         let mut state = host();
         state
             .append_host_queue(
                 OperationId::new("append").expect("operation ID"),
                 0,
-                vec![entry("one", "one"), entry("two", "two")],
+                vec![entry("one", "one")],
             )
             .expect("append");
         state.snapshot.host_lifecycle = HostLifecycle::Ready;
