@@ -205,3 +205,51 @@ fn playlist_decoder_prebuffers_the_next_source_before_current_source_finishes() 
         .expect_err("the deliberately stopped lookahead worker is cancelled");
     assert_eq!(cancelled.kind, PacketizerWorkerErrorKind::Cancelled);
 }
+
+#[test]
+fn an_empty_update_while_current_audio_is_backpressured_does_not_leak_a_boundary() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let current_path = write_bytes(&temp, "clear-current.wav", &pcm_wav_frames(48_000, 2, 48_000));
+    let next_path = write_bytes(&temp, "clear-next.wav", &pcm_wav_frames(48_000, 2, 480));
+    let decoder = StreamingDecodeHandle::open(current_path, StreamingDecodeConfig::default())
+        .expect("current decoder");
+    let next = StreamingPlaylistTrackFactory::new("entry-removed", "Removed", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist(
+        decoder,
+        "entry-current",
+        "Current",
+        vec![next],
+        SessionId::new("session-clear-backpressure").expect("session"),
+        StreamId::new("stream-clear-backpressure").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+    )
+    .expect("playlist");
+    packetizer
+        .playlist_updater()
+        .expect("updater")
+        .replace_upcoming(Vec::new())
+        .expect("remove upcoming before consumer drains");
+    let mut saw_removed = false;
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                saw_removed |= boundary.entry_id == "entry-removed";
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("clear test stalled"),
+        }
+    }
+    // The update is consumed while the current track is still packetizing;
+    // no stale successor boundary is ever allowed to escape.
+    packetizer.join().expect("playlist completed after clearing next track");
+    assert!(!saw_removed);
+}

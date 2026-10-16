@@ -77,7 +77,29 @@ pub(super) fn run_playlist_packetizer_worker(
             ));
         }
 
+        // One last latest-value read closes the EOF-to-promotion window:
+        // a host may have accepted a new upcoming order while the final
+        // decoded chunk was being sent under backpressure. Do not promote
+        // a decoder selected from the old order if an update is pending.
+        let had_successor = next.is_some();
+        if had_successor {
+            let mut final_track = false;
+            refresh_pending_playlist_update(
+                updates,
+                &mut upcoming,
+                &mut next,
+                &mut final_track,
+            )?;
+        }
         let Some(((next_entry_id, next_display_name), next_decoder)) = next else {
+            if had_successor {
+                // The previous track was packetized as non-final; silently
+                // claiming EOF here would discard its partial last packet.
+                return Err(PacketizerWorkerError::new(
+                    PacketizerWorkerErrorKind::Packetize,
+                    "playlist successor removed after the last decoded chunk; stop and replay",
+                ));
+            }
             return Ok(PacketizerSummary {
                 state: PacketizerWorkerState::Completed,
                 emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
