@@ -7,8 +7,9 @@ use crate::domain::SampleIndex;
 use super::super::types::{DecodeError, DecodeErrorKind};
 use super::{
     PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
-    PlaylistUpdateState, PlaylistUpdates, SharedStatistics, StagedPlaylistTrack, StreamingPacketizeConfig,
-    StreamingPlaylistTrackFactory, WORKER_POLL_INTERVAL, ensure_not_cancelled,
+    PlaylistUpdateState, PlaylistUpdates, SharedStatistics, StagedPlaylistTrack,
+    StreamingPacketizeConfig, StreamingPlaylistTrackFactory, WORKER_POLL_INTERVAL,
+    ensure_not_cancelled,
     merge_decoder_shutdown_result, send_with_backpressure,
 };
 use crate::protocol::{ControlMessage, MAX_DISPLAY_NAME_BYTES, ProtocolFrame, TrackBoundary};
@@ -197,7 +198,7 @@ fn apply_playlist_update(
     })?;
     if let Some(replacement) = state.pending.take() {
         // Promotion may have happened since the caller submitted this edit.
-        validate_playlist_entries(Some(&state.current_entry_id), &replacement)?;
+        super::validate_playlist_entries(Some(&state.current_entry_id), &replacement)?;
         *upcoming = replacement.into();
     }
     Ok(())
@@ -363,7 +364,10 @@ mod promotion_identity_tests {
         apply_playlist_update(&state, &mut upcoming).expect("apply accepted edit");
         assert_eq!(state.lock().expect("lock").current_entry_id, "two");
         assert_eq!(
-            upcoming.iter().map(|track| track.entry_id.as_str()).collect::<Vec<_>>(),
+            upcoming
+                .iter()
+                .map(|track| track.entry_id.as_str())
+                .collect::<Vec<_>>(),
             ["three"]
         );
     }
