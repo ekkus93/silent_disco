@@ -166,6 +166,31 @@ class MainViewModelListenerResyncTest {
     }
 
     @Test
+    fun replayedStreamStartRefreshesTrackNameWhenReconnectingToSameStream() {
+        assertThat(
+            listenerTrackNameAfterStreamStart(
+                isSameStream = true,
+                currentTrackName = "Missed track boundary",
+                announcedTrackName = "Current host track",
+            ),
+        ).isEqualTo("Current host track")
+        assertThat(
+            listenerTrackNameAfterStreamStart(
+                isSameStream = true,
+                currentTrackName = "Current track",
+                announcedTrackName = " ",
+            ),
+        ).isEqualTo("Current track")
+        assertThat(
+            listenerTrackNameAfterStreamStart(
+                isSameStream = false,
+                currentTrackName = "Previous stream track",
+                announcedTrackName = null,
+            ),
+        ).isNull()
+    }
+
+    @Test
     fun hostStopReturnsToApprovedAndCancelsTheRuntimeClockProbeLoop() = runTest(dispatcher) {
         val harness = bufferingListener()
         harness.viewModel.listenerTransportConnected = true

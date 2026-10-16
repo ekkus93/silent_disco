@@ -60,6 +60,19 @@ internal fun shouldReanchorListenerPlayback(
     runtimeAvailable: Boolean,
 ): Boolean = resumeInPlace && runtimeAvailable
 
+internal fun listenerTrackNameAfterStreamStart(
+    isSameStream: Boolean,
+    currentTrackName: String?,
+    announcedTrackName: String?,
+): String? {
+    val announced = announcedTrackName?.takeIf(String::isNotBlank)
+    return when {
+        announced != null -> announced
+        isSameStream -> currentTrackName
+        else -> null
+    }
+}
+
 /**
  * Lifecycle states the Rust actor does not yet drive (deferred to Block 23's
  * decoder/scheduler ownership work) -- Kotlin's own playback pipeline is
@@ -253,11 +266,15 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
     val isSameStream = currentStreamId == streamId
     currentStreamId = streamId
     listenerStreamHostStartTimeMs = event.hostStartTimeMs.toLong()
+    _uiState.value = _uiState.value.copy(
+        listenerCurrentTrackName = listenerTrackNameAfterStreamStart(
+            isSameStream = isSameStream,
+            currentTrackName = _uiState.value.listenerCurrentTrackName,
+            announcedTrackName = event.currentDisplayName,
+        ),
+    )
     if (!isSameStream) {
         pendingListenerTrackBoundaries.clear()
-        _uiState.value = _uiState.value.copy(
-            listenerCurrentTrackName = event.currentDisplayName?.takeIf(String::isNotBlank),
-        )
     }
     rescheduleListenerTrackBoundaries()
     if (!isSameStream || listenerPlayback == null) {
