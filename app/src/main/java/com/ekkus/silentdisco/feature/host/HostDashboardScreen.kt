@@ -125,22 +125,34 @@ fun HostDashboardScreen(
         TopAppBar(
             title = { Text(uiState.hostForm.sessionName.ifBlank { "Hosting" }) },
             navigationIcon = {
-                IconButton(onClick = onBackRequest) {
+                IconButton(
+                    onClick = onBackRequest,
+                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
             },
             actions = {
-                IconButton(onClick = onAddSongs) {
+                IconButton(
+                    onClick = onAddSongs,
+                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                ) {
                     Icon(Icons.Filled.Add, contentDescription = "Add songs")
                 }
-                IconButton(onClick = onManageQueue) {
+                IconButton(
+                    onClick = onManageQueue,
+                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                ) {
                     Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Manage queue")
                 }
                 TextButton(
                     onClick = onInvite,
                     modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum),
                 ) { Text("Invite") }
-                IconButton(onClick = { overflowOpen = true }) {
+                IconButton(
+                    onClick = { overflowOpen = true },
+                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                ) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "Session actions")
                 }
                 DropdownMenu(

@@ -6,8 +6,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
@@ -23,6 +25,7 @@ import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
 import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
+import com.ekkus.silentdisco.feature.host.HostDashboardScreen
 import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
 import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
 import com.ekkus.silentdisco.feature.host.HostReadyScreen
@@ -132,6 +135,46 @@ class AccessibilityAndComponentTest {
     @Test
     fun hostReadyStartActionMeetsFortyEightDpMinimum() = assertTouchTarget("host-start-session") {
         HostReadyScreen(validHostState(), {}, {}, {}, {})
+    }
+
+    @Test
+    fun hostDashboardPrimaryActionsMeetFortyEightDpTouchTargetMinimum() {
+        var densityScale = 1f
+        composeRule.setContent {
+            densityScale = LocalDensity.current.density
+            SilentDiscoTheme {
+                HostDashboardScreen(
+                    uiState = AppUiState(
+                        hostPlaybackState = PlaybackState.PLAYING,
+                        hostQueue = listOf(HostQueueItem("current", "source", "Current song", null, 60_000L)),
+                    ),
+                    onBackRequest = {},
+                    onInvite = {},
+                    onApproval = { _, _ -> },
+                    onRemoveListener = {},
+                    onPlayPause = {},
+                    onStop = {},
+                    onEndSessionRequest = {},
+                    onOpenConnectionHelp = {},
+                    onAddDemoJoinRequest = {},
+                    onAddSongs = {},
+                    onManageQueue = {},
+                )
+            }
+        }
+
+        listOf(
+            composeRule.onNodeWithContentDescription("Add songs"),
+            composeRule.onNodeWithContentDescription("Manage queue"),
+            composeRule.onNodeWithText("Invite"),
+            composeRule.onNodeWithText("Pause"),
+            composeRule.onNodeWithText("Stop"),
+        ).forEachIndexed { index, node ->
+            val label = listOf("Add songs", "Manage queue", "Invite", "Pause", "Stop")[index]
+            val bounds = node.fetchSemanticsNode().boundsInRoot
+            assertWithMessage("$label width").that(bounds.width / densityScale).isAtLeast(48f)
+            assertWithMessage("$label height").that(bounds.height / densityScale).isAtLeast(48f)
+        }
     }
 
     @Test
