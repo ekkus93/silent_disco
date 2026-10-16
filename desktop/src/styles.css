@@ -76,10 +76,6 @@
     overflow-y: auto;
   }
 
-  .desktop-host-session {
-    padding: 0.5rem;
-  }
-
   .desktop-host-status-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.25rem;
