@@ -345,6 +345,38 @@ mod tests {
     }
 
     #[test]
+    fn ffi_update_reports_closed_when_producer_finished_but_end_not_consumed() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sd-ffi-unobserved-eof-{unique}"));
+        fs::create_dir_all(&root).expect("temp directory");
+        let source = root.join("short.wav");
+        fs::write(&source, wav_pcm16(48_000, 2, 241, 3_000)).expect("source");
+        let stream = FfiHostPlaylistStreamer::open(
+            "session-unobserved-eof".to_owned(),
+            "stream-unobserved-eof".to_owned(),
+            5_000,
+            vec![FfiPlaylistSource {
+                entry_id: "current".to_owned(),
+                display_name: "Short".to_owned(),
+                staged_path: source.to_string_lossy().into_owned(),
+            }],
+        )
+        .expect("open short stream");
+        // Join the short producer without calling next_frame. This leaves
+        // the UniFFI object's consumer-observed closed flag false.
+        let worker = stream.inner.lock().expect("lock").take().expect("worker");
+        worker.join().expect("producer completed");
+        assert!(!stream.closed.load(std::sync::atomic::Ordering::Acquire));
+        let error = stream.replace_upcoming(Vec::new())
+            .expect_err("completed producer must not accept a phantom update");
+        assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn ffi_playlist_stream_keeps_audio_sequence_and_sample_clock_across_boundary() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
