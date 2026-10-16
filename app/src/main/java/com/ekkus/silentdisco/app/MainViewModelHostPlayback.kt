@@ -18,7 +18,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.max
 import kotlin.math.min
 
 /** A missing delivery (transport not yet bound) reports as zero peers reached. */
@@ -244,8 +243,11 @@ internal fun MainViewModel.startHostStreamingLoop(
 
             val finalPacket = lastPacket
             if (finalPacket != null) {
-                val audibleEndMs = finalPacket.hostPresentationTimeMs + presentationOffsetMs + packetDurationMs
-                delay(max(0L, audibleEndMs - SystemClock.elapsedRealtime()))
+                awaitHostPacketPresentationTail(
+                    finalPacket.hostPresentationTimeMs,
+                    presentationOffsetMs,
+                    packetDurationMs,
+                )
             }
             stopHostMonitorPlayback()
             logger.i("stream.stop", "Host playlist reached its final track boundary")
@@ -270,10 +272,11 @@ internal fun MainViewModel.startHostStreamingLoop(
             throw error
         } catch (error: Throwable) {
             lastPacket?.let { sentPacket ->
-                val audibleEndElapsedMs = sentPacket.hostPresentationTimeMs +
-                    presentationOffsetMs + packetDurationMs
-                val remainingMs = audibleEndElapsedMs - SystemClock.elapsedRealtime()
-                if (remainingMs > 0) delay(remainingMs)
+                awaitHostPacketPresentationTail(
+                    sentPacket.hostPresentationTimeMs,
+                    presentationOffsetMs,
+                    packetDurationMs,
+                )
             }
             handleHostPlaybackEngineFailure(error)
         } finally {
@@ -284,6 +287,19 @@ internal fun MainViewModel.startHostStreamingLoop(
             }
         }
     }
+}
+
+internal suspend fun awaitHostPacketPresentationTail(
+    packetPresentationTimeMs: Long,
+    presentationOffsetMs: Long,
+    packetDurationMs: Long,
+    elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
+    wait: suspend (Long) -> Unit = { delay(it) },
+): Long {
+    val audibleEndElapsedMs = packetPresentationTimeMs + presentationOffsetMs + packetDurationMs
+    val remainingMs = (audibleEndElapsedMs - elapsedRealtimeMs()).coerceAtLeast(0L)
+    if (remainingMs > 0L) wait(remainingMs)
+    return audibleEndElapsedMs
 }
 
 internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
