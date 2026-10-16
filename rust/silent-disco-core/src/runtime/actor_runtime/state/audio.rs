@@ -32,6 +32,9 @@ impl ActorState {
                 if matches!(state, PlaybackState::Stopped | PlaybackState::Error) {
                     self.snapshot.host_queue_next_boundary = None;
                 }
+                if state == PlaybackState::Stopped {
+                    self.snapshot.playback_position_ms = 0;
+                }
                 self.snapshot.playback_state = state;
                 Ok(ApplyOutcome::changed())
             }

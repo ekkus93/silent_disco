@@ -198,6 +198,72 @@ mod host_queue_actor_tests {
     }
 
     #[test]
+    fn stopping_clears_scheduled_boundary_but_preserves_queue_for_replay() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-stop-replay").expect("operation ID"),
+                0,
+                vec![entry("one", "source-one"), entry("two", "source-two")],
+            )
+            .expect("append queue");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        state.snapshot.playback_position_ms = 8_000;
+        state
+            .apply_audio(AudioEvent::TrackBoundaryScheduled {
+                entry_id: "two".into(),
+                first_sample_index: 384_000,
+            })
+            .expect("schedule next track");
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop playback");
+
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
+        assert_eq!(state.snapshot.playback_position_ms, 0);
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+        assert_eq!(
+            state
+                .snapshot
+                .host_queue
+                .entries()
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["one", "two"]
+        );
+        assert_eq!(
+            state
+                .snapshot
+                .host_draft
+                .audio_source
+                .as_ref()
+                .map(|source| source.source_id.as_str()),
+            Some("source-one")
+        );
+
+        let stale_boundary_error = state
+            .apply_audio_control(AudioEvent::TrackBoundaryApplied {
+                entry_id: "two".into(),
+                first_sample_index: 384_000,
+            })
+            .expect_err("a canceled boundary must not advance a stopped queue");
+        assert_eq!(
+            stale_boundary_error.code,
+            CoreErrorCode::InvalidStateTransition
+        );
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("play restarts the current entry");
+        assert_eq!(state.snapshot.playback_position_ms, 0);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+    }
+
+    #[test]
     fn queue_add_is_rejected_for_listener_role_and_end_session_clears_source_alias() {
         let mut state = host();
         state
