@@ -2,6 +2,7 @@
 
 **Date:** 2026-10-15
 **Branch:** `master`
+**Latest checkpoint:** `c8802cd8edbe3131afe16dd4941e48500e95f91e` (`test(android): cover host setup state restoration`)
 **Status:** Implementation substantially complete; final verification and real-device qualification remain open.
 **Product direction:** The mockups were reviewed and the user approved proceeding with the current direction.
 
@@ -73,4 +74,6 @@ The accessible-action test cases were added after the previous run; the combined
 
 The source-file line-limit gate initially failed locally on seven files over the 800-line cap. Those modules and test blocks have been split into focused adjacent files; `bash scripts/check-source-file-line-counts.sh` now passes for all 640 tracked source files. Full local checks pass after the split: `RUST_TEST_THREADS=1 bash scripts/check-rust.sh` (363 core unit tests, 66 FFI unit tests and integration tests), Android JVM/lint/debug/release/API 36 instrumentation (118 cases, 117 passed, one skipped), desktop `npm run check` (157 frontend tests and production build), and desktop Tauri fmt/strict Clippy/tests (340 passed, 5 ignored).
 
-GitHub Actions for commit `a0af477` did not start any quality jobs. The run annotations say, “The job was not started because an Actions budget is preventing further use.” The Android instrumentation job was consequently skipped by its workflow dependency. Exact-head hosted CI remains open until Actions can run. The user confirmed that physical devices are unavailable; cross-device audio acceptance remains open.
+GitHub Actions for `a0af477` did not start any quality jobs; the run annotations said, “The job was not started because an Actions budget is preventing further use.” Runs for exact checkpoint `c8802cd` also failed before any job steps ran and provided no runner log. The local source-line check passes on all 641 tracked files. Exact-head hosted CI remains open until Actions can run. The user confirmed that physical devices are unavailable; cross-device audio acceptance remains open.
+
+The current pushed checkpoint also includes `WorkflowConfigurationStateTest`: Host Access keeps an in-flight Next action disabled after Compose saved-state restoration, with no duplicate callback. The exact-source Android gate passed: 118 instrumentation tests (117 passed, 1 skipped, 0 failed), JVM tests, lint, debug assembly, and release assembly. Other local Rust and desktop checks remain as recorded above. This is a good handoff point: the remaining work is listed in the TODO, while physical qualification and hosted CI require restored external resources.
