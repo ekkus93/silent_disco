@@ -1,5 +1,7 @@
 package com.ekkus.silentdisco.feature.listener
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -16,6 +19,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import com.ekkus.silentdisco.ui.theme.WorkflowMotion
 import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
 
 internal enum class ClientWorkflowStage(val label: String) {
@@ -45,6 +49,16 @@ internal fun ClientWorkflowStepper(
             val isCurrent = index == currentIndex
             val isComplete = index < currentIndex
             val label = if (isComplete) "✓ ${item.label}" else "${index + 1} ${item.label}"
+            val targetColor = if (isCurrent || isComplete) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            val color by animateColorAsState(
+                targetValue = targetColor,
+                animationSpec = tween(durationMillis = WorkflowMotion.stateChangeMs),
+                label = "client_workflow_step_${item.name.lowercase()}_color",
+            )
             Text(
                 text = label,
                 modifier = Modifier
@@ -60,11 +74,7 @@ internal fun ClientWorkflowStepper(
                     .testTag("client-workflow-step-${item.name.lowercase()}"),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                color = if (isCurrent || isComplete) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                color = color,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )
