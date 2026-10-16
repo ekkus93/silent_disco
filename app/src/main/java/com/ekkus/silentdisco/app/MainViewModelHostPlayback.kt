@@ -357,6 +357,7 @@ private fun MainViewModel.scheduleHostQueueBoundary(
             dueAtElapsedRealtimeMs = dueAtMs,
             isPaused = { _uiState.value.hostPlaybackState == PlaybackState.PAUSED },
         )
+        if (!isActive) return@launch
         runCatching {
             ensureRustHostCore().trackBoundaryApplied(boundary.entryId, boundary.firstSampleIndex.toLong())
         }.onSuccess {
