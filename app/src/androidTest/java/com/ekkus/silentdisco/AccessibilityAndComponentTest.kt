@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -12,16 +13,28 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.HostQueueItem
+import com.ekkus.silentdisco.app.HostFormState
 import com.ekkus.silentdisco.app.StorageInitializationState
+import com.ekkus.silentdisco.core.model.ApprovalMode
+import com.ekkus.silentdisco.core.model.HostLifecycleState
+import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.core.model.SelectedAudioFile
+import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
+import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
+import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
 import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
+import com.ekkus.silentdisco.feature.host.HostReadyScreen
+import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
+import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Rule
 import org.junit.Test
+import android.net.Uri
 
 class AccessibilityAndComponentTest {
     @get:Rule
@@ -104,5 +117,66 @@ class AccessibilityAndComponentTest {
             assertWithMessage("$tag width").that(bounds.width / densityScale).isAtLeast(48f)
             assertWithMessage("$tag height").that(bounds.height / densityScale).isAtLeast(48f)
         }
+    }
+
+    @Test
+    fun hostMusicChooseAudioActionMeetsFortyEightDpMinimum() = assertTouchTarget("host-choose-audio") {
+        HostMusicSetupScreen(AppUiState(), {}, {}, {}, onNext = {})
+    }
+
+    @Test
+    fun hostAccessNextActionMeetsFortyEightDpMinimum() = assertTouchTarget("host-access-next") {
+        HostAccessSetupScreen(AppUiState(), {}, {}, {}, {}, onNext = {})
+    }
+
+    @Test
+    fun hostReadyStartActionMeetsFortyEightDpMinimum() = assertTouchTarget("host-start-session") {
+        HostReadyScreen(validHostState(), {}, {}, {}, {})
+    }
+
+    @Test
+    fun clientJoinActionMeetsFortyEightDpMinimum() = assertTouchTarget("session-request-join") {
+        SessionJoinScreen(
+            AppUiState(
+                selectedSession = SessionInfo(
+                    id = "session-1",
+                    name = "Weekend Mix",
+                    hostDeviceName = "Alex's phone",
+                    approvalMode = ApprovalMode.MANUAL,
+                    inviteCodeRequired = false,
+                ),
+                listenerState = ListenerLifecycleState.SESSION_SELECTED,
+            ),
+            {}, {}, {}, {}, {}, {}, {},
+        )
+    }
+
+    @Test
+    fun nearbyScanActionMeetsFortyEightDpMinimum() = assertTouchTarget("nearby-scan-qr") {
+        NearbySessionsScreen(AppUiState(), false, {}, {}, {}, {}, onScanQr = {})
+    }
+
+    private fun validHostState(): AppUiState {
+        val selectedSong = SelectedAudioFile(
+            uri = Uri.parse("content://test/silent-disco.wav"),
+            displayName = "silent-disco.wav",
+            mimeType = "audio/wav",
+            sizeBytes = 1_024,
+        )
+        return AppUiState(
+            hostForm = HostFormState(sessionName = "Weekend Mix", selectedAudio = selectedSong),
+            hostState = HostLifecycleState.IDLE,
+        )
+    }
+
+    private fun assertTouchTarget(tag: String, content: @Composable () -> Unit) {
+        var densityScale = 1f
+        composeRule.setContent {
+            densityScale = LocalDensity.current.density
+            SilentDiscoTheme(content = content)
+        }
+        val bounds = composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        assertWithMessage("$tag width").that(bounds.width / densityScale).isAtLeast(48f)
+        assertWithMessage("$tag height").that(bounds.height / densityScale).isAtLeast(48f)
     }
 }
