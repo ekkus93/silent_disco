@@ -291,3 +291,60 @@ fn empty_final_contiguous_chunk_flushes_only_the_retained_partial_packet() {
     assert_eq!(tail.sequence.get(), 1);
     assert_eq!(packetizer.next_contiguous_sample_index(), 241);
 }
+
+#[test]
+fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "identity-first.wav", &pcm_wav_frames(48_000, 2, 241));
+    let second_path = write_bytes(&temp, "identity-second.wav", &pcm_wav_frames(48_000, 2, 480));
+    let first = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let second = StreamingPlaylistTrackFactory::new("entry-second", "Second", move || {
+        StreamingDecodeHandle::open(second_path, StreamingDecodeConfig::default())
+    })
+    .expect("second factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist(
+        first,
+        "entry-first",
+        "First",
+        vec![second],
+        SessionId::new("session-current-id").expect("session"),
+        StreamId::new("stream-current-id").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig::default(),
+    )
+    .expect("playlist");
+    let updater = packetizer.playlist_updater().expect("updater");
+    let duplicate = |id: &str| {
+        StreamingPlaylistTrackFactory::new(id, "Duplicate", || {
+            unreachable!("duplicate entry must be rejected before opening")
+        })
+        .expect("factory")
+    };
+    let error = updater
+        .replace_upcoming(vec![duplicate("entry-first")])
+        .expect_err("the initially current entry cannot be requeued");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
+    assert!(error.message.contains("duplicate entry IDs"));
+
+    let mut saw_second = false;
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                assert_eq!(boundary.entry_id, "entry-second");
+                saw_second = true;
+                let error = updater
+                    .replace_upcoming(vec![duplicate("entry-second")])
+                    .expect_err("the promoted current entry cannot be requeued");
+                assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
+                assert!(error.message.contains("duplicate entry IDs"));
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("identity test stalled"),
+        }
+    }
+    assert!(saw_second);
+    packetizer.join().expect("rejected edits do not interrupt playback");
+}

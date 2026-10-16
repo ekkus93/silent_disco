@@ -457,6 +457,14 @@ mod tests {
             ],
         )
         .expect("open FFI playlist");
+        let duplicate_error = stream
+            .replace_upcoming(vec![FfiPlaylistSource {
+                entry_id: "entry-current".to_owned(),
+                display_name: "Duplicate current".to_owned(),
+                staged_path: current.to_string_lossy().into_owned(),
+            }])
+            .expect_err("UniFFI must reject a live update that duplicates the active track");
+        assert!(duplicate_error.to_string().contains("duplicate entry IDs"));
         stream
             .replace_upcoming(vec![FfiPlaylistSource {
                 entry_id: "entry-replacement".to_owned(),

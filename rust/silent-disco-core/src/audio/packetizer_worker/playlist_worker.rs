@@ -7,7 +7,7 @@ use crate::domain::SampleIndex;
 use super::super::types::{DecodeError, DecodeErrorKind};
 use super::{
     PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
-    PlaylistUpdates, SharedStatistics, StagedPlaylistTrack, StreamingPacketizeConfig,
+    PlaylistUpdateState, PlaylistUpdates, SharedStatistics, StagedPlaylistTrack, StreamingPacketizeConfig,
     StreamingPlaylistTrackFactory, WORKER_POLL_INTERVAL, ensure_not_cancelled,
     merge_decoder_shutdown_result, send_with_backpressure,
 };
@@ -170,6 +170,7 @@ pub(super) fn run_playlist_packetizer_worker(
             }
         };
         current_display_name.clone_from(&next_display_name);
+        promote_current_entry(updates, &next_entry_id)?;
         boundary = Some(ProtocolFrame::Control(ControlMessage::TrackBoundary(
             TrackBoundary {
                 session_id: packetizer.session_id().clone(),
@@ -185,20 +186,39 @@ pub(super) fn run_playlist_packetizer_worker(
 }
 
 fn apply_playlist_update(
-    updates: &Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>,
+    updates: &Mutex<PlaylistUpdateState>,
     upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
 ) -> Result<(), PacketizerWorkerError> {
-    let replacement = updates
-        .lock()
-        .map_err(|_| {
-            PacketizerWorkerError::new(
-                PacketizerWorkerErrorKind::WorkerPanicked,
-                "playlist update lock was poisoned",
-            )
-        })?
-        .take();
-    if let Some(replacement) = replacement {
+    let mut state = updates.lock().map_err(|_| {
+        PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::WorkerPanicked,
+            "playlist update lock was poisoned",
+        )
+    })?;
+    if let Some(replacement) = state.pending.take() {
+        // Promotion may have happened since the caller submitted this edit.
+        validate_playlist_entries(Some(&state.current_entry_id), &replacement)?;
         *upcoming = replacement.into();
+    }
+    Ok(())
+}
+
+/// If a pending edit was accepted just before promotion, the newly current
+/// entry is no longer upcoming. Keep the remaining order without replaying it.
+fn promote_current_entry(
+    updates: &Mutex<PlaylistUpdateState>,
+    entry_id: &str,
+) -> Result<(), PacketizerWorkerError> {
+    let mut state = updates.lock().map_err(|_| {
+        PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::WorkerPanicked,
+            "playlist update lock was poisoned",
+        )
+    })?;
+    state.current_entry_id.clear();
+    state.current_entry_id.push_str(entry_id);
+    if let Some(pending) = state.pending.as_mut() {
+        pending.retain(|track| track.entry_id != entry_id);
     }
     Ok(())
 }
@@ -222,7 +242,7 @@ fn packetize_playlist_track(
     statistics: &SharedStatistics,
     mut final_track: bool,
     boundary: Option<ProtocolFrame>,
-    updates: &Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>,
+    updates: &Mutex<PlaylistUpdateState>,
     upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
     next: &mut Option<StagedPlaylistTrack>,
 ) -> Result<PacketizerSummary, PacketizerWorkerError> {
@@ -281,7 +301,7 @@ fn packetize_playlist_track(
 }
 
 fn refresh_pending_playlist_update(
-    updates: &Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>,
+    updates: &Mutex<PlaylistUpdateState>,
     upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
     next: &mut Option<StagedPlaylistTrack>,
     final_track: &mut bool,
@@ -294,6 +314,7 @@ fn refresh_pending_playlist_update(
                 "playlist update lock was poisoned",
             )
         })?
+        .pending
         .is_some();
     if has_update {
         apply_playlist_update(updates, upcoming)?;
@@ -318,4 +339,32 @@ fn map_playlist_decode_error(error: &DecodeError, display_name: &str) -> Packeti
         kind,
         format!("{display_name}: streaming playlist decoder failed: {error}"),
     )
+}
+
+#[cfg(test)]
+mod promotion_identity_tests {
+    use super::*;
+
+    fn factory(id: &str) -> StreamingPlaylistTrackFactory {
+        StreamingPlaylistTrackFactory::new(id, "Track", || {
+            unreachable!("identity-only test never opens a decoder")
+        })
+        .expect("factory")
+    }
+
+    #[test]
+    fn promotion_removes_only_new_current_entry_from_pending_edit() {
+        let state = Mutex::new(PlaylistUpdateState {
+            current_entry_id: "one".to_owned(),
+            pending: Some(vec![factory("two"), factory("three")]),
+        });
+        promote_current_entry(&state, "two").expect("promotion");
+        let mut upcoming = VecDeque::new();
+        apply_playlist_update(&state, &mut upcoming).expect("apply accepted edit");
+        assert_eq!(state.lock().expect("lock").current_entry_id, "two");
+        assert_eq!(
+            upcoming.iter().map(|track| track.entry_id.as_str()).collect::<Vec<_>>(),
+            ["three"]
+        );
+    }
 }

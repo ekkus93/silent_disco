@@ -19,7 +19,13 @@ use playlist_worker::{
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
-type PlaylistUpdates = Arc<Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>>;
+/// Current track identity and pending edit share one lock so a promotion
+/// cannot race validation of a new live replacement.
+struct PlaylistUpdateState {
+    current_entry_id: String,
+    pending: Option<Vec<StreamingPlaylistTrackFactory>>,
+}
+type PlaylistUpdates = Arc<Mutex<PlaylistUpdateState>>;
 type StagedPlaylistTrack = ((String, String), Result<StreamingDecodeHandle, DecodeError>);
 
 /// Default bounded output-queue capacity for one packetizer worker.
@@ -130,7 +136,7 @@ pub struct StreamingPlaylistTrackFactory {
 /// Cloneable control for replacing the unconsumed upcoming playlist.
 #[derive(Clone)]
 pub struct StreamingPlaylistUpdater {
-    pending: Arc<Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>>,
+    pending: PlaylistUpdates,
 }
 
 impl StreamingPlaylistUpdater {
@@ -144,13 +150,14 @@ impl StreamingPlaylistUpdater {
         &self,
         upcoming: Vec<StreamingPlaylistTrackFactory>,
     ) -> Result<(), PacketizerWorkerError> {
-        validate_playlist_entries(None, &upcoming)?;
-        *self.pending.lock().map_err(|_| {
+        let mut state = self.pending.lock().map_err(|_| {
             PacketizerWorkerError::new(
                 PacketizerWorkerErrorKind::WorkerPanicked,
                 "playlist update lock was poisoned",
             )
-        })? = Some(upcoming);
+        })?;
+        validate_playlist_entries(Some(&state.current_entry_id), &upcoming)?;
+        state.pending = Some(upcoming);
         Ok(())
     }
 }
@@ -326,7 +333,10 @@ impl StreamingPacketizeHandle {
         let worker_cancellation = Arc::clone(&cancellation);
         let worker_statistics = Arc::clone(&statistics);
         let playlist_updater = StreamingPlaylistUpdater {
-            pending: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(PlaylistUpdateState {
+                current_entry_id: current_entry_id.clone(),
+                pending: None,
+            })),
         };
         let worker_updates = Arc::clone(&playlist_updater.pending);
         let join = thread::Builder::new()

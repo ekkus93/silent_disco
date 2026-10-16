@@ -97,3 +97,9 @@ This closes one race window, not the producer-to-consumer boundary-commit race. 
 ## 2026-10-16 — Direct packetizer queue-entry bound enforcement
 
 The Rust actor already limits the authoritative host queue to 100 entries with unique IDs. Direct streaming packetizer and UniFFI callers previously bypassed those checks: `spawn_playlist` accepted arbitrarily many upcoming factories and duplicate entry IDs, and `replace_upcoming` could enqueue an oversized/duplicate live replacement. Both paths now reject duplicate upcoming IDs and reserve one current-track slot within the existing 100-entry limit. A direct FFI regression exercises oversized initial playlists, duplicate initial IDs, oversized live updates, and duplicate live updates. This is defensive input validation; it does **not** resolve the producer/actor boundary-commit race or qualify physical gapless playback.
+
+## 2026-10-16 — Live updater current-entry identity validation
+
+Direct packetizer/UniFFI live updates previously checked duplicate IDs only *within* the upcoming list, not against the active track. The shared updater now tracks current identity under the same lock as pending edits, rejects duplicate-current IDs before accepting an update, and revalidates at consumption. Promotion updates the identity and removes the just-promoted entry from an already-accepted pending edit, preserving the remaining order rather than replaying the same song. Core, promotion-state, and UniFFI regressions cover these cases.
+
+**Scope:** This closes a direct-updater identity bypass, **not** the producer/actor boundary-commit race. An already-enqueued boundary can still conflict with an actor-accepted queue edit; the producer-side reservation protocol and physical playback qualification remain open.
