@@ -408,24 +408,24 @@ mod promotion_identity_tests {
     }
 
     #[test]
-    fn promotion_removes_only_new_current_entry_from_pending_edit() {
+    fn accepted_retarget_wins_before_promotion() {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
-            pending: Some(vec![factory("two"), factory("three")]),
+            pending: Some(vec![factory("replacement"), factory("three")]),
             terminal: false,
         });
         assert!(!promote_current_entry_if_unmodified(&state, "two").expect("pending edit"));
         assert_eq!(state.lock().expect("lock").current_entry_id, "one");
         let mut upcoming = VecDeque::new();
         apply_playlist_update(&state, &mut upcoming).expect("apply accepted edit");
-        assert!(promote_current_entry_if_unmodified(&state, "two").expect("promotion"));
-        assert_eq!(state.lock().expect("lock").current_entry_id, "two");
+        assert!(promote_current_entry_if_unmodified(&state, "replacement").expect("promotion"));
+        assert_eq!(state.lock().expect("lock").current_entry_id, "replacement");
         assert_eq!(
             upcoming
                 .iter()
                 .map(|track| track.entry_id.as_str())
                 .collect::<Vec<_>>(),
-            ["two", "three"]
+            ["replacement", "three"]
         );
     }
 }
