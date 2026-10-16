@@ -13,7 +13,9 @@ use super::types::{DecodeError, DecodeErrorKind, DecodeSummary};
 mod playlist_worker;
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame};
-use playlist_worker::{run_playlist_packetizer_worker, validate_track_identity};
+use playlist_worker::{
+    run_playlist_packetizer_worker, validate_playlist_entries, validate_track_identity,
+};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
@@ -142,6 +144,7 @@ impl StreamingPlaylistUpdater {
         &self,
         upcoming: Vec<StreamingPlaylistTrackFactory>,
     ) -> Result<(), PacketizerWorkerError> {
+        validate_playlist_entries(None, &upcoming)?;
         *self.pending.lock().map_err(|_| {
             PacketizerWorkerError::new(
                 PacketizerWorkerErrorKind::WorkerPanicked,
@@ -303,6 +306,7 @@ impl StreamingPacketizeHandle {
         let current_entry_id = current_entry_id.into();
         let current_display_name = current_display_name.into();
         validate_track_identity(&current_entry_id, &current_display_name)?;
+        validate_playlist_entries(Some(&current_entry_id), &upcoming)?;
         let format = decoder.stream_info().format;
         let packetizer = Packetizer::new(
             session_id,

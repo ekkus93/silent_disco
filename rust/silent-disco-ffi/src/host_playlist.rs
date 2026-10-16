@@ -261,6 +261,73 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn direct_ffi_playlist_cannot_bypass_authoritative_queue_entry_limits() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sd-ffi-queue-bounds-{unique}"));
+        fs::create_dir_all(&root).expect("temp directory");
+        let source = root.join("source.wav");
+        fs::write(&source, wav_pcm16(48_000, 2, 48_000, 3_000)).expect("valid source");
+        let staged_path = source.to_string_lossy().into_owned();
+        let make_source = |id: String| FfiPlaylistSource {
+            entry_id: id,
+            display_name: "Track".to_owned(),
+            staged_path: staged_path.clone(),
+        };
+
+        let oversized = (0..=100)
+            .map(|index| make_source(format!("entry-{index}")))
+            .collect();
+        let error = FfiHostPlaylistStreamer::open(
+            "session-ffi-overflow".to_owned(),
+            "stream-ffi-overflow".to_owned(),
+            5_000,
+            oversized,
+        )
+        .expect_err("direct FFI open must enforce the 100-entry queue bound");
+        assert!(error.to_string().contains("100-entry"));
+
+        let duplicate = vec![
+            make_source("same-entry".to_owned()),
+            make_source("same-entry".to_owned()),
+        ];
+        let error = FfiHostPlaylistStreamer::open(
+            "session-ffi-duplicate".to_owned(),
+            "stream-ffi-duplicate".to_owned(),
+            5_000,
+            duplicate,
+        )
+        .expect_err("direct FFI open must reject duplicate entry IDs");
+        assert!(error.to_string().contains("duplicate entry IDs"));
+
+        let stream = FfiHostPlaylistStreamer::open(
+            "session-ffi-live-bounds".to_owned(),
+            "stream-ffi-live-bounds".to_owned(),
+            5_000,
+            vec![make_source("current".to_owned())],
+        )
+        .expect("valid single-track stream");
+        let too_many_upcoming = (0..100)
+            .map(|index| make_source(format!("upcoming-{index}")))
+            .collect();
+        let error = stream
+            .replace_upcoming(too_many_upcoming)
+            .expect_err("live update must reserve one current-track slot");
+        assert!(error.to_string().contains("100-entry"));
+        let error = stream
+            .replace_upcoming(vec![
+                make_source("duplicate".to_owned()),
+                make_source("duplicate".to_owned()),
+            ])
+            .expect_err("live update must reject duplicate upcoming IDs");
+        assert!(error.to_string().contains("duplicate entry IDs"));
+        stream.cancel().expect("cancel stream");
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
     fn ffi_playlist_stream_keeps_audio_sequence_and_sample_clock_across_boundary() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

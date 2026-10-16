@@ -12,7 +12,7 @@ use super::{
     merge_decoder_shutdown_result, send_with_backpressure,
 };
 use crate::protocol::{ControlMessage, MAX_DISPLAY_NAME_BYTES, ProtocolFrame, TrackBoundary};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
@@ -30,6 +30,37 @@ pub(super) fn validate_track_identity(
             PacketizerWorkerErrorKind::Packetize,
             "playlist track identity exceeds protocol bounds",
         ));
+    }
+    Ok(())
+}
+
+/// Enforce the actor's queue bounds even for direct core/UniFFI packetizer
+/// callers that bypass HostQueue. A live updater reserves one current slot,
+/// although its current entry ID is owned by the running worker.
+pub(super) fn validate_playlist_entries(
+    current_entry_id: Option<&str>,
+    upcoming: &[StreamingPlaylistTrackFactory],
+) -> Result<(), PacketizerWorkerError> {
+    if upcoming.len() >= crate::runtime::MAX_HOST_QUEUE_ENTRIES {
+        return Err(PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::Packetize,
+            format!(
+                "playlist exceeds the {}-entry queue limit",
+                crate::runtime::MAX_HOST_QUEUE_ENTRIES
+            ),
+        ));
+    }
+    let mut ids = HashSet::with_capacity(upcoming.len() + 1);
+    if let Some(current) = current_entry_id {
+        ids.insert(current);
+    }
+    for track in upcoming {
+        if !ids.insert(track.entry_id.as_str()) {
+            return Err(PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::Packetize,
+                "playlist contains duplicate entry IDs",
+            ));
+        }
     }
     Ok(())
 }
