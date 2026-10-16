@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15
 **Branch:** `master`
-**Latest implementation checkpoint:** `3968b7a` (`fix(android): enforce listener playback touch targets`)
+**Latest implementation checkpoint:** `2f05632` (`fix(android): guard canceled host boundary scheduler`)
 **Status:** Implementation substantially complete; final verification and real-device qualification remain open.
 **Product direction:** The mockups were reviewed and the user approved proceeding with the current direction.
 
@@ -79,3 +79,11 @@ GitHub Actions for `a0af477` did not start any quality jobs; the run annotations
 The current pushed checkpoint also includes `WorkflowConfigurationStateTest`: Host Access keeps an in-flight Next action disabled after Compose saved-state restoration, with no duplicate callback. The exact-source Android gate passed: 118 instrumentation tests (117 passed, 1 skipped, 0 failed), JVM tests, lint, debug assembly, and release assembly. Other local Rust and desktop checks remain as recorded above. This is a good handoff point: the remaining work is listed in the TODO, while physical qualification and hosted CI require restored external resources.
 
 Follow-up committed at `522f95c`: same-stream listener reconnect now applies the host's replayed current track name, so a boundary missed while disconnected cannot leave stale title text. A focused JVM regression passes for replayed metadata, omitted metadata, and a new stream without a title. Production scheduler/reconnect session coverage remains open. Commit `ff2c7dc` animates client workflow step color with the shared 160 ms motion token; Android unit tests, lint, and the 16-test workflow instrumentation class passed. Commit `19f1e01` fixes Host Dashboard Add songs and Manage queue exposed 40 dp bounds by assigning explicit 48 dp button sizes. Commit `3968b7a` fixes listener volume, Fix connection, and Leave session bounds; the slider's outer 48 dp semantics node retains its range and progress semantics. The full Android gate passed after these updates: 120 instrumentation cases (119 passed, one skipped), JVM tests, lint, debug assembly, and release assembly. Broader Android motion/reduced-motion behavior and accessibility traversal remain open.
+
+## Handoff checkpoint: 2026-10-15
+
+The implementation checkpoint is `2f05632`. The Android host queue-boundary delay now lives in an injectable helper and has a virtual-time regression proving that a pause shifts the due time by the paused duration. The coroutine also checks cancellation before sending the applied-boundary event. Focused `HostQueueBoundarySchedulerTest` passed.
+
+The latest full Android gate, `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease connectedDebugAndroidTest --stacktrace --console=plain`, completed successfully on the source committed as `2f05632`. API 36 instrumentation XML reports 120 tests, 119 passed, one skipped, zero failed. `bash scripts/check-source-file-line-counts.sh` passes for all 642 tracked source files, and `git diff --check` passes. The full gate should be rerun after any further source changes.
+
+The best stopping point is now: software gates are green, the implementation and outstanding work are recorded in this handoff and the TODO, and the remaining end-to-end audio qualification cannot be completed here because the user confirmed no physical devices are available. Exact-head hosted CI is also still unverified because recent GitHub Actions runs did not start jobs under the repository Actions budget restriction. Next, continue the unchecked TODO items, prioritize production scheduler/reconnect integration and remaining host/client race permutations, then run hosted CI and device qualification when those resources are available. Do not claim overall gapless acceptance complete until those device checks pass.
