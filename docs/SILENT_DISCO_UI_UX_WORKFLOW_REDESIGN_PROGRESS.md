@@ -129,3 +129,5 @@ Until those results are recorded:
 The Android host's natural EOF and exceptional playback failure paths now share a tested packet-tail wait helper; injected-clock JVM tests verify Stop is not allowed before the last packet's audible interval ends. Runtime-level Android Stop timestamp coverage is still open.
 
 API 36 accessibility semantics-bounds coverage now measures 48 dp primary actions across Host Music, Host Access, Host Ready, Client Join, nearby QR, and live queue controls. The follow-on Android full gate passed again with 117 instrumentation cases (116 passed, one skip), JVM tests, lint, and debug/release assembly. Broader traversal and hands-on accessibility remain pending.
+
+The latest connected API 36 test XML confirms 117 instrumentation cases with zero failures/errors (116 passed, one skipped) after adding the additional workflow touch-target assertions.
