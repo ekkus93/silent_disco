@@ -18,3 +18,5 @@ mod lifecycle_tests;
 mod manual;
 mod robustness_tests;
 mod streaming_tests;
+mod workflow_harness;
+mod workflow_tests;

@@ -171,12 +171,12 @@ pub(super) fn join_and_approve_listener(
     listener
 }
 
-struct FixedInterfaceProvider {
+pub(super) struct FixedInterfaceProvider {
     record: InterfaceRecord,
 }
 
 impl FixedInterfaceProvider {
-    fn new(name: String, index: u32, address: Ipv4Addr) -> Self {
+    pub(super) fn new(name: String, index: u32, address: Ipv4Addr) -> Self {
         Self {
             record: InterfaceRecord {
                 name,
