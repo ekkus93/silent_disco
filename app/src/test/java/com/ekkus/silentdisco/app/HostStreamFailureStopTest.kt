@@ -185,6 +185,89 @@ class HostStreamFailureStopTest {
         }
     }
 
+    @Test
+    fun twoTrackBoundariesRemainOrderedAcrossPauseAndResume() = runTest(dispatcher) {
+        // Both tracks have audio scheduled on the same stream. Pause before
+        // the second boundary is read: it must not apply against the old
+        // unpaused clock, nor overtake the first boundary on resume.
+        val fixture = startFailingStream(
+            frames = listOf(
+                trackBoundary(firstSampleIndex = 960),
+                audioFrame(sequence = 1, firstSampleIndex = 960, presentationMs = 420),
+                trackBoundary(firstSampleIndex = 1_920, entryId = "entry-3"),
+                audioFrame(sequence = 2, firstSampleIndex = 1_920, presentationMs = 440),
+            ),
+        )
+        try {
+            advanceTimeBy(30L)
+            runCurrent()
+            fixture.setPlaybackState(PlaybackState.PAUSED)
+            advanceTimeBy(100L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+            fixture.setPlaybackState(PlaybackState.PLAYING)
+
+            advanceTimeBy(389L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryScheduledCalls)
+                .containsExactly("entry-2" to 960L, "entry-3" to 1_920L)
+                .inOrder()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+            assertThat(fixture.transport.stops).isEmpty()
+
+            advanceTimeBy(1L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls)
+                .containsExactly("entry-2" to 960L)
+            assertThat(fixture.transport.stops).isEmpty()
+
+            advanceTimeBy(20L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls)
+                .containsExactly("entry-2" to 960L, "entry-3" to 1_920L)
+                .inOrder()
+            assertThat(fixture.transport.stops).isEmpty()
+
+            advanceTimeBy(20L)
+            runCurrent()
+            assertThat(fixture.transport.stops)
+                .containsExactly(StopCall(STREAM_ID, hostStopTimeMs = 560uL, sentAtMs = 560L))
+        } finally {
+            fixture.viewModel.hostTransportController.close()
+        }
+    }
+
+    @Test
+    fun stopDuringPauseCancelsAnAnnouncedButUnappliedBoundary() = runTest(dispatcher) {
+        val fixture = startFailingStream(
+            frames = listOf(
+                trackBoundary(firstSampleIndex = 960),
+                audioFrame(sequence = 1, firstSampleIndex = 960, presentationMs = 420),
+            ),
+        )
+        try {
+            advanceTimeBy(30L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryScheduledCalls)
+                .containsExactly("entry-2" to 960L)
+            fixture.setPlaybackState(PlaybackState.PAUSED)
+            advanceTimeBy(100L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+
+            // A user Stop during a pause must withdraw pending boundary jobs;
+            // it cannot apply the old track change after the stream ends.
+            fixture.setPlaybackState(PlaybackState.STOPPED)
+            advanceTimeBy(500L)
+            runCurrent()
+            assertThat(fixture.viewModel.hostBoundaryJobs).isEmpty()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+            assertThat(fixture.viewModel.hostPlaylistStreamer).isNull()
+        } finally {
+            fixture.viewModel.hostTransportController.close()
+        }
+    }
+
     private suspend fun TestScope.startFailingStream(frames: List<FfiPlaylistFrame>): StreamFixture {
         val clock = { testScheduler.currentTime }
         val transport = RecordingHostTransportHandle(clock)
@@ -240,11 +323,14 @@ class HostStreamFailureStopTest {
         }
     }
 
-    private fun trackBoundary(firstSampleIndex: Long) = FfiPlaylistFrame.TrackBoundary(
+    private fun trackBoundary(
+        firstSampleIndex: Long,
+        entryId: String = "entry-2",
+    ) = FfiPlaylistFrame.TrackBoundary(
         streamId = STREAM_ID,
         firstSampleIndex = firstSampleIndex.toULong(),
-        entryId = "entry-2",
-        displayName = "Second track",
+        entryId = entryId,
+        displayName = if (entryId == "entry-2") "Second track" else "Third track",
     )
 
     private fun audioFrame(sequence: Long, firstSampleIndex: Long, presentationMs: Long) = FfiPlaylistFrame.Audio(
