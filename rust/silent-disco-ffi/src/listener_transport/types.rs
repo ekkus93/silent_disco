@@ -75,6 +75,14 @@ pub enum FfiListenerTransportEvent {
         sample_rate: u32,
         channels: u16,
         samples_per_packet: u32,
+        current_entry_id: Option<String>,
+        current_display_name: Option<String>,
+    },
+    TrackBoundary {
+        stream_id: String,
+        first_sample_index: u64,
+        entry_id: String,
+        display_name: String,
     },
     Paused {
         stream_id: String,

@@ -89,6 +89,7 @@ impl PlaybackScheduler {
         let jitter_buffer = JitterBuffer::new(JitterBufferConfig {
             session_id: config.session_id.clone(),
             stream_id: config.stream_id.clone(),
+            first_sequence: config.first_sequence,
             max_reorder_window: config.max_reorder_window,
             max_buffered_duration_ms: config.max_buffered_duration_ms,
         })

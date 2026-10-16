@@ -56,6 +56,7 @@ class ManualEndpointScreenTest {
 
         composeRule.onNodeWithTag("manual-endpoint-preview").assertIsDisplayed()
         composeRule.onNodeWithText("Host: 192.168.1.50").assertIsDisplayed()
+        composeRule.onNodeWithText("Protocol version: 1").assertDoesNotExist()
         composeRule.onNodeWithTag("manual-endpoint-connect").assertIsEnabled()
     }
 

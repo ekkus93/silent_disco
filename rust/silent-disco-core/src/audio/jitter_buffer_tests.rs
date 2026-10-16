@@ -57,6 +57,24 @@ fn emits_out_of_order_arrivals_in_sequence_order() {
 }
 
 #[test]
+fn starts_at_configured_sequence_for_an_active_stream_join() {
+    let mut config = JitterBufferConfig::new(session(), stream());
+    config.first_sequence = 5;
+    let mut buffer = JitterBuffer::new(config).expect("valid config");
+    buffer.accept(packet(5, 100)).expect("accepted");
+
+    assert_eq!(buffer.next_expected_sequence(), 5);
+    assert_eq!(
+        buffer
+            .pop_in_order()
+            .expect("first joined packet")
+            .sequence
+            .get(),
+        5
+    );
+}
+
+#[test]
 fn pop_in_order_returns_none_while_the_next_sequence_is_missing() {
     let mut buffer = buffer();
     buffer.accept(packet(1, 20)).expect("accepted");

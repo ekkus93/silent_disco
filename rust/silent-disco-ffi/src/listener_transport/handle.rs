@@ -533,6 +533,14 @@ fn map_control_frame(
             sample_rate: value.sample_rate,
             channels: value.channels,
             samples_per_packet: value.samples_per_packet,
+            current_entry_id: value.current_entry_id,
+            current_display_name: value.current_display_name,
+        }),
+        ControlMessage::TrackBoundary(value) => Some(FfiListenerTransportEvent::TrackBoundary {
+            stream_id: value.stream_id.into_string(),
+            first_sample_index: value.first_sample_index.get(),
+            entry_id: value.entry_id,
+            display_name: value.display_name,
         }),
         ControlMessage::Pause(value) => Some(FfiListenerTransportEvent::Paused {
             stream_id: value.stream_id.into_string(),

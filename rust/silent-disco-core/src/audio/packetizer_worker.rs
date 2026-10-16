@@ -1,8 +1,9 @@
 use core::fmt;
+use std::collections::VecDeque;
 use std::error::Error;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -10,10 +11,12 @@ use super::decoder::StreamingDecodeHandle;
 use super::packetizer::{Packetizer, PacketizerError, PacketizerErrorKind};
 use super::types::{DecodeError, DecodeErrorKind, DecodeSummary};
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
-use crate::protocol::ProtocolFrame;
+use crate::protocol::{ControlMessage, MAX_DISPLAY_NAME_BYTES, ProtocolFrame, TrackBoundary};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
+type PlaylistUpdates = Arc<Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>>;
+type StagedPlaylistTrack = ((String, String), Result<StreamingDecodeHandle, DecodeError>);
 
 /// Default bounded output-queue capacity for one packetizer worker.
 pub const DEFAULT_PACKETIZER_QUEUE_CAPACITY: usize = 32;
@@ -112,6 +115,64 @@ pub struct PacketizerSummary {
     pub backpressure_events: u64,
 }
 
+/// Lazily opened upcoming track for a single continuous playlist stream.
+/// Only the current decoder and one upcoming decoder are alive at once.
+pub struct StreamingPlaylistTrackFactory {
+    entry_id: String,
+    display_name: String,
+    open: Box<dyn FnOnce() -> Result<StreamingDecodeHandle, DecodeError> + Send + 'static>,
+}
+
+/// Cloneable control for replacing the unconsumed upcoming playlist.
+#[derive(Clone)]
+pub struct StreamingPlaylistUpdater {
+    pending: Arc<Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>>,
+}
+
+impl StreamingPlaylistUpdater {
+    /// Replaces every not-yet-started upcoming entry. The packetizer keeps
+    /// the current track and sample timeline intact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a worker error if the updater's shared state was poisoned.
+    pub fn replace_upcoming(
+        &self,
+        upcoming: Vec<StreamingPlaylistTrackFactory>,
+    ) -> Result<(), PacketizerWorkerError> {
+        *self.pending.lock().map_err(|_| {
+            PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::WorkerPanicked,
+                "playlist update lock was poisoned",
+            )
+        })? = Some(upcoming);
+        Ok(())
+    }
+}
+
+impl StreamingPlaylistTrackFactory {
+    /// Creates an upcoming playlist entry whose decoder starts on demand.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration error when its wire identity or display name
+    /// exceeds the protocol bounds.
+    pub fn new(
+        entry_id: impl Into<String>,
+        display_name: impl Into<String>,
+        open: impl FnOnce() -> Result<StreamingDecodeHandle, DecodeError> + Send + 'static,
+    ) -> Result<Self, PacketizerWorkerError> {
+        let entry_id = entry_id.into();
+        let display_name = display_name.into();
+        validate_track_identity(&entry_id, &display_name)?;
+        Ok(Self {
+            entry_id,
+            display_name,
+            open: Box::new(open),
+        })
+    }
+}
+
 #[derive(Default)]
 struct SharedStatistics {
     queued_packets: AtomicUsize,
@@ -154,6 +215,7 @@ pub struct StreamingPacketizeHandle {
     statistics: Arc<SharedStatistics>,
     config: StreamingPacketizeConfig,
     stream_start: ProtocolFrame,
+    playlist_updater: Option<StreamingPlaylistUpdater>,
     join: Option<JoinHandle<Result<PacketizerSummary, PacketizerWorkerError>>>,
 }
 
@@ -211,6 +273,85 @@ impl StreamingPacketizeHandle {
             statistics,
             config,
             stream_start,
+            playlist_updater: None,
+            join: Some(join),
+        })
+    }
+
+    /// Starts one continuous stream across a bounded sequence of tracks.
+    /// The next source is opened while the current decoder is running, so at
+    /// most two decoder queues exist at any time and its first PCM chunk is
+    /// ready before the boundary whenever decoding keeps pace.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the first decoder format/configuration or
+    /// current track metadata is invalid, or when the worker cannot start.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_playlist(
+        decoder: StreamingDecodeHandle,
+        current_entry_id: impl Into<String>,
+        current_display_name: impl Into<String>,
+        upcoming: Vec<StreamingPlaylistTrackFactory>,
+        session_id: SessionId,
+        stream_id: StreamId,
+        host_start_time_ms: MonotonicMillis,
+        config: StreamingPacketizeConfig,
+    ) -> Result<Self, PacketizerWorkerError> {
+        let current_entry_id = current_entry_id.into();
+        let current_display_name = current_display_name.into();
+        validate_track_identity(&current_entry_id, &current_display_name)?;
+        let format = decoder.stream_info().format;
+        let packetizer = Packetizer::new(
+            session_id,
+            stream_id,
+            format,
+            config.packet_duration_ms,
+            host_start_time_ms,
+        )?;
+        let mut stream_start = packetizer.stream_start_message();
+        if let ProtocolFrame::Control(ControlMessage::StreamStart(start)) = &mut stream_start {
+            start.current_entry_id = Some(current_entry_id.clone());
+            start.current_display_name = Some(current_display_name.clone());
+        }
+        let (sender, receiver) = sync_channel(config.queue_capacity);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let statistics = Arc::new(SharedStatistics::default());
+        let worker_cancellation = Arc::clone(&cancellation);
+        let worker_statistics = Arc::clone(&statistics);
+        let playlist_updater = StreamingPlaylistUpdater {
+            pending: Arc::new(Mutex::new(None)),
+        };
+        let worker_updates = Arc::clone(&playlist_updater.pending);
+        let join = thread::Builder::new()
+            .name("silent-disco-streaming-playlist-packetizer".to_owned())
+            .spawn(move || {
+                run_playlist_packetizer_worker(
+                    decoder,
+                    current_entry_id,
+                    current_display_name,
+                    upcoming,
+                    &worker_updates,
+                    packetizer,
+                    &sender,
+                    config,
+                    &worker_cancellation,
+                    &worker_statistics,
+                )
+            })
+            .map_err(|error| {
+                PacketizerWorkerError::new(
+                    PacketizerWorkerErrorKind::WorkerPanicked,
+                    format!("could not start the playlist packetizer worker: {error}"),
+                )
+            })?;
+        Ok(Self {
+            receiver,
+            cancellation,
+            statistics,
+            config,
+            stream_start,
+            playlist_updater: Some(playlist_updater),
             join: Some(join),
         })
     }
@@ -219,6 +360,12 @@ impl StreamingPacketizeHandle {
     #[must_use]
     pub const fn stream_start_message(&self) -> &ProtocolFrame {
         &self.stream_start
+    }
+
+    /// Returns the live playlist update handle for playlist streams.
+    #[must_use]
+    pub fn playlist_updater(&self) -> Option<StreamingPlaylistUpdater> {
+        self.playlist_updater.clone()
     }
 
     /// Returns a lock-free snapshot of queue pressure and worker progress.
@@ -367,6 +514,7 @@ mod failure_visibility_tests {
             cancellation: Arc::new(AtomicBool::new(false)),
             statistics: Arc::new(SharedStatistics::default()),
             config: StreamingPacketizeConfig::default(),
+            playlist_updater: None,
             stream_start: crate::protocol::ProtocolFrame::Control(
                 crate::protocol::ControlMessage::Stop(crate::protocol::Stop {
                     session_id: crate::domain::SessionId::new("drop-test-session")
@@ -576,6 +724,232 @@ fn packetize_stream(
             });
         }
     }
+}
+
+fn validate_track_identity(
+    entry_id: &str,
+    display_name: &str,
+) -> Result<(), PacketizerWorkerError> {
+    if entry_id.is_empty()
+        || entry_id.len() > crate::protocol::MAX_PROTOCOL_STRING_BYTES
+        || display_name.is_empty()
+        || display_name.len() > MAX_DISPLAY_NAME_BYTES
+    {
+        return Err(PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::Packetize,
+            "playlist track identity exceeds protocol bounds",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_playlist_packetizer_worker(
+    mut decoder: StreamingDecodeHandle,
+    _current_entry_id: String,
+    mut current_display_name: String,
+    upcoming: Vec<StreamingPlaylistTrackFactory>,
+    updates: &PlaylistUpdates,
+    mut packetizer: Packetizer,
+    sender: &SyncSender<ProtocolFrame>,
+    config: StreamingPacketizeConfig,
+    cancellation: &AtomicBool,
+    statistics: &SharedStatistics,
+) -> Result<PacketizerSummary, PacketizerWorkerError> {
+    let mut upcoming: VecDeque<_> = upcoming.into();
+    let mut boundary = None;
+    loop {
+        ensure_not_cancelled(cancellation)?;
+        apply_playlist_update(updates, &mut upcoming)?;
+        let mut next = open_next_track(&mut upcoming);
+        let has_ready_successor = next.as_ref().is_some_and(|(_, opened)| opened.is_ok());
+        let track_result = packetize_playlist_track(
+            &decoder,
+            &mut packetizer,
+            sender,
+            config,
+            cancellation,
+            statistics,
+            !has_ready_successor,
+            boundary.take(),
+            updates,
+            &mut upcoming,
+            &mut next,
+        );
+        let decoder_result = if track_result.is_err() {
+            decoder.cancel_and_join()
+        } else {
+            decoder.join()
+        };
+        if let Err(error) = merge_decoder_shutdown_result(track_result, decoder_result) {
+            return Err(PacketizerWorkerError::new(
+                error.kind,
+                format!("{current_display_name}: {}", error.message),
+            ));
+        }
+
+        let Some(((next_entry_id, next_display_name), next_decoder)) = next else {
+            return Ok(PacketizerSummary {
+                state: PacketizerWorkerState::Completed,
+                emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
+                backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
+            });
+        };
+        decoder = match next_decoder {
+            Ok(decoder) => decoder,
+            Err(error) => {
+                return Err(map_playlist_decode_error(&error, &next_display_name));
+            }
+        };
+        current_display_name.clone_from(&next_display_name);
+        boundary = Some(ProtocolFrame::Control(ControlMessage::TrackBoundary(
+            TrackBoundary {
+                session_id: packetizer.session_id().clone(),
+                stream_id: packetizer.stream_id().clone(),
+                first_sample_index: crate::domain::SampleIndex::new(
+                    packetizer.next_contiguous_sample_index(),
+                ),
+                entry_id: next_entry_id.clone(),
+                display_name: next_display_name.clone(),
+            },
+        )));
+    }
+}
+
+fn apply_playlist_update(
+    updates: &Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>,
+    upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
+) -> Result<(), PacketizerWorkerError> {
+    let replacement = updates
+        .lock()
+        .map_err(|_| {
+            PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::WorkerPanicked,
+                "playlist update lock was poisoned",
+            )
+        })?
+        .take();
+    if let Some(replacement) = replacement {
+        *upcoming = replacement.into();
+    }
+    Ok(())
+}
+
+fn open_next_track(
+    upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
+) -> Option<StagedPlaylistTrack> {
+    upcoming.pop_front().map(|factory| {
+        let identity = (factory.entry_id, factory.display_name);
+        (identity, (factory.open)())
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn packetize_playlist_track(
+    decoder: &StreamingDecodeHandle,
+    packetizer: &mut Packetizer,
+    sender: &SyncSender<ProtocolFrame>,
+    config: StreamingPacketizeConfig,
+    cancellation: &AtomicBool,
+    statistics: &SharedStatistics,
+    mut final_track: bool,
+    boundary: Option<ProtocolFrame>,
+    updates: &Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>,
+    upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
+    next: &mut Option<StagedPlaylistTrack>,
+) -> Result<PacketizerSummary, PacketizerWorkerError> {
+    let mut pending_boundary = boundary;
+    loop {
+        ensure_not_cancelled(cancellation)?;
+        refresh_pending_playlist_update(updates, upcoming, next, &mut final_track)?;
+        let chunk = match decoder.recv_timeout(WORKER_POLL_INTERVAL) {
+            Ok(chunk) => chunk,
+            Err(RecvTimeoutError::Timeout) => {
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(PacketizerWorkerError::new(
+                    PacketizerWorkerErrorKind::Source,
+                    "playlist decoder disconnected before its final chunk",
+                ));
+            }
+        };
+        let input_finished = chunk.end_of_stream;
+        if let Some(boundary) = pending_boundary.take() {
+            send_with_backpressure(
+                sender,
+                boundary,
+                cancellation,
+                statistics,
+                config.queue_capacity,
+            )?;
+        }
+        let mut chunk = chunk;
+        chunk.end_of_stream = input_finished && final_track;
+        let outcome = packetizer.push_contiguous_chunk(chunk)?;
+        for frame in outcome.frames {
+            send_with_backpressure(
+                sender,
+                frame,
+                cancellation,
+                statistics,
+                config.queue_capacity,
+            )?;
+        }
+        if input_finished {
+            if final_track && !outcome.end_of_stream {
+                return Err(PacketizerWorkerError::new(
+                    PacketizerWorkerErrorKind::Packetize,
+                    "final playlist track did not finish the packetizer stream",
+                ));
+            }
+            return Ok(PacketizerSummary {
+                state: PacketizerWorkerState::Completed,
+                emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
+                backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
+            });
+        }
+    }
+}
+
+fn refresh_pending_playlist_update(
+    updates: &Mutex<Option<Vec<StreamingPlaylistTrackFactory>>>,
+    upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
+    next: &mut Option<StagedPlaylistTrack>,
+    final_track: &mut bool,
+) -> Result<(), PacketizerWorkerError> {
+    let has_update = updates
+        .lock()
+        .map_err(|_| {
+            PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::WorkerPanicked,
+                "playlist update lock was poisoned",
+            )
+        })?
+        .is_some();
+    if has_update {
+        apply_playlist_update(updates, upcoming)?;
+        if let Some((_, Ok(stale))) = next.take() {
+            let _ = stale.cancel_and_join();
+        }
+        *next = open_next_track(upcoming);
+        *final_track = next.is_none();
+    }
+    Ok(())
+}
+
+fn map_playlist_decode_error(error: &DecodeError, display_name: &str) -> PacketizerWorkerError {
+    let kind = if error.kind == DecodeErrorKind::WorkerPanicked {
+        PacketizerWorkerErrorKind::WorkerPanicked
+    } else if error.kind == DecodeErrorKind::Cancelled {
+        PacketizerWorkerErrorKind::Cancelled
+    } else {
+        PacketizerWorkerErrorKind::Source
+    };
+    PacketizerWorkerError::new(
+        kind,
+        format!("{display_name}: streaming playlist decoder failed: {error}"),
+    )
 }
 
 fn send_with_backpressure(

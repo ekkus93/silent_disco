@@ -115,6 +115,8 @@ fn random_control_frame(prng: &mut DeterministicPrng) -> ProtocolFrame {
             sample_rate: 48_000,
             channels: 2,
             samples_per_packet: 1 + u32::try_from(prng.next_below(2_000)).unwrap_or(1),
+            current_entry_id: None,
+            current_display_name: None,
         }),
         6 => ControlMessage::Pause(Pause {
             session_id,

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +17,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -33,13 +35,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 import com.ekkus.silentdisco.app.JoinUiStep
 import com.ekkus.silentdisco.app.UserProblemAction
 import com.ekkus.silentdisco.app.derivedPersistentProblem
 import com.ekkus.silentdisco.app.joinUiStep
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
-import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,9 +91,10 @@ fun SessionJoinScreen(
                 }
             },
         )
+        ClientWorkflowStepper(stage = ClientWorkflowStage.CONNECT)
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -131,44 +134,76 @@ fun SessionJoinScreen(
                         singleLine = true,
                     )
                 }
-                Button(
-                    onClick = {
-                        editingInviteCode = false
-                        onJoin()
-                    },
-                    enabled = session != null &&
-                        (!session.inviteCodeRequired || uiState.connectionProgress.inviteCode.isNotBlank()),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("session-request-join"),
-                ) {
-                    Text(if (editingInviteCode) "Request again" else "Request to join")
-                }
             } else {
                 JoinProgressCard(uiState.joinUiStep())
             }
 
             if (problem != null && !editingInviteCode) {
-                PrimaryProblemCard(
-                    title = problem.title,
-                    detail = problem.detail,
-                    primaryActionLabel = problem.primaryAction?.label(),
-                    onPrimaryAction = problem.primaryAction?.let { action ->
-                        { handleProblemAction(action) }
-                    },
-                    secondaryActionLabel = problem.secondaryAction?.label(),
-                    onSecondaryAction = problem.secondaryAction?.let { action ->
-                        { handleProblemAction(action) }
-                    },
-                    modifier = Modifier.testTag("session-join-problem"),
-                    primaryActionModifier = Modifier.testTag("session-problem-primary"),
-                    secondaryActionModifier = Modifier.testTag("session-problem-secondary"),
-                )
+                Card(modifier = Modifier.testTag("session-join-problem")) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(problem.title, style = MaterialTheme.typography.titleMedium)
+                        Text(problem.detail, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
+        }
 
-            if (uiState.listenerState != ListenerLifecycleState.PLAYING) {
-                TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-                    Text("Cancel")
+        if (uiState.listenerState != ListenerLifecycleState.PLAYING) {
+            HorizontalDivider()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (problem != null && !editingInviteCode) {
+                    problem.primaryAction?.let { action ->
+                        Button(
+                            onClick = { handleProblemAction(action) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = WorkflowTouchTarget.minimum)
+                                .testTag("session-problem-primary"),
+                        ) { Text(action.label()) }
+                    }
+                    problem.secondaryAction?.let { action ->
+                        TextButton(
+                            onClick = { handleProblemAction(action) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = WorkflowTouchTarget.minimum)
+                                .testTag("session-problem-secondary"),
+                        ) { Text(action.label()) }
+                    }
+                } else if (!requestStarted || editingInviteCode) {
+                    Button(
+                        onClick = {
+                            editingInviteCode = false
+                            onJoin()
+                        },
+                        enabled = session != null &&
+                            (!session.inviteCodeRequired || uiState.connectionProgress.inviteCode.isNotBlank()),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WorkflowTouchTarget.minimum)
+                            .testTag("session-request-join"),
+                    ) {
+                        Text(if (editingInviteCode) "Request again" else "Request to join")
+                    }
+                }
+                if (problem?.primaryAction != UserProblemAction.RETURN_TO_SESSIONS) {
+                    TextButton(
+                        onClick = onCancel,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WorkflowTouchTarget.minimum)
+                            .testTag("session-join-cancel"),
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             }
         }

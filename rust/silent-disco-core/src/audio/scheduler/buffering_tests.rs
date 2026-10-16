@@ -34,6 +34,20 @@ fn transitions_to_playing_and_delivers_frames_once_the_startup_target_is_reached
 }
 
 #[test]
+fn active_stream_join_starts_at_first_sequence_on_absolute_host_timeline() {
+    let mut cfg = config();
+    cfg.first_sequence = 5;
+    cfg.startup_buffer_target_ms = 0;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    scheduler.submit_packet(datagram(5, 1)).expect("accepted");
+
+    match scheduler.poll(HOST_START_MS + 100) {
+        SchedulerPoll::Frame { frame, .. } => assert_eq!(frame.sequence, 5),
+        other => panic!("expected joined frame at its host deadline, got {other:?}"),
+    }
+}
+
+#[test]
 fn returns_waiting_when_polled_before_the_next_presentation_deadline() {
     let mut scheduler = PlaybackScheduler::new(config(), 0.0).expect("valid scheduler");
     for sequence in 0..=20 {

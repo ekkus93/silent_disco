@@ -328,11 +328,15 @@ impl ActorState {
         &mut self,
         event: AudioEvent,
     ) -> Result<ApplyOutcome, CoreError> {
+        let retryable_audio_failure =
+            matches!(&event, AudioEvent::Failed(error) if error.retryable);
         let transition = match &event {
             AudioEvent::PlaybackStateChanged(state) => Some(*state),
             AudioEvent::EndOfStream { .. } => Some(PlaybackState::Stopped),
             AudioEvent::Failed(_) => Some(PlaybackState::Error),
             AudioEvent::PositionAdvanced { .. }
+            | AudioEvent::TrackBoundaryScheduled { .. }
+            | AudioEvent::TrackBoundaryApplied { .. }
             | AudioEvent::SynchronizationUpdated { .. }
             | AudioEvent::Underrun { .. } => None,
         };
@@ -381,8 +385,17 @@ impl ActorState {
                 }
             }
             Some(PlaybackState::Error) => {
-                self.snapshot.host_lifecycle = HostLifecycle::Error;
-                self.snapshot.recoverable_action = Some(RecoverableAction::ReselectAudioSource);
+                if retryable_audio_failure {
+                    self.snapshot.host_lifecycle = if self.snapshot.listeners.is_empty() {
+                        HostLifecycle::WaitingForListeners
+                    } else {
+                        HostLifecycle::Ready
+                    };
+                    self.snapshot.recoverable_action = Some(RecoverableAction::Retry);
+                } else {
+                    self.snapshot.host_lifecycle = HostLifecycle::Error;
+                    self.snapshot.recoverable_action = Some(RecoverableAction::ReselectAudioSource);
+                }
             }
             Some(PlaybackState::Buffering | PlaybackState::Ready | PlaybackState::Underrun)
             | None => {}

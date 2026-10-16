@@ -97,6 +97,8 @@ pub(super) fn stream_start(session_id: &SessionId, host_start_time_ms: u64) -> C
         sample_rate: 48_000,
         channels: 2,
         samples_per_packet: 960,
+        current_entry_id: None,
+        current_display_name: None,
     })
 }
 

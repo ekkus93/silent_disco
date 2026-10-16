@@ -6,6 +6,25 @@ import type {
 import { listenerProgress, type PendingOperation } from "./domain";
 import { ListenerDetailScreen } from "../ListenerDetailScreen";
 
+function trustLabel(value: string): string {
+  return value === "trusted" ? "Trusted device" : "Approved for this session";
+}
+
+function connectionLabel(value: string): string {
+  switch (value) {
+    case "connected":
+      return "Connected";
+    case "retrying":
+      return "Reconnecting";
+    case "disconnected":
+      return "Disconnected";
+    case "failed":
+      return "Connection failed";
+    default:
+      return value.replaceAll("_", " ");
+  }
+}
+
 interface ListenerListProps {
   listeners: ConnectedListenerDto[];
   playbackState: string;
@@ -30,10 +49,7 @@ export function ListenerList({
   const selectedListener = listeners.find((listener) => listener.deviceId === selectedListenerId);
 
   return (
-    <section
-      aria-labelledby="listeners-title"
-      className="mt-6 rounded-2xl border border-slate-700 bg-slate-950/70 p-5"
-    >
+    <section aria-labelledby="listeners-title" className="sd-workflow-card mt-6 p-5">
       <h2 id="listeners-title" className="text-xl font-semibold">
         Connected listeners
       </h2>
@@ -53,19 +69,18 @@ export function ListenerList({
       ) : (
         <ul className="mt-4 grid gap-3 md:grid-cols-2">
           {listeners.map((listener) => (
-            <li key={listener.deviceId} className="rounded-xl bg-slate-900 p-4">
+            <li key={listener.deviceId} className="sd-workflow-card border-0 p-4 shadow-none">
               <p className="font-semibold">{listener.displayName}</p>
               <p className="mt-1 text-sm text-slate-200">
                 {listenerProgress(listener, playbackState)}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                Trust: {listener.trustState} · core transport state:{" "}
-                <span className="font-mono">{listener.transportState}</span>
+                {trustLabel(listener.trustState)} · {connectionLabel(listener.transportState)}
               </p>
               <button
                 type="button"
                 onClick={() => onSelectListener(listener.deviceId)}
-                className="mt-3 rounded-lg border border-slate-600 px-3 py-2 text-sm font-semibold hover:border-slate-400"
+                className="sd-workflow-control mt-3 rounded-sd-control border border-sd-outline px-3 py-2 text-sm font-semibold text-sd-on-surface hover:border-sd-primary"
               >
                 View {listener.displayName}
               </button>

@@ -7,7 +7,22 @@ import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
+
+class ListenerResumePolicyTest {
+    @Test
+    fun sameStreamResumeWithRunningPlaybackReanchorsInsteadOfRestarting() {
+        assertTrue(shouldReanchorListenerPlayback(resumeInPlace = true, runtimeAvailable = true))
+    }
+
+    @Test
+    fun newStreamOrMissingRuntimeStartsPlaybackNormally() {
+        assertFalse(shouldReanchorListenerPlayback(resumeInPlace = false, runtimeAvailable = true))
+        assertFalse(shouldReanchorListenerPlayback(resumeInPlace = true, runtimeAvailable = false))
+    }
+}
 
 class NextListenerStateTest {
     @Test

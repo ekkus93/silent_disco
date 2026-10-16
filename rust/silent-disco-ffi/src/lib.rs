@@ -16,6 +16,7 @@ mod android_p2_abi;
 mod audio_abi;
 mod audio_output;
 mod host_control;
+mod host_playlist;
 mod host_transport;
 mod listener_playback;
 mod listener_transport;
@@ -31,9 +32,13 @@ pub use host_control::{
     FfiCoreDiagnostic, FfiCoreError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,
     FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest,
     FfiJoinRequestInput, FfiListenerLifecycle, FfiListenerSummary, FfiPlatformCompletion,
-    FfiPlatformEffect, FfiPlaybackState, FfiSessionAdvertisement, FfiStorageEffect,
+    FfiPlatformEffect, FfiPlaybackState, FfiQueueEntry, FfiSessionAdvertisement, FfiStorageEffect,
     FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState, FfiTrustState,
     FfiTuningPatch, FfiTuningSettings,
+};
+pub use host_playlist::{
+    FfiHostPlaylistError, FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource,
+    FfiPlaylistStreamStart,
 };
 pub use host_transport::{
     FfiHostTransportCounters, FfiHostTransportDelivery, FfiHostTransportError,

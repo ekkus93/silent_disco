@@ -16,7 +16,7 @@ import kotlinx.serialization.json.Json
 private const val LOCAL_LISTENER_BIND_ADDRESS = "0.0.0.0"
 private const val LISTENER_DISPLAY_NAME = "This Android Listener"
 /** Protocol version advertised by this app's BLE and desktop-mDNS discovery layers. */
-internal const val LISTENER_DISCOVERY_PROTOCOL_VERSION: Int = 2
+internal const val LISTENER_DISCOVERY_PROTOCOL_VERSION: Int = 3
 
 @Serializable
 private data class ManualHostEndpointPayload(

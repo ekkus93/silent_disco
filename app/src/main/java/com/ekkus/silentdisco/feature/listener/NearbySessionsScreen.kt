@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,6 +34,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 import com.ekkus.silentdisco.app.canSelectSession
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.SessionInfo
@@ -71,7 +73,8 @@ fun NearbySessionsScreen(
                 if (onConnectManually != null) {
                     TextButton(
                         onClick = onConnectManually,
-                        modifier = Modifier.testTag("nearby-connect-manually"),
+                        modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum)
+                            .testTag("nearby-connect-manually"),
                     ) {
                         Text("Connect manually")
                     }
@@ -79,7 +82,8 @@ fun NearbySessionsScreen(
                 if (onScanQr != null) {
                     TextButton(
                         onClick = onScanQr,
-                        modifier = Modifier.testTag("nearby-scan-qr"),
+                        modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum)
+                            .testTag("nearby-scan-qr"),
                     ) {
                         Text("Scan QR")
                     }
@@ -92,6 +96,7 @@ fun NearbySessionsScreen(
                 }
             },
         )
+        ClientWorkflowStepper(stage = ClientWorkflowStage.FIND)
 
         when {
             permissionRequired -> EmptyState(
@@ -156,7 +161,7 @@ private fun SessionResults(
     ) {
         item {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {

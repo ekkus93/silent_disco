@@ -330,7 +330,7 @@ internal object BleAdvertisementCodec {
      */
     val serviceDataUuid: ParcelUuid = ParcelUuid(UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb"))
 
-    private const val PROTOCOL_VERSION = 2
+    private const val PROTOCOL_VERSION = 3
     private const val SESSION_ID_BYTES = 6
     private const val MAX_HOST_NAME_BYTES = 10
     private const val MAX_SESSION_NAME_BYTES = 6

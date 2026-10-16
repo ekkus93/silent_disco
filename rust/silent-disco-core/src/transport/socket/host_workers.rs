@@ -343,6 +343,7 @@ fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), Tr
         | ControlMessage::JoinApproval(_)
         | ControlMessage::JoinRejection(_)
         | ControlMessage::StreamStart(_)
+        | ControlMessage::TrackBoundary(_)
         | ControlMessage::Pause(_)
         | ControlMessage::Stop(_) => Err(TransportError::new(
             TransportErrorKind::Unauthorized,

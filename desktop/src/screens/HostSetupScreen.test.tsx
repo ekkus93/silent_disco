@@ -11,14 +11,14 @@ import type { CoreSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostSetupScreen } from "./HostSetupScreen";
 
 const {
-  selectAudioSource,
+  addHostAudioSources,
   selectHostRole,
   updateHostDraft,
   createHostSession,
   getHostNetworkState,
   setHostNetworkPreference,
 } = vi.hoisted(() => ({
-  selectAudioSource: vi.fn(),
+  addHostAudioSources: vi.fn(),
   selectHostRole: vi.fn(),
   updateHostDraft: vi.fn(),
   createHostSession: vi.fn(),
@@ -26,12 +26,11 @@ const {
   setHostNetworkPreference: vi.fn(),
 }));
 
-vi.mock("../core/audioSourceClient", () => ({ selectAudioSource }));
-
 vi.mock("../core/client", async () => {
   const actual = await vi.importActual<typeof import("../core/client")>("../core/client");
   return {
     ...actual,
+    addHostAudioSources,
     selectHostRole,
     updateHostDraft,
     createHostSession,
@@ -61,6 +60,20 @@ function snapshot(overrides: Partial<CoreSnapshotDto> = {}): CoreSnapshotDto {
         durationMs: "5000",
       },
       rememberApprovedDevices: false,
+    },
+    hostQueue: {
+      revision: "0",
+      entries: [
+        {
+          entryId: "entry-1",
+          source: {
+            sourceId: "source-1",
+            displayName: "set.wav",
+            byteLength: "1024",
+            durationMs: "5000",
+          },
+        },
+      ],
     },
     hostDraftValidation: [],
     canCreateHostSession: true,
@@ -118,9 +131,14 @@ function renderScreen(initial = snapshot()) {
   return store;
 }
 
+function advanceToReady() {
+  fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review session" }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  selectAudioSource.mockResolvedValue({ operationId: "source-2", acceptedAtRevision: "4" });
+  addHostAudioSources.mockResolvedValue({ operationId: "source-2", acceptedAtRevision: "4" });
   selectHostRole.mockResolvedValue({ operationId: "role-1", acceptedAtRevision: "4" });
   updateHostDraft.mockResolvedValue({ operationId: "draft-1", acceptedAtRevision: "4" });
   createHostSession.mockResolvedValue({ operationId: "create-1", acceptedAtRevision: "4" });
@@ -151,29 +169,24 @@ describe("HostSetupScreen", () => {
     expect(selectHostRole).toHaveBeenCalledWith("4");
   });
 
-  it("uses native labelled controls in keyboard order", () => {
+  it("presents Music, Access, and Ready as ordered wizard stages", () => {
     renderScreen();
-    const session = screen.getByLabelText("Session name");
+    expect(screen.getByLabelText("Session name")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Listener approval")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
     const approval = screen.getByLabelText("Listener approval");
     const remember = screen.getByLabelText("Remember approved devices");
-    const select = screen.getByRole("button", { name: "Select audio file" });
-    const validate = screen.getByRole("button", { name: "Validate settings" });
-    expect(
-      session.compareDocumentPosition(approval) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(
       approval.compareDocumentPosition(remember) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      remember.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      select.compareDocumentPosition(validate) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Review session" }));
+    expect(screen.getByRole("heading", { name: "Ready to host" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start hosting" })).toBeInTheDocument();
   });
 
   it("shows invite-code controls only for invite-code approval", () => {
     renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
     expect(screen.queryByLabelText("Invite code")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Listener approval"), {
       target: { value: "invite_code" },
@@ -221,6 +234,7 @@ describe("HostSetupScreen", () => {
     const initial = snapshot({
       canCreateHostSession: false,
       hostDraft: { ...snapshot().hostDraft, audioSource: null },
+      hostQueue: { revision: "0", entries: [] },
       hostDraftValidation: [
         {
           field: "audioSource",
@@ -230,12 +244,12 @@ describe("HostSetupScreen", () => {
       ],
     });
     const store = renderScreen(initial);
-    fireEvent.click(screen.getByRole("button", { name: "Select audio file" }));
-    await waitFor(() => expect(selectAudioSource).toHaveBeenCalledWith("4"));
-    expect(screen.getByText("No inspected source selected.")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("Waiting for a newer Rust snapshot"),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add songs" }));
+    await waitFor(() => expect(addHostAudioSources).toHaveBeenCalled());
+    expect(
+      screen.getByText("No songs added. Add WAV, FLAC, or MP3 files to build the playlist."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Adding songs…"));
 
     store.dispatch(
       coreActions.notificationReceived({
@@ -243,38 +257,37 @@ describe("HostSetupScreen", () => {
         details: snapshot({ revision: "5" }),
       }),
     );
-    await waitFor(() => expect(screen.getByText("set.wav")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/set\.wav/)).toBeInTheDocument());
     expect(store.getState().core.pendingCommandReceipts).toEqual({});
   });
 
   it("treats native dialog cancellation as no command and no error", async () => {
-    selectAudioSource.mockResolvedValue(null);
+    addHostAudioSources.mockResolvedValue(null);
     const store = renderScreen();
-    fireEvent.click(screen.getByRole("button", { name: "Select audio file" }));
-    await waitFor(() => expect(selectAudioSource).toHaveBeenCalledWith("4"));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Select audio file" })).toBeEnabled(),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add songs" }));
+    await waitFor(() => expect(addHostAudioSources).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add songs" })).toBeEnabled());
     expect(store.getState().core.pendingCommandReceipts).toEqual({});
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows source-selection failure without changing the authoritative source", async () => {
-    selectAudioSource.mockRejectedValue(new Error("permission denied"));
+    addHostAudioSources.mockRejectedValue(new Error("permission denied"));
     const store = renderScreen();
-    fireEvent.click(screen.getByRole("button", { name: "Select audio file" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add songs" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("permission denied"));
     expect(store.getState().core.snapshot?.hostDraft.audioSource?.sourceId).toBe("source-1");
   });
 
   it("keeps create pending until a newer Rust snapshot is observed", async () => {
     const store = renderScreen();
-    const create = screen.getByRole("button", { name: "Create session" });
+    advanceToReady();
+    const create = screen.getByRole("button", { name: "Start hosting" });
     await waitFor(() => expect(create).toBeEnabled());
     fireEvent.click(create);
     await waitFor(() => expect(createHostSession).toHaveBeenCalledWith("4"));
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("Waiting for a newer Rust snapshot"),
+      expect(screen.getByRole("status")).toHaveTextContent("Starting your session…"),
     );
     expect(store.getState().core.snapshot?.hostLifecycle).toBe("idle");
 
@@ -290,7 +303,8 @@ describe("HostSetupScreen", () => {
   it("shows invocation rejection and never advances lifecycle locally", async () => {
     createHostSession.mockRejectedValue(new Error("stale revision"));
     const store = renderScreen();
-    const create = screen.getByRole("button", { name: "Create session" });
+    advanceToReady();
+    const create = screen.getByRole("button", { name: "Start hosting" });
     await waitFor(() => expect(create).toBeEnabled());
     fireEvent.click(create);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("stale revision"));

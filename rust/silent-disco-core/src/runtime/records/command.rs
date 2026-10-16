@@ -1,7 +1,9 @@
 use super::errors::{RuntimeContractError, validate_token};
 use crate::domain::{AppRole, DeviceId, OperationId, RequestId, SessionId};
 use crate::protocol::MAX_INVITE_CODE_BYTES;
-use crate::runtime::{AudioSourceDescriptor, HostDraftPatch, SnapshotRevision, TuningPatch};
+use crate::runtime::{
+    AudioSourceDescriptor, HostDraftPatch, QueueEntry, SnapshotRevision, TuningPatch,
+};
 
 /// Presentation intent submitted to the authoritative actor.
 #[derive(Debug, Clone, PartialEq)]
@@ -10,6 +12,21 @@ pub enum CoreCommand {
         role: AppRole,
     },
     UpdateHostDraft(HostDraftPatch),
+    AppendHostQueue {
+        expected_queue_revision: u64,
+        entries: Vec<QueueEntry>,
+    },
+    ReorderHostQueue {
+        expected_queue_revision: u64,
+        ordered_entry_ids: Vec<String>,
+    },
+    RemoveHostQueueEntry {
+        expected_queue_revision: u64,
+        entry_id: String,
+    },
+    ClearHostQueue {
+        expected_queue_revision: u64,
+    },
     CreateHostSession,
     EndHostSession,
     StartDiscovery,

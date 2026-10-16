@@ -9,8 +9,8 @@ use crate::{
     protocol::{
         AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, FRAME_HEADER_BYTES,
         FRAME_HEADER_LENGTH, Hello, JoinRequest, MAX_CONTROL_PAYLOAD_BYTES, MessageKind,
-        PROTOCOL_MAGIC, PROTOCOL_VERSION, ProtocolFrame, SyncRequest, SyncResponse,
-        SynchronizationReport,
+        PROTOCOL_MAGIC, PROTOCOL_VERSION, ProtocolFrame, StreamStart, SyncRequest, SyncResponse,
+        SynchronizationReport, TrackBoundary,
     },
 };
 
@@ -95,6 +95,13 @@ fn control_sync_and_audio_round_trip_canonically() {
                 drift_ppm: -3.125,
             },
         )),
+        ProtocolFrame::Control(ControlMessage::TrackBoundary(TrackBoundary {
+            session_id: session_id(),
+            stream_id: stream_id(),
+            first_sample_index: SampleIndex::new(96_000),
+            entry_id: "entry-2".into(),
+            display_name: "Second song.flac".into(),
+        })),
         ProtocolFrame::Audio(AudioDatagram {
             session_id: session_id(),
             stream_id: stream_id(),
@@ -118,12 +125,29 @@ fn control_sync_and_audio_round_trip_canonically() {
 }
 
 #[test]
+fn stream_start_round_trips_initial_queue_track_identity() {
+    let frame = ProtocolFrame::Control(ControlMessage::StreamStart(StreamStart {
+        session_id: session_id(),
+        stream_id: stream_id(),
+        host_start_time_ms: MonotonicMillis::new(1_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 960,
+        current_entry_id: Some("entry-current".into()),
+        current_display_name: Some("First track.flac".into()),
+    }));
+
+    let encoded = encode_frame(&frame).expect("track identity is encoded");
+    assert!(decode_frame(&encoded).expect("stream start decodes") == frame);
+}
+
+#[test]
 fn rejects_unknown_version_kind_flags_and_oversized_length_from_header_only() {
     let mut bytes = encode_frame(&hello_frame()).expect("hello frame encodes");
-    bytes[4..6].copy_from_slice(&3_u16.to_be_bytes());
+    bytes[4..6].copy_from_slice(&4_u16.to_be_bytes());
     assert!(matches!(
         decode_frame(&bytes),
-        Err(ProtocolError::UnsupportedVersion { version: 3 })
+        Err(ProtocolError::UnsupportedVersion { version: 4 })
     ));
 
     let mut bytes = encode_frame(&hello_frame()).expect("hello frame encodes");

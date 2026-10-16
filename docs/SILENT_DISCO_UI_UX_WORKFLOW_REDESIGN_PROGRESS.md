@@ -1,5 +1,11 @@
 # Silent Disco UI/UX Workflow Redesign — Implementation Progress
 
+## Follow-on scope — gapless queue redesign (2026-10-15)
+
+The earlier P0/P1/P2 completion record below remains tied to its validated commit and original TODO. The separate [gapless queue and workflow TODO](SILENT_DISCO_GAPLESS_QUEUE_AND_WORKFLOW_REDESIGN_TODO_2026-10-15.md) adds new work and remains in progress. The follow-on implementation now includes Rust-owned queue/protocol-v3 state, continuous playlist packetization and scheduled track boundaries, Android and desktop queue editing, matching host/client workflows, late-join stream/boundary replay, and failure recovery. Qualification and accessibility work remains incomplete; the original “software implementation complete” status does not cover this follow-on scope.
+
+**Follow-on validation (2026-10-15):** Current desktop `npm run check` passes with generated-binding verification, formatting, clean Biome lint, typecheck, 157 frontend tests, production build, and Lab exclusion. Android `testDebugUnitTest lintDebug assembleDebug` passes; the full API 36 managed instrumentation run completed 111 tests (110 passed, 1 annotated skip, 0 failed), including measured queue action bounds. It includes native Oboe rebind open-counter verification and host/client workflow screens. Rust serial workspace checks and strict desktop Tauri checks passed in the current implementation cycle. Managed and virtual tests do not replace packaged cross-platform audio measurements or physical output-device acceptance; those remain pending.
+
 **Updated:** 2026-07-27  
 **Target branch:** `master`  
 **Source TODO:** `docs/SILENT_DISCO_UI_UX_WORKFLOW_REDESIGN_TODO.md`  

@@ -83,6 +83,46 @@ pub struct FfiAudioSource {
     pub duration_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiQueueEntry {
+    pub entry_id: String,
+    pub source: FfiAudioSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiHostQueueBoundary {
+    pub entry_id: String,
+    pub first_sample_index: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiHostQueuePreparationState {
+    Empty,
+    Prepared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiHostQueueReadiness {
+    Empty,
+    Ready,
+    Buffering,
+    Playing,
+    Paused,
+    Underrun,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiHostQueueSnapshot {
+    pub revision: u64,
+    pub current: Option<FfiQueueEntry>,
+    pub upcoming: Vec<FfiQueueEntry>,
+    pub preparation_state: FfiHostQueuePreparationState,
+    pub readiness: FfiHostQueueReadiness,
+    pub error: Option<FfiCoreError>,
+    pub next_boundary: Option<FfiHostQueueBoundary>,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FfiTuningSettings {
     pub sync_sample_window: u32,
@@ -207,6 +247,10 @@ pub struct FfiCoreSnapshot {
     pub revision: u64,
     pub selected_role: Option<FfiAppRole>,
     pub host_draft: FfiHostDraft,
+    pub host_queue: Vec<FfiQueueEntry>,
+    pub host_queue_revision: u64,
+    pub host_queue_next_boundary: Option<FfiHostQueueBoundary>,
+    pub host_queue_snapshot: FfiHostQueueSnapshot,
     pub host_lifecycle: FfiHostLifecycle,
     pub listener_lifecycle: FfiListenerLifecycle,
     pub transport_state: FfiTransportState,

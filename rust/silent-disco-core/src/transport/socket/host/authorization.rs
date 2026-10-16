@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::domain::DeviceId;
+use crate::protocol::{ProtocolFrame, encode_frame};
 
 use super::super::super::{
     ListenerDatagramRoutes, TransportChannel, TransportError, TransportErrorKind, TransportEvent,
@@ -73,6 +74,13 @@ impl SocketHostTransport {
             },
         );
         drop(route_registry);
+        if let Err(error) = self.send_cached_playback_controls(&peer) {
+            if let Ok(mut routes) = self.routes.lock() {
+                routes.remove(device_id);
+            }
+            peer.authorized.store(false, Ordering::Release);
+            return Err(error);
+        }
         send_event(
             &self.event_sender,
             &self.counters,
@@ -82,6 +90,33 @@ impl SocketHostTransport {
                 received_at: self.clock.now(),
             },
         );
+        Ok(())
+    }
+
+    fn send_cached_playback_controls(
+        &self,
+        peer: &super::peer::PeerState,
+    ) -> Result<(), TransportError> {
+        let controls = self
+            .playback_controls
+            .lock()
+            .map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "playback control cache is poisoned",
+                )
+            })?
+            .snapshot();
+        for message in controls {
+            let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
+                .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
+            let result = peer.sender.send(bytes);
+            self.record_peer_result(peer, &result);
+            let written = result?;
+            self.counters.frame_sent(written);
+            self.update_silence_clock(peer, &message);
+        }
         Ok(())
     }
 }

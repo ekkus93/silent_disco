@@ -1,7 +1,9 @@
 use super::network::DesktopHostNetworkControl;
 use crate::dto::DesktopErrorDto;
 use silent_disco_core::audio::{PacketizerWorkerErrorKind, StreamingPacketizeHandle};
+use silent_disco_core::audio::{StreamingPlaylistTrackFactory, StreamingPlaylistUpdater};
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, SessionId, StreamId};
+use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::protocol::{
     AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart,
 };
@@ -63,6 +65,7 @@ pub(super) struct DesktopPlaybackStreamer {
     /// `apply_pause_offset`) so pacing keeps comparing against real time
     /// instead of a timeline that silently fell behind during the pause.
     pub(super) accumulated_pause_offset_ms: Arc<AtomicU64>,
+    playlist_updater: Option<StreamingPlaylistUpdater>,
     stop: Arc<AtomicBool>,
     pump: Option<JoinHandle<Result<(), DesktopErrorDto>>>,
 }
@@ -83,6 +86,7 @@ impl DesktopPlaybackStreamer {
         network: Arc<DesktopHostNetworkControl>,
         handle: CoreActorHandle,
     ) -> Result<Self, DesktopErrorDto> {
+        let playlist_updater = packetizer.playlist_updater();
         handle
             .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
             .map_err(DesktopErrorDto::from)?;
@@ -137,9 +141,34 @@ impl DesktopPlaybackStreamer {
             stream_start,
             paused_at_ms,
             accumulated_pause_offset_ms,
+            playlist_updater,
             stop,
             pump: Some(pump),
         })
+    }
+
+    pub(super) fn replace_upcoming(
+        &self,
+        upcoming: Vec<StreamingPlaylistTrackFactory>,
+    ) -> Result<(), DesktopErrorDto> {
+        let Some(updater) = &self.playlist_updater else {
+            return Err(DesktopErrorDto::new(
+                "desktop.playback.queue_update_unavailable",
+                "audio",
+                "error",
+                true,
+                "the active playback stream does not support playlist updates",
+            ));
+        };
+        updater
+            .replace_upcoming(upcoming)
+            .map_err(|error| DesktopErrorDto::new(
+                "desktop.playback.queue_update_failed",
+                "audio",
+                "error",
+                true,
+                &error.to_string(),
+            ))
     }
 
     /// Signals the pump thread to stop. The pump thread itself performs the

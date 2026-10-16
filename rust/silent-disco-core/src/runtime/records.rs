@@ -32,7 +32,10 @@ pub use platform::{
     PermissionCapability, PlatformEffect, PlatformEffectRequest, PlatformEvent,
     PlatformOperationCompletion,
 };
-pub use snapshot::{CoreActorInput, CoreSnapshot, RecoverableAction};
+pub use snapshot::{
+    CoreActorInput, CoreSnapshot, HostQueueBoundary, HostQueuePreparationState, HostQueueReadiness,
+    HostQueueSnapshot, RecoverableAction,
+};
 
 use crate::protocol::PROTOCOL_VERSION;
 

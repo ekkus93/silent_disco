@@ -115,6 +115,7 @@ pub struct Packetizer {
     next_sequence: u64,
     carry: Vec<i16>,
     carry_first_sample_index: Option<u64>,
+    contiguous_sample_cursor: u64,
     finished: bool,
 }
 
@@ -176,6 +177,7 @@ impl Packetizer {
             next_sequence: 0,
             carry: Vec::new(),
             carry_first_sample_index: None,
+            contiguous_sample_cursor: 0,
             finished: false,
         })
     }
@@ -191,6 +193,8 @@ impl Packetizer {
             sample_rate: self.format.sample_rate_hz,
             channels: self.format.channels,
             samples_per_packet: self.samples_per_packet,
+            current_entry_id: None,
+            current_display_name: None,
         }))
     }
 
@@ -198,6 +202,65 @@ impl Packetizer {
     #[must_use]
     pub const fn is_finished(&self) -> bool {
         self.finished
+    }
+
+    /// Returns the first sample index available to the next adjacent track.
+    ///
+    /// Use this with [`Self::push_contiguous_chunk`] when each source decoder
+    /// starts its local sample indices at zero. It advances by decoded frames,
+    /// so container duration rounding cannot introduce a gap or overlap.
+    #[must_use]
+    pub const fn next_contiguous_sample_index(&self) -> u64 {
+        self.contiguous_sample_cursor
+    }
+
+    /// Returns the owning session identity.
+    #[must_use]
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    /// Returns the identity of this continuous stream.
+    #[must_use]
+    pub fn stream_id(&self) -> &StreamId {
+        &self.stream_id
+    }
+
+    /// Pushes a decoded chunk from a track in one continuous stream timeline.
+    /// The source-local sample index is replaced with the stream cursor while
+    /// the decoded PCM payload and end-of-stream flag are preserved.
+    ///
+    /// Track decoders can therefore be switched without flushing or padding
+    /// packetizer carry at the boundary. Only the final queue item should set
+    /// `chunk.end_of_stream`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PacketizerError`] when the stream sample cursor overflows or
+    /// the chunk violates the packetizer's format/end-of-stream contract.
+    pub fn push_contiguous_chunk(
+        &mut self,
+        mut chunk: DecodedPcmChunk,
+    ) -> Result<PacketizeOutcome, PacketizerError> {
+        let frame_count = u64::try_from(chunk.frame_count()).map_err(|_| {
+            PacketizerError::new(
+                PacketizerErrorKind::InvalidConfiguration,
+                "decoded chunk frame count exceeds the stream timeline",
+            )
+        })?;
+        let next_cursor = self
+            .contiguous_sample_cursor
+            .checked_add(frame_count)
+            .ok_or_else(|| {
+                PacketizerError::new(
+                    PacketizerErrorKind::InvalidConfiguration,
+                    "continuous stream sample index overflowed",
+                )
+            })?;
+        chunk.first_sample_index = crate::domain::SampleIndex::new(self.contiguous_sample_cursor);
+        let outcome = self.push_chunk(chunk)?;
+        self.contiguous_sample_cursor = next_cursor;
+        Ok(outcome)
     }
 
     /// Consumes one decoded chunk, returning every full-width datagram it

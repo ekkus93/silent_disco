@@ -4,6 +4,8 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
+import com.ekkus.silentdisco.core.model.SyncState
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -38,6 +40,14 @@ class WorkflowViewModelTest {
             selectedSession = session,
             listenerState = ListenerLifecycleState.PLAYING,
             listenerPlaybackState = PlaybackState.PLAYING,
+            connectionProgress = ConnectionProgressState(
+                approved = true,
+                connected = true,
+                synced = true,
+                buffered = true,
+                playing = true,
+            ),
+            listenerSyncState = SyncState(confidence = SyncQualityBadge.GOOD),
         )
 
         viewModel.onUiStateChanged(playing)

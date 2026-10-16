@@ -90,6 +90,7 @@ const snapshot: CoreSnapshotDto = {
     },
     rememberApprovedDevices: false,
   },
+  hostQueue: { revision: "0", entries: [] },
   hostDraftValidation: [],
   canCreateHostSession: true,
   hostLifecycle: "idle",
@@ -159,6 +160,7 @@ const hostSessionSnapshot: HostSessionSnapshotDto = {
   playbackPositionMs: "0",
   streamEndedNaturally: false,
   audioSource: null,
+  hostQueue: { revision: "0", entries: [] },
   broadcast: null,
   lastError: null,
   monitor: { enabled: false, active: false, failureReason: null },
@@ -486,17 +488,38 @@ describe("App", () => {
   // Block 50.2: the control lives on Settings now, but host setup still gates
   // session creation on network readiness, so the handoff must actually work.
   it("hands off from host setup to Settings for network configuration", async () => {
-    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    ensureDesktopBridgeMock.mockResolvedValue({
+      ...connection,
+      snapshot: {
+        ...snapshot,
+        hostQueue: {
+          revision: "0",
+          entries: [
+            {
+              entryId: "entry-1",
+              source: {
+                sourceId: "source-1",
+                displayName: "set.wav",
+                byteLength: "1024",
+                durationMs: "5000",
+              },
+            },
+          ],
+        },
+      },
+    });
     renderApp();
 
     await screen.findByRole("heading", { name: "Create a silent disco" });
+    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review session" }));
     // Setup shows the outcome, not a second copy of the control.
     expect(await screen.findByText(/Ready to bind enp1s0 at 192\.168\.1\.20/)).toBeVisible();
     expect(screen.queryByLabelText("Host network interface")).not.toBeInTheDocument();
     // Paired with the unresolved-policy test below: together these prove the
     // readiness gate actually toggles rather than being permanently disabled.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /create session/i })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: /start hosting/i })).toBeEnabled(),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Configure in Settings" }));
@@ -516,15 +539,36 @@ describe("App", () => {
       requiresExplicitSelection: true,
       selectionError: "multiple private-LAN addresses require an explicit selection",
     });
-    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    ensureDesktopBridgeMock.mockResolvedValue({
+      ...connection,
+      snapshot: {
+        ...snapshot,
+        hostQueue: {
+          revision: "0",
+          entries: [
+            {
+              entryId: "entry-1",
+              source: {
+                sourceId: "source-1",
+                displayName: "set.wav",
+                byteLength: "1024",
+                durationMs: "5000",
+              },
+            },
+          ],
+        },
+      },
+    });
     renderApp();
 
     await screen.findByRole("heading", { name: "Create a silent disco" });
+    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review session" }));
     expect(
       await screen.findByText(/multiple private-LAN addresses require an explicit selection/),
     ).toBeVisible();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /create session/i })).toBeDisabled(),
+      expect(screen.getByRole("button", { name: /start hosting/i })).toBeDisabled(),
     );
   });
 

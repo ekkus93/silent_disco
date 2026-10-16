@@ -41,7 +41,7 @@ internal fun shouldResyncForOffset(
     internal fun MainViewModel.requestListenerSyncProbe(source: String) {
         val session = _uiState.value.selectedSession
         if (session == null) {
-            val message = "Join a session before requesting manual resync"
+            val message = "Join a session before checking the connection timing."
             _uiState.value = _uiState.value.copy(lastError = message)
             diagnosticsStore.updateListener { it.copy(lastError = message) }
             refreshListenerDiagnostics()
@@ -67,6 +67,7 @@ internal fun shouldResyncForOffset(
         // nothing for Kotlin to hand off here.
         val request = newListenerSyncProbeRequest(SessionId(session.id))
         pendingSyncCorrelationId = request.correlationId
+        logger.i("sync.probe.requested", "Checking connection timing ($source)")
 
         if (listenerTransportConnected ||
             wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED
@@ -85,7 +86,7 @@ internal fun shouldResyncForOffset(
                     approved = true,
                     connected = true,
                 ),
-                lastMessage = "$source sync probe sent",
+                lastMessage = "Checking connection timing…",
                 lastError = null,
             )
             viewModelScope.launch {
@@ -95,7 +96,7 @@ internal fun shouldResyncForOffset(
                         request.t1ListenerSendElapsedMs.toULong(),
                     )
                 }.onSuccess {
-                    _uiState.value = _uiState.value.copy(lastMessage = "$source sync probe sent", lastError = null)
+                    _uiState.value = _uiState.value.copy(lastMessage = "Checking connection timing…", lastError = null)
                 }.onFailure { error ->
                     handleSyncFailure(error.message ?: "Failed to send sync probe")
                 }
@@ -107,13 +108,13 @@ internal fun shouldResyncForOffset(
         if (isDemoSession) {
             applySyncResponse(hostTimingService.createResponse(request))
             _uiState.value = _uiState.value.copy(
-                lastMessage = "$source sync applied locally for demo session",
+                lastMessage = "Connection timing is ready",
                 lastError = null,
             )
             return
         }
 
-        val message = "Manual resync requires an active host connection"
+        val message = "Connect to a host before checking the connection timing."
         _uiState.value = _uiState.value.copy(lastError = message)
         diagnosticsStore.updateListener { it.copy(lastError = message) }
         refreshListenerDiagnostics()
@@ -135,7 +136,8 @@ internal fun shouldResyncForOffset(
             runCatching {
                 listenerTransportController.sendSyncRequest(correlationId.toULong(), sendTimeMs)
             }.onSuccess {
-                _uiState.value = _uiState.value.copy(lastMessage = "$source sync probe sent", lastError = null)
+                logger.i("sync.probe.requested", "Checking connection timing ($source)")
+                _uiState.value = _uiState.value.copy(lastMessage = "Checking connection timing…", lastError = null)
             }.onFailure { error ->
                 handleSyncFailure(error.message ?: "Failed to send sync probe")
             }
@@ -194,7 +196,7 @@ internal fun shouldResyncForOffset(
             // created/used at all (native library unavailable, an
             // impossible timestamp ordering, a protocol-level bridge
             // failure) -- a real, reportable failure, not routine noise.
-            handleSyncFailure(error.message ?: "Rust synchronization estimator failed to process the sample")
+            handleSyncFailure(error.message ?: "Couldn't update connection timing. Try again.")
             return
         }
 
@@ -207,10 +209,7 @@ internal fun shouldResyncForOffset(
                 "degradedLock=${observation.degradedLock}",
         )
         if (!observation.accepted) {
-            val message =
-                "Clock sync: ${observation.acquisitionRejectedSampleCount} rejected over " +
-                    "${observation.acquisitionElapsedMs}ms (RTT gate " +
-                    "${"%.0f".format(observation.acquisitionRttLimitMs)}ms)"
+            val message = "Checking connection timing…"
             _uiState.value = _uiState.value.copy(
                 listenerState = ListenerLifecycleState.SYNCING_CLOCK,
                 connectionProgress = _uiState.value.connectionProgress.copy(
@@ -248,7 +247,7 @@ internal fun shouldResyncForOffset(
             driftThresholdMs = _uiState.value.tuningSettings.syncDriftThresholdMs,
         )
         if (shouldResync && !_uiState.value.connectionProgress.synced) {
-            handleSyncFailure("Unable to establish a stable sync estimate")
+            handleSyncFailure("Couldn't establish steady connection timing. Try reconnecting.")
             return
         }
         _uiState.value = _uiState.value.copy(
@@ -258,8 +257,7 @@ internal fun shouldResyncForOffset(
             // independent monotonic clocks even when their epochs differ.
             connectionProgress = _uiState.value.connectionProgress.copy(synced = !shouldResync),
             lastMessage = if (!shouldResync && observation.degradedLock) {
-                "Clock sync locked after ${observation.acquisitionRejectedSampleCount} rejected samples " +
-                    "using a bounded degraded acquisition gate"
+                "Connected with limited timing accuracy"
             } else {
                 _uiState.value.lastMessage
             },
@@ -271,7 +269,7 @@ internal fun shouldResyncForOffset(
                 jitterMs = syncState.jitterMs,
                 resyncCount = syncState.resyncCount,
                 metricsSummary = summarizeMetrics(),
-                lastError = if (shouldResync) "Sync drift exceeded threshold" else null,
+                lastError = if (shouldResync) "Connection timing changed" else null,
             )
         }
         metrics.increment("sync_sample")
@@ -286,15 +284,17 @@ internal fun shouldResyncForOffset(
 
     internal fun MainViewModel.handleSyncFailure(message: String) {
         logger.w("sync.error", message)
+        val userMessage = "Couldn't establish a steady connection. Try reconnecting closer to the host."
         metrics.increment("sync_establish_failure")
         resyncJob?.cancel()
         stopListenerPlayback()
         resetListenerSyncAcquisition()
         // Reported into Rust (rather than written locally) so a later Rust
         // snapshot cannot silently revert this back to an earlier state.
-        listenerCoreController?.transportFailed(message, retryable = true)
+        listenerCoreController?.transportFailed(userMessage, retryable = true)
         _uiState.value = _uiState.value.copy(
             listenerPlaybackState = PlaybackState.ERROR,
+            lastError = userMessage,
             connectionProgress = _uiState.value.connectionProgress.copy(
                 buffered = false,
                 playing = false,

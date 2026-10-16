@@ -594,6 +594,7 @@ fn validate_listener_outbound(
         | ControlMessage::JoinApproval(_)
         | ControlMessage::JoinRejection(_)
         | ControlMessage::StreamStart(_)
+        | ControlMessage::TrackBoundary(_)
         | ControlMessage::Pause(_)
         | ControlMessage::Stop(_) => Err(TransportError::new(
             TransportErrorKind::Unauthorized,
@@ -631,6 +632,7 @@ fn validate_listener_inbound(
         )),
         ControlMessage::Hello(_)
         | ControlMessage::StreamStart(_)
+        | ControlMessage::TrackBoundary(_)
         | ControlMessage::Pause(_)
         | ControlMessage::Stop(_) => Ok(()),
         ControlMessage::JoinRequest(_) => Err(TransportError::new(

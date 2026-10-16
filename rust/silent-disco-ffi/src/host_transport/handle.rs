@@ -7,7 +7,7 @@ use silent_disco_core::domain::{
 };
 use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, Disconnect, JoinApproval, JoinRejection, Pause,
-    ProtocolFrame, Stop, StreamStart, SyncResponse,
+    ProtocolFrame, Stop, StreamStart, SyncResponse, TrackBoundary,
 };
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,
@@ -175,6 +175,8 @@ impl FfiHostTransportHandle {
         sample_rate: u32,
         channels: u16,
         samples_per_packet: u32,
+        current_entry_id: Option<String>,
+        current_display_name: Option<String>,
     ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
         self.with_transport(|inner| {
             let message = ControlMessage::StreamStart(StreamStart {
@@ -184,8 +186,41 @@ impl FfiHostTransportHandle {
                 sample_rate,
                 channels,
                 samples_per_packet,
+                current_entry_id,
+                current_display_name,
             });
             let delivery = inner.transport.broadcast_control(&message)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
+    /// Sends the current stream announcement to one already-authorized listener.
+    /// Used when an approved listener joins after playback has started.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_stream_start_to_listener(
+        &self,
+        listener_id: String,
+        stream_id: String,
+        host_start_time_ms: u64,
+        sample_rate: u32,
+        channels: u16,
+        samples_per_packet: u32,
+        current_entry_id: Option<String>,
+        current_display_name: Option<String>,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let listener_id = device_id(listener_id)?;
+            let message = ControlMessage::StreamStart(StreamStart {
+                session_id: inner.session_id.clone(),
+                stream_id: parse_stream_id(stream_id)?,
+                host_start_time_ms: MonotonicMillis::new(host_start_time_ms),
+                sample_rate,
+                channels,
+                samples_per_packet,
+                current_entry_id,
+                current_display_name,
+            });
+            let delivery = inner.transport.send_control(&listener_id, &message)?;
             Ok(delivery_from(delivery))
         })
     }
@@ -203,6 +238,50 @@ impl FfiHostTransportHandle {
                 host_pause_time_ms: MonotonicMillis::new(host_pause_time_ms),
             });
             let delivery = inner.transport.broadcast_control(&message)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
+    /// Announces the exact sample index where the next queued track begins.
+    pub fn broadcast_track_boundary(
+        &self,
+        stream_id: String,
+        first_sample_index: u64,
+        entry_id: String,
+        display_name: String,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let message = ControlMessage::TrackBoundary(TrackBoundary {
+                session_id: inner.session_id.clone(),
+                stream_id: parse_stream_id(stream_id)?,
+                first_sample_index: SampleIndex::new(first_sample_index),
+                entry_id,
+                display_name,
+            });
+            let delivery = inner.transport.broadcast_control(&message)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
+    /// Sends one pending sample-indexed track boundary to a late-joining listener.
+    pub fn send_track_boundary_to_listener(
+        &self,
+        listener_id: String,
+        stream_id: String,
+        first_sample_index: u64,
+        entry_id: String,
+        display_name: String,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let listener_id = device_id(listener_id)?;
+            let message = ControlMessage::TrackBoundary(TrackBoundary {
+                session_id: inner.session_id.clone(),
+                stream_id: parse_stream_id(stream_id)?,
+                first_sample_index: SampleIndex::new(first_sample_index),
+                entry_id,
+                display_name,
+            });
+            let delivery = inner.transport.send_control(&listener_id, &message)?;
             Ok(delivery_from(delivery))
         })
     }
@@ -479,6 +558,7 @@ fn map_control_frame(
         | ControlMessage::JoinRejection(_)
         | ControlMessage::Disconnect(_)
         | ControlMessage::StreamStart(_)
+        | ControlMessage::TrackBoundary(_)
         | ControlMessage::Pause(_)
         | ControlMessage::Stop(_)
         | ControlMessage::SynchronizationReport(_) => None,

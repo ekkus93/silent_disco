@@ -107,6 +107,7 @@ impl Encoder {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn encode_control(message: &ControlMessage) -> Result<Vec<u8>, ProtocolError> {
     let mut output = Encoder::with_capacity(256);
     match message {
@@ -161,6 +162,35 @@ fn encode_control(message: &ControlMessage) -> Result<Vec<u8>, ProtocolError> {
             output.put_u32(value.sample_rate);
             output.put_u16(value.channels);
             output.put_u32(value.samples_per_packet);
+            output.put_optional_string(
+                "current_entry_id",
+                value.current_entry_id.as_deref(),
+                crate::domain::MAX_IDENTIFIER_BYTES,
+                false,
+            )?;
+            output.put_optional_string(
+                "current_display_name",
+                value.current_display_name.as_deref(),
+                MAX_DISPLAY_NAME_BYTES,
+                false,
+            )?;
+        }
+        ControlMessage::TrackBoundary(value) => {
+            output.put_session_id(&value.session_id)?;
+            output.put_stream_id(&value.stream_id)?;
+            output.put_u64(value.first_sample_index.get());
+            output.put_string(
+                "entry_id",
+                &value.entry_id,
+                crate::domain::MAX_IDENTIFIER_BYTES,
+                false,
+            )?;
+            output.put_string(
+                "display_name",
+                &value.display_name,
+                MAX_DISPLAY_NAME_BYTES,
+                false,
+            )?;
         }
         ControlMessage::Pause(value) => {
             output.put_session_id(&value.session_id)?;

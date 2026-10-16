@@ -1,9 +1,10 @@
 #![allow(clippy::too_many_lines)]
 use std::sync::Arc;
 
-use crate::domain::{DeliverySeverity, MonotonicMillis};
+use crate::domain::{DeliverySeverity, MonotonicMillis, SampleIndex, StreamId};
 use crate::protocol::{
-    ControlMessage, Hello, JoinApproval, ProtocolFrame, SyncRequest, SyncResponse,
+    ControlMessage, Hello, JoinApproval, Pause, ProtocolFrame, StreamStart, SyncRequest,
+    SyncResponse, TrackBoundary,
 };
 
 use super::test_support::{
@@ -71,6 +72,79 @@ fn pending_control_peer_receives_hello_before_datagram_authorization() {
 
     assert_eq!(host.counters().audio_datagrams_sent, 0);
     assert_eq!(listener.counters().audio_datagrams_received, 0);
+    listener.shutdown().expect("listener should stop");
+    host.shutdown().expect("host should stop");
+}
+
+#[test]
+fn newly_authorized_listener_receives_the_active_stream_and_queued_boundaries() {
+    let session_id = id_session("late-join-session");
+    let device_id = id_device("late-join-listener");
+    let factory = SocketTransportFactory;
+    let clock = Arc::new(SystemTransportClock::default());
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("host should bind");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener should connect");
+
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Late Listener"))
+        .expect("join request should reach host");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let stream_id = StreamId::new("late-join-stream").expect("stream ID");
+    let stream_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_start_time_ms: MonotonicMillis::new(1_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        current_entry_id: Some("entry-one".to_owned()),
+        current_display_name: Some("First Track.wav".to_owned()),
+    });
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        first_sample_index: SampleIndex::new(48_000),
+        entry_id: "entry-two".to_owned(),
+        display_name: "Second Track.flac".to_owned(),
+    });
+    let pause = ControlMessage::Pause(Pause {
+        session_id,
+        stream_id,
+        host_pause_time_ms: MonotonicMillis::new(1_500),
+    });
+    host.broadcast_control(&stream_start)
+        .expect("stream state should be cached without current peers");
+    host.broadcast_control(&boundary)
+        .expect("upcoming boundary should be cached");
+    host.broadcast_control(&pause)
+        .expect("paused state should be cached");
+
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("new listener should be authorized");
+    wait_for_authorized(&mut *host, &device_id);
+    for expected in [stream_start, boundary, pause] {
+        wait_for_frame(&mut *listener, TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(expected.clone())
+        });
+    }
+
     listener.shutdown().expect("listener should stop");
     host.shutdown().expect("host should stop");
 }

@@ -23,7 +23,7 @@ use super::types::{
     MAX_AUDIO_DATAGRAM_BYTES, MAX_DISPLAY_NAME_BYTES, MAX_INVITE_CODE_BYTES, MAX_REASON_BYTES,
     MAX_SESSION_NAME_BYTES, MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES, MessageKind, PROTOCOL_MAGIC,
     PROTOCOL_VERSION, Pause, ProtocolFrame, ResyncNotice, SUPPORTED_FRAME_FLAGS, Stop, StreamStart,
-    SyncRequest, SyncResponse, SynchronizationReport,
+    SyncRequest, SyncResponse, SynchronizationReport, TrackBoundary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

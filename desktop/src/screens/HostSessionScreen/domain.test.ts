@@ -30,6 +30,7 @@ function snapshot(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionS
     playbackPositionMs: "0",
     streamEndedNaturally: false,
     audioSource: null,
+    hostQueue: { revision: "0", entries: [] },
     broadcast: null,
     lastError: null,
     monitor: { enabled: false, active: false, failureReason: null },

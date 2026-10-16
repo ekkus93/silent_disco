@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 private const val SILENT_DISCO_SERVICE_TYPE = "_silentdisco._tcp."
-private const val SILENT_DISCO_PROTOCOL_VERSION = 2
+private const val SILENT_DISCO_PROTOCOL_VERSION = 3
 
 /** One fully-resolved Silent Disco desktop mDNS advertisement. */
 data class MdnsSessionAdvertisement(

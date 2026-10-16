@@ -12,8 +12,8 @@ use crate::domain::{
 };
 use crate::error::CoreError;
 use crate::runtime::{
-    CapabilitySnapshot, DeliveryReport, HostDraft, JoinRequestSummary, ListenerSummary,
-    SessionAdvertisement, SnapshotRevision, SynchronizationSummary,
+    CapabilitySnapshot, DeliveryReport, HostDraft, HostQueue, JoinRequestSummary, ListenerSummary,
+    QueueEntry, SessionAdvertisement, SnapshotRevision, SynchronizationSummary,
 };
 
 /// Presentation action that remains available after a recoverable failure.
@@ -26,6 +26,42 @@ pub enum RecoverableAction {
     ReselectAudioSource,
 }
 
+/// Upcoming queue transition announced to the playback transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostQueueBoundary {
+    pub entry_id: String,
+    pub first_sample_index: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostQueuePreparationState {
+    Empty,
+    Prepared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostQueueReadiness {
+    Empty,
+    Ready,
+    Buffering,
+    Playing,
+    Paused,
+    Underrun,
+    Failed,
+}
+
+/// Bounded display-oriented queue projection derived from the actor snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostQueueSnapshot {
+    pub revision: u64,
+    pub current: Option<QueueEntry>,
+    pub upcoming: Vec<QueueEntry>,
+    pub preparation_state: HostQueuePreparationState,
+    pub readiness: HostQueueReadiness,
+    pub error: Option<CoreError>,
+    pub next_boundary: Option<HostQueueBoundary>,
+}
+
 /// Immutable authoritative presentation state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CoreSnapshot {
@@ -33,6 +69,9 @@ pub struct CoreSnapshot {
     pub selected_role: Option<AppRole>,
     pub capabilities: CapabilitySnapshot,
     pub host_draft: HostDraft,
+    pub host_queue: HostQueue,
+    /// Next sample-indexed queue transition announced by the playback worker.
+    pub host_queue_next_boundary: Option<HostQueueBoundary>,
     pub host_lifecycle: HostLifecycle,
     pub listener_lifecycle: ListenerLifecycle,
     pub transport_state: TransportState,
@@ -67,6 +106,8 @@ impl Default for CoreSnapshot {
             selected_role: None,
             capabilities: CapabilitySnapshot::default(),
             host_draft: HostDraft::default(),
+            host_queue: HostQueue::default(),
+            host_queue_next_boundary: None,
             host_lifecycle: HostLifecycle::Idle,
             listener_lifecycle: ListenerLifecycle::Idle,
             transport_state: TransportState::Idle,
@@ -90,6 +131,37 @@ impl Default for CoreSnapshot {
 }
 
 impl CoreSnapshot {
+    /// Projects current/upcoming entries with actor-owned playback readiness.
+    #[must_use]
+    pub fn host_queue_snapshot(&self) -> HostQueueSnapshot {
+        let preparation_state = if self.host_queue.entries().is_empty() {
+            HostQueuePreparationState::Empty
+        } else {
+            // Queue commands only accept sources after platform preparation succeeds.
+            HostQueuePreparationState::Prepared
+        };
+        let readiness = match (self.playback_state, self.host_queue.entries().is_empty()) {
+            (PlaybackState::Error, _) => HostQueueReadiness::Failed,
+            (_, true) => HostQueueReadiness::Empty,
+            (PlaybackState::Buffering, false) => HostQueueReadiness::Buffering,
+            (PlaybackState::Playing, false) => HostQueueReadiness::Playing,
+            (PlaybackState::Paused, false) => HostQueueReadiness::Paused,
+            (PlaybackState::Underrun, false) => HostQueueReadiness::Underrun,
+            (PlaybackState::Stopped | PlaybackState::Ready, false) => HostQueueReadiness::Ready,
+        };
+        HostQueueSnapshot {
+            revision: self.host_queue.revision(),
+            current: self.host_queue.current().cloned(),
+            upcoming: self.host_queue.upcoming().to_vec(),
+            preparation_state,
+            readiness,
+            error: (self.playback_state == PlaybackState::Error)
+                .then(|| self.last_error.clone())
+                .flatten(),
+            next_boundary: self.host_queue_next_boundary.clone(),
+        }
+    }
+
     /// Validates bounded collections and cross-field state invariants.
     ///
     /// # Errors

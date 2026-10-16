@@ -86,6 +86,7 @@ function fixture(overrides: Partial<HostSessionSnapshotDto> = {}): HostSessionSn
     playbackPositionMs: "0",
     streamEndedNaturally: false,
     audioSource: null,
+    hostQueue: { revision: "0", entries: [] },
     broadcast: null,
     lastError: null,
     monitor: { enabled: false, active: false, failureReason: null },
@@ -140,6 +141,39 @@ beforeEach(() => {
 });
 
 describe("HostSessionScreen Block 23", () => {
+  it("keeps live playback and queue controls together in the sticky dashboard region", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({
+        audioSource: {
+          sourceId: "source-1",
+          displayName: "Current song",
+          byteLength: "2400",
+          durationMs: "60000",
+        },
+        connectedListeners: fixture().connectedListeners.slice(0, 1),
+      }),
+    );
+    render(<HostSessionScreen />);
+
+    const dashboard = await screen.findByRole("region", {
+      name: "Live playback and queue controls",
+    });
+    expect(dashboard).toHaveClass("sticky");
+    expect(dashboard).toContainElement(screen.getByRole("heading", { name: "Playback controls" }));
+    expect(dashboard).toContainElement(screen.getByRole("heading", { name: "Manage queue (0)" }));
+    expect(dashboard).toContainElement(screen.getByRole("button", { name: "Add songs" }));
+    expect(dashboard).toContainElement(
+      screen.getByRole("progressbar", { name: "Playback progress" }),
+    );
+    expect(dashboard).toContainElement(screen.getByText("1 listeners"));
+    expect(dashboard).toContainElement(screen.getByRole("button", { name: "Create invite" }));
+    expect(screen.getByText("Trusted device · Connected")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for listeners")).toBeInTheDocument();
+    expect(screen.getByText("Ready to connect")).toBeInTheDocument();
+    expect(screen.getByText("Available")).toBeInTheDocument();
+    expect(screen.queryByText("waiting_for_listeners")).not.toBeInTheDocument();
+  });
+
   it("renders safe request identity, age, trust, invite and accessible decisions", async () => {
     render(<HostSessionScreen />);
     expect(await screen.findByText("Listener One")).toBeInTheDocument();
@@ -216,11 +250,9 @@ describe("HostSessionScreen Block 23", () => {
     await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
     expect(screen.getByText("Listener One")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() =>
-      expect(
-        screen.getByText("Listener approval was confirmed by the Rust core."),
-      ).toBeInTheDocument(),
+      expect(screen.getByText("Listener joined the session.")).toBeInTheDocument(),
     );
     expect(screen.queryByText("Request request-1")).not.toBeInTheDocument();
   });
@@ -235,7 +267,7 @@ describe("HostSessionScreen Block 23", () => {
     await screen.findByText("Listener One");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(
       await screen.findByText("The join request disappeared before its decision was confirmed."),
@@ -259,11 +291,9 @@ describe("HostSessionScreen Block 23", () => {
     await screen.findByText("Listener One");
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(client.rejectJoinRequest).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
-    expect(
-      await screen.findByText("Listener rejection was confirmed by transport delivery."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Join request declined.")).toBeInTheDocument();
     expect(screen.queryByText(/disappeared from the current session/)).not.toBeInTheDocument();
   });
 
@@ -288,14 +318,12 @@ describe("HostSessionScreen Block 23", () => {
     await screen.findByText("Listener One");
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(client.rejectJoinRequest).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.queryByText("Request request-1")).not.toBeInTheDocument());
     expect(screen.queryByText(/disappeared from the current session/)).not.toBeInTheDocument();
 
     resolveRejection({ operationId: "command-2", acceptedAtRevision: "12" });
-    expect(
-      await screen.findByText("Listener rejection was confirmed by transport delivery."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Join request declined.")).toBeInTheDocument();
   });
 
   it("does not confirm rejection from an earlier delivery report", async () => {
@@ -308,7 +336,7 @@ describe("HostSessionScreen Block 23", () => {
     await screen.findByText("Listener One");
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(client.rejectJoinRequest).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(
       await screen.findByText("The join request disappeared before its decision was confirmed."),
@@ -329,7 +357,7 @@ describe("HostSessionScreen Block 23", () => {
     vi.mocked(client.getHostSessionState).mockResolvedValue(
       fixture({ revision: "13", hostLifecycle: "error" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(endButton).toBeEnabled());
   });
 
@@ -346,13 +374,13 @@ describe("HostSessionScreen Block 23", () => {
     vi.mocked(client.getHostSessionState).mockResolvedValue(
       fixture({ revision: "13", hostLifecycle: "ready", playbackState: "stopped" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(endButton).toBeDisabled());
 
     vi.mocked(client.getHostSessionState).mockResolvedValue(
       fixture({ revision: "14", hostLifecycle: "idle", playbackState: "stopped" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "End session" })).toBeEnabled());
   });
 
@@ -389,7 +417,7 @@ describe("HostSessionScreen Block 23", () => {
     vi.mocked(client.getHostSessionState).mockResolvedValue(
       fixture({ revision: "14", hostLifecycle: "idle" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "End session" })).toBeEnabled());
   });
 
@@ -418,7 +446,7 @@ describe("HostSessionScreen Block 23", () => {
     await screen.findByText("Listener One");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(
       (await screen.findAllByText("transport control delivery had no intended recipients")).length,
@@ -446,7 +474,7 @@ describe("HostSessionScreen Block 23", () => {
     await screen.findByText("Listener One");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(client.approveJoinRequest).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(
       await screen.findByText(
@@ -513,7 +541,7 @@ describe("HostSessionScreen Block 23", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     await screen.findByText("join request is stale or no longer pending");
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(client.getHostSessionState).toHaveBeenCalledTimes(2));
     expect(screen.getByText("join request is stale or no longer pending")).toBeInTheDocument();
   });
@@ -543,6 +571,37 @@ describe("HostSessionScreen playback controls", () => {
     await waitFor(() => expect(client.startHostPlayback).toHaveBeenCalled());
   });
 
+  it("offers Retry after a playlist failure and retains the current song", async () => {
+    vi.mocked(client.getHostSessionState).mockResolvedValue(
+      fixture({
+        hostLifecycle: "waiting_for_listeners",
+        playbackState: "error",
+        playbackControlsEnabled: true,
+        recoverableAction: "retry",
+        audioSource: {
+          sourceId: "source-1",
+          displayName: "Current song",
+          byteLength: "2400",
+          durationMs: "60000",
+        },
+        lastError: {
+          code: "audio_output_failed",
+          subsystem: "audio",
+          severity: "error",
+          retryable: true,
+          message: "Playlist playback stopped after an audio failure",
+        },
+      }),
+    );
+    render(<HostSessionScreen />);
+
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(retry).toBeEnabled();
+    expect(screen.getByText("Current song")).toBeInTheDocument();
+    fireEvent.click(retry);
+    await waitFor(() => expect(client.startHostPlayback).toHaveBeenCalled());
+  });
+
   it("clears the playback request announcement when Rust reports playback started", async () => {
     vi.mocked(client.getHostSessionState)
       .mockResolvedValueOnce(fixture({ playbackControlsEnabled: true }))
@@ -552,7 +611,7 @@ describe("HostSessionScreen playback controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(await screen.findByText("Playback start requested.")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.queryByText("Playback start requested.")).toBeNull());
   });
 
@@ -569,7 +628,7 @@ describe("HostSessionScreen playback controls", () => {
     vi.mocked(client.getHostSessionState).mockResolvedValue(
       fixture({ revision: "13", playbackState: "paused", playbackControlsEnabled: true }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Refresh host state" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     const resumeButton = await screen.findByRole("button", { name: "Resume" });
     expect(resumeButton).toBeEnabled();
     fireEvent.click(resumeButton);

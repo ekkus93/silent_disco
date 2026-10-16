@@ -5,7 +5,7 @@ use super::{
     MAX_SESSION_NAME_BYTES, MAX_SYNC_CONFIDENCE_WIRE_NAME_BYTES, MessageKind, MonotonicMillis,
     PROTOCOL_MAGIC, PROTOCOL_VERSION, PacketSequence, Pause, ProtocolError, ProtocolFrame, Reader,
     ResyncNotice, SUPPORTED_FRAME_FLAGS, SampleIndex, SessionId, Stop, StreamId, StreamStart,
-    SyncConfidence, SyncRequest, SyncResponse, SynchronizationReport, crc32,
+    SyncConfidence, SyncRequest, SyncResponse, SynchronizationReport, TrackBoundary, crc32,
     validate_audio_parameters, validate_text,
 };
 
@@ -163,13 +163,13 @@ fn decode_control(kind: MessageKind, payload: &[u8]) -> Result<ControlMessage, P
             listener_id: input.read_device_id()?,
             sent_at_elapsed_ms: MonotonicMillis::new(input.read_u64()?),
         }),
-        MessageKind::StreamStart => ControlMessage::StreamStart(StreamStart {
+        MessageKind::StreamStart => ControlMessage::StreamStart(decode_stream_start(&mut input)?),
+        MessageKind::TrackBoundary => ControlMessage::TrackBoundary(TrackBoundary {
             session_id: input.read_session_id()?,
             stream_id: input.read_stream_id()?,
-            host_start_time_ms: MonotonicMillis::new(input.read_u64()?),
-            sample_rate: input.read_u32()?,
-            channels: input.read_u16()?,
-            samples_per_packet: input.read_u32()?,
+            first_sample_index: SampleIndex::new(input.read_u64()?),
+            entry_id: input.read_string("entry_id", crate::domain::MAX_IDENTIFIER_BYTES, false)?,
+            display_name: input.read_string("display_name", MAX_DISPLAY_NAME_BYTES, false)?,
         }),
         MessageKind::Pause => ControlMessage::Pause(Pause {
             session_id: input.read_session_id()?,
@@ -214,6 +214,27 @@ fn decode_control(kind: MessageKind, payload: &[u8]) -> Result<ControlMessage, P
     };
     input.finish()?;
     Ok(message)
+}
+
+fn decode_stream_start(input: &mut Reader<'_>) -> Result<StreamStart, ProtocolError> {
+    Ok(StreamStart {
+        session_id: input.read_session_id()?,
+        stream_id: input.read_stream_id()?,
+        host_start_time_ms: MonotonicMillis::new(input.read_u64()?),
+        sample_rate: input.read_u32()?,
+        channels: input.read_u16()?,
+        samples_per_packet: input.read_u32()?,
+        current_entry_id: input.read_optional_string(
+            "current_entry_id",
+            crate::domain::MAX_IDENTIFIER_BYTES,
+            false,
+        )?,
+        current_display_name: input.read_optional_string(
+            "current_display_name",
+            MAX_DISPLAY_NAME_BYTES,
+            false,
+        )?,
+    })
 }
 
 fn decode_sync_request(payload: &[u8]) -> Result<SyncRequest, ProtocolError> {

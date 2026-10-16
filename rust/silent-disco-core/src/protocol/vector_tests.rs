@@ -6,11 +6,11 @@ use super::{
 };
 use crate::domain::{PacketSequence, SessionId};
 
-const CONTROL_VECTORS: &str = include_str!("../../testdata/protocol/v2/control_vectors.txt");
-const SYNC_VECTORS: &str = include_str!("../../testdata/protocol/v2/sync_vectors.txt");
-const AUDIO_VECTORS: &str = include_str!("../../testdata/protocol/v2/audio_vectors.txt");
-const BOUNDARY_VECTORS: &str = include_str!("../../testdata/protocol/v2/boundary_vectors.txt");
-const MALFORMED_VECTORS: &str = include_str!("../../testdata/protocol/v2/malformed_vectors.txt");
+const CONTROL_VECTORS: &str = include_str!("../../testdata/protocol/v3/control_vectors.txt");
+const SYNC_VECTORS: &str = include_str!("../../testdata/protocol/v3/sync_vectors.txt");
+const AUDIO_VECTORS: &str = include_str!("../../testdata/protocol/v3/audio_vectors.txt");
+const BOUNDARY_VECTORS: &str = include_str!("../../testdata/protocol/v3/boundary_vectors.txt");
+const MALFORMED_VECTORS: &str = include_str!("../../testdata/protocol/v3/malformed_vectors.txt");
 
 struct ValidVector {
     name: String,
@@ -37,6 +37,7 @@ fn every_protocol_message_kind_has_a_canonical_golden_vector() {
         "join_rejection",
         "heartbeat",
         "stream_start",
+        "track_boundary",
         "pause",
         "stop",
         "disconnect",

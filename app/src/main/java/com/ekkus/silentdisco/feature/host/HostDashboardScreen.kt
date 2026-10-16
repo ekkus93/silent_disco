@@ -1,22 +1,24 @@
 package com.ekkus.silentdisco.feature.host
 
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,6 +27,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
@@ -33,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -46,6 +50,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 import com.ekkus.silentdisco.app.JoinApprovalAction
 import com.ekkus.silentdisco.app.SessionHealthLevel
 import com.ekkus.silentdisco.app.canStartOrPauseHostPlayback
@@ -58,7 +64,6 @@ import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
-import kotlinx.coroutines.delay
 
 enum class HostDashboardTab(val title: String) {
     REQUESTS("Requests"),
@@ -79,6 +84,8 @@ fun HostDashboardScreen(
     onEndSessionRequest: () -> Unit,
     onOpenConnectionHelp: () -> Unit,
     onAddDemoJoinRequest: () -> Unit,
+    onAddSongs: () -> Unit = {},
+    onManageQueue: () -> Unit = {},
     initialTab: HostDashboardTab = HostDashboardTab.REQUESTS,
 ) {
     var selectedTabIndex by rememberSaveable(initialTab) { mutableIntStateOf(initialTab.ordinal) }
@@ -123,7 +130,16 @@ fun HostDashboardScreen(
                 }
             },
             actions = {
-                TextButton(onClick = onInvite) { Text("Invite") }
+                IconButton(onClick = onAddSongs) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add songs")
+                }
+                IconButton(onClick = onManageQueue) {
+                    Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Manage queue")
+                }
+                TextButton(
+                    onClick = onInvite,
+                    modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum),
+                ) { Text("Invite") }
                 IconButton(onClick = { overflowOpen = true }) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "Session actions")
                 }
@@ -158,69 +174,89 @@ fun HostDashboardScreen(
             },
         )
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().testTag("host-dashboard-list"),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+        Card(modifier = Modifier.fillMaxWidth().padding(horizontal = WorkflowSpacing.large)) {
+            Column(
+                modifier = Modifier.padding(WorkflowSpacing.large),
+                verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.small),
+            ) {
+                val currentQueueItem = uiState.hostQueue.firstOrNull()
+                Text(
+                    text = currentQueueItem?.displayName
+                        ?: uiState.hostForm.selectedAudio?.displayName
+                        ?: "No song selected",
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("host-current-song"),
+                )
+                Text(
+                    text = when (uiState.hostPlaybackState) {
+                        PlaybackState.PLAYING -> "Streaming"
+                        PlaybackState.PAUSED -> "Paused"
+                        PlaybackState.BUFFERING -> "Preparing audio"
+                        PlaybackState.ERROR -> "Playback problem"
+                        else -> "Session ready"
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                currentQueueItem?.durationMs?.takeIf { it > 0L }?.let { durationMs ->
+                    val positionMs = uiState.hostPlaybackPositionMs.coerceIn(0L, durationMs)
+                    LinearProgressIndicator(
+                        progress = { positionMs.toFloat() / durationMs.toFloat() },
+                        modifier = Modifier.fillMaxWidth().testTag("host-playback-progress"),
+                    )
+                    Text(
+                        "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val connected = uiState.hostDiagnostics.connectedListenerCount
+                Text(if (connected == 1) "1 listener" else "$connected listeners")
+                Row(horizontalArrangement = Arrangement.spacedBy(WorkflowSpacing.medium)) {
+                    Button(
+                        onClick = onPlayPause,
+                        enabled = uiState.canStartOrPauseHostPlayback(),
+                        modifier = Modifier.weight(1f).heightIn(min = WorkflowTouchTarget.minimum),
                     ) {
+                        val playing = uiState.hostPlaybackState == PlaybackState.PLAYING
                         Text(
-                            text = when (uiState.hostPlaybackState) {
-                                PlaybackState.PLAYING -> "Streaming"
-                                PlaybackState.PAUSED -> "Paused"
-                                PlaybackState.BUFFERING -> "Preparing audio"
-                                PlaybackState.ERROR -> "Playback problem"
-                                else -> "Session ready"
+                            when {
+                                playing -> "Pause"
+                                uiState.hostPlaybackState == PlaybackState.ERROR -> "Retry"
+                                else -> "Play"
                             },
-                            style = MaterialTheme.typography.headlineSmall,
+                            maxLines = 1,
                         )
-                        val connected = uiState.hostDiagnostics.connectedListenerCount
-                        Text(
-                            if (connected == 1) "1 listener connected" else "$connected listeners connected",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            uiState.hostForm.selectedAudio?.displayName ?: "No audio selected",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    }
+                    Button(
+                        onClick = onStop,
+                        enabled = uiState.canStopHostPlayback(),
+                        modifier = Modifier.weight(1f).heightIn(min = WorkflowTouchTarget.minimum),
+                    ) {
+                        Text("Stop", maxLines = 1)
                     }
                 }
             }
+        }
 
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth().testTag("host-dashboard-list"),
+            contentPadding = PaddingValues(WorkflowSpacing.large),
+            verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.large),
+        ) {
             item {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = Modifier.fillMaxWidth().testTag("host-queue-card")) {
                     Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(WorkflowSpacing.large),
+                        verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.small),
                     ) {
-                        Text("Playback", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = onPlayPause,
-                                enabled = uiState.canStartOrPauseHostPlayback(),
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                val playing = uiState.hostPlaybackState == PlaybackState.PLAYING
-                                Icon(
-                                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                    contentDescription = null,
-                                )
-                                Text(if (playing) "Pause" else "Play")
-                            }
-                            Button(
-                                onClick = onStop,
-                                enabled = uiState.canStopHostPlayback(),
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(Icons.Filled.Stop, contentDescription = null)
-                                Text("Stop")
-                            }
-                        }
+                        Text("Queue (${uiState.hostQueue.size})", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            uiState.hostQueue.firstOrNull()?.displayName
+                                ?: "No songs queued. Add songs, then press Play.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -232,13 +268,16 @@ fun HostDashboardScreen(
                         .testTag("host-session-health"),
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(WorkflowSpacing.large),
+                        verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.small),
                     ) {
                         Text(health.title, style = MaterialTheme.typography.titleMedium)
                         Text(health.detail)
                         if (health.level != SessionHealthLevel.GOOD) {
-                            Button(onClick = onOpenConnectionHelp) {
+                            Button(
+                                onClick = onOpenConnectionHelp,
+                                modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum),
+                            ) {
                                 Text("Connection help")
                             }
                         }
@@ -305,6 +344,11 @@ fun HostDashboardScreen(
     }
 }
 
+private fun formatPlaybackTime(milliseconds: Long): String {
+    val totalSeconds = milliseconds / 1_000L
+    return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
+}
+
 @Composable
 private fun ListenerRequestCard(
     request: JoinRequest,
@@ -315,16 +359,22 @@ private fun ListenerRequestCard(
     var elapsedSeconds by remember(request.requestId) {
         mutableLongStateOf(((SystemClock.elapsedRealtime() - request.requestedAtMs) / 1_000L).coerceAtLeast(0L))
     }
-    LaunchedEffect(request.requestId) {
-        while (true) {
-            elapsedSeconds = ((SystemClock.elapsedRealtime() - request.requestedAtMs) / 1_000L).coerceAtLeast(0L)
-            delay(1_000L)
+    DisposableEffect(request.requestId) {
+        val handler = Handler(Looper.getMainLooper())
+        val ticker = object : Runnable {
+            override fun run() {
+                elapsedSeconds = ((SystemClock.elapsedRealtime() - request.requestedAtMs) / 1_000L)
+                    .coerceAtLeast(0L)
+                handler.postDelayed(this, 1_000L)
+            }
         }
+        handler.postDelayed(ticker, 1_000L)
+        onDispose { handler.removeCallbacks(ticker) }
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(WorkflowSpacing.large),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(request.listenerName, style = MaterialTheme.typography.titleMedium)
@@ -344,7 +394,7 @@ private fun ListenerRequestCard(
                         .fillMaxWidth()
                         .testTag("approval-progress-${request.requestId}"),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(WorkflowSpacing.medium),
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     Text(approvalProgressLabel(inFlightAction))
@@ -353,21 +403,21 @@ private fun ListenerRequestCard(
             Button(
                 onClick = { onApproval(request, JoinApprovalAction.APPROVE_ONCE) },
                 enabled = !approvalLocked,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
             ) {
                 Text("Approve once")
             }
             Button(
                 onClick = { onApproval(request, JoinApprovalAction.ALWAYS_ALLOW) },
                 enabled = !approvalLocked,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
             ) {
                 Text("Always allow")
             }
             TextButton(
                 onClick = { onApproval(request, JoinApprovalAction.REJECT) },
                 enabled = !approvalLocked,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
             ) {
                 Text("Reject", color = MaterialTheme.colorScheme.error)
             }
@@ -383,7 +433,7 @@ private fun ConnectedListenerCard(
     var menuOpen by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(WorkflowSpacing.large),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Row(
@@ -427,7 +477,7 @@ private fun EmptyListenerSection(message: String) {
         message,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 24.dp),
+            .padding(vertical = WorkflowSpacing.xxLarge),
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

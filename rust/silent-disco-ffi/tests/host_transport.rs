@@ -68,6 +68,34 @@ fn poll_listener_until(
     }
 }
 
+fn assert_track_boundary_broadcast(
+    host: &FfiHostTransportHandle,
+    listener: &FfiListenerTransportHandle,
+) {
+    let delivery = host
+        .broadcast_track_boundary(
+            "stream-1".to_owned(),
+            7_680,
+            "entry-next".to_owned(),
+            "Next Song".to_owned(),
+        )
+        .expect("broadcast sample-indexed track boundary");
+    assert_eq!(delivery.intended_peers, 1);
+    assert_eq!(delivery.successful_peers, 1);
+    let boundary = poll_listener_until(listener, |event| {
+        matches!(event, FfiListenerTransportEvent::TrackBoundary { .. })
+    });
+    assert_eq!(
+        boundary,
+        FfiListenerTransportEvent::TrackBoundary {
+            stream_id: "stream-1".to_owned(),
+            first_sample_index: 7_680,
+            entry_id: "entry-next".to_owned(),
+            display_name: "Next Song".to_owned(),
+        }
+    );
+}
+
 /// `received_at_elapsed_ms` is a real clock reading taken when the response
 /// was pulled off the socket, not a value a test can predict -- the wire
 /// fields are checked exactly, and the new one only for sanity (present,
@@ -181,6 +209,105 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
     }
 
     listener.shutdown().expect("shutdown listener transport");
+    host.shutdown().expect("shutdown host transport");
+}
+
+#[test]
+fn host_transport_targets_current_stream_and_boundary_to_late_joiner() {
+    let host = FfiHostTransportHandle::bind(
+        HOST_ADDRESS.to_owned(),
+        CONTROL_PORT + 30,
+        SYNC_PORT + 30,
+        AUDIO_PORT + 30,
+        "late-join-session".to_owned(),
+    )
+    .expect("bind host transport");
+    let endpoint = format!(
+        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{} ,"syncPort":{},"audioPort":{},"sessionId":"late-join-session","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
+        CONTROL_PORT + 30,
+        SYNC_PORT + 30,
+        AUDIO_PORT + 30,
+        current_protocol_version(),
+    );
+    let listener = FfiListenerTransportHandle::connect(
+        endpoint,
+        now_wall_clock_ms(),
+        "late-listener".to_owned(),
+        HOST_ADDRESS.to_owned(),
+    )
+    .expect("connect late listener");
+    listener
+        .send_join_request("Late Listener".to_owned(), None)
+        .expect("send join request");
+    let (listener_id, sync_port, audio_port) = match poll_host_until(&host, |event| {
+        matches!(event, FfiHostTransportEvent::JoinRequestReceived { .. })
+    }) {
+        FfiHostTransportEvent::JoinRequestReceived {
+            device_id,
+            sync_port,
+            audio_port,
+            ..
+        } => (device_id, sync_port, audio_port),
+        other => panic!("unexpected event: {other:?}"),
+    };
+    host.send_join_approval(listener_id.clone(), false)
+        .expect("approve listener");
+    poll_listener_until(&listener, |event| {
+        matches!(event, FfiListenerTransportEvent::JoinApproved { .. })
+    });
+    host.authorize_listener(listener_id.clone(), sync_port, audio_port)
+        .expect("authorize listener datagram routes");
+
+    let start_delivery = host
+        .send_stream_start_to_listener(
+            listener_id.clone(),
+            "active-stream".to_owned(),
+            1_000,
+            48_000,
+            2,
+            240,
+            Some("entry-current".to_owned()),
+            Some("Current song".to_owned()),
+        )
+        .expect("send current stream state");
+    assert_eq!(start_delivery.successful_peers, 1);
+    assert_eq!(
+        poll_listener_until(&listener, |event| {
+            matches!(event, FfiListenerTransportEvent::StreamStarted { .. })
+        }),
+        FfiListenerTransportEvent::StreamStarted {
+            stream_id: "active-stream".to_owned(),
+            host_start_time_ms: 1_000,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: 240,
+            current_entry_id: Some("entry-current".to_owned()),
+            current_display_name: Some("Current song".to_owned()),
+        }
+    );
+    let boundary_delivery = host
+        .send_track_boundary_to_listener(
+            listener_id,
+            "active-stream".to_owned(),
+            24_000,
+            "entry-next".to_owned(),
+            "Next song".to_owned(),
+        )
+        .expect("send upcoming boundary");
+    assert_eq!(boundary_delivery.successful_peers, 1);
+    assert_eq!(
+        poll_listener_until(&listener, |event| {
+            matches!(event, FfiListenerTransportEvent::TrackBoundary { .. })
+        }),
+        FfiListenerTransportEvent::TrackBoundary {
+            stream_id: "active-stream".to_owned(),
+            first_sample_index: 24_000,
+            entry_id: "entry-next".to_owned(),
+            display_name: "Next song".to_owned(),
+        }
+    );
+
+    listener.shutdown().expect("shutdown listener");
     host.shutdown().expect("shutdown host transport");
 }
 
@@ -327,6 +454,8 @@ fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
         )
     });
     assert_sync_response_matches(&sync_response);
+
+    assert_track_boundary_broadcast(&host, &listener);
 
     // PCM16 stereo payload size must equal samples_per_packet * channels * 2 bytes.
     let payload_bytes: Vec<u8> = (0..3_840_u32)

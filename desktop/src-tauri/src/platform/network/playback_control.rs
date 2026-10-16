@@ -30,6 +30,24 @@ pub(crate) struct StreamDiagnosticsSnapshot {
 }
 
 impl DesktopHostNetworkControl {
+    pub(crate) fn replace_upcoming_playlist(
+        &self,
+        upcoming: Vec<silent_disco_core::audio::StreamingPlaylistTrackFactory>,
+    ) -> Result<(), DesktopErrorDto> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(playback) = state
+            .active
+            .as_ref()
+            .and_then(|active| active.playback.as_ref())
+        else {
+            return Ok(());
+        };
+        playback.replace_upcoming(upcoming)
+    }
+
     /// Live decode/packetizer queue diagnostics for the current or most
     /// recently active stream (Block 35.1 "decoder/source queues"/
     /// "packetizer") -- `None` if no stream has ever started for this
@@ -63,6 +81,9 @@ impl DesktopHostNetworkControl {
         decode_diagnostics: silent_disco_core::audio::DecodeStatisticsReader,
         packetize_diagnostics: silent_disco_core::audio::PacketizeStatisticsReader,
     ) -> Result<(), DesktopErrorDto> {
+        let starting_replacement_stream = handle
+            .current_snapshot()
+            .is_ok_and(|snapshot| snapshot.playback_state == PlaybackState::Buffering);
         {
             let mut state = self
                 .state
@@ -82,10 +103,12 @@ impl DesktopHostNetworkControl {
                     .dto());
                 }
                 _ => {
-                    // A previous stream that ended by failing must surface here
-                    // rather than being buried by starting the next one.
                     if let Some(finished) = active.playback.take() {
-                        finished.join()?;
+                        match finished.join() {
+                            Ok(()) => {}
+                            Err(_) if starting_replacement_stream => {}
+                            Err(error) => return Err(error),
+                        }
                     }
                 }
             }

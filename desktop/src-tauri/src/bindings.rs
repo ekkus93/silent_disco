@@ -25,11 +25,13 @@ use crate::platform::network_dto::{
     SetNetworkBindPreferenceRequest,
 };
 use crate::runtime_dto::{
-    ApproveJoinRequest, AttachNotificationResponse, AudioSourceSummaryDto, CapabilitySnapshotDto,
-    CommandReceiptDto, CoreDiagnosticDto, CoreNotificationDto, CoreSnapshotDto, DiagnosticFieldDto,
-    HostDraftDto, HostDraftValidationDto, JoinRequestCommandRequest, ListenerCommandRequest,
-    OpenProfileRequest, OpenProfileResponse, PlatformEffectDto, RevisionCommandRequest,
-    UpdateHostDraftRequest,
+    AppendHostQueueRequest, ApproveJoinRequest, AttachNotificationResponse, AudioSourceSummaryDto,
+    CapabilitySnapshotDto, CommandReceiptDto, CoreDiagnosticDto, CoreNotificationDto,
+    CoreSnapshotDto, DiagnosticFieldDto, HostDraftDto, HostDraftValidationDto,
+    HostQueueBoundaryDto, HostQueueClearRequest, HostQueueDto, HostQueueEntryCommandRequest,
+    HostQueueEntryDto, HostQueuePreparationStateDto, HostQueueReadinessDto,
+    JoinRequestCommandRequest, ListenerCommandRequest, OpenProfileRequest, OpenProfileResponse,
+    PlatformEffectDto, ReorderHostQueueRequest, RevisionCommandRequest, UpdateHostDraftRequest,
 };
 use std::fmt;
 use ts_rs::{Config, TS};
@@ -66,6 +68,10 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<JoinRequestCommandRequest>(&config),
         declaration::<ListenerCommandRequest>(&config),
         declaration::<UpdateHostDraftRequest>(&config),
+        declaration::<AppendHostQueueRequest>(&config),
+        declaration::<ReorderHostQueueRequest>(&config),
+        declaration::<HostQueueEntryCommandRequest>(&config),
+        declaration::<HostQueueClearRequest>(&config),
         declaration::<NetworkAddressClassDto>(&config),
         declaration::<NetworkAddressCandidateDto>(&config),
         declaration::<NetworkBindPreferenceDto>(&config),
@@ -83,6 +89,11 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<NetworkInterfaceSnapshotDto>(&config),
         declaration::<CommandReceiptDto>(&config),
         declaration::<AudioSourceSummaryDto>(&config),
+        declaration::<HostQueueEntryDto>(&config),
+        declaration::<HostQueueBoundaryDto>(&config),
+        declaration::<HostQueuePreparationStateDto>(&config),
+        declaration::<HostQueueReadinessDto>(&config),
+        declaration::<HostQueueDto>(&config),
         declaration::<HostDraftDto>(&config),
         declaration::<CapabilitySnapshotDto>(&config),
         declaration::<HostDraftValidationDto>(&config),
@@ -123,7 +134,13 @@ fn render_typescript_bindings_inner() -> String {
 
     let mut output = String::from(GENERATED_HEADER);
     for declaration in declarations {
-        output.push_str(&declaration);
+        output.push_str(
+            &declaration
+                .lines()
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         output.push_str("\n\n");
     }
     output

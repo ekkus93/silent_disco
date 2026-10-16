@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +37,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 import com.ekkus.silentdisco.app.isValidInviteCode
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
@@ -73,9 +76,7 @@ fun HostAccessSetupScreen(
     onApprovalModeChanged: (ApprovalMode) -> Unit,
     onInviteCodeChanged: (String) -> Unit,
     onGenerateCode: () -> Unit,
-    onStartSession: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onShareSupportReport: () -> Unit,
+    onNext: () -> Unit,
 ) {
     var startSubmissionInFlight by rememberSaveable { mutableStateOf(false) }
 
@@ -91,11 +92,16 @@ fun HostAccessSetupScreen(
         }
     }
 
-    fun requestStart() {
+    fun requestNext() {
         if (startSubmissionInFlight) return
         startSubmissionInFlight = true
-        onStartSession()
+        onNext()
     }
+    val inviteCodeRequired = uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE
+    val inviteCodeValid = !inviteCodeRequired || isValidInviteCode(uiState.hostForm.inviteCode)
+    val invalid = uiState.hostForm.sessionName.isBlank() ||
+        uiState.hostForm.selectedAudio == null || !inviteCodeValid
+    val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION || startSubmissionInFlight
 
     Column(
         modifier = Modifier
@@ -112,10 +118,11 @@ fun HostAccessSetupScreen(
         )
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(WorkflowSpacing.large),
+            verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.large),
         ) {
             Text(
                 text = "Who can join this session?",
@@ -142,12 +149,12 @@ fun HostAccessSetupScreen(
                         .testTag("host-access-${option.mode.name.lowercase()}"),
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(WorkflowSpacing.large),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(WorkflowSpacing.medium),
                     ) {
                         RadioButton(selected = selected, onClick = null)
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.xSmall)) {
                             Text(option.title, style = MaterialTheme.typography.titleMedium)
                             Text(
                                 option.detail,
@@ -159,8 +166,6 @@ fun HostAccessSetupScreen(
                 }
             }
 
-            val inviteCodeRequired = uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE
-            val inviteCodeValid = !inviteCodeRequired || isValidInviteCode(uiState.hostForm.inviteCode)
             if (inviteCodeRequired) {
                 OutlinedTextField(
                     value = uiState.hostForm.inviteCode,
@@ -185,7 +190,8 @@ fun HostAccessSetupScreen(
                 )
                 TextButton(
                     onClick = onGenerateCode,
-                    modifier = Modifier.testTag("host-generate-code"),
+                    modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum)
+                        .testTag("host-generate-code"),
                 ) {
                     Text("Generate code")
                 }
@@ -193,7 +199,7 @@ fun HostAccessSetupScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(WorkflowSpacing.large),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text("Session summary", style = MaterialTheme.typography.titleMedium)
@@ -206,50 +212,24 @@ fun HostAccessSetupScreen(
                 }
             }
 
-            val invalid = uiState.hostForm.sessionName.isBlank() ||
-                uiState.hostForm.selectedAudio == null ||
-                !inviteCodeValid
-            val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION ||
-                startSubmissionInFlight
-            val startFailed = uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()
             if (invalid) {
                 Text(
-                    text = "Complete the required session details before starting.",
+                    text = "Complete the required session details before continuing.",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
 
-            if (startFailed) {
-                val permissionFailure = uiState.lastError.contains("permission", ignoreCase = true)
-                PrimaryProblemCard(
-                    title = if (permissionFailure) {
-                        "Nearby-device access is required"
-                    } else {
-                        "The session could not be started"
-                    },
-                    detail = if (permissionFailure) {
-                        "Allow nearby-device access in Settings, then start the session again."
-                    } else {
-                        "Check that nearby connections are available and try again."
-                    },
-                    primaryActionLabel = if (permissionFailure) "Open Settings" else "Retry",
-                    onPrimaryAction = if (permissionFailure) onOpenSettings else ::requestStart,
-                    secondaryActionLabel = if (permissionFailure) "Retry" else "Share support report",
-                    onSecondaryAction = if (permissionFailure) ::requestStart else onShareSupportReport,
-                    modifier = Modifier.testTag("host-start-problem"),
-                )
-            } else {
-                Button(
-                    onClick = ::requestStart,
-                    enabled = !invalid && !isStarting,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("host-start-session"),
-                ) {
-                    Text(if (isStarting) "Starting…" else "Start session")
-                }
-            }
+        }
+        Button(
+            onClick = ::requestNext,
+            enabled = !invalid && !isStarting,
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = WorkflowSpacing.large, vertical = WorkflowSpacing.medium)
+                        .heightIn(min = WorkflowTouchTarget.minimum)
+                .testTag("host-access-next"),
+        ) {
+            Text(if (isStarting) "Continuing…" else "Review session")
         }
     }
 }

@@ -97,7 +97,7 @@ export function DeliveryAndTransportAlerts({
       ) : null}
       {transportError ? (
         <p role="alert" className="mt-6 text-sm text-rose-200">
-          Transport worker: {transportError}
+          Connection error: {transportError}
         </p>
       ) : null}
       {lastError ? <ErrorAlert error={lastError} /> : null}

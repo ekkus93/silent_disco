@@ -19,7 +19,7 @@ use silent_disco_core::runtime::{CoreCommand, CoreCommandRequest, SnapshotRevisi
 use silent_disco_core::storage::StoredSettings;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn wall_clock_ms() -> u64 {
     SystemTime::now()
@@ -30,7 +30,86 @@ fn wall_clock_ms() -> u64 {
 }
 
 impl DesktopAppState {
-    pub(super) fn current_snapshot(&self) -> Result<CoreSnapshotDto, DesktopErrorDto> {
+    pub(crate) fn wait_for_queue_revision_change(
+        &self,
+        previous_revision: &str,
+    ) -> Result<Option<CoreSnapshotDto>, DesktopErrorDto> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let snapshot = self.current_snapshot()?;
+            if snapshot.host_queue.revision != previous_revision {
+                return Ok(Some(snapshot));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    pub(crate) fn retarget_active_host_queue(
+        &self,
+        snapshot: &CoreSnapshotDto,
+        registry: &crate::platform::file_picker::SelectedSourceRegistry,
+    ) -> Result<(), DesktopErrorDto> {
+        use silent_disco_core::audio::{
+            StreamingDecodeConfig, StreamingDecodeHandle, StreamingPlaylistTrackFactory,
+        };
+
+        let mut upcoming = Vec::new();
+        for entry in snapshot.host_queue.entries.iter().skip(1) {
+            let source = registry.resolve(&entry.source.source_id)?.ok_or_else(|| {
+                DesktopErrorDto::new(
+                    "desktop.queue.source_unavailable",
+                    "audio",
+                    "error",
+                    true,
+                    "an upcoming queue source is no longer staged in this desktop profile",
+                )
+            })?;
+            let path = source.canonical_path().to_owned();
+            let display_name = entry.source.display_name.clone();
+            upcoming.push(
+                StreamingPlaylistTrackFactory::new(
+                    entry.entry_id.clone(),
+                    display_name.clone(),
+                    move || {
+                        StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).map_err(
+                            |error| silent_disco_core::audio::DecodeError {
+                                kind: error.kind,
+                                message: format!("{display_name}: {}", error.message),
+                            },
+                        )
+                    },
+                )
+                .map_err(|error| {
+                    DesktopErrorDto::new(
+                        "desktop.queue.invalid_source",
+                        "audio",
+                        "error",
+                        false,
+                        &error.to_string(),
+                    )
+                })?,
+            );
+        }
+
+        let network = {
+            let runtime = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*runtime {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => return Ok(()),
+            }
+        };
+        network.replace_upcoming_playlist(upcoming)
+    }
+
+    pub(crate) fn current_snapshot(&self) -> Result<CoreSnapshotDto, DesktopErrorDto> {
         let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
         match &*state {
             DesktopRuntimeState::Ready(ready) => {

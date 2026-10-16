@@ -194,10 +194,10 @@ export function App() {
   const failed = lifecycle.kind === "failed";
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#312e81_0%,#171229_42%,#100d1a_100%)] px-6 py-10 text-violet-50">
+    <main className="desktop-app-shell min-h-screen bg-[radial-gradient(circle_at_top,#312e81_0%,#171229_42%,#100d1a_100%)] px-6 py-10 text-violet-50">
       <ShutdownOverlay />
-      <section className="mx-auto max-w-6xl rounded-3xl border border-violet-300/20 bg-slate-950/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
-        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-violet-200/15 pb-5">
+      <section className="desktop-app-panel mx-auto max-w-6xl rounded-3xl border border-violet-300/20 bg-slate-950/70 p-8 shadow-2xl shadow-black/40 backdrop-blur">
+        <header className="desktop-app-header flex flex-wrap items-end justify-between gap-4 border-b border-violet-200/15 pb-5">
           <div>
             <div className="flex items-center gap-3">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
@@ -213,7 +213,9 @@ export function App() {
                 </span>
               ) : null}
             </div>
-            <h1 className="mt-2 text-4xl font-bold tracking-tight">Host control</h1>
+            <h1 className="desktop-app-title mt-2 text-4xl font-bold tracking-tight">
+              Host control
+            </h1>
           </div>
           {/* Stale-rejected is a shell-level counter about the notification
               stream itself, so it stays here. Revision and lifecycle do not:
@@ -227,7 +229,11 @@ export function App() {
           ) : null}
         </header>
 
-        <div role="tablist" aria-label="Destinations" className="mt-5 flex flex-wrap gap-2">
+        <div
+          role="tablist"
+          aria-label="Destinations"
+          className="desktop-app-destinations mt-5 flex flex-wrap gap-2"
+        >
           {DESTINATIONS.filter(
             (destination) =>
               destination.id !== "lab" || (labModeAvailable === true && LabScreen !== null),
@@ -260,7 +266,7 @@ export function App() {
           aria-labelledby={`destination-tab-${activeView}`}
           ref={destinationRef}
           tabIndex={-1}
-          className="mt-7 outline-none"
+          className="desktop-app-panel-body mt-7 outline-none"
         >
           {activeView === "host" ? (
             <>

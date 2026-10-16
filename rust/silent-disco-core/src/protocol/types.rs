@@ -5,7 +5,7 @@ use crate::domain::{
 };
 
 pub const PROTOCOL_MAGIC: [u8; 4] = *b"SDP2";
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const FRAME_HEADER_BYTES: usize = 16;
 pub const FRAME_HEADER_LENGTH: u16 = 16;
 pub const MAX_CONTROL_PAYLOAD_BYTES: usize = 64 * 1024;
@@ -37,6 +37,7 @@ pub enum MessageKind {
     Disconnect = 9,
     ResyncNotice = 10,
     SynchronizationReport = 11,
+    TrackBoundary = 12,
     SyncRequest = 100,
     SyncResponse = 101,
     Audio = 200,
@@ -62,6 +63,7 @@ impl MessageKind {
             Self::Disconnect => "disconnect",
             Self::ResyncNotice => "resync_notice",
             Self::SynchronizationReport => "synchronization_report",
+            Self::TrackBoundary => "track_boundary",
             Self::SyncRequest => "sync_request",
             Self::SyncResponse => "sync_response",
             Self::Audio => "audio",
@@ -83,6 +85,7 @@ impl MessageKind {
                 | Self::Disconnect
                 | Self::ResyncNotice
                 | Self::SynchronizationReport
+                | Self::TrackBoundary
         )
     }
 
@@ -117,6 +120,7 @@ impl TryFrom<u16> for MessageKind {
             9 => Ok(Self::Disconnect),
             10 => Ok(Self::ResyncNotice),
             11 => Ok(Self::SynchronizationReport),
+            12 => Ok(Self::TrackBoundary),
             100 => Ok(Self::SyncRequest),
             101 => Ok(Self::SyncResponse),
             200 => Ok(Self::Audio),
@@ -204,6 +208,21 @@ pub struct StreamStart {
     pub sample_rate: u32,
     pub channels: u16,
     pub samples_per_packet: u32,
+    /// Current queue-entry identity when the host has playlist metadata.
+    pub current_entry_id: Option<String>,
+    /// Bounded display metadata for the announced current track.
+    pub current_display_name: Option<String>,
+}
+
+/// Announces the next queue entry at a future position on the existing PCM
+/// timeline. The listener must retain its stream, scheduler and audio sink.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TrackBoundary {
+    pub session_id: SessionId,
+    pub stream_id: StreamId,
+    pub first_sample_index: SampleIndex,
+    pub entry_id: String,
+    pub display_name: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -265,6 +284,7 @@ pub enum ControlMessage {
     JoinRejection(JoinRejection),
     Heartbeat(Heartbeat),
     StreamStart(StreamStart),
+    TrackBoundary(TrackBoundary),
     Pause(Pause),
     Stop(Stop),
     Disconnect(Disconnect),
@@ -282,6 +302,7 @@ impl ControlMessage {
             Self::JoinRejection(_) => MessageKind::JoinRejection,
             Self::Heartbeat(_) => MessageKind::Heartbeat,
             Self::StreamStart(_) => MessageKind::StreamStart,
+            Self::TrackBoundary(_) => MessageKind::TrackBoundary,
             Self::Pause(_) => MessageKind::Pause,
             Self::Stop(_) => MessageKind::Stop,
             Self::Disconnect(_) => MessageKind::Disconnect,
@@ -299,6 +320,7 @@ impl ControlMessage {
             Self::JoinRejection(value) => &value.session_id,
             Self::Heartbeat(value) => &value.session_id,
             Self::StreamStart(value) => &value.session_id,
+            Self::TrackBoundary(value) => &value.session_id,
             Self::Pause(value) => &value.session_id,
             Self::Stop(value) => &value.session_id,
             Self::Disconnect(value) => &value.session_id,

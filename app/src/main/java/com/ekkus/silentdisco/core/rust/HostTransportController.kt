@@ -74,6 +74,8 @@ class HostTransportController : AutoCloseable {
         sampleRate: Int,
         channels: Int,
         samplesPerPacket: Int,
+        currentEntryId: String?,
+        currentDisplayName: String?,
     ): FfiHostTransportDelivery? = withHandle {
         it.broadcastStreamStart(
             streamId,
@@ -81,11 +83,65 @@ class HostTransportController : AutoCloseable {
             sampleRate.toUInt(),
             channels.toUShort(),
             samplesPerPacket.toUInt(),
+            currentEntryId,
+            currentDisplayName,
         )
     }
 
     suspend fun broadcastPause(streamId: String, hostPauseTimeMs: Long): FfiHostTransportDelivery? =
         withHandle { it.broadcastPause(streamId, hostPauseTimeMs.toULong()) }
+
+    suspend fun sendStreamStartToListener(
+        listenerId: String,
+        streamId: String,
+        hostStartTimeMs: Long,
+        sampleRate: Int,
+        channels: Int,
+        samplesPerPacket: Int,
+        currentEntryId: String?,
+        currentDisplayName: String?,
+    ): FfiHostTransportDelivery? = withHandle {
+        it.sendStreamStartToListener(
+            listenerId,
+            streamId,
+            hostStartTimeMs.toULong(),
+            sampleRate.toUInt(),
+            channels.toUShort(),
+            samplesPerPacket.toUInt(),
+            currentEntryId,
+            currentDisplayName,
+        )
+    }
+
+    suspend fun broadcastTrackBoundary(
+        streamId: String,
+        firstSampleIndex: Long,
+        entryId: String,
+        displayName: String,
+    ): FfiHostTransportDelivery? = withHandle {
+        it.broadcastTrackBoundary(
+            streamId,
+            firstSampleIndex.toULong(),
+            entryId,
+            displayName,
+        )
+    }
+
+    suspend fun sendTrackBoundaryToListener(
+        listenerId: String,
+        streamId: String,
+        firstSampleIndex: Long,
+        entryId: String,
+        displayName: String,
+    ): FfiHostTransportDelivery? = withHandle {
+        it.sendTrackBoundaryToListener(
+            listenerId,
+            streamId,
+            firstSampleIndex.toULong(),
+            entryId,
+            displayName,
+        )
+    }
 
     suspend fun broadcastStop(streamId: String, hostStopTimeMs: Long): FfiHostTransportDelivery? =
         withHandle { it.broadcastStop(streamId, hostStopTimeMs.toULong()) }

@@ -17,9 +17,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -62,9 +64,10 @@ fun ListenerPlaybackV2Screen(
                 }
             },
         )
+        ClientWorkflowStepper(stage = ClientWorkflowStage.LISTEN)
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -116,8 +119,9 @@ fun ListenerPlaybackV2Screen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        uiState.hostForm.selectedAudio?.displayName ?: "Host-selected audio",
+                        uiState.listenerCurrentTrackName ?: "Waiting for track information",
                         style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.testTag("listener-current-track"),
                     )
                 }
             }
@@ -137,6 +141,14 @@ fun ListenerPlaybackV2Screen(
                     .testTag("listener-volume"),
             )
 
+        }
+        HorizontalDivider()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             if (actionUseful) {
                 Button(
                     onClick = onFixConnection,
@@ -148,8 +160,7 @@ fun ListenerPlaybackV2Screen(
                     Text("Fix connection")
                 }
             }
-
-            Button(
+            TextButton(
                 onClick = onLeaveRequest,
                 modifier = Modifier
                     .fillMaxWidth()

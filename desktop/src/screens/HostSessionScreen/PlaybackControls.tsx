@@ -32,45 +32,55 @@ export function PlaybackControls({
   return (
     <section
       aria-labelledby="playback-title"
-      className="mt-6 rounded-2xl border border-slate-700 bg-slate-950/70 p-5"
+      className="sd-workflow-card mt-6 p-5 [@media(max-height:700px)]:mt-2 [@media(max-height:700px)]:p-3"
     >
-      <h2 id="playback-title" className="text-xl font-semibold">
+      <h2 id="playback-title" className="text-sd-title [@media(max-height:700px)]:text-lg">
         Playback controls
       </h2>
-      <p className="mt-2 text-sm text-slate-400">
+      <p className="desktop-playback-hint mt-2 text-sm text-slate-400 [@media(max-height:700px)]:mt-1">
         Requires a selected audio source and an active host session.
       </p>
       {audioSource ? (
-        <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
-          <span className="font-semibold text-slate-100">{audioSource.displayName}</span>
-          <span className="font-mono text-slate-400">
-            {formatTimestamp(playbackPositionMs)} / {formatTimestamp(audioSource.durationMs)}
-          </span>
-          {streamEndedNaturally ? (
-            <span className="rounded-full border border-cyan-500/60 bg-cyan-950/30 px-2 py-0.5 text-xs font-semibold text-cyan-200">
-              Finished
+        <div className="mt-3 [@media(max-height:700px)]:mt-1">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+            <span className="font-semibold text-slate-100">{audioSource.displayName}</span>
+            <span className="font-mono text-slate-400">
+              {formatTimestamp(playbackPositionMs)} / {formatTimestamp(audioSource.durationMs)}
             </span>
+            {streamEndedNaturally ? (
+              <span className="rounded-full border border-sd-outline-variant bg-sd-secondary-container px-2 py-0.5 text-xs font-semibold text-sd-on-secondary-container">
+                Finished
+              </span>
+            ) : null}
+          </div>
+          {Number(audioSource.durationMs) > 0 ? (
+            <progress
+              aria-label="Playback progress"
+              className="mt-2 h-2 w-full accent-sd-secondary [@media(max-height:700px)]:mt-1"
+              max={Number(audioSource.durationMs)}
+              value={Math.min(Number(playbackPositionMs), Number(audioSource.durationMs))}
+            />
           ) : null}
         </div>
       ) : null}
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex gap-2 [@media(max-height:700px)]:mt-2">
         <button
           type="button"
           onClick={() => onControlPlayback(playbackState === "paused" ? "resume" : "start")}
           disabled={
             playbackPending ||
             !playbackControlsEnabled ||
-            !["stopped", "ready", "paused"].includes(playbackState)
+            !["stopped", "ready", "paused", "error"].includes(playbackState)
           }
-          className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          className="sd-workflow-control rounded-sd-control bg-sd-surface-variant px-4 py-2 text-sm font-semibold text-sd-on-surface disabled:cursor-not-allowed disabled:opacity-40 [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1"
         >
-          {playbackState === "paused" ? "Resume" : "Play"}
+          {playbackState === "paused" ? "Resume" : playbackState === "error" ? "Retry" : "Play"}
         </button>
         <button
           type="button"
           onClick={() => onControlPlayback("pause")}
           disabled={playbackPending || !playbackControlsEnabled || playbackState !== "playing"}
-          className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          className="sd-workflow-control rounded-sd-control bg-sd-surface-variant px-4 py-2 text-sm font-semibold text-sd-on-surface disabled:cursor-not-allowed disabled:opacity-40 [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1"
         >
           Pause
         </button>
@@ -82,13 +92,13 @@ export function PlaybackControls({
             !playbackControlsEnabled ||
             !["playing", "paused", "buffering"].includes(playbackState)
           }
-          className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          className="sd-workflow-control rounded-sd-control bg-sd-surface-variant px-4 py-2 text-sm font-semibold text-sd-on-surface disabled:cursor-not-allowed disabled:opacity-40 [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1"
         >
           Stop
         </button>
       </div>
 
-      <div className="mt-4 border-t border-slate-800 pt-4">
+      <div className="desktop-host-monitor mt-4 border-t border-slate-800 pt-4 [@media(max-height:700px)]:mt-2 [@media(max-height:700px)]:pt-2">
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -96,7 +106,8 @@ export function PlaybackControls({
             disabled={monitorPending}
             onChange={(event) => onToggleMonitor(event.target.checked)}
           />
-          Local monitor (optional -- never affects listener transmission)
+          <span>Local monitor</span>
+          <span className="desktop-monitor-note">(optional; listeners are unaffected)</span>
         </label>
         {monitor.enabled ? (
           <p

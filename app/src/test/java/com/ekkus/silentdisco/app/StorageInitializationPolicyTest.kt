@@ -36,6 +36,6 @@ class StorageInitializationPolicyTest {
 
         assertThat(state.persistentFeaturesEnabled()).isTrue()
         assertThat(state.canRetryStorageInitialization()).isFalse()
-        assertThat(state.storageStatusLabel()).isEqualTo("Rust storage ready")
+        assertThat(state.storageStatusLabel()).isEqualTo("Saved settings are ready")
     }
 }

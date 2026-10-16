@@ -11,11 +11,15 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.HostQueueItem
 import com.ekkus.silentdisco.app.StorageInitializationState
+import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
+import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Rule
 import org.junit.Test
 
@@ -67,5 +71,38 @@ class AccessibilityAndComponentTest {
 
         composeRule.onNodeWithTag("home-host").assertIsDisplayed()
         composeRule.onNodeWithTag("home-join").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun hostQueuePrimaryAndEditActionsMeetFortyEightDpTouchTargetMinimum() {
+        var densityScale = 1f
+        composeRule.setContent {
+            densityScale = LocalDensity.current.density
+            SilentDiscoTheme {
+                HostQueueManagementScreen(
+                    uiState = AppUiState(
+                        hostPlaybackState = PlaybackState.PLAYING,
+                        hostQueue = listOf(
+                            HostQueueItem("current", "source-1", "Current song", null, null),
+                            HostQueueItem("upcoming", "source-2", "Upcoming song", null, null),
+                        ),
+                    ),
+                    onBack = {},
+                    onAddSongs = {},
+                    onReorderQueue = {},
+                    onRemoveQueueEntry = {},
+                )
+            }
+        }
+
+        listOf(
+            "host-queue-add-songs",
+            "host-queue-move-down-upcoming",
+            "host-queue-remove-upcoming",
+        ).forEach { tag ->
+            val bounds = composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertWithMessage("$tag width").that(bounds.width / densityScale).isAtLeast(48f)
+            assertWithMessage("$tag height").that(bounds.height / densityScale).isAtLeast(48f)
+        }
     }
 }

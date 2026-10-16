@@ -23,10 +23,11 @@ use crate::domain::{
 use crate::error::CoreError;
 use crate::runtime::records::{
     AudioEvent, CoreActorInput, CoreCommand, CoreDiagnostic, CoreNotification, CoreSnapshot,
-    DiagnosticField, DiscoveryRequest, MAX_CONNECTED_LISTENERS, MAX_DISCOVERED_SESSIONS,
-    MAX_PENDING_JOIN_REQUESTS, NetworkEstablishmentRequest, PlatformEffect, PlatformEffectRequest,
-    PlatformEvent, PlatformOperationCompletion, RecoverableAction, SessionAdvertisement,
-    StorageCompletion, StorageEvent, TransportEvent, current_protocol_version,
+    DiagnosticField, DiscoveryRequest, HostQueueBoundary, MAX_CONNECTED_LISTENERS,
+    MAX_DISCOVERED_SESSIONS, MAX_PENDING_JOIN_REQUESTS, NetworkEstablishmentRequest,
+    PlatformEffect, PlatformEffectRequest, PlatformEvent, PlatformOperationCompletion,
+    RecoverableAction, SessionAdvertisement, StorageCompletion, StorageEvent, TransportEvent,
+    current_protocol_version,
 };
 use crate::runtime::{
     ApprovalDelivery, StorageEffect, StorageEffectRequest, TransportEffect, TransportEffectRequest,

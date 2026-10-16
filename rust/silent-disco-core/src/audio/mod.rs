@@ -34,7 +34,8 @@ pub use packetizer::{
 pub use packetizer_worker::{
     DEFAULT_PACKETIZER_QUEUE_CAPACITY, MAX_PACKETIZER_QUEUE_CAPACITY, PacketizeStatisticsReader,
     PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
-    StreamingPacketizeConfig, StreamingPacketizeHandle,
+    StreamingPacketizeConfig, StreamingPacketizeHandle, StreamingPlaylistTrackFactory,
+    StreamingPlaylistUpdater,
 };
 pub use playback_pump::{
     DEFAULT_MAX_PREFILL_MS, DEFAULT_WRITE_LEAD_MS, PlaybackDiagnostics, PlaybackPump,

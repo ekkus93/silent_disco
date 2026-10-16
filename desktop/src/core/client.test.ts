@@ -50,6 +50,7 @@ const openResponse: OpenProfileResponse = {
       },
       rememberApprovedDevices: false,
     },
+    hostQueue: { revision: "0", entries: [] },
     hostDraftValidation: [],
     canCreateHostSession: true,
     hostLifecycle: "idle",

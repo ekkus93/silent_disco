@@ -26,6 +26,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostDraft
 import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
+import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
@@ -45,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal fun MainViewModel.ensureRustHostCore(): HostCoreController {
     hostCoreController?.let { return it }
@@ -185,13 +187,37 @@ internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: Transpo
 internal fun MainViewModel.createRustHostSession() {
     if (!requirePersistenceReady("start a host session")) return
     val controller = ensureRustHostCore()
-    val draft = _uiState.value.hostForm.toFfiHostDraft(_uiState.value.tuningSettings)
+    val hostForm = _uiState.value.hostForm
+    val setupAudio = listOfNotNull(hostForm.selectedAudio) + hostForm.additionalAudio
+    val draft = hostForm.toFfiHostDraft(_uiState.value.tuningSettings)
+    val additionalEntries = hostForm.additionalAudio.mapIndexed { index, audio ->
+        FfiQueueEntry(
+            entryId = "android-entry-${UUID.randomUUID()}-${index + 1}",
+            source = audio.toFfiAudioSource(),
+        )
+    }
     _uiState.value = _uiState.value.copy(
         lastMessage = "Starting host session…",
         lastError = null,
     )
     viewModelScope.launch {
-        runCatching { controller.configureAndCreate(draft) }
+        val newlyStaged = mutableSetOf<String>()
+        val preparation = runCatching {
+            withContext(Dispatchers.IO) {
+                setupAudio.distinctBy { stableOpaqueAudioSourceId(it.uri.toString()) }.forEach { audio ->
+                    val sourceId = stableOpaqueAudioSourceId(audio.uri.toString())
+                    if (!stagedAudioFilesBySourceId.containsKey(sourceId)) newlyStaged += sourceId
+                    stageAndValidateHostSource(audio)
+                }
+            }
+        }
+        if (preparation.isFailure) {
+            newlyStaged.mapNotNull(stagedAudioFilesBySourceId::remove).forEach { it.delete() }
+            val error = preparation.exceptionOrNull() ?: IllegalStateException("Audio preparation failed")
+            _uiState.value = _uiState.value.copy(lastError = error.message ?: "Could not prepare selected songs")
+            return@launch
+        }
+        runCatching { controller.configureAndCreate(draft, additionalEntries) }
             .onFailure { reportRustHostCommandFailure("start host session", it) }
     }
 }
@@ -239,6 +265,10 @@ internal fun MainViewModel.removeRustListener(listenerId: String) {
 internal fun MainViewModel.endRustHostSession() {
     viewModelScope.launch {
         runCatching { ensureRustHostCore().endHostSession() }
+            .onSuccess {
+                releaseLiveQueueAudioGrants()
+                withContext(Dispatchers.IO) { releaseStagedHostSources() }
+            }
             .onFailure { reportRustHostCommandFailure("end host session", it) }
     }
 }
@@ -267,6 +297,12 @@ internal fun MainViewModel.reportRustHostPlaybackState(
     }
 }
 
+internal fun MainViewModel.reportRustHostPlaybackFailure(message: String) {
+    val controller = hostCoreController ?: return
+    runCatching { controller.playbackFailed(message) }
+        .onFailure { reportRustHostCommandFailure("report playback failure", it) }
+}
+
 private fun MainViewModel.applyRustHostSnapshot(snapshot: FfiCoreSnapshot) {
     val sessionId = currentSessionId?.value ?: _uiState.value.hostDiagnostics.sessionId
     val pending = snapshot.pendingJoinRequests.map { request ->
@@ -282,11 +318,22 @@ private fun MainViewModel.applyRustHostSnapshot(snapshot: FfiCoreSnapshot) {
     val listeners = snapshot.listeners.map { listener -> listener.toAppListener(snapshot.playbackState) }
     val hostState = snapshot.hostLifecycle.toAppHostLifecycle()
     val playbackState = snapshot.playbackState.toAppPlaybackState()
+    val queue = snapshot.hostQueue.map { entry ->
+        HostQueueItem(
+            entryId = entry.entryId,
+            sourceId = entry.source.sourceId,
+            displayName = entry.source.displayName,
+            byteLength = entry.source.sizeBytes?.toLong(),
+            durationMs = entry.source.durationMs?.toLong(),
+        )
+    }
     _uiState.value = _uiState.value.copy(
         hostState = hostState,
         pendingJoinRequests = pending,
         approvedListeners = listeners,
         hostPlaybackState = playbackState,
+        hostPlaybackPositionMs = snapshot.playbackPositionMs.toLong(),
+        hostQueue = queue,
         lastError = snapshot.lastError?.message,
         lastMessage = hostState.presentationMessage(_uiState.value.lastMessage),
     )
@@ -493,10 +540,14 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         report = delivery.toFfiDeliveryReport(),
     )
     if (effect is FfiTransportEffect.DeliverJoinApproval && (delivery?.successfulPeers ?: 0u) > 0u) {
-        pendingListenerDatagramPorts.remove(effect.listenerId)?.let { (syncPort, audioPort) ->
-            runCatching { hostTransportController.authorizeListener(effect.listenerId, syncPort, audioPort) }
-                .onFailure { error -> reportRustHostCommandFailure("authorize listener datagram routes", error) }
-        }
+        val authorized = pendingListenerDatagramPorts.remove(effect.listenerId)?.let { (syncPort, audioPort) ->
+            runCatching {
+                hostTransportController.authorizeListener(effect.listenerId, syncPort, audioPort)
+            }.onFailure { error ->
+                reportRustHostCommandFailure("authorize listener datagram routes", error)
+            }.isSuccess
+        } ?: false
+        if (!authorized) return
         val displayName = _uiState.value.pendingJoinRequests
             .firstOrNull { it.listenerId == effect.listenerId }
             ?.listenerName
@@ -556,7 +607,7 @@ private suspend fun MainViewModel.executeRustStorageEffect(
     }
 }
 
-private fun MainViewModel.reportRustHostCommandFailure(action: String, error: Throwable) {
+internal fun MainViewModel.reportRustHostCommandFailure(action: String, error: Throwable) {
     val message = error.message ?: "Failed to $action"
     logger.e("rust.host.command", message, error)
     _uiState.value = _uiState.value.copy(lastError = message)
@@ -566,19 +617,19 @@ internal fun HostFormState.toFfiHostDraft(tuning: TuningSettings): FfiHostDraft 
     sessionName = sessionName,
     approvalMode = approvalMode.toFfiApprovalMode(),
     inviteCode = inviteCode.takeIf { approvalMode == ApprovalMode.INVITE_CODE },
-    audioSource = selectedAudio?.let { audio ->
-        FfiAudioSource(
-            sourceId = opaqueAudioSourceId(audio.uri.toString()),
-            displayName = audio.displayName,
-            sizeBytes = audio.sizeBytes?.toULong(),
-            durationMs = null,
-        )
-    },
+    audioSource = selectedAudio?.toFfiAudioSource(),
     rememberApprovedDevices = rememberApprovedDevices,
     tuning = tuning.toFfiTuningSettings(),
 )
 
-private fun opaqueAudioSourceId(uri: String): String {
+internal fun com.ekkus.silentdisco.core.model.SelectedAudioFile.toFfiAudioSource() = FfiAudioSource(
+    sourceId = stableOpaqueAudioSourceId(uri.toString()),
+    displayName = displayName,
+    sizeBytes = sizeBytes?.toULong(),
+    durationMs = null,
+)
+
+internal fun stableOpaqueAudioSourceId(uri: String): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(uri.toByteArray())
     return "android-source-" + digest.take(16).joinToString("") { "%02x".format(it) }
 }

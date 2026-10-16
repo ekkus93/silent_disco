@@ -1,6 +1,7 @@
 use crate::dto::DesktopErrorDto;
 use sha2::{Digest, Sha256};
 use silent_disco_core::runtime::{AudioSourceDescriptor, MAX_AUDIO_SOURCE_DISPLAY_NAME_BYTES};
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -81,8 +82,14 @@ impl InspectedAudioSource {
 }
 
 #[derive(Default)]
+struct SourceRegistryState {
+    sources: HashMap<String, InspectedAudioSource>,
+    selected_source_id: Option<String>,
+}
+
+#[derive(Default)]
 pub(crate) struct SelectedSourceRegistry {
-    selected: Mutex<Option<InspectedAudioSource>>,
+    state: Mutex<SourceRegistryState>,
 }
 
 impl SelectedSourceRegistry {
@@ -95,13 +102,37 @@ impl SelectedSourceRegistry {
         &self,
         source: InspectedAudioSource,
     ) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
-        let mut selected = self.selected.lock().map_err(|_| registry_error())?;
-        Ok(selected.replace(source))
+        let mut state = self.state.lock().map_err(|_| registry_error())?;
+        let previous = state
+            .selected_source_id
+            .as_ref()
+            .and_then(|id| state.sources.get(id))
+            .cloned();
+        let source_id = source.descriptor.source_id.clone();
+        state.sources.insert(source_id.clone(), source);
+        state.selected_source_id = Some(source_id);
+        Ok(previous)
+    }
+
+    pub(crate) fn register(
+        &self,
+        source: InspectedAudioSource,
+    ) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
+        let mut state = self.state.lock().map_err(|_| registry_error())?;
+        Ok(state
+            .sources
+            .insert(source.descriptor.source_id.clone(), source))
     }
 
     pub(crate) fn clear(&self) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
-        let mut selected = self.selected.lock().map_err(|_| registry_error())?;
-        Ok(selected.take())
+        let mut state = self.state.lock().map_err(|_| registry_error())?;
+        let selected_id = state.selected_source_id.take();
+        let selected = selected_id
+            .as_ref()
+            .and_then(|id| state.sources.get(id))
+            .cloned();
+        state.sources.clear();
+        Ok(selected)
     }
 
     pub(crate) fn restore_if_current(
@@ -109,12 +140,17 @@ impl SelectedSourceRegistry {
         current_source_id: &str,
         previous: Option<InspectedAudioSource>,
     ) -> Result<(), DesktopErrorDto> {
-        let mut selected = self.selected.lock().map_err(|_| registry_error())?;
-        if selected
-            .as_ref()
-            .is_some_and(|source| source.descriptor.source_id == current_source_id)
-        {
-            *selected = previous;
+        let mut state = self.state.lock().map_err(|_| registry_error())?;
+        if state.selected_source_id.as_deref() == Some(current_source_id) {
+            state.sources.remove(current_source_id);
+            state.selected_source_id = previous
+                .as_ref()
+                .map(|source| source.descriptor.source_id.clone());
+            if let Some(previous) = previous {
+                state
+                    .sources
+                    .insert(previous.descriptor.source_id.clone(), previous);
+            }
         }
         Ok(())
     }
@@ -127,16 +163,29 @@ impl SelectedSourceRegistry {
         &self,
         source_id: &str,
     ) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
-        let selected = self.selected.lock().map_err(|_| registry_error())?;
-        Ok(selected
-            .as_ref()
-            .filter(|source| source.descriptor.source_id == source_id)
-            .cloned())
+        let state = self.state.lock().map_err(|_| registry_error())?;
+        Ok(state.sources.get(source_id).cloned())
+    }
+
+    pub(crate) fn remove(
+        &self,
+        source_id: &str,
+    ) -> Result<Option<InspectedAudioSource>, DesktopErrorDto> {
+        let mut state = self.state.lock().map_err(|_| registry_error())?;
+        if state.selected_source_id.as_deref() == Some(source_id) {
+            state.selected_source_id = None;
+        }
+        Ok(state.sources.remove(source_id))
     }
 }
 
 pub(crate) trait AudioFileDialog {
     fn pick_file(&self) -> Result<Option<PathBuf>, DesktopErrorDto>;
+
+    fn pick_files(&self) -> Result<Option<Vec<PathBuf>>, DesktopErrorDto> {
+        self.pick_file()
+            .map(|selected| selected.map(|path| vec![path]))
+    }
 }
 
 pub(crate) struct TauriAudioFileDialog<R: Runtime> {
@@ -170,6 +219,34 @@ impl<R: Runtime> AudioFileDialog for TauriAudioFileDialog<R> {
                         &format!("selected file path could not be represented safely: {error}"),
                     )
                 })
+            })
+            .transpose()
+    }
+
+    fn pick_files(&self) -> Result<Option<Vec<PathBuf>>, DesktopErrorDto> {
+        let selected = self
+            .app
+            .dialog()
+            .file()
+            .set_title("Select audio sources")
+            .add_filter("Supported audio", &["wav", "flac", "mp3"])
+            .blocking_pick_files();
+        selected
+            .map(|paths| {
+                paths
+                    .into_iter()
+                    .map(|path| {
+                        path.into_path().map_err(|error| {
+                            source_error(
+                                "desktop.audio_source.path_unavailable",
+                                false,
+                                &format!(
+                                    "selected file path could not be represented safely: {error}"
+                                ),
+                            )
+                        })
+                    })
+                    .collect()
             })
             .transpose()
     }
@@ -232,6 +309,12 @@ pub(crate) fn pick_and_inspect<R: Runtime>(
     select_and_inspect(&TauriAudioFileDialog::new(app), &SystemAudioFileBoundary)
 }
 
+pub(crate) fn pick_and_inspect_files<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<Vec<InspectedAudioSource>>, DesktopErrorDto> {
+    select_and_inspect_files(&TauriAudioFileDialog::new(app), &SystemAudioFileBoundary)
+}
+
 pub(crate) fn select_and_inspect(
     dialog: &dyn AudioFileDialog,
     files: &dyn AudioFileBoundary,
@@ -240,6 +323,43 @@ pub(crate) fn select_and_inspect(
         return Ok(None);
     };
     inspect_source(&path, files).map(Some)
+}
+
+pub(crate) fn select_and_inspect_files(
+    dialog: &dyn AudioFileDialog,
+    files: &dyn AudioFileBoundary,
+) -> Result<Option<Vec<InspectedAudioSource>>, DesktopErrorDto> {
+    let Some(paths) = dialog.pick_files()? else {
+        return Ok(None);
+    };
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    paths
+        .iter()
+        .map(|path| {
+            inspect_source(path, files).map_err(|error| {
+                named_source_error(
+                    &error,
+                    &path.file_name().map_or_else(
+                        || "Selected file".to_owned(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+pub(crate) fn named_source_error(error: &DesktopErrorDto, display_name: &str) -> DesktopErrorDto {
+    DesktopErrorDto::new(
+        &error.code,
+        &error.subsystem,
+        &error.severity,
+        error.retryable,
+        &format!("{display_name}: {}", error.message),
+    )
 }
 
 fn inspect_source(

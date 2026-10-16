@@ -32,6 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
+private const val CANONICAL_STREAM_SAMPLE_RATE = 48_000L
 
 private val REQUESTED_OR_LATER = setOf(
     ListenerLifecycleState.JOIN_REQUESTED,
@@ -51,6 +52,18 @@ private val CONNECTED_OR_LATER = setOf(
 private val APPROVED_OR_LATER = setOf(
     ListenerLifecycleState.APPROVED,
 )
+
+internal fun listenerBoundaryLocalTimeMs(
+    hostStartTimeMs: Long,
+    firstSampleIndex: Long,
+    hostOffsetMs: Double,
+): Double =
+    hostStartTimeMs + firstSampleIndex * 1_000.0 / CANONICAL_STREAM_SAMPLE_RATE - hostOffsetMs
+
+internal fun shouldReanchorListenerPlayback(
+    resumeInPlace: Boolean,
+    runtimeAvailable: Boolean,
+): Boolean = resumeInPlace && runtimeAvailable
 
 /**
  * Lifecycle states the Rust actor does not yet drive (deferred to Block 23's
@@ -224,11 +237,15 @@ internal fun MainViewModel.handleListenerTransportEvent(
         }
         is FfiListenerTransportEvent.Rejected -> controller.transportFailed(event.message, false)
         is FfiListenerTransportEvent.StreamStarted -> handleTransportStreamStarted(event)
-        is FfiListenerTransportEvent.Paused -> propagateListenerPlaybackState(
-            playbackState = PlaybackState.PAUSED,
-            listenerState = _uiState.value.listenerState,
-            message = "Host paused the stream",
-        )
+        is FfiListenerTransportEvent.TrackBoundary -> handleTransportTrackBoundary(event)
+        is FfiListenerTransportEvent.Paused -> {
+            cancelListenerTrackBoundaryTimers()
+            propagateListenerPlaybackState(
+                playbackState = PlaybackState.PAUSED,
+                listenerState = _uiState.value.listenerState,
+                message = "Host paused the stream",
+            )
+        }
         is FfiListenerTransportEvent.Stopped -> handleTransportStreamStopped()
         is FfiListenerTransportEvent.SyncResponseReceived -> handleTransportSyncResponse(event)
         is FfiListenerTransportEvent.AudioReceived -> handleTransportAudioReceived(event)
@@ -238,25 +255,37 @@ internal fun MainViewModel.handleListenerTransportEvent(
 private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTransportEvent.StreamStarted) {
     val session = _uiState.value.selectedSession ?: return
     val streamId = StreamId(event.streamId)
+    val isSameStream = currentStreamId == streamId
     currentStreamId = streamId
-    _uiState.value = _uiState.value.copy(
-        listenerState = ListenerLifecycleState.BUFFERING,
-        listenerPlaybackState = PlaybackState.BUFFERING,
-        connectionProgress = _uiState.value.connectionProgress.copy(
-            currentState = ListenerLifecycleState.BUFFERING,
-            approved = true,
-            connected = true,
-            synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
-            buffered = false,
-            playing = false,
-        ),
-        lastMessage = "Host stream starting",
-        lastError = null,
-    )
+    listenerStreamHostStartTimeMs = event.hostStartTimeMs.toLong()
+    if (!isSameStream) {
+        pendingListenerTrackBoundaries.clear()
+        _uiState.value = _uiState.value.copy(
+            listenerCurrentTrackName = event.currentDisplayName?.takeIf(String::isNotBlank),
+        )
+    }
+    rescheduleListenerTrackBoundaries()
+    if (!isSameStream || listenerPlayback == null) {
+        _uiState.value = _uiState.value.copy(
+            listenerState = ListenerLifecycleState.BUFFERING,
+            listenerPlaybackState = PlaybackState.BUFFERING,
+            connectionProgress = _uiState.value.connectionProgress.copy(
+                currentState = ListenerLifecycleState.BUFFERING,
+                approved = true,
+                connected = true,
+                synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
+                buffered = false,
+                playing = false,
+            ),
+            lastMessage = "Host stream starting",
+            lastError = null,
+        )
+    }
     startListenerPlaybackFromTransport(
         sessionId = SessionId(session.id),
         streamId = streamId,
         event = event,
+        resumeInPlace = isSameStream,
     )
 }
 
@@ -270,6 +299,9 @@ internal fun MainViewModel.handleTransportStreamStopped() {
     // StreamStart creates a new runtime and starts its own probe loop.
     resyncJob?.cancel()
     resyncJob = null
+    listenerStreamHostStartTimeMs = null
+    pendingListenerTrackBoundaries.clear()
+    cancelListenerTrackBoundaryTimers()
     stopListenerPlayback()
     propagateListenerPlaybackState(
         playbackState = PlaybackState.STOPPED,
@@ -286,6 +318,58 @@ internal fun MainViewModel.handleTransportStreamStopped() {
         it.copy(endOfStreamReached = true, playbackState = PlaybackState.STOPPED)
     }
     refreshListenerDiagnostics()
+}
+
+private fun MainViewModel.handleTransportTrackBoundary(
+    event: FfiListenerTransportEvent.TrackBoundary,
+) {
+    if (currentStreamId?.value != event.streamId) return
+    val sampleIndex = event.firstSampleIndex.toLong()
+    metrics.increment("track_boundary_received")
+    pendingListenerTrackBoundaries[sampleIndex] = PendingListenerTrackBoundary(
+        streamId = event.streamId,
+        firstSampleIndex = sampleIndex,
+        displayName = event.displayName,
+    )
+    scheduleListenerTrackBoundary(sampleIndex)
+}
+
+internal fun MainViewModel.rescheduleListenerTrackBoundaries() {
+    cancelListenerTrackBoundaryTimers()
+    pendingListenerTrackBoundaries.keys.toList().forEach(::scheduleListenerTrackBoundary)
+}
+
+private fun MainViewModel.cancelListenerTrackBoundaryTimers() {
+    listenerTrackBoundaryJobs.values.forEach { it.cancel() }
+    listenerTrackBoundaryJobs.clear()
+}
+
+private fun MainViewModel.scheduleListenerTrackBoundary(sampleIndex: Long) {
+    if (_uiState.value.listenerPlaybackState == PlaybackState.PAUSED) return
+    if (_uiState.value.listenerSyncState.confidence == SyncQualityBadge.UNKNOWN) return
+    val boundary = pendingListenerTrackBoundaries[sampleIndex] ?: return
+    val hostStartMs = listenerStreamHostStartTimeMs ?: return
+    val boundaryLocalTimeMs = listenerBoundaryLocalTimeMs(
+        hostStartMs,
+        sampleIndex,
+        _uiState.value.listenerSyncState.offsetMs,
+    )
+    val waitMs = (boundaryLocalTimeMs - android.os.SystemClock.elapsedRealtime())
+        .coerceAtLeast(0.0)
+        .toLong()
+    listenerTrackBoundaryJobs.remove(sampleIndex)?.cancel()
+    metrics.increment("track_boundary_scheduled")
+    listenerTrackBoundaryJobs[sampleIndex] = viewModelScope.launch {
+        delay(waitMs)
+        if (currentStreamId?.value != boundary.streamId) return@launch
+        if (_uiState.value.listenerPlaybackState == PlaybackState.PAUSED) return@launch
+        pendingListenerTrackBoundaries.remove(sampleIndex)
+        listenerTrackBoundaryJobs.remove(sampleIndex)
+        _uiState.value = _uiState.value.copy(listenerCurrentTrackName = boundary.displayName)
+        metrics.increment("track_boundary_applied")
+        diagnosticsStore.updateListener { it.copy(metricsSummary = summarizeMetrics()) }
+        refreshListenerDiagnostics()
+    }
 }
 
 /**
@@ -383,9 +467,7 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
     )
     if (!outcome.accepted) {
         val message =
-            "Clock sync: ${outcome.acquisitionRejectedSampleCount} rejected over " +
-                "${outcome.acquisitionElapsedMs}ms (RTT gate " +
-                "${"%.0f".format(outcome.acquisitionRttLimitMs)}ms)"
+            "Checking connection timing…"
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.SYNCING_CLOCK,
             connectionProgress = _uiState.value.connectionProgress.copy(
@@ -410,13 +492,13 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
         listenerSyncState = syncState,
         connectionProgress = _uiState.value.connectionProgress.copy(synced = outcome.syncLocked),
         lastMessage = if (outcome.degradedLock) {
-            "Clock sync locked after ${outcome.acquisitionRejectedSampleCount} rejected samples " +
-                "using a bounded degraded acquisition gate"
+            "Connected with limited timing accuracy"
         } else {
-            "Clock sync locked"
+            "Connection timing is ready"
         },
         lastError = null,
     )
+    rescheduleListenerTrackBoundaries()
     diagnosticsStore.updateListener {
         it.copy(
             hostOffsetMs = syncState.offsetMs,
@@ -511,9 +593,10 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
     sessionId: SessionId,
     streamId: StreamId,
     event: FfiListenerTransportEvent.StreamStarted,
+    resumeInPlace: Boolean,
 ) {
     listenerPlaybackControlExecutor.execute {
-        startListenerPlaybackFromTransportNow(sessionId, streamId, event)
+        startListenerPlaybackFromTransportNow(sessionId, streamId, event, resumeInPlace)
     }
 }
 
@@ -521,7 +604,17 @@ private fun MainViewModel.startListenerPlaybackFromTransportNow(
     sessionId: SessionId,
     streamId: StreamId,
     event: FfiListenerTransportEvent.StreamStarted,
+    resumeInPlace: Boolean,
 ) {
+    val runningPlayback = listenerPlayback
+    if (
+        runningPlayback != null &&
+        shouldReanchorListenerPlayback(resumeInPlace, runtimeAvailable = true)
+    ) {
+        runCatching { runningPlayback.reanchorPresentationTime(event.hostStartTimeMs) }
+            .onFailure(::handleListenerPlaybackEngineFailure)
+        return
+    }
     stopListenerPlaybackNow()
     val runtime = runCatching {
         FfiListenerPlaybackHandle.open(
@@ -609,7 +702,7 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                 !reportedSyncStall
             ) {
                 reportedSyncStall = true
-                val message = "No clock sync established; playback cannot start"
+                val message = "Couldn't establish a steady connection. Move closer to the host and try again."
                 logger.w("sync.stalled", message)
                 _uiState.value = _uiState.value.copy(
                     listenerState = ListenerLifecycleState.DESYNCED,
@@ -618,8 +711,7 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                 diagnosticsStore.updateListener { it.copy(lastError = message) }
             }
             if (!diagnostics.syncLocked && diagnostics.droppedBeforeSync > lastDroppedBeforeSync) {
-                val message =
-                    "Waiting for clock sync; ${diagnostics.droppedBeforeSync} audio packets were dropped before lock"
+                val message = "Getting your connection ready…"
                 logger.w("sync.pre_sync_drop", message)
                 _uiState.value = _uiState.value.copy(
                     listenerState = ListenerLifecycleState.SYNCING_CLOCK,

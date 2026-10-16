@@ -134,7 +134,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
               delete failures[requestId];
               return failures;
             });
-            setAnnouncement("Listener approval was confirmed by the Rust core.");
+            setAnnouncement("Listener joined the session.");
           } else if (
             operation.kind === "reject" &&
             operation.operationId !== null &&
@@ -146,7 +146,7 @@ export function useHostSessionViewModel(): HostSessionViewModel {
               delete failures[requestId];
               return failures;
             });
-            setAnnouncement("Listener rejection was confirmed by transport delivery.");
+            setAnnouncement("Join request declined.");
           } else {
             const failure =
               operationFailure(next, operation) ??

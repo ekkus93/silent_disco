@@ -8,6 +8,7 @@ pub use types::{
     FfiCoreDiagnostic, FfiCoreError, FfiCoreNotification, FfiCoreObserver, FfiCoreSnapshot,
     FfiDeliveryReport, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiJoinRequestInput,
     FfiListenerLifecycle, FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect,
-    FfiPlaybackState, FfiSessionAdvertisement, FfiStorageEffect, FfiSynchronizationSummary,
-    FfiTransportEffect, FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
+    FfiPlaybackState, FfiQueueEntry, FfiSessionAdvertisement, FfiStorageEffect,
+    FfiSynchronizationSummary, FfiTransportEffect, FfiTransportState, FfiTrustState,
+    FfiTuningPatch, FfiTuningSettings,
 };

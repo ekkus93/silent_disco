@@ -13,7 +13,8 @@ use super::harness::{
 };
 use crate::platform::start_playback;
 use silent_disco_core::domain::PlaybackState;
-use silent_disco_core::protocol::ControlMessage;
+use silent_disco_core::protocol::{ControlMessage, ProtocolFrame};
+use silent_disco_core::transport::{TransportChannel, TransportEvent};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -397,11 +398,26 @@ fn a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streami
         "mid-stream-read-failure",
         truncated_body_full_header_wav(),
     );
-    let (actor, handle, _receiver, _advertisement, network, _endpoint) =
+    let failed_source_id = descriptor.source_id.clone();
+    let (actor, handle, receiver, advertisement, network, endpoint) =
         start_host_session(descriptor, interface_name, interface_index, address);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
 
     start_playback::start(&handle, &network, &registry)
         .expect("a header that parses fine must start playback, even though its body is short");
+
+    let (last_audible_audio_end_ms, stop_time_ms) = receive_audio_tail_and_stop(&mut *listener);
+    assert!(
+        stop_time_ms >= last_audible_audio_end_ms,
+        "Stop must not cut off an already-sent packet before its presentation interval ends",
+    );
 
     // The pump must notice the read failure and exit on its own -- polling
     // `playback_is_active` is exactly what `start_playback::start` itself
@@ -431,6 +447,23 @@ fn a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streami
         !snapshot.stream_ended_naturally,
         "a mid-stream read failure is not a clean end-of-file and must not be reported as one"
     );
+    assert_eq!(snapshot.playback_state, PlaybackState::Error);
+    assert_eq!(snapshot.host_queue.entries().len(), 1);
+    assert_eq!(
+        snapshot
+            .host_queue
+            .current()
+            .map(|entry| entry.source.source_id.as_str()),
+        Some(failed_source_id.as_str()),
+        "the failed queue item remains available for retry or removal",
+    );
+    assert!(
+        snapshot
+            .last_error
+            .as_ref()
+            .is_some_and(|error| error.message.contains("source.wav")),
+        "the playback failure identifies the unreadable source",
+    );
 
     // The failure itself must reach a caller, not be swallowed as a normal
     // stop just because the pump had already exited by the time this runs.
@@ -447,7 +480,45 @@ fn a_host_source_read_failure_mid_stream_does_not_claim_continued_normal_streami
     );
 
     network.shutdown().expect("stop desktop host transport");
+    listener.shutdown().expect("listener shutdown");
     actor.shutdown().expect("actor shutdown");
+}
+
+fn receive_audio_tail_and_stop(
+    listener: &mut dyn silent_disco_core::transport::ListenerTransportNode,
+) -> (u64, u64) {
+    let mut last_audible_audio_end_ms = None;
+    let stop_time_ms = loop {
+        match listener
+            .recv_event(TEST_TIMEOUT)
+            .expect("receive failure stop")
+        {
+            TransportEvent::FrameReceived {
+                channel: TransportChannel::Audio,
+                frame: ProtocolFrame::Audio(audio),
+                ..
+            } => {
+                let duration_ms =
+                    u64::from(audio.samples_per_packet) * 1_000 / u64::from(audio.sample_rate);
+                last_audible_audio_end_ms = Some(
+                    audio
+                        .host_presentation_time_ms
+                        .get()
+                        .saturating_add(duration_ms),
+                );
+            }
+            TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::Stop(stop)),
+                ..
+            } => break stop.host_stop_time_ms.get(),
+            _ => {}
+        }
+    };
+    (
+        last_audible_audio_end_ms.expect("failure emitted some valid audio"),
+        stop_time_ms,
+    )
 }
 
 /// Locks in the Block 27.3 zero-recipient decision: starting playback with

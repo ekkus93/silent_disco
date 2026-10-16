@@ -7,13 +7,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -78,7 +79,8 @@ class RemainingAdaptiveLayoutCoverageTest {
             }
         }
 
-        composeRule.onNodeWithTag("host-dashboard-list").performScrollToIndex(4)
+        composeRule.onNodeWithTag("host-dashboard-list")
+            .performScrollToNode(hasText("Always allow"))
         composeRule.onNodeWithText("Approve once").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Reject").performScrollTo().assertIsDisplayed()
     }
@@ -104,7 +106,8 @@ class RemainingAdaptiveLayoutCoverageTest {
             }
         }
 
-        composeRule.onNodeWithTag("session-request-join").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("session-request-join").assertIsDisplayed()
+        composeRule.onNodeWithTag("client-workflow-step-connect").assertIsDisplayed()
     }
 
     @Test

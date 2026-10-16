@@ -1,11 +1,13 @@
 package com.ekkus.silentdisco.app
 
+import android.os.SystemClock
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.SyncState
+import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.rust.FakeListenerTransport
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
@@ -126,6 +128,44 @@ class MainViewModelListenerResyncTest {
     }
 
     @Test
+    fun trackBoundaryPresentationWaitsForItsSampleTimeAndSurvivesPause() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        val viewModel = harness.viewModel
+        viewModel.currentStreamId = StreamId("stream-1")
+        viewModel.listenerStreamHostStartTimeMs = SystemClock.elapsedRealtime() + 1_000L
+        viewModel._uiState.value = viewModel._uiState.value.copy(
+            listenerState = ListenerLifecycleState.PLAYING,
+            listenerPlaybackState = PlaybackState.PAUSED,
+            listenerSyncState = SyncState(confidence = SyncQualityBadge.GOOD),
+            listenerCurrentTrackName = "First track",
+        )
+
+        viewModel.handleListenerTransportEvent(
+            harness.listenerCoreController,
+            FfiListenerTransportEvent.TrackBoundary(
+                streamId = "stream-1",
+                firstSampleIndex = 0uL,
+                entryId = "entry-2",
+                displayName = "Second track",
+            ),
+        )
+        runCurrent()
+        assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("First track")
+        assertThat(viewModel.pendingListenerTrackBoundaries).containsKey(0L)
+
+        viewModel._uiState.value = viewModel._uiState.value.copy(listenerPlaybackState = PlaybackState.PLAYING)
+        viewModel.rescheduleListenerTrackBoundaries()
+        advanceTimeBy(999)
+        runCurrent()
+        assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("First track")
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
+        assertThat(viewModel.pendingListenerTrackBoundaries).doesNotContainKey(0L)
+    }
+
+    @Test
     fun hostStopReturnsToApprovedAndCancelsTheRuntimeClockProbeLoop() = runTest(dispatcher) {
         val harness = bufferingListener()
         harness.viewModel.listenerTransportConnected = true
@@ -175,8 +215,12 @@ class MainViewModelListenerResyncTest {
             .isEqualTo(SyncQualityBadge.UNKNOWN)
         assertThat(harness.viewModel._uiState.value.listenerSyncState.resyncCount).isEqualTo(3)
         assertThat(harness.viewModel._uiState.value.connectionProgress.synced).isFalse()
+        assertThat(harness.viewModel._uiState.value.lastError)
+            .isEqualTo("Couldn't establish a steady connection. Try reconnecting closer to the host.")
         assertThat(harness.listenerCoreController.transportFailedCalls)
-            .containsExactly("Unable to establish a stable sync estimate" to true)
+            .containsExactly(
+                "Couldn't establish a steady connection. Try reconnecting closer to the host." to true,
+            )
     }
 
     @Test

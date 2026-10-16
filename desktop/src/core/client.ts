@@ -12,6 +12,7 @@ import type {
   DesktopErrorDto,
   DiagnosticsExportOutcome,
   HostInvitationDto,
+  HostQueueEntryCommandRequest,
   HostSessionSnapshotDto,
   JoinRequestCommandRequest,
   LabAdvanceTimeRequest,
@@ -28,6 +29,7 @@ import type {
   OpenProfileRequest,
   OpenProfileResponse,
   RevisionCommandRequest,
+  ReorderHostQueueRequest,
   SetNetworkBindPreferenceRequest,
   StorageInspectionDto,
   UpdateHostDraftRequest,
@@ -235,6 +237,22 @@ export async function getCoreSmoke(input: number): Promise<CoreSmokeDto> {
 
 export async function getCurrentSnapshot(): Promise<CoreSnapshotDto> {
   return invokeDesktop<CoreSnapshotDto>("get_current_snapshot");
+}
+
+export async function addHostAudioSources(): Promise<CommandReceiptDto | null> {
+  return invokeDesktop<CommandReceiptDto | null>("add_host_audio_sources");
+}
+
+export async function reorderHostQueue(
+  request: ReorderHostQueueRequest,
+): Promise<CommandReceiptDto> {
+  return invokeDesktop<CommandReceiptDto>("reorder_host_queue", { request });
+}
+
+export async function removeHostQueueEntry(
+  request: HostQueueEntryCommandRequest,
+): Promise<CommandReceiptDto> {
+  return invokeDesktop<CommandReceiptDto>("remove_host_queue_entry", { request });
 }
 
 export async function getStorageInspection(): Promise<StorageInspectionDto> {

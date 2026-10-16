@@ -3,7 +3,7 @@ use super::packetizer::Packetizer;
 use super::{
     AudioFormat, AudioSampleFormat, DecodedPcmChunk, PacketizerErrorKind,
     PacketizerWorkerErrorKind, PacketizerWorkerState, StreamingDecodeConfig, StreamingDecodeHandle,
-    StreamingPacketizeConfig, StreamingPacketizeHandle,
+    StreamingPacketizeConfig, StreamingPacketizeHandle, StreamingPlaylistTrackFactory,
 };
 use crate::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, crc32};
@@ -139,6 +139,37 @@ fn emits_exact_full_width_packets_from_an_aligned_chunk() {
     assert_eq!(second.sequence.get(), 1);
     assert_eq!(second.first_sample_index.get(), 20);
     assert_eq!(second.host_presentation_time_ms.get(), 20);
+}
+
+#[test]
+fn adjacent_tracks_share_one_exact_sample_timeline_and_packet_sequence() {
+    let format = mono_format(1_000);
+    let mut packetizer = Packetizer::new(
+        SessionId::new("session-tracks").expect("session id"),
+        StreamId::new("stream-tracks").expect("stream id"),
+        format,
+        20,
+        MonotonicMillis::new(0),
+    )
+    .expect("valid packetizer");
+
+    let first = packetizer
+        .push_contiguous_chunk(chunk(format, 0, vec![1; 13], false))
+        .expect("first track chunk");
+    assert!(first.frames.is_empty());
+    assert_eq!(packetizer.next_contiguous_sample_index(), 13);
+
+    // The second decoder also starts at local sample zero. Its 17 frames
+    // complete the packet retained from track one without padding or overlap.
+    let second = packetizer
+        .push_contiguous_chunk(chunk(format, 0, vec![2; 17], true))
+        .expect("second and final track chunk");
+    assert_eq!(second.frames.len(), 2);
+    assert!(second.end_of_stream);
+    let datagram = audio_datagram(&second.frames[0]);
+    assert_eq!(datagram.sequence.get(), 0);
+    assert_eq!(datagram.first_sample_index.get(), 0);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 30);
 }
 
 #[test]
@@ -382,6 +413,10 @@ fn write_bytes(temp: &TempDir, name: &str, bytes: &[u8]) -> PathBuf {
 
 fn pcm_wav(sample_rate: u32, channels: u16, seconds: u32) -> Vec<u8> {
     let frame_count = sample_rate.checked_mul(seconds).expect("fixture frames");
+    pcm_wav_frames(sample_rate, channels, frame_count)
+}
+
+fn pcm_wav_frames(sample_rate: u32, channels: u16, frame_count: u32) -> Vec<u8> {
     let sample_count = frame_count
         .checked_mul(u32::from(channels))
         .expect("fixture samples");
@@ -415,6 +450,209 @@ fn pcm_wav(sample_rate: u32, channels: u16, seconds: u32) -> Vec<u8> {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     bytes
+}
+
+#[test]
+fn playlist_packetizer_emits_exact_boundary_on_one_contiguous_packet_timeline() {
+    let _guard = super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "first.wav", &pcm_wav_frames(48_000, 2, 241));
+    let second_path = write_bytes(&temp, "second.wav", &pcm_wav_frames(48_000, 2, 497));
+    let first_decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("open first track");
+    let second_factory =
+        StreamingPlaylistTrackFactory::new("entry-second", "Second track", move || {
+            StreamingDecodeHandle::open(second_path, StreamingDecodeConfig::default())
+        })
+        .expect("second track factory");
+    let handle = StreamingPacketizeHandle::spawn_playlist(
+        first_decoder,
+        "entry-first",
+        "First track",
+        vec![second_factory],
+        SessionId::new("session-playlist").expect("session id"),
+        StreamId::new("stream-playlist").expect("stream id"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig::default(),
+    )
+    .expect("start playlist packetizer");
+
+    let mut frames = Vec::new();
+    loop {
+        match handle.recv_timeout(TEST_TIMEOUT) {
+            Ok(frame) => frames.push(frame),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("playlist packetizer did not complete in time")
+            }
+        }
+    }
+    let summary = handle.join().expect("playlist completed");
+    let audio = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            ProtocolFrame::Audio(datagram) => Some(datagram),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let boundary = frames
+        .iter()
+        .position(|frame| {
+            matches!(
+                frame,
+                ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))
+                    if boundary.entry_id == "entry-second"
+                        && boundary.first_sample_index.get() == 241
+            )
+        })
+        .expect("sample-indexed second-track boundary");
+
+    assert_eq!(summary.state, PacketizerWorkerState::Completed);
+    assert_eq!(
+        audio
+            .iter()
+            .map(|packet| packet.sequence.get())
+            .collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    assert_eq!(
+        audio
+            .iter()
+            .map(|packet| packet.first_sample_index.get())
+            .collect::<Vec<_>>(),
+        [0, 240, 480, 720]
+    );
+    assert!(boundary < frames.iter().position(|frame| matches!(frame, ProtocolFrame::Audio(packet) if packet.first_sample_index.get() == 240)).expect("boundary-spanning packet"));
+    assert_eq!(audio[0].samples_per_packet, 240);
+    assert_eq!(summary.emitted_packets, 5); // one boundary control and four audio packets
+}
+
+#[test]
+fn playlist_update_cancels_the_staged_successor_and_emits_only_the_replacement_boundary() {
+    let _guard = super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let current_path = write_bytes(
+        &temp,
+        "update-current.wav",
+        &pcm_wav_frames(48_000, 2, 48_000),
+    );
+    let stale_path = write_bytes(
+        &temp,
+        "update-stale.wav",
+        &pcm_wav_frames(48_000, 2, 48_000),
+    );
+    let replacement_path = write_bytes(
+        &temp,
+        "update-replacement.wav",
+        &pcm_wav_frames(48_000, 2, 480),
+    );
+    let current = StreamingDecodeHandle::open(current_path, StreamingDecodeConfig::default())
+        .expect("open current track");
+    let stale = StreamingPlaylistTrackFactory::new("entry-stale", "Stale track", move || {
+        StreamingDecodeHandle::open(stale_path, StreamingDecodeConfig::default())
+    })
+    .expect("stale factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist(
+        current,
+        "entry-current",
+        "Current track",
+        vec![stale],
+        SessionId::new("session-playlist-update").expect("session ID"),
+        StreamId::new("stream-playlist-update").expect("stream ID"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+    )
+    .expect("start playlist");
+    let updater = packetizer.playlist_updater().expect("playlist updater");
+    let replacement =
+        StreamingPlaylistTrackFactory::new("entry-replacement", "Replacement track", move || {
+            StreamingDecodeHandle::open(replacement_path, StreamingDecodeConfig::default())
+        })
+        .expect("replacement factory");
+    updater
+        .replace_upcoming(vec![replacement])
+        .expect("replace upcoming playlist");
+
+    let mut frames = Vec::new();
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(frame) => frames.push(frame),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("updated playlist stalled"),
+        }
+    }
+    packetizer.join().expect("updated playlist completes");
+    let boundaries = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)) => Some(boundary),
+            _ => None,
+        })
+        .map(|boundary| boundary.entry_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(boundaries, ["entry-replacement"]);
+}
+
+#[test]
+fn playlist_decoder_prebuffers_the_next_source_before_current_source_finishes() {
+    let _guard = super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let current_path = write_bytes(&temp, "current.wav", &pcm_wav(48_000, 2, 10));
+    let next_path = write_bytes(&temp, "next.wav", &pcm_wav(48_000, 2, 10));
+    let current = StreamingDecodeHandle::open(current_path, StreamingDecodeConfig::default())
+        .expect("open current track");
+    let current_statistics = current.statistics_reader();
+    let (next_statistics_sender, next_statistics_receiver) = std::sync::mpsc::sync_channel(1);
+    let next_factory = StreamingPlaylistTrackFactory::new("entry-next", "Next track", move || {
+        let decoder = StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())?;
+        next_statistics_sender
+            .send(decoder.statistics_reader())
+            .expect("test still waiting for upcoming decoder");
+        Ok(decoder)
+    })
+    .expect("next track factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist(
+        current,
+        "entry-current",
+        "Current track",
+        vec![next_factory],
+        SessionId::new("session-lookahead").expect("session ID"),
+        StreamId::new("stream-lookahead").expect("stream ID"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+    )
+    .expect("start playlist packetizer");
+
+    let next_statistics = next_statistics_receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("next decoder opened before the current track finished");
+    let deadline = std::time::Instant::now() + TEST_TIMEOUT;
+    loop {
+        let next = next_statistics.snapshot();
+        let current = current_statistics.snapshot();
+        if next.queued_chunks > 0 {
+            assert!(next.queued_chunks <= next.queue_capacity_chunks);
+            assert_eq!(current.state, super::DecodeWorkerState::Running);
+            assert!(current.emitted_frames < 480_000);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "next source did not prebuffer"
+        );
+        std::thread::yield_now();
+    }
+
+    let cancelled = packetizer
+        .cancel_and_join()
+        .expect_err("the deliberately stopped lookahead worker is cancelled");
+    assert_eq!(cancelled.kind, PacketizerWorkerErrorKind::Cancelled);
 }
 
 fn open_canonical_decoder(temp: &TempDir, seconds: u32) -> StreamingDecodeHandle {

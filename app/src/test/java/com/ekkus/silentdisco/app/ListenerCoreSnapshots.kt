@@ -4,6 +4,9 @@ import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiHostDraft
 import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
+import com.ekkus.silentdisco.core.uniffi.FfiHostQueuePreparationState
+import com.ekkus.silentdisco.core.uniffi.FfiHostQueueReadiness
+import com.ekkus.silentdisco.core.uniffi.FfiHostQueueSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
@@ -73,4 +76,16 @@ internal fun listenerCoreSnapshot(
     recoverableAction = null,
     lastError = null,
     shuttingDown = false,
+    hostQueue = emptyList(),
+    hostQueueRevision = 0uL,
+    hostQueueNextBoundary = null,
+    hostQueueSnapshot = FfiHostQueueSnapshot(
+        revision = 0uL,
+        current = null,
+        upcoming = emptyList(),
+        preparationState = FfiHostQueuePreparationState.EMPTY,
+        readiness = FfiHostQueueReadiness.EMPTY,
+        error = null,
+        nextBoundary = null,
+    ),
 )

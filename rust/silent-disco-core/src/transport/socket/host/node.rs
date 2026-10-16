@@ -161,6 +161,16 @@ impl HostTransportNode for SocketHostTransport {
         }
         let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
             .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
+        self.playback_controls
+            .lock()
+            .map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "playback control cache is poisoned",
+                )
+            })?
+            .update(message);
         let peers: Vec<Arc<PeerState>> = self
             .authorized_routes()?
             .into_iter()

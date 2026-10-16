@@ -179,6 +179,8 @@ private fun HostMusicCompletePreview() {
             onBack = {},
             onSessionNameChanged = {},
             onChooseAudio = {},
+            onRemoveAudio = { _ -> },
+            onMoveAudio = { _, _ -> },
             onNext = {},
         )
     }
@@ -198,9 +200,7 @@ private fun HostAccessInviteCodePreview() {
             onApprovalModeChanged = {},
             onInviteCodeChanged = {},
             onGenerateCode = {},
-            onStartSession = {},
-            onOpenSettings = {},
-            onShareSupportReport = {},
+            onNext = {},
         )
     }
 }

@@ -33,14 +33,16 @@ export function StatusCard({
   label,
   value,
   severity = "neutral",
+  className = "",
 }: {
   label: string;
   value: string;
   severity?: StatusSeverity;
+  className?: string;
 }) {
   const marker = SEVERITY_MARKER[severity];
   return (
-    <div className={`rounded-xl border p-4 ${SEVERITY_CLASS[severity]}`}>
+    <div className={`rounded-xl border p-4 ${SEVERITY_CLASS[severity]} ${className}`}>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-2 break-words text-lg font-semibold">{value}</p>
       {marker ? (

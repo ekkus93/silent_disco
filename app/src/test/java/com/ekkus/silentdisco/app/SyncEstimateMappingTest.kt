@@ -24,6 +24,39 @@ import org.junit.Test
 class SyncEstimateMappingTest {
 
     @Test
+    fun `sample indexed boundary maps through the accepted host clock offset`() {
+        assertThat(
+            listenerBoundaryLocalTimeMs(
+                hostStartTimeMs = 1_000_000,
+                firstSampleIndex = 48_000,
+                hostOffsetMs = 125.0,
+            ),
+        ).isWithin(0.001).of(1_000_875.0)
+    }
+
+    @Test
+    fun `non packet aligned boundary uses decoded sample time rather than rounded duration`() {
+        val boundaryTimeMs = listenerBoundaryLocalTimeMs(
+            hostStartTimeMs = 5_000,
+            firstSampleIndex = 241,
+            hostOffsetMs = 0.0,
+        )
+
+        assertThat(boundaryTimeMs).isWithin(0.001).of(5_000 + 241_000.0 / 48_000.0)
+    }
+
+    @Test
+    fun `negative host offset advances the local boundary deadline`() {
+        assertThat(
+            listenerBoundaryLocalTimeMs(
+                hostStartTimeMs = 20_000,
+                firstSampleIndex = 24_000,
+                hostOffsetMs = -40.0,
+            ),
+        ).isWithin(0.001).of(20_540.0)
+    }
+
+    @Test
     fun `RustSyncConfidence maps onto the identical SyncQualityBadge ordinal`() {
         assertThat(RustSyncConfidence.UNKNOWN.toAppSyncQuality()).isEqualTo(SyncQualityBadge.UNKNOWN)
         assertThat(RustSyncConfidence.POOR.toAppSyncQuality()).isEqualTo(SyncQualityBadge.POOR)

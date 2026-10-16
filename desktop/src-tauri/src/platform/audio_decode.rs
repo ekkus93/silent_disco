@@ -1,14 +1,48 @@
 use crate::dto::DesktopErrorDto;
+use crate::platform::file_picker::InspectedAudioSource;
 use crate::platform::file_picker::SelectedSourceRegistry;
+use crate::platform::source_staging_control::SourceStagingOperation;
 use silent_disco_core::audio::{
     DecodeError, DecodeErrorKind, StreamingDecodeConfig, StreamingDecodeHandle,
 };
 use silent_disco_core::runtime::AudioSourceDescriptor;
+use std::sync::mpsc::RecvTimeoutError;
+use std::time::Duration;
 
 /// Desktop-owned preparation result retaining the exact staged-source identity.
 pub(crate) struct PreparedAudioSource {
     descriptor: AudioSourceDescriptor,
     decoder: StreamingDecodeHandle,
+}
+
+/// Fully decodes a staged item through the shared bounded decoder before queue acceptance.
+/// PCM chunks are discarded immediately; cancellation is checked while waiting for each chunk.
+pub(crate) fn validate_staged_audio_source(
+    source: &InspectedAudioSource,
+    operation: &SourceStagingOperation,
+) -> Result<(), DesktopErrorDto> {
+    operation.ensure_not_cancelled()?;
+    let decoder =
+        StreamingDecodeHandle::open(source.canonical_path(), StreamingDecodeConfig::default())
+            .map_err(|error| map_shared_decode_error(&error))?;
+    loop {
+        operation.ensure_not_cancelled()?;
+        match decoder.recv_timeout(Duration::from_millis(25)) {
+            Ok(chunk) if chunk.end_of_stream => {
+                decoder
+                    .join()
+                    .map_err(|error| map_shared_decode_error(&error))?;
+                return Ok(());
+            }
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return decoder
+                    .join()
+                    .map(|_| ())
+                    .map_err(|error| map_shared_decode_error(&error));
+            }
+        }
+    }
 }
 
 impl PreparedAudioSource {

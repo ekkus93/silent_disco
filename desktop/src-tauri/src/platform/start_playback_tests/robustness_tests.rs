@@ -4,7 +4,8 @@
 use super::fixtures::stage_long_source;
 use super::harness::{TEST_TIMEOUT, real_private_lan_address, start_host_session, wait_snapshot};
 use crate::platform::start_playback;
-use silent_disco_core::domain::PlaybackState;
+use silent_disco_core::domain::{HostLifecycle, PlaybackState};
+use silent_disco_core::runtime::RecoverableAction;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -96,10 +97,17 @@ fn a_transport_worker_failure_mid_stream_is_reported_by_the_playback_pump() {
         "unexpected transport failure message: {}",
         error.message
     );
-    let stopped = wait_snapshot(&handle, |snapshot| {
-        snapshot.playback_state == PlaybackState::Stopped
+    let failed = wait_snapshot(&handle, |snapshot| {
+        snapshot.playback_state == PlaybackState::Error
     });
-    assert_eq!(stopped.playback_state, PlaybackState::Stopped);
+    assert_eq!(failed.playback_state, PlaybackState::Error);
+    assert_eq!(failed.host_lifecycle, HostLifecycle::WaitingForListeners);
+    assert_eq!(failed.recoverable_action, Some(RecoverableAction::Retry));
+    assert!(failed.last_error.is_some());
+    assert!(
+        failed.host_draft.audio_source.is_some(),
+        "failed source must remain retryable"
+    );
 
     network.shutdown().expect("finish desktop host shutdown");
     actor.shutdown().expect("actor shutdown");

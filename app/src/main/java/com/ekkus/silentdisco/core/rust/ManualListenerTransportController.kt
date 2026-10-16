@@ -270,6 +270,7 @@ class ManualListenerTransportController(
                 }
             }
             is FfiListenerTransportEvent.StreamStarted -> handleStreamStarted(scope, handle, event)
+            is FfiListenerTransportEvent.TrackBoundary -> Unit
             is FfiListenerTransportEvent.Paused ->
                 _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PAUSED)
             is FfiListenerTransportEvent.Stopped -> handleStreamStopped()

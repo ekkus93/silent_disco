@@ -94,10 +94,6 @@ fun ManualEndpointScreen(
                     ) {
                         Text("Host: ${form.hostAddress}", style = MaterialTheme.typography.bodyMedium)
                         Text("Session: ${form.sessionId}", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Protocol version: ${form.protocolVersion}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
                     }
                 }
             }

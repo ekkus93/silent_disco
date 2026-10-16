@@ -44,6 +44,8 @@ import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
 import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
 import com.ekkus.silentdisco.feature.host.HostDashboardScreen
 import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
+import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
+import com.ekkus.silentdisco.feature.host.HostReadyScreen
 import com.ekkus.silentdisco.feature.host.InviteSessionSheet
 import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
 import com.ekkus.silentdisco.feature.listener.ManualEndpointScreen
@@ -140,15 +142,16 @@ fun SilentDiscoApp(
         if (granted) continuation?.invoke()
     }
 
+    var addingLiveQueueAudio by remember { mutableStateOf(false) }
     val audioPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
-        viewModel.selectAudioFile(
-            uri = uri,
-            displayName = uri.lastPathSegment ?: "audio-file",
-            mimeType = null,
-        )
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris: List<Uri> ->
+        if (addingLiveQueueAudio) {
+            addingLiveQueueAudio = false
+            viewModel.addSongsToLiveQueue(uris)
+        } else {
+            viewModel.selectAudioFiles(uris)
+        }
     }
 
     val qrScannerLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -367,9 +370,12 @@ fun SilentDiscoApp(
                     onSessionNameChanged = { viewModel.updateHostForm(sessionName = it) },
                     onChooseAudio = {
                         requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
+                            addingLiveQueueAudio = false
                             audioPickerLauncher.launch(arrayOf("audio/*"))
                         }
                     },
+                    onRemoveAudio = viewModel::removeSetupAudio,
+                    onMoveAudio = viewModel::moveSetupAudio,
                     onNext = { navController.navigateSingleTop(AppRoutes.HostAccessSetup) },
                 )
             }
@@ -383,9 +389,15 @@ fun SilentDiscoApp(
                         viewModel.updateHostForm(inviteCode = normalizeInviteCode(code))
                     },
                     onGenerateCode = { viewModel.updateHostForm(inviteCode = generateInviteCode()) },
-                    onStartSession = {
-                        viewModel.createHostSession()
-                    },
+                    onNext = { navController.navigateSingleTop(AppRoutes.HostReady) },
+                )
+            }
+
+            composable(AppRoutes.HostReady) {
+                HostReadyScreen(
+                    uiState = uiState,
+                    onBack = { navController.popBackStack() },
+                    onStartSession = viewModel::createHostSession,
                     onOpenSettings = ::openSystemSettings,
                     onShareSupportReport = ::shareSupportReport,
                 )
@@ -414,6 +426,28 @@ fun SilentDiscoApp(
                         navController.navigateSingleTop(AppRoutes.ConnectionHelp)
                     },
                     onAddDemoJoinRequest = viewModel::addDemoJoinRequest,
+                    onAddSongs = {
+                        requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
+                            addingLiveQueueAudio = true
+                            audioPickerLauncher.launch(arrayOf("audio/*"))
+                        }
+                    },
+                    onManageQueue = { navController.navigateSingleTop(AppRoutes.HostQueueManagement) },
+                )
+            }
+
+            composable(AppRoutes.HostQueueManagement) {
+                HostQueueManagementScreen(
+                    uiState = uiState,
+                    onBack = { navController.popBackStack() },
+                    onAddSongs = {
+                        requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
+                            addingLiveQueueAudio = true
+                            audioPickerLauncher.launch(arrayOf("audio/*"))
+                        }
+                    },
+                    onReorderQueue = viewModel::reorderLiveQueue,
+                    onRemoveQueueEntry = viewModel::removeLiveQueueEntry,
                 )
             }
 

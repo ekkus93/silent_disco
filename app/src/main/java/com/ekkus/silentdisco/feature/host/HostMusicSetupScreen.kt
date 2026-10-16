@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,8 +24,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,8 +35,14 @@ fun HostMusicSetupScreen(
     onBack: () -> Unit,
     onSessionNameChanged: (String) -> Unit,
     onChooseAudio: () -> Unit,
+    onRemoveAudio: (Int) -> Unit = {},
+    onMoveAudio: (Int, Int) -> Unit = { _, _ -> },
     onNext: () -> Unit,
 ) {
+    val missingItems = buildList {
+        if (uiState.hostForm.selectedAudio == null) add("Choose at least one song")
+        if (uiState.hostForm.sessionName.isBlank()) add("Enter a session name")
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -49,10 +58,11 @@ fun HostMusicSetupScreen(
         )
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(WorkflowSpacing.large),
+            verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.large),
         ) {
             Text(
                 text = "Choose what everyone will hear.",
@@ -61,8 +71,8 @@ fun HostMusicSetupScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(WorkflowSpacing.xLarge),
+                    verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.medium),
                 ) {
                     Icon(
                         Icons.Filled.AudioFile,
@@ -70,14 +80,14 @@ fun HostMusicSetupScreen(
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = uiState.hostForm.selectedAudio?.displayName ?: "No audio selected",
+                        text = if (uiState.hostForm.selectedAudio == null) "No audio selected" else "${uiState.hostForm.additionalAudio.size + 1} songs selected",
                         style = MaterialTheme.typography.titleLarge,
                     )
                     Text(
                         text = if (uiState.hostForm.selectedAudio == null) {
                             "Choose an audio file stored on this phone."
                         } else {
-                            "This file will be streamed to approved listeners."
+                            "Songs play in this order. Add more songs or adjust the list before continuing."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -86,9 +96,49 @@ fun HostMusicSetupScreen(
                         onClick = onChooseAudio,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = WorkflowTouchTarget.minimum)
                             .testTag("host-choose-audio"),
                     ) {
-                        Text(if (uiState.hostForm.selectedAudio == null) "Choose audio" else "Choose different audio")
+                        Text(if (uiState.hostForm.selectedAudio == null) "Choose songs" else "Add songs")
+                    }
+                    val playlist = listOfNotNull(uiState.hostForm.selectedAudio) + uiState.hostForm.additionalAudio
+                    playlist.forEachIndexed { index, audio ->
+                        androidx.compose.material3.ListItem(
+                            headlineContent = { Text("${index + 1}. ${audio.displayName}") },
+                            trailingContent = {
+                                androidx.compose.foundation.layout.Row {
+                                    IconButton(
+                                        onClick = { onMoveAudio(index, index - 1) },
+                                        enabled = index > 0,
+                                        modifier = Modifier.sizeIn(
+                                            minWidth = WorkflowTouchTarget.minimum,
+                                            minHeight = WorkflowTouchTarget.minimum,
+                                        ),
+                                    ) {
+                                        Text("↑", color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    IconButton(
+                                        onClick = { onMoveAudio(index, index + 1) },
+                                        enabled = index < playlist.lastIndex,
+                                        modifier = Modifier.sizeIn(
+                                            minWidth = WorkflowTouchTarget.minimum,
+                                            minHeight = WorkflowTouchTarget.minimum,
+                                        ),
+                                    ) {
+                                        Text("↓", color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    IconButton(
+                                        onClick = { onRemoveAudio(index) },
+                                        modifier = Modifier.sizeIn(
+                                            minWidth = WorkflowTouchTarget.minimum,
+                                            minHeight = WorkflowTouchTarget.minimum,
+                                        ),
+                                    ) {
+                                        Text("×", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -106,10 +156,6 @@ fun HostMusicSetupScreen(
                 singleLine = true,
             )
 
-            val missingItems = buildList {
-                if (uiState.hostForm.selectedAudio == null) add("Choose an audio file")
-                if (uiState.hostForm.sessionName.isBlank()) add("Enter a session name")
-            }
             if (missingItems.isNotEmpty()) {
                 Text(
                     text = missingItems.joinToString(separator = ". ", postfix = "."),
@@ -119,15 +165,16 @@ fun HostMusicSetupScreen(
                 )
             }
 
-            Button(
-                onClick = onNext,
-                enabled = missingItems.isEmpty(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("host-music-next"),
-            ) {
-                Text("Next: Choose access")
-            }
+        }
+        Button(
+            onClick = onNext,
+            enabled = missingItems.isEmpty(),
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = WorkflowSpacing.large, vertical = WorkflowSpacing.medium)
+                .heightIn(min = WorkflowTouchTarget.minimum)
+                .testTag("host-music-next"),
+        ) {
+            Text("Next: Choose access")
         }
     }
 }

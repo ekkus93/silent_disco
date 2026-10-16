@@ -328,7 +328,7 @@ fn permission_denied_is_explicit() {
 }
 
 #[test]
-fn registry_is_single_slot_and_rolls_back_only_current_selection() {
+fn registry_rolls_back_selection_and_retains_independently_registered_queue_sources() {
     let root = TestDirectory::new();
     let first_path = root.path("first.wav");
     let second_path = root.path("second.mp3");
@@ -374,6 +374,41 @@ fn registry_is_single_slot_and_rolls_back_only_current_selection() {
         registry
             .resolve(&first_id)
             .expect("resolve after clear")
+            .is_none()
+    );
+}
+
+#[test]
+fn registry_keeps_multiple_queue_sources_until_clear() {
+    let root = TestDirectory::new();
+    let first_path = root.path("first.wav");
+    let second_path = root.path("second.mp3");
+    write_file(&first_path, b"RIFF\x00\x00\x00\x00WAVEfixture");
+    write_file(&second_path, b"ID3fixture");
+    let first = select_and_inspect(&FixedDialog(Ok(Some(first_path))), &SystemBoundary)
+        .expect("inspect first")
+        .expect("first selected");
+    let second = select_and_inspect(&FixedDialog(Ok(Some(second_path))), &SystemBoundary)
+        .expect("inspect second")
+        .expect("second selected");
+    let first_id = first.descriptor().source_id.clone();
+    let second_id = second.descriptor().source_id.clone();
+    let registry = SelectedSourceRegistry::new();
+    registry.register(first).expect("register first");
+    registry.register(second).expect("register second");
+    assert!(registry.resolve(&first_id).expect("first").is_some());
+    assert!(registry.resolve(&second_id).expect("second").is_some());
+    registry.clear().expect("clear all sources");
+    assert!(
+        registry
+            .resolve(&first_id)
+            .expect("first cleared")
+            .is_none()
+    );
+    assert!(
+        registry
+            .resolve(&second_id)
+            .expect("second cleared")
             .is_none()
     );
 }

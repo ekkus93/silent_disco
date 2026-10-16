@@ -50,6 +50,15 @@ data class HostFormState(
     val inviteCode: String = "",
     val rememberApprovedDevices: Boolean = false,
     val selectedAudio: SelectedAudioFile? = null,
+    val additionalAudio: List<SelectedAudioFile> = emptyList(),
+)
+
+data class HostQueueItem(
+    val entryId: String,
+    val sourceId: String,
+    val displayName: String,
+    val byteLength: Long?,
+    val durationMs: Long?,
 )
 
 data class ConnectionProgressState(
@@ -77,8 +86,11 @@ data class AppUiState(
     val manualConnectState: ManualConnectUiState = ManualConnectUiState.Idle,
     val pendingJoinRequests: List<JoinRequest> = emptyList(),
     val approvedListeners: List<ListenerInfo> = emptyList(),
+    val hostQueue: List<HostQueueItem> = emptyList(),
     val hostPlaybackState: PlaybackState = PlaybackState.STOPPED,
+    val hostPlaybackPositionMs: Long = 0L,
     val listenerPlaybackState: PlaybackState = PlaybackState.STOPPED,
+    val listenerCurrentTrackName: String? = null,
     val listenerSyncState: SyncState = SyncState(),
     val tuningSettings: TuningSettings = TuningSettings(),
     val storageState: StorageInitializationState = StorageInitializationState.INITIALIZING,
@@ -89,6 +101,19 @@ data class AppUiState(
     val isScanning: Boolean = false,
     val lastMessage: String? = null,
     val lastError: String? = null,
+)
+
+internal data class PendingListenerTrackBoundary(
+    val streamId: String,
+    val firstSampleIndex: Long,
+    val displayName: String,
+)
+
+internal data class PendingHostTrackBoundary(
+    val streamId: String,
+    val firstSampleIndex: Long,
+    val entryId: String,
+    val displayName: String,
 )
 
 fun AppUiState.permissionSummary(): String {

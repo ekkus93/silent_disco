@@ -60,8 +60,8 @@ internal fun AppUiState.withStorageInitializationFailure(error: Throwable): AppU
 }
 
 internal fun AppUiState.storageStatusLabel(): String = when (storageState) {
-    StorageInitializationState.INITIALIZING -> "Initializing Rust storage…"
-    StorageInitializationState.READY -> "Rust storage ready"
+    StorageInitializationState.INITIALIZING -> "Preparing saved settings…"
+    StorageInitializationState.READY -> "Saved settings are ready"
     StorageInitializationState.RECOVERABLE_FAILURE -> "Storage temporarily unavailable"
     StorageInitializationState.FATAL_FAILURE -> "Storage initialization failed"
 }

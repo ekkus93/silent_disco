@@ -12,6 +12,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
+import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.uniffi.FfiTransportState
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -34,6 +35,18 @@ interface HostCoreController : AutoCloseable {
     val notifications: Flow<FfiCoreNotification>
 
     suspend fun configureAndCreate(draft: FfiHostDraft)
+    suspend fun configureAndCreate(draft: FfiHostDraft, additionalEntries: List<FfiQueueEntry>) {
+        configureAndCreate(draft)
+    }
+    suspend fun appendHostQueue(entries: List<FfiQueueEntry>) {
+        throw UnsupportedOperationException("host queue append is unavailable")
+    }
+    suspend fun reorderHostQueue(orderedEntryIds: List<String>) {
+        throw UnsupportedOperationException("host queue reorder is unavailable")
+    }
+    suspend fun removeHostQueueEntry(entryId: String) {
+        throw UnsupportedOperationException("host queue removal is unavailable")
+    }
     suspend fun approveJoin(requestId: String, rememberForFuture: Boolean)
     suspend fun rejectJoin(requestId: String)
     suspend fun removeListener(listenerId: String)
@@ -48,6 +61,11 @@ interface HostCoreController : AutoCloseable {
     fun transportFailed(message: String, retryable: Boolean)
     fun transportDeliveryCompleted(operationId: String, report: FfiDeliveryReport)
     fun playbackStateChanged(state: FfiPlaybackState)
+    fun playbackFailed(message: String)
+    fun playbackPositionAdvanced(streamId: String, positionMs: Long)
+    fun playbackStreamEnded(streamId: String)
+    fun trackBoundaryScheduled(entryId: String, firstSampleIndex: Long)
+    fun trackBoundaryApplied(entryId: String, firstSampleIndex: Long)
     fun platformOperationSucceeded(operationId: String, completion: FfiPlatformCompletion)
     fun platformOperationFailed(operationId: String, message: String, retryable: Boolean)
     fun settingsSaved(operationId: String)
@@ -86,6 +104,10 @@ class UniFfiHostCoreController(
     override val notifications: Flow<FfiCoreNotification> = notificationChannel.receiveAsFlow()
 
     override suspend fun configureAndCreate(draft: FfiHostDraft) = withContext(Dispatchers.IO) {
+        configureAndCreate(draft, emptyList())
+    }
+
+    override suspend fun configureAndCreate(draft: FfiHostDraft, additionalEntries: List<FfiQueueEntry>) = withContext(Dispatchers.IO) {
         commandMutex.withLock {
             val handle = openHandle()
             var snapshot = currentSnapshot(handle)
@@ -99,7 +121,38 @@ class UniFfiHostCoreController(
                     handle.updateHostDraft(snapshot.revision, draft).acceptedAtRevision,
                 )
             }
+            if (additionalEntries.isNotEmpty()) {
+                snapshot = awaitCommandSnapshot(
+                    handle.appendHostQueue(
+                        snapshot.revision,
+                        snapshot.hostQueueRevision,
+                        additionalEntries,
+                    ).acceptedAtRevision,
+                )
+            }
             handle.createHostSession(snapshot.revision)
+            Unit
+        }
+    }
+
+    override suspend fun appendHostQueue(entries: List<FfiQueueEntry>) = submitQueueCommand { handle, snapshot ->
+        handle.appendHostQueue(snapshot.revision, snapshot.hostQueueRevision, entries).acceptedAtRevision
+    }
+
+    override suspend fun reorderHostQueue(orderedEntryIds: List<String>) = submitQueueCommand { handle, snapshot ->
+        handle.reorderHostQueue(snapshot.revision, snapshot.hostQueueRevision, orderedEntryIds).acceptedAtRevision
+    }
+
+    override suspend fun removeHostQueueEntry(entryId: String) = submitQueueCommand { handle, snapshot ->
+        handle.removeHostQueueEntry(snapshot.revision, snapshot.hostQueueRevision, entryId).acceptedAtRevision
+    }
+
+    private suspend fun submitQueueCommand(
+        command: suspend (FfiCoreHandle, FfiCoreSnapshot) -> ULong,
+    ) = withContext(Dispatchers.IO) {
+        commandMutex.withLock {
+            val handle = openHandle()
+            awaitCommandSnapshot(command(handle, currentSnapshot(handle)))
             Unit
         }
     }
@@ -163,6 +216,22 @@ class UniFfiHostCoreController(
     override fun playbackStateChanged(state: FfiPlaybackState) = withOpenHandle { handle ->
         handle.playbackStateChanged(state)
     }
+
+    override fun playbackFailed(message: String) = withOpenHandle { handle ->
+        handle.playbackFailed(message)
+    }
+
+    override fun playbackPositionAdvanced(streamId: String, positionMs: Long) =
+        withOpenHandle { handle -> handle.playbackPositionAdvanced(streamId, positionMs.toULong()) }
+
+    override fun playbackStreamEnded(streamId: String) =
+        withOpenHandle { handle -> handle.playbackStreamEnded(streamId) }
+
+    override fun trackBoundaryScheduled(entryId: String, firstSampleIndex: Long) =
+        withOpenHandle { handle -> handle.trackBoundaryScheduled(entryId, firstSampleIndex.toULong()) }
+
+    override fun trackBoundaryApplied(entryId: String, firstSampleIndex: Long) =
+        withOpenHandle { handle -> handle.trackBoundaryApplied(entryId, firstSampleIndex.toULong()) }
 
     override fun platformOperationSucceeded(
         operationId: String,

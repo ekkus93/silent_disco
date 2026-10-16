@@ -2,6 +2,7 @@ package com.ekkus.silentdisco.app
 
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
+import com.ekkus.silentdisco.core.model.SyncQualityBadge
 
 sealed interface AppUiEffect {
     data object NavigateHome : AppUiEffect
@@ -22,4 +23,11 @@ internal fun shouldNavigateToListenerPlayback(
     alreadyConsumed: Boolean,
 ): Boolean = state.listenerState == ListenerLifecycleState.PLAYING &&
     state.listenerPlaybackState == PlaybackState.PLAYING &&
+    state.selectedSession != null &&
+    state.connectionProgress.approved &&
+    state.connectionProgress.connected &&
+    state.connectionProgress.synced &&
+    state.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN &&
+    state.connectionProgress.buffered &&
+    state.connectionProgress.playing &&
     !alreadyConsumed

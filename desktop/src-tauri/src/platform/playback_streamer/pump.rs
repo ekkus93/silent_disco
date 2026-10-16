@@ -38,7 +38,7 @@ fn spawn_pump(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn run_pump(
     packetizer: StreamingPacketizeHandle,
     network: &Arc<DesktopHostNetworkControl>,
@@ -53,6 +53,9 @@ fn run_pump(
 ) -> Result<(), DesktopErrorDto> {
     let mut last_reported_position_ms: Option<u64> = None;
     let mut streaming_error: Option<DesktopErrorDto> = None;
+    let mut pending_boundaries: VecDeque<TrackBoundary> = VecDeque::new();
+    let mut packetizer_disconnected = false;
+    let mut last_audible_audio_end_ms = None;
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -61,8 +64,49 @@ fn run_pump(
             thread::sleep(PAUSE_POLL_INTERVAL);
             continue;
         }
-        match packetizer.recv_timeout(PUMP_RECV_TIMEOUT) {
+        let now = match network.transport_now() {
+            Ok(now) => now.get(),
+            Err(error) => {
+                streaming_error = Some(error);
+                break;
+            }
+        };
+        if let Err(error) = apply_due_boundaries(
+            &mut pending_boundaries,
+            host_start_time_ms,
+            accumulated_pause_offset_ms.load(Ordering::Acquire),
+            now,
+            handle,
+        ) {
+            streaming_error = Some(error);
+        }
+        if streaming_error.is_some() {
+            break;
+        }
+        if packetizer_disconnected && pending_boundaries.is_empty() {
+            break;
+        }
+        if packetizer_disconnected {
+            thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+        let recv_timeout = if pending_boundaries.is_empty() {
+            PUMP_RECV_TIMEOUT
+        } else {
+            Duration::from_millis(10)
+        };
+        match packetizer.recv_timeout(recv_timeout) {
             Ok(mut frame) => {
+                if let ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)) = &frame {
+                    if let Err(error) = handle.submit_audio_event(AudioEvent::TrackBoundaryScheduled {
+                        entry_id: boundary.entry_id.clone(),
+                        first_sample_index: boundary.first_sample_index.get(),
+                    }) {
+                        streaming_error = Some(DesktopErrorDto::from(error));
+                        break;
+                    }
+                    pending_boundaries.push_back(boundary.clone());
+                }
                 // Position must reflect actual song content progress, which
                 // is exactly what the packetizer's own (unshifted) sequence
                 // math already gives -- compute it before the pause offset
@@ -88,13 +132,26 @@ fn run_pump(
                         break;
                     }
                 }
+                let audio_end_ms = match &frame {
+                    ProtocolFrame::Audio(audio) => Some(
+                        audio.host_presentation_time_ms.get().saturating_add(
+                            u64::from(audio.samples_per_packet)
+                                .saturating_mul(1_000)
+                                / u64::from(audio.sample_rate),
+                        ),
+                    ),
+                    _ => None,
+                };
                 if let Err(error) = network.broadcast_playback_frame(frame) {
                     streaming_error = Some(error);
                     break;
                 }
+                if let Some(audio_end_ms) = audio_end_ms {
+                    last_audible_audio_end_ms = Some(audio_end_ms);
+                }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => packetizer_disconnected = true,
         }
     }
     // Tearing the monitor down is attempted unconditionally, exactly like
@@ -139,6 +196,18 @@ fn run_pump(
         )),
     };
     let ending_stream_id = stream_id.clone();
+    let terminal_failure = streaming_error
+        .as_ref()
+        .map(|error| error.message.clone())
+        .or_else(|| packetizer_result.as_ref().err().map(|error| error.message.clone()));
+    let failure_tail_result = if terminal_failure.is_some() && !stop.load(Ordering::Acquire) {
+        last_audible_audio_end_ms
+            .map(|deadline| wait_until_audio_tail(deadline, network, stop))
+            .transpose()
+            .map(|_| ())
+    } else {
+        Ok(())
+    };
     let broadcast_result = network.transport_now().and_then(|host_stop_time_ms| {
         network.broadcast_playback_frame(ProtocolFrame::Control(ControlMessage::Stop(Stop {
             session_id,
@@ -150,6 +219,8 @@ fn run_pump(
         handle.submit_audio_event(AudioEvent::EndOfStream {
             stream_id: ending_stream_id,
         })
+    } else if let Some(message) = terminal_failure {
+        handle.submit_audio_event(AudioEvent::Failed(playback_failure(&message)))
     } else {
         handle.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
     }
@@ -158,13 +229,82 @@ fn run_pump(
         return Err(primary
             .with_appended_cleanup(monitor_result.err())
             .with_appended_cleanup(packetizer_result.err())
+            .with_appended_cleanup(failure_tail_result.err())
             .with_appended_cleanup(broadcast_result.err())
             .with_appended_cleanup(stopped_result.err()));
     }
     monitor_result
         .and(packetizer_result)
+        .and(failure_tail_result)
         .and(broadcast_result)
         .and(stopped_result)
+}
+
+fn wait_until_audio_tail(
+    deadline_ms: u64,
+    network: &DesktopHostNetworkControl,
+    stop: &AtomicBool,
+) -> Result<(), DesktopErrorDto> {
+    while !stop.load(Ordering::Acquire) {
+        let now = network.transport_now()?.get();
+        if now >= deadline_ms {
+            break;
+        }
+        thread::sleep(Duration::from_millis(deadline_ms.saturating_sub(now).min(10)));
+    }
+    Ok(())
+}
+
+fn playback_failure(message: &str) -> CoreError {
+    let detail = message
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(384)
+        .collect::<String>();
+    CoreError::new(
+        CoreErrorCode::AudioOutputFailed,
+        format!("Playlist playback stopped: {detail}"),
+        ErrorSeverity::Error,
+        true,
+        None,
+    )
+    .unwrap_or_else(|_| {
+        CoreError::new(
+            CoreErrorCode::AudioOutputFailed,
+            "Playlist playback stopped after an audio failure",
+            ErrorSeverity::Error,
+            true,
+            None,
+        )
+        .expect("static playback failure is valid")
+    })
+}
+
+fn apply_due_boundaries(
+    pending: &mut VecDeque<TrackBoundary>,
+    host_start_time_ms: u64,
+    pause_offset_ms: u64,
+    now_ms: u64,
+    handle: &CoreActorHandle,
+) -> Result<(), DesktopErrorDto> {
+    while pending.front().is_some_and(|boundary| {
+        let boundary_time_ms = host_start_time_ms
+            .saturating_add(
+                boundary.first_sample_index.get().saturating_mul(1_000)
+                    / u64::from(CANONICAL_SAMPLE_RATE_HZ),
+            )
+            .saturating_add(pause_offset_ms);
+        boundary_time_ms <= now_ms
+    }) {
+        let boundary = pending.pop_front().expect("front was present");
+        handle
+            .submit_audio_event(AudioEvent::TrackBoundaryApplied {
+                entry_id: boundary.entry_id,
+                first_sample_index: boundary.first_sample_index.get(),
+            })
+            .map_err(DesktopErrorDto::from)?;
+    }
+    Ok(())
 }
 
 /// Submits a throttled `PositionAdvanced` event for one emitted audio frame.
@@ -277,3 +417,7 @@ fn wait_until_within_send_ahead_horizon(
         thread::sleep(SEND_AHEAD_POLL_INTERVAL);
     }
 }
+use std::collections::VecDeque;
+
+use silent_disco_core::audio::CANONICAL_SAMPLE_RATE_HZ;
+use silent_disco_core::protocol::TrackBoundary;

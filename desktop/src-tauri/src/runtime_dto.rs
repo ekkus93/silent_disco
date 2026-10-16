@@ -95,6 +95,160 @@ pub struct AudioSourceSummaryDto {
     pub duration_ms: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HostQueueEntryDto {
+    pub entry_id: String,
+    pub source: AudioSourceSummaryDto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum HostQueuePreparationStateDto {
+    Empty,
+    Prepared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum HostQueueReadinessDto {
+    Empty,
+    Ready,
+    Buffering,
+    Playing,
+    Paused,
+    Underrun,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HostQueueDto {
+    pub revision: String,
+    pub entries: Vec<HostQueueEntryDto>,
+    #[ts(optional)]
+    pub current: Option<HostQueueEntryDto>,
+    #[ts(optional)]
+    pub upcoming: Option<Vec<HostQueueEntryDto>>,
+    #[ts(optional)]
+    pub preparation_state: Option<HostQueuePreparationStateDto>,
+    #[ts(optional)]
+    pub readiness: Option<HostQueueReadinessDto>,
+    #[ts(optional)]
+    pub error: Option<DesktopErrorDto>,
+    #[ts(optional)]
+    pub next_boundary: Option<HostQueueBoundaryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HostQueueBoundaryDto {
+    pub entry_id: String,
+    pub first_sample_index: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct AppendHostQueueRequest {
+    pub expected_revision: String,
+    pub expected_queue_revision: String,
+    pub entries: Vec<HostQueueEntryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct ReorderHostQueueRequest {
+    pub expected_revision: String,
+    pub expected_queue_revision: String,
+    pub ordered_entry_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HostQueueEntryCommandRequest {
+    pub expected_revision: String,
+    pub expected_queue_revision: String,
+    pub entry_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HostQueueClearRequest {
+    pub expected_revision: String,
+    pub expected_queue_revision: String,
+}
+
+impl From<&silent_disco_core::runtime::HostQueue> for HostQueueDto {
+    fn from(queue: &silent_disco_core::runtime::HostQueue) -> Self {
+        Self {
+            revision: queue.revision().to_string(),
+            entries: queue.entries().iter().map(host_queue_entry_dto).collect(),
+            current: None,
+            upcoming: None,
+            preparation_state: None,
+            readiness: None,
+            error: None,
+            next_boundary: None,
+        }
+    }
+}
+
+fn host_queue_entry_dto(entry: &silent_disco_core::runtime::QueueEntry) -> HostQueueEntryDto {
+    HostQueueEntryDto {
+        entry_id: entry.entry_id.clone(),
+        source: AudioSourceSummaryDto {
+            source_id: entry.source.source_id.clone(),
+            display_name: entry.source.display_name.clone(),
+            byte_length: entry.source.byte_length.map(|length| length.to_string()),
+            duration_ms: entry
+                .source
+                .duration_ms
+                .map(|duration| duration.to_string()),
+        },
+    }
+}
+
+pub(crate) fn host_queue_snapshot(snapshot: &CoreSnapshot) -> HostQueueDto {
+    let view = snapshot.host_queue_snapshot();
+    let mut dto = HostQueueDto::from(&snapshot.host_queue);
+    dto.current = view.current.as_ref().map(host_queue_entry_dto);
+    dto.upcoming = Some(view.upcoming.iter().map(host_queue_entry_dto).collect());
+    dto.preparation_state = Some(match view.preparation_state {
+        silent_disco_core::runtime::HostQueuePreparationState::Empty => {
+            HostQueuePreparationStateDto::Empty
+        }
+        silent_disco_core::runtime::HostQueuePreparationState::Prepared => {
+            HostQueuePreparationStateDto::Prepared
+        }
+    });
+    dto.readiness = Some(match view.readiness {
+        silent_disco_core::runtime::HostQueueReadiness::Empty => HostQueueReadinessDto::Empty,
+        silent_disco_core::runtime::HostQueueReadiness::Ready => HostQueueReadinessDto::Ready,
+        silent_disco_core::runtime::HostQueueReadiness::Buffering => {
+            HostQueueReadinessDto::Buffering
+        }
+        silent_disco_core::runtime::HostQueueReadiness::Playing => HostQueueReadinessDto::Playing,
+        silent_disco_core::runtime::HostQueueReadiness::Paused => HostQueueReadinessDto::Paused,
+        silent_disco_core::runtime::HostQueueReadiness::Underrun => HostQueueReadinessDto::Underrun,
+        silent_disco_core::runtime::HostQueueReadiness::Failed => HostQueueReadinessDto::Failed,
+    });
+    dto.error = view.error.map(DesktopErrorDto::from);
+    dto.next_boundary = view.next_boundary.map(|boundary| HostQueueBoundaryDto {
+        entry_id: boundary.entry_id,
+        first_sample_index: boundary.first_sample_index.to_string(),
+    });
+    dto
+}
+
 /// Authoritative Rust-owned host draft rendered by React.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -173,6 +327,7 @@ pub struct CoreSnapshotDto {
     pub selected_role: Option<String>,
     pub capabilities: CapabilitySnapshotDto,
     pub host_draft: HostDraftDto,
+    pub host_queue: HostQueueDto,
     pub host_draft_validation: Vec<HostDraftValidationDto>,
     pub can_create_host_session: bool,
     pub host_lifecycle: String,
@@ -205,6 +360,7 @@ impl From<CoreSnapshot> for CoreSnapshotDto {
             selected_role: value.selected_role.map(|role| role.wire_name().to_owned()),
             capabilities: CapabilitySnapshotDto::from(value.capabilities),
             host_draft: HostDraftDto::from(&value.host_draft),
+            host_queue: host_queue_snapshot(&value),
             host_draft_validation,
             can_create_host_session,
             host_lifecycle: value.host_lifecycle.wire_name().to_owned(),

@@ -175,6 +175,7 @@ pub(super) fn validate_virtual_listener_identity(
         | ControlMessage::JoinApproval(_)
         | ControlMessage::JoinRejection(_)
         | ControlMessage::StreamStart(_)
+        | ControlMessage::TrackBoundary(_)
         | ControlMessage::Pause(_)
         | ControlMessage::Stop(_) => false,
     };

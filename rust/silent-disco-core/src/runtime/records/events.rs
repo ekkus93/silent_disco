@@ -53,6 +53,14 @@ pub enum AudioEvent {
         stream_id: StreamId,
         position_ms: u64,
     },
+    TrackBoundaryApplied {
+        entry_id: String,
+        first_sample_index: u64,
+    },
+    TrackBoundaryScheduled {
+        entry_id: String,
+        first_sample_index: u64,
+    },
     SynchronizationUpdated {
         device_id: DeviceId,
         summary: SynchronizationSummary,

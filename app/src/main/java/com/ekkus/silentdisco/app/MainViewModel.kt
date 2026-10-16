@@ -2,6 +2,8 @@ package com.ekkus.silentdisco.app
 
 import android.app.Application
 import android.net.Uri
+import android.content.Intent
+import android.content.SharedPreferences
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +27,7 @@ import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
@@ -38,6 +41,7 @@ import com.ekkus.silentdisco.core.rust.UniFfiListenerCoreController
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
+import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
 import com.ekkus.silentdisco.core.rust.RustCoreBridge
 import com.ekkus.silentdisco.core.rust.RustDomainStore
 import com.ekkus.silentdisco.core.rust.RustSyncEstimator
@@ -51,12 +55,15 @@ import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 
 class MainViewModel @JvmOverloads constructor(
@@ -93,6 +100,12 @@ class MainViewModel @JvmOverloads constructor(
         networkSessionLock = WifiLowLatencyNetworkLock(application),
     )
     internal val hostTransportController = HostTransportController()
+    internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
+    private val audioGrantLedger: SharedPreferences = application.getSharedPreferences(
+        AUDIO_GRANT_LEDGER_PREFERENCES,
+        Application.MODE_PRIVATE,
+    )
+    private val audioGrantLedgerLock = Any()
 
     internal val _uiState = MutableStateFlow(
         AppUiState(
@@ -107,6 +120,9 @@ class MainViewModel @JvmOverloads constructor(
 
     internal var currentSessionId: SessionId? = null
     internal var currentStreamId: StreamId? = null
+    internal var listenerStreamHostStartTimeMs: Long? = null
+    internal val pendingListenerTrackBoundaries = linkedMapOf<Long, PendingListenerTrackBoundary>()
+    internal val listenerTrackBoundaryJobs = mutableMapOf<Long, Job>()
     /**
      * Rust-owned pre-runtime clock-sync estimator (`RustCoreBridge.openSyncEstimator()`).
      * Holds a real native handle -- every teardown path that used to just drop
@@ -128,6 +144,12 @@ class MainViewModel @JvmOverloads constructor(
         hostMonitorPlaybackRef.getAndSet(value)
     internal var latestDecodedAudio: AudioDecodeResult? = null
     internal var latestPackets: List<AudioPacket> = emptyList()
+    internal var hostPlaylistStreamer: HostPlaylistStreamController? = null
+    internal var hostPlaylistStreamStart: com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart? = null
+    internal var hostPlaylistFormat: com.ekkus.silentdisco.core.audio.AudioFormatSpec? = null
+    internal val stagedAudioFilesBySourceId = ConcurrentHashMap<String, java.io.File>()
+    internal val hostBoundaryJobs: MutableSet<Job> = ConcurrentHashMap.newKeySet()
+    internal val hostPendingTrackBoundaries = ConcurrentHashMap<Long, PendingHostTrackBoundary>()
     internal var hostStreamJob: Job? = null
     internal var hostPlaybackCommandJob: Job? = null
     internal var playbackJob: Job? = null
@@ -164,6 +186,8 @@ class MainViewModel @JvmOverloads constructor(
     internal val pendingListenerDatagramPorts = mutableMapOf<String, Pair<UShort, UShort>>()
 
     init {
+        cleanupOrphanedAudioReadGrants()
+        cleanupOrphanedHostStagedFiles()
         initializeDomainPersistence()
         observeDiscovery()
         observeBleFailures()
@@ -200,17 +224,225 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun selectAudioFile(uri: Uri, displayName: String, mimeType: String?) {
+        selectAudioFiles(listOf(uri), displayName, mimeType)
+    }
+
+    fun selectAudioFiles(uris: List<Uri>, fallbackName: String = "audio-file", mimeType: String? = null) {
+        if (uris.isEmpty()) return
+        val priorFiles = listOfNotNull(_uiState.value.hostForm.selectedAudio) +
+            _uiState.value.hostForm.additionalAudio
+        val priorUris = priorFiles.mapTo(mutableSetOf()) { it.uri }
+        val newGrants = mutableSetOf<Uri>()
         runCatching {
-            decoder.describe(uri, fallbackName = displayName, fallbackMimeType = mimeType)
+            uris.mapIndexed { index, uri ->
+                val name = uri.lastPathSegment
+                    ?: if (index == 0) fallbackName else "audio-file-${index + 1}"
+                runCatching {
+                    retainAudioReadGrant(uri, newGrants)
+                    decoder.describe(uri, fallbackName = name, fallbackMimeType = mimeType)
+                }.getOrElse { error ->
+                    throw IllegalArgumentException("$name: ${error.message ?: "could not be read"}", error)
+                }
+            }
         }.onSuccess { selected ->
             latestDecodedAudio = null
+            val selectedUris = selected.mapTo(mutableSetOf()) { it.uri }
+            (priorUris - selectedUris).forEach { uri ->
+                val sourceId = stableOpaqueAudioSourceId(uri.toString())
+                if (_uiState.value.hostQueue.none { it.sourceId == sourceId }) {
+                    releaseAudioReadGrant(uri)
+                }
+            }
             _uiState.value = _uiState.value.copy(
-                hostForm = _uiState.value.hostForm.copy(selectedAudio = selected),
-                lastMessage = "Selected ${selected.displayName}",
+                hostForm = _uiState.value.hostForm.copy(
+                    selectedAudio = selected.first(),
+                    additionalAudio = selected.drop(1),
+                ),
+                lastMessage = "Added ${selected.size} ${if (selected.size == 1) "song" else "songs"}",
                 lastError = null,
             )
         }.onFailure { error ->
+            newGrants.forEach(::releaseAudioReadGrant)
             _uiState.value = _uiState.value.copy(lastError = error.message ?: "Failed to access audio file")
+        }
+    }
+
+    fun removeSetupAudio(index: Int) {
+        val form = _uiState.value.hostForm
+        val files = listOfNotNull(form.selectedAudio) + form.additionalAudio
+        if (index !in files.indices) return
+        val removedUri = files[index].uri
+        val updated = files.toMutableList().apply { removeAt(index) }
+        _uiState.value = _uiState.value.copy(
+            hostForm = form.copy(selectedAudio = updated.firstOrNull(), additionalAudio = updated.drop(1)),
+        )
+        val stillInDraft = updated.any { it.uri == removedUri }
+        val sourceId = stableOpaqueAudioSourceId(removedUri.toString())
+        val stillQueued = _uiState.value.hostQueue.any { it.sourceId == sourceId }
+        if (!stillInDraft && !stillQueued) releaseAudioReadGrant(removedUri)
+    }
+
+    fun moveSetupAudio(from: Int, to: Int) {
+        val form = _uiState.value.hostForm
+        val files = (listOfNotNull(form.selectedAudio) + form.additionalAudio).toMutableList()
+        if (from !in files.indices || to !in files.indices) return
+        val item = files.removeAt(from)
+        files.add(to, item)
+        _uiState.value = _uiState.value.copy(
+            hostForm = form.copy(selectedAudio = files.firstOrNull(), additionalAudio = files.drop(1)),
+        )
+    }
+
+    fun addSongsToLiveQueue(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val newGrants = mutableSetOf<Uri>()
+            val newlyStagedSourceIds = mutableSetOf<String>()
+            val entries = runCatching {
+                withContext(Dispatchers.IO) {
+                    uris.mapIndexed { index, uri ->
+                        val name = uri.lastPathSegment ?: "audio-file-${index + 1}"
+                        val selected = runCatching {
+                            retainAudioReadGrant(uri, newGrants)
+                            decoder.describe(uri, fallbackName = name, fallbackMimeType = null)
+                        }.getOrElse { error ->
+                            throw IllegalArgumentException("$name: ${error.message ?: "could not be read"}", error)
+                        }
+                        val sourceId = stableOpaqueAudioSourceId(uri.toString())
+                        if (!stagedAudioFilesBySourceId.containsKey(sourceId)) newlyStagedSourceIds += sourceId
+                        stageAndValidateHostSource(selected)
+                        FfiQueueEntry(
+                            entryId = "android-entry-${UUID.randomUUID()}-${index + 1}",
+                            source = selected.toFfiAudioSource(),
+                        )
+                    }
+                }
+            }.getOrElse { error ->
+                newlyStagedSourceIds.mapNotNull(stagedAudioFilesBySourceId::remove).forEach { it.delete() }
+                newGrants.forEach(::releaseAudioReadGrant)
+                _uiState.value = _uiState.value.copy(lastError = error.message ?: "Could not add songs")
+                return@launch
+            }
+            val core = ensureRustHostCore()
+            runCatching { core.appendHostQueue(entries) }
+                .onSuccess {
+                    core.snapshots.value?.let { snapshot ->
+                        runCatching { retargetActiveHostPlaylist(snapshot) }
+                            .onFailure { reportRustHostCommandFailure("retarget playback queue", it) }
+                    }
+                    uris.forEach { uri ->
+                        liveQueueSourceUris[stableOpaqueAudioSourceId(uri.toString())] = uri
+                    }
+                    _uiState.value = _uiState.value.copy(lastError = null, lastMessage = "Songs added to queue")
+                }
+                .onFailure {
+                    newlyStagedSourceIds.mapNotNull(stagedAudioFilesBySourceId::remove).forEach { it.delete() }
+                    newGrants.forEach(::releaseAudioReadGrant)
+                    reportRustHostCommandFailure("add songs", it)
+                }
+        }
+    }
+
+    private fun retainAudioReadGrant(uri: Uri, newlyRetained: MutableSet<Uri>) {
+        val resolver = getApplication<Application>().contentResolver
+        val alreadyRetained = resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+        if (!alreadyRetained && uri !in newlyRetained) {
+            resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            newlyRetained += uri
+        }
+        synchronized(audioGrantLedgerLock) {
+            val grants = audioGrantLedger.getStringSet(AUDIO_GRANT_LEDGER_KEY, emptySet()).orEmpty().toMutableSet()
+            if (grants.add(uri.toString())) {
+                audioGrantLedger.edit().putStringSet(AUDIO_GRANT_LEDGER_KEY, grants).apply()
+            }
+        }
+    }
+
+    private fun releaseAudioReadGrant(uri: Uri) {
+        runCatching {
+            getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        synchronized(audioGrantLedgerLock) {
+            val grants = audioGrantLedger.getStringSet(AUDIO_GRANT_LEDGER_KEY, emptySet()).orEmpty().toMutableSet()
+            if (grants.remove(uri.toString())) {
+                if (grants.isEmpty()) {
+                    audioGrantLedger.edit().remove(AUDIO_GRANT_LEDGER_KEY).apply()
+                } else {
+                    audioGrantLedger.edit().putStringSet(AUDIO_GRANT_LEDGER_KEY, grants).apply()
+                }
+            }
+        }
+    }
+
+    private fun cleanupOrphanedAudioReadGrants() {
+        val grants = synchronized(audioGrantLedgerLock) {
+            audioGrantLedger.getStringSet(AUDIO_GRANT_LEDGER_KEY, emptySet()).orEmpty().toList()
+        }
+        grants.forEach { grant ->
+            runCatching { releaseAudioReadGrant(Uri.parse(grant)) }
+        }
+    }
+
+    private fun cleanupOrphanedHostStagedFiles() {
+        val cacheDir = runCatching { getApplication<Application>().cacheDir }.getOrNull() ?: return
+        cacheDir.listFiles()
+            ?.filter { it.name.startsWith("silent-disco-source-") }
+            ?.forEach { it.delete() }
+    }
+
+    internal fun releaseLiveQueueAudioGrants() {
+        val setupUris = (listOfNotNull(_uiState.value.hostForm.selectedAudio) +
+            _uiState.value.hostForm.additionalAudio).mapTo(mutableSetOf()) { it.uri }
+        liveQueueSourceUris.values.distinct().filterNot(setupUris::contains)
+            .forEach(::releaseAudioReadGrant)
+        liveQueueSourceUris.clear()
+    }
+
+    fun reorderLiveQueue(entryIds: List<String>) {
+        viewModelScope.launch {
+            val core = ensureRustHostCore()
+            runCatching { core.reorderHostQueue(entryIds) }
+                .onSuccess {
+                    core.snapshots.value?.let { snapshot ->
+                        runCatching { retargetActiveHostPlaylist(snapshot) }
+                            .onFailure { reportRustHostCommandFailure("retarget playback queue", it) }
+                    }
+                }
+                .onFailure { reportRustHostCommandFailure("reorder queue", it) }
+        }
+    }
+
+    fun removeLiveQueueEntry(entryId: String) {
+        viewModelScope.launch {
+            val removed = _uiState.value.hostQueue.firstOrNull { it.entryId == entryId }
+            val core = ensureRustHostCore()
+            runCatching { core.removeHostQueueEntry(entryId) }
+                .onSuccess {
+                    core.snapshots.value?.let { snapshot ->
+                        runCatching { retargetActiveHostPlaylist(snapshot) }
+                            .onFailure { reportRustHostCommandFailure("retarget playback queue", it) }
+                    }
+                    if (removed != null) {
+                        val stillQueued = _uiState.value.hostQueue.any {
+                            it.entryId != entryId && it.sourceId == removed.sourceId
+                        }
+                        val setupFiles = listOfNotNull(_uiState.value.hostForm.selectedAudio) +
+                            _uiState.value.hostForm.additionalAudio
+                        val stillInDraft = setupFiles.any {
+                            stableOpaqueAudioSourceId(it.uri.toString()) == removed.sourceId
+                        }
+                        if (!stillQueued && !stillInDraft) {
+                            liveQueueSourceUris.remove(removed.sourceId)?.let(::releaseAudioReadGrant)
+                            withContext(Dispatchers.IO) {
+                                stagedAudioFilesBySourceId.remove(removed.sourceId)?.delete()
+                            }
+                        }
+                    }
+                }
+                .onFailure { reportRustHostCommandFailure("remove queue item", it) }
         }
     }
 
@@ -454,7 +686,9 @@ class MainViewModel @JvmOverloads constructor(
         listenerCoreController?.close()
         hostTransportController.close()
         listenerTransportController.close()
+        releaseLiveQueueAudioGrants()
         runBlocking(Dispatchers.IO) {
+            runCatching { releaseStagedHostSources() }
             runCatching { stopHostMonitorPlayback() }
                 .onFailure { error -> logger.e("playback.host.stop", "Host monitor cleanup failed", error) }
             domainStore.close()
@@ -465,6 +699,8 @@ class MainViewModel @JvmOverloads constructor(
 
 /** Prefix for [MainViewModel.demoSessions], a BuildConfig.DEBUG-only simulation that never touches Rust. */
 internal const val DEMO_SESSION_ID_PREFIX = "demo-session-"
+private const val AUDIO_GRANT_LEDGER_PREFERENCES = "host-audio-grant-ledger"
+private const val AUDIO_GRANT_LEDGER_KEY = "persisted-read-grants"
 
 internal fun RustStoredTuningSettings.toAppTuningSettings(): TuningSettings = TuningSettings(
     syncSampleWindow = syncSampleWindow,

@@ -24,6 +24,7 @@ function snapshot(revision: string, hostLifecycle = "idle"): CoreSnapshotDto {
       audioSource: null,
       rememberApprovedDevices: false,
     },
+    hostQueue: { revision: "0", entries: [] },
     hostDraftValidation: [
       { field: "sessionName", code: "session_name", message: "session name is invalid" },
     ],

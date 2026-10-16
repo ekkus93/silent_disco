@@ -28,6 +28,8 @@ pub struct JitterBufferConfig {
     /// Stream this buffer accepts packets for; every other stream is rejected
     /// as stale (an earlier or unrelated stream generation).
     pub stream_id: StreamId,
+    /// First sequence expected when joining an already-running stream.
+    pub first_sequence: u64,
     /// Maximum sequence distance ahead of the next-expected sequence that a
     /// packet may occupy before it is rejected as unreorderable.
     pub max_reorder_window: u32,
@@ -43,6 +45,7 @@ impl JitterBufferConfig {
         Self {
             session_id,
             stream_id,
+            first_sequence: 0,
             max_reorder_window: DEFAULT_MAX_REORDER_WINDOW,
             max_buffered_duration_ms: DEFAULT_MAX_BUFFERED_DURATION_MS,
         }
@@ -201,10 +204,11 @@ impl JitterBuffer {
                 ),
             });
         }
+        let first_sequence = config.first_sequence;
         Ok(Self {
             config,
             packets: BTreeMap::new(),
-            next_expected_sequence: 0,
+            next_expected_sequence: first_sequence,
             statistics: JitterBufferStatistics::default(),
             far_future_run: 0,
             lowest_far_future: None,

@@ -6,8 +6,9 @@ use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorHandle,
     CoreActorRuntime, CoreCommand, CoreCommandRequest, CoreNotification, CoreSnapshot,
-    HostDraftPatch, InviteCodePatch, ListenerSummary, PlatformEffect, PlatformEffectRequest,
-    PlatformEvent, PlatformOperationCompletion, RecoverableAction, SnapshotRevision,
+    HostDraftPatch, HostQueuePreparationState, HostQueueReadiness, InviteCodePatch,
+    ListenerSummary, PlatformEffect, PlatformEffectRequest, PlatformEvent,
+    PlatformOperationCompletion, QueueEntry, RecoverableAction, SnapshotRevision,
     SynchronizationSummary, TransportEvent,
 };
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
@@ -279,6 +280,155 @@ fn playback_position_and_natural_completion_are_tracked_authoritatively() {
     let stopped_explicitly = next_snapshot(&receiver, second_stream.revision.get() + 1);
     assert!(!stopped_explicitly.stream_ended_naturally);
 
+    runtime.shutdown().expect("shutdown actor");
+}
+
+#[test]
+fn queue_snapshot_tracks_announced_and_applied_sample_boundary() {
+    let (runtime, handle, receiver) = start_actor();
+    let (creating, start_advertising) = create_host(&handle, &receiver, "Boundary host");
+    let next_source =
+        AudioSourceDescriptor::new("source-2", "Next track.wav", Some(8192), Some(4000))
+            .expect("next source");
+    let queued = command_snapshot(
+        &handle,
+        &receiver,
+        creating.revision,
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: creating.host_queue.revision(),
+            entries: vec![QueueEntry::new("entry-next", next_source).expect("queue entry")],
+        },
+    );
+    handle
+        .submit_transport_event(TransportEvent::StateChanged(TransportState::Advertising))
+        .expect("submit advertising state");
+    let advertising = next_snapshot(&receiver, queued.revision.get() + 1);
+    handle
+        .submit_platform_event(PlatformEvent::OperationSucceeded {
+            operation_id: start_advertising.operation_id,
+            completion: PlatformOperationCompletion::AdvertisingStarted,
+        })
+        .expect("submit advertising success");
+    let waiting = next_snapshot(&receiver, advertising.revision.get() + 1);
+    handle
+        .submit_transport_event(TransportEvent::ListenerConnected(listener_summary()))
+        .expect("submit listener connection");
+    let ready = next_snapshot(&receiver, waiting.revision.get() + 1);
+    handle
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("submit playing state");
+    let playing = next_snapshot(&receiver, ready.revision.get() + 1);
+
+    handle
+        .submit_audio_event(AudioEvent::TrackBoundaryScheduled {
+            entry_id: "entry-next".to_owned(),
+            first_sample_index: 1_234,
+        })
+        .expect("submit scheduled boundary");
+    let scheduled = next_snapshot(&receiver, playing.revision.get() + 1);
+    let boundary = scheduled
+        .host_queue_next_boundary
+        .as_ref()
+        .expect("scheduled boundary in snapshot");
+    assert_eq!(boundary.entry_id, "entry-next");
+    assert_eq!(boundary.first_sample_index, 1_234);
+    assert_eq!(scheduled.host_queue.current().unwrap().entry_id, "source-1");
+    let queue_view = scheduled.host_queue_snapshot();
+    assert_eq!(queue_view.current.as_ref().unwrap().entry_id, "source-1");
+    assert_eq!(queue_view.upcoming[0].entry_id, "entry-next");
+    assert_eq!(
+        queue_view.preparation_state,
+        HostQueuePreparationState::Prepared
+    );
+    assert_eq!(queue_view.readiness, HostQueueReadiness::Playing);
+    assert_eq!(queue_view.next_boundary.unwrap().first_sample_index, 1_234);
+
+    handle
+        .submit_audio_event(AudioEvent::TrackBoundaryApplied {
+            entry_id: "entry-next".to_owned(),
+            first_sample_index: 1_235,
+        })
+        .expect("submit mismatched applied boundary");
+    let mismatch = next_error(&receiver);
+    assert_eq!(mismatch.code, CoreErrorCode::InvalidStateTransition);
+    assert_eq!(
+        handle
+            .current_snapshot()
+            .expect("snapshot unchanged")
+            .revision,
+        scheduled.revision,
+    );
+
+    handle
+        .submit_audio_event(AudioEvent::TrackBoundaryApplied {
+            entry_id: "entry-next".to_owned(),
+            first_sample_index: 1_234,
+        })
+        .expect("submit applied boundary");
+    let applied = next_snapshot(&receiver, scheduled.revision.get() + 1);
+    assert_eq!(applied.host_queue.current().unwrap().entry_id, "entry-next");
+    assert!(applied.host_queue_next_boundary.is_none());
+    assert!(applied.host_queue_snapshot().upcoming.is_empty());
+
+    runtime.shutdown().expect("shutdown actor");
+}
+
+#[test]
+fn late_playback_failure_keeps_the_queue_and_allows_removing_the_failed_entry() {
+    let (runtime, handle, receiver) = start_actor();
+    let (creating, start_advertising) = create_host(&handle, &receiver, "Failed track host");
+    handle
+        .submit_transport_event(TransportEvent::StateChanged(TransportState::Advertising))
+        .expect("submit advertising state");
+    let advertising = next_snapshot(&receiver, creating.revision.get() + 1);
+    handle
+        .submit_platform_event(PlatformEvent::OperationSucceeded {
+            operation_id: start_advertising.operation_id,
+            completion: PlatformOperationCompletion::AdvertisingStarted,
+        })
+        .expect("submit advertising success");
+    let waiting = next_snapshot(&receiver, advertising.revision.get() + 1);
+    handle
+        .submit_transport_event(TransportEvent::ListenerConnected(listener_summary()))
+        .expect("submit listener connection");
+    let ready = next_snapshot(&receiver, waiting.revision.get() + 1);
+    handle
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("submit playback start");
+    let playing = next_snapshot(&receiver, ready.revision.get() + 1);
+    handle
+        .submit_audio_event(AudioEvent::Failed(
+            CoreError::new(
+                CoreErrorCode::AudioOutputFailed,
+                "fixture.wav: source read failed after playback began",
+                ErrorSeverity::Error,
+                true,
+                None,
+            )
+            .expect("valid playback failure"),
+        ))
+        .expect("submit late read failure");
+    let failed = next_snapshot(&receiver, playing.revision.get() + 1);
+    assert_eq!(failed.playback_state, PlaybackState::Error);
+    assert_eq!(failed.host_lifecycle, HostLifecycle::Ready);
+    assert_eq!(failed.host_queue.current().unwrap().entry_id, "source-1");
+    assert_eq!(
+        failed.host_queue_snapshot().readiness,
+        HostQueueReadiness::Failed
+    );
+    assert!(failed.last_error.as_ref().unwrap().retryable);
+
+    let removed = command_snapshot(
+        &handle,
+        &receiver,
+        failed.revision,
+        CoreCommand::RemoveHostQueueEntry {
+            expected_queue_revision: failed.host_queue.revision(),
+            entry_id: "source-1".to_owned(),
+        },
+    );
+    assert!(removed.host_queue.entries().is_empty());
+    assert!(removed.host_queue_snapshot().error.is_none());
     runtime.shutdown().expect("shutdown actor");
 }
 

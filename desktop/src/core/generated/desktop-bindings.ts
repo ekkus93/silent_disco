@@ -32,6 +32,14 @@ export type ListenerCommandRequest = { expectedRevision: string, listenerId: str
 
 export type UpdateHostDraftRequest = { expectedRevision: string, sessionName: string, approvalMode: string, inviteCode: string | null, rememberApprovedDevices: boolean, };
 
+export type AppendHostQueueRequest = { expectedRevision: string, expectedQueueRevision: string, entries: Array<HostQueueEntryDto>, };
+
+export type ReorderHostQueueRequest = { expectedRevision: string, expectedQueueRevision: string, orderedEntryIds: Array<string>, };
+
+export type HostQueueEntryCommandRequest = { expectedRevision: string, expectedQueueRevision: string, entryId: string, };
+
+export type HostQueueClearRequest = { expectedRevision: string, expectedQueueRevision: string, };
+
 export type NetworkAddressClassDto = "loopback" | "link_local" | "private_lan" | "vpn" | "container" | "shared_address_space" | "other";
 
 export type NetworkAddressCandidateDto = { interfaceName: string, interfaceIndex: number, address: string, prefixLength: number, classification: NetworkAddressClassDto, isDefaultRoute: boolean, isActive: boolean, isPhysical: boolean, selectable: boolean, rejectionReason: string | null, };
@@ -50,13 +58,13 @@ export type DeliveryReportDto = { intendedPeers: number, successfulPeers: number
 
 export type BroadcastDeliveryDto = { framesAttempted: string, framesFailed: string, framesFullyDelivered: string, framesPartiallyDelivered: string, framesUndelivered: string, framesWithoutRecipients: string, recipientsIntended: string, recipientsDelivered: string, queueDepth: string, queuePeakDepth: string, queueOverflows: string, };
 
-export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, playbackPositionMs: string, 
+export type HostSessionSnapshotDto = { revision: string, hostLifecycle: string, transportState: string, playbackState: string, playbackPositionMs: string,
 /**
  * True once the current/most recent stream reached its own natural end,
  * distinct from an explicit stop -- both otherwise present as the same
  * generic `playback_state` of `stopped`.
  */
-streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, lastDeliveryOperationId: string | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null, 
+streamEndedNaturally: boolean, audioSource: AudioSourceSummaryDto | null, hostQueue: HostQueueDto, sessionName: string, connection: HostConnectionDto | null, pendingJoinRequests: Array<PendingJoinRequestDto>, connectedListeners: Array<ConnectedListenerDto>, lastDelivery: DeliveryReportDto | null, lastDeliveryOperationId: string | null, recoverableAction: string | null, playbackControlsEnabled: boolean, transportWorkerRunning: boolean, transportError: string | null, broadcast: BroadcastDeliveryDto | null, lastError: DesktopErrorDto | null,
 /**
  * Local monitor status (Block 34). Independent of `connection`/network
  * state -- monitor audio affects only what is heard at this desktop
@@ -68,11 +76,11 @@ export type HostInvitationDto = { payload: string, expiresAtMs: string, };
 
 export type MdnsStatusDto = { active: boolean, failureReason: string | null, };
 
-export type MonitorStatusDto = { 
+export type MonitorStatusDto = {
 /**
  * The user's current on/off preference (34.2 "monitor enable is explicit").
  */
-enabled: boolean, 
+enabled: boolean,
 /**
  * True only while a real output stream is actually running.
  */
@@ -80,7 +88,7 @@ active: boolean, failureReason: string | null, };
 
 export type NetworkBindingDto = { interfaceName: string, address: string, controlPort: number, syncPort: number, audioPort: number, mdns: MdnsStatusDto, };
 
-export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null, 
+export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto, candidates: Array<NetworkAddressCandidateDto>, automaticSelection: NetworkAddressCandidateDto | null, resolvedSelection: NetworkAddressCandidateDto | null, requiresExplicitSelection: boolean, selectionError: string | null, activeBinding: NetworkBindingDto | null, activeBindingValid: boolean, interfaceChange: string | null,
 /**
  * The current shared-address-space opt-in, so the UI renders the
  * authoritative value rather than tracking its own copy.
@@ -91,13 +99,23 @@ export type CommandReceiptDto = { operationId: string, acceptedAtRevision: strin
 
 export type AudioSourceSummaryDto = { sourceId: string, displayName: string, byteLength: string | null, durationMs: string | null, };
 
+export type HostQueueEntryDto = { entryId: string, source: AudioSourceSummaryDto, };
+
+export type HostQueueBoundaryDto = { entryId: string, firstSampleIndex: string, };
+
+export type HostQueuePreparationStateDto = "empty" | "prepared";
+
+export type HostQueueReadinessDto = "empty" | "ready" | "buffering" | "playing" | "paused" | "underrun" | "failed";
+
+export type HostQueueDto = { revision: string, entries: Array<HostQueueEntryDto>, current?: HostQueueEntryDto, upcoming?: Array<HostQueueEntryDto>, preparationState?: HostQueuePreparationStateDto, readiness?: HostQueueReadinessDto, error?: DesktopErrorDto, nextBoundary?: HostQueueBoundaryDto, };
+
 export type HostDraftDto = { sessionName: string, approvalMode: string, inviteCode: string | null, audioSource: AudioSourceSummaryDto | null, rememberApprovedDevices: boolean, };
 
 export type CapabilitySnapshotDto = { localNetworkAvailable: boolean, audioSourceSelectionAvailable: boolean, audioOutputAvailable: boolean, secureStoreAvailable: boolean, };
 
 export type HostDraftValidationDto = { field: string, code: string, message: string, };
 
-export type CoreSnapshotDto = { revision: string, selectedRole: string | null, capabilities: CapabilitySnapshotDto, hostDraft: HostDraftDto, hostDraftValidation: Array<HostDraftValidationDto>, canCreateHostSession: boolean, hostLifecycle: string, listenerLifecycle: string, transportState: string, discoveryActive: boolean, discoveredSessionCount: number, pendingJoinRequestCount: number, listenerCount: number, playbackState: string, playbackPositionMs: string, recoverableAction: string | null, lastError: DesktopErrorDto | null, shuttingDown: boolean, };
+export type CoreSnapshotDto = { revision: string, selectedRole: string | null, capabilities: CapabilitySnapshotDto, hostDraft: HostDraftDto, hostQueue: HostQueueDto, hostDraftValidation: Array<HostDraftValidationDto>, canCreateHostSession: boolean, hostLifecycle: string, listenerLifecycle: string, transportState: string, discoveryActive: boolean, discoveredSessionCount: number, pendingJoinRequestCount: number, listenerCount: number, playbackState: string, playbackPositionMs: string, recoverableAction: string | null, lastError: DesktopErrorDto | null, shuttingDown: boolean, };
 
 export type OpenProfileResponse = { lifecycle: BridgeLifecycleDto, coreVersion: CoreVersionDto, snapshot: CoreSnapshotDto, };
 
@@ -133,14 +151,14 @@ export type MonitorDiagnosticsDto = { enabled: boolean, active: boolean, failure
 
 export type NotificationBridgeDiagnosticsDto = { deliveryFailure: DesktopErrorDto | null, };
 
-export type DesktopDiagnosticsDto = { versions: VersionsDiagnosticsDto, profile: ProfileDiagnosticsDto, storage: StorageDiagnosticsDto, identity: IdentityDiagnosticsDto, endpoint: HostConnectionDto | null, transport: TransportDiagnosticsDto, listeners: Array<ListenerDiagnosticsDto>, 
+export type DesktopDiagnosticsDto = { versions: VersionsDiagnosticsDto, profile: ProfileDiagnosticsDto, storage: StorageDiagnosticsDto, identity: IdentityDiagnosticsDto, endpoint: HostConnectionDto | null, transport: TransportDiagnosticsDto, listeners: Array<ListenerDiagnosticsDto>,
 /**
  * True whenever the real listener count exceeded the bounded
  * `listeners` list above -- 35.3 "truncation/omission reported": a
  * bounded export must say so, not silently drop entries and look
  * complete.
  */
-listenersTruncated: boolean, synchronization: SynchronizationDiagnosticsDto | null, decodeQueue: DecodeQueueDiagnosticsDto | null, packetizeQueue: PacketizeQueueDiagnosticsDto | null, monitor: MonitorDiagnosticsDto, notificationBridge: NotificationBridgeDiagnosticsDto, lastError: DesktopErrorDto | null, shuttingDown: boolean, 
+listenersTruncated: boolean, synchronization: SynchronizationDiagnosticsDto | null, decodeQueue: DecodeQueueDiagnosticsDto | null, packetizeQueue: PacketizeQueueDiagnosticsDto | null, monitor: MonitorDiagnosticsDto, notificationBridge: NotificationBridgeDiagnosticsDto, lastError: DesktopErrorDto | null, shuttingDown: boolean,
 /**
  * Wall-clock capture time, for a frontend "stale data" indicator
  * (35.2) -- never used for sync/playback scheduling, which remains
@@ -156,37 +174,37 @@ export type LabLinkDto = { from: string, to: string, latencyMs: string, jitterMs
 
 export type LabScenarioSummaryDto = { schemaVersion: number, seed: string, nodeIds: Array<string>, linkCount: number, fixtureCount: number, stepCount: number, assertionCount: number, timeoutMs: string, links: Array<LabLinkDto>, };
 
-export type LabTimelineEntryDto = { node: string, sequence: string, 
+export type LabTimelineEntryDto = { node: string, sequence: string,
 /**
  * One of `"snapshot" | "effect" | "transportEffect" | "storageEffect"
  * | "error" | "diagnostic"`.
  */
 kind: string, summary: string, };
 
-export type LabStepResultDto = { index: number, atMs: string, node: string, submitError: string | null, 
+export type LabStepResultDto = { index: number, atMs: string, node: string, submitError: string | null,
 /**
  * `"settled" | "timedOut"`.
  */
 settlement: string, };
 
-export type LabAssertionResultDto = { kind: string, node: string, byMs: string, 
+export type LabAssertionResultDto = { kind: string, node: string, byMs: string,
 /**
  * `"held" | "timedOut"`.
  */
 outcome: string, };
 
-export type LabRunOutcomeDto = { 
+export type LabRunOutcomeDto = {
 /**
  * `"completed" | "timedOut" | "executionError"`.
  */
 outcome: string, finalTimeMs: string, stepResults: Array<LabStepResultDto>, assertionResults: Array<LabAssertionResultDto>, timeline: Array<LabTimelineEntryDto>, timelineTruncated: boolean, };
 
-export type LabStateDto = { nowMs: string, 
+export type LabStateDto = { nowMs: string,
 /**
  * `true` while `lab_run_loaded_scenario` is executing -- gates
  * "running-state command disablement" (Block 42's own test list).
  */
-running: boolean, 
+running: boolean,
 /**
  * `true` after a backend pause request has been accepted and until a
  * resume/stop/completion clears it. Pause is cooperative: the currently

@@ -7,11 +7,12 @@ use super::file_picker::SelectedSourceRegistry;
 use super::network::DesktopHostNetworkControl;
 use crate::dto::DesktopErrorDto;
 use silent_disco_core::audio::{
-    PacketizerWorkerError, PacketizerWorkerErrorKind, StreamingDecodeConfig,
-    StreamingPacketizeConfig, StreamingPacketizeHandle,
+    DecodeError, PacketizerWorkerError, PacketizerWorkerErrorKind, StreamingDecodeConfig,
+    StreamingDecodeHandle, StreamingPacketizeConfig, StreamingPacketizeHandle,
+    StreamingPlaylistTrackFactory,
 };
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, StreamId};
-use silent_disco_core::runtime::{AudioEvent, CoreActorHandle};
+use silent_disco_core::runtime::{AudioEvent, CoreActorHandle, QueueEntry};
 use std::sync::Arc;
 
 /// Startup presentation buffer before the first audio sample plays, matching
@@ -43,6 +44,21 @@ pub(crate) fn start(
             "no audio source is selected for this host session",
         )
     })?;
+    let queue_entries = if snapshot.host_queue.entries().is_empty() {
+        vec![
+            QueueEntry::new("single-track", descriptor.clone()).map_err(|error| {
+                DesktopErrorDto::new(
+                    "desktop.playback.invalid_queue_entry",
+                    "audio",
+                    "error",
+                    false,
+                    &error.to_string(),
+                )
+            })?,
+        ]
+    } else {
+        snapshot.host_queue.entries().to_vec()
+    };
     let active = network.active_host_session()?.ok_or_else(|| {
         DesktopErrorDto::new(
             "desktop.playback.no_active_session",
@@ -73,7 +89,7 @@ pub(crate) fn start(
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
         .map_err(DesktopErrorDto::from)?;
 
-    match start_after_buffering(handle, network, registry, &descriptor, session_id) {
+    match start_after_buffering(handle, network, registry, &queue_entries, session_id) {
         Ok(()) => Ok(()),
         Err(error) => {
             let state_error = handle
@@ -89,11 +105,54 @@ fn start_after_buffering(
     handle: &CoreActorHandle,
     network: &Arc<DesktopHostNetworkControl>,
     registry: &SelectedSourceRegistry,
-    descriptor: &silent_disco_core::runtime::AudioSourceDescriptor,
+    queue_entries: &[QueueEntry],
     session_id: silent_disco_core::domain::SessionId,
 ) -> Result<(), DesktopErrorDto> {
+    let current = queue_entries.first().ok_or_else(|| {
+        DesktopErrorDto::new(
+            "desktop.playback.no_source_selected",
+            "audio",
+            "error",
+            false,
+            "no audio source is queued for this host session",
+        )
+    })?;
     let prepared =
-        prepare_staged_audio_source(registry, descriptor, StreamingDecodeConfig::default())?;
+        prepare_staged_audio_source(registry, &current.source, StreamingDecodeConfig::default())?;
+    let mut upcoming = Vec::with_capacity(queue_entries.len().saturating_sub(1));
+    for entry in queue_entries.iter().skip(1) {
+        let source = registry
+            .resolve(&entry.source.source_id)?
+            .filter(|source| source.descriptor() == &entry.source)
+            .ok_or_else(|| {
+                DesktopErrorDto::new(
+                    "desktop.playback.queued_source_not_staged",
+                    "audio",
+                    "error",
+                    true,
+                    &format!(
+                        "{} is no longer staged in this desktop profile",
+                        entry.source.display_name
+                    ),
+                )
+            })?;
+        let path = source.canonical_path().to_owned();
+        let display_name = entry.source.display_name.clone();
+        let factory = StreamingPlaylistTrackFactory::new(
+            entry.entry_id.clone(),
+            display_name.clone(),
+            move || {
+                StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).map_err(
+                    |error| DecodeError {
+                        kind: error.kind,
+                        message: format!("{display_name}: {}", error.message),
+                    },
+                )
+            },
+        )
+        .map_err(|error| map_packetizer_error(&error))?;
+        upcoming.push(factory);
+    }
     let host_start_time_ms =
         MonotonicMillis::new(network.transport_now()?.get() + STARTUP_BUFFER_MS);
     let stream_id =
@@ -112,8 +171,11 @@ fn start_after_buffering(
     // independent of the handle's own ownership, which the packetizer
     // worker exclusively holds from this point on.
     let decode_diagnostics = decoder.statistics_reader();
-    let packetizer = StreamingPacketizeHandle::spawn(
+    let packetizer = StreamingPacketizeHandle::spawn_playlist(
         decoder,
+        current.entry_id.clone(),
+        current.source.display_name.clone(),
+        upcoming,
         session_id.clone(),
         stream_id.clone(),
         host_start_time_ms,

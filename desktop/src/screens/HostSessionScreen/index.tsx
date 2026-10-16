@@ -3,6 +3,7 @@ import { DeliveryAndTransportAlerts } from "./DeliveryAndTransportAlerts";
 import { ListenerList } from "./ListenerList";
 import { PendingJoinRequests } from "./PendingJoinRequests";
 import { PlaybackControls } from "./PlaybackControls";
+import { HostQueueControls } from "./HostQueueControls";
 import { QrInvitationPanel } from "./QrInvitationPanel";
 import { SessionHeaderAndStatus } from "./SessionHeaderAndStatus";
 import { ErrorAlert } from "./shared";
@@ -36,10 +37,9 @@ export function HostSessionScreen() {
   );
 
   return (
-    <section className="mx-auto max-w-6xl p-6 text-slate-100">
+    <section className="mx-auto max-w-6xl p-6 text-slate-100 [@media(max-height:700px)]:p-3">
       <SessionHeaderAndStatus
         sessionName={snapshot.sessionName}
-        revision={snapshot.revision}
         onRefresh={vm.refresh}
         onEndSession={vm.endSession}
         endPending={vm.endPending}
@@ -50,6 +50,49 @@ export function HostSessionScreen() {
         playbackState={snapshot.playbackState}
         transportWorkerRunning={snapshot.transportWorkerRunning}
       />
+
+      <section
+        aria-label="Live playback and queue controls"
+        className="host-live-dashboard sticky top-0 z-20 -mx-2 mt-3 max-h-[calc(100vh-1rem)] overflow-y-auto bg-[#171229]/95 px-2 pb-2 backdrop-blur [@media(max-height:700px)]:-mx-1 [@media(max-height:700px)]:mt-2 [@media(max-height:700px)]:px-1 [@media(max-height:700px)]:pb-1"
+      >
+        <PlaybackControls
+          audioSource={snapshot.audioSource}
+          playbackPositionMs={snapshot.playbackPositionMs}
+          streamEndedNaturally={snapshot.streamEndedNaturally}
+          playbackState={snapshot.playbackState}
+          playbackControlsEnabled={snapshot.playbackControlsEnabled}
+          playbackPending={vm.playbackPending}
+          onControlPlayback={vm.controlPlayback}
+          monitor={snapshot.monitor}
+          monitorPending={vm.monitorPending}
+          onToggleMonitor={vm.toggleMonitor}
+        />
+
+        <HostQueueControls
+          queue={snapshot.hostQueue}
+          revision={snapshot.revision}
+          playbackState={snapshot.playbackState}
+          onRefresh={vm.refresh}
+        />
+
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-2">
+          <span className="text-sm font-medium">
+            {snapshot.connectedListeners.length} listeners
+          </span>
+          <button
+            type="button"
+            onClick={vm.refreshInvitation}
+            disabled={vm.invitationPending}
+            className="rounded-lg border border-cyan-500/60 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-950/40 disabled:opacity-50 [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-1"
+          >
+            {vm.invitationPending
+              ? "Creating invite…"
+              : vm.invitation
+                ? "Refresh invite"
+                : "Create invite"}
+          </button>
+        </div>
+      </section>
 
       <ConnectionDetailsPanel connection={snapshot.connection} onCopy={vm.copyValue} />
 
@@ -89,19 +132,6 @@ export function HostSessionScreen() {
         removalOperations={vm.removalOperations}
         removalFailures={vm.removalFailures}
         onRequestRemoval={vm.requestRemoval}
-      />
-
-      <PlaybackControls
-        audioSource={snapshot.audioSource}
-        playbackPositionMs={snapshot.playbackPositionMs}
-        streamEndedNaturally={snapshot.streamEndedNaturally}
-        playbackState={snapshot.playbackState}
-        playbackControlsEnabled={snapshot.playbackControlsEnabled}
-        playbackPending={vm.playbackPending}
-        onControlPlayback={vm.controlPlayback}
-        monitor={snapshot.monitor}
-        monitorPending={vm.monitorPending}
-        onToggleMonitor={vm.toggleMonitor}
       />
 
       <DeliveryAndTransportAlerts

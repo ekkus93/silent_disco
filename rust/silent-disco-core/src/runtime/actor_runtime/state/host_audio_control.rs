@@ -19,7 +19,7 @@ impl ActorState {
                     HostLifecycle::Ready | HostLifecycle::WaitingForListeners
                 ) || !matches!(
                     self.snapshot.playback_state,
-                    PlaybackState::Stopped | PlaybackState::Ready
+                    PlaybackState::Stopped | PlaybackState::Ready | PlaybackState::Error
                 ) {
                     return Err(invalid_state(
                         "host playback can begin buffering only from an active stopped session",
@@ -87,6 +87,8 @@ impl ActorState {
             AudioEvent::PlaybackStateChanged(PlaybackState::Error | PlaybackState::Underrun)
             | AudioEvent::Failed(_)
             | AudioEvent::PositionAdvanced { .. }
+            | AudioEvent::TrackBoundaryScheduled { .. }
+            | AudioEvent::TrackBoundaryApplied { .. }
             | AudioEvent::SynchronizationUpdated { .. }
             | AudioEvent::Underrun { .. } => {}
         }
@@ -110,7 +112,8 @@ impl ActorState {
 mod tests {
     use super::{ActorState, AppRole, AudioEvent, HostLifecycle, PlaybackState};
     use crate::domain::{DeviceId, SessionId};
-    use crate::error::CoreErrorCode;
+    use crate::error::{CoreError, CoreErrorCode, ErrorSeverity};
+    use crate::runtime::RecoverableAction;
 
     fn ready_host() -> ActorState {
         let mut state = ActorState::new(DeviceId::new("host-audio-test").expect("valid device ID"));
@@ -178,5 +181,45 @@ mod tests {
         assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
         assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
         assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::Ready);
+    }
+
+    #[test]
+    fn retryable_playlist_failure_keeps_session_ready_and_play_can_retry() {
+        let mut state = ready_host();
+        state.snapshot.host_lifecycle = HostLifecycle::Streaming;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        let failure = CoreError::new(
+            CoreErrorCode::AudioOutputFailed,
+            "playlist decoder failed",
+            ErrorSeverity::Error,
+            true,
+            None,
+        )
+        .expect("valid playback failure");
+
+        state
+            .apply_audio_control(AudioEvent::Failed(failure))
+            .expect("retryable audio failure is observable");
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Error);
+        assert_eq!(
+            state.snapshot.host_lifecycle,
+            HostLifecycle::WaitingForListeners
+        );
+        assert_eq!(
+            state.snapshot.recoverable_action,
+            Some(RecoverableAction::Retry)
+        );
+        assert!(state.snapshot.last_error.is_some());
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+            .expect("Play retries from an audio error");
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Buffering);
+        assert_eq!(
+            state.snapshot.host_lifecycle,
+            HostLifecycle::WaitingForListeners
+        );
+        assert_eq!(state.snapshot.recoverable_action, None);
+        assert!(state.snapshot.last_error.is_none());
     }
 }

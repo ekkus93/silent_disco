@@ -1,8 +1,9 @@
 use super::types::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreNotification, FfiCoreSnapshot, FfiDeliveryReport,
-    FfiDiagnosticField, FfiHostDraft, FfiHostLifecycle, FfiJoinRequest, FfiListenerLifecycle,
-    FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState,
+    FfiDiagnosticField, FfiHostDraft, FfiHostLifecycle, FfiHostQueuePreparationState,
+    FfiHostQueueReadiness, FfiHostQueueSnapshot, FfiJoinRequest, FfiListenerLifecycle,
+    FfiListenerSummary, FfiPlatformCompletion, FfiPlatformEffect, FfiPlaybackState, FfiQueueEntry,
     FfiSessionAdvertisement, FfiStorageEffect, FfiSynchronizationSummary, FfiTransportEffect,
     FfiTransportState, FfiTrustState, FfiTuningPatch, FfiTuningSettings,
 };
@@ -13,10 +14,11 @@ use silent_disco_core::domain::{
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
     AudioOutputInfo, AudioSourceDescriptor, CommandReceipt, CoreDiagnostic, CoreNotification,
-    CoreSnapshot, DeliveryReport, NetworkEndpoint, PermissionCapability, PlatformEffect,
-    PlatformEffectRequest, PlatformOperationCompletion, RecoverableAction, SessionAdvertisement,
-    StorageEffect, StorageEffectRequest, SynchronizationSummary, TransportEffect,
-    TransportEffectRequest, TuningPatch,
+    CoreSnapshot, DeliveryReport, HostQueueBoundary, HostQueuePreparationState, HostQueueReadiness,
+    HostQueueSnapshot, NetworkEndpoint, PermissionCapability, PlatformEffect,
+    PlatformEffectRequest, PlatformOperationCompletion, QueueEntry, RecoverableAction,
+    SessionAdvertisement, StorageEffect, StorageEffectRequest, SynchronizationSummary,
+    TransportEffect, TransportEffectRequest, TuningPatch,
 };
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -224,6 +226,70 @@ impl TryFrom<FfiAudioSource> for AudioSourceDescriptor {
     }
 }
 
+impl From<QueueEntry> for FfiQueueEntry {
+    fn from(value: QueueEntry) -> Self {
+        Self {
+            entry_id: value.entry_id,
+            source: value.source.into(),
+        }
+    }
+}
+
+impl From<HostQueueBoundary> for super::types::FfiHostQueueBoundary {
+    fn from(value: HostQueueBoundary) -> Self {
+        Self {
+            entry_id: value.entry_id,
+            first_sample_index: value.first_sample_index,
+        }
+    }
+}
+
+impl From<HostQueuePreparationState> for FfiHostQueuePreparationState {
+    fn from(value: HostQueuePreparationState) -> Self {
+        match value {
+            HostQueuePreparationState::Empty => Self::Empty,
+            HostQueuePreparationState::Prepared => Self::Prepared,
+        }
+    }
+}
+
+impl From<HostQueueReadiness> for FfiHostQueueReadiness {
+    fn from(value: HostQueueReadiness) -> Self {
+        match value {
+            HostQueueReadiness::Empty => Self::Empty,
+            HostQueueReadiness::Ready => Self::Ready,
+            HostQueueReadiness::Buffering => Self::Buffering,
+            HostQueueReadiness::Playing => Self::Playing,
+            HostQueueReadiness::Paused => Self::Paused,
+            HostQueueReadiness::Underrun => Self::Underrun,
+            HostQueueReadiness::Failed => Self::Failed,
+        }
+    }
+}
+
+impl From<HostQueueSnapshot> for FfiHostQueueSnapshot {
+    fn from(value: HostQueueSnapshot) -> Self {
+        Self {
+            revision: value.revision,
+            current: value.current.map(Into::into),
+            upcoming: value.upcoming.into_iter().map(Into::into).collect(),
+            preparation_state: value.preparation_state.into(),
+            readiness: value.readiness.into(),
+            error: value.error.map(Into::into),
+            next_boundary: value.next_boundary.map(Into::into),
+        }
+    }
+}
+
+impl TryFrom<FfiQueueEntry> for QueueEntry {
+    type Error = FfiBridgeError;
+
+    fn try_from(value: FfiQueueEntry) -> Result<Self, Self::Error> {
+        Self::new(value.entry_id, value.source.try_into()?)
+            .map_err(|error| FfiBridgeError::Core(error.to_string()))
+    }
+}
+
 impl From<TuningSettings> for FfiTuningSettings {
     fn from(value: TuningSettings) -> Self {
         Self {
@@ -359,6 +425,7 @@ impl From<silent_disco_core::runtime::ListenerSummary> for FfiListenerSummary {
 
 impl From<CoreSnapshot> for FfiCoreSnapshot {
     fn from(value: CoreSnapshot) -> Self {
+        let host_queue_snapshot = value.host_queue_snapshot().into();
         let tuning = value.tuning.into();
         let host_draft = FfiHostDraft {
             session_name: value.host_draft.session_name,
@@ -372,6 +439,16 @@ impl From<CoreSnapshot> for FfiCoreSnapshot {
             revision: value.revision.get(),
             selected_role: value.selected_role.map(Into::into),
             host_draft,
+            host_queue: value
+                .host_queue
+                .entries()
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect(),
+            host_queue_revision: value.host_queue.revision(),
+            host_queue_next_boundary: value.host_queue_next_boundary.map(Into::into),
+            host_queue_snapshot,
             host_lifecycle: value.host_lifecycle.into(),
             listener_lifecycle: value.listener_lifecycle.into(),
             transport_state: value.transport_state.into(),

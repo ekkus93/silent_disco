@@ -8,9 +8,11 @@ import {
 } from "../app/selectors";
 import { useAppDispatch, useAppSelector } from "../app/store";
 import { uiActions } from "../app/uiSlice";
-import { selectAudioSource } from "../core/audioSourceClient";
 import {
+  addHostAudioSources,
   createHostSession,
+  removeHostQueueEntry,
+  reorderHostQueue,
   selectHostRole,
   toDesktopBridgeError,
   updateHostDraft,
@@ -64,6 +66,7 @@ export function HostSetupScreen() {
   const [networkReady, setNetworkReady] = useState(false);
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   const [sessionNameTouched, setSessionNameTouched] = useState(false);
+  const [setupStage, setSetupStage] = useState<"music" | "access" | "ready">("music");
   const roleSelectionRequest = useRef<{
     revision: string;
     request: ReturnType<typeof selectHostRole>;
@@ -125,7 +128,7 @@ export function HostSetupScreen() {
   const sessionNameError = sessionNameTouched ? validationByField.get("sessionName") : undefined;
 
   if (snapshot === null || draft === null) {
-    return <p role="status">Waiting for the authoritative Rust host draft…</p>;
+    return <p role="status">Loading host setup…</p>;
   }
 
   const lifecycleAllowsSetup =
@@ -136,7 +139,7 @@ export function HostSetupScreen() {
     (command) => command.commandKind === "create_host_session",
   );
   const sourcePending = pendingCommands.some(
-    (command) => command.commandKind === "select_audio_source",
+    (command) => command.commandKind === "append_host_queue",
   );
 
   const submitDraft = async () => {
@@ -156,30 +159,36 @@ export function HostSetupScreen() {
           submittedAtRevision: receipt.acceptedAtRevision,
         }),
       );
+      return true;
     } catch (error: unknown) {
       dispatch(
         coreActions.commandInvocationFailed(toDesktopBridgeError(error, "update host draft")),
       );
+      return false;
     }
+  };
+
+  const continueSetup = async () => {
+    if (pending) return;
+    if (dirty && !(await submitDraft())) return;
+    setSetupStage((stage) => (stage === "music" ? "access" : "ready"));
   };
 
   const chooseSource = async () => {
     setSelectingSource(true);
     try {
-      const receipt = await selectAudioSource(snapshot.revision);
+      const receipt = await addHostAudioSources();
       if (receipt !== null) {
         dispatch(
           coreActions.commandPending({
             operationId: receipt.operationId,
-            commandKind: "select_audio_source",
+            commandKind: "append_host_queue",
             submittedAtRevision: receipt.acceptedAtRevision,
           }),
         );
       }
     } catch (error: unknown) {
-      dispatch(
-        coreActions.commandInvocationFailed(toDesktopBridgeError(error, "select audio source")),
-      );
+      dispatch(coreActions.commandInvocationFailed(toDesktopBridgeError(error, "add songs")));
     } finally {
       setSelectingSource(false);
     }
@@ -219,80 +228,100 @@ export function HostSetupScreen() {
           <h2 id="advanced-tuning-title" className="mt-2 text-2xl font-bold">
             Advanced tuning
           </h2>
-          <p className="mt-3 text-violet-100/75">
-            Rust owns the active tuning values. Editing remains disabled until the dedicated typed
-            tuning command surface is connected.
-          </p>
+          <p className="mt-3 text-violet-100/75">Audio tuning is unavailable in this version.</p>
         </div>
       </section>
     );
   }
 
+  const setupStages = [
+    { id: "music", label: "Music" },
+    { id: "access", label: "Access" },
+    { id: "ready", label: "Ready" },
+  ] as const;
+
   return (
     <section aria-labelledby="host-setup-title" className="space-y-7">
       <div>
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300">
-          Rust-authoritative host setup
-        </p>
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300">Host setup</p>
         <h2 id="host-setup-title" className="mt-2 text-3xl font-bold">
           Create a silent disco
         </h2>
         <p className="mt-3 max-w-2xl text-violet-100/75">
-          Edit locally, then submit typed commands. The screen does not claim success until a newer
-          Rust snapshot arrives.
+          Choose a playlist, set who can join, then review the session before you start.
         </p>
       </div>
 
+      <nav aria-label="Host setup steps" className="flex flex-wrap gap-3">
+        {setupStages.map((stage, index) => (
+          <span
+            key={stage.id}
+            aria-current={setupStage === stage.id ? "step" : undefined}
+            className={`rounded-full border px-4 py-2 text-sm ${
+              setupStage === stage.id
+                ? "border-cyan-300 bg-cyan-300/10 text-cyan-100"
+                : "border-violet-200/15 text-violet-100/65"
+            }`}
+          >
+            {index + 1}. {stage.label}
+          </span>
+        ))}
+      </nav>
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <form
-          className="space-y-5 rounded-2xl border border-violet-200/15 bg-black/25 p-5"
+          className="sd-workflow-card space-y-5 p-5"
           onSubmit={(event) => {
             event.preventDefault();
-            void submitDraft();
+            if (setupStage !== "ready") void continueSetup();
           }}
         >
-          <div>
-            <label htmlFor="session-name" className="block text-sm font-semibold">
-              Session name
-            </label>
-            <input
-              id="session-name"
-              value={draft.sessionName}
-              onChange={(event) => {
-                setDraft({ ...draft, sessionName: event.target.value });
-                setDirty(true);
-              }}
-              onBlur={() => setSessionNameTouched(true)}
-              aria-describedby={sessionNameError ? "session-name-error" : undefined}
-              className="mt-2 w-full rounded-xl border border-violet-200/25 bg-slate-950 px-3 py-2"
-            />
-            {sessionNameError ? (
-              <p id="session-name-error" className="mt-2 text-sm text-amber-200">
-                {sessionNameError}
-              </p>
-            ) : null}
-          </div>
+          {setupStage === "music" ? (
+            <div>
+              <label htmlFor="session-name" className="block text-sm font-semibold">
+                Session name
+              </label>
+              <input
+                id="session-name"
+                value={draft.sessionName}
+                onChange={(event) => {
+                  setDraft({ ...draft, sessionName: event.target.value });
+                  setDirty(true);
+                }}
+                onBlur={() => setSessionNameTouched(true)}
+                aria-describedby={sessionNameError ? "session-name-error" : undefined}
+                className="mt-2 w-full rounded-xl border border-violet-200/25 bg-slate-950 px-3 py-2"
+              />
+              {sessionNameError ? (
+                <p id="session-name-error" className="mt-2 text-sm text-amber-200">
+                  {sessionNameError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
-          <div>
-            <label htmlFor="approval-mode" className="block text-sm font-semibold">
-              Listener approval
-            </label>
-            <select
-              id="approval-mode"
-              value={draft.approvalMode}
-              onChange={(event) => {
-                setDraft({ ...draft, approvalMode: event.target.value as ApprovalMode });
-                setDirty(true);
-              }}
-              className="mt-2 w-full rounded-xl border border-violet-200/25 bg-slate-950 px-3 py-2"
-            >
-              <option value="manual">Approve each listener</option>
-              <option value="trusted_devices">Automatically approve trusted devices</option>
-              <option value="invite_code">Require an invite code</option>
-            </select>
-          </div>
+          {setupStage === "access" ? (
+            <div>
+              <label htmlFor="approval-mode" className="block text-sm font-semibold">
+                Listener approval
+              </label>
+              <select
+                id="approval-mode"
+                value={draft.approvalMode}
+                onChange={(event) => {
+                  setDraft({ ...draft, approvalMode: event.target.value as ApprovalMode });
+                  setDirty(true);
+                }}
+                className="mt-2 w-full rounded-xl border border-violet-200/25 bg-slate-950 px-3 py-2"
+              >
+                <option value="manual">Approve each listener</option>
+                <option value="trusted_devices">Automatically approve trusted devices</option>
+                <option value="invite_code">Require an invite code</option>
+              </select>
+            </div>
+          ) : null}
 
-          {draft.approvalMode === "invite_code" ? (
+          {setupStage === "access" && draft.approvalMode === "invite_code" ? (
             <div>
               <label htmlFor="invite-code" className="block text-sm font-semibold">
                 Invite code
@@ -317,57 +346,115 @@ export function HostSetupScreen() {
             </div>
           ) : null}
 
-          <label className="flex items-start gap-3 rounded-xl border border-violet-200/15 p-3">
-            <input
-              aria-describedby="remember-approved-devices-help"
-              aria-label="Remember approved devices"
-              type="checkbox"
-              checked={draft.rememberApprovedDevices}
-              onChange={(event) => {
-                setDraft({ ...draft, rememberApprovedDevices: event.target.checked });
-                setDirty(true);
-              }}
-              className="mt-1"
-            />
-            <span>
-              <span className="block font-semibold">Remember approved devices</span>
-              <span
-                className="mt-1 block text-sm text-violet-100/65"
-                id="remember-approved-devices-help"
-              >
-                Rust applies the trusted-device policy; this checkbox does not persist trust itself.
+          {setupStage === "access" ? (
+            <label className="flex items-start gap-3 rounded-xl border border-violet-200/15 p-3">
+              <input
+                aria-describedby="remember-approved-devices-help"
+                aria-label="Remember approved devices"
+                type="checkbox"
+                checked={draft.rememberApprovedDevices}
+                onChange={(event) => {
+                  setDraft({ ...draft, rememberApprovedDevices: event.target.checked });
+                  setDirty(true);
+                }}
+                className="mt-1"
+              />
+              <span>
+                <span className="block font-semibold">Remember approved devices</span>
+                <span
+                  className="mt-1 block text-sm text-violet-100/65"
+                  id="remember-approved-devices-help"
+                >
+                  Approved devices can join future sessions without asking again.
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          ) : null}
+
+          {setupStage === "ready" ? (
+            <section aria-label="Session review" className="space-y-3">
+              <h3 className="text-lg font-semibold">Ready to host</h3>
+              <p>{snapshot.hostDraft.sessionName}</p>
+              <p>{snapshot.hostQueue.entries.length} songs queued</p>
+              <p>
+                {draft.approvalMode === "manual"
+                  ? "Approve each listener"
+                  : draft.approvalMode === "trusted_devices"
+                    ? "Trusted devices"
+                    : "Invite code required"}
+              </p>
+              {draft.approvalMode === "invite_code" ? (
+                <p>Invite code: {draft.inviteCode || "Required"}</p>
+              ) : null}
+              {dirty ? <p role="status">Saving the latest settings…</p> : null}
+            </section>
+          ) : null}
 
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => void chooseSource()}
-              disabled={!canSubmit || selectingSource}
-              className="rounded-xl border border-cyan-300/40 px-4 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {selectingSource ? "Opening audio picker…" : "Select audio file"}
-            </button>
-            <button
-              type="submit"
-              disabled={!canSubmit || !dirty}
-              className="rounded-xl bg-cyan-300 px-4 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Validate settings
-            </button>
-            <button
-              type="button"
-              onClick={() => void createSession()}
-              disabled={!canCreate}
-              className="rounded-xl bg-violet-300 px-4 py-2 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Create session
-            </button>
+            {setupStage === "music" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void chooseSource()}
+                  disabled={!canSubmit || selectingSource}
+                  className="sd-workflow-control rounded-sd-control border border-sd-outline px-4 py-2 font-semibold text-sd-on-surface disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {selectingSource ? "Opening audio picker…" : "Add songs"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    !canSubmit ||
+                    snapshot.hostQueue.entries.length === 0 ||
+                    !draft.sessionName.trim()
+                  }
+                  className="sd-workflow-control rounded-sd-control bg-sd-secondary-container px-4 py-2 font-semibold text-sd-on-secondary-container disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next: Access
+                </button>
+              </>
+            ) : null}
+            {setupStage === "access" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSetupStage("music")}
+                  className="sd-workflow-control rounded-sd-control border border-sd-outline px-4 py-2 font-semibold text-sd-on-surface"
+                >
+                  Back to music
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canSubmit}
+                  className="sd-workflow-control rounded-sd-control bg-sd-secondary-container px-4 py-2 font-semibold text-sd-on-secondary-container disabled:opacity-40"
+                >
+                  Review session
+                </button>
+              </>
+            ) : null}
+            {setupStage === "ready" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSetupStage("access")}
+                  className="sd-workflow-control rounded-sd-control border border-sd-outline px-4 py-2 font-semibold text-sd-on-surface"
+                >
+                  Back to access
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void createSession()}
+                  disabled={!canCreate}
+                  className="sd-workflow-control rounded-sd-control bg-sd-primary px-4 py-2 font-semibold text-sd-on-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {createPending ? "Starting…" : "Start hosting"}
+                </button>
+              </>
+            ) : null}
             <button
               type="button"
               onClick={() => setShowAdvancedTuning(true)}
-              className="rounded-xl border border-violet-300/30 px-4 py-2 font-semibold"
+              className="sd-workflow-control rounded-sd-control border border-sd-outline px-4 py-2 font-semibold text-sd-on-surface"
             >
               Advanced tuning
             </button>
@@ -375,28 +462,96 @@ export function HostSetupScreen() {
         </form>
 
         <aside className="space-y-4" aria-label="Host setup summary">
-          <SummaryCard title="Selected audio source">
-            {snapshot.hostDraft.audioSource === null ? (
-              <>
-                <p>No inspected source selected.</p>
-                <p className="mt-2 text-sm text-violet-100/65">
-                  Select one WAV, FLAC, or MP3 file. Rust validates the regular-file status, size,
-                  bounded name, canonical identity, and content signature before registration.
-                </p>
-              </>
+          <SummaryCard title={`Playlist (${snapshot.hostQueue.entries.length})`}>
+            {snapshot.hostQueue.entries.length === 0 ? (
+              <p>No songs added. Add WAV, FLAC, or MP3 files to build the playlist.</p>
             ) : (
-              <>
-                <p>{snapshot.hostDraft.audioSource.displayName}</p>
-                {snapshot.hostDraft.audioSource.byteLength !== null ? (
-                  <p className="mt-1 font-mono text-xs text-violet-100/55">
-                    {snapshot.hostDraft.audioSource.byteLength} bytes
-                  </p>
-                ) : null}
-              </>
+              <ol className="space-y-3">
+                {snapshot.hostQueue.entries.map((entry, index) => (
+                  <li key={entry.entryId} className="rounded-lg border border-violet-200/15 p-3">
+                    <p className="font-medium">
+                      {index + 1}. {entry.source.displayName}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={pending || index === 0}
+                        onClick={() => {
+                          const ids = snapshot.hostQueue.entries.map((item) => item.entryId);
+                          const before = ids[index - 1];
+                          const current = ids[index];
+                          if (before && current) {
+                            ids[index - 1] = current;
+                            ids[index] = before;
+                          }
+                          void reorderHostQueue({
+                            expectedRevision: snapshot.revision,
+                            expectedQueueRevision: snapshot.hostQueue.revision,
+                            orderedEntryIds: ids,
+                          }).catch((error: unknown) =>
+                            dispatch(
+                              coreActions.commandInvocationFailed(
+                                toDesktopBridgeError(error, "reorder playlist"),
+                              ),
+                            ),
+                          );
+                        }}
+                        className="rounded border border-violet-200/20 px-2 py-1 text-sm disabled:opacity-40"
+                      >
+                        Move up
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pending || index === snapshot.hostQueue.entries.length - 1}
+                        onClick={() => {
+                          const ids = snapshot.hostQueue.entries.map((item) => item.entryId);
+                          const current = ids[index];
+                          const after = ids[index + 1];
+                          if (current && after) {
+                            ids[index] = after;
+                            ids[index + 1] = current;
+                          }
+                          void reorderHostQueue({
+                            expectedRevision: snapshot.revision,
+                            expectedQueueRevision: snapshot.hostQueue.revision,
+                            orderedEntryIds: ids,
+                          }).catch((error: unknown) =>
+                            dispatch(
+                              coreActions.commandInvocationFailed(
+                                toDesktopBridgeError(error, "reorder playlist"),
+                              ),
+                            ),
+                          );
+                        }}
+                        className="rounded border border-violet-200/20 px-2 py-1 text-sm disabled:opacity-40"
+                      >
+                        Move down
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          void removeHostQueueEntry({
+                            expectedRevision: snapshot.revision,
+                            expectedQueueRevision: snapshot.hostQueue.revision,
+                            entryId: entry.entryId,
+                          }).catch((error: unknown) =>
+                            dispatch(
+                              coreActions.commandInvocationFailed(
+                                toDesktopBridgeError(error, "remove playlist item"),
+                              ),
+                            ),
+                          )
+                        }
+                        className="rounded border border-violet-200/20 px-2 py-1 text-sm disabled:opacity-40"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
             )}
-            {validationByField.has("audioSource") ? (
-              <p className="mt-2 text-sm text-amber-200">{validationByField.get("audioSource")}</p>
-            ) : null}
           </SummaryCard>
 
           <HostNetworkReadinessSummary
@@ -419,12 +574,12 @@ export function HostSetupScreen() {
       {pending || selectingSource ? (
         <p role="status" aria-live="polite" className="rounded-xl border border-cyan-300/25 p-3">
           {selectingSource
-            ? "Waiting for the native audio file dialog…"
+            ? "Choose audio files…"
             : createPending
-              ? "Create request accepted by the queue. Waiting for a newer Rust snapshot…"
+              ? "Starting your session…"
               : sourcePending
-                ? "Source registration accepted by the queue. Waiting for a newer Rust snapshot…"
-                : "Host settings are pending authoritative Rust evidence…"}
+                ? "Adding songs…"
+                : "Saving host settings…"}
         </p>
       ) : null}
 
@@ -439,7 +594,7 @@ export function HostSetupScreen() {
 
       {!lifecycleAllowsSetup ? (
         <p role="status" className="rounded-xl border border-violet-300/25 p-3">
-          Rust host lifecycle: {snapshot.hostLifecycle}. This screen has not locally advanced it.
+          Finish the active host session before changing these settings.
         </p>
       ) : null}
     </section>
@@ -448,7 +603,7 @@ export function HostSetupScreen() {
 
 function SummaryCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-violet-200/15 bg-black/25 p-4">
+    <section className="sd-workflow-card p-4">
       <h3 className="font-semibold text-cyan-200">{title}</h3>
       <div className="mt-2 text-sm leading-6 text-violet-100/70">{children}</div>
     </section>

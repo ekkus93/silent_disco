@@ -55,7 +55,7 @@ fun TrustedHostsScreen(
         when {
             uiState.storageState == P2StorageState.INITIALIZING -> LoadingState(
                 title = "Loading trusted hosts…",
-                detail = "Reading verified host keys from Rust-owned storage",
+                detail = "Checking saved host identities",
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),

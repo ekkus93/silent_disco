@@ -1,11 +1,15 @@
 use super::{
-    ActorState, ApplyOutcome, AudioEvent, CoreError, CoreNotification, PlaybackState, invalid_state,
+    ActorState, ApplyOutcome, AudioEvent, CoreError, CoreNotification, HostQueueBoundary,
+    PlaybackState, invalid_state,
 };
 
 impl ActorState {
     pub(super) fn apply_audio(&mut self, event: AudioEvent) -> Result<ApplyOutcome, CoreError> {
         match event {
             AudioEvent::PlaybackStateChanged(state) => {
+                if state == PlaybackState::Buffering {
+                    self.clear_failure();
+                }
                 // A genuinely new stream starts playing from a state other
                 // than Paused or Playing -- resuming a pause must continue
                 // from where it left off, not reset, and a duplicate/stale
@@ -23,6 +27,10 @@ impl ActorState {
                 {
                     self.snapshot.playback_position_ms = 0;
                     self.snapshot.stream_ended_naturally = false;
+                    self.snapshot.host_queue_next_boundary = None;
+                }
+                if matches!(state, PlaybackState::Stopped | PlaybackState::Error) {
+                    self.snapshot.host_queue_next_boundary = None;
                 }
                 self.snapshot.playback_state = state;
                 Ok(ApplyOutcome::changed())
@@ -43,6 +51,81 @@ impl ActorState {
                 self.snapshot.playback_position_ms = position_ms;
                 Ok(ApplyOutcome::changed())
             }
+            AudioEvent::TrackBoundaryApplied {
+                entry_id,
+                first_sample_index,
+            } => {
+                if self.snapshot.playback_state != PlaybackState::Playing {
+                    return Err(invalid_state(
+                        "track boundary applied while playback was inactive",
+                        None,
+                    ));
+                }
+                let expected = self.snapshot.host_queue.upcoming().first().ok_or_else(|| {
+                    invalid_state("track boundary has no matching queued entry", None)
+                })?;
+                if expected.entry_id != entry_id {
+                    return Err(invalid_state(
+                        "track boundary does not match the next queued entry",
+                        None,
+                    ));
+                }
+                let revision = self.snapshot.host_queue.revision();
+                if let Some(boundary) = &self.snapshot.host_queue_next_boundary
+                    && (boundary.entry_id != entry_id
+                        || boundary.first_sample_index != first_sample_index)
+                {
+                    return Err(invalid_state(
+                        "applied track boundary differs from the announced queue boundary",
+                        None,
+                    ));
+                }
+                self.snapshot
+                    .host_queue
+                    .complete_current(revision)
+                    .map_err(|error| invalid_state(error.to_string(), None))?;
+                self.snapshot.host_draft.audio_source = self
+                    .snapshot
+                    .host_queue
+                    .current()
+                    .map(|entry| entry.source.clone());
+                self.snapshot.host_queue_next_boundary = None;
+                Ok(ApplyOutcome::changed())
+            }
+            AudioEvent::TrackBoundaryScheduled {
+                entry_id,
+                first_sample_index,
+            } => {
+                if self.snapshot.playback_state != PlaybackState::Playing {
+                    return Err(invalid_state(
+                        "track boundary scheduled while playback was inactive",
+                        None,
+                    ));
+                }
+                let expected = self.snapshot.host_queue.upcoming().first().ok_or_else(|| {
+                    invalid_state("track boundary has no matching queued entry", None)
+                })?;
+                if expected.entry_id != entry_id {
+                    return Err(invalid_state(
+                        "track boundary does not match the next queued entry",
+                        None,
+                    ));
+                }
+                if let Some(boundary) = &self.snapshot.host_queue_next_boundary
+                    && (boundary.entry_id != entry_id
+                        || boundary.first_sample_index != first_sample_index)
+                {
+                    return Err(invalid_state(
+                        "a different queue boundary is already scheduled",
+                        None,
+                    ));
+                }
+                self.snapshot.host_queue_next_boundary = Some(HostQueueBoundary {
+                    entry_id,
+                    first_sample_index,
+                });
+                Ok(ApplyOutcome::changed())
+            }
             AudioEvent::SynchronizationUpdated { device_id, summary } => {
                 self.snapshot.synchronization = Some(summary);
                 if let Some(listener) = self
@@ -56,6 +139,13 @@ impl ActorState {
                 Ok(ApplyOutcome::changed())
             }
             AudioEvent::EndOfStream { .. } => {
+                let queue_revision = self.snapshot.host_queue.revision();
+                self.snapshot
+                    .host_queue
+                    .clear(queue_revision, false)
+                    .map_err(|error| invalid_state(error.to_string(), None))?;
+                self.snapshot.host_draft.audio_source = None;
+                self.snapshot.host_queue_next_boundary = None;
                 self.snapshot.playback_state = PlaybackState::Stopped;
                 self.snapshot.stream_ended_naturally = true;
                 Ok(ApplyOutcome::changed())
@@ -71,6 +161,7 @@ impl ActorState {
             }
             AudioEvent::Failed(error) => {
                 self.snapshot.playback_state = PlaybackState::Error;
+                self.snapshot.host_queue_next_boundary = None;
                 self.snapshot.last_error = Some(error.clone());
                 Ok(ApplyOutcome {
                     notifications: vec![CoreNotification::Error(error)],

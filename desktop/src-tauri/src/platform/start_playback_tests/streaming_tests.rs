@@ -9,11 +9,16 @@ use super::harness::{
     wait_for_audio, wait_for_control, wait_for_stream_start, wait_for_sync_response, wait_snapshot,
 };
 use crate::platform::start_playback;
+use silent_disco_core::audio::{
+    StreamingDecodeConfig, StreamingDecodeHandle, StreamingPlaylistTrackFactory,
+};
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, SyncConfidence};
 use silent_disco_core::protocol::{
     ControlMessage, ProtocolFrame, SyncRequest, SynchronizationReport,
 };
-use silent_disco_core::runtime::{AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch};
+use silent_disco_core::runtime::{
+    AudioSourcePatch, CoreCommand, HostDraftPatch, InviteCodePatch, QueueEntry,
+};
 use silent_disco_core::transport::{TransportChannel, TransportEvent};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -81,6 +86,187 @@ fn desktop_host_streams_real_audio_and_answers_sync_requests() {
         snapshot.playback_state == silent_disco_core::domain::PlaybackState::Stopped
     });
 
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+#[test]
+fn desktop_host_emits_sample_indexed_boundary_for_the_next_queued_track() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!(
+            "no private LAN interface on this CI host; queue boundary transport test skipped"
+        );
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (descriptor_a, registry) = stage_source(&temp);
+    let descriptor_b = super::fixtures::replace_source(
+        &temp,
+        &registry,
+        "desktop-block-playback-queued-second-source",
+    );
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(descriptor_a, interface_name, interface_index, address);
+    let before = handle.current_snapshot().expect("snapshot before append");
+    let current_entry = before
+        .host_queue
+        .current()
+        .expect("current queue entry")
+        .clone();
+    submit(
+        &handle,
+        before.revision.get(),
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: before.host_queue.revision(),
+            entries: vec![QueueEntry::new("queued-second", descriptor_b).expect("queue entry")],
+        },
+    );
+    wait_snapshot(&handle, |snapshot| snapshot.host_queue.entries().len() == 2);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+
+    start_playback::start(&handle, &network, &registry).expect("start queued playlist");
+    let announced = wait_for_stream_start(&mut *listener);
+    assert_eq!(
+        announced.current_entry_id.as_deref(),
+        Some(current_entry.entry_id.as_str())
+    );
+    assert_eq!(
+        announced.current_display_name.as_deref(),
+        Some(current_entry.source.display_name.as_str()),
+    );
+    let boundary_sample = loop {
+        match listener.recv_event(Duration::from_secs(10)) {
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)),
+                ..
+            }) if boundary.entry_id == "queued-second" => {
+                break boundary.first_sample_index.get();
+            }
+            Ok(_) => {}
+            Err(error) => panic!("listener did not receive queued track boundary: {error}"),
+        }
+    };
+    assert_eq!(boundary_sample, 4_800);
+    let next_track_audio = loop {
+        let datagram = wait_for_audio(&mut *listener);
+        if datagram.first_sample_index.get() >= boundary_sample {
+            break datagram;
+        }
+    };
+    assert_eq!(next_track_audio.first_sample_index.get(), boundary_sample);
+
+    network.stop_playback().expect("stop queued playlist");
+    listener.shutdown().expect("listener shutdown");
+    network.shutdown().expect("stop desktop host transport");
+    actor.shutdown().expect("actor shutdown");
+}
+
+#[test]
+fn desktop_live_queue_removal_cancels_the_prebuffer_and_targets_the_replacement() {
+    let Some((interface_name, interface_index, address)) = real_private_lan_address() else {
+        eprintln!("no private LAN interface on this CI host; skipping live queue retarget test");
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp");
+    let (current_source, registry) = stage_long_source(&temp);
+    let stale_source = replace_source(&temp, &registry, "desktop-live-retarget-stale");
+    let replacement_source = replace_source(&temp, &registry, "desktop-live-retarget-replacement");
+    let (actor, handle, receiver, advertisement, network, endpoint) =
+        start_host_session(current_source, interface_name, interface_index, address);
+    let before = handle.current_snapshot().expect("queue before append");
+    submit(
+        &handle,
+        before.revision.get(),
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: before.host_queue.revision(),
+            entries: vec![
+                QueueEntry::new("retarget-stale", stale_source).expect("stale queue entry"),
+                QueueEntry::new("retarget-replacement", replacement_source)
+                    .expect("replacement queue entry"),
+            ],
+        },
+    );
+    wait_snapshot(&handle, |snapshot| snapshot.host_queue.entries().len() == 3);
+    let mut listener = join_and_approve_listener(
+        address,
+        endpoint,
+        &advertisement,
+        &handle,
+        &receiver,
+        &network,
+    );
+    start_playback::start(&handle, &network, &registry).expect("start playlist with prebuffer");
+    let _ = wait_for_stream_start(&mut *listener);
+    let _ = wait_for_audio(&mut *listener);
+
+    let before_remove = handle.current_snapshot().expect("queue before removal");
+    submit(
+        &handle,
+        before_remove.revision.get(),
+        CoreCommand::RemoveHostQueueEntry {
+            expected_queue_revision: before_remove.host_queue.revision(),
+            entry_id: "retarget-stale".to_owned(),
+        },
+    );
+    let updated = wait_snapshot(&handle, |snapshot| {
+        snapshot.host_queue.entries().len() == 2
+            && snapshot
+                .host_queue
+                .upcoming()
+                .first()
+                .is_some_and(|entry| entry.entry_id == "retarget-replacement")
+    });
+    let replacement = updated
+        .host_queue
+        .upcoming()
+        .first()
+        .expect("replacement remains queued")
+        .clone();
+    let staged = registry
+        .resolve(&replacement.source.source_id)
+        .expect("registry lookup")
+        .expect("replacement source is staged");
+    let path = staged.canonical_path().to_owned();
+    let display_name = replacement.source.display_name.clone();
+    let factory =
+        StreamingPlaylistTrackFactory::new(replacement.entry_id, display_name.clone(), move || {
+            StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).map_err(|error| {
+                silent_disco_core::audio::DecodeError {
+                    kind: error.kind,
+                    message: format!("{display_name}: {}", error.message),
+                }
+            })
+        })
+        .expect("replacement track factory");
+    network
+        .replace_upcoming_playlist(vec![factory])
+        .expect("retarget active packetizer");
+
+    let boundary_entry = loop {
+        match listener.recv_event(Duration::from_secs(10)) {
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)),
+                ..
+            }) => break boundary.entry_id,
+            Ok(_) => {}
+            Err(error) => panic!("listener did not receive replacement boundary: {error}"),
+        }
+    };
+    assert_eq!(boundary_entry, "retarget-replacement");
+
+    network.stop_playback().expect("stop retargeted playlist");
     listener.shutdown().expect("listener shutdown");
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");

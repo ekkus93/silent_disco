@@ -15,6 +15,21 @@ impl ActorState {
         match command {
             CoreCommand::SelectRole { role } => self.select_role(operation_id, role),
             CoreCommand::UpdateHostDraft(patch) => self.update_host_draft(operation_id, &patch),
+            CoreCommand::AppendHostQueue {
+                expected_queue_revision,
+                entries,
+            } => self.append_host_queue(operation_id, expected_queue_revision, entries),
+            CoreCommand::ReorderHostQueue {
+                expected_queue_revision,
+                ordered_entry_ids,
+            } => self.reorder_host_queue(operation_id, expected_queue_revision, ordered_entry_ids),
+            CoreCommand::RemoveHostQueueEntry {
+                expected_queue_revision,
+                entry_id,
+            } => self.remove_host_queue_entry(operation_id, expected_queue_revision, &entry_id),
+            CoreCommand::ClearHostQueue {
+                expected_queue_revision,
+            } => self.clear_host_queue(operation_id, expected_queue_revision),
             CoreCommand::CreateHostSession => self.create_host_session(operation_id),
             CoreCommand::EndHostSession => self.end_host_session(operation_id),
             CoreCommand::StartDiscovery => self.start_discovery(operation_id),
@@ -96,13 +111,183 @@ impl ActorState {
                 Some(operation_id),
             ));
         }
-        self.snapshot.host_draft = self
+        let updated = self
             .snapshot
             .host_draft
             .patched(patch)
-            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id)))?;
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        if updated.audio_source != self.snapshot.host_draft.audio_source {
+            let entries = updated
+                .audio_source
+                .as_ref()
+                .map(|source| {
+                    crate::runtime::QueueEntry::new(source.source_id.clone(), source.clone())
+                        .map_err(|error| {
+                            invalid_argument(error.to_string(), Some(operation_id.clone()))
+                        })
+                })
+                .transpose()?
+                .into_iter()
+                .collect();
+            let revision = self.snapshot.host_queue.revision();
+            self.snapshot
+                .host_queue
+                .replace_all(revision, entries)
+                .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+            self.clear_stale_host_queue_boundary();
+        }
+        self.snapshot.host_draft = updated;
         self.clear_failure();
         Ok(ApplyOutcome::changed())
+    }
+
+    fn append_host_queue(
+        &mut self,
+        operation_id: OperationId,
+        expected_revision: u64,
+        entries: Vec<crate::runtime::QueueEntry>,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_host_queue_editable(&operation_id)?;
+        self.snapshot
+            .host_queue
+            .append(expected_revision, entries)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        self.sync_legacy_audio_source();
+        self.clear_stale_host_queue_boundary();
+        self.clear_failure();
+        Ok(ApplyOutcome::changed())
+    }
+
+    fn reorder_host_queue(
+        &mut self,
+        operation_id: OperationId,
+        expected_revision: u64,
+        ordered_entry_ids: Vec<String>,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_host_queue_editable(&operation_id)?;
+        let current_locked = matches!(
+            self.snapshot.playback_state,
+            PlaybackState::Playing
+                | PlaybackState::Paused
+                | PlaybackState::Buffering
+                | PlaybackState::Underrun
+        );
+        if let Some(boundary) = &self.snapshot.host_queue_next_boundary
+            && ordered_entry_ids.get(1).map(String::as_str) != Some(boundary.entry_id.as_str())
+        {
+            return Err(invalid_state(
+                "queue reorder cannot change the already scheduled next track",
+                Some(operation_id.clone()),
+            ));
+        }
+        self.snapshot
+            .host_queue
+            .reorder(expected_revision, &ordered_entry_ids, current_locked)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        self.sync_legacy_audio_source();
+        self.clear_stale_host_queue_boundary();
+        self.clear_failure();
+        Ok(ApplyOutcome::changed())
+    }
+
+    fn remove_host_queue_entry(
+        &mut self,
+        operation_id: OperationId,
+        expected_revision: u64,
+        entry_id: &str,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_host_queue_editable(&operation_id)?;
+        let current_locked = matches!(
+            self.snapshot.playback_state,
+            PlaybackState::Playing
+                | PlaybackState::Paused
+                | PlaybackState::Buffering
+                | PlaybackState::Underrun
+        );
+        if self
+            .snapshot
+            .host_queue_next_boundary
+            .as_ref()
+            .is_some_and(|boundary| boundary.entry_id == entry_id)
+        {
+            return Err(invalid_state(
+                "the already scheduled next track cannot be removed",
+                Some(operation_id.clone()),
+            ));
+        }
+        self.snapshot
+            .host_queue
+            .remove(expected_revision, entry_id, current_locked)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        self.sync_legacy_audio_source();
+        self.clear_stale_host_queue_boundary();
+        self.clear_failure();
+        Ok(ApplyOutcome::changed())
+    }
+
+    fn clear_host_queue(
+        &mut self,
+        operation_id: OperationId,
+        expected_revision: u64,
+    ) -> Result<ApplyOutcome, CoreError> {
+        self.require_host_queue_editable(&operation_id)?;
+        if self.snapshot.host_queue_next_boundary.is_some() {
+            return Err(invalid_state(
+                "host queue cannot be cleared after the next track boundary has been scheduled",
+                Some(operation_id.clone()),
+            ));
+        }
+        let current_locked = matches!(
+            self.snapshot.playback_state,
+            PlaybackState::Playing
+                | PlaybackState::Paused
+                | PlaybackState::Buffering
+                | PlaybackState::Underrun
+        );
+        self.snapshot
+            .host_queue
+            .clear(expected_revision, current_locked)
+            .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
+        self.sync_legacy_audio_source();
+        self.snapshot.host_queue_next_boundary = None;
+        self.clear_failure();
+        Ok(ApplyOutcome::changed())
+    }
+
+    fn require_host_queue_editable(&self, operation_id: &OperationId) -> Result<(), CoreError> {
+        self.require_role(AppRole::Host, operation_id)?;
+        if self.snapshot.host_lifecycle == HostLifecycle::EndingSession {
+            return Err(invalid_state(
+                "host queue cannot change while the session is ending",
+                Some(operation_id.clone()),
+            ));
+        }
+        Ok(())
+    }
+
+    fn sync_legacy_audio_source(&mut self) {
+        self.snapshot.host_draft.audio_source = self
+            .snapshot
+            .host_queue
+            .current()
+            .map(|entry| entry.source.clone());
+    }
+
+    fn clear_stale_host_queue_boundary(&mut self) {
+        let boundary_is_still_next =
+            self.snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    self.snapshot
+                        .host_queue
+                        .upcoming()
+                        .first()
+                        .is_some_and(|entry| entry.entry_id == boundary.entry_id)
+                });
+        if !boundary_is_still_next {
+            self.snapshot.host_queue_next_boundary = None;
+        }
     }
 
     /// True when `patch` is exactly a track switch: the session is live but
@@ -585,5 +770,179 @@ mod track_switch_tests {
             );
         assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
         assert_eq!(state.snapshot.host_draft.session_name, "");
+    }
+}
+
+#[cfg(test)]
+mod host_queue_actor_tests {
+    use super::{ActorState, AppRole, HostLifecycle, OperationId, PlaybackState};
+    use crate::domain::{DeviceId, StreamId};
+    use crate::error::CoreErrorCode;
+    use crate::runtime::{AudioEvent, AudioSourceDescriptor, QueueEntry};
+
+    fn host() -> ActorState {
+        let mut state = ActorState::new(DeviceId::new("host-queue-test").expect("valid device ID"));
+        state.snapshot.selected_role = Some(AppRole::Host);
+        state
+    }
+
+    fn entry(id: &str, source: &str) -> QueueEntry {
+        QueueEntry::new(
+            id,
+            AudioSourceDescriptor::new(source, "Track.wav", Some(4_096), Some(2_000))
+                .expect("valid source"),
+        )
+        .expect("valid queue entry")
+    }
+
+    #[test]
+    fn actor_queue_append_and_reorder_update_the_snapshot_and_legacy_source() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append").expect("operation ID"),
+                0,
+                vec![entry("one", "same"), entry("two", "same")],
+            )
+            .expect("append");
+        assert_eq!(state.snapshot.host_queue.entries().len(), 2);
+        assert_eq!(
+            state
+                .snapshot
+                .host_draft
+                .audio_source
+                .as_ref()
+                .unwrap()
+                .source_id,
+            "same"
+        );
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        state
+            .reorder_host_queue(
+                OperationId::new("reorder").expect("operation ID"),
+                1,
+                vec!["one".into(), "two".into()],
+            )
+            .expect("unchanged active order is allowed");
+        let error = state
+            .remove_host_queue_entry(OperationId::new("remove").expect("operation ID"), 1, "one")
+            .expect_err("playing current entry is locked");
+        assert_eq!(error.code, CoreErrorCode::InvalidArgument);
+        assert_eq!(state.snapshot.host_queue.entries().len(), 2);
+    }
+
+    #[test]
+    fn queue_edits_are_rejected_after_the_next_boundary_is_scheduled() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-scheduled").expect("operation ID"),
+                0,
+                vec![entry("one", "one"), entry("two", "two")],
+            )
+            .expect("append");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        state
+            .apply_audio(AudioEvent::TrackBoundaryScheduled {
+                entry_id: "two".into(),
+                first_sample_index: 1_234,
+            })
+            .expect("schedule boundary");
+
+        let error = state
+            .remove_host_queue_entry(
+                OperationId::new("remove-scheduled").expect("operation ID"),
+                1,
+                "two",
+            )
+            .expect_err("scheduled target must remain authoritative");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "two");
+        state
+            .append_host_queue(
+                OperationId::new("append-after-scheduled").expect("operation ID"),
+                1,
+                vec![entry("three", "three")],
+            )
+            .expect("appending behind a fixed boundary keeps its target valid");
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "two");
+        assert_eq!(state.snapshot.host_queue.entries().len(), 3);
+        state
+            .reorder_host_queue(
+                OperationId::new("reorder-after-scheduled").expect("operation ID"),
+                2,
+                vec!["one".into(), "two".into(), "three".into()],
+            )
+            .expect("the fixed target may remain first while later entries are reordered");
+    }
+
+    #[test]
+    fn queue_add_is_rejected_for_listener_role_and_end_session_clears_source_alias() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append").expect("operation ID"),
+                0,
+                vec![entry("one", "one")],
+            )
+            .expect("append");
+        state
+            .clear_host_queue(OperationId::new("clear").expect("operation ID"), 1)
+            .expect("clear");
+        assert!(state.snapshot.host_queue.entries().is_empty());
+        assert!(state.snapshot.host_draft.audio_source.is_none());
+
+        state.snapshot.selected_role = Some(AppRole::Listener);
+        let error = state
+            .append_host_queue(
+                OperationId::new("append-listener").expect("operation ID"),
+                2,
+                vec![entry("two", "two")],
+            )
+            .expect_err("listeners cannot mutate the host queue");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+    }
+
+    #[test]
+    fn ending_a_host_session_clears_authoritative_queue_and_source_alias() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append").expect("operation ID"),
+                0,
+                vec![entry("one", "one"), entry("two", "two")],
+            )
+            .expect("append");
+        state.reset_host_session();
+        assert!(state.snapshot.host_queue.entries().is_empty());
+        assert!(state.snapshot.host_draft.audio_source.is_none());
+    }
+
+    #[test]
+    fn natural_end_clears_completed_queue_and_preserves_host_session() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append").expect("operation ID"),
+                0,
+                vec![entry("one", "one"), entry("two", "two")],
+            )
+            .expect("append");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+
+        state
+            .apply_audio_control(AudioEvent::EndOfStream {
+                stream_id: StreamId::new("stream-ended").expect("stream ID"),
+            })
+            .expect("end of stream");
+
+        assert!(state.snapshot.host_queue.entries().is_empty());
+        assert!(state.snapshot.host_draft.audio_source.is_none());
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
+        assert!(state.snapshot.stream_ended_naturally);
+        assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::Ready);
     }
 }

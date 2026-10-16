@@ -11,7 +11,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -76,7 +77,9 @@ class AdaptiveLayoutRemainingCoverageTest {
             }
         }
 
-        composeRule.onNodeWithTag("host-dashboard-list").performScrollToIndex(4)
+        repeat(5) {
+            composeRule.onNodeWithTag("host-dashboard-list").performTouchInput { swipeUp() }
+        }
         composeRule.onNodeWithText("Always allow").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Reject").performScrollTo().assertIsDisplayed()
     }
@@ -110,9 +113,10 @@ class AdaptiveLayoutRemainingCoverageTest {
             }
         }
 
-        composeRule.onNodeWithTag("session-problem-primary").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("session-problem-secondary").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Cancel").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("session-problem-primary").assertIsDisplayed()
+        composeRule.onNodeWithTag("session-problem-secondary").assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").assertIsDisplayed()
+        composeRule.onNodeWithTag("client-workflow-step-connect").assertIsDisplayed()
     }
 
     @Test

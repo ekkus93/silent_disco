@@ -26,7 +26,7 @@ internal fun MainViewModel.startHostMonitorPlayback(
     streamId: StreamId,
     format: AudioFormatSpec,
     firstPacket: AudioPacket,
-): String {
+) {
     stopHostMonitorPlayback()
     require(firstPacket.streamId == streamId) { "host monitor packet stream does not match active stream" }
     require(firstPacket.sessionId == sessionId) { "host monitor packet session does not match active session" }
@@ -60,7 +60,7 @@ internal fun MainViewModel.startHostMonitorPlayback(
             "Oboe stream failed to open for host monitor (status=$oboeStatus)"
         }
         hostMonitorPlayback = runtime
-        return "Rust/Oboe host monitor"
+        return
     } catch (error: Throwable) {
         runCatching { runtime.stop() }.exceptionOrNull()?.let(error::addSuppressed)
         runCatching { OboeBridge.nativeOboeClose() }.exceptionOrNull()?.let(error::addSuppressed)

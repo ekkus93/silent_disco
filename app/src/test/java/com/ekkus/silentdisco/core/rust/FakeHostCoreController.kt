@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiDeliveryReport
 import com.ekkus.silentdisco.core.uniffi.FfiHostDraft
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
+import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
@@ -39,6 +40,10 @@ class FakeHostCoreController : HostCoreController {
     override val notifications: Flow<FfiCoreNotification> = notificationChannel.receiveAsFlow()
 
     val configureAndCreateCalls = mutableListOf<FfiHostDraft>()
+    val appendHostQueueCalls = mutableListOf<List<FfiQueueEntry>>()
+    val reorderHostQueueCalls = mutableListOf<List<String>>()
+    val removeHostQueueEntryCalls = mutableListOf<String>()
+    var queueCommandFailure: Throwable? = null
     val approveJoinCalls = mutableListOf<Pair<String, Boolean>>()
     val rejectJoinCalls = mutableListOf<String>()
     val removeListenerCalls = mutableListOf<String>()
@@ -53,6 +58,11 @@ class FakeHostCoreController : HostCoreController {
     val transportFailedCalls = mutableListOf<Pair<String, Boolean>>()
     val transportDeliveryCompletedCalls = mutableListOf<Pair<String, FfiDeliveryReport>>()
     val playbackStateChangedCalls = mutableListOf<FfiPlaybackState>()
+    val playbackFailureCalls = mutableListOf<String>()
+    val playbackPositionAdvancedCalls = mutableListOf<Pair<String, Long>>()
+    val playbackStreamEndedCalls = mutableListOf<String>()
+    val trackBoundaryScheduledCalls = mutableListOf<Pair<String, Long>>()
+    val trackBoundaryAppliedCalls = mutableListOf<Pair<String, Long>>()
     val platformOperationSucceededCalls = mutableListOf<RecordedCompletion>()
     val platformOperationFailedCalls = mutableListOf<RecordedFailure>()
     val settingsSavedCalls = mutableListOf<String>()
@@ -69,6 +79,21 @@ class FakeHostCoreController : HostCoreController {
 
     override suspend fun configureAndCreate(draft: FfiHostDraft) {
         configureAndCreateCalls += draft
+    }
+
+    override suspend fun appendHostQueue(entries: List<FfiQueueEntry>) {
+        queueCommandFailure?.let { throw it }
+        appendHostQueueCalls += entries
+    }
+
+    override suspend fun reorderHostQueue(orderedEntryIds: List<String>) {
+        queueCommandFailure?.let { throw it }
+        reorderHostQueueCalls += orderedEntryIds
+    }
+
+    override suspend fun removeHostQueueEntry(entryId: String) {
+        queueCommandFailure?.let { throw it }
+        removeHostQueueEntryCalls += entryId
     }
 
     override suspend fun approveJoin(requestId: String, rememberForFuture: Boolean) {
@@ -122,6 +147,26 @@ class FakeHostCoreController : HostCoreController {
 
     override fun playbackStateChanged(state: FfiPlaybackState) {
         playbackStateChangedCalls += state
+    }
+
+    override fun playbackFailed(message: String) {
+        playbackFailureCalls += message
+    }
+
+    override fun playbackPositionAdvanced(streamId: String, positionMs: Long) {
+        playbackPositionAdvancedCalls += streamId to positionMs
+    }
+
+    override fun playbackStreamEnded(streamId: String) {
+        playbackStreamEndedCalls += streamId
+    }
+
+    override fun trackBoundaryScheduled(entryId: String, firstSampleIndex: Long) {
+        trackBoundaryScheduledCalls += entryId to firstSampleIndex
+    }
+
+    override fun trackBoundaryApplied(entryId: String, firstSampleIndex: Long) {
+        trackBoundaryAppliedCalls += entryId to firstSampleIndex
     }
 
     override fun platformOperationSucceeded(operationId: String, completion: FfiPlatformCompletion) {

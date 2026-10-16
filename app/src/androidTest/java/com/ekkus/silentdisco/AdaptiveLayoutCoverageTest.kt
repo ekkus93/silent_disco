@@ -75,7 +75,7 @@ class AdaptiveLayoutCoverageTest {
             }
         }
 
-        composeRule.onNodeWithTag("host-music-next").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("host-music-next").assertIsDisplayed()
     }
 
     @Test
@@ -88,14 +88,12 @@ class AdaptiveLayoutCoverageTest {
                     onApprovalModeChanged = {},
                     onInviteCodeChanged = {},
                     onGenerateCode = {},
-                    onStartSession = {},
-                    onOpenSettings = {},
-                    onShareSupportReport = {},
+                    onNext = {},
                 )
             }
         }
 
-        composeRule.onNodeWithTag("host-start-session").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("host-access-next").assertIsDisplayed()
     }
 
     @Test
@@ -120,8 +118,8 @@ class AdaptiveLayoutCoverageTest {
             }
         }
 
-        composeRule.onNodeWithTag("listener-fix-connection").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("listener-leave").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("listener-fix-connection").assertIsDisplayed()
+        composeRule.onNodeWithTag("listener-leave").assertIsDisplayed()
     }
 
     @Test

@@ -2,10 +2,13 @@ package com.ekkus.silentdisco
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.HostFormState
 import com.ekkus.silentdisco.app.JoinApprovalAction
@@ -59,6 +62,7 @@ class PreviewStateSeamTest {
             }
         }
 
+        composeRule.onNodeWithTag("host-dashboard-list").performScrollToNode(hasText("Alex's phone"))
         composeRule.onNodeWithText("Alex's phone").assertIsDisplayed()
         composeRule.onNodeWithText("No one is waiting to join.").assertDoesNotExist()
     }
@@ -90,6 +94,7 @@ class PreviewStateSeamTest {
             }
         }
 
+        composeRule.onNodeWithTag("host-dashboard-list").performScrollToNode(hasText("Riley's phone"))
         composeRule.onNodeWithText("Riley's phone").assertIsDisplayed()
         composeRule.onNodeWithText("No listeners need attention.").assertDoesNotExist()
     }

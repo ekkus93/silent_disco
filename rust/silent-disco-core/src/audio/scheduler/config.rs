@@ -87,6 +87,9 @@ pub struct SchedulerConfig {
     /// Host monotonic time at which sequence zero's presentation slot began,
     /// matching the host packetizer's `host_start_time_ms`.
     pub host_start_time_ms: u64,
+    /// First packet sequence expected for a listener joining an active stream.
+    /// Its presentation deadline remains anchored to sequence zero's host time.
+    pub first_sequence: u64,
     /// Samples per channel per packet, matching the host packetizer's
     /// configuration for this stream.
     pub samples_per_packet: u32,
@@ -139,6 +142,7 @@ impl SchedulerConfig {
             stream_id,
             sample_rate,
             host_start_time_ms,
+            first_sequence: 0,
             samples_per_packet,
             channels,
             startup_buffer_target_ms: DEFAULT_STARTUP_BUFFER_TARGET_MS,

@@ -1,5 +1,6 @@
-use super::audio_decode::prepare_staged_audio_source;
+use super::audio_decode::{prepare_staged_audio_source, validate_staged_audio_source};
 use super::file_picker::{AudioContainer, InspectedAudioSource, SelectedSourceRegistry};
+use super::source_staging_control::SourceStagingControl;
 use silent_disco_core::audio::{AudioFormat, DecodeWorkerState, StreamingDecodeConfig};
 use silent_disco_core::runtime::AudioSourceDescriptor;
 use std::fs;
@@ -63,6 +64,34 @@ fn prepares_the_exact_registered_staged_source() {
 }
 
 #[test]
+fn validates_full_decode_before_queue_acceptance() {
+    let temp = TempDir::new().expect("temp");
+    let source_path = temp.path().join("source.wav");
+    fs::write(&source_path, pcm_wav()).expect("write source");
+    let source = inspected_source(&source_path, "source.wav");
+    let control = SourceStagingControl::new();
+    let operation = control.begin().expect("begin validation");
+
+    validate_staged_audio_source(&source, &operation).expect("decode complete source");
+}
+
+#[test]
+fn rejects_a_source_that_only_passes_header_probe() {
+    let temp = TempDir::new().expect("temp");
+    let source_path = temp.path().join("truncated.wav");
+    let mut bytes = pcm_wav();
+    bytes.truncate(bytes.len() - 128);
+    fs::write(&source_path, bytes).expect("write truncated source");
+    let source = inspected_source(&source_path, "truncated.wav");
+    let control = SourceStagingControl::new();
+    let operation = control.begin().expect("begin validation");
+
+    let error = validate_staged_audio_source(&source, &operation)
+        .expect_err("truncated source must not be accepted");
+    assert_eq!(error.subsystem, "audio");
+}
+
+#[test]
 fn refuses_a_source_id_that_is_not_registered() {
     let descriptor =
         AudioSourceDescriptor::new("desktop-staged-missing", "missing.wav", Some(10), None)
@@ -117,6 +146,19 @@ fn prepare_error(
             panic!("source unexpectedly prepared")
         }
     }
+}
+
+fn inspected_source(path: &std::path::Path, display_name: &str) -> InspectedAudioSource {
+    let canonical_path = fs::canonicalize(path).expect("canonical source");
+    let byte_length = fs::metadata(&canonical_path).expect("metadata").len();
+    let descriptor = AudioSourceDescriptor::new(
+        format!("desktop-staged-{}", display_name.replace('.', "-")),
+        display_name,
+        Some(byte_length),
+        None,
+    )
+    .expect("descriptor");
+    InspectedAudioSource::from_staged(descriptor, canonical_path, AudioContainer::Wav)
 }
 
 fn pcm_wav() -> Vec<u8> {

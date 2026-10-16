@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.audio
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.ekkus.silentdisco.core.uniffi.FfiAudioOutputHandle
 import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
@@ -120,6 +121,29 @@ class OboePlaybackEngineInstrumentedTest {
     }
 
     @Test
+    fun rebinds_the_open_native_output_to_a_new_render_ring_without_reopening() {
+        assertThat(OboeBridge.isAvailable).isTrue()
+        val firstRing = FfiAudioOutputHandle.open(48_000u, 19_200u)
+        val nextTrackRing = FfiAudioOutputHandle.open(48_000u, 19_200u)
+        try {
+            assertThat(OboeBridge.nativeOboeOpen(firstRing.engineToken())).isEqualTo(0)
+            val beforeRebind = parseOutputCounters(OboeBridge.nativeOboeLastOpenSummary())
+
+            assertThat(OboeBridge.nativeOboeRebind(nextTrackRing.engineToken())).isEqualTo(0)
+            assertThat(OboeBridge.nativeOboeIsOpen()).isTrue()
+
+            val afterRebind = parseOutputCounters(OboeBridge.nativeOboeLastOpenSummary())
+            assertThat(afterRebind.first).isEqualTo(beforeRebind.first)
+            assertThat(afterRebind.second).isEqualTo(beforeRebind.second + 1)
+        } finally {
+            OboeBridge.nativeOboeClose()
+            nextTrackRing.release()
+            firstRing.release()
+        }
+        assertThat(OboeBridge.nativeOboeIsOpen()).isFalse()
+    }
+
+    @Test
     fun no_callback_fires_after_stop_returns() {
         val engine = OboePlaybackEngine()
         engine.start()
@@ -134,5 +158,11 @@ class OboePlaybackEngineInstrumentedTest {
         // observable as new callback_count growth, which requires an open
         // stream in the first place.
         assertThat(OboeBridge.nativeOboeIsOpen()).isFalse()
+    }
+
+    private fun parseOutputCounters(summary: String): Pair<Int, Int> {
+        val match = Regex("opens=(\\d+) rebinds=(\\d+)").find(summary)
+            ?: error("native Oboe summary did not contain stream counters: $summary")
+        return match.groupValues[1].toInt() to match.groupValues[2].toInt()
     }
 }

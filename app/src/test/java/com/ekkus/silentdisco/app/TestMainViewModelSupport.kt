@@ -57,7 +57,9 @@ class MainViewModelHarness(
  */
 private fun fakeApplication(): Application {
     val application = mock<Application>()
-    whenever(application.contentResolver).thenReturn(mock<ContentResolver>())
+    val contentResolver = mock<ContentResolver>()
+    whenever(contentResolver.persistedUriPermissions).thenReturn(emptyList())
+    whenever(application.contentResolver).thenReturn(contentResolver)
 
     val wifiLock = mock<WifiManager.WifiLock>()
     val wifiManager = mock<WifiManager>()
@@ -66,6 +68,11 @@ private fun fakeApplication(): Application {
 
     val sharedPreferences = mock<SharedPreferences>()
     whenever(sharedPreferences.getString(any(), anyOrNull())).thenReturn("test-device-id")
+    whenever(sharedPreferences.getStringSet(any(), any())).thenReturn(emptySet())
+    val editor = mock<SharedPreferences.Editor>()
+    whenever(sharedPreferences.edit()).thenReturn(editor)
+    whenever(editor.putStringSet(any(), any())).thenReturn(editor)
+    whenever(editor.remove(any())).thenReturn(editor)
     whenever(application.getSharedPreferences(any(), any())).thenReturn(sharedPreferences)
 
     return application

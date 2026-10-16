@@ -2,19 +2,19 @@ use super::conversions::network_endpoint;
 use super::types::{
     FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
     FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
-    FfiPlatformCompletion, FfiPlaybackState, FfiSessionAdvertisement, FfiTransportState,
-    FfiTuningPatch, FfiTuningSettings,
+    FfiPlatformCompletion, FfiPlaybackState, FfiQueueEntry, FfiSessionAdvertisement,
+    FfiTransportState, FfiTuningPatch, FfiTuningSettings,
 };
 use silent_disco_core::domain::{
-    ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SessionId, SyncConfidence,
-    TransportState, TrustState,
+    ApprovalMode, DeviceId, MonotonicMillis, OperationId, RequestId, SessionId, StreamId,
+    SyncConfidence, TransportState, TrustState,
 };
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourcePatch, CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreCommand,
     CoreCommandRequest, CoreNotification, HostDraftPatch, InviteCodePatch, JoinRequestSummary,
-    ListenerSummary, PlatformEvent, SessionAdvertisement, SnapshotRevision, StorageCompletion,
-    StorageEvent, SynchronizationSummary, TransportEvent,
+    ListenerSummary, PlatformEvent, QueueEntry, SessionAdvertisement, SnapshotRevision,
+    StorageCompletion, StorageEvent, SynchronizationSummary, TransportEvent,
 };
 use std::sync::{Arc, Mutex};
 
@@ -100,6 +100,68 @@ impl FfiCoreHandle {
                 audio_source,
                 remember_approved_devices: Some(draft.remember_approved_devices),
             }),
+        )
+    }
+
+    pub fn append_host_queue(
+        &self,
+        expected_revision: u64,
+        expected_queue_revision: u64,
+        entries: Vec<FfiQueueEntry>,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        let entries = entries
+            .into_iter()
+            .map(QueueEntry::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.submit_command(
+            expected_revision,
+            CoreCommand::AppendHostQueue {
+                expected_queue_revision,
+                entries,
+            },
+        )
+    }
+
+    pub fn reorder_host_queue(
+        &self,
+        expected_revision: u64,
+        expected_queue_revision: u64,
+        ordered_entry_ids: Vec<String>,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(
+            expected_revision,
+            CoreCommand::ReorderHostQueue {
+                expected_queue_revision,
+                ordered_entry_ids,
+            },
+        )
+    }
+
+    pub fn remove_host_queue_entry(
+        &self,
+        expected_revision: u64,
+        expected_queue_revision: u64,
+        entry_id: String,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(
+            expected_revision,
+            CoreCommand::RemoveHostQueueEntry {
+                expected_queue_revision,
+                entry_id,
+            },
+        )
+    }
+
+    pub fn clear_host_queue(
+        &self,
+        expected_revision: u64,
+        expected_queue_revision: u64,
+    ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.submit_command(
+            expected_revision,
+            CoreCommand::ClearHostQueue {
+                expected_queue_revision,
+            },
         )
     }
 
@@ -457,6 +519,68 @@ impl FfiCoreHandle {
         self.ensure_open()?;
         self.handle
             .submit_audio_event(AudioEvent::PlaybackStateChanged(state.into()))?;
+        Ok(())
+    }
+
+    pub fn playback_failed(&self, message: String) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        let error = input_error(CoreErrorCode::AudioOutputFailed, message, true, None)?;
+        self.handle.submit_audio_event(AudioEvent::Failed(error))?;
+        Ok(())
+    }
+
+    pub fn playback_position_advanced(
+        &self,
+        stream_id: String,
+        position_ms: u64,
+    ) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        let stream_id =
+            StreamId::new(stream_id).map_err(|error| FfiBridgeError::Core(error.to_string()))?;
+        self.handle
+            .submit_audio_event(AudioEvent::PositionAdvanced {
+                stream_id,
+                position_ms,
+            })?;
+        Ok(())
+    }
+
+    pub fn playback_stream_ended(&self, stream_id: String) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        let stream_id =
+            StreamId::new(stream_id).map_err(|error| FfiBridgeError::Core(error.to_string()))?;
+        self.handle
+            .submit_audio_event(AudioEvent::EndOfStream { stream_id })?;
+        Ok(())
+    }
+
+    /// Applies a queue transition after its sample-indexed boundary is due.
+    pub fn track_boundary_scheduled(
+        &self,
+        entry_id: String,
+        first_sample_index: u64,
+    ) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        self.handle
+            .submit_audio_event(AudioEvent::TrackBoundaryScheduled {
+                entry_id,
+                first_sample_index,
+            })?;
+        Ok(())
+    }
+
+    /// Applies a queue transition after its sample-indexed boundary is due.
+    pub fn track_boundary_applied(
+        &self,
+        entry_id: String,
+        first_sample_index: u64,
+    ) -> Result<(), FfiBridgeError> {
+        self.ensure_open()?;
+        self.handle
+            .submit_audio_event(AudioEvent::TrackBoundaryApplied {
+                entry_id,
+                first_sample_index,
+            })?;
         Ok(())
     }
 
