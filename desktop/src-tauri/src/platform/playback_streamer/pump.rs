@@ -222,16 +222,18 @@ fn run_pump(
             host_stop_time_ms,
         })))
     });
-    let stopped_result = if ended_naturally {
-        handle.submit_audio_event(AudioEvent::EndOfStream {
-            stream_id: ending_stream_id,
-        })
-    } else if let Some(message) = terminal_failure {
-        handle.submit_audio_event(AudioEvent::Failed(playback_failure(&message)))
-    } else {
-        handle.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
-    }
-    .map_err(DesktopErrorDto::from);
+    // A fully packetized source is not proof of successful playback: the
+    // transport can fail while already-queued frames are being delivered.
+    // Likewise, explicit Stop must preserve the queue even if the worker
+    // completed while the sender was draining its bounded output channel.
+    let stopped_result = handle
+        .submit_audio_event(terminal_audio_event(
+            ending_stream_id,
+            stop.load(Ordering::Acquire),
+            ended_naturally,
+            terminal_failure.as_deref(),
+        ))
+        .map_err(DesktopErrorDto::from);
     if let Some(primary) = streaming_error {
         return Err(primary
             .with_appended_cleanup(monitor_result.err())
@@ -260,6 +262,26 @@ fn wait_until_audio_tail(
         thread::sleep(Duration::from_millis(deadline_ms.saturating_sub(now).min(10)));
     }
     Ok(())
+}
+
+/// Selects the actor's terminal event from actual delivery, not merely the
+/// packetizer's completion. A transport failure takes precedence over EOF,
+/// and an explicit Stop takes precedence over an otherwise clean EOF.
+fn terminal_audio_event(
+    stream_id: StreamId,
+    stop_requested: bool,
+    packetizer_completed: bool,
+    failure: Option<&str>,
+) -> AudioEvent {
+    if let Some(message) = failure {
+        AudioEvent::Failed(playback_failure(message))
+    } else if stop_requested {
+        AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)
+    } else if packetizer_completed {
+        AudioEvent::EndOfStream { stream_id }
+    } else {
+        AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)
+    }
 }
 
 fn playback_failure(message: &str) -> CoreError {

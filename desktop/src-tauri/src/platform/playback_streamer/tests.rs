@@ -1,13 +1,68 @@
 #[cfg(test)]
 mod tests {
-    use super::{apply_pause_offset, forward_to_monitor, implicit_join_failure};
+    use super::{
+        apply_pause_offset, forward_to_monitor, implicit_join_failure, terminal_audio_event,
+    };
     use silent_disco_core::domain::{
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
     };
     use silent_disco_core::protocol::{
         AudioCodec, AudioDatagram, ControlMessage, Disconnect, ProtocolFrame,
     };
+    use silent_disco_core::runtime::AudioEvent;
 
+
+    fn terminal_stream_id() -> StreamId {
+        StreamId::new("stream-pump-terminal-test").expect("stream id")
+    }
+
+    #[test]
+    fn transport_failure_after_packetizer_completion_is_not_natural_queue_end() {
+        let event = terminal_audio_event(
+            terminal_stream_id(),
+            false,
+            true,
+            Some("boundary broadcast failed"),
+        );
+        assert!(
+            matches!(event, AudioEvent::Failed(_)),
+            "a packetizer that finished ahead of the sender must not hide transport failure"
+        );
+    }
+
+    #[test]
+    fn explicit_stop_after_packetizer_completion_preserves_queue() {
+        let event = terminal_audio_event(terminal_stream_id(), true, true, None);
+        assert!(
+            matches!(event, AudioEvent::PlaybackStateChanged(silent_disco_core::domain::PlaybackState::Stopped)),
+            "explicit Stop must not advance the queue as if it ended naturally"
+        );
+    }
+
+    #[test]
+    fn genuine_queue_exhaustion_still_reports_natural_end() {
+        let event = terminal_audio_event(terminal_stream_id(), false, true, None);
+        assert!(matches!(event, AudioEvent::EndOfStream { .. }));
+    }
+
+    #[test]
+    fn early_worker_cancellation_does_not_claim_natural_end() {
+        let event = terminal_audio_event(terminal_stream_id(), false, false, None);
+        assert!(
+            matches!(event, AudioEvent::PlaybackStateChanged(silent_disco_core::domain::PlaybackState::Stopped))
+        );
+    }
+
+    #[test]
+    fn a_transport_failure_remains_visible_when_stop_is_also_requested() {
+        let event = terminal_audio_event(
+            terminal_stream_id(),
+            true,
+            true,
+            Some("network send failed"),
+        );
+        assert!(matches!(event, AudioEvent::Failed(_)));
+    }
 
     #[test]
     fn implicit_drop_cleanup_classifies_worker_failure_instead_of_discarding_it() {
