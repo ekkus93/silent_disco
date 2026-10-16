@@ -131,3 +131,5 @@ The Android host's natural EOF and exceptional playback failure paths now share 
 API 36 accessibility semantics-bounds coverage now measures 48 dp primary actions across Host Music, Host Access, Host Ready, Client Join, nearby QR, and live queue controls. The follow-on Android full gate passed again with 117 instrumentation cases (116 passed, one skip), JVM tests, lint, and debug/release assembly. Broader traversal and hands-on accessibility remain pending.
 
 The latest connected API 36 test XML confirms 117 instrumentation cases with zero failures/errors (116 passed, one skipped) after adding the additional workflow touch-target assertions.
+
+The 800-line source limit is now locally satisfied after splitting seven oversized files into focused modules/test files; the checker passes for all 640 tracked sources. Full local Rust, Android, desktop frontend, and desktop Tauri gates pass. GitHub Actions for `a0af477` could not start due to the repository Actions budget, and no physical acceptance hardware is available.

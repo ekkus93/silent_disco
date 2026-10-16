@@ -102,5 +102,5 @@ This checklist is dependency-ordered. Complete and qualify each block before mov
 - [ ] Test a packaged desktop-host to Android-listener session with different source formats and multiple tracks; verify measured gapless boundary and no output-device reopen.
 - [ ] Test Android-host to Android-listener track transitions and desktop-listener acceptance if supported.
 - [ ] Test add/reorder/remove during playback, pause/resume at boundary, Stop/Play, queue end/add/Play, late join, reconnect, and failure recovery on real or qualified device/audio paths.
-- [ ] Reconcile every checklist item against exact-head CI, test logs, device evidence, and the specification. Do not report gapless playback complete from UI tests alone.
+- [ ] Reconcile every checklist item against exact-head CI, test logs, device evidence, and the specification. Local Rust, Android, desktop, and source-line gates pass on the current implementation. GitHub Actions run for `a0af477` did not start jobs because GitHub reports the repository Actions budget prevents further use; exact-head hosted CI remains unverified pending budget restoration. Physical device evidence is also unavailable. Do not report gapless playback complete from UI tests alone.
 - [x] Update the existing UI/UX progress ledger with the new scope and preserve its prior completion evidence.
