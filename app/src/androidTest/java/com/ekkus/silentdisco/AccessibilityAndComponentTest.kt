@@ -30,6 +30,7 @@ import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
 import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
 import com.ekkus.silentdisco.feature.host.HostReadyScreen
 import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
+import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
@@ -197,6 +198,32 @@ class AccessibilityAndComponentTest {
     @Test
     fun nearbyScanActionMeetsFortyEightDpMinimum() = assertTouchTarget("nearby-scan-qr") {
         NearbySessionsScreen(AppUiState(), false, {}, {}, {}, {}, onScanQr = {})
+    }
+
+    @Test
+    fun listenerPlaybackControlsMeetFortyEightDpTouchTargetMinimum() {
+        var densityScale = 1f
+        composeRule.setContent {
+            densityScale = LocalDensity.current.density
+            SilentDiscoTheme {
+                ListenerPlaybackV2Screen(
+                    uiState = AppUiState(
+                        listenerState = ListenerLifecycleState.DESYNCED,
+                        listenerPlaybackState = PlaybackState.PLAYING,
+                    ),
+                    onBackRequest = {},
+                    onVolumeChanged = {},
+                    onFixConnection = {},
+                    onLeaveRequest = {},
+                )
+            }
+        }
+
+        listOf("listener-volume", "listener-fix-connection", "listener-leave").forEach { tag ->
+            val bounds = composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertWithMessage("$tag width").that(bounds.width / densityScale).isAtLeast(48f)
+            assertWithMessage("$tag height").that(bounds.height / densityScale).isAtLeast(48f)
+        }
     }
 
     private fun validHostState(): AppUiState {

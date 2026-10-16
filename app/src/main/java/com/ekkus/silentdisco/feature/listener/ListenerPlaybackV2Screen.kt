@@ -1,9 +1,11 @@
 package com.ekkus.silentdisco.feature.listener
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -36,6 +39,7 @@ import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.ui.components.StatusBadge
 import com.ekkus.silentdisco.ui.components.StatusTone
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -130,16 +134,23 @@ fun ListenerPlaybackV2Screen(
                 "Local volume — ${(uiState.localVolume * 100).roundToInt()}%",
                 style = MaterialTheme.typography.titleMedium,
             )
-            Slider(
-                value = uiState.localVolume,
-                onValueChange = onVolumeChanged,
-                valueRange = 0f..1f,
+            Box(
                 modifier = Modifier
-                    .semantics {
+                    .fillMaxWidth()
+                    .heightIn(min = WorkflowTouchTarget.minimum)
+                    .semantics(mergeDescendants = true) {
                         contentDescription = "Local playback volume"
                     }
                     .testTag("listener-volume"),
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Slider(
+                    value = uiState.localVolume,
+                    onValueChange = onVolumeChanged,
+                    valueRange = 0f..1f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
         }
         HorizontalDivider()
@@ -154,6 +165,7 @@ fun ListenerPlaybackV2Screen(
                     onClick = onFixConnection,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(min = WorkflowTouchTarget.minimum)
                         .testTag("listener-fix-connection"),
                 ) {
                     Icon(Icons.Filled.Build, contentDescription = null)
@@ -164,6 +176,7 @@ fun ListenerPlaybackV2Screen(
                 onClick = onLeaveRequest,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = WorkflowTouchTarget.minimum)
                     .testTag("listener-leave"),
             ) {
                 Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null)
