@@ -12,6 +12,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistFrame
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -343,18 +344,23 @@ private suspend fun MainViewModel.broadcastHostTrackBoundary(
     }.onFailure { error -> handleHostControlFailure("broadcast track boundary", error) }
 }
 
-private fun MainViewModel.scheduleHostQueueBoundary(
+internal fun MainViewModel.scheduleHostQueueBoundary(
     start: FfiPlaylistStreamStart,
     boundary: FfiPlaylistFrame.TrackBoundary,
     sampleRate: Int,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
+    wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
 ) {
     metrics.increment("track_boundary_scheduled")
-    val job = viewModelScope.launch(Dispatchers.IO) {
+    val job = viewModelScope.launch(dispatcher) {
         val dueAtMs = start.hostStartTimeMs.toLong() +
             boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
         awaitHostQueueBoundary(
             dueAtElapsedRealtimeMs = dueAtMs,
             isPaused = { _uiState.value.hostPlaybackState == PlaybackState.PAUSED },
+            elapsedRealtimeMs = elapsedRealtimeMs,
+            wait = wait,
         )
         if (!isActive) return@launch
         runCatching {
