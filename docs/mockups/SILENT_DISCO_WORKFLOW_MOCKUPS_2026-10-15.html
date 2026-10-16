@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Silent Disco — Workflow Mockups</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --canvas: #101019;
+        --surface: #191923;
+        --surface-2: #232331;
+        --surface-3: #2b2a3a;
+        --outline: #494756;
+        --ink: #f5f1ff;
+        --muted: #c3bfd1;
+        --dim: #918da0;
+        --primary: #d5c2ff;
+        --primary-ink: #32145f;
+        --secondary: #b3e4dc;
+        --tertiary: #ffb7a9;
+        --green: #9fe7c2;
+        --warning: #ffd27e;
+        --r-xl: 30px;
+        --r-lg: 24px;
+        --r-md: 18px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--canvas);
+        color: var(--ink);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(ellipse at 12% 2%, rgba(132, 89, 199, .17), transparent 40%),
+          radial-gradient(ellipse at 88% 4%, rgba(60, 163, 156, .12), transparent 38%),
+          var(--canvas);
+      }
+      button { font: inherit; cursor: pointer; }
+      .board { max-width: 1440px; margin: 0 auto; padding: 30px clamp(16px, 4vw, 56px) 60px; }
+      .board-head { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:24px; }
+      .eyebrow { color:var(--secondary); font-size:12px; letter-spacing:.16em; font-weight:800; text-transform:uppercase; }
+      h1 { margin:8px 0 7px; font-size:clamp(28px,4vw,44px); letter-spacing:-.04em; line-height:1; }
+      .lede { max-width:650px; margin:0; color:var(--muted); font-size:14px; line-height:1.45; }
+      .review-badge { flex:none; padding:10px 14px; border:1px solid rgba(179,228,220,.28); background:rgba(179,228,220,.08); border-radius:99px; color:var(--secondary); font-size:12px; font-weight:700; }
+      .toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin:25px 0 18px; }
+      .tabs, .device-toggle { display:flex; gap:5px; padding:5px; background:#1c1b26; border:1px solid #34323f; border-radius:999px; }
+      .tabs button, .device-toggle button { border:0; border-radius:999px; padding:10px 16px; background:transparent; color:var(--muted); font-size:13px; font-weight:750; white-space:nowrap; }
+      .tabs button[aria-selected="true"], .device-toggle button[aria-pressed="true"] { background:var(--primary); color:var(--primary-ink); box-shadow:0 2px 10px #08071055; }
+      .screen-title { display:flex; align-items:center; gap:12px; margin:24px 0 14px; }
+      .screen-title h2 { margin:0; font-size:20px; letter-spacing:-.02em; }
+      .screen-title p { margin:0; color:var(--dim); font-size:13px; }
+      .mockup-frame { width:100%; height:660px; padding:13px; border-radius:34px; background:linear-gradient(145deg,#343341,#1f1e2a 55%,#383544); border:1px solid #565361; box-shadow:0 28px 90px #0008, inset 0 1px 0 #ffffff14; transition:width .25s ease,height .25s ease; }
+      .window { position:relative; display:grid; grid-template-columns:76px 1fr; height:100%; overflow:hidden; border-radius:24px; background:#101018; border:1px solid #ffffff10; }
+      .rail { display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px 9px; background:#171620; border-right:1px solid #ffffff0d; }
+      .brand-mark { display:grid; place-items:center; width:42px; height:42px; margin-bottom:21px; border-radius:16px 16px 16px 5px; color:#291445; font-weight:900; background:linear-gradient(135deg,#e1d4ff,#91ddd2); box-shadow:0 5px 18px #b49bef33; }
+      .rail-icon { display:grid; place-items:center; width:46px; height:46px; border:0; border-radius:16px; background:transparent; color:#aaa6b8; font-size:17px; }
+      .rail-icon.active { color:var(--primary); background:#3a314d; }
+      .rail-spacer { flex:1; }
+      .workspace { min-width:0; display:flex; flex-direction:column; }
+      .topbar { height:67px; flex:none; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 25px; border-bottom:1px solid #ffffff10; background:#14131d; }
+      .topbar-title { display:flex; align-items:center; gap:10px; min-width:0; font-size:14px; font-weight:750; }
+      .topbar-sub { color:var(--dim); font-size:12px; font-weight:500; }
+      .top-actions { display:flex; align-items:center; gap:9px; }
+      .live-pill, .status-pill { display:inline-flex; align-items:center; gap:7px; border-radius:99px; padding:7px 11px; border:1px solid #a1e5c52e; color:var(--green); background:#80e0b412; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; white-space:nowrap; }
+      .dot { width:7px; height:7px; border-radius:50%; background:currentColor; box-shadow:0 0 11px currentColor; }
+      .avatar { display:grid; place-items:center; width:34px;height:34px;border-radius:50%;background:#3b3650;color:#e3d8ff;font-size:12px;font-weight:800; }
+      .content { display:flex; flex:1; min-height:0; flex-direction:column; padding:24px 26px 20px; }
+      .content-head { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:17px; }
+      .content-head h3 { margin:0; font-size:24px; letter-spacing:-.04em; }
+      .content-head p { margin:5px 0 0; color:var(--dim); font-size:12px; }
+      .stepper { display:flex; align-items:center; gap:7px; padding:5px; background:#1b1a24; border:1px solid #383643; border-radius:99px; }
+      .step { display:flex; align-items:center; gap:7px; border:0; border-radius:99px; padding:8px 11px; color:#aaa6b7; background:transparent; font-size:11px; font-weight:750; white-space:nowrap; }
+      .step-num { display:grid; place-items:center; width:21px;height:21px;border-radius:50%;background:#33313e;color:#c5c0d1;font-size:10px; }
+      .step.active { background:#39304b;color:#e7dcff; }
+      .step.active .step-num { background:var(--primary); color:var(--primary-ink); }
+      .step.done .step-num { background:#95dcca;color:#143d37; }
+      .screen-body { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(240px,.8fr); gap:16px; flex:1; min-height:0; }
+      .card { min-width:0; padding:18px; border:1px solid #ffffff13; border-radius:var(--r-lg); background:linear-gradient(145deg,#1e1d28,#191822); box-shadow:0 6px 22px #0002; }
+      .card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:13px; }
+      .card-head h4 { margin:0; font-size:14px; letter-spacing:-.01em; }
+      .subtle { color:var(--dim); font-size:11px; }
+      .song-list { display:flex; flex-direction:column; gap:7px; }
+      .song { display:grid; grid-template-columns:29px 35px minmax(0,1fr) auto; align-items:center; gap:10px; min-height:54px; padding:7px 9px; border-radius:16px; border:1px solid transparent; background:#252430; }
+      .song.current { background:#302a3c; border-color:#d4c1ff48; }
+      .drag { color:#7e7a8c; font-size:16px; text-align:center; letter-spacing:-3px; }
+      .cover { width:35px;height:35px;border-radius:11px;background:linear-gradient(145deg,#f9b69d,#874ac5 58%,#30375f); }
+      .cover.teal { background:linear-gradient(145deg,#b8f2d9,#208a86 54%,#28345c); }
+      .cover.blue { background:linear-gradient(145deg,#a9c9ff,#5961bd 58%,#2a2747); }
+      .cover.gold { background:linear-gradient(145deg,#ffe49b,#e27957 55%,#693e68); }
+      .song-name { min-width:0; font-size:12px; font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .song-meta { margin-top:3px; color:var(--dim); font-size:10px; }
+      .song-time { color:#b9b3c7; font-variant-numeric:tabular-nums; font-size:10px; }
+      .mini-tag { display:inline-flex; align-items:center; gap:5px; color:var(--secondary); font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+      .add-row { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; min-height:44px; margin-top:9px; border:1px dashed #777286; border-radius:15px; background:#23222c; color:#ddd2ff; font-size:12px; font-weight:800; }
+      .add-row .plus { display:grid; place-items:center; width:20px;height:20px;border-radius:50%;color:#30204b;background:var(--primary);font-size:16px; }
+      .summary-card { display:flex; flex-direction:column; justify-content:space-between; }
+      .summary-top { display:flex; flex-direction:column; gap:13px; }
+      .summary-number { display:flex; align-items:baseline; gap:7px; }
+      .summary-number strong { font-size:34px; letter-spacing:-.06em; }
+      .summary-number span { color:var(--muted); font-size:12px; }
+      .info-line { display:flex; align-items:flex-start; gap:10px; padding-top:11px; border-top:1px solid #ffffff12; }
+      .info-icon { display:grid; place-items:center; flex:none; width:26px;height:26px;border-radius:9px;background:#393349;color:var(--primary);font-size:13px; }
+      .info-copy b { display:block; font-size:11px; }
+      .info-copy span { display:block; margin-top:3px; color:var(--dim); font-size:10px; }
+      .button-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:15px; margin-top:14px; border-top:1px solid #ffffff12; }
+      .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:42px; padding:0 17px; border:1px solid transparent; border-radius:999px; background:#302e3a; color:var(--ink); font-size:12px; font-weight:800; white-space:nowrap; }
+      .btn.primary { background:var(--primary); color:var(--primary-ink); box-shadow:0 6px 18px #b596e72c; }
+      .btn.tonal { background:#39334a; color:#e4d7ff; }
+      .btn.ghost { background:transparent; border-color:#4a4756; color:#d4cedf; }
+      .btn.danger { color:#ffb6ae; background:#4a2e34; }
+      .btn.icon { width:43px; padding:0; font-size:16px; }
+      .button-row .left-actions, .button-row .right-actions { display:flex; gap:9px; }
+      .access-options { display:grid; gap:9px; }
+      .access-choice { display:flex; align-items:center; gap:11px; padding:13px; border-radius:17px; border:1px solid #ffffff18; background:#24232e; }
+      .access-choice.selected { border-color:#d4c1ff85; background:#332b40; }
+      .radio { width:17px;height:17px;border:2px solid #888397;border-radius:50%; }
+      .selected .radio { border:5px solid var(--primary); }
+      .access-choice b { font-size:12px; }
+      .access-choice small { display:block; margin-top:3px; color:var(--dim); font-size:10px; }
+      .field { margin-top:15px; }
+      .field label { display:block; margin-bottom:6px; color:#cbc5d6; font-size:10px; font-weight:750; }
+      .input { min-height:43px; padding:12px 13px; border:1px solid #514e5e; border-radius:14px; background:#15141c; color:#f5f1ff; font-size:12px; }
+      .ready-hero { display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; min-height:280px; }
+      .ready-orb { display:grid; place-items:center; width:88px;height:88px;margin-bottom:17px;border-radius:31px 31px 31px 12px;background:linear-gradient(140deg,#e2d2ff,#98e4d5);color:#2f1850;font-size:32px;box-shadow:0 16px 45px #ad8bdc3e; }
+      .ready-hero h4 { margin:0; font-size:23px; letter-spacing:-.04em; }
+      .ready-hero p { color:var(--muted); font-size:12px; }
+      .live-layout { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(275px,.8fr); gap:16px; flex:1; min-height:0; }
+      .now-card { position:relative; display:flex; flex-direction:column; overflow:hidden; padding:21px; border:1px solid #ffffff13; border-radius:26px; background:linear-gradient(145deg,#252033,#171720 78%); }
+      .now-card::before { content:""; position:absolute; width:340px;height:340px;top:-190px;left:-100px;border-radius:50%;background:#c782ff17;filter:blur(10px); }
+      .now-head { display:flex; align-items:center; justify-content:space-between; position:relative; z-index:1; }
+      .now-art { flex:1; min-height:140px; display:grid; place-items:center; }
+      .album-art { position:relative; width:192px;height:192px; max-height:28vh; max-width:28vh; border-radius:48px 48px 48px 15px; background:linear-gradient(145deg,#f9b99c 4%,#b159ce 42%,#483ca0 73%,#1b2b50); box-shadow:0 22px 54px #0008, inset 0 1px 0 #ffffff4d; transform:rotate(-4deg); }
+      .album-art::before { content:"";position:absolute;width:63%;height:63%;left:19%;top:19%;border:1px solid #ffffff85;border-radius:50%;box-shadow:0 0 0 17px #ffffff12,0 0 0 36px #ffffff0d; }
+      .album-art::after { content:"";position:absolute;width:14px;height:14px;left:calc(50% - 7px);top:calc(50% - 7px);border-radius:50%;background:#f8eaff; }
+      .track-info { position:relative; z-index:1; }
+      .track-info h4 { margin:0; font-size:23px; letter-spacing:-.04em; }
+      .track-info p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+      .wave { display:flex; align-items:center; justify-content:center; gap:3px; height:24px; margin:11px 0; color:#cdb7ff; }
+      .wave i { width:3px; border-radius:9px; background:currentColor; opacity:.78; }
+      .wave i:nth-child(5n+1){height:7px}.wave i:nth-child(5n+2){height:14px}.wave i:nth-child(5n+3){height:20px}.wave i:nth-child(5n+4){height:11px}.wave i:nth-child(5n){height:17px}
+      .progress { height:5px; overflow:hidden; border-radius:9px; background:#555160; }
+      .progress span { display:block; width:38%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#d4c1ff,#9be2d4); }
+      .time-row { display:flex; justify-content:space-between; margin-top:5px; color:#b4aec0; font-size:10px; font-variant-numeric:tabular-nums; }
+      .transport { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:13px; }
+      .transport .play { width:53px;height:53px; font-size:19px; }
+      .queue-card { display:flex; flex-direction:column; min-height:0; }
+      .queue-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+      .queue-count { color:#c7c1d4; font-size:10px; }
+      .queue-divider { display:flex; align-items:center; gap:8px; margin:11px 0 7px; color:var(--dim); font-size:9px; letter-spacing:.12em; text-transform:uppercase; }
+      .queue-divider::after { content:"";height:1px;flex:1;background:#ffffff14; }
+      .listener-strip { display:flex; align-items:center; gap:9px; padding:11px 12px; border:1px solid #ffffff12; border-radius:15px; background:#24232e; color:#ccc6d9; font-size:11px; }
+      .listener-bubbles { display:flex; }
+      .listener-bubbles i { width:22px;height:22px;display:grid;place-items:center;margin-left:-5px;border:2px solid #24232e;border-radius:50%;background:#62527d;color:#f4e9ff;font-size:8px;font-style:normal; }
+      .listener-bubbles i:first-child { margin-left:0;background:#477b73; }
+      .listen-layout { display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:17px; flex:1; min-height:0; }
+      .session-list { display:flex; flex-direction:column; gap:9px; }
+      .session-card { display:grid; grid-template-columns:40px minmax(0,1fr) auto; align-items:center; gap:11px; padding:12px; border:1px solid #ffffff15; border-radius:17px; background:#24232e; }
+      .session-card.selected { border-color:#d5c2ff88; background:#322b40; }
+      .session-icon { display:grid;place-items:center;width:40px;height:40px;border-radius:14px;background:#3b3250;color:#ded0ff;font-size:17px; }
+      .session-card b { display:block; font-size:12px; }
+      .session-card small { display:block; margin-top:4px; color:var(--dim); font-size:10px; }
+      .session-card .distance { color:#c6c0d2; font-size:10px; }
+      .qr-card { display:flex; flex-direction:column;align-items:center;justify-content:center;text-align:center; }
+      .qr-placeholder { display:grid;place-items:center;width:122px;height:122px;margin:8px auto 14px;border:9px solid #f2ecff;border-radius:14px;background:repeating-conic-gradient(#211b30 0 25%,#f2ecff 0 50%) 50% / 18px 18px;color:#211b30; }
+      .qr-placeholder span { padding:5px;border-radius:5px;background:#f2ecff;font-size:8px;font-weight:900; }
+      .qr-card h4 { margin:0;font-size:14px; }
+      .qr-card p { max-width:180px;color:var(--dim);font-size:10px;line-height:1.4; }
+      .connect-body { display:grid; grid-template-columns:1fr 300px; gap:18px; flex:1; min-height:0; }
+      .connecting-hero { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:300px; text-align:center; }
+      .pulse-ring { display:grid;place-items:center;width:112px;height:112px;margin-bottom:18px;border:1px solid #d4c1ff50;border-radius:50%;box-shadow:0 0 0 13px #d4c1ff0d,0 0 0 28px #d4c1ff08;color:var(--primary);font-size:30px; }
+      .connecting-hero h4 { margin:0;font-size:22px;letter-spacing:-.04em; }
+      .connecting-hero p { max-width:340px;color:var(--muted);font-size:12px;line-height:1.5; }
+      .status-steps { display:flex;flex-direction:column;gap:12px;margin-top:18px; }
+      .status-step { display:flex;align-items:center;gap:10px;color:#b8b2c4;font-size:11px; }
+      .status-check { display:grid;place-items:center;width:23px;height:23px;border-radius:50%;background:#3a3546;color:var(--dim);font-size:11px; }
+      .status-step.done .status-check { background:#285346;color:#a8eed1; }
+      .status-step.active { color:#f3edff;font-weight:750; }
+      .status-step.active .status-check { background:#503d6b;color:#e1ceff; }
+      .player-screen { display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:16px; flex:1; min-height:0; }
+      .listener-now { display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center; }
+      .listener-now .album-art { width:200px;height:200px;margin:12px 0 25px; }
+      .listener-now h4 { margin:0;font-size:22px;letter-spacing:-.04em; }
+      .listener-now p { margin:6px 0 13px;color:var(--muted);font-size:12px; }
+      .sync-ok { display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:99px;background:#1d4337;color:#a3ecc9;font-size:10px;font-weight:800; }
+      .volume-block { margin-top:16px; }
+      .volume-label { display:flex;justify-content:space-between;color:#d0cadd;font-size:10px; }
+      .volume-track { height:5px;margin-top:8px;border-radius:9px;background:#544f60; }
+      .volume-track span { display:block;width:62%;height:100%;border-radius:inherit;background:#d4c1ff; }
+      .notice { display:flex;gap:9px;align-items:flex-start;padding:12px;border-radius:16px;background:#272632;color:#bdb7c8;font-size:10px;line-height:1.4; }
+      .notice strong { color:#f3eeff; }
+      .status-column { display:flex;flex-direction:column;gap:12px; }
+      .status-column .card { padding:15px; }
+      .bottom-note { margin-top:13px;color:#807b8b;font-size:11px; }
+      .phone-only, .desktop-only { display:block; }
+
+      /* Android-sized device frame */
+      body[data-device="android"] .mockup-frame { width:420px;max-width:100%;height:820px;margin:0 auto;padding:10px;border-radius:42px; }
+      body[data-device="android"] .window { display:flex;flex-direction:column;border-radius:33px; }
+      body[data-device="android"] .rail { display:none; }
+      body[data-device="android"] .topbar { height:61px;padding:0 17px; }
+      body[data-device="android"] .content { padding:17px 15px 14px; }
+      body[data-device="android"] .content-head { align-items:flex-start;flex-direction:column;gap:12px;margin-bottom:12px; }
+      body[data-device="android"] .content-head h3 { font-size:21px; }
+      body[data-device="android"] .stepper { width:100%;justify-content:space-between; }
+      body[data-device="android"] .step { padding:7px 9px;font-size:10px; }
+      body[data-device="android"] .screen-body { display:flex;flex-direction:column;gap:10px; }
+      body[data-device="android"] .card { padding:14px;border-radius:21px; }
+      body[data-device="android"] .summary-card { display:none; }
+      body[data-device="android"] .song { min-height:51px; }
+      body[data-device="android"] .button-row { position:sticky;bottom:0;margin:10px -15px -14px;padding:12px 15px calc(12px + env(safe-area-inset-bottom,0px));background:#14131d;border-top:1px solid #ffffff13; }
+      body[data-device="android"] .button-row .btn { min-height:46px; }
+      body[data-device="android"] .live-layout, body[data-device="android"] .listen-layout, body[data-device="android"] .connect-body, body[data-device="android"] .player-screen { display:flex;flex-direction:column;gap:10px; }
+      body[data-device="android"] .live-layout .queue-card { flex:1; }
+      body[data-device="android"] .now-card { min-height:0;padding:14px; }
+      body[data-device="android"] .now-art { min-height:110px; }
+      body[data-device="android"] .album-art { width:132px;height:132px;max-width:none;max-height:none;border-radius:36px 36px 36px 12px; }
+      body[data-device="android"] .track-info h4 { font-size:19px; }
+      body[data-device="android"] .track-info p { font-size:11px; }
+      body[data-device="android"] .transport { margin-top:7px; }
+      body[data-device="android"] .transport .play { width:47px;height:47px; }
+      body[data-device="android"] .queue-card { padding:13px; }
+      body[data-device="android"] .queue-card .song { min-height:44px;grid-template-columns:22px 30px minmax(0,1fr) auto; }
+      body[data-device="android"] .queue-card .cover { width:30px;height:30px; }
+      body[data-device="android"] .queue-card .song:nth-of-type(n+4) { display:none; }
+      body[data-device="android"] .listen-layout { flex:1; }
+      body[data-device="android"] .qr-card { display:none; }
+      body[data-device="android"] .session-card { min-height:64px; }
+      body[data-device="android"] .connect-body { flex:1; }
+      body[data-device="android"] .connecting-hero { min-height:190px; }
+      body[data-device="android"] .pulse-ring { width:83px;height:83px;margin-bottom:14px; }
+      body[data-device="android"] .player-screen { flex:1; }
+      body[data-device="android"] .listener-now { flex:1;min-height:280px; }
+      body[data-device="android"] .listener-now .album-art { width:165px;height:165px;margin:10px 0 18px; }
+      body[data-device="android"] .status-column { display:grid;grid-template-columns:1fr 1fr; }
+      body[data-device="android"] .status-column .notice { grid-column:1/-1; }
+      body[data-device="android"] .topbar-sub { display:none; }
+      body[data-device="android"] .review-badge { display:none; }
+      .view-panel[hidden] { display:none; }
+      @media (max-width:780px) {
+        .board { padding:20px 14px 40px; }
+        .board-head { align-items:flex-start;flex-direction:column; }
+        .toolbar { align-items:flex-start;flex-direction:column; }
+        .tabs { max-width:100%;overflow:auto; }
+        .tabs button { padding:9px 12px;font-size:11px; }
+        .mockup-frame { height:720px; }
+        .window { grid-template-columns:58px 1fr; }
+        .rail { padding:15px 6px; }
+        .rail-icon { width:40px;height:40px; }
+        .screen-body,.live-layout,.listen-layout,.connect-body,.player-screen { grid-template-columns:1fr; }
+        .summary-card,.qr-card { display:none; }
+        .content { padding:17px; }
+        .topbar { padding:0 16px; }
+      }
+      @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior:auto!important;transition:none!important; } }
+    </style>
+  </head>
+  <body data-device="desktop">
+    <main class="board">
+      <header class="board-head">
+        <div>
+          <div class="eyebrow">Product design review · 15 Oct 2026</div>
+          <h1>Silent Disco</h1>
+          <p class="lede">Host and listener workflows with a shared queue, pinned actions, and a gapless handoff. Choose a workflow and device size to review the screen direction.</p>
+        </div>
+        <div class="review-badge">MOCKUP · NOT IMPLEMENTATION</div>
+      </header>
+
+      <nav class="toolbar" aria-label="Mockup controls">
+        <div class="tabs" role="tablist" aria-label="Workflow">
+          <button role="tab" aria-selected="true" data-workflow="host-setup">Host setup</button>
+          <button role="tab" aria-selected="false" data-workflow="host-live">Host live</button>
+          <button role="tab" aria-selected="false" data-workflow="host-queue">Manage queue</button>
+          <button role="tab" aria-selected="false" data-workflow="client-join">Client join</button>
+          <button role="tab" aria-selected="false" data-workflow="client-wait">Approval wait</button>
+          <button role="tab" aria-selected="false" data-workflow="client-listen">Listening</button>
+        </div>
+        <div class="device-toggle" aria-label="Device size">
+          <button type="button" aria-pressed="true" data-device-choice="desktop">Desktop</button>
+          <button type="button" aria-pressed="false" data-device-choice="android">Android</button>
+        </div>
+      </nav>
+
+      <section class="view-panel" id="host-setup" aria-label="Host setup wizard">
+        <div class="screen-title"><h2>Host setup wizard</h2><p>Music → Access → Ready</p></div>
+        <div class="mockup-frame"><div class="window">
+          <aside class="rail"><div class="brand-mark">♫</div><button class="rail-icon active">♫</button><button class="rail-icon">◉</button><button class="rail-icon">⚙</button><div class="rail-spacer"></div><button class="rail-icon">?</button></aside>
+          <div class="workspace">
+            <header class="topbar"><div class="topbar-title"><span>Silent Disco</span><span class="topbar-sub">/ Host setup</span></div><div class="top-actions"><div class="avatar">PC</div></div></header>
+            <div class="content">
+              <div class="content-head"><div><h3>Create a disco</h3><p>Build the playlist, choose access, then start.</p></div><div class="stepper" aria-label="Host setup steps"><button class="step active" data-host-step="music"><span class="step-num">1</span>Music</button><button class="step" data-host-step="access"><span class="step-num">2</span>Access</button><button class="step" data-host-step="ready"><span class="step-num">3</span>Ready</button></div></div>
+              <div class="host-step-content" data-step-content="music">
+                <div class="screen-body">
+                  <section class="card"><div class="card-head"><h4>Playlist</h4><span class="subtle">3 songs · 12 min</span></div><div class="song-list">
+                    <div class="song current"><span class="drag">⠿</span><div class="cover"></div><div><div class="song-name">Golden Hour</div><div class="song-meta">Night Drive · 3:42</div></div><span class="mini-tag">First</span></div>
+                    <div class="song"><span class="drag">⠿</span><div class="cover teal"></div><div><div class="song-name">Soft Focus</div><div class="song-meta">Mira Sol · 4:08</div></div><span class="song-time">4:08</span></div>
+                    <div class="song"><span class="drag">⠿</span><div class="cover blue"></div><div><div class="song-name">Afterglow</div><div class="song-meta">Mira Sol · 4:19</div></div><span class="song-time">4:19</span></div>
+                  </div><button class="add-row"><span class="plus">+</span>Add songs</button></section>
+                  <aside class="card summary-card"><div class="summary-top"><div><div class="eyebrow">Your disco</div><div class="summary-number"><strong>3</strong><span>songs queued</span></div></div><div class="info-line"><span class="info-icon">♫</span><div class="info-copy"><b>Starts with Golden Hour</b><span>Drag songs to change the order.</span></div></div><div class="info-line"><span class="info-icon">⏱</span><div class="info-copy"><b>Gapless playback</b><span>Music keeps flowing between songs.</span></div></div></div><div class="notice">All songs are prepared before the session starts.</div></aside>
+                </div>
+              </div>
+              <div class="host-step-content" data-step-content="access" hidden>
+                <div class="screen-body"><section class="card"><div class="card-head"><h4>Session details</h4><span class="subtle">Step 2 of 3</span></div><div class="field"><label>SESSION NAME</label><div class="input">Friday night</div></div><div class="field"><label>WHO CAN JOIN?</label><div class="access-options"><div class="access-choice selected"><span class="radio"></span><div><b>Approve people</b><small>You decide who joins.</small></div></div><div class="access-choice"><span class="radio"></span><div><b>Invite code</b><small>Share a code with your group.</small></div></div><div class="access-choice"><span class="radio"></span><div><b>Trusted devices</b><small>Let approved devices join automatically.</small></div></div></div></div></section><aside class="card summary-card"><div class="summary-top"><div class="eyebrow">Music ready</div><div class="summary-number"><strong>3</strong><span>songs</span></div><div class="info-line"><span class="info-icon">♫</span><div class="info-copy"><b>Golden Hour</b><span>First in your playlist</span></div></div></div><div class="notice">You can add or change upcoming songs while hosting.</div></aside></div>
+              </div>
+              <div class="host-step-content" data-step-content="ready" hidden>
+                <div class="screen-body"><section class="card ready-hero"><div class="ready-orb">♫</div><h4>Friday night is ready</h4><p>3 songs · Approve people · Gapless playback</p><div class="status-pill"><span class="dot"></span>Ready to host</div></section><aside class="card summary-card"><div class="summary-top"><div class="eyebrow">First song</div><div class="song current"><div class="cover"></div><div><div class="song-name">Golden Hour</div><div class="song-meta">Night Drive · 3:42</div></div><span class="mini-tag">1</span></div><div class="info-line"><span class="info-icon">◉</span><div class="info-copy"><b>Listener approval</b><span>You'll approve each person.</span></div></div></div><div class="notice">Your session starts when you press Start hosting.</div></aside></div>
+              </div>
+              <footer class="button-row"><div class="left-actions"><button class="btn ghost" data-host-back>Back</button></div><div class="right-actions"><button class="btn primary" data-host-next>Continue <span>→</span></button></div></footer>
+            </div>
+          </div>
+        </div></div>
+      </section>
+
+      <section class="view-panel" id="host-live" aria-label="Host live session" hidden>
+        <div class="screen-title"><h2>Live host session</h2><p>Current song, transport, next song, and listeners stay in view.</p></div>
+        <div class="mockup-frame"><div class="window">
+          <aside class="rail"><div class="brand-mark">♫</div><button class="rail-icon active">♫</button><button class="rail-icon">◉</button><button class="rail-icon">⚙</button><div class="rail-spacer"></div><button class="rail-icon">?</button></aside>
+          <div class="workspace"><header class="topbar"><div class="topbar-title"><span>Friday night</span><span class="status-pill"><span class="dot"></span>Live</span></div><div class="top-actions"><span class="queue-count">● 8 listening</span><button class="btn tonal">Invite</button><div class="avatar">PC</div></div></header>
+            <div class="content"><div class="content-head"><div><h3>Your disco</h3><p>Playlist stays in sync for everyone.</p></div><button class="btn ghost">Manage queue ↗</button></div>
+              <div class="live-layout"><section class="now-card"><div class="now-head"><span class="mini-tag"><span class="dot"></span>NOW PLAYING</span><span class="subtle">Gapless on</span></div><div class="now-art"><div class="album-art"></div></div><div class="track-info"><h4>Golden Hour</h4><p>Night Drive</p><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="progress"><span></span></div><div class="time-row"><span>1:24</span><span>3:42</span></div></div><div class="transport"><button class="btn icon ghost" title="Previous">|◀</button><button class="btn icon primary play" title="Pause">Ⅱ</button><button class="btn icon ghost" title="Stop">■</button></div></section>
+                <aside class="card queue-card"><div class="queue-head"><h4>Up next</h4><span class="queue-count">2 songs</span></div><div class="song-list" style="margin-top:13px"><div class="song current"><div class="cover teal"></div><div><div class="song-name">Soft Focus</div><div class="song-meta">Mira Sol · 4:08</div></div><span class="mini-tag">Next</span></div><div class="song"><div class="cover blue"></div><div><div class="song-name">Afterglow</div><div class="song-meta">Mira Sol · 4:19</div></div><span class="drag">•••</span></div></div><div class="queue-divider">More queued</div><div class="song"><div class="cover gold"></div><div><div class="song-name">Slow Motion</div><div class="song-meta">Hana Vale · 3:55</div></div><span class="drag">•••</span></div><button class="add-row"><span class="plus">+</span>Add songs</button><div class="button-row"><button class="btn ghost">Manage queue</button><span class="subtle">8 listeners</span></div></aside>
+              </div>
+            </div>
+          </div>
+        </div></div>
+      </section>
+
+      <section class="view-panel" id="host-queue" aria-label="Host queue management" hidden>
+        <div class="screen-title"><h2>Manage queue</h2><p>Current song stays locked; upcoming songs can move or be removed.</p></div>
+        <div class="mockup-frame"><div class="window">
+          <aside class="rail"><div class="brand-mark">♫</div><button class="rail-icon active">♫</button><button class="rail-icon">◉</button><button class="rail-icon">⚙</button><div class="rail-spacer"></div><button class="rail-icon">?</button></aside>
+          <div class="workspace"><header class="topbar"><div class="topbar-title"><span>Friday night</span><span class="status-pill"><span class="dot"></span>Live</span></div><div class="top-actions"><span class="queue-count">4 songs</span><div class="avatar">PC</div></div></header>
+            <div class="content"><div class="content-head"><div><h3>Playlist</h3><p>Drag to reorder upcoming songs.</p></div><button class="btn tonal">＋ Add songs</button></div>
+              <div class="screen-body"><section class="card"><div class="card-head"><h4>Now playing</h4><span class="mini-tag">Locked</span></div><div class="song current"><div class="cover"></div><div><div class="song-name">Golden Hour</div><div class="song-meta">Night Drive · 1:24 / 3:42</div></div><span class="mini-tag">♫</span></div>
+                <div class="card-head" style="margin-top:23px"><h4>Up next</h4><span class="subtle">3 songs</span></div><div class="song-list"><div class="song"><span class="drag">⠿</span><div class="cover teal"></div><div><div class="song-name">Soft Focus</div><div class="song-meta">Mira Sol · 4:08</div></div><button class="btn icon ghost" aria-label="Remove Soft Focus">×</button></div><div class="song"><span class="drag">⠿</span><div class="cover blue"></div><div><div class="song-name">Afterglow</div><div class="song-meta">Mira Sol · 4:19</div></div><button class="btn icon ghost" aria-label="Remove Afterglow">×</button></div><div class="song"><span class="drag">⠿</span><div class="cover gold"></div><div><div class="song-name">Slow Motion</div><div class="song-meta">Hana Vale · 3:55</div></div><button class="btn icon ghost" aria-label="Remove Slow Motion">×</button></div></div></section>
+                <aside class="card summary-card"><div class="summary-top"><div class="eyebrow">Playlist order</div><div class="summary-number"><strong>4</strong><span>songs</span></div><div class="info-line"><span class="info-icon">↕</span><div class="info-copy"><b>Changes apply live</b><span>The current song keeps playing.</span></div></div><div class="info-line"><span class="info-icon">♫</span><div class="info-copy"><b>Next: Soft Focus</b><span>Prepared for a gapless transition.</span></div></div></div></aside></div>
+              <footer class="button-row"><button class="btn ghost">Cancel</button><div class="right-actions"><button class="btn primary">Done</button></div></footer>
+            </div>
+          </div>
+        </div></div>
+      </section>
+
+      <section class="view-panel" id="client-join" aria-label="Client join wizard" hidden>
+        <div class="screen-title"><h2>Join a disco</h2><p>Find → Connect → Listen</p></div>
+        <div class="mockup-frame"><div class="window">
+          <aside class="rail"><div class="brand-mark">♫</div><button class="rail-icon">♫</button><button class="rail-icon active">⌕</button><button class="rail-icon">⚙</button><div class="rail-spacer"></div><button class="rail-icon">?</button></aside>
+          <div class="workspace"><header class="topbar"><div class="topbar-title"><span>Join a disco</span><span class="topbar-sub">/ Nearby</span></div><div class="top-actions"><button class="btn ghost">Scan QR</button><div class="avatar">JC</div></div></header>
+            <div class="content"><div class="content-head"><div><h3>Choose a session</h3><p>Pick a nearby disco to join.</p></div><div class="stepper"><button class="step active"><span class="step-num">1</span>Find</button><button class="step"><span class="step-num">2</span>Connect</button><button class="step"><span class="step-num">3</span>Listen</button></div></div>
+              <div class="listen-layout"><section class="card"><div class="card-head"><h4>Nearby</h4><button class="btn ghost">↻ Scan</button></div><div class="session-list"><div class="session-card selected"><span class="session-icon">♫</span><div><b>Friday night</b><small>Hosted by Alex · Approval required</small></div><span class="distance">4 m</span></div><div class="session-card"><span class="session-icon">♫</span><div><b>Rooftop mix</b><small>Open to join · 6 listening</small></div><span class="distance">12 m</span></div><div class="session-card"><span class="session-icon">♫</span><div><b>Studio B</b><small>Invite code required</small></div><span class="distance">18 m</span></div></div></section><aside class="card qr-card"><div class="qr-placeholder"><span>SCAN</span></div><h4>Have an invite?</h4><p>Scan the host's QR code to find their session.</p><button class="btn tonal">Open camera</button></aside></div>
+              <footer class="button-row"><button class="btn ghost">Back</button><div class="right-actions"><button class="btn primary">Join Friday night →</button></div></footer>
+            </div>
+          </div>
+        </div></div>
+      </section>
+
+      <section class="view-panel" id="client-wait" aria-label="Client approval waiting state" hidden>
+        <div class="screen-title"><h2>Waiting for approval</h2><p>Clear status and one visible way to cancel.</p></div>
+        <div class="mockup-frame"><div class="window">
+          <aside class="rail"><div class="brand-mark">♫</div><button class="rail-icon">♫</button><button class="rail-icon active">⌕</button><button class="rail-icon">⚙</button><div class="rail-spacer"></div><button class="rail-icon">?</button></aside>
+          <div class="workspace"><header class="topbar"><div class="topbar-title"><span>Friday night</span><span class="status-pill"><span class="dot"></span>Request sent</span></div><div class="top-actions"><span class="topbar-sub">Hosted by Alex</span><div class="avatar">JC</div></div></header>
+            <div class="content"><div class="content-head"><div><h3>Almost there</h3><p>Alex will let you in.</p></div><div class="stepper"><button class="step done"><span class="step-num">✓</span>Find</button><button class="step active"><span class="step-num">2</span>Connect</button><button class="step"><span class="step-num">3</span>Listen</button></div></div>
+              <div class="connect-body"><section class="card connecting-hero"><div class="pulse-ring">♫</div><h4>Waiting for Alex</h4><p>Your request to join Friday night is on its way. Listening starts when you're approved.</p><span class="status-pill"><span class="dot"></span>Waiting</span></section><aside class="card summary-card"><div class="summary-top"><div class="eyebrow">Joining</div><div class="info-line"><span class="info-icon">♫</span><div class="info-copy"><b>Friday night</b><span>3 songs · Gapless playlist</span></div></div><div class="info-line"><span class="info-icon">◉</span><div class="info-copy"><b>Hosted by Alex</b><span>Approval required</span></div></div></div><button class="btn ghost">Cancel request</button></aside></div>
+              <footer class="button-row"><button class="btn ghost">Back</button><div class="right-actions"><button class="btn danger">Cancel request</button></div></footer>
+            </div>
+          </div>
+        </div></div>
+      </section>
+
+      <section class="view-panel" id="client-listen" aria-label="Client connecting and listening" hidden>
+        <div class="screen-title"><h2>Client session</h2><p>Waiting and listening states stay on one screen.</p></div>
+        <div class="mockup-frame"><div class="window">
+          <aside class="rail"><div class="brand-mark">♫</div><button class="rail-icon">♫</button><button class="rail-icon active">⌕</button><button class="rail-icon">⚙</button><div class="rail-spacer"></div><button class="rail-icon">?</button></aside>
+          <div class="workspace"><header class="topbar"><div class="topbar-title"><span>Friday night</span><span class="status-pill"><span class="dot"></span>Connected</span></div><div class="top-actions"><span class="topbar-sub">Hosted by Alex</span><div class="avatar">JC</div></div></header>
+            <div class="content"><div class="content-head"><div><h3>You're in</h3><p>The host controls the playlist. Your volume is yours.</p></div><div class="stepper"><button class="step done"><span class="step-num">✓</span>Find</button><button class="step done"><span class="step-num">✓</span>Connect</button><button class="step active"><span class="step-num">3</span>Listen</button></div></div>
+              <div class="player-screen"><section class="card listener-now"><div class="sync-ok"><span class="dot"></span>In sync</div><div class="album-art"></div><h4>Golden Hour</h4><p>Night Drive · Friday night</p><div class="progress" style="width:min(100%,340px)"><span></span></div><div class="time-row" style="width:min(100%,340px)"><span>1:24</span><span>3:42</span></div><div class="volume-block" style="width:min(100%,340px)"><div class="volume-label"><span>Device volume</span><span>62%</span></div><div class="volume-track"><span></span></div></div></section><aside class="status-column"><div class="card"><div class="card-head"><h4>Connection</h4><span class="mini-tag">Stable</span></div><div class="info-line"><span class="info-icon">◉</span><div class="info-copy"><b>Connected to Alex</b><span>Track changes stay in sync.</span></div></div></div><div class="card"><div class="card-head"><h4>Up next</h4></div><div class="song"><div class="cover teal"></div><div><div class="song-name">Soft Focus</div><div class="song-meta">Mira Sol</div></div></div></div><div class="notice"><strong>Listening</strong><span>Keep this screen open for playback controls.</span></div><button class="btn ghost">Leave session</button></aside></div>
+            </div>
+          </div>
+        </div></div>
+      </section>
+      <p class="bottom-note">Design review only. Copy, spacing, workflow transitions, and platform adaptation are open to your feedback; no app code is changed by this artifact.</p>
+    </main>
+    <script>
+      const panelButtons = [...document.querySelectorAll("[data-workflow]")];
+      const panels = [...document.querySelectorAll(".view-panel")];
+      panelButtons.forEach((button) => button.addEventListener("click", () => {
+        panelButtons.forEach((item) => item.setAttribute("aria-selected", String(item === button)));
+        panels.forEach((panel) => { panel.hidden = panel.id !== button.dataset.workflow; });
+      }));
+      document.querySelectorAll("[data-device-choice]").forEach((button) => button.addEventListener("click", () => {
+        document.body.dataset.device = button.dataset.deviceChoice;
+        document.querySelectorAll("[data-device-choice]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+      }));
+      let hostStepIndex = 0;
+      const hostSteps = ["music", "access", "ready"];
+      function showHostStep(index) {
+        hostStepIndex = Math.max(0, Math.min(hostSteps.length - 1, index));
+        document.querySelectorAll("[data-host-step]").forEach((button) => {
+          const stepIndex = hostSteps.indexOf(button.dataset.hostStep);
+          button.classList.toggle("active", stepIndex === hostStepIndex);
+          button.classList.toggle("done", stepIndex < hostStepIndex);
+          button.querySelector(".step-num").textContent = stepIndex < hostStepIndex ? "✓" : String(stepIndex + 1);
+        });
+        document.querySelectorAll("[data-step-content]").forEach((section) => {
+          section.hidden = section.dataset.stepContent !== hostSteps[hostStepIndex];
+        });
+        document.querySelector("[data-host-next]").innerHTML = hostStepIndex === 2 ? "Start hosting <span>→</span>" : "Continue <span>→</span>";
+        document.querySelector("[data-host-back]").style.visibility = hostStepIndex === 0 ? "hidden" : "visible";
+      }
+      document.querySelectorAll("[data-host-step]").forEach((button) => button.addEventListener("click", () => showHostStep(hostSteps.indexOf(button.dataset.hostStep))));
+      document.querySelector("[data-host-next]").addEventListener("click", () => showHostStep(hostStepIndex + 1));
+      document.querySelector("[data-host-back]").addEventListener("click", () => showHostStep(hostStepIndex - 1));
+      showHostStep(0);
+    </script>
+  </body>
+</html>
