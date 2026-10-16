@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15
 **Branch:** `master`
-**Latest checkpoint:** `c8802cd8edbe3131afe16dd4941e48500e95f91e` (`test(android): cover host setup state restoration`)
+**Latest implementation checkpoint:** `19f1e01` (`fix(android): enforce dashboard action touch targets`)
 **Status:** Implementation substantially complete; final verification and real-device qualification remain open.
 **Product direction:** The mockups were reviewed and the user approved proceeding with the current direction.
 
@@ -78,4 +78,4 @@ GitHub Actions for `a0af477` did not start any quality jobs; the run annotations
 
 The current pushed checkpoint also includes `WorkflowConfigurationStateTest`: Host Access keeps an in-flight Next action disabled after Compose saved-state restoration, with no duplicate callback. The exact-source Android gate passed: 118 instrumentation tests (117 passed, 1 skipped, 0 failed), JVM tests, lint, debug assembly, and release assembly. Other local Rust and desktop checks remain as recorded above. This is a good handoff point: the remaining work is listed in the TODO, while physical qualification and hosted CI require restored external resources.
 
-Follow-up committed at `522f95c`: same-stream listener reconnect now applies the host's replayed current track name, so a boundary missed while disconnected cannot leave stale title text. A focused JVM regression passes for replayed metadata, omitted metadata, and a new stream without a title. Production scheduler/reconnect session coverage remains open. The client workflow stepper also now animates stage color with the shared 160 ms motion token; Android unit tests, lint, and the 16-test workflow instrumentation class passed after that change. Broader Android motion/reduced-motion behavior remains open.
+Follow-up committed at `522f95c`: same-stream listener reconnect now applies the host's replayed current track name, so a boundary missed while disconnected cannot leave stale title text. A focused JVM regression passes for replayed metadata, omitted metadata, and a new stream without a title. Production scheduler/reconnect session coverage remains open. Commit `ff2c7dc` animates client workflow step color with the shared 160 ms motion token; Android unit tests, lint, and the 16-test workflow instrumentation class passed. Commit `19f1e01` fixes Host Dashboard Add songs and Manage queue exposed 40 dp bounds by assigning explicit 48 dp button sizes. The full Android gate passed after these updates: 119 instrumentation cases (118 passed, one skipped), JVM tests, lint, debug assembly, and release assembly. Broader Android motion/reduced-motion behavior and accessibility traversal remain open.
