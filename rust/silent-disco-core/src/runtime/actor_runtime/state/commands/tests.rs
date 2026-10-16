@@ -198,6 +198,96 @@ mod host_queue_actor_tests {
     }
 
     #[test]
+    fn an_unannounced_boundary_cannot_advance_the_queue_after_an_edit() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-unannounced").expect("operation ID"),
+                0,
+                vec![
+                    entry("one", "source-one"),
+                    entry("two", "source-two"),
+                    entry("three", "source-three"),
+                ],
+            )
+            .expect("append queue");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+
+        // A queue mutation before scheduling is legal. A stale boundary
+        // from an already-prefetched worker must not promote the new head
+        // merely because its entry ID matches the revised upcoming item.
+        state
+            .remove_host_queue_entry(
+                OperationId::new("remove-prefetched").expect("operation ID"),
+                1,
+                "two",
+            )
+            .expect("remove next entry before it was scheduled");
+        let revision = state.snapshot.host_queue.revision();
+        let error = state
+            .apply_audio(AudioEvent::TrackBoundaryApplied {
+                entry_id: "three".into(),
+                first_sample_index: 48_000,
+            })
+            .expect_err("unannounced boundary must never advance the queue");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.host_queue.revision(), revision);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+
+        state
+            .apply_audio(AudioEvent::TrackBoundaryScheduled {
+                entry_id: "three".into(),
+                first_sample_index: 48_000,
+            })
+            .expect("schedule the accepted next track");
+        state
+            .apply_audio(AudioEvent::TrackBoundaryApplied {
+                entry_id: "three".into(),
+                first_sample_index: 48_000,
+            })
+            .expect("exact scheduled boundary may advance the queue");
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "three");
+    }
+
+    #[test]
+    fn a_stopped_boundary_is_not_resurrected_by_replay() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-replay-boundary").expect("operation ID"),
+                0,
+                vec![entry("one", "source-one"), entry("two", "source-two")],
+            )
+            .expect("append queue");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        state
+            .apply_audio(AudioEvent::TrackBoundaryScheduled {
+                entry_id: "two".into(),
+                first_sample_index: 12_345,
+            })
+            .expect("schedule first stream's boundary");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("replay");
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+
+        let error = state
+            .apply_audio(AudioEvent::TrackBoundaryApplied {
+                entry_id: "two".into(),
+                first_sample_index: 12_345,
+            })
+            .expect_err("boundary from stopped stream must not apply to replay");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+    }
+
+    #[test]
     fn stopping_clears_scheduled_boundary_but_preserves_queue_for_replay() {
         let mut state = host();
         state

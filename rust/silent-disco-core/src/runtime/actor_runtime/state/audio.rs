@@ -73,16 +73,25 @@ impl ActorState {
                         None,
                     ));
                 }
-                let revision = self.snapshot.host_queue.revision();
-                if let Some(boundary) = &self.snapshot.host_queue_next_boundary
-                    && (boundary.entry_id != entry_id
-                        || boundary.first_sample_index != first_sample_index)
+                // The transport must first announce and reserve the exact
+                // boundary. Without this check a stale event can advance the
+                // authoritative queue after a legal edit, Stop, or replay
+                // even if the next entry ID happens to match.
+                let Some(boundary) = &self.snapshot.host_queue_next_boundary else {
+                    return Err(invalid_state(
+                        "track boundary was applied without being scheduled",
+                        None,
+                    ));
+                };
+                if boundary.entry_id != entry_id
+                    || boundary.first_sample_index != first_sample_index
                 {
                     return Err(invalid_state(
                         "applied track boundary differs from the announced queue boundary",
                         None,
                     ));
                 }
+                let revision = self.snapshot.host_queue.revision();
                 self.snapshot
                     .host_queue
                     .complete_current(revision)
