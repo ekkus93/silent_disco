@@ -279,6 +279,13 @@ internal fun MainViewModel.startHostStreamingLoop(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
+            // A boundary at or past the end of the sent audio introduces a
+            // track no listener will hear. Cancel it before waiting out the
+            // tail: its deadline equals the tail's end, and the host queue
+            // must not advance to it on whichever timer happens to win.
+            cancelHostBoundaryJobsFrom(
+                lastPacket?.let { it.firstSampleIndex + it.samplesPerPacket } ?: 0L,
+            )
             lastPacket?.let { sentPacket ->
                 awaitHostPacketPresentationTail(
                     sentPacket.hostPresentationTimeMs,
@@ -384,8 +391,9 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
             refreshHostDiagnostics()
         }.onFailure { error -> reportRustHostCommandFailure("advance playlist", error) }
     }
-    hostBoundaryJobs += job
-    job.invokeOnCompletion { hostBoundaryJobs.remove(job) }
+    val sampleIndex = boundary.firstSampleIndex.toLong()
+    hostBoundaryJobs.put(sampleIndex, job)?.cancel()
+    job.invokeOnCompletion { hostBoundaryJobs.remove(sampleIndex, job) }
 }
 
 internal suspend fun awaitHostQueueBoundary(
@@ -411,9 +419,15 @@ internal suspend fun awaitHostQueueBoundary(
 }
 
 internal fun MainViewModel.cancelHostBoundaryJobs() {
-    val pendingJobs = hostBoundaryJobs.toList()
+    val pendingJobs = hostBoundaryJobs.values.toList()
     hostBoundaryJobs.clear()
     pendingJobs.forEach(Job::cancel)
+}
+
+private fun MainViewModel.cancelHostBoundaryJobsFrom(firstUnsentSampleIndex: Long) {
+    hostBoundaryJobs.keys
+        .filter { it >= firstUnsentSampleIndex }
+        .forEach { sampleIndex -> hostBoundaryJobs.remove(sampleIndex)?.cancel() }
 }
 
 private const val PAUSE_POLL_INTERVAL_MS = 20L

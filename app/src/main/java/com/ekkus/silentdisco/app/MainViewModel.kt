@@ -129,6 +129,14 @@ class MainViewModel @JvmOverloads constructor(
     internal var currentStreamId: StreamId? = null
     internal var listenerStreamHostStartTimeMs: Long? = null
     internal val pendingListenerTrackBoundaries = linkedMapOf<Long, PendingListenerTrackBoundary>()
+    /**
+     * Boundaries presented since the last StreamStart, and the track that
+     * StreamStart announced. A host Pause undoes any presented past its pause
+     * instant: a replayed paused stream carries its pre-pause anchor, so its
+     * upcoming boundary otherwise looks overdue before the Pause arrives.
+     */
+    internal val appliedListenerTrackBoundaries = sortedMapOf<Long, PendingListenerTrackBoundary>()
+    internal var listenerStreamStartTrackName: String? = null
     internal val listenerTrackBoundaryJobs = mutableMapOf<Long, Job>()
     /**
      * Rust-owned pre-runtime clock-sync estimator (`RustCoreBridge.openSyncEstimator()`).
@@ -155,7 +163,8 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostPlaylistStreamStart: com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart? = null
     internal var hostPlaylistFormat: com.ekkus.silentdisco.core.audio.AudioFormatSpec? = null
     internal val stagedAudioFilesBySourceId = ConcurrentHashMap<String, java.io.File>()
-    internal val hostBoundaryJobs: MutableSet<Job> = ConcurrentHashMap.newKeySet()
+    /** Scheduled host queue advances, keyed by the boundary's first sample index. */
+    internal val hostBoundaryJobs = ConcurrentHashMap<Long, Job>()
     internal val hostPendingTrackBoundaries = ConcurrentHashMap<Long, PendingHostTrackBoundary>()
     internal var hostStreamJob: Job? = null
     internal var hostPlaybackCommandJob: Job? = null

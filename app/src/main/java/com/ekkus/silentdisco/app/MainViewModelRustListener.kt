@@ -29,6 +29,9 @@ import kotlinx.coroutines.launch
 
 private const val CANONICAL_STREAM_SAMPLE_RATE = 48_000L
 
+/** Mirrors the host transport's replay cache bound (`MAX_CACHED_TRACK_BOUNDARIES`). */
+private const val MAX_APPLIED_LISTENER_TRACK_BOUNDARIES = 100
+
 private val REQUESTED_OR_LATER = setOf(
     ListenerLifecycleState.JOIN_REQUESTED,
     ListenerLifecycleState.AWAITING_APPROVAL,
@@ -48,12 +51,14 @@ private val APPROVED_OR_LATER = setOf(
     ListenerLifecycleState.APPROVED,
 )
 
+internal fun listenerBoundaryHostTimeMs(hostStartTimeMs: Long, firstSampleIndex: Long): Double =
+    hostStartTimeMs + firstSampleIndex * 1_000.0 / CANONICAL_STREAM_SAMPLE_RATE
+
 internal fun listenerBoundaryLocalTimeMs(
     hostStartTimeMs: Long,
     firstSampleIndex: Long,
     hostOffsetMs: Double,
-): Double =
-    hostStartTimeMs + firstSampleIndex * 1_000.0 / CANONICAL_STREAM_SAMPLE_RATE - hostOffsetMs
+): Double = listenerBoundaryHostTimeMs(hostStartTimeMs, firstSampleIndex) - hostOffsetMs
 
 internal fun shouldReanchorListenerPlayback(
     resumeInPlace: Boolean,
@@ -248,6 +253,9 @@ internal fun MainViewModel.handleListenerTransportEvent(
         is FfiListenerTransportEvent.TrackBoundary -> handleTransportTrackBoundary(event)
         is FfiListenerTransportEvent.Paused -> {
             cancelListenerTrackBoundaryTimers()
+            if (currentStreamId?.value == event.streamId) {
+                withdrawListenerTrackBoundariesAfter(event.hostPauseTimeMs.toLong())
+            }
             propagateListenerPlaybackState(
                 playbackState = PlaybackState.PAUSED,
                 listenerState = _uiState.value.listenerState,
@@ -273,11 +281,22 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
             announcedTrackName = event.currentDisplayName,
         ),
     )
+    listenerStreamStartTrackName = _uiState.value.listenerCurrentTrackName
+    appliedListenerTrackBoundaries.clear()
     if (!isSameStream) {
         pendingListenerTrackBoundaries.clear()
     }
-    rescheduleListenerTrackBoundaries()
-    if (!isSameStream || listenerPlayback == null) {
+    val resumesRunningPlayback = isSameStream && listenerPlayback != null
+    if (resumesRunningPlayback && _uiState.value.listenerPlaybackState == PlaybackState.PAUSED) {
+        // The runtime is re-anchored in place, so it never re-reports its
+        // first PLAYING; leave PAUSED here or every later boundary stays
+        // blocked and the screen reads paused while audio plays.
+        _uiState.value = _uiState.value.copy(
+            listenerPlaybackState = PlaybackState.BUFFERING,
+            lastMessage = "Host resumed the stream",
+        )
+    }
+    if (!resumesRunningPlayback) {
         _uiState.value = _uiState.value.copy(
             listenerState = ListenerLifecycleState.BUFFERING,
             listenerPlaybackState = PlaybackState.BUFFERING,
@@ -293,6 +312,7 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
             lastError = null,
         )
     }
+    rescheduleListenerTrackBoundaries()
     startListenerPlaybackFromTransport(
         sessionId = SessionId(session.id),
         streamId = streamId,
@@ -313,6 +333,8 @@ internal fun MainViewModel.handleTransportStreamStopped() {
     resyncJob = null
     listenerStreamHostStartTimeMs = null
     pendingListenerTrackBoundaries.clear()
+    appliedListenerTrackBoundaries.clear()
+    listenerStreamStartTrackName = null
     cancelListenerTrackBoundaryTimers()
     stopListenerPlayback()
     propagateListenerPlaybackState(
@@ -346,6 +368,27 @@ private fun MainViewModel.handleTransportTrackBoundary(
     scheduleListenerTrackBoundary(sampleIndex)
 }
 
+/**
+ * Returns boundaries presented after the host's pause instant to pending and
+ * restores the track that was playing at that instant. The host holds such
+ * boundaries across the pause and re-sends them, re-anchored, on resume.
+ */
+private fun MainViewModel.withdrawListenerTrackBoundariesAfter(hostPauseTimeMs: Long) {
+    val hostStartMs = listenerStreamHostStartTimeMs ?: return
+    val withdrawn = appliedListenerTrackBoundaries.filterKeys { sampleIndex ->
+        listenerBoundaryHostTimeMs(hostStartMs, sampleIndex) > hostPauseTimeMs
+    }
+    if (withdrawn.isEmpty()) return
+    withdrawn.forEach { (sampleIndex, boundary) ->
+        appliedListenerTrackBoundaries.remove(sampleIndex)
+        pendingListenerTrackBoundaries[sampleIndex] = boundary
+    }
+    metrics.increment("track_boundary_withdrawn", withdrawn.size.toLong())
+    val trackAtPause = appliedListenerTrackBoundaries.values.lastOrNull()?.displayName
+        ?: listenerStreamStartTrackName
+    _uiState.value = _uiState.value.copy(listenerCurrentTrackName = trackAtPause)
+}
+
 internal fun MainViewModel.rescheduleListenerTrackBoundaries() {
     cancelListenerTrackBoundaryTimers()
     pendingListenerTrackBoundaries.keys.toList().forEach(::scheduleListenerTrackBoundary)
@@ -377,6 +420,10 @@ private fun MainViewModel.scheduleListenerTrackBoundary(sampleIndex: Long) {
         if (_uiState.value.listenerPlaybackState == PlaybackState.PAUSED) return@launch
         pendingListenerTrackBoundaries.remove(sampleIndex)
         listenerTrackBoundaryJobs.remove(sampleIndex)
+        appliedListenerTrackBoundaries[sampleIndex] = boundary
+        while (appliedListenerTrackBoundaries.size > MAX_APPLIED_LISTENER_TRACK_BOUNDARIES) {
+            appliedListenerTrackBoundaries.remove(appliedListenerTrackBoundaries.firstKey())
+        }
         _uiState.value = _uiState.value.copy(listenerCurrentTrackName = boundary.displayName)
         metrics.increment("track_boundary_applied")
         diagnosticsStore.updateListener { it.copy(metricsSummary = summarizeMetrics()) }

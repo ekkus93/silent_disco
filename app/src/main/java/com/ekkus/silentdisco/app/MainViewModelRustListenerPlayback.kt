@@ -144,6 +144,14 @@ private fun MainViewModel.startListenerPlaybackFromTransportNow(
 }
 
 /**
+ * Promotes BUFFERING whenever the runtime plays -- including after a
+ * same-stream resume re-anchors it -- but never overrides PAUSED: the runtime
+ * keeps playing out its buffered tail after a host pause.
+ */
+internal fun shouldReportListenerPlaying(phase: FfiPlaybackPhase, reported: PlaybackState): Boolean =
+    phase == FfiPlaybackPhase.PLAYING && reported == PlaybackState.BUFFERING
+
+/**
  * Mirrors the runtime's own accounting into the diagnostics store and UI.
  *
  * Polling a snapshot beats deriving state per frame: the counters come from
@@ -153,7 +161,6 @@ private fun MainViewModel.startListenerPlaybackFromTransportNow(
 private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerPlaybackHandle) {
     playbackJob?.cancel()
     playbackJob = viewModelScope.launch(Dispatchers.IO) {
-        var reportedPlaying = false
         var reportedSyncStall = false
         var lastUnderruns = 0UL
         var lastDroppedBeforeSync = 0UL
@@ -193,8 +200,7 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                 )
             }
             lastDroppedBeforeSync = diagnostics.droppedBeforeSync
-            if (!reportedPlaying && diagnostics.phase == FfiPlaybackPhase.PLAYING) {
-                reportedPlaying = true
+            if (shouldReportListenerPlaying(diagnostics.phase, _uiState.value.listenerPlaybackState)) {
                 _uiState.value = _uiState.value.copy(
                     listenerState = ListenerLifecycleState.PLAYING,
                     listenerPlaybackState = PlaybackState.PLAYING,

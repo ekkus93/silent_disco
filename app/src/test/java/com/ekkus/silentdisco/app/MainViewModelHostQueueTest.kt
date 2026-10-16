@@ -80,7 +80,7 @@ class MainViewModelHostQueueTest {
     fun stoppingPlaybackCancelsPendingBoundaryApplicationsBeforeSubmittingStop() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         val pendingBoundary = Job()
-        harness.viewModel.hostBoundaryJobs += pendingBoundary
+        harness.viewModel.hostBoundaryJobs[960L] = pendingBoundary
         harness.viewModel._uiState.value = AppUiState(hostPlaybackState = PlaybackState.PLAYING)
 
         harness.viewModel.stopHostPlaybackImpl()
