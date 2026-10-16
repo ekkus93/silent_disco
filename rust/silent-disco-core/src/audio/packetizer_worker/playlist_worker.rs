@@ -143,6 +143,16 @@ pub(super) fn run_playlist_packetizer_worker(
                 &mut final_track,
             )?;
         }
+        // Commit only after consuming every accepted edit. The check and
+        // promotion share the updater mutex, preventing a lost retarget.
+        while next.as_ref().is_some_and(|(_, opened)| opened.is_ok()) {
+            let id = &next.as_ref().expect("checked").0.0;
+            if promote_current_entry_if_unmodified(updates, id)? {
+                break;
+            }
+            let mut final_track = false;
+            refresh_pending_playlist_update(updates, &mut upcoming, &mut next, &mut final_track)?;
+        }
         let Some(((next_entry_id, next_display_name), next_decoder)) = next else {
             if had_successor {
                 // The outgoing decoder was processed as non-final, so its
@@ -188,7 +198,6 @@ pub(super) fn run_playlist_packetizer_worker(
             }
         };
         current_display_name.clone_from(&next_display_name);
-        promote_current_entry(updates, &next_entry_id)?;
         boundary = Some(ProtocolFrame::Control(ControlMessage::TrackBoundary(
             TrackBoundary {
                 session_id: packetizer.session_id().clone(),
@@ -221,24 +230,23 @@ fn apply_playlist_update(
     Ok(())
 }
 
-/// If a pending edit was accepted just before promotion, the newly current
-/// entry is no longer upcoming. Keep the remaining order without replaying it.
-fn promote_current_entry(
+/// Returns false if a pending accepted edit must be applied first.
+fn promote_current_entry_if_unmodified(
     updates: &Mutex<PlaylistUpdateState>,
     entry_id: &str,
-) -> Result<(), PacketizerWorkerError> {
+) -> Result<bool, PacketizerWorkerError> {
     let mut state = updates.lock().map_err(|_| {
         PacketizerWorkerError::new(
             PacketizerWorkerErrorKind::WorkerPanicked,
             "playlist update lock was poisoned",
         )
     })?;
+    if state.pending.is_some() {
+        return Ok(false);
+    }
     state.current_entry_id.clear();
     state.current_entry_id.push_str(entry_id);
-    if let Some(pending) = state.pending.as_mut() {
-        pending.retain(|track| track.entry_id != entry_id);
-    }
-    Ok(())
+    Ok(true)
 }
 
 fn open_next_track(
@@ -406,16 +414,18 @@ mod promotion_identity_tests {
             pending: Some(vec![factory("two"), factory("three")]),
             terminal: false,
         });
-        promote_current_entry(&state, "two").expect("promotion");
+        assert!(!promote_current_entry_if_unmodified(&state, "two").expect("pending edit"));
+        assert_eq!(state.lock().expect("lock").current_entry_id, "one");
         let mut upcoming = VecDeque::new();
         apply_playlist_update(&state, &mut upcoming).expect("apply accepted edit");
+        assert!(promote_current_entry_if_unmodified(&state, "two").expect("promotion"));
         assert_eq!(state.lock().expect("lock").current_entry_id, "two");
         assert_eq!(
             upcoming
                 .iter()
                 .map(|track| track.entry_id.as_str())
                 .collect::<Vec<_>>(),
-            ["three"]
+            ["two", "three"]
         );
     }
 }
