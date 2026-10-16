@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15
 **Branch:** `master`
-**Latest implementation checkpoint:** `2f05632` (`fix(android): guard canceled host boundary scheduler`)
+**Latest implementation checkpoint:** `007c48e` (`test(android): exercise host boundary scheduler integration`)
 **Status:** Implementation substantially complete; final verification and real-device qualification remain open.
 **Product direction:** The mockups were reviewed and the user approved proceeding with the current direction.
 
@@ -87,3 +87,15 @@ The implementation checkpoint is `2f05632`. The Android host queue-boundary dela
 The latest full Android gate, `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease connectedDebugAndroidTest --stacktrace --console=plain`, completed successfully on the source committed as `2f05632`. API 36 instrumentation XML reports 120 tests, 119 passed, one skipped, zero failed. `bash scripts/check-source-file-line-counts.sh` passes for all 642 tracked source files, and `git diff --check` passes. The full gate should be rerun after any further source changes.
 
 The best stopping point is now: software gates are green, the implementation and outstanding work are recorded in this handoff and the TODO, and the remaining end-to-end audio qualification cannot be completed here because the user confirmed no physical devices are available. Exact-head hosted CI is also still unverified because recent GitHub Actions runs did not start jobs under the repository Actions budget restriction. Next, continue the unchecked TODO items, prioritize production scheduler/reconnect integration and remaining host/client race permutations, then run hosted CI and device qualification when those resources are available. Do not claim overall gapless acceptance complete until those device checks pass.
+
+## Latest work since the previous handoff checkpoint
+
+Three more commits are pushed on `master`:
+
+- `893be43 fix(android): cancel queue boundaries on stop` cancels Android's independent scheduled host-boundary jobs synchronously before submitting STOP. A MainViewModel regression verifies cancellation precedes the authoritative state transition.
+- `9e96a90 fix(core): reset host queue playhead on stop` makes Rust STOP reset the displayed playhead to zero while retaining the current and upcoming queue entries/source. The actor regression verifies a stale scheduled boundary is cleared and rejected after STOP and Play restarts the same current entry at position zero.
+- `007c48e test(android): exercise host boundary scheduler integration` injects dispatcher/clock/wait at the production Android scheduler seam. Virtual-time MainViewModel tests verify that pause shifts the scheduled boundary deadline, the Rust controller receives the boundary at the due time, and Stop cancellation prevents application.
+
+Verification at `007c48e`: `RUST_TEST_THREADS=1 bash scripts/check-rust.sh` passed (364 core unit tests, 66 FFI unit tests, all workspace integration tests, formatting, strict Clippy). Android `testDebugUnitTest` and `lintDebug` passed. The source-line check passed across 642 tracked source files. A full Android gate was started but cancelled before results at the user's request to switch to Claude Code; rerun `./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease connectedDebugAndroidTest --stacktrace --console=plain` on the next checkpoint. The most recent completed managed instrumentation evidence remains the 120-case API 36 run documented above (119 passed, one skipped, zero failed).
+
+Remaining software work includes broader pause/resume, queue-edit, late-join/reconnect and failure race permutations; runtime-level Android output preservation and failure Stop timestamp coverage; full host/client workflow and accessibility traversal; screenshot/golden coverage; and reconciling every unchecked item in the TODO against exact-head evidence. External blockers are unchanged: the user has no physical devices, and GitHub Actions is not starting jobs while the repository Actions budget restriction is active. The working tree was clean at this checkpoint except for local untracked `.serena/` data, which is not part of the project and was not committed.
