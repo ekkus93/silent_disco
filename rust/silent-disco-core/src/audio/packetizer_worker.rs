@@ -24,6 +24,7 @@ const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
 struct PlaylistUpdateState {
     current_entry_id: String,
     pending: Option<Vec<StreamingPlaylistTrackFactory>>,
+    terminal: bool,
 }
 type PlaylistUpdates = Arc<Mutex<PlaylistUpdateState>>;
 type StagedPlaylistTrack = ((String, String), Result<StreamingDecodeHandle, DecodeError>);
@@ -156,6 +157,12 @@ impl StreamingPlaylistUpdater {
                 "playlist update lock was poisoned",
             )
         })?;
+        if state.terminal {
+            return Err(PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::Cancelled,
+                "playlist packetizer has already terminated",
+            ));
+        }
         validate_playlist_entries(Some(&state.current_entry_id), &upcoming)?;
         state.pending = Some(upcoming);
         Ok(())
@@ -336,6 +343,7 @@ impl StreamingPacketizeHandle {
             pending: Arc::new(Mutex::new(PlaylistUpdateState {
                 current_entry_id: current_entry_id.clone(),
                 pending: None,
+                terminal: false,
             })),
         };
         let worker_updates = Arc::clone(&playlist_updater.pending);

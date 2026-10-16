@@ -191,9 +191,13 @@ impl FfiHostPlaylistStreamer {
                 .map_err(|error| FfiHostPlaylistError::Packetizer(error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        self.updater
-            .replace_upcoming(factories)
-            .map_err(|error| FfiHostPlaylistError::Packetizer(error.to_string()))
+        self.updater.replace_upcoming(factories).map_err(|error| {
+            if error.kind == PacketizerWorkerErrorKind::Cancelled {
+                FfiHostPlaylistError::Closed(error.to_string())
+            } else {
+                FfiHostPlaylistError::Packetizer(error.to_string())
+            }
+        })
     }
 
     /// Returns `None` when no frame arrived before the timeout or after clean EOF.

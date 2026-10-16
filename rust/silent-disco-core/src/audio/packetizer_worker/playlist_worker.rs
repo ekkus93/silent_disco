@@ -18,6 +18,19 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 
+/// Marks the updater terminal under the same lock used to admit queue edits.
+/// A producer that has exited must not silently accept work it cannot emit.
+struct PlaylistTerminalGuard<'a>(&'a PlaylistUpdates);
+
+impl Drop for PlaylistTerminalGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.terminal = true;
+            state.pending = None;
+        }
+    }
+}
+
 pub(super) fn validate_track_identity(
     entry_id: &str,
     display_name: &str,
@@ -82,6 +95,7 @@ pub(super) fn run_playlist_packetizer_worker(
     cancellation: &AtomicBool,
     statistics: &SharedStatistics,
 ) -> Result<PacketizerSummary, PacketizerWorkerError> {
+    let _terminal_guard = PlaylistTerminalGuard(updates);
     let mut upcoming: VecDeque<_> = upcoming.into();
     let mut boundary = None;
     loop {
@@ -390,6 +404,7 @@ mod promotion_identity_tests {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
             pending: Some(vec![factory("two"), factory("three")]),
+            terminal: false,
         });
         promote_current_entry(&state, "two").expect("promotion");
         let mut upcoming = VecDeque::new();

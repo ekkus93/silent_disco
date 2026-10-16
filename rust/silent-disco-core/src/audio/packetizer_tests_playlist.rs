@@ -369,3 +369,58 @@ fn playlist_factory_enforces_actor_queue_entry_identity_rules() {
         assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
     }
 }
+
+#[test]
+fn playlist_updater_rejects_edits_after_producer_completes_before_consumer_join() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let path = write_bytes(&temp, "terminal.wav", &pcm_wav_frames(48_000, 2, 241));
+    let decoder = StreamingDecodeHandle::open(path, StreamingDecodeConfig::default())
+        .expect("open track");
+    let handle = StreamingPacketizeHandle::spawn_playlist(
+        decoder,
+        "entry-terminal",
+        "Terminal track",
+        vec![],
+        SessionId::new("session-terminal").expect("session ID"),
+        StreamId::new("stream-terminal").expect("stream ID"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig::default(),
+    )
+    .expect("start packetizer");
+    let updater = handle.playlist_updater().expect("updater");
+    // The bounded channel can hold the entire short stream. Producer exit
+    // is independent of the consumer observing the final packet.
+    handle.join().expect("producer finished");
+    let error = updater
+        .replace_upcoming(vec![])
+        .expect_err("finished producer must reject edits");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+    assert!(error.message.contains("terminated"));
+}
+
+#[test]
+fn playlist_updater_rejects_edits_after_cancellation() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let path = write_bytes(&temp, "cancelled.wav", &pcm_wav_frames(48_000, 2, 48_000));
+    let decoder = StreamingDecodeHandle::open(path, StreamingDecodeConfig::default())
+        .expect("open track");
+    let handle = StreamingPacketizeHandle::spawn_playlist(
+        decoder,
+        "entry-cancelled",
+        "Cancelled track",
+        vec![],
+        SessionId::new("session-cancelled").expect("session ID"),
+        StreamId::new("stream-cancelled").expect("stream ID"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig { queue_capacity: 1, ..StreamingPacketizeConfig::default() },
+    )
+    .expect("start packetizer");
+    let updater = handle.playlist_updater().expect("updater");
+    let _ = handle.cancel_and_join();
+    let error = updater
+        .replace_upcoming(vec![])
+        .expect_err("cancelled producer must reject edits");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+}
