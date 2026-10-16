@@ -347,16 +347,26 @@ private suspend fun MainViewModel.broadcastHostTrackBoundary(
     boundary: FfiPlaylistFrame.TrackBoundary,
 ) {
     metrics.increment("track_boundary_broadcast")
-    runCatching {
+    // Unlike a best-effort UI notification, this control defines which
+    // source listeners are about to hear. Sending subsequent PCM after a
+    // failed boundary would make the listener's track identity untruthful.
+    val delivery = try {
         hostTransportController.broadcastTrackBoundary(
             streamId = streamId.value,
             firstSampleIndex = boundary.firstSampleIndex.toLong(),
             entryId = boundary.entryId,
             displayName = boundary.displayName,
-        )
-    }.onSuccess { delivery ->
-        reportHostBroadcastDelivery("broadcast track boundary", delivery.toSendAllResult(), requireAnyPeer = false)
-    }.onFailure { error -> handleHostControlFailure("broadcast track boundary", error) }
+        ).toSendAllResult()
+    } catch (error: Throwable) {
+        handleHostControlFailure("broadcast track boundary", error)
+        throw error
+    }
+    if (!reportHostBroadcastDelivery("broadcast track boundary", delivery, requireAnyPeer = false)) {
+        // The stream loop catches this, withdraws unheard boundaries, waits
+        // for the final sent PCM tail, then broadcasts Stop. Zero listeners
+        // is permitted: there is no connected listener to desynchronize.
+        throw IllegalStateException("Track boundary was not delivered to every connected listener")
+    }
 }
 
 internal fun MainViewModel.scheduleHostQueueBoundary(

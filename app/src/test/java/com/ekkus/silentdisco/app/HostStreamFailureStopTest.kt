@@ -268,6 +268,89 @@ class HostStreamFailureStopTest {
         }
     }
 
+    @Test
+    fun partialBoundaryDeliveryStopsBeforeSendingNextTrackAudio() = runTest(dispatcher) {
+        val fixture = startFailingStream(
+            frames = listOf(
+                trackBoundary(firstSampleIndex = 960),
+                audioFrame(sequence = 1, firstSampleIndex = 960, presentationMs = 420),
+            ),
+        )
+        fixture.transport.boundaryDeliveryOverride = FfiHostTransportDelivery(
+            intendedPeers = 2u,
+            successfulPeers = 1u,
+            failedPeers = 1u,
+            bytesSent = 0uL,
+        )
+        try {
+            advanceTimeBy(419L)
+            runCurrent()
+            assertThat(fixture.transport.boundarySamples).containsExactly(960uL)
+            assertThat(fixture.transport.audio.map(AudioCall::sequence)).containsExactly(0uL)
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+            assertThat(fixture.transport.stops).isEmpty()
+
+            advanceTimeBy(1L)
+            runCurrent()
+            assertThat(fixture.transport.stops)
+                .containsExactly(StopCall(STREAM_ID, hostStopTimeMs = 420uL, sentAtMs = 420L))
+            assertThat(fixture.harness.hostCoreController.playbackFailureCalls).hasSize(1)
+            assertThat(fixture.harness.hostCoreController.playbackFailureCalls.single())
+                .contains("Track boundary was not delivered")
+        } finally {
+            fixture.viewModel.hostTransportController.close()
+        }
+    }
+
+    @Test
+    fun boundaryTransportExceptionStopsWithoutSendingNextTrackAudio() = runTest(dispatcher) {
+        val fixture = startFailingStream(
+            frames = listOf(
+                trackBoundary(firstSampleIndex = 960),
+                audioFrame(sequence = 1, firstSampleIndex = 960, presentationMs = 420),
+            ),
+        )
+        fixture.transport.boundaryException = IllegalStateException("injected boundary transport failure")
+        try {
+            advanceTimeBy(420L)
+            runCurrent()
+            assertThat(fixture.transport.audio.map(AudioCall::sequence)).containsExactly(0uL)
+            assertThat(fixture.transport.stops)
+                .containsExactly(StopCall(STREAM_ID, hostStopTimeMs = 420uL, sentAtMs = 420L))
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+            assertThat(fixture.harness.hostCoreController.playbackFailureCalls)
+                .containsExactly("injected boundary transport failure")
+        } finally {
+            fixture.viewModel.hostTransportController.close()
+        }
+    }
+
+    @Test
+    fun boundaryWithNoConnectedListenersDoesNotAbortPlayback() = runTest(dispatcher) {
+        val fixture = startFailingStream(
+            frames = listOf(
+                trackBoundary(firstSampleIndex = 960),
+                audioFrame(sequence = 1, firstSampleIndex = 960, presentationMs = 420),
+            ),
+        )
+        fixture.transport.boundaryDeliveryOverride = FfiHostTransportDelivery(
+            intendedPeers = 0u,
+            successfulPeers = 0u,
+            failedPeers = 0u,
+            bytesSent = 0uL,
+        )
+        try {
+            advanceTimeBy(30L)
+            runCurrent()
+            assertThat(fixture.transport.audio.map(AudioCall::sequence))
+                .containsExactly(0uL, 1uL).inOrder()
+            assertThat(fixture.harness.hostCoreController.playbackFailureCalls).isEmpty()
+            assertThat(fixture.transport.stops).isEmpty()
+        } finally {
+            fixture.viewModel.hostTransportController.close()
+        }
+    }
+
     private suspend fun TestScope.startFailingStream(frames: List<FfiPlaylistFrame>): StreamFixture {
         val clock = { testScheduler.currentTime }
         val transport = RecordingHostTransportHandle(clock)
@@ -363,6 +446,8 @@ private class RecordingHostTransportHandle(private val clock: () -> Long) : FfiH
     val stops: MutableList<StopCall> = Collections.synchronizedList(mutableListOf())
     val streamStartTimesMs: MutableList<ULong> = Collections.synchronizedList(mutableListOf())
     val boundarySamples: MutableList<ULong> = Collections.synchronizedList(mutableListOf())
+    var boundaryDeliveryOverride: FfiHostTransportDelivery? = null
+    var boundaryException: Throwable? = null
 
     override fun pollEvent(timeoutMs: ULong): FfiHostTransportEvent? {
         Thread.sleep(10)
@@ -403,7 +488,8 @@ private class RecordingHostTransportHandle(private val clock: () -> Long) : FfiH
         displayName: String,
     ): FfiHostTransportDelivery {
         boundarySamples += firstSampleIndex
-        return DELIVERED
+        boundaryException?.let { throw it }
+        return boundaryDeliveryOverride ?: DELIVERED
     }
 
     override fun broadcastStop(streamId: String, hostStopTimeMs: ULong): FfiHostTransportDelivery {
