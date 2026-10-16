@@ -322,13 +322,33 @@ fn refresh_pending_playlist_update(
         .is_some();
     if has_update {
         apply_playlist_update(updates, upcoming)?;
-        if let Some((_, Ok(stale))) = next.take() {
-            let _ = stale.cancel_and_join();
+        // Appending or reordering tracks *behind* the already-prepared
+        // successor must not tear down and reopen that decoder. Besides
+        // wasting the prebuffer, reopening can introduce a boundary underrun
+        // or fail after a staged file becomes temporarily unavailable.
+        if next.as_ref().is_some_and(|((id, name), opened)| {
+            opened.is_ok() && upcoming.front().is_some_and(|factory| {
+                same_staged_identity(id, name, factory)
+            })
+        }) {
+            upcoming.pop_front();
+        } else {
+            if let Some((_, Ok(stale))) = next.take() {
+                let _ = stale.cancel_and_join();
+            }
+            *next = open_next_track(upcoming);
         }
-        *next = open_next_track(upcoming);
         *final_track = next.is_none();
     }
     Ok(())
+}
+
+fn same_staged_identity(
+    entry_id: &str,
+    display_name: &str,
+    candidate: &StreamingPlaylistTrackFactory,
+) -> bool {
+    entry_id == candidate.entry_id && display_name == candidate.display_name
 }
 
 fn map_playlist_decode_error(error: &DecodeError, display_name: &str) -> PacketizerWorkerError {
@@ -354,6 +374,15 @@ mod promotion_identity_tests {
             unreachable!("identity-only test never opens a decoder")
         })
         .expect("factory")
+    }
+
+    #[test]
+    fn unchanged_successor_identity_preserves_the_prebuffer() {
+        let same = factory("next");
+        let changed = factory("replacement");
+        assert!(same_staged_identity("next", "Track", &same));
+        assert!(!same_staged_identity("next", "Track", &changed));
+        assert!(!same_staged_identity("next", "Renamed track", &same));
     }
 
     #[test]
