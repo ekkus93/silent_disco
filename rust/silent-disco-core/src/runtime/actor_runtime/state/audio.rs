@@ -151,6 +151,15 @@ impl ActorState {
                 Ok(ApplyOutcome::changed())
             }
             AudioEvent::EndOfStream { .. } => {
+                // A delayed EOF after explicit Stop or a playback failure is
+                // not natural completion of the active stream. Keep the queue
+                // intact for replay or retry instead of clearing it.
+                if self.snapshot.playback_state != PlaybackState::Playing {
+                    return Err(invalid_state(
+                        "end of stream received while playback was inactive",
+                        None,
+                    ));
+                }
                 let queue_revision = self.snapshot.host_queue.revision();
                 self.snapshot
                     .host_queue

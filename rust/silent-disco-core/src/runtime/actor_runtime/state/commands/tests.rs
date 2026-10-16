@@ -396,6 +396,66 @@ mod host_queue_actor_tests {
     }
 
     #[test]
+    fn delayed_end_of_stream_after_stop_preserves_queue_for_replay() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-stop-eof").expect("operation ID"),
+                0,
+                vec![entry("one", "one"), entry("two", "two")],
+            )
+            .expect("append");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Playing;
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("explicit Stop");
+
+        let revision = state.snapshot.host_queue.revision();
+        let error = state
+            .apply_audio_control(AudioEvent::EndOfStream {
+                stream_id: StreamId::new("stopped-stream").expect("stream ID"),
+            })
+            .expect_err("late EOF must not clear a stopped queue");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Stopped);
+        assert_eq!(state.snapshot.host_queue.revision(), revision);
+        assert_eq!(state.snapshot.host_queue.entries().len(), 2);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+        assert!(!state.snapshot.stream_ended_naturally);
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("replay");
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+    }
+
+    #[test]
+    fn delayed_end_of_stream_after_failure_keeps_retryable_queue() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-error-eof").expect("operation ID"),
+                0,
+                vec![entry("failed", "source-one"), entry("next", "source-two")],
+            )
+            .expect("append");
+        state.snapshot.host_lifecycle = HostLifecycle::Ready;
+        state.snapshot.playback_state = PlaybackState::Error;
+        let revision = state.snapshot.host_queue.revision();
+        let error = state
+            .apply_audio_control(AudioEvent::EndOfStream {
+                stream_id: StreamId::new("failed-stream").expect("stream ID"),
+            })
+            .expect_err("late EOF must not erase retryable queue");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Error);
+        assert_eq!(state.snapshot.host_queue.revision(), revision);
+        assert_eq!(state.snapshot.host_queue.entries().len(), 2);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "failed");
+        assert!(!state.snapshot.stream_ended_naturally);
+    }
+
+    #[test]
     fn natural_end_clears_completed_queue_and_preserves_host_session() {
         let mut state = host();
         state
