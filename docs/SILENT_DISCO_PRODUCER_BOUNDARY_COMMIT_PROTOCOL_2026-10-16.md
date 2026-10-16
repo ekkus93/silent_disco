@@ -21,3 +21,9 @@ The producer must not wait for the consumer of its own bounded output channel wh
 5. Exercise the production Android FFI and desktop host paths, not just a standalone packetizer test. Verify same-stream identity and exact-head Rust/Android/desktop gates before checking this TODO item.
 
 This note does not replace device-level output continuity evidence or restore unavailable GitHub Actions execution.
+
+## EOF retarget progress, 2026-10-16
+
+Commits `b10491a` and `013b2e1` recheck the pending upcoming-list update after the outgoing decoder completes and before promoting its prebuffered successor. If that update removes the last successor, the worker now finalizes the existing packetizer with an **empty final PCM chunk**, flushing any carried partial packet at the genuine queue end. A regression checks its exact sample/sequence position. This supersedes the earlier implementation-note statement that this specific late-removal case must stop with a typed packetizer failure.
+
+The producer-to-consumer enqueue race remains unresolved. No reservation callback is connected to the actor, so section 3 of the TODO stays unchecked. Do not confuse the EOF retarget fix with full boundary-commit linearization.
