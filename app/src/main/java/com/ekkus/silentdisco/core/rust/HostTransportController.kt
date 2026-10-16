@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,7 +31,18 @@ private const val POLL_TIMEOUT_MS: ULong = 500uL
  * releases the current native session and poll job but intentionally keeps the
  * event stream open; `MainViewModel` installs one collector for its lifetime.
  */
-class HostTransportController : AutoCloseable {
+class HostTransportController(
+    /**
+     * Runs bind and send calls. The event poll loop always stays on
+     * [Dispatchers.IO] because it blocks inside native `pollEvent`.
+     */
+    private val callDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Opens the native host transport; replaced only by JVM tests that record broadcasts. */
+    private val bindHandle: (String, UShort, UShort, UShort, String) -> FfiHostTransportHandle =
+        { localAddress, controlPort, syncPort, audioPort, sessionId ->
+            FfiHostTransportHandle.bind(localAddress, controlPort, syncPort, audioPort, sessionId)
+        },
+) : AutoCloseable {
     private val handleRef = AtomicReference<FfiHostTransportHandle?>(null)
     private var eventLoop: Job? = null
     private val eventChannel = Channel<FfiHostTransportEvent>(Channel.UNLIMITED)
@@ -45,9 +57,9 @@ class HostTransportController : AutoCloseable {
         audioPort: Int,
         sessionId: String,
     ) {
-        withContext(Dispatchers.IO) {
+        withContext(callDispatcher) {
             closeExistingHandle()
-            val handle = FfiHostTransportHandle.bind(
+            val handle = bindHandle(
                 localAddress,
                 controlPort.toUShort(),
                 syncPort.toUShort(),
@@ -209,7 +221,7 @@ class HostTransportController : AutoCloseable {
     }
 
     private suspend fun <T> withHandle(action: (FfiHostTransportHandle) -> T): T? =
-        withContext(Dispatchers.IO) { handleRef.get()?.let(action) }
+        withContext(callDispatcher) { handleRef.get()?.let(action) }
 
     private fun closeExistingHandle() {
         handleRef.getAndSet(null)?.let { handle ->

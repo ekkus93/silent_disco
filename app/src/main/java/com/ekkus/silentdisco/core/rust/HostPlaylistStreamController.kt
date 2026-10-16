@@ -6,7 +6,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiPlaylistSource
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart
 
 /** Owns the Rust bounded decoder/packetizer worker for one Android host stream. */
-class HostPlaylistStreamController private constructor(
+class HostPlaylistStreamController internal constructor(
     private val handle: FfiHostPlaylistStreamer,
 ) : AutoCloseable {
     val streamStart: FfiPlaylistStreamStart = handle.streamStart()

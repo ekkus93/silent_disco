@@ -5,13 +5,17 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.wifi.WifiManager
+import android.os.SystemClock
 import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.ekkus.silentdisco.core.rust.FakeListenerCoreController
 import com.ekkus.silentdisco.core.rust.FakeListenerTransport
 import com.ekkus.silentdisco.core.rust.FakeRustDomainStore
+import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.transport.FakeBleTransport
 import com.ekkus.silentdisco.core.transport.FakeMdnsTransport
 import com.ekkus.silentdisco.core.transport.FakeSessionTransport
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.mock
@@ -26,10 +30,12 @@ import org.mockito.kotlin.whenever
  * [FakeListenerCoreController.emit]) instead of being invoked reflectively
  * or re-implemented for the test.
  *
- * `hostTransportController` remains the real unbound production class for
- * zero-peer host-delivery assertions. The listener transport is injected as
- * a recording fake so endpoint-backed mDNS discovery can exercise the real
- * connect/join effect path without opening native sockets.
+ * `hostTransportController` defaults to the real unbound production class for
+ * zero-peer host-delivery assertions; host stream tests pass one bound to a
+ * recording native-handle fake plus a virtual clock and dispatcher. The
+ * listener transport is injected as a recording fake so endpoint-backed mDNS
+ * discovery can exercise the real connect/join effect path without opening
+ * native sockets.
  */
 class MainViewModelHarness(
     val viewModel: MainViewModel,
@@ -79,7 +85,12 @@ private fun fakeApplication(): Application {
 }
 
 /** Constructs a real [MainViewModel] wired entirely to recording fakes; see [MainViewModelHarness]. */
-fun newTestMainViewModelHarness(): MainViewModelHarness {
+fun newTestMainViewModelHarness(
+    hostTransportController: HostTransportController = HostTransportController(),
+    hostElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
+    hostStreamDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    closeHostMonitorOutput: () -> Unit = {},
+): MainViewModelHarness {
     val hostCoreController = FakeHostCoreController()
     val listenerCoreController = FakeListenerCoreController()
     val domainStore = FakeRustDomainStore()
@@ -96,6 +107,10 @@ fun newTestMainViewModelHarness(): MainViewModelHarness {
         wifiDirectService = wifiDirectService,
         mdnsService = mdnsService,
         listenerTransportController = listenerTransport,
+        hostTransportController = hostTransportController,
+        hostElapsedRealtimeMs = hostElapsedRealtimeMs,
+        hostStreamDispatcher = hostStreamDispatcher,
+        closeHostMonitorOutput = closeHostMonitorOutput,
     )
     return MainViewModelHarness(
         viewModel = viewModel,

@@ -35,7 +35,7 @@ internal fun MainViewModel.startHostStreamingLoop(
     format: AudioFormatSpec,
 ) {
     hostStreamJob?.cancel()
-    hostStreamJob = viewModelScope.launch(Dispatchers.IO) {
+    hostStreamJob = viewModelScope.launch(hostStreamDispatcher) {
         var packet = firstPacket
         var pendingFirstPacket: AudioPacket? = firstPacket
         var packetCount = 0L
@@ -63,11 +63,11 @@ internal fun MainViewModel.startHostStreamingLoop(
                     }
                 }
                 while (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
-                    if (pauseStartedAtMs == null) pauseStartedAtMs = SystemClock.elapsedRealtime()
+                    if (pauseStartedAtMs == null) pauseStartedAtMs = hostElapsedRealtimeMs()
                     delay(PAUSE_POLL_INTERVAL_MS)
                 }
                 pauseStartedAtMs?.let { pausedAt ->
-                    presentationOffsetMs += SystemClock.elapsedRealtime() - pausedAt
+                    presentationOffsetMs += hostElapsedRealtimeMs() - pausedAt
                     pauseStartedAtMs = null
                     previousSendElapsedMs = null
                     runCatching {
@@ -109,7 +109,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                     packet = prefetchedPacket
                     pendingFirstPacket = null
                 } else {
-                    when (val frame = withContext(Dispatchers.IO) { streamer.nextFrame(3uL) }) {
+                    when (val frame = withContext(hostStreamDispatcher) { streamer.nextFrame(3uL) }) {
                         null -> continue
                         FfiPlaylistFrame.End -> break
                         is FfiPlaylistFrame.TrackBoundary -> {
@@ -125,7 +125,13 @@ internal fun MainViewModel.startHostStreamingLoop(
                                     displayName = frame.displayName,
                                 )
                             broadcastHostTrackBoundary(streamId, frame)
-                            scheduleHostQueueBoundary(start, frame, format.sampleRate)
+                            scheduleHostQueueBoundary(
+                                start,
+                                frame,
+                                format.sampleRate,
+                                hostStreamDispatcher,
+                                hostElapsedRealtimeMs,
+                            )
                             continue
                         }
                         is FfiPlaylistFrame.Audio -> packet = AudioPacket(
@@ -147,7 +153,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                 val timedPacket = if (presentationOffsetMs == 0L) packet else packet.copy(
                     hostPresentationTimeMs = packet.hostPresentationTimeMs + presentationOffsetMs,
                 )
-                val now = SystemClock.elapsedRealtime()
+                val now = hostElapsedRealtimeMs()
                 previousSendElapsedMs?.let { previous ->
                     val sendGap = now - previous
                     metrics.recordTiming("packet_gap_ms", sendGap.toDouble())
@@ -248,6 +254,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                     finalPacket.hostPresentationTimeMs,
                     presentationOffsetMs,
                     packetDurationMs,
+                    hostElapsedRealtimeMs,
                 )
             }
             stopHostMonitorPlayback()
@@ -264,7 +271,7 @@ internal fun MainViewModel.startHostStreamingLoop(
             runCatching {
                 hostTransportController.broadcastStop(
                     streamId = streamId.value,
-                    hostStopTimeMs = SystemClock.elapsedRealtime(),
+                    hostStopTimeMs = hostElapsedRealtimeMs(),
                 ).toSendAllResult()
             }.onFailure { error -> handleHostControlFailure("broadcast stream stop", error) }
             refreshHostDiagnostics(streamState = PlaybackState.STOPPED)
@@ -277,6 +284,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                     sentPacket.hostPresentationTimeMs,
                     presentationOffsetMs,
                     packetDurationMs,
+                    hostElapsedRealtimeMs,
                 )
             }
             handleHostPlaybackEngineFailure(error)
@@ -310,11 +318,11 @@ internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
     _uiState.value = _uiState.value.copy(lastError = message)
     reportRustHostPlaybackFailure(message)
     currentStreamId?.let { failedStreamId ->
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(hostStreamDispatcher) {
             runCatching {
                 hostTransportController.broadcastStop(
                     streamId = failedStreamId.value,
-                    hostStopTimeMs = SystemClock.elapsedRealtime(),
+                    hostStopTimeMs = hostElapsedRealtimeMs(),
                 )
             }.onFailure { stopError ->
                 logger.w("stream.stop.failure", stopError.message ?: "Could not stop listeners")

@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
+import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
 import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
@@ -55,6 +56,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,6 +89,15 @@ class MainViewModel @JvmOverloads constructor(
     internal val wifiDirectService: SessionTransport = WifiDirectTransportService(application, AppLogger()),
     internal val mdnsService: MdnsTransport = MdnsDiscoveryService(application),
     internal val listenerTransportController: ListenerTransport = ListenerTransportController(),
+    internal val hostTransportController: HostTransportController = HostTransportController(),
+    /**
+     * Host stream-loop seams: the monotonic clock behind packet presentation
+     * and Stop timestamps, the dispatcher the loop runs on, and the native
+     * monitor-output close. JVM tests drive them with virtual time.
+     */
+    internal val hostElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
+    internal val hostStreamDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    internal val closeHostMonitorOutput: () -> Unit = OboeBridge::nativeOboeClose,
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
     internal val diagnosticsStore = DiagnosticsStore()
@@ -97,7 +108,6 @@ class MainViewModel @JvmOverloads constructor(
         application.getExternalFilesDir(null),
         networkSessionLock = WifiLowLatencyNetworkLock(application),
     )
-    internal val hostTransportController = HostTransportController()
     internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
     private val persistedAudioReadGrants = PersistedAudioReadGrants(
         application.contentResolver,

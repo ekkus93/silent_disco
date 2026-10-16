@@ -63,7 +63,7 @@ internal fun MainViewModel.startHostMonitorPlayback(
         return
     } catch (error: Throwable) {
         runCatching { runtime.stop() }.exceptionOrNull()?.let(error::addSuppressed)
-        runCatching { OboeBridge.nativeOboeClose() }.exceptionOrNull()?.let(error::addSuppressed)
+        runCatching { closeHostMonitorOutput() }.exceptionOrNull()?.let(error::addSuppressed)
         runCatching { runtime.close() }.exceptionOrNull()?.let(error::addSuppressed)
         throw error
     }
@@ -109,7 +109,7 @@ internal fun MainViewModel.stopHostMonitorPlayback() {
         }
     }
     capture { runtime.stop() }
-    capture { OboeBridge.nativeOboeClose() }
+    capture { closeHostMonitorOutput() }
     capture { runtime.close() }
     firstFailure?.let { throw it }
 }
