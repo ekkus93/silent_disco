@@ -351,21 +351,12 @@ private fun MainViewModel.scheduleHostQueueBoundary(
 ) {
     metrics.increment("track_boundary_scheduled")
     val job = viewModelScope.launch(Dispatchers.IO) {
-        var dueAtMs = start.hostStartTimeMs.toLong() + boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
-        var pausedAtMs: Long? = null
-        while (isActive) {
-            val now = SystemClock.elapsedRealtime()
-            if (_uiState.value.hostPlaybackState == PlaybackState.PAUSED) {
-                if (pausedAtMs == null) pausedAtMs = now
-                delay(PAUSE_POLL_INTERVAL_MS)
-                continue
-            }
-            pausedAtMs?.let { dueAtMs += now - it; pausedAtMs = null }
-            val remainingMs = dueAtMs - now
-            if (remainingMs <= 0L) break
-            delay(min(remainingMs, PAUSE_POLL_INTERVAL_MS))
-        }
-        if (!isActive) return@launch
+        val dueAtMs = start.hostStartTimeMs.toLong() +
+            boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
+        awaitHostQueueBoundary(
+            dueAtElapsedRealtimeMs = dueAtMs,
+            isPaused = { _uiState.value.hostPlaybackState == PlaybackState.PAUSED },
+        )
         runCatching {
             ensureRustHostCore().trackBoundaryApplied(boundary.entryId, boundary.firstSampleIndex.toLong())
         }.onSuccess {
@@ -381,6 +372,28 @@ private fun MainViewModel.scheduleHostQueueBoundary(
     }
     hostBoundaryJobs += job
     job.invokeOnCompletion { hostBoundaryJobs.remove(job) }
+}
+
+internal suspend fun awaitHostQueueBoundary(
+    dueAtElapsedRealtimeMs: Long,
+    isPaused: () -> Boolean,
+    elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
+    wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
+): Long {
+    var dueAtMs = dueAtElapsedRealtimeMs
+    var pausedAtMs: Long? = null
+    while (true) {
+        val now = elapsedRealtimeMs()
+        if (isPaused()) {
+            if (pausedAtMs == null) pausedAtMs = now
+            wait(PAUSE_POLL_INTERVAL_MS)
+            continue
+        }
+        pausedAtMs?.let { dueAtMs += now - it; pausedAtMs = null }
+        val remainingMs = dueAtMs - now
+        if (remainingMs <= 0L) return dueAtMs
+        wait(min(remainingMs, PAUSE_POLL_INTERVAL_MS))
+    }
 }
 
 private const val PAUSE_POLL_INTERVAL_MS = 20L
