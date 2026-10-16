@@ -296,8 +296,16 @@ fn empty_final_contiguous_chunk_flushes_only_the_retained_partial_packet() {
 fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
     let _guard = super::super::tests::audio_test_guard();
     let temp = TempDir::new().expect("temp");
-    let first_path = write_bytes(&temp, "identity-first.wav", &pcm_wav_frames(48_000, 2, 241));
-    let second_path = write_bytes(&temp, "identity-second.wav", &pcm_wav_frames(48_000, 2, 480));
+    let first_path = write_bytes(
+        &temp,
+        "identity-first.wav",
+        &pcm_wav_frames(48_000, 2, 241),
+    );
+    let second_path = write_bytes(
+        &temp,
+        "identity-second.wav",
+        &pcm_wav_frames(48_000, 2, 480),
+    );
     let first = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
         .expect("first decoder");
     let second = StreamingPlaylistTrackFactory::new("entry-second", "Second", move || {
