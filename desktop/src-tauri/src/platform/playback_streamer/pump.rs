@@ -152,7 +152,7 @@ fn run_pump(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                forward_to_monitor(&frame, monitor_tap);
+                forward_to_monitor_if_running(&frame, monitor_tap, stop);
                 let audio_end_ms = match &frame {
                     ProtocolFrame::Audio(audio) => Some(
                         audio.host_presentation_time_ms.get().saturating_add(
@@ -431,8 +431,18 @@ fn apply_pause_offset(frame: &mut ProtocolFrame, offset_ms: u64) {
 /// broadcast path below this call, which must never be affected by monitor
 /// health (34.2 policy). Runs after [`apply_pause_offset`] so the monitor's
 /// own scheduler sees the same pause-corrected timeline the network
-/// broadcast does, and before the send-ahead wait, since the monitor has no
-/// use for that network-specific pacing at all.
+/// broadcast does. It runs only after send-ahead pacing and checks Stop
+/// again, so a cancellation during that wait cannot enqueue monitor audio.
+fn forward_to_monitor_if_running(
+    frame: &ProtocolFrame,
+    monitor_tap: Option<&SyncSender<AudioDatagram>>,
+    stop: &AtomicBool,
+) {
+    if !stop.load(Ordering::Acquire) {
+        forward_to_monitor(frame, monitor_tap);
+    }
+}
+
 fn forward_to_monitor(frame: &ProtocolFrame, monitor_tap: Option<&SyncSender<AudioDatagram>>) {
     let (Some(tap), ProtocolFrame::Audio(datagram)) = (monitor_tap, frame) else {
         return;
