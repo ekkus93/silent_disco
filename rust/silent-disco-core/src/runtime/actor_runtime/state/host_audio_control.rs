@@ -19,7 +19,9 @@ impl ActorState {
             && self.snapshot.playback_state == PlaybackState::Buffering
         {
             let mut candidate = self.clone();
-            candidate.apply_audio_with_host_lifecycle(AudioEvent::PlaybackStateChanged(
+            // Reuse the validated host Playing transition, including the
+            // WaitingForListeners -> Streaming path used after Stop/replay.
+            candidate.apply_audio_control(AudioEvent::PlaybackStateChanged(
                 PlaybackState::Playing,
             ))?;
             let outcome = candidate.apply_audio(event)?;
