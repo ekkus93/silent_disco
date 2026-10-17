@@ -48,6 +48,8 @@ This checklist is dependency-ordered. Complete and qualify each block before mov
 
   - Producer checkpoint 2026-10-17: Android production now calls the Rust actor-reserved FFI streamer on master; desktop startup cancellation was hardened; a closed-authority FFI guard test was added. This remains unchecked pending generated UniFFI bindings, executable Rust/Android/desktop race tests, exact-head CI, and physical playback evidence. See `docs/SILENT_DISCO_PRODUCER_BOUNDARY_COMMIT_PROTOCOL_2026-10-16.md`.
 
+  - 2026-10-17 FFI Stop/cancellation checkpoint: the uploaded source exactly matched master `7daa4f2d` for the packetizer, FFI streamer/tests, and TODO. Direct master commits `6714e8ec` and `9c4779cf` wake a blocked FFI producer before the consumer mutex and suppress buffered frames after concurrent Stop; two concurrency regression tests were added. Source-line and patch whitespace checks pass locally, but Rust/Android/desktop execution remains unverified. Exact-head CI run 39051233506 failed with no job steps on both initial and rerun attempts. Keep this task open pending runnable toolchains, full producer/edit race coverage, and physical evidence.
+
 ## 4. Continuous gapless host/listener playback
 
 - [x] Implement host lookahead so the next track is decoded and prebuffered before the current track reaches its exact sample boundary. The shared Rust playlist worker opens the next bounded decoder while packetizing the current track; a core regression test verifies that the next decoder has queued PCM while the current decoder is still running and has not reached EOF.
