@@ -38,7 +38,10 @@ fn spawn_pump(
         })
 }
 
-fn boundary_schedule_event(boundary: &TrackBoundary, already_reserved: bool) -> Option<AudioEvent> {
+fn boundary_schedule_event(
+    boundary: &TrackBoundary,
+    already_reserved: bool,
+) -> Option<AudioEvent> {
     (!already_reserved).then(|| AudioEvent::TrackBoundaryScheduled {
         entry_id: boundary.entry_id.clone(),
         first_sample_index: boundary.first_sample_index.get(),
@@ -112,9 +115,7 @@ fn run_pump(
                 if let ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)) = &frame {
                     // A producer-reserved boundary is already serialized by
                     // the actor; do not resubmit a stale event after Stop.
-                    if let Some(event) =
-                        boundary_schedule_event(boundary, authoritative_boundaries)
-                    {
+                    if let Some(event) = boundary_schedule_event(boundary, authoritative_boundaries) {
                         if let Err(error) = handle.submit_audio_event(event) {
                             streaming_error = Some(DesktopErrorDto::from(error));
                             break;
