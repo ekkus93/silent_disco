@@ -6,15 +6,15 @@ use super::super::types::DecodedPcmChunk;
 use crate::domain::SampleIndex;
 use super::super::types::{DecodeError, DecodeErrorKind};
 use super::{
-    PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind, PacketizerWorkerState,
-    PlaylistUpdateState, PlaylistUpdates, SharedStatistics, StagedPlaylistTrack,
+    BoundaryReserver, PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind,
+    PacketizerWorkerState, PlaylistUpdateState, PlaylistUpdates, SharedStatistics, StagedPlaylistTrack,
     StreamingPacketizeConfig, StreamingPlaylistTrackFactory, WORKER_POLL_INTERVAL,
     ensure_not_cancelled,
     merge_decoder_shutdown_result, send_with_backpressure,
 };
 use crate::protocol::{ControlMessage, MAX_DISPLAY_NAME_BYTES, ProtocolFrame, TrackBoundary};
 use std::collections::{HashSet, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 
@@ -92,8 +92,9 @@ pub(super) fn run_playlist_packetizer_worker(
     mut packetizer: Packetizer,
     sender: &SyncSender<ProtocolFrame>,
     config: StreamingPacketizeConfig,
-    cancellation: &AtomicBool,
+    cancellation: &Arc<AtomicBool>,
     statistics: &SharedStatistics,
+    boundary_reserver: Option<&BoundaryReserver>,
 ) -> Result<PacketizerSummary, PacketizerWorkerError> {
     let _terminal_guard = PlaylistTerminalGuard(updates);
     let mut upcoming: VecDeque<_> = upcoming.into();
@@ -197,17 +198,23 @@ pub(super) fn run_playlist_packetizer_worker(
                 return Err(map_playlist_decode_error(&error, &next_display_name));
             }
         };
+        let committed_boundary = TrackBoundary {
+            session_id: packetizer.session_id().clone(),
+            stream_id: packetizer.stream_id().clone(),
+            first_sample_index: crate::domain::SampleIndex::new(
+                packetizer.next_contiguous_sample_index(),
+            ),
+            entry_id: next_entry_id.clone(),
+            display_name: next_display_name.clone(),
+        };
+        // The actor must first lock this target against competing queue edits.
+        // No worker update lock or bounded output-channel slot is held here.
+        if let Some(reserve) = boundary_reserver {
+            reserve(&committed_boundary, Arc::clone(cancellation))?;
+        }
         current_display_name.clone_from(&next_display_name);
         boundary = Some(ProtocolFrame::Control(ControlMessage::TrackBoundary(
-            TrackBoundary {
-                session_id: packetizer.session_id().clone(),
-                stream_id: packetizer.stream_id().clone(),
-                first_sample_index: crate::domain::SampleIndex::new(
-                    packetizer.next_contiguous_sample_index(),
-                ),
-                entry_id: next_entry_id.clone(),
-                display_name: next_display_name.clone(),
-            },
+            committed_boundary,
         )));
     }
 }
