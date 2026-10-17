@@ -4,12 +4,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use silent_disco_core::audio::{
-    PacketizerWorkerErrorKind, StreamingDecodeConfig, StreamingDecodeHandle,
+    PacketizerWorkerError, PacketizerWorkerErrorKind, StreamingDecodeConfig, StreamingDecodeHandle,
     StreamingPacketizeConfig, StreamingPacketizeHandle, StreamingPlaylistTrackFactory,
     StreamingPlaylistUpdater,
 };
-use silent_disco_core::domain::{SessionId, StreamId};
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame};
+use silent_disco_core::domain::{PlaybackState, SessionId, StreamId};
+use silent_disco_core::runtime::CoreActorHandle;
+use crate::host_control::FfiCoreHandle;
+use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
+
+type FfiBoundaryReserver = Arc<
+    dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync,
+>;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FfiPlaylistSource {
@@ -96,73 +102,25 @@ impl FfiHostPlaylistStreamer {
         host_start_time_ms: u64,
         sources: Vec<FfiPlaylistSource>,
     ) -> Result<Arc<Self>, FfiHostPlaylistError> {
-        if sources.is_empty() {
-            return Err(FfiHostPlaylistError::InvalidConfiguration(
-                "host playlist is empty".to_owned(),
-            ));
-        }
-        let session_id = SessionId::new(session_id)
-            .map_err(|error| FfiHostPlaylistError::InvalidConfiguration(error.to_string()))?;
-        let stream_id = StreamId::new(stream_id)
-            .map_err(|error| FfiHostPlaylistError::InvalidConfiguration(error.to_string()))?;
-        let mut sources = sources.into_iter();
-        let current = sources.next().ok_or_else(|| {
-            FfiHostPlaylistError::InvalidConfiguration("host playlist is empty".to_owned())
-        })?;
-        let decode_config = StreamingDecodeConfig::default();
-        let decoder =
-            StreamingDecodeHandle::open(&current.staged_path, decode_config).map_err(|error| {
-                FfiHostPlaylistError::Decode(format!("{}: {error}", current.display_name))
-            })?;
-        let upcoming = sources
-            .map(|source| {
-                let path = PathBuf::from(source.staged_path);
-                StreamingPlaylistTrackFactory::new(
-                    source.entry_id,
-                    source.display_name,
-                    move || StreamingDecodeHandle::open(path, decode_config),
-                )
-                .map_err(|error| FfiHostPlaylistError::Packetizer(error.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let packetizer = StreamingPacketizeHandle::spawn_playlist(
-            decoder,
-            current.entry_id.clone(),
-            current.display_name.clone(),
-            upcoming,
-            session_id,
-            stream_id,
-            silent_disco_core::domain::MonotonicMillis::new(host_start_time_ms),
-            StreamingPacketizeConfig::default(),
-        )
-        .map_err(|error| FfiHostPlaylistError::Packetizer(error.to_string()))?;
-        let ProtocolFrame::Control(ControlMessage::StreamStart(start)) =
-            packetizer.stream_start_message()
-        else {
-            return Err(FfiHostPlaylistError::Packetizer(
-                "playlist packetizer returned an invalid start frame".to_owned(),
-            ));
-        };
-        let stream_start = FfiPlaylistStreamStart {
-            stream_id: start.stream_id.to_string(),
-            host_start_time_ms: start.host_start_time_ms.get(),
-            sample_rate: start.sample_rate,
-            channels: start.channels,
-            samples_per_packet: start.samples_per_packet,
-            current_entry_id: start.current_entry_id.clone(),
-            current_display_name: start.current_display_name.clone(),
-        };
-        let updater = packetizer.playlist_updater().ok_or_else(|| {
-            FfiHostPlaylistError::Packetizer(
-                "playlist packetizer did not provide an update handle".to_owned(),
-            )
-        })?;
-        Ok(Arc::new(Self {
-            inner: Mutex::new(Some(packetizer)),
-            closed: AtomicBool::new(false),
-            updater,
-            stream_start,
-        }))
+        Self::open_with_reserver(session_id, stream_id, host_start_time_ms, sources, None)
+    }
+
+    /// Production host constructor: the producer reserves each successor on
+    /// the serialized actor before it enters the bounded output queue.
+    #[uniffi::constructor]
+    pub fn open_authoritative(
+        session_id: String,
+        stream_id: String,
+        host_start_time_ms: u64,
+        sources: Vec<FfiPlaylistSource>,
+        authority: Arc<FfiCoreHandle>,
+    ) -> Result<Arc<Self>, FfiHostPlaylistError> {
+        let actor = authority.actor_handle()
+            .map_err(|error| FfiHostPlaylistError::Closed(error.to_string()))?;
+        let reserve = Arc::new(move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
+            reserve_authoritative_boundary(&actor, boundary, cancelled)
+        });
+        Self::open_with_reserver(session_id, stream_id, host_start_time_ms, sources, Some(reserve))
     }
 
     pub fn stream_start(&self) -> FfiPlaylistStreamStart {
@@ -239,6 +197,140 @@ impl FfiHostPlaylistStreamer {
             return Err(FfiHostPlaylistError::Packetizer(error.to_string()));
         }
         Ok(())
+    }
+}
+
+impl FfiHostPlaylistStreamer {
+    fn open_with_reserver(
+        session_id: String,
+        stream_id: String,
+        host_start_time_ms: u64,
+        sources: Vec<FfiPlaylistSource>,
+        reserve: Option<FfiBoundaryReserver>,
+    ) -> Result<Arc<Self>, FfiHostPlaylistError> {
+        if sources.is_empty() {
+            return Err(FfiHostPlaylistError::InvalidConfiguration(
+                "host playlist is empty".to_owned(),
+            ));
+        }
+        let session_id = SessionId::new(session_id)
+            .map_err(|error| FfiHostPlaylistError::InvalidConfiguration(error.to_string()))?;
+        let stream_id = StreamId::new(stream_id)
+            .map_err(|error| FfiHostPlaylistError::InvalidConfiguration(error.to_string()))?;
+        let mut sources = sources.into_iter();
+        let current = sources.next().ok_or_else(|| {
+            FfiHostPlaylistError::InvalidConfiguration("host playlist is empty".to_owned())
+        })?;
+        let decode_config = StreamingDecodeConfig::default();
+        let decoder =
+            StreamingDecodeHandle::open(&current.staged_path, decode_config).map_err(|error| {
+                FfiHostPlaylistError::Decode(format!("{}: {error}", current.display_name))
+            })?;
+        let upcoming = sources
+            .map(|source| {
+                let path = PathBuf::from(source.staged_path);
+                StreamingPlaylistTrackFactory::new(
+                    source.entry_id,
+                    source.display_name,
+                    move || StreamingDecodeHandle::open(path, decode_config),
+                )
+                .map_err(|error| FfiHostPlaylistError::Packetizer(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let packetizer = match reserve {
+            Some(reserve) => StreamingPacketizeHandle::spawn_playlist_reserved(
+                decoder,
+                current.entry_id.clone(),
+                current.display_name.clone(),
+                upcoming,
+                session_id,
+                stream_id,
+                silent_disco_core::domain::MonotonicMillis::new(host_start_time_ms),
+                StreamingPacketizeConfig::default(),
+                reserve,
+            ),
+            None => StreamingPacketizeHandle::spawn_playlist(
+                decoder,
+                current.entry_id.clone(),
+                current.display_name.clone(),
+                upcoming,
+                session_id,
+                stream_id,
+                silent_disco_core::domain::MonotonicMillis::new(host_start_time_ms),
+                StreamingPacketizeConfig::default(),
+            ),
+        }
+        .map_err(|error| FfiHostPlaylistError::Packetizer(error.to_string()))?;
+        let ProtocolFrame::Control(ControlMessage::StreamStart(start)) =
+            packetizer.stream_start_message()
+        else {
+            return Err(FfiHostPlaylistError::Packetizer(
+                "playlist packetizer returned an invalid start frame".to_owned(),
+            ));
+        };
+        let stream_start = FfiPlaylistStreamStart {
+            stream_id: start.stream_id.to_string(),
+            host_start_time_ms: start.host_start_time_ms.get(),
+            sample_rate: start.sample_rate,
+            channels: start.channels,
+            samples_per_packet: start.samples_per_packet,
+            current_entry_id: start.current_entry_id.clone(),
+            current_display_name: start.current_display_name.clone(),
+        };
+        let updater = packetizer.playlist_updater().ok_or_else(|| {
+            FfiHostPlaylistError::Packetizer(
+                "playlist packetizer did not provide an update handle".to_owned(),
+            )
+        })?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Some(packetizer)),
+            closed: AtomicBool::new(false),
+            updater,
+            stream_start,
+        }))
+ 
+    }
+}
+
+/// This callback runs on the Rust producer thread, never on Kotlin's frame
+/// consumer. It holds neither the decoder queue nor the output-channel lock.
+fn reserve_authoritative_boundary(
+    actor: &CoreActorHandle,
+    boundary: &TrackBoundary,
+    cancelled: Arc<AtomicBool>,
+) -> Result<(), PacketizerWorkerError> {
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(PacketizerWorkerError {
+                kind: PacketizerWorkerErrorKind::Cancelled,
+                message: "host boundary reservation cancelled".to_owned(),
+            });
+        }
+        let playback_state = actor
+            .current_snapshot()
+            .map_err(|error| playlist_reservation_error(&error.to_string()))?
+            .playback_state;
+        match playback_state {
+            PlaybackState::Playing => break,
+            PlaybackState::Stopped | PlaybackState::Error => {
+                return Err(playlist_reservation_error("playback stopped before reservation"));
+            }
+            _ => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    actor.reserve_host_track_boundary(
+        boundary.stream_id.clone(),
+        boundary.entry_id.clone(),
+        boundary.first_sample_index.get(),
+        cancelled,
+    )
+    .map_err(|error| playlist_reservation_error(&error.to_string()))
+}
+
+fn playlist_reservation_error(message: &str) -> PacketizerWorkerError {
+    PacketizerWorkerError {
+        kind: PacketizerWorkerErrorKind::Packetize,
+        message: format!("authoritative host boundary reservation failed: {message}"),
     }
 }
 

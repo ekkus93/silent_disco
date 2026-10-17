@@ -596,6 +596,13 @@ impl FfiCoreHandle {
 }
 
 impl FfiCoreHandle {
+    /// Cloned authority for production audio producer reservations.
+    /// Shutdown invalidates the clone's actor admission.
+    pub(crate) fn actor_handle(&self) -> Result<CoreActorHandle, FfiBridgeError> {
+        self.ensure_open()?;
+        Ok(self.handle.clone())
+    }
+
     fn ensure_open(&self) -> Result<(), FfiBridgeError> {
         let open = self
             .runtime
