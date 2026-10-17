@@ -94,16 +94,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
             "${packet.payload.size + 48}B first packet; native streaming decoder"
         }
 
-        afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
-            // Register the new stream identity before broadcasting StreamStart.
-            // The normal position reporter is throttled and cannot protect
-            // the window before the first audio packet is sent.
-            try {
-                ensureRustHostCore().playbackPositionAdvanced(streamId.value, 0L)
-            } catch (error: Throwable) {
-                handleHostPlaybackEngineFailure(error)
-                return@afterAuthoritativeHostPlaybackState
-            }
+        afterAuthoritativeHostPlaybackStart(streamId) {
             try {
                 withContext(Dispatchers.IO) {
                     startHostMonitorPlayback(
@@ -115,7 +106,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
                 }
             } catch (error: Throwable) {
                 handleHostPlaybackEngineFailure(error)
-                return@afterAuthoritativeHostPlaybackState
+                return@afterAuthoritativeHostPlaybackStart
             }
             metrics.increment("stream_start")
             metrics.recordTiming(
@@ -329,6 +320,23 @@ private suspend fun MainViewModel.afterAuthoritativeHostPlaybackState(
         target = state,
         transition = { target ->
             ensureRustHostCore().transitionPlaybackState(target)
+            Unit
+        },
+        afterAccepted = afterAccepted,
+    )
+}
+
+// The actor accepts PositionAdvanced(0) from Buffering as a single
+// Playing-plus-stream-identity transition. Keep the UI state transition
+// semantics while avoiding a two-event race against a delayed old EOF.
+private suspend fun MainViewModel.afterAuthoritativeHostPlaybackStart(
+    streamId: StreamId,
+    afterAccepted: suspend () -> Unit,
+) {
+    runAfterAuthoritativeHostPlaybackTransition(
+        target = FfiPlaybackState.PLAYING,
+        transition = {
+            ensureRustHostCore().playbackPositionAdvanced(streamId.value, 0L)
             Unit
         },
         afterAccepted = afterAccepted,

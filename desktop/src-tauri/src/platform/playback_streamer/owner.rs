@@ -87,12 +87,11 @@ impl DesktopPlaybackStreamer {
         handle: CoreActorHandle,
     ) -> Result<Self, DesktopErrorDto> {
         let playlist_updater = packetizer.playlist_updater();
+        // The buffered-to-Playing transition and stream-ID binding happen
+        // in the same serialized actor event, before any network frame.
         handle
-            .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
             .map_err(DesktopErrorDto::from)?;
-        // Bind this playback generation before any network frame is sent.
-        // Otherwise a delayed EOF from a previous stream can end a fresh
-        // stream before its first throttled PositionAdvanced event arrives.
         handle
             .submit_audio_event(AudioEvent::PositionAdvanced {
                 stream_id: stream_id.clone(),
