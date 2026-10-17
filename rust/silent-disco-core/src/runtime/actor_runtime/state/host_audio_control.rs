@@ -141,6 +141,79 @@ mod tests {
     }
 
     #[test]
+    fn buffered_start_atomically_binds_stream_and_rejects_old_eof_on_replay() {
+        use crate::domain::StreamId;
+
+        let mut state = ready_host();
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+            .expect("buffer");
+        let first = StreamId::new("first-generation").expect("stream ID");
+        state
+            .apply_audio_control(AudioEvent::PositionAdvanced {
+                stream_id: first.clone(),
+                position_ms: 0,
+            })
+            .expect("start and bind first stream in one event");
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Playing);
+        assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::Streaming);
+        assert_eq!(state.active_audio_stream_id, Some(first.clone()));
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+            .expect("buffer replay");
+        let next = StreamId::new("next-generation").expect("stream ID");
+        state
+            .apply_audio_control(AudioEvent::PositionAdvanced {
+                stream_id: next.clone(),
+                position_ms: 0,
+            })
+            .expect("start and bind replay");
+        assert_eq!(state.active_audio_stream_id, Some(next));
+        let error = state
+            .apply_audio_control(AudioEvent::EndOfStream { stream_id: first })
+            .expect_err("old EOF cannot stop replay");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Playing);
+    }
+
+    #[test]
+    fn buffered_start_rejects_retired_identity_without_partial_transition() {
+        use crate::domain::StreamId;
+
+        let mut state = ready_host();
+        let old = StreamId::new("retired-start").expect("stream ID");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+            .expect("buffer");
+        state
+            .apply_audio_control(AudioEvent::PositionAdvanced {
+                stream_id: old.clone(),
+                position_ms: 0,
+            })
+            .expect("start");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+            .expect("buffer again");
+        let error = state
+            .apply_audio_control(AudioEvent::PositionAdvanced {
+                stream_id: old,
+                position_ms: 0,
+            })
+            .expect_err("retired stream cannot start another generation");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Buffering);
+        assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::WaitingForListeners);
+        assert!(state.active_audio_stream_id.is_none());
+    }
+
+    #[test]
     fn host_playback_follows_buffer_play_pause_resume_stop_sequence() {
         let mut state = ready_host();
 
