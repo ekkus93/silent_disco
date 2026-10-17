@@ -27,3 +27,7 @@ This note does not replace device-level output continuity evidence or restore un
 Commits `b10491a` and `013b2e1` recheck the pending upcoming-list update after the outgoing decoder completes and before promoting its prebuffered successor. If that update removes the last successor, the worker now finalizes the existing packetizer with an **empty final PCM chunk**, flushing any carried partial packet at the genuine queue end. A regression checks its exact sample/sequence position. This supersedes the earlier implementation-note statement that this specific late-removal case must stop with a typed packetizer failure.
 
 The producer-to-consumer enqueue race remains unresolved. No reservation callback is connected to the actor, so section 3 of the TODO stays unchecked. Do not confuse the EOF retarget fix with full boundary-commit linearization.
+
+## Exact-head qualification observation (2026-10-17)
+
+At master `0bc29d14d998976ef8abbb2022a10ca8649a1072`, Rust/Android CI run 39010477546 attempt 2 failed with zero executed job steps, and the bridge could not retrieve either failing job log (`JOB_NOT_FOUND`). The `rust` local-validation profile is not authorized/available. This is an infrastructure qualification blocker, not evidence that the new Rust tests passed or failed. The producer/actor boundary reservation remains unimplemented and must be wired to both production hosts before the queue-retargeting checkbox can close.
