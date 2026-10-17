@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_pause_offset, boundary_schedule_event, forward_to_monitor,
-        forward_to_monitor_if_running, implicit_join_failure,
+        apply_pause_offset, boundary_schedule_event, broadcast_then_monitor,
+        forward_to_monitor, forward_to_monitor_if_running, implicit_join_failure,
         terminal_audio_event,
     };
     use silent_disco_core::domain::{
@@ -222,6 +222,62 @@ mod tests {
         stop.store(false, Ordering::Release);
         forward_to_monitor_if_running(&frame, Some(&tap), &stop);
         assert!(receiver.try_recv().is_ok(), "active playback still feeds the monitor");
+    }
+
+    #[test]
+    fn monitor_only_receives_audio_after_successful_network_handoff() {
+        let (tap, receiver) = std::sync::mpsc::sync_channel(2);
+        let stop = AtomicBool::new(false);
+        let failure = crate::dto::DesktopErrorDto::new(
+            "desktop.playback.test_broadcast_failure",
+            "audio",
+            "error",
+            true,
+            "injected network failure",
+        );
+        let failed = broadcast_then_monitor(
+            audio_frame(1_000),
+            |_frame| Err(failure),
+            Some(&tap),
+            &stop,
+        );
+        assert!(failed.is_err(), "the network error must propagate");
+        assert!(
+            receiver.try_recv().is_err(),
+            "the monitor must not play an unaccepted network packet"
+        );
+
+        let accepted = broadcast_then_monitor(
+            audio_frame(2_000),
+            |frame| {
+                assert!(matches!(frame, ProtocolFrame::Audio(_)));
+                Ok(())
+            },
+            Some(&tap),
+            &stop,
+        );
+        assert!(matches!(accepted, Ok(true)));
+        let played = receiver.try_recv().expect("accepted frame reaches monitor");
+        assert_eq!(played.host_presentation_time_ms.get(), 2_000);
+    }
+
+    #[test]
+    fn stop_before_network_handoff_suppresses_broadcast_and_monitor() {
+        let (tap, receiver) = std::sync::mpsc::sync_channel(1);
+        let stop = AtomicBool::new(true);
+        let broadcast_called = AtomicBool::new(false);
+        let outcome = broadcast_then_monitor(
+            audio_frame(1_000),
+            |_frame| {
+                broadcast_called.store(true, Ordering::Release);
+                Ok(())
+            },
+            Some(&tap),
+            &stop,
+        );
+        assert!(matches!(outcome, Ok(false)));
+        assert!(!broadcast_called.load(Ordering::Acquire));
+        assert!(receiver.try_recv().is_err());
     }
 
     /// The overwhelmingly common case -- no monitor active at all -- must

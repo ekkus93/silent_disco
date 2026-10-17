@@ -152,7 +152,6 @@ fn run_pump(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                forward_to_monitor_if_running(&frame, monitor_tap, stop);
                 let audio_end_ms = match &frame {
                     ProtocolFrame::Audio(audio) => Some(
                         audio.host_presentation_time_ms.get().saturating_add(
@@ -163,9 +162,20 @@ fn run_pump(
                     ),
                     _ => None,
                 };
-                if let Err(error) = network.broadcast_playback_frame(frame) {
-                    streaming_error = Some(error);
-                    break;
+                // The local monitor must never get a packet that the
+                // network sender rejected. Recheck Stop at the handoff.
+                match broadcast_then_monitor(
+                    frame,
+                    |frame| network.broadcast_playback_frame(frame),
+                    monitor_tap,
+                    stop,
+                ) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => {
+                        streaming_error = Some(error);
+                        break;
+                    }
                 }
                 if let Some(audio_end_ms) = audio_end_ms {
                     last_audible_audio_end_ms = Some(audio_end_ms);
@@ -423,16 +433,36 @@ fn apply_pause_offset(frame: &mut ProtocolFrame, offset_ms: u64) {
     }
 }
 
-/// Forwards one outgoing audio frame's datagram to the local monitor pump,
-/// if a monitor is currently active for this stream (Block 34).
-///
-/// Best-effort and non-blocking (`try_send`): a monitor that cannot keep up
-/// simply misses frames rather than ever slowing or blocking the network
-/// broadcast path below this call, which must never be affected by monitor
-/// health (34.2 policy). Runs after [`apply_pause_offset`] so the monitor's
-/// own scheduler sees the same pause-corrected timeline the network
-/// broadcast does. It runs only after send-ahead pacing and checks Stop
-/// again, so a cancellation during that wait cannot enqueue monitor audio.
+/// Hand a frame to the network first, and only mirror successfully accepted
+/// audio to the best-effort local monitor. The monitor must not play a frame
+/// rejected by network delivery, and Stop between pacing and handoff must
+/// suppress both outputs. This does not promise remote acknowledgement.
+fn broadcast_then_monitor<F>(
+    frame: ProtocolFrame,
+    broadcast: F,
+    monitor_tap: Option<&SyncSender<AudioDatagram>>,
+    stop: &AtomicBool,
+) -> Result<bool, DesktopErrorDto>
+where
+    F: FnOnce(ProtocolFrame) -> Result<(), DesktopErrorDto>,
+{
+    if stop.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+    // Clone only audio when a monitor is present. The network owns the
+    // original frame, so its successful handoff must happen first.
+    let monitor_frame = (monitor_tap.is_some() && matches!(&frame, ProtocolFrame::Audio(_)))
+        .then(|| frame.clone());
+    broadcast(frame)?;
+    if let Some(monitor_frame) = monitor_frame.as_ref() {
+        forward_to_monitor_if_running(monitor_frame, monitor_tap, stop);
+    }
+    Ok(true)
+}
+
+/// Forward only after a successful network handoff. A full or disconnected
+/// monitor is best-effort and must never block the broadcast path.
+/// Both outputs share the pause-adjusted presentation timestamp.
 fn forward_to_monitor_if_running(
     frame: &ProtocolFrame,
     monitor_tap: Option<&SyncSender<AudioDatagram>>,
