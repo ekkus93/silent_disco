@@ -12,8 +12,11 @@ use silent_disco_core::audio::{
     StreamingPlaylistTrackFactory,
 };
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, StreamId};
+use silent_disco_core::protocol::TrackBoundary;
 use silent_disco_core::runtime::{AudioEvent, CoreActorHandle, QueueEntry};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 /// Startup presentation buffer before the first audio sample plays, matching
 /// this project's ~400ms baseline (see `CLAUDE.md`).
@@ -171,7 +174,39 @@ fn start_after_buffering(
     // independent of the handle's own ownership, which the packetizer
     // worker exclusively holds from this point on.
     let decode_diagnostics = decoder.statistics_reader();
-    let packetizer = StreamingPacketizeHandle::spawn_playlist(
+    // The producer must reserve each boundary on the same serialized actor
+    // that admits host queue edits. Unlike ordinary submit_audio_event, the
+    // reservation waits for explicit actor application before successor PCM
+    // can enter the packetizer's bounded output channel.
+    let authority = handle.clone();
+    let reserve = Arc::new(move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
+        // A short first track may finish decoding while the host is still
+        // binding its stream identity. Wait without holding any decoder or
+        // actor locks; cancellation must also unblock an aborted start.
+        while authority
+            .current_snapshot()
+            .map_err(|error| reservation_error(&error.to_string()))?
+            .playback_state
+            != PlaybackState::Playing
+        {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(PacketizerWorkerError {
+                    kind: PacketizerWorkerErrorKind::Cancelled,
+                    message: "boundary reservation cancelled during playback startup".into(),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        authority
+            .reserve_host_track_boundary(
+                boundary.stream_id.clone(),
+                boundary.entry_id.clone(),
+                boundary.first_sample_index.get(),
+                cancelled,
+            )
+            .map_err(|error| reservation_error(&error.to_string()))
+    });
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
         decoder,
         current.entry_id.clone(),
         current.source.display_name.clone(),
@@ -180,6 +215,7 @@ fn start_after_buffering(
         stream_id.clone(),
         host_start_time_ms,
         StreamingPacketizeConfig::default(),
+        reserve,
     )
     .map_err(|error| map_packetizer_error(&error))?;
     // Same reasoning: taken before the packetizer is moved into its own
@@ -203,4 +239,11 @@ fn map_packetizer_error(error: &PacketizerWorkerError) -> DesktopErrorDto {
         PacketizerWorkerErrorKind::WorkerPanicked => "desktop.playback.worker_failed",
     };
     DesktopErrorDto::new(code, "audio", "error", true, &error.message)
+}
+
+fn reservation_error(message: &str) -> PacketizerWorkerError {
+    PacketizerWorkerError {
+        kind: PacketizerWorkerErrorKind::Packetize,
+        message: format!("authoritative playlist boundary reservation failed: {message}"),
+    }
 }
