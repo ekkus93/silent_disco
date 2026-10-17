@@ -4,9 +4,14 @@ use super::{
 };
 
 impl ActorState {
-    fn retire_active_audio_stream(&mut self) {
+    pub(super) fn retire_active_audio_stream(&mut self) {
         if let Some(stream_id) = self.active_audio_stream_id.take() {
-            self.retired_audio_stream_id = Some(stream_id);
+            if !self.retired_audio_stream_ids.contains(&stream_id) {
+                if self.retired_audio_stream_ids.len() == super::MAX_RETIRED_AUDIO_STREAM_IDS {
+                    self.retired_audio_stream_ids.remove(0);
+                }
+                self.retired_audio_stream_ids.push(stream_id);
+            }
         }
     }
 
@@ -59,12 +64,9 @@ impl ActorState {
                         None,
                     ));
                 }
-                // Position events are already stream-scoped on the wire.
-                // The retired identity also fences the window before the
-                // replay's first new-stream position event.
-                if self.active_audio_stream_id.is_none()
-                    && self.retired_audio_stream_id.as_ref() == Some(&stream_id)
-                {
+                // Recent retired streams cannot claim the new generation
+                // before its first position event, even after several replays.
+                if self.retired_audio_stream_ids.contains(&stream_id) {
                     return Err(invalid_state(
                         "playback position belongs to a retired stream",
                         None,
@@ -186,11 +188,8 @@ impl ActorState {
                 Ok(ApplyOutcome::changed())
             }
             AudioEvent::EndOfStream { stream_id } => {
-                // A stopped stream cannot end a fresh playback generation,
-                // including before the new stream reports its first position.
-                if self.active_audio_stream_id.is_none()
-                    && self.retired_audio_stream_id.as_ref() == Some(&stream_id)
-                {
+                // Multiple old streams may deliver late EOF after replay.
+                if self.retired_audio_stream_ids.contains(&stream_id) {
                     return Err(invalid_state(
                         "end of stream belongs to a retired playback stream",
                         None,
@@ -264,6 +263,56 @@ impl ActorState {
                     stop_requested: false,
                 })
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod retired_stream_tests {
+    use super::*;
+    use crate::domain::{DeviceId, StreamId};
+
+    #[test]
+    fn two_stopped_streams_cannot_claim_a_third_replay() {
+        let mut state = ActorState::new(DeviceId::new("retired-stream-test").unwrap());
+        state.snapshot.playback_state = PlaybackState::Playing;
+        for name in ["first-stream", "second-stream"] {
+            state.apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: StreamId::new(name).unwrap(), position_ms: 10,
+            }).unwrap();
+            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)).unwrap();
+            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing)).unwrap();
+        }
+        for name in ["first-stream", "second-stream"] {
+            let stream_id = StreamId::new(name).unwrap();
+            assert!(state.apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: stream_id.clone(), position_ms: 10,
+            }).is_err());
+            assert!(state.apply_audio(AudioEvent::EndOfStream { stream_id }).is_err());
+        }
+        assert_eq!(state.snapshot.playback_position_ms, 0);
+        state.apply_audio(AudioEvent::PositionAdvanced {
+            stream_id: StreamId::new("third-stream").unwrap(), position_ms: 1,
+        }).unwrap();
+    }
+
+    #[test]
+    fn retired_stream_history_remains_bounded() {
+        let mut state = ActorState::new(DeviceId::new("retired-bound-test").unwrap());
+        state.snapshot.playback_state = PlaybackState::Playing;
+        for i in 0..20 {
+            state.apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: StreamId::new(format!("stream-{i}")).unwrap(), position_ms: 1,
+            }).unwrap();
+            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)).unwrap();
+            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing)).unwrap();
+        }
+        assert_eq!(state.retired_audio_stream_ids.len(), super::super::MAX_RETIRED_AUDIO_STREAM_IDS);
+        assert_eq!(state.retired_audio_stream_ids[0].as_str(), "stream-4");
+        for name in ["stream-4", "stream-19"] {
+            assert!(state.apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: StreamId::new(name).unwrap(), position_ms: 1,
+            }).is_err());
         }
     }
 }
