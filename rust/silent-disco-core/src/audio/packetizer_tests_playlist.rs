@@ -424,3 +424,117 @@ fn playlist_updater_rejects_edits_after_cancellation() {
         .expect_err("cancelled producer must reject edits");
     assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
 }
+
+#[test]
+fn successor_audio_cannot_escape_before_authoritative_reservation_ack() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "reserved-first.wav", &pcm_wav_frames(48_000, 2, 241));
+    let next_path = write_bytes(&temp, "reserved-next.wav", &pcm_wav_frames(48_000, 2, 497));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let successor = StreamingPlaylistTrackFactory::new("reserved-next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("factory");
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let reserver = std::sync::Arc::new(move |boundary: &crate::protocol::TrackBoundary, _cancel| {
+        entered_tx.send(boundary.first_sample_index.get()).expect("signal reservation");
+        release_rx
+            .lock()
+            .expect("gate lock")
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("release reservation");
+        Ok(())
+    });
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "reserved-first",
+        "First",
+        vec![successor],
+        SessionId::new("reserved-playlist-session").expect("session"),
+        StreamId::new("reserved-playlist-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig { queue_capacity: 1, ..StreamingPacketizeConfig::default() },
+        reserver,
+    ).expect("packetizer");
+
+    let mut prefix = Vec::new();
+    // A one-frame channel needs the consumer to drain the final first-track
+    // packet before the producer can reach the boundary reservation.
+    prefix.push(packetizer.recv_timeout(TEST_TIMEOUT).expect("first audio packet"));
+    assert_eq!(entered_rx.recv_timeout(TEST_TIMEOUT).expect("reservation reached"), 241);
+    assert!(matches!(prefix[0], ProtocolFrame::Audio(_)));
+    assert!(matches!(
+        packetizer.recv_timeout(Duration::from_millis(50)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ), "successor frames must not pass an unacknowledged reservation");
+    release_tx.send(()).expect("ack reservation");
+    let mut tail = Vec::new();
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(frame) => tail.push(frame),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("reserved playlist stalled"),
+        }
+    }
+    packetizer.join().expect("playlist complete");
+    assert!(matches!(
+        tail.first(),
+        Some(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)))
+            if boundary.entry_id == "reserved-next" && boundary.first_sample_index.get() == 241
+    ));
+    assert_eq!(
+        tail.iter()
+            .filter(|frame| matches!(frame, ProtocolFrame::Audio(_)))
+            .count(),
+        3,
+        "no successor PCM is lost across the committed boundary"
+    );
+}
+
+#[test]
+fn rejected_reservation_fails_closed_without_emitting_successor_audio() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "denied-first.wav", &pcm_wav_frames(48_000, 2, 240));
+    let next_path = write_bytes(&temp, "denied-next.wav", &pcm_wav_frames(48_000, 2, 480));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let successor = StreamingPlaylistTrackFactory::new("denied-next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("factory");
+    let reserver = std::sync::Arc::new(|_: &crate::protocol::TrackBoundary, _| {
+        Err(super::PacketizerWorkerError {
+            kind: PacketizerWorkerErrorKind::Packetize,
+            message: "injected authoritative queue conflict".into(),
+        })
+    });
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "denied-first",
+        "First",
+        vec![successor],
+        SessionId::new("denied-playlist-session").expect("session"),
+        StreamId::new("denied-playlist-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig::default(),
+        reserver,
+    ).expect("packetizer");
+    let mut frames = Vec::new();
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(frame) => frames.push(frame),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("denied playlist stalled"),
+        }
+    }
+    let error = packetizer.join().expect_err("rejected boundary must fail closed");
+    assert!(error.message.contains("injected authoritative queue conflict"));
+    assert!(frames.iter().all(|frame| matches!(frame, ProtocolFrame::Audio(_))),
+        "a rejected reservation must never enqueue the successor boundary");
+    assert_eq!(frames.len(), 1, "only outgoing track audio may be queued");
+}
