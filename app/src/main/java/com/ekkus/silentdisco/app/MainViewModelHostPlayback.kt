@@ -113,10 +113,15 @@ internal fun MainViewModel.startHostStreamingLoop(
                         null -> continue
                         FfiPlaylistFrame.End -> break
                         is FfiPlaylistFrame.TrackBoundary -> {
-                            ensureRustHostCore().trackBoundaryScheduled(
-                                frame.entryId,
-                                frame.firstSampleIndex.toLong(),
-                            )
+                            val actor = ensureRustHostCore()
+                            // In production the producer already reserved the
+                            // boundary with Rust before queuing successor PCM.
+                            if (!actor.boundariesReservedByProducer) {
+                                actor.trackBoundaryScheduled(
+                                    frame.entryId,
+                                    frame.firstSampleIndex.toLong(),
+                                )
+                            }
                             hostPendingTrackBoundaries[frame.firstSampleIndex.toLong()] =
                                 PendingHostTrackBoundary(
                                     streamId = frame.streamId,

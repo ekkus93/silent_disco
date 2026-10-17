@@ -13,6 +13,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
+import com.ekkus.silentdisco.core.uniffi.FfiPlaylistSource
 import com.ekkus.silentdisco.core.uniffi.FfiTransportState
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -33,6 +34,18 @@ import kotlinx.coroutines.withTimeout
 interface HostCoreController : AutoCloseable {
     val snapshots: StateFlow<FfiCoreSnapshot?>
     val notifications: Flow<FfiCoreNotification>
+
+    /** Isolated test doubles may use direct packetization; production reserves
+     *  boundaries on its authoritative actor before successor frames enqueue. */
+    val boundariesReservedByProducer: Boolean get() = false
+
+    fun openHostPlaylist(
+        sessionId: String,
+        streamId: String,
+        hostStartTimeMs: ULong,
+        sources: List<FfiPlaylistSource>,
+    ): HostPlaylistStreamController =
+        HostPlaylistStreamController.open(sessionId, streamId, hostStartTimeMs, sources)
 
     suspend fun configureAndCreate(draft: FfiHostDraft)
     suspend fun configureAndCreate(draft: FfiHostDraft, additionalEntries: List<FfiQueueEntry>) {
@@ -102,6 +115,16 @@ class UniFfiHostCoreController(
 
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
     override val notifications: Flow<FfiCoreNotification> = notificationChannel.receiveAsFlow()
+    override val boundariesReservedByProducer: Boolean = true
+
+    override fun openHostPlaylist(
+        sessionId: String,
+        streamId: String,
+        hostStartTimeMs: ULong,
+        sources: List<FfiPlaylistSource>,
+    ): HostPlaylistStreamController = HostPlaylistStreamController.openAuthoritative(
+        sessionId, streamId, hostStartTimeMs, sources, openHandle(),
+    )
 
     override suspend fun configureAndCreate(draft: FfiHostDraft) = withContext(Dispatchers.IO) {
         configureAndCreate(draft, emptyList())

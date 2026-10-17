@@ -65,7 +65,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         val streamer = try {
             val sources = withContext(Dispatchers.IO) { stageHostPlaylistSources() }
             withContext(Dispatchers.IO) {
-                com.ekkus.silentdisco.core.rust.HostPlaylistStreamController.open(
+                ensureRustHostCore().openHostPlaylist(
                     sessionId = sessionId.value,
                     streamId = streamId.value,
                     hostStartTimeMs = (SystemClock.elapsedRealtime() + HOST_STREAM_START_LEAD_MS).toULong(),
