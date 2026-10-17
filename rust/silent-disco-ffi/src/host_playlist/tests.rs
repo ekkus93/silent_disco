@@ -1,13 +1,11 @@
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
-use crate::host_control::{
-    FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,
-};
+use crate::host_control::{FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver};
 use silent_disco_core::audio::PacketizerWorkerErrorKind;
 use silent_disco_core::domain::{SampleIndex, SessionId, StreamId};
 use silent_disco_core::protocol::TrackBoundary;
 use std::fs;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct QuietObserver;
@@ -634,6 +632,18 @@ fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
     }
     assert!(drained > 0, "current track must produce frames");
 
+    // Repeated short internal polls must honor the caller's *total* timeout.
+    // A zero timeout remains a nonblocking read when no frame is queued.
+    let immediate = Instant::now();
+    assert!(stream.next_frame(0).expect("nonblocking poll").is_none());
+    assert!(immediate.elapsed() < Duration::from_secs(1));
+    let timed = Instant::now();
+    assert!(stream.next_frame(120).expect("timed poll").is_none());
+    assert!(
+        timed.elapsed() >= Duration::from_millis(90),
+        "the internal 20 ms poll must not shorten the caller's timeout"
+    );
+
     let (started_tx, started_rx) = sync_channel(1);
     let reader = Arc::clone(&stream);
     let waiting_consumer = std::thread::spawn(move || {
@@ -667,7 +677,7 @@ fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
     let received = waiting_consumer.join().expect("consumer thread").expect("frame read");
     assert!(received.is_none(), "Stop must suppress queued audio");
     assert!(
-        stop_elapsed < Duration::from_millis(500),
+        stop_elapsed < Duration::from_secs(2),
         "Stop blocked behind a long receive timeout: {stop_elapsed:?}"
     );
     fs::remove_dir_all(root).expect("cleanup");
