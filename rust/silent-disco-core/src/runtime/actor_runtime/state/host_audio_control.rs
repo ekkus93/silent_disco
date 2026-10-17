@@ -12,6 +12,21 @@ impl ActorState {
             return self.apply_audio_with_host_lifecycle(event);
         }
 
+        // Atomically start a buffered host stream and bind its identity.
+        // The actor processes this as one input, preventing an old EOF
+        // from interleaving between Playing and stream registration.
+        if let AudioEvent::PositionAdvanced { position_ms: 0, .. } = &event
+            && self.snapshot.playback_state == PlaybackState::Buffering
+        {
+            let mut candidate = self.clone();
+            candidate.apply_audio_with_host_lifecycle(AudioEvent::PlaybackStateChanged(
+                PlaybackState::Playing,
+            ))?;
+            let outcome = candidate.apply_audio(event)?;
+            *self = candidate;
+            return Ok(outcome);
+        }
+
         match &event {
             AudioEvent::PlaybackStateChanged(PlaybackState::Buffering) => {
                 if !matches!(
