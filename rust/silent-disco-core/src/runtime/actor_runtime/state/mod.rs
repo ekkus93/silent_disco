@@ -8,6 +8,7 @@ mod audio;
 mod commands;
 mod host_audio_control;
 mod platform;
+mod reservation;
 mod storage;
 mod support;
 mod transport;

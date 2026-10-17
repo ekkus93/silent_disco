@@ -31,3 +31,7 @@ The producer-to-consumer enqueue race remains unresolved. No reservation callbac
 ## Exact-head qualification observation (2026-10-17)
 
 At master `0bc29d14d998976ef8abbb2022a10ca8649a1072`, Rust/Android CI run 39010477546 attempt 2 failed with zero executed job steps, and the bridge could not retrieve either failing job log (`JOB_NOT_FOUND`). The `rust` local-validation profile is not authorized/available. This is an infrastructure qualification blocker, not evidence that the new Rust tests passed or failed. The producer/actor boundary reservation remains unimplemented and must be wired to both production hosts before the queue-retargeting checkbox can close.
+
+## Serialized actor reservation primitive — 2026-10-17
+
+The actor now has a dedicated synchronous reservation message and a bounded acknowledgment channel. Unlike the earlier asynchronous `submit_audio_event(TrackBoundaryScheduled)`, the new `CoreActorHandle::reserve_host_track_boundary` acknowledges only after the actor has verified the active stream, applied its queue-boundary lock, advanced/published its snapshot, and enqueued notifications. Queue mutations and reservations share the actor's serialized input order; cancellation is checked before acceptance and by the waiting producer. Unit regressions cover edit-first, reservation-first, and wrong-stream outcomes. **This only supplies the actor-side primitive.** The packetizer and production desktop/Android entry points do not yet call it; the queue-edit race remains OPEN until those integrations and executable validation are complete.

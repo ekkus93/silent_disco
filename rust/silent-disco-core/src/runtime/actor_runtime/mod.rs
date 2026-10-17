@@ -1,4 +1,5 @@
 mod errors;
+mod reservation;
 mod state;
 
 use self::errors::{
@@ -10,7 +11,7 @@ use super::records::{
     CoreSnapshot, PlatformEvent, StorageEvent, TransportEvent,
 };
 use super::types::DeliveryReport;
-use crate::domain::{DeliverySeverity, DeviceId, OperationId};
+use crate::domain::{DeliverySeverity, DeviceId, OperationId, StreamId};
 use crate::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -141,7 +142,17 @@ struct ActorShared {
     next_command_sequence: AtomicU64,
 }
 
-struct ActorMessage(Box<CoreActorInput>);
+enum ActorMessage {
+    Input(Box<CoreActorInput>),
+    /// A synchronous producer reservation, linearized alongside queue edits.
+    ReserveBoundary {
+        stream_id: StreamId,
+        entry_id: String,
+        first_sample_index: u64,
+        cancelled: Arc<AtomicBool>,
+        reply: SyncSender<Result<(), CoreError>>,
+    },
+}
 
 enum NotificationMessage {
     Notify(Box<CoreNotification>),
@@ -315,7 +326,7 @@ impl CoreActorRuntime {
             .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
         self.handle
             .sender
-            .send(ActorMessage(Box::new(CoreActorInput::Command {
+            .send(ActorMessage::Input(Box::new(CoreActorInput::Command {
                 operation_id,
                 request,
             })))
@@ -433,7 +444,7 @@ impl CoreActorHandle {
         input: CoreActorInput,
         operation_id: Option<OperationId>,
     ) -> Result<(), CoreError> {
-        match self.sender.try_send(ActorMessage(Box::new(input))) {
+        match self.sender.try_send(ActorMessage::Input(Box::new(input))) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err(core_error(
                 CoreErrorCode::QueueOverflow,
@@ -511,8 +522,32 @@ fn run_actor_worker(
         notification_sender,
         CoreNotification::Snapshot(state.snapshot.clone()),
     )?;
-    while let Ok(ActorMessage(input)) = receiver.recv() {
-        let result = state.process(*input);
+    while let Ok(message) = receiver.recv() {
+        let (result, reservation_reply) = match message {
+            ActorMessage::Input(input) => (state.process(*input), None),
+            ActorMessage::ReserveBoundary {
+                stream_id,
+                entry_id,
+                first_sample_index,
+                cancelled,
+                reply,
+            } => {
+                if cancelled.load(Ordering::Acquire) {
+                    let _ = reply.send(Err(invalid_argument(
+                        "playlist boundary reservation was cancelled",
+                        None,
+                    )));
+                    continue;
+                }
+                match state.reserve_track_boundary(stream_id, entry_id, first_sample_index) {
+                    Ok(result) => (result, Some(reply)),
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        continue;
+                    }
+                }
+            }
+        };
         write_snapshot(shared, &state.snapshot)?;
         for notification in result.notifications {
             if let Err(error) = send_notification(notification_sender, notification) {
@@ -520,6 +555,11 @@ fn run_actor_worker(
                 shared.accepting.store(false, Ordering::Release);
                 return Err(error);
             }
+        }
+        // The producer may emit successor audio only after the actor has
+        // committed this reservation and its snapshot has been published.
+        if let Some(reply) = reservation_reply {
+            let _ = reply.send(Ok(()));
         }
         if result.stop_requested {
             shared.accepting.store(false, Ordering::Release);
@@ -553,7 +593,7 @@ fn run_notification_worker<O: CoreObserver>(
                         // such as a join approval -- silently undelivered.
                         if let Some(effect) = refusable
                             && actor_sender
-                                .try_send(ActorMessage(Box::new(
+                                .try_send(ActorMessage::Input(Box::new(
                                     effect.failure_input(error.clone()),
                                 )))
                                 .is_ok()
