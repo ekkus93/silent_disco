@@ -115,12 +115,19 @@ impl FfiHostPlaylistStreamer {
         sources: Vec<FfiPlaylistSource>,
         authority: Arc<FfiCoreHandle>,
     ) -> Result<Arc<Self>, FfiHostPlaylistError> {
-        let actor = authority.actor_handle()
+        let actor = authority
+            .actor_handle()
             .map_err(|error| FfiHostPlaylistError::Closed(error.to_string()))?;
         let reserve = Arc::new(move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
             reserve_authoritative_boundary(&actor, boundary, cancelled)
         });
-        Self::open_with_reserver(session_id, stream_id, host_start_time_ms, sources, Some(reserve))
+        Self::open_with_reserver(
+            session_id,
+            stream_id,
+            host_start_time_ms,
+            sources,
+            Some(reserve),
+        )
     }
 
     pub fn stream_start(&self) -> FfiPlaylistStreamStart {
@@ -288,7 +295,6 @@ impl FfiHostPlaylistStreamer {
             updater,
             stream_start,
         }))
- 
     }
 }
 
