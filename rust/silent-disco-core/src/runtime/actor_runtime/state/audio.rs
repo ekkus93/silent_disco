@@ -26,11 +26,13 @@ impl ActorState {
                     )
                 {
                     self.snapshot.playback_position_ms = 0;
+                    self.active_audio_stream_id = None;
                     self.snapshot.stream_ended_naturally = false;
                     self.snapshot.host_queue_next_boundary = None;
                 }
                 if matches!(state, PlaybackState::Stopped | PlaybackState::Error) {
                     self.snapshot.host_queue_next_boundary = None;
+                    self.active_audio_stream_id = None;
                 }
                 if state == PlaybackState::Stopped {
                     self.snapshot.playback_position_ms = 0;
@@ -38,7 +40,10 @@ impl ActorState {
                 self.snapshot.playback_state = state;
                 Ok(ApplyOutcome::changed())
             }
-            AudioEvent::PositionAdvanced { position_ms, .. } => {
+            AudioEvent::PositionAdvanced {
+                stream_id,
+                position_ms,
+            } => {
                 if !matches!(
                     self.snapshot.playback_state,
                     PlaybackState::Playing | PlaybackState::Paused
@@ -48,9 +53,23 @@ impl ActorState {
                         None,
                     ));
                 }
+                // Position events are already stream-scoped on the wire.
+                // Reject late progress from a different stream once this
+                // playback generation has reported its first position.
+                if self
+                    .active_audio_stream_id
+                    .as_ref()
+                    .is_some_and(|active| active != &stream_id)
+                {
+                    return Err(invalid_state(
+                        "playback position belongs to a different stream",
+                        None,
+                    ));
+                }
                 if position_ms < self.snapshot.playback_position_ms {
                     return Err(invalid_state("playback position moved backward", None));
                 }
+                self.active_audio_stream_id = Some(stream_id);
                 self.snapshot.playback_position_ms = position_ms;
                 Ok(ApplyOutcome::changed())
             }
@@ -150,7 +169,20 @@ impl ActorState {
                 }
                 Ok(ApplyOutcome::changed())
             }
-            AudioEvent::EndOfStream { .. } => {
+            AudioEvent::EndOfStream { stream_id } => {
+                // An old producer can finish after a new stream has begun.
+                // Once the active generation reports position, its stream
+                // identity fences both stale progress and stale natural EOF.
+                if self
+                    .active_audio_stream_id
+                    .as_ref()
+                    .is_some_and(|active| active != &stream_id)
+                {
+                    return Err(invalid_state(
+                        "end of stream belongs to a different playback stream",
+                        None,
+                    ));
+                }
                 // A delayed EOF after explicit Stop or a playback failure is
                 // not natural completion of the active stream. Keep the queue
                 // intact for replay or retry instead of clearing it.
@@ -170,6 +202,7 @@ impl ActorState {
                 {
                     self.snapshot.playback_state = PlaybackState::Stopped;
                     self.snapshot.playback_position_ms = 0;
+                    self.active_audio_stream_id = None;
                     self.snapshot.host_queue_next_boundary = None;
                     self.snapshot.stream_ended_naturally = false;
                     return Ok(ApplyOutcome::changed());
@@ -181,6 +214,7 @@ impl ActorState {
                     .map_err(|error| invalid_state(error.to_string(), None))?;
                 self.snapshot.host_draft.audio_source = None;
                 self.snapshot.host_queue_next_boundary = None;
+                self.active_audio_stream_id = None;
                 self.snapshot.playback_state = PlaybackState::Stopped;
                 self.snapshot.stream_ended_naturally = true;
                 Ok(ApplyOutcome::changed())
@@ -195,6 +229,7 @@ impl ActorState {
                 Ok(outcome)
             }
             AudioEvent::Failed(error) => {
+                self.active_audio_stream_id = None;
                 self.snapshot.playback_state = PlaybackState::Error;
                 self.snapshot.host_queue_next_boundary = None;
                 self.snapshot.last_error = Some(error.clone());

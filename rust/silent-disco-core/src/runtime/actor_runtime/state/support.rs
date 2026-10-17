@@ -223,6 +223,7 @@ impl ActorState {
         self.snapshot.pending_join_requests.clear();
         self.snapshot.listeners.clear();
         self.snapshot.playback_state = PlaybackState::Stopped;
+        self.active_audio_stream_id = None;
         self.snapshot.playback_position_ms = 0;
         self.snapshot.last_delivery = None;
         self.snapshot.last_delivery_operation_id = None;
@@ -234,6 +235,7 @@ impl ActorState {
         self.snapshot.listener_lifecycle = ListenerLifecycle::Idle;
         self.snapshot.selected_session = None;
         self.snapshot.playback_state = PlaybackState::Stopped;
+        self.active_audio_stream_id = None;
     }
 
     pub(super) fn clear_failure(&mut self) {

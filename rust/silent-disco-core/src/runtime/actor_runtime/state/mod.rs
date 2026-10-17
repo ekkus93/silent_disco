@@ -18,7 +18,7 @@ use super::errors::{
 };
 use crate::domain::{
     AppRole, DeviceId, HostLifecycle, ListenerLifecycle, OperationId, PlaybackState, RequestId,
-    SessionId, TransportState, TuningSettings,
+    SessionId, StreamId, TransportState, TuningSettings,
 };
 use crate::error::CoreError;
 use crate::runtime::records::{
@@ -41,6 +41,9 @@ pub(super) struct ActorState {
     pub(super) snapshot: CoreSnapshot,
     local_device_id: DeviceId,
     host_session_id: Option<SessionId>,
+    // Last stream to report progress during this playback generation.
+    // Kept actor-private; platform source identifiers never enter snapshots.
+    active_audio_stream_id: Option<StreamId>,
     pending_platform: Vec<(OperationId, PendingPlatformOperation)>,
     pending_transport: Vec<(OperationId, PendingTransportOperation)>,
     pending_storage: Vec<(OperationId, PendingStorageOperation)>,
@@ -139,6 +142,7 @@ impl ActorState {
             snapshot: CoreSnapshot::default(),
             local_device_id,
             host_session_id: None,
+            active_audio_stream_id: None,
             pending_platform: Vec::new(),
             pending_transport: Vec::new(),
             pending_storage: Vec::new(),
