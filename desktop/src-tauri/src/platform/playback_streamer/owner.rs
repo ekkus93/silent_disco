@@ -5,7 +5,7 @@ use silent_disco_core::audio::{StreamingPlaylistTrackFactory, StreamingPlaylistU
 use silent_disco_core::domain::{MonotonicMillis, PlaybackState, SessionId, StreamId};
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::protocol::{
-    AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart,
+    AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart, TrackBoundary,
 };
 use silent_disco_core::runtime::{AudioEvent, CoreActorHandle};
 use std::sync::Arc;
