@@ -425,6 +425,7 @@ fn map_playlist_decode_error(error: &DecodeError, display_name: &str) -> Packeti
 #[cfg(test)]
 mod promotion_identity_tests {
     use super::*;
+    use std::sync::Arc;
 
     fn factory(id: &str) -> StreamingPlaylistTrackFactory {
         StreamingPlaylistTrackFactory::new(id, "Track", || {
