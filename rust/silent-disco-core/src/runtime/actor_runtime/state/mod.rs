@@ -44,6 +44,9 @@ pub(super) struct ActorState {
     // Last stream to report progress during this playback generation.
     // Kept actor-private; platform source identifiers never enter snapshots.
     active_audio_stream_id: Option<StreamId>,
+    // The most recently completed or explicitly stopped stream must not
+    // reclaim a fresh playback generation before its first progress event.
+    retired_audio_stream_id: Option<StreamId>,
     pending_platform: Vec<(OperationId, PendingPlatformOperation)>,
     pending_transport: Vec<(OperationId, PendingTransportOperation)>,
     pending_storage: Vec<(OperationId, PendingStorageOperation)>,
@@ -143,6 +146,7 @@ impl ActorState {
             local_device_id,
             host_session_id: None,
             active_audio_stream_id: None,
+            retired_audio_stream_id: None,
             pending_platform: Vec::new(),
             pending_transport: Vec::new(),
             pending_storage: Vec::new(),

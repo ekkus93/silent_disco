@@ -612,6 +612,87 @@ mod host_queue_actor_tests {
     }
 
     #[test]
+    fn stopped_stream_cannot_rebind_replay_before_new_progress() {
+        let mut state = host();
+        state
+            .append_host_queue(
+                OperationId::new("append-retired-stream").expect("operation ID"),
+                0,
+                vec![entry("one", "source-one")],
+            )
+            .expect("append");
+        state.snapshot.playback_state = PlaybackState::Playing;
+        let old = StreamId::new("retired-stream").expect("stream ID");
+        let new = StreamId::new("replacement-stream").expect("stream ID");
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: old.clone(),
+                position_ms: 100,
+            })
+            .expect("bind old stream");
+        state
+            .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop");
+        state
+            .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("restart");
+        let revision = state.snapshot.host_queue.revision();
+
+        let stale_progress = state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: old.clone(),
+                position_ms: 5,
+            })
+            .expect_err("old progress cannot claim unbound replay");
+        assert_eq!(stale_progress.code, CoreErrorCode::InvalidStateTransition);
+        let stale_end = state
+            .apply_audio(AudioEvent::EndOfStream { stream_id: old })
+            .expect_err("old EOF cannot clear unbound replay");
+        assert_eq!(stale_end.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.host_queue.revision(), revision);
+        assert_eq!(state.snapshot.playback_position_ms, 0);
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Playing);
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: new.clone(),
+                position_ms: 10,
+            })
+            .expect("new stream can claim replay");
+        state
+            .apply_audio(AudioEvent::EndOfStream { stream_id: new })
+            .expect("new stream can finish normally");
+        assert!(state.snapshot.stream_ended_naturally);
+    }
+
+    #[test]
+    fn pause_resume_preserves_bound_stream_without_retiring_it() {
+        let mut state = host();
+        state.snapshot.playback_state = PlaybackState::Playing;
+        let stream = StreamId::new("paused-stream").expect("stream ID");
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: stream.clone(),
+                position_ms: 100,
+            })
+            .expect("bind active stream");
+        state
+            .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+            .expect("pause");
+        state
+            .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("resume");
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: stream,
+                position_ms: 200,
+            })
+            .expect("same stream continues after resume");
+        assert_eq!(state.snapshot.playback_position_ms, 200);
+    }
+
+    #[test]
     fn natural_end_clears_completed_queue_and_preserves_host_session() {
         let mut state = host();
         state
