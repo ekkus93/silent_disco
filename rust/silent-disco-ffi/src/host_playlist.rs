@@ -350,12 +350,15 @@ fn reserve_authoritative_boundary(
         }
         let playback_state = actor
             .current_snapshot()
-            .map_err(|error| playlist_reservation_error(&error.to_string()))?
+            .map_err(|error| playlist_reservation_error(&error.to_string(), &cancelled))?
             .playback_state;
         match playback_state {
             PlaybackState::Playing => break,
             PlaybackState::Stopped | PlaybackState::Error => {
-                return Err(playlist_reservation_error("playback stopped before reservation"));
+                return Err(playlist_reservation_error(
+                    "playback stopped before reservation",
+                    &cancelled,
+                ));
             }
             _ => std::thread::sleep(Duration::from_millis(20)),
         }
@@ -364,15 +367,23 @@ fn reserve_authoritative_boundary(
         boundary.stream_id.clone(),
         boundary.entry_id.clone(),
         boundary.first_sample_index.get(),
-        cancelled,
+        Arc::clone(&cancelled),
     )
-    .map_err(|error| playlist_reservation_error(&error.to_string()))
+    .map_err(|error| playlist_reservation_error(&error.to_string(), &cancelled))
 }
 
-fn playlist_reservation_error(message: &str) -> PacketizerWorkerError {
+fn playlist_reservation_error(message: &str, cancelled: &AtomicBool) -> PacketizerWorkerError {
+    let cancelled = cancelled.load(Ordering::Acquire);
     PacketizerWorkerError {
-        kind: PacketizerWorkerErrorKind::Packetize,
-        message: format!("authoritative host boundary reservation failed: {message}"),
+        kind: if cancelled {
+            PacketizerWorkerErrorKind::Cancelled
+        } else {
+            PacketizerWorkerErrorKind::Packetize
+        },
+        message: format!(
+            "authoritative host boundary reservation {}: {message}",
+            if cancelled { "cancelled" } else { "failed" }
+        ),
     }
 }
 

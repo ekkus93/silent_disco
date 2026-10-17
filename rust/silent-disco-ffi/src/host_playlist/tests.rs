@@ -36,6 +36,19 @@ fn authoritative_ffi_playlist_rejects_closed_actor_before_opening_source() {
 }
 
 #[test]
+fn reservation_reply_failure_preserves_cancellation_classification() {
+    use std::sync::atomic::Ordering;
+
+    let signal = AtomicBool::new(false);
+    let rejected = super::playlist_reservation_error("actor rejected edit", &signal);
+    assert_eq!(rejected.kind, PacketizerWorkerErrorKind::Packetize);
+    signal.store(true, Ordering::Release);
+    let interrupted = super::playlist_reservation_error("actor reply interrupted", &signal);
+    assert_eq!(interrupted.kind, PacketizerWorkerErrorKind::Cancelled);
+    assert!(interrupted.message.contains("cancelled"));
+}
+
+#[test]
 fn cancelled_ffi_reservation_never_waits_for_playing() {
     let authority = FfiCoreHandle::open(
         "cancelled-playlist-actor".to_owned(),

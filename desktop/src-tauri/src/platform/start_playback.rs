@@ -194,13 +194,14 @@ fn start_after_buffering(
             }
             let state = authority
                 .current_snapshot()
-                .map_err(|error| reservation_error(&error.to_string()))?
+                .map_err(|error| reservation_error(&error.to_string(), &cancelled))?
                 .playback_state;
             match state {
                 PlaybackState::Playing => break,
                 PlaybackState::Stopped | PlaybackState::Error => {
                     return Err(reservation_error(
                         "host playback stopped before boundary reservation",
+                        &cancelled,
                     ));
                 }
                 _ => std::thread::sleep(Duration::from_millis(20)),
@@ -211,9 +212,9 @@ fn start_after_buffering(
                 boundary.stream_id.clone(),
                 boundary.entry_id.clone(),
                 boundary.first_sample_index.get(),
-                cancelled,
+                Arc::clone(&cancelled),
             )
-            .map_err(|error| reservation_error(&error.to_string()))
+            .map_err(|error| reservation_error(&error.to_string(), &cancelled))
     });
     let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
         decoder,
@@ -250,9 +251,33 @@ fn map_packetizer_error(error: &PacketizerWorkerError) -> DesktopErrorDto {
     DesktopErrorDto::new(code, "audio", "error", true, &error.message)
 }
 
-fn reservation_error(message: &str) -> PacketizerWorkerError {
+fn reservation_error(message: &str, cancelled: &AtomicBool) -> PacketizerWorkerError {
+    let cancelled = cancelled.load(Ordering::Acquire);
     PacketizerWorkerError {
-        kind: PacketizerWorkerErrorKind::Packetize,
-        message: format!("authoritative playlist boundary reservation failed: {message}"),
+        kind: if cancelled {
+            PacketizerWorkerErrorKind::Cancelled
+        } else {
+            PacketizerWorkerErrorKind::Packetize
+        },
+        message: format!(
+            "authoritative playlist boundary reservation {}: {message}",
+            if cancelled { "cancelled" } else { "failed" }
+        ),
+    }
+}
+
+#[cfg(test)]
+mod reservation_cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_while_actor_reply_is_pending_is_not_packetizer_failure() {
+        let signal = AtomicBool::new(false);
+        let rejected = reservation_error("actor refused boundary", &signal);
+        assert_eq!(rejected.kind, PacketizerWorkerErrorKind::Packetize);
+        signal.store(true, Ordering::Release);
+        let interrupted = reservation_error("actor reply interrupted", &signal);
+        assert_eq!(interrupted.kind, PacketizerWorkerErrorKind::Cancelled);
+        assert!(interrupted.message.contains("cancelled"));
     }
 }
