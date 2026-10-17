@@ -39,6 +39,13 @@ fn spawn_pump(
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn boundary_schedule_event(boundary: &TrackBoundary, already_reserved: bool) -> Option<AudioEvent> {
+    (!already_reserved).then(|| AudioEvent::TrackBoundaryScheduled {
+        entry_id: boundary.entry_id.clone(),
+        first_sample_index: boundary.first_sample_index.get(),
+    })
+}
+
 fn run_pump(
     packetizer: StreamingPacketizeHandle,
     network: &Arc<DesktopHostNetworkControl>,
@@ -51,6 +58,7 @@ fn run_pump(
     accumulated_pause_offset_ms: &AtomicU64,
     monitor_tap: Option<&SyncSender<AudioDatagram>>,
 ) -> Result<(), DesktopErrorDto> {
+    let authoritative_boundaries = packetizer.boundaries_already_reserved();
     let mut last_reported_position_ms: Option<u64> = None;
     let mut streaming_error: Option<DesktopErrorDto> = None;
     let mut pending_boundaries: VecDeque<TrackBoundary> = VecDeque::new();
@@ -97,13 +105,20 @@ fn run_pump(
         };
         match packetizer.recv_timeout(recv_timeout) {
             Ok(mut frame) => {
+                // Stop can arrive while the packetizer receive is blocked.
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
                 if let ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)) = &frame {
-                    if let Err(error) = handle.submit_audio_event(AudioEvent::TrackBoundaryScheduled {
-                        entry_id: boundary.entry_id.clone(),
-                        first_sample_index: boundary.first_sample_index.get(),
-                    }) {
-                        streaming_error = Some(DesktopErrorDto::from(error));
-                        break;
+                    // A producer-reserved boundary is already serialized by
+                    // the actor; do not resubmit a stale event after Stop.
+                    if let Some(event) =
+                        boundary_schedule_event(boundary, authoritative_boundaries)
+                    {
+                        if let Err(error) = handle.submit_audio_event(event) {
+                            streaming_error = Some(DesktopErrorDto::from(error));
+                            break;
+                        }
                     }
                     pending_boundaries.push_back(boundary.clone());
                 }
@@ -131,6 +146,9 @@ fn run_pump(
                         streaming_error = Some(error);
                         break;
                     }
+                }
+                if stop.load(Ordering::Acquire) {
+                    break;
                 }
                 let audio_end_ms = match &frame {
                     ProtocolFrame::Audio(audio) => Some(

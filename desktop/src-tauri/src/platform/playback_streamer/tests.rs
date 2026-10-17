@@ -1,16 +1,36 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_pause_offset, forward_to_monitor, implicit_join_failure, terminal_audio_event,
+        apply_pause_offset, boundary_schedule_event, forward_to_monitor, implicit_join_failure,
+        terminal_audio_event,
     };
     use silent_disco_core::domain::{
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
     };
     use silent_disco_core::protocol::{
-        AudioCodec, AudioDatagram, ControlMessage, Disconnect, ProtocolFrame,
+        AudioCodec, AudioDatagram, ControlMessage, Disconnect, ProtocolFrame, TrackBoundary,
     };
     use silent_disco_core::runtime::AudioEvent;
 
+
+    #[test]
+    fn producer_reserved_boundary_does_not_trigger_duplicate_actor_event() {
+        let boundary = TrackBoundary {
+            session_id: SessionId::new("session-pump-test").expect("session id"),
+            stream_id: terminal_stream_id(),
+            first_sample_index: SampleIndex::new(480),
+            entry_id: "next-entry".to_owned(),
+            display_name: "Next track".to_owned(),
+        };
+        assert!(boundary_schedule_event(&boundary, true).is_none());
+        assert!(matches!(
+            boundary_schedule_event(&boundary, false),
+            Some(AudioEvent::TrackBoundaryScheduled {
+                entry_id,
+                first_sample_index: 480
+            }) if entry_id == "next-entry"
+        ));
+    }
 
     fn terminal_stream_id() -> StreamId {
         StreamId::new("stream-pump-terminal-test").expect("stream id")
