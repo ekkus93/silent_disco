@@ -277,23 +277,38 @@ mod retired_stream_tests {
         let mut state = ActorState::new(DeviceId::new("retired-stream-test").unwrap());
         state.snapshot.playback_state = PlaybackState::Playing;
         for name in ["first-stream", "second-stream"] {
-            state.apply_audio(AudioEvent::PositionAdvanced {
-                stream_id: StreamId::new(name).unwrap(), position_ms: 10,
-            }).unwrap();
-            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)).unwrap();
-            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing)).unwrap();
+            state
+                .apply_audio(AudioEvent::PositionAdvanced {
+                    stream_id: StreamId::new(name).unwrap(),
+                    position_ms: 10,
+                })
+                .unwrap();
+            state
+                .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+                .unwrap();
+            state
+                .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+                .unwrap();
         }
         for name in ["first-stream", "second-stream"] {
             let stream_id = StreamId::new(name).unwrap();
-            assert!(state.apply_audio(AudioEvent::PositionAdvanced {
-                stream_id: stream_id.clone(), position_ms: 10,
-            }).is_err());
+            assert!(
+                state
+                    .apply_audio(AudioEvent::PositionAdvanced {
+                        stream_id: stream_id.clone(),
+                        position_ms: 10,
+                    })
+                    .is_err()
+            );
             assert!(state.apply_audio(AudioEvent::EndOfStream { stream_id }).is_err());
         }
         assert_eq!(state.snapshot.playback_position_ms, 0);
-        state.apply_audio(AudioEvent::PositionAdvanced {
-            stream_id: StreamId::new("third-stream").unwrap(), position_ms: 1,
-        }).unwrap();
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: StreamId::new("third-stream").unwrap(),
+                position_ms: 1,
+            })
+            .unwrap();
     }
 
     #[test]
@@ -301,18 +316,36 @@ mod retired_stream_tests {
         let mut state = ActorState::new(DeviceId::new("retired-bound-test").unwrap());
         state.snapshot.playback_state = PlaybackState::Playing;
         for i in 0..20 {
-            state.apply_audio(AudioEvent::PositionAdvanced {
-                stream_id: StreamId::new(format!("stream-{i}")).unwrap(), position_ms: 1,
-            }).unwrap();
-            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped)).unwrap();
-            state.apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing)).unwrap();
+            state
+                .apply_audio(AudioEvent::PositionAdvanced {
+                    stream_id: StreamId::new(format!("stream-{i}")).unwrap(),
+                    position_ms: 1,
+                })
+                .unwrap();
+            state
+                .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+                .unwrap();
+            state
+                .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+                .unwrap();
         }
-        assert_eq!(state.retired_audio_stream_ids.len(), super::super::MAX_RETIRED_AUDIO_STREAM_IDS);
-        assert_eq!(state.retired_audio_stream_ids[0].as_str(), "stream-4");
+        assert_eq!(
+            state.retired_audio_stream_ids.len(),
+            super::super::MAX_RETIRED_AUDIO_STREAM_IDS
+        );
+        assert_eq!(
+            state.retired_audio_stream_ids[0],
+            StreamId::new("stream-4").unwrap()
+        );
         for name in ["stream-4", "stream-19"] {
-            assert!(state.apply_audio(AudioEvent::PositionAdvanced {
-                stream_id: StreamId::new(name).unwrap(), position_ms: 1,
-            }).is_err());
+            assert!(
+                state
+                    .apply_audio(AudioEvent::PositionAdvanced {
+                        stream_id: StreamId::new(name).unwrap(),
+                        position_ms: 1,
+                    })
+                    .is_err()
+            );
         }
     }
 }
