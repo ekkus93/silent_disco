@@ -257,6 +257,8 @@ pub struct StreamingPacketizeHandle {
     config: StreamingPacketizeConfig,
     stream_start: ProtocolFrame,
     playlist_updater: Option<StreamingPlaylistUpdater>,
+    /// Producer has synchronously committed boundaries to the host actor.
+    authoritative_boundaries: bool,
     join: Option<JoinHandle<Result<PacketizerSummary, PacketizerWorkerError>>>,
 }
 
@@ -316,6 +318,7 @@ impl StreamingPacketizeHandle {
             config,
             stream_start,
             playlist_updater: None,
+            authoritative_boundaries: false,
             join: Some(join),
         })
     }
@@ -324,6 +327,12 @@ impl StreamingPacketizeHandle {
     #[must_use]
     pub const fn stream_start_message(&self) -> &ProtocolFrame {
         &self.stream_start
+    }
+
+    /// Whether successor boundaries are already committed to the host actor.
+    #[must_use]
+    pub const fn boundaries_already_reserved(&self) -> bool {
+        self.authoritative_boundaries
     }
 
     /// Returns the live playlist update handle for playlist streams.
@@ -487,6 +496,7 @@ mod failure_visibility_tests {
             statistics: Arc::new(SharedStatistics::default()),
             config: StreamingPacketizeConfig::default(),
             playlist_updater: None,
+            authoritative_boundaries: false,
             stream_start: crate::protocol::ProtocolFrame::Control(
                 crate::protocol::ControlMessage::Stop(crate::protocol::Stop {
                     session_id: crate::domain::SessionId::new("drop-test-session")

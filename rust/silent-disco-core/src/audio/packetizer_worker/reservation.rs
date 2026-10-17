@@ -113,6 +113,7 @@ impl StreamingPacketizeHandle {
             })),
         };
         let worker_updates = Arc::clone(&playlist_updater.pending);
+        let authoritative_boundaries = boundary_reserver.is_some();
         let join = thread::Builder::new()
             .name("silent-disco-streaming-playlist-packetizer".to_owned())
             .spawn(move || {
@@ -143,6 +144,7 @@ impl StreamingPacketizeHandle {
             config,
             stream_start,
             playlist_updater: Some(playlist_updater),
+            authoritative_boundaries,
             join: Some(join),
         })
     }
