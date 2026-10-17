@@ -141,7 +141,6 @@ fn run_pump(
                     &mut frame,
                     accumulated_pause_offset_ms.load(Ordering::Acquire),
                 );
-                forward_to_monitor(&frame, monitor_tap);
                 match wait_until_within_send_ahead_horizon(&frame, network, stop) {
                     Ok(true) => {}
                     Ok(false) => break,
@@ -153,6 +152,7 @@ fn run_pump(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
+                forward_to_monitor(&frame, monitor_tap);
                 let audio_end_ms = match &frame {
                     ProtocolFrame::Audio(audio) => Some(
                         audio.host_presentation_time_ms.get().saturating_add(
