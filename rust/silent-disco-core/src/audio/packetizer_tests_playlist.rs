@@ -538,3 +538,66 @@ fn rejected_reservation_fails_closed_without_emitting_successor_audio() {
         "a rejected reservation must never enqueue the successor boundary");
     assert_eq!(frames.len(), 1, "only outgoing track audio may be queued");
 }
+
+#[test]
+fn cancelled_authoritative_reservation_joins_without_successor_frames() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "cancel-first.wav", &pcm_wav_frames(48_000, 2, 241));
+    let next_path = write_bytes(&temp, "cancel-next.wav", &pcm_wav_frames(48_000, 2, 480));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let successor = StreamingPlaylistTrackFactory::new("cancel-next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("successor factory");
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let reserver = std::sync::Arc::new(
+        move |_: &crate::protocol::TrackBoundary,
+              cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+            entered_tx.send(()).expect("signal reservation entry");
+            while !cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(super::super::PacketizerWorkerError {
+                kind: PacketizerWorkerErrorKind::Cancelled,
+                message: "injected reservation cancellation".into(),
+            })
+        },
+    );
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "cancel-first",
+        "First",
+        vec![successor],
+        SessionId::new("cancel-reservation-session").expect("session"),
+        StreamId::new("cancel-reservation-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        reserver,
+    )
+    .expect("packetizer");
+
+    // Drain the outgoing packet so the producer can reach the reservation.
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(_))
+    ));
+    entered_rx
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("producer reached the reservation");
+    assert!(
+        matches!(
+            packetizer.recv_timeout(Duration::from_millis(20)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "no successor boundary or PCM may escape while reservation is pending"
+    );
+    let error = packetizer
+        .cancel_and_join()
+        .expect_err("cancellation must join the producer waiting for authority");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+}
