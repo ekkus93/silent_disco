@@ -171,13 +171,25 @@ impl FfiHostPlaylistStreamer {
         &self,
         timeout_ms: u64,
     ) -> Result<Option<FfiPlaylistFrame>, FfiHostPlaylistError> {
+        // Cancellation may be signalled while another consumer is holding
+        // this mutex. Do not deliver frames buffered before Stop.
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         let mut inner = self.inner.lock().map_err(|_| {
             FfiHostPlaylistError::Closed("playlist stream lock was poisoned".to_owned())
         })?;
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         let Some(packetizer) = inner.as_ref() else {
             return Ok(None);
         };
-        match packetizer.recv_timeout(Duration::from_millis(timeout_ms)) {
+        let received = packetizer.recv_timeout(Duration::from_millis(timeout_ms));
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        match received {
             Ok(frame) => frame_to_ffi(frame).map(Some),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {

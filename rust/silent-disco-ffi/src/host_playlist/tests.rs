@@ -528,6 +528,50 @@ fn ffi_cancel_signals_producer_before_waiting_for_frame_consumer_lock() {
     fs::remove_dir_all(root).expect("cleanup");
 }
 
+#[test]
+fn ffi_stop_does_not_deliver_buffered_audio_to_a_waiting_consumer() {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::sync_channel;
+    use std::time::Duration;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-ffi-stop-frame-{unique}"));
+    fs::create_dir_all(&root).expect("temp directory");
+    let source = root.join("current.wav");
+    fs::write(&source, wav_pcm16(48_000, 2, 48_000, 3_000)).expect("source");
+    let stream = FfiHostPlaylistStreamer::open(
+        "session-ffi-stop-frame".to_owned(),
+        "stream-ffi-stop-frame".to_owned(),
+        5_000,
+        vec![FfiPlaylistSource {
+            entry_id: "current".to_owned(),
+            display_name: "Current".to_owned(),
+            staged_path: source.to_string_lossy().into_owned(),
+        }],
+    )
+    .expect("open playlist");
+
+    let consumer_lock = stream.inner.lock().expect("consumer mutex");
+    let (started_tx, started_rx) = sync_channel(1);
+    let consumer_stream = Arc::clone(&stream);
+    let consumer = std::thread::spawn(move || {
+        started_tx.send(()).expect("consumer started");
+        consumer_stream.next_frame(50)
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).expect("consumer started");
+    // Simulate a concurrent host Stop before releasing the frame mutex.
+    stream.closed.store(true, Ordering::Release);
+    stream.cancellation.store(true, Ordering::Release);
+    drop(consumer_lock);
+    let frame = consumer.join().expect("consumer thread").expect("frame poll");
+    assert!(frame.is_none(), "stopped stream must not expose queued audio");
+    stream.cancel().expect("finalize Stop");
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
 fn wav_pcm16(sample_rate: u32, channels: u16, frames: u32, sample: i16) -> Vec<u8> {
     let data_bytes = frames * u32::from(channels) * 2;
     let mut bytes = Vec::with_capacity(44 + data_bytes as usize);
