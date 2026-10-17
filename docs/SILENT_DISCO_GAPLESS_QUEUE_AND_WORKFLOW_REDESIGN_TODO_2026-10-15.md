@@ -67,6 +67,9 @@ This checklist is dependency-ordered. Complete and qualify each block before mov
 
 **2026-10-16 partial EOF race guard:** The actor now treats EOF with unconsumed upcoming entries or an unapplied boundary as premature stream exhaustion: it stops playback without deleting the queue or source alias, preserving Stop/Play recovery. Two deterministic actor regressions cover an append after producer completion and an unapplied boundary. This does **not** serialize producer boundary commitment with queue edits or establish stream-generation identity; sections 3, 4, and 9 remain open pending production integration and executed qualification.
 
+
+**2026-10-17 FFI cancellation-timeout hardening (not yet qualified):** Direct-to-master commit `217f0ed97fe7` bounds the UniFFI consumer's receive-lock hold to 20 ms cancellation-aware polls while preserving the caller's total requested timeout (including zero-timeout polling). It adds a real two-track producer-gate regression: drain current audio, hold boundary reservation, block a consumer in `next_frame(10_000)`, then verify Stop interrupts promptly and no successor audio escapes. This builds on the pre-lock worker cancellation signal (`6714e8ec`) and Stop buffered-frame guard (`9c4779cf`). The modified FFI module and tests remain below the 800-line limit. No Rust toolchain was available in this execution; the Ralph Bridge `rust` validation profile still rejects requests. Exact-head Rust/Android Actions run [39052880385](https://github.com/ekkus93/silent_disco/actions/runs/39052880385) failed with zero job steps on both its original run and an accepted failed-jobs rerun (attempt 2). Continue treating §3, §4, and §9 as open pending executable tests, bindings, the remaining edit/reservation interleavings, and physical output acceptance.
+
 ## 5. Android host experience
 
 - [x] Implement the 3-step Host wizard: Music → Access → Ready, using the reviewed mockup direction.
