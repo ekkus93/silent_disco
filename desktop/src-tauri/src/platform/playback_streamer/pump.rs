@@ -38,7 +38,6 @@ fn spawn_pump(
         })
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn boundary_schedule_event(boundary: &TrackBoundary, already_reserved: bool) -> Option<AudioEvent> {
     (!already_reserved).then(|| AudioEvent::TrackBoundaryScheduled {
         entry_id: boundary.entry_id.clone(),
@@ -46,6 +45,7 @@ fn boundary_schedule_event(boundary: &TrackBoundary, already_reserved: bool) -> 
     })
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn run_pump(
     packetizer: StreamingPacketizeHandle,
     network: &Arc<DesktopHostNetworkControl>,
