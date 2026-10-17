@@ -1,11 +1,14 @@
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
-use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::host_control::{
     FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,
 };
+use silent_disco_core::audio::PacketizerWorkerErrorKind;
+use silent_disco_core::domain::{SampleIndex, SessionId, StreamId};
+use silent_disco_core::protocol::TrackBoundary;
+use std::fs;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 struct QuietObserver;
 
@@ -20,7 +23,8 @@ fn authoritative_ffi_playlist_rejects_closed_actor_before_opening_source() {
     let actor = FfiCoreHandle::open(
         "closed-playlist-actor".to_owned(),
         Arc::new(QuietObserver),
-    ).expect("actor opens");
+    )
+    .expect("actor opens");
     actor.shutdown().expect("actor shuts down");
     let error = FfiHostPlaylistStreamer::open_authoritative(
         "closed-session".to_owned(),
@@ -28,8 +32,31 @@ fn authoritative_ffi_playlist_rejects_closed_actor_before_opening_source() {
         0,
         vec![],
         actor,
-    ).expect_err("closed actor must be rejected before opening sources");
+    )
+    .expect_err("closed actor must be rejected before opening sources");
     assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
+}
+
+#[test]
+fn cancelled_ffi_reservation_never_waits_for_playing() {
+    let authority = FfiCoreHandle::open(
+        "cancelled-playlist-actor".to_owned(),
+        Arc::new(QuietObserver),
+    )
+    .expect("actor opens");
+    let actor = authority.actor_handle().expect("live actor");
+    let boundary = TrackBoundary {
+        session_id: SessionId::new("cancelled-session").expect("session ID"),
+        stream_id: StreamId::new("cancelled-stream").expect("stream ID"),
+        first_sample_index: SampleIndex::new(960),
+        entry_id: "next-track".to_owned(),
+        display_name: "Next".to_owned(),
+    };
+    let cancellation = Arc::new(AtomicBool::new(true));
+    let error = super::reserve_authoritative_boundary(&actor, &boundary, cancellation)
+        .expect_err("cancelled producer must not wait for playback");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+    authority.shutdown().expect("actor shuts down");
 }
 
 #[test]
