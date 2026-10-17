@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const FRAME_CANCEL_POLL: Duration = Duration::from_millis(20);
 
 use silent_disco_core::audio::{
     PacketizerWorkerError, PacketizerWorkerErrorKind, StreamingDecodeConfig, StreamingDecodeHandle,
@@ -185,10 +187,26 @@ impl FfiHostPlaylistStreamer {
         let Some(packetizer) = inner.as_ref() else {
             return Ok(None);
         };
-        let received = packetizer.recv_timeout(Duration::from_millis(timeout_ms));
-        if self.closed.load(Ordering::Acquire) {
-            return Ok(None);
-        }
+        // The mutex must not remain held for an arbitrarily long receive
+        // timeout: cancel() signals the producer without this lock, then
+        // needs the lock to join it. Poll in short, cancellation-aware slices.
+        let timeout = Duration::from_millis(timeout_ms);
+        let started = Instant::now();
+        let received = loop {
+            if self.closed.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            let result = packetizer.recv_timeout(remaining.min(FRAME_CANCEL_POLL));
+            if self.closed.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            match result {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    if started.elapsed() < timeout => {}
+                other => break other,
+            }
+        };
         match received {
             Ok(frame) => frame_to_ffi(frame).map(Some),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),

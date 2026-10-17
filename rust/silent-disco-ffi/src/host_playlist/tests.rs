@@ -572,6 +572,107 @@ fn ffi_stop_does_not_deliver_buffered_audio_to_a_waiting_consumer() {
     fs::remove_dir_all(root).expect("cleanup");
 }
 
+#[test]
+fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::sync_channel;
+    use std::time::{Duration, Instant};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-ffi-cancel-poll-{unique}"));
+    fs::create_dir_all(&root).expect("temp directory");
+    let wav = root.join("source.wav");
+    fs::write(&wav, wav_pcm16(48_000, 2, 4_800, 3_000)).expect("source");
+    let path = wav.to_string_lossy().into_owned();
+    let sources = ["one", "two"]
+        .into_iter()
+        .map(|id| FfiPlaylistSource {
+            entry_id: id.to_owned(),
+            display_name: id.to_owned(),
+            staged_path: path.clone(),
+        })
+        .collect();
+
+    let (entered_tx, entered_rx) = sync_channel(1);
+    let reservation = Arc::new(
+        move |_: &silent_disco_core::protocol::TrackBoundary,
+              cancelled: Arc<std::sync::atomic::AtomicBool>| {
+            entered_tx.send(()).expect("reservation reached");
+            while !cancelled.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(silent_disco_core::audio::PacketizerWorkerError {
+                kind: PacketizerWorkerErrorKind::Cancelled,
+                message: "test reservation cancelled".to_owned(),
+            })
+        },
+    );
+    let stream = FfiHostPlaylistStreamer::open_with_reserver(
+        "session-ffi-cancel-poll".to_owned(),
+        "stream-ffi-cancel-poll".to_owned(),
+        5_000,
+        sources,
+        Some(reservation),
+    )
+    .expect("start gated packetizer");
+    entered_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("producer reached boundary reservation");
+
+    // Drain the outgoing packets. The producer cannot publish a boundary or
+    // successor PCM until the gate is explicitly cancelled.
+    let mut drained = 0;
+    for _ in 0..64 {
+        match stream.next_frame(30).expect("drain current track") {
+            Some(FfiPlaylistFrame::End) => panic!("gated producer ended early"),
+            Some(_) => drained += 1,
+            None => break,
+        }
+    }
+    assert!(drained > 0, "current track must produce frames");
+
+    let (started_tx, started_rx) = sync_channel(1);
+    let reader = Arc::clone(&stream);
+    let waiting_consumer = std::thread::spawn(move || {
+        started_tx.send(()).expect("consumer started");
+        reader.next_frame(10_000)
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("consumer started");
+    // Ensure next_frame actually holds the mutex (rather than racing
+    // cancellation at the initial closed check).
+    let acquire_deadline = Instant::now() + Duration::from_secs(2);
+    let mut locked = false;
+    while Instant::now() < acquire_deadline {
+        if stream.inner.try_lock().is_err() {
+            locked = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    if !locked {
+        stream.cancellation.store(true, Ordering::Release);
+        stream.closed.store(true, Ordering::Release);
+        waiting_consumer.join().expect("reader thread").expect("reader result");
+        panic!("consumer did not wait on the packet channel");
+    }
+
+    let stop_started = Instant::now();
+    stream.cancel().expect("cancel must not wait for long timeout");
+    let stop_elapsed = stop_started.elapsed();
+    let received = waiting_consumer.join().expect("consumer thread").expect("frame read");
+    assert!(received.is_none(), "Stop must suppress queued audio");
+    assert!(
+        stop_elapsed < Duration::from_millis(500),
+        "Stop blocked behind a long receive timeout: {stop_elapsed:?}"
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
 fn wav_pcm16(sample_rate: u32, channels: u16, frames: u32, sample: i16) -> Vec<u8> {
     let data_bytes = frames * u32::from(channels) * 2;
     let mut bytes = Vec::with_capacity(44 + data_bytes as usize);
