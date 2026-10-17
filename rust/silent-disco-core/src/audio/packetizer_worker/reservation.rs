@@ -82,6 +82,7 @@ impl StreamingPacketizeHandle {
         config: StreamingPacketizeConfig,
         boundary_reserver: Option<BoundaryReserver>,
     ) -> Result<Self, PacketizerWorkerError> {
+        config.validate()?;
         let current_entry_id = current_entry_id.into();
         let current_display_name = current_display_name.into();
         validate_track_identity(&current_entry_id, &current_display_name)?;

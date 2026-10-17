@@ -57,6 +57,23 @@ impl Default for StreamingPacketizeConfig {
     }
 }
 
+impl StreamingPacketizeConfig {
+    // A zero-capacity sync_channel is a rendezvous channel, but our bounded
+    // send loop reserves a queue slot before attempting delivery. It cannot
+    // make progress with capacity zero. Reject it instead of hanging forever.
+    fn validate(self) -> Result<(), PacketizerWorkerError> {
+        if !(1..=MAX_PACKETIZER_QUEUE_CAPACITY).contains(&self.queue_capacity) {
+            return Err(PacketizerWorkerError::new(
+                PacketizerWorkerErrorKind::Packetize,
+                format!(
+                    "packetizer queue capacity must be between 1 and {MAX_PACKETIZER_QUEUE_CAPACITY} frames"
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Lifecycle state of one packetizer worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketizerWorkerState {
@@ -259,6 +276,7 @@ impl StreamingPacketizeHandle {
         host_start_time_ms: MonotonicMillis,
         config: StreamingPacketizeConfig,
     ) -> Result<Self, PacketizerWorkerError> {
+        config.validate()?;
         let format = decoder.stream_info().format;
         let packetizer = Packetizer::new(
             session_id,
@@ -451,7 +469,7 @@ mod failure_visibility_tests {
     use super::{
         DecodeError, DecodeErrorKind, PacketizerSummary, PacketizerWorkerError,
         PacketizerWorkerErrorKind, SharedStatistics, StreamingPacketizeConfig,
-        StreamingPacketizeHandle,
+        StreamingPacketizeHandle, MAX_PACKETIZER_QUEUE_CAPACITY,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::Arc;
@@ -478,6 +496,27 @@ mod failure_visibility_tests {
                 }),
             ),
             join: Some(worker),
+        }
+    }
+
+    #[test]
+    fn packetizer_queue_capacity_rejects_zero_and_unbounded_values() {
+        for capacity in [0, MAX_PACKETIZER_QUEUE_CAPACITY + 1] {
+            let config = StreamingPacketizeConfig {
+                queue_capacity: capacity,
+                ..StreamingPacketizeConfig::default()
+            };
+            let error = config.validate().expect_err("invalid queue must fail fast");
+            assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
+            assert!(error.message.contains("queue capacity"));
+        }
+        for capacity in [1, MAX_PACKETIZER_QUEUE_CAPACITY] {
+            StreamingPacketizeConfig {
+                queue_capacity: capacity,
+                ..StreamingPacketizeConfig::default()
+            }
+            .validate()
+            .expect("bounded queue capacity is valid");
         }
     }
 
