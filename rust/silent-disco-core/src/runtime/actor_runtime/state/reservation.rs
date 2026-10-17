@@ -1,5 +1,8 @@
 //! Synchronous queue-boundary reservation before audio producer commitment.
-use super::{ActorState, AudioEvent, CoreNotification, ProcessResult, StreamId, invalid_argument, invalid_state, resource_limit};
+use super::{
+    ActorState, AudioEvent, CoreNotification, ProcessResult, StreamId, invalid_argument,
+    invalid_state, resource_limit,
+};
 use crate::error::CoreError;
 
 impl ActorState {
@@ -49,7 +52,7 @@ mod tests {
     use super::*;
     use crate::domain::{AppRole, DeviceId, HostLifecycle, PlaybackState, SessionId};
     use crate::error::CoreErrorCode;
-    use crate::runtime::{AudioSourceDescriptor, QueueEntry};
+    use crate::runtime::{AudioSourceDescriptor, CoreCommand, QueueEntry};
 
     fn entry(id: &str) -> QueueEntry {
         QueueEntry::new(
@@ -81,17 +84,27 @@ mod tests {
             .reserve_track_boundary(stream_id, "two".into(), 48_000)
             .expect("authoritative reservation");
         assert_eq!(state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id, "two");
-        let error = state.remove_host_queue_entry(
-            crate::domain::OperationId::new("remove-reserved").expect("operation ID"),
-            state.snapshot.host_queue.revision(),
-            "two",
-        ).expect_err("reserved next entry cannot be removed");
+        let remove_revision = state.snapshot.host_queue.revision();
+        let error = state
+            .apply_command(
+                crate::domain::OperationId::new("remove-reserved").expect("operation ID"),
+                CoreCommand::RemoveHostQueueEntry {
+                    expected_queue_revision: remove_revision,
+                    entry_id: "two".into(),
+                },
+            )
+            .expect_err("reserved next entry cannot be removed");
         assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
-        state.append_host_queue(
-            crate::domain::OperationId::new("append-behind").expect("operation ID"),
-            state.snapshot.host_queue.revision(),
-            vec![entry("four")],
-        ).expect("later items remain editable");
+        let append_revision = state.snapshot.host_queue.revision();
+        state
+            .apply_command(
+                crate::domain::OperationId::new("append-behind").expect("operation ID"),
+                CoreCommand::AppendHostQueue {
+                    expected_queue_revision: append_revision,
+                    entries: vec![entry("four")],
+                },
+            )
+            .expect("later items remain editable");
         assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "two");
     }
 
