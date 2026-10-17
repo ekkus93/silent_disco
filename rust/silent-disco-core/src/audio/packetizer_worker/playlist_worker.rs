@@ -212,6 +212,25 @@ pub(super) fn run_playlist_packetizer_worker(
     }
 }
 
+/// Atomically close the updater only if no previously accepted edit remains.
+/// A pending append wins the EOF race and must be retargeted before the
+/// packetizer is allowed to emit its final frame.
+fn seal_final_track_if_unmodified(
+    updates: &Mutex<PlaylistUpdateState>,
+) -> Result<bool, PacketizerWorkerError> {
+    let mut state = updates.lock().map_err(|_| {
+        PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::WorkerPanicked,
+            "playlist update lock was poisoned",
+        )
+    })?;
+    if state.pending.is_some() {
+        return Ok(false);
+    }
+    state.terminal = true;
+    Ok(true)
+}
+
 fn apply_playlist_update(
     updates: &Mutex<PlaylistUpdateState>,
     upcoming: &mut VecDeque<StreamingPlaylistTrackFactory>,
@@ -297,6 +316,22 @@ fn packetize_playlist_track(
                 statistics,
                 config.queue_capacity,
             )?;
+        }
+        // The final decoded chunk is the last chance to accept an append
+        // without restarting the stream. Atomically seal the updater before
+        // marking the packetizer finished: edits accepted before the seal
+        // are applied, and edits arriving afterwards receive Closed instead
+        // of being silently lost between EOF and worker termination.
+        if input_finished && final_track {
+            loop {
+                if seal_final_track_if_unmodified(updates)? {
+                    break;
+                }
+                refresh_pending_playlist_update(updates, upcoming, next, &mut final_track)?;
+                if !final_track {
+                    break;
+                }
+            }
         }
         let mut chunk = chunk;
         chunk.end_of_stream = input_finished && final_track;
@@ -405,6 +440,37 @@ mod promotion_identity_tests {
         assert!(same_staged_identity("next", "Track", &same));
         assert!(!same_staged_identity("next", "Track", &changed));
         assert!(!same_staged_identity("next", "Renamed track", &same));
+    }
+
+    #[test]
+    fn accepted_append_wins_before_final_eof_seal() {
+        let state = Mutex::new(PlaylistUpdateState {
+            current_entry_id: "one".to_owned(),
+            pending: Some(vec![factory("appended")]),
+            terminal: false,
+        });
+        assert!(!seal_final_track_if_unmodified(&state).expect("pending edit wins"));
+        assert!(!state.lock().unwrap().terminal);
+        let mut upcoming = VecDeque::new();
+        apply_playlist_update(&state, &mut upcoming).expect("consume accepted append");
+        assert_eq!(upcoming.front().unwrap().entry_id, "appended");
+        // A live successor means the current track must not be sealed.
+        assert!(!state.lock().unwrap().terminal);
+    }
+
+    #[test]
+    fn final_eof_seal_rejects_late_edits_before_worker_exit() {
+        let state = Arc::new(Mutex::new(PlaylistUpdateState {
+            current_entry_id: "one".to_owned(),
+            pending: None,
+            terminal: false,
+        }));
+        assert!(seal_final_track_if_unmodified(&state).expect("seal EOF"));
+        let updater = super::super::StreamingPlaylistUpdater { pending: state };
+        let error = updater
+            .replace_upcoming(vec![factory("too-late")])
+            .expect_err("completed packetizer cannot acknowledge an edit");
+        assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
     }
 
     #[test]
