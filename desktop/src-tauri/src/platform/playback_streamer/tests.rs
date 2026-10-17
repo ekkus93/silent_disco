@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_pause_offset, boundary_schedule_event, forward_to_monitor, implicit_join_failure,
+        apply_pause_offset, boundary_schedule_event, forward_to_monitor,
+        forward_to_monitor_if_running, implicit_join_failure,
         terminal_audio_event,
     };
     use silent_disco_core::domain::{
@@ -11,6 +12,7 @@ mod tests {
         AudioCodec, AudioDatagram, ControlMessage, Disconnect, ProtocolFrame, TrackBoundary,
     };
     use silent_disco_core::runtime::AudioEvent;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
 
     #[test]
@@ -204,6 +206,22 @@ mod tests {
         forward_to_monitor(&frame, Some(&tap));
         // Reaching here at all is the proof: a blocking or panicking
         // implementation would never return control to this line.
+    }
+
+    #[test]
+    fn stopped_pump_does_not_forward_audio_to_monitor_after_pacing() {
+        let (tap, receiver) = std::sync::mpsc::sync_channel(2);
+        let stop = AtomicBool::new(false);
+        let frame = audio_frame(50_000);
+
+        // Model a Stop request while send-ahead pacing was still waiting.
+        stop.store(true, Ordering::Release);
+        forward_to_monitor_if_running(&frame, Some(&tap), &stop);
+        assert!(receiver.try_recv().is_err(), "Stop must suppress the monitor tap");
+
+        stop.store(false, Ordering::Release);
+        forward_to_monitor_if_running(&frame, Some(&tap), &stop);
+        assert!(receiver.try_recv().is_ok(), "active playback still feeds the monitor");
     }
 
     /// The overwhelmingly common case -- no monitor active at all -- must
