@@ -2,8 +2,8 @@
 mod tests {
     use super::{
         apply_pause_offset, boundary_schedule_event, broadcast_then_monitor,
-        forward_to_monitor, forward_to_monitor_if_running, implicit_join_failure,
-        terminal_audio_event,
+        forward_to_monitor, forward_to_monitor_if_running, frame_content_position_ms,
+        implicit_join_failure, terminal_audio_event,
     };
     use silent_disco_core::domain::{
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
@@ -123,6 +123,26 @@ mod tests {
             host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
             payload: vec![0_u8; 240 * 2 * 2],
         })
+    }
+
+    #[test]
+    fn position_progress_uses_unshifted_audio_time_not_pause_adjusted_time() {
+        let mut frame = audio_frame(1_250);
+        let content_position_ms = frame_content_position_ms(&frame, 1_000);
+        apply_pause_offset(&mut frame, 500);
+        assert_eq!(content_position_ms, Some(250));
+        assert_eq!(frame_content_position_ms(&frame, 1_000), Some(750));
+    }
+
+    #[test]
+    fn control_frames_never_advance_content_progress() {
+        let frame = ProtocolFrame::Control(ControlMessage::Disconnect(Disconnect {
+            session_id: SessionId::new("session-pump-test").expect("session id"),
+            listener_id: silent_disco_core::domain::DeviceId::new("device-pump-test")
+                .expect("device id"),
+            reason: "test".to_owned(),
+        }));
+        assert_eq!(frame_content_position_ms(&frame, 1_000), None);
     }
 
     /// This is the fix's whole mechanism: a resumed stream's packetizer keeps

@@ -125,18 +125,9 @@ fn run_pump(
                     }
                     pending_boundaries.push_back(boundary.clone());
                 }
-                // Position must reflect actual song content progress, which
-                // is exactly what the packetizer's own (unshifted) sequence
-                // math already gives -- compute it before the pause offset
-                // below inflates the frame's presentation time by however
-                // long the stream has spent paused so far.
-                report_position_if_due(
-                    &frame,
-                    host_start_time_ms,
-                    &mut last_reported_position_ms,
-                    handle,
-                    &stream_id,
-                );
+                // Capture content progress before applying the pause offset.
+                // Do not report it until the network accepts the audio frame.
+                let content_position_ms = frame_content_position_ms(&frame, host_start_time_ms);
                 apply_pause_offset(
                     &mut frame,
                     accumulated_pause_offset_ms.load(Ordering::Acquire),
@@ -180,6 +171,12 @@ fn run_pump(
                 if let Some(audio_end_ms) = audio_end_ms {
                     last_audible_audio_end_ms = Some(audio_end_ms);
                 }
+                report_position_if_due(
+                    content_position_ms,
+                    &mut last_reported_position_ms,
+                    handle,
+                    &stream_id,
+                );
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => packetizer_disconnected = true,
@@ -367,29 +364,33 @@ fn apply_due_boundaries(
     Ok(())
 }
 
-/// Submits a throttled `PositionAdvanced` event for one emitted audio frame.
-///
-/// Position is computed from the frame's own presentation time against the
-/// stream's start -- the authoritative timeline this stream is scheduled
-/// against -- rather than from wall-clock elapsed time, which would drift
-/// under pause or send-ahead bursting. A failed submission is advisory-grade,
-/// the same severity as the audio broadcast just below this call in the
-/// caller, and is handled the same way: retried on the next due frame rather
-/// than treated as a reason to stop the stream.
+/// Compute the unshifted content position before pause correction.
+/// Non-audio control frames never advance the host's progress indicator.
+fn frame_content_position_ms(frame: &ProtocolFrame, host_start_time_ms: u64) -> Option<u64> {
+    match frame {
+        ProtocolFrame::Audio(datagram) => Some(
+            datagram
+                .host_presentation_time_ms
+                .get()
+                .saturating_sub(host_start_time_ms),
+        ),
+        _ => None,
+    }
+}
+
+/// Submit a throttled `PositionAdvanced` event only after the network
+/// accepts the corresponding audio packet. Failed/aborted sends must not
+/// advance the authoritative UI position. A failed actor notification is
+/// advisory and is retried on the next due accepted frame.
 fn report_position_if_due(
-    frame: &ProtocolFrame,
-    host_start_time_ms: u64,
+    position_ms: Option<u64>,
     last_reported_position_ms: &mut Option<u64>,
     handle: &CoreActorHandle,
     stream_id: &StreamId,
 ) {
-    let ProtocolFrame::Audio(datagram) = frame else {
+    let Some(position_ms) = position_ms else {
         return;
     };
-    let position_ms = datagram
-        .host_presentation_time_ms
-        .get()
-        .saturating_sub(host_start_time_ms);
     let due = match *last_reported_position_ms {
         Some(previous) => position_ms >= previous.saturating_add(POSITION_REPORT_INTERVAL_MS),
         None => true,
