@@ -209,8 +209,13 @@ pub(super) fn run_playlist_packetizer_worker(
         };
         // The actor must first lock this target against competing queue edits.
         // No worker update lock or bounded output-channel slot is held here.
-        if let Some(reserve) = boundary_reserver {
-            reserve(&committed_boundary, Arc::clone(cancellation))?;
+        if let Some(reserve) = boundary_reserver
+            && let Err(error) = reserve(&committed_boundary, Arc::clone(cancellation))
+        {
+            // The successor decoder is already opened and prebuffering.
+            // Rejecting its boundary must cancel/join that worker rather
+            // than dropping a live decoder after failing closed.
+            return merge_decoder_shutdown_result(Err(error), decoder.cancel_and_join());
         }
         current_display_name.clone_from(&next_display_name);
         boundary = Some(ProtocolFrame::Control(ControlMessage::TrackBoundary(

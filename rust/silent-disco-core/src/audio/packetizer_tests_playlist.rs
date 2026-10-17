@@ -508,7 +508,7 @@ fn rejected_reservation_fails_closed_without_emitting_successor_audio() {
     })
     .expect("factory");
     let reserver = std::sync::Arc::new(|_: &crate::protocol::TrackBoundary, _| {
-        Err(super::PacketizerWorkerError {
+        Err(super::super::PacketizerWorkerError {
             kind: PacketizerWorkerErrorKind::Packetize,
             message: "injected authoritative queue conflict".into(),
         })
