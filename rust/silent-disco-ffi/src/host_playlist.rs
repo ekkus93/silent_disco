@@ -82,6 +82,7 @@ impl std::error::Error for FfiHostPlaylistError {}
 pub struct FfiHostPlaylistStreamer {
     inner: Mutex<Option<StreamingPacketizeHandle>>,
     closed: AtomicBool,
+    cancellation: Arc<AtomicBool>,
     updater: StreamingPlaylistUpdater,
     stream_start: FfiPlaylistStreamStart,
 }
@@ -194,6 +195,8 @@ impl FfiHostPlaylistStreamer {
 
     pub fn cancel(&self) -> Result<(), FfiHostPlaylistError> {
         self.closed.store(true, Ordering::Release);
+        // Wake an actor-reservation wait before contending with next_frame.
+        self.cancellation.store(true, Ordering::Release);
         let mut inner = self.inner.lock().map_err(|_| {
             FfiHostPlaylistError::Closed("playlist stream lock was poisoned".to_owned())
         })?;
@@ -275,6 +278,7 @@ impl FfiHostPlaylistStreamer {
                 "playlist packetizer returned an invalid start frame".to_owned(),
             ));
         };
+        let cancellation = packetizer.cancellation_signal();
         let stream_start = FfiPlaylistStreamStart {
             stream_id: start.stream_id.to_string(),
             host_start_time_ms: start.host_start_time_ms.get(),
@@ -292,6 +296,7 @@ impl FfiHostPlaylistStreamer {
         Ok(Arc::new(Self {
             inner: Mutex::new(Some(packetizer)),
             closed: AtomicBool::new(false),
+            cancellation,
             updater,
             stream_start,
         }))

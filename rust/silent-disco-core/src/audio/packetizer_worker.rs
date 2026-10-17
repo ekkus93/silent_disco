@@ -366,6 +366,14 @@ impl StreamingPacketizeHandle {
         Ok(frame)
     }
 
+    /// Returns a shared cancellation signal so platform adapters can wake
+    /// a blocked producer before acquiring their frame-consumer mutex.
+    /// Callers may set this flag to true, but must never reset it.
+    #[must_use]
+    pub fn cancellation_signal(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancellation)
+    }
+
     /// Requests cooperative cancellation. Use [`Self::cancel_and_join`] when
     /// a terminal result is required immediately.
     pub fn cancel(&self) {

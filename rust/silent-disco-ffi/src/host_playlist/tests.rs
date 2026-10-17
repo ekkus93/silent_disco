@@ -477,6 +477,57 @@ fn decoder_read_failure_after_open_is_reported_instead_of_clean_queue_end() {
     fs::remove_dir_all(root).expect("remove temp directory");
 }
 
+#[test]
+fn ffi_cancel_signals_producer_before_waiting_for_frame_consumer_lock() {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::sync_channel;
+    use std::time::{Duration, Instant};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-ffi-cancel-lock-{unique}"));
+    fs::create_dir_all(&root).expect("temp directory");
+    let source = root.join("current.wav");
+    fs::write(&source, wav_pcm16(48_000, 2, 48_000, 3_000)).expect("source");
+    let stream = FfiHostPlaylistStreamer::open(
+        "session-ffi-cancel-lock".to_owned(),
+        "stream-ffi-cancel-lock".to_owned(),
+        5_000,
+        vec![FfiPlaylistSource {
+            entry_id: "current".to_owned(),
+            display_name: "Current".to_owned(),
+            staged_path: source.to_string_lossy().into_owned(),
+        }],
+    )
+    .expect("open playlist");
+
+    // Simulate next_frame holding the consumer lock. Stop must signal the
+    // producer without waiting for its receive timeout or queued frames.
+    let held_consumer = stream.inner.lock().expect("consumer lock");
+    let cancellation = Arc::clone(&stream.cancellation);
+    let (started_tx, started_rx) = sync_channel(1);
+    let stop_stream = Arc::clone(&stream);
+    let stopper = std::thread::spawn(move || {
+        started_tx.send(()).expect("signal stopper");
+        stop_stream.cancel()
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).expect("stopper started");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !cancellation.load(Ordering::Acquire) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let signalled_before_unlock = cancellation.load(Ordering::Acquire);
+    drop(held_consumer);
+    stopper.join().expect("stopper thread").expect("cancel playlist");
+    assert!(
+        signalled_before_unlock,
+        "cancellation must not wait for the frame-consumer mutex"
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
 fn wav_pcm16(sample_rate: u32, channels: u16, frames: u32, sample: i16) -> Vec<u8> {
     let data_bytes = frames * u32::from(channels) * 2;
     let mut bytes = Vec::with_capacity(44 + data_bytes as usize);
