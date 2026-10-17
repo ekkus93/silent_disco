@@ -475,6 +475,57 @@ mod promotion_identity_tests {
     }
 
     #[test]
+    fn concurrent_final_eof_seal_never_loses_an_accepted_append() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        // Exercise the real updater and producer admission functions under
+        // contention, rather than asserting only a sequential ordering.
+        // Exactly one operation wins: an accepted edit stays pending for the
+        // worker, or a sealed EOF rejects the edit as terminal.
+        for _ in 0..32 {
+            let state = Arc::new(Mutex::new(PlaylistUpdateState {
+                current_entry_id: "one".to_owned(),
+                pending: None,
+                terminal: false,
+            }));
+            let gate = Arc::new(Barrier::new(3));
+            let seal_state = Arc::clone(&state);
+            let seal_gate = Arc::clone(&gate);
+            let sealer = thread::spawn(move || {
+                seal_gate.wait();
+                seal_final_track_if_unmodified(&seal_state).expect("seal")
+            });
+            let updater = super::super::StreamingPlaylistUpdater {
+                pending: Arc::clone(&state),
+            };
+            let edit_gate = Arc::clone(&gate);
+            let editor = thread::spawn(move || {
+                edit_gate.wait();
+                updater.replace_upcoming(vec![factory("appended")])
+            });
+            gate.wait();
+            let sealed = sealer.join().expect("sealer thread");
+            let accepted = editor.join().expect("editor thread").is_ok();
+            let final_state = state.lock().expect("state lock");
+            assert_ne!(
+                sealed, accepted,
+                "EOF and an accepted append cannot both win or both lose"
+            );
+            if accepted {
+                assert!(!final_state.terminal);
+                assert_eq!(
+                    final_state.pending.as_ref().unwrap()[0].entry_id,
+                    "appended"
+                );
+            } else {
+                assert!(final_state.terminal);
+                assert!(final_state.pending.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn accepted_retarget_wins_before_promotion() {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
