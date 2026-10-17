@@ -312,6 +312,54 @@ mod retired_stream_tests {
     }
 
     #[test]
+    fn stream_start_position_zero_fences_old_eof_before_first_audio_packet() {
+        let mut state = ActorState::new(DeviceId::new("stream-start-fence-test").unwrap());
+        state.snapshot.playback_state = PlaybackState::Playing;
+        let old = StreamId::new("old-stream-no-progress").unwrap();
+        let fresh = StreamId::new("fresh-stream-start").unwrap();
+
+        // Even a stream that never emitted a position can be retired once
+        // both hosts submit the initial position-zero identity handshake.
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: old.clone(),
+                position_ms: 0,
+            })
+            .expect("bind first stream at start");
+        state
+            .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop first stream");
+        state
+            .apply_audio(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("replay");
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: fresh.clone(),
+                position_ms: 0,
+            })
+            .expect("bind fresh stream before sending packets");
+
+        let error = state
+            .apply_audio(AudioEvent::EndOfStream { stream_id: old.clone() })
+            .expect_err("old EOF must not stop fresh stream before its first packet");
+        assert_eq!(error.code, crate::error::CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Playing);
+        assert_eq!(state.snapshot.playback_position_ms, 0);
+        assert!(state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: old,
+                position_ms: 1,
+            })
+            .is_err());
+        state
+            .apply_audio(AudioEvent::PositionAdvanced {
+                stream_id: fresh,
+                position_ms: 1,
+            })
+            .expect("fresh stream can advance");
+    }
+
+    #[test]
     fn retired_stream_history_remains_bounded() {
         let mut state = ActorState::new(DeviceId::new("retired-bound-test").unwrap());
         state.snapshot.playback_state = PlaybackState::Playing;

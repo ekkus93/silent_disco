@@ -90,6 +90,15 @@ impl DesktopPlaybackStreamer {
         handle
             .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
             .map_err(DesktopErrorDto::from)?;
+        // Bind this playback generation before any network frame is sent.
+        // Otherwise a delayed EOF from a previous stream can end a fresh
+        // stream before its first throttled PositionAdvanced event arrives.
+        handle
+            .submit_audio_event(AudioEvent::PositionAdvanced {
+                stream_id: stream_id.clone(),
+                position_ms: 0,
+            })
+            .map_err(DesktopErrorDto::from)?;
         network.broadcast_playback_frame(packetizer.stream_start_message().clone())?;
         let stream_start = match packetizer.stream_start_message() {
             ProtocolFrame::Control(ControlMessage::StreamStart(start)) => start.clone(),

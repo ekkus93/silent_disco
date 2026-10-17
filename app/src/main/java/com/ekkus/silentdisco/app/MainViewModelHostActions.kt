@@ -95,6 +95,15 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         }
 
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
+            // Register the new stream identity before broadcasting StreamStart.
+            // The normal position reporter is throttled and cannot protect
+            // the window before the first audio packet is sent.
+            try {
+                ensureRustHostCore().playbackPositionAdvanced(streamId.value, 0L)
+            } catch (error: Throwable) {
+                handleHostPlaybackEngineFailure(error)
+                return@afterAuthoritativeHostPlaybackState
+            }
             try {
                 withContext(Dispatchers.IO) {
                     startHostMonitorPlayback(
