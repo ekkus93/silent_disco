@@ -110,6 +110,8 @@ impl FfiHostPlaylistStreamer {
 
     /// Production host constructor: the producer reserves each successor on
     /// the serialized actor before it enters the bounded output queue.
+    // UniFFI's exported object parameter is owned; borrowing it would change the FFI contract.
+    #[expect(clippy::needless_pass_by_value, reason = "UniFFI requires an owned Arc object argument")]
     #[uniffi::constructor]
     pub fn open_authoritative(
         session_id: String,
@@ -123,7 +125,7 @@ impl FfiHostPlaylistStreamer {
             .map_err(|error| FfiHostPlaylistError::Closed(error.to_string()))?;
         let reserve = Arc::new(
             move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
-                reserve_authoritative_boundary(&actor, boundary, cancelled)
+                reserve_authoritative_boundary(&actor, boundary, &cancelled)
             },
         );
         Self::open_with_reserver(
@@ -339,7 +341,7 @@ impl FfiHostPlaylistStreamer {
 fn reserve_authoritative_boundary(
     actor: &CoreActorHandle,
     boundary: &TrackBoundary,
-    cancelled: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
 ) -> Result<(), PacketizerWorkerError> {
     loop {
         if cancelled.load(Ordering::Acquire) {
@@ -350,14 +352,14 @@ fn reserve_authoritative_boundary(
         }
         let playback_state = actor
             .current_snapshot()
-            .map_err(|error| playlist_reservation_error(&error.to_string(), &cancelled))?
+            .map_err(|error| playlist_reservation_error(&error.to_string(), cancelled))?
             .playback_state;
         match playback_state {
             PlaybackState::Playing => break,
             PlaybackState::Stopped | PlaybackState::Error => {
                 return Err(playlist_reservation_error(
                     "playback stopped before reservation",
-                    &cancelled,
+                    cancelled,
                 ));
             }
             _ => std::thread::sleep(Duration::from_millis(20)),
@@ -368,9 +370,9 @@ fn reserve_authoritative_boundary(
             boundary.stream_id.clone(),
             boundary.entry_id.clone(),
             boundary.first_sample_index.get(),
-            Arc::clone(&cancelled),
+            Arc::clone(cancelled),
         )
-        .map_err(|error| playlist_reservation_error(&error.to_string(), &cancelled))
+        .map_err(|error| playlist_reservation_error(&error.to_string(), cancelled))
 }
 
 fn playlist_reservation_error(message: &str, cancelled: &AtomicBool) -> PacketizerWorkerError {

@@ -61,7 +61,7 @@ fn cancelled_ffi_reservation_never_waits_for_playing() {
         display_name: "Next".to_owned(),
     };
     let cancellation = Arc::new(AtomicBool::new(true));
-    let error = super::reserve_authoritative_boundary(&actor, &boundary, cancellation)
+    let error = super::reserve_authoritative_boundary(&actor, &boundary, &cancellation)
         .expect_err("cancelled producer must not wait for playback");
     assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
     authority.shutdown().expect("actor shuts down");
@@ -594,11 +594,10 @@ fn ffi_stop_does_not_deliver_buffered_audio_to_a_waiting_consumer() {
     fs::remove_dir_all(root).expect("cleanup");
 }
 
-#[test]
-fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
+fn open_gated_ffi_stream_for_cancellation_test() -> (Arc<FfiHostPlaylistStreamer>, std::path::PathBuf) {
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::sync_channel;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -643,6 +642,16 @@ fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
     entered_rx
         .recv_timeout(Duration::from_secs(3))
         .expect("producer reached boundary reservation");
+    (stream, root)
+}
+
+#[test]
+fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::sync_channel;
+    use std::time::{Duration, Instant};
+
+    let (stream, root) = open_gated_ffi_stream_for_cancellation_test();
 
     // Drain the outgoing packets. The producer cannot publish a boundary or
     // successor PCM until the gate is explicitly cancelled.
