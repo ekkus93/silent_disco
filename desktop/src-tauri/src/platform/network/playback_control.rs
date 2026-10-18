@@ -376,7 +376,7 @@ impl DesktopHostNetworkControl {
     }
 
     /// Atomically orders a pump frame against Pause using the same host
-    /// state mutex as pause_playback/resume_playback. If Pause won the lock,
+    /// state mutex as `pause_playback`/`resume_playback`. If Pause won the lock,
     /// leave the frame with the pump so it can be re-anchored after Resume.
     /// A false return is not a transport failure and must not drop the frame.
     pub(crate) fn broadcast_playback_frame_unless_paused(

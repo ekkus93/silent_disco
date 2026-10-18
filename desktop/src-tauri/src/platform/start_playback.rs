@@ -122,40 +122,7 @@ fn start_after_buffering(
     })?;
     let prepared =
         prepare_staged_audio_source(registry, &current.source, StreamingDecodeConfig::default())?;
-    let mut upcoming = Vec::with_capacity(queue_entries.len().saturating_sub(1));
-    for entry in queue_entries.iter().skip(1) {
-        let source = registry
-            .resolve(&entry.source.source_id)?
-            .filter(|source| source.descriptor() == &entry.source)
-            .ok_or_else(|| {
-                DesktopErrorDto::new(
-                    "desktop.playback.queued_source_not_staged",
-                    "audio",
-                    "error",
-                    true,
-                    &format!(
-                        "{} is no longer staged in this desktop profile",
-                        entry.source.display_name
-                    ),
-                )
-            })?;
-        let path = source.canonical_path().to_owned();
-        let display_name = entry.source.display_name.clone();
-        let factory = StreamingPlaylistTrackFactory::new(
-            entry.entry_id.clone(),
-            display_name.clone(),
-            move || {
-                StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).map_err(
-                    |error| DecodeError {
-                        kind: error.kind,
-                        message: format!("{display_name}: {}", error.message),
-                    },
-                )
-            },
-        )
-        .map_err(|error| map_packetizer_error(&error))?;
-        upcoming.push(factory);
-    }
+    let upcoming = prepare_upcoming_sources(registry, queue_entries)?;
     let host_start_time_ms =
         MonotonicMillis::new(network.transport_now()?.get() + STARTUP_BUFFER_MS);
     let stream_id =
@@ -241,6 +208,47 @@ fn start_after_buffering(
         decode_diagnostics,
         packetize_diagnostics,
     )
+}
+
+fn prepare_upcoming_sources(
+    registry: &SelectedSourceRegistry,
+    queue_entries: &[QueueEntry],
+) -> Result<Vec<StreamingPlaylistTrackFactory>, DesktopErrorDto> {
+    let mut upcoming = Vec::with_capacity(queue_entries.len().saturating_sub(1));
+    for entry in queue_entries.iter().skip(1) {
+        let source = registry
+            .resolve(&entry.source.source_id)?
+            .filter(|source| source.descriptor() == &entry.source)
+            .ok_or_else(|| {
+                DesktopErrorDto::new(
+                    "desktop.playback.queued_source_not_staged",
+                    "audio",
+                    "error",
+                    true,
+                    &format!(
+                        "{} is no longer staged in this desktop profile",
+                        entry.source.display_name
+                    ),
+                )
+            })?;
+        let path = source.canonical_path().to_owned();
+        let display_name = entry.source.display_name.clone();
+        let factory = StreamingPlaylistTrackFactory::new(
+            entry.entry_id.clone(),
+            display_name.clone(),
+            move || {
+                StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).map_err(
+                    |error| DecodeError {
+                        kind: error.kind,
+                        message: format!("{display_name}: {}", error.message),
+                    },
+                )
+            },
+        )
+        .map_err(|error| map_packetizer_error(&error))?;
+        upcoming.push(factory);
+    }
+    Ok(upcoming)
 }
 
 fn map_packetizer_error(error: &PacketizerWorkerError) -> DesktopErrorDto {
