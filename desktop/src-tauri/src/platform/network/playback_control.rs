@@ -383,6 +383,7 @@ impl DesktopHostNetworkControl {
         &self,
         frame: &ProtocolFrame,
         paused: &AtomicBool,
+        stop: &AtomicBool,
     ) -> Result<bool, DesktopErrorDto> {
         let state = self
             .state
@@ -394,7 +395,10 @@ impl DesktopHostNetworkControl {
             )
             .dto());
         };
-        if paused.load(Ordering::Acquire) {
+        // Pause and both Stop paths publish their flags while this same
+        // mutex is held. Check both flags under the lock, so an audio handoff
+        // cannot overtake a committed Stop or Pause.
+        if paused.load(Ordering::Acquire) || stop.load(Ordering::Acquire) {
             return Ok(false);
         }
         active

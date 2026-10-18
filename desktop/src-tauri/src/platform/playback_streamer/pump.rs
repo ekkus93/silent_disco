@@ -152,7 +152,7 @@ fn run_pump(
                     }
                     match broadcast_then_monitor(
                         &frame,
-                        |frame| network.broadcast_playback_frame_unless_paused(frame, paused),
+                        |frame| network.broadcast_playback_frame_unless_paused(frame, paused, stop),
                         monitor_tap,
                         stop,
                     ) {
