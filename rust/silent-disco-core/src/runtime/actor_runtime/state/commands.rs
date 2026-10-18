@@ -285,7 +285,9 @@ impl ActorState {
             .iter()
             .enumerate()
             .any(|(index, boundary)| {
-                upcoming.get(index).is_none_or(|entry| entry.entry_id != boundary.entry_id)
+                upcoming
+                    .get(index)
+                    .is_none_or(|entry| entry.entry_id != boundary.entry_id)
             })
         {
             self.clear_host_boundary_reservations();

@@ -183,7 +183,9 @@ impl ActorState {
                     .host_queue
                     .upcoming()
                     .get(self.pending_host_boundaries.len())
-                    .ok_or_else(|| invalid_state("track boundary has no matching queued entry", None))?;
+                    .ok_or_else(|| {
+                        invalid_state("track boundary has no matching queued entry", None)
+                    })?;
                 if expected.entry_id != entry_id {
                     return Err(invalid_state(
                         "track boundary does not match the next unreserved queued entry",

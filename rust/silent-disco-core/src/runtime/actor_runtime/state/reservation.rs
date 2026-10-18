@@ -129,29 +129,38 @@ mod tests {
             .expect("second successor prebuffered before first is applied");
         assert_eq!(state.pending_host_boundaries.len(), 2);
         assert_eq!(
-            state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+            state
+                .snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .unwrap()
+                .entry_id,
             "two"
         );
 
         let revision = state.snapshot.host_queue.revision();
-        assert!(state
-            .apply_command(
-                crate::domain::OperationId::new("remove-third-reserved").unwrap(),
-                CoreCommand::RemoveHostQueueEntry {
-                    expected_queue_revision: revision,
-                    entry_id: "three".into(),
-                },
-            )
-            .is_err());
-        assert!(state
-            .apply_command(
-                crate::domain::OperationId::new("reorder-reserved-prefix").unwrap(),
-                CoreCommand::ReorderHostQueue {
-                    expected_queue_revision: revision,
-                    ordered_entry_ids: vec!["one".into(), "three".into(), "two".into()],
-                },
-            )
-            .is_err());
+        assert!(
+            state
+                .apply_command(
+                    crate::domain::OperationId::new("remove-third-reserved").unwrap(),
+                    CoreCommand::RemoveHostQueueEntry {
+                        expected_queue_revision: revision,
+                        entry_id: "three".into(),
+                    },
+                )
+                .is_err()
+        );
+        assert!(
+            state
+                .apply_command(
+                    crate::domain::OperationId::new("reorder-reserved-prefix").unwrap(),
+                    CoreCommand::ReorderHostQueue {
+                        expected_queue_revision: revision,
+                        ordered_entry_ids: vec!["one".into(), "three".into(), "two".into()],
+                    },
+                )
+                .is_err()
+        );
 
         state
             .apply_audio_control(AudioEvent::TrackBoundaryApplied {
@@ -161,7 +170,12 @@ mod tests {
             .expect("first boundary");
         assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "two");
         assert_eq!(
-            state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+            state
+                .snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .unwrap()
+                .entry_id,
             "three"
         );
 
@@ -171,7 +185,10 @@ mod tests {
                 first_sample_index: 9_600,
             })
             .expect("second boundary");
-        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "three");
+        assert_eq!(
+            state.snapshot.host_queue.current().unwrap().entry_id,
+            "three"
+        );
         assert!(state.pending_host_boundaries.is_empty());
         assert!(state.snapshot.host_queue_next_boundary.is_none());
     }
