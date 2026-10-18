@@ -306,7 +306,7 @@ fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
     let second_path = write_bytes(
         &temp,
         "identity-second.wav",
-        &pcm_wav_frames(48_000, 2, 480),
+        &pcm_wav_frames(48_000, 2, 4_800),
     );
     let first = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
         .expect("first decoder");
@@ -480,18 +480,16 @@ fn successor_audio_cannot_escape_before_authoritative_reservation_ack() {
 
     // A one-frame channel needs the consumer to drain the final first-track
     // packet before the producer can reach the boundary reservation.
-    let mut prefix = vec![
-        packetizer
-            .recv_timeout(TEST_TIMEOUT)
-            .expect("first audio packet"),
-    ];
+    let first_frame = packetizer
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("first audio packet");
     assert_eq!(
         entered_rx
             .recv_timeout(TEST_TIMEOUT)
             .expect("reservation reached"),
         241
     );
-    assert!(matches!(prefix[0], ProtocolFrame::Audio(_)));
+    assert!(matches!(first_frame, ProtocolFrame::Audio(_)));
     assert!(
         matches!(
             packetizer.recv_timeout(Duration::from_millis(50)),
