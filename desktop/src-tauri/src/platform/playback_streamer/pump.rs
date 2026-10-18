@@ -131,22 +131,41 @@ fn run_pump(
                 let mut applied_pause_offset_ms =
                     accumulated_pause_offset_ms.load(Ordering::Acquire);
                 apply_pause_offset(&mut frame, applied_pause_offset_ms);
-                match wait_until_within_send_ahead_horizon(
-                    &mut frame,
-                    network,
-                    stop,
-                    paused,
-                    accumulated_pause_offset_ms,
-                    &mut applied_pause_offset_ms,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    Err(error) => {
-                        streaming_error = Some(error);
-                        break;
+                // A Pause can win the network mutex *after* pacing decides
+                // this frame is due. In that case keep it, wait for Resume,
+                // and apply the additional pause offset before retrying.
+                let accepted = loop {
+                    match wait_until_within_send_ahead_horizon(
+                        &mut frame,
+                        network,
+                        stop,
+                        paused,
+                        accumulated_pause_offset_ms,
+                        &mut applied_pause_offset_ms,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) => break false,
+                        Err(error) => {
+                            streaming_error = Some(error);
+                            break false;
+                        }
                     }
-                }
-                if stop.load(Ordering::Acquire) {
+                    match broadcast_then_monitor(
+                        &frame,
+                        |frame| network.broadcast_playback_frame_unless_paused(frame, paused),
+                        monitor_tap,
+                        stop,
+                    ) {
+                        Ok(true) => break true,
+                        Ok(false) if stop.load(Ordering::Acquire) => break false,
+                        Ok(false) => continue,
+                        Err(error) => {
+                            streaming_error = Some(error);
+                            break false;
+                        }
+                    }
+                };
+                if !accepted {
                     break;
                 }
                 let audio_end_ms = match &frame {
@@ -159,21 +178,6 @@ fn run_pump(
                     ),
                     _ => None,
                 };
-                // The local monitor must never get a packet that the
-                // network sender rejected. Recheck Stop at the handoff.
-                match broadcast_then_monitor(
-                    frame,
-                    |frame| network.broadcast_playback_frame(frame),
-                    monitor_tap,
-                    stop,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    Err(error) => {
-                        streaming_error = Some(error);
-                        break;
-                    }
-                }
                 if let Some(audio_end_ms) = audio_end_ms {
                     last_audible_audio_end_ms = Some(audio_end_ms);
                 }
@@ -445,25 +449,23 @@ fn apply_pause_offset(frame: &mut ProtocolFrame, offset_ms: u64) {
 /// rejected by network delivery, and Stop between pacing and handoff must
 /// suppress both outputs. This does not promise remote acknowledgement.
 fn broadcast_then_monitor<F>(
-    frame: ProtocolFrame,
+    frame: &ProtocolFrame,
     broadcast: F,
     monitor_tap: Option<&SyncSender<AudioDatagram>>,
     stop: &AtomicBool,
 ) -> Result<bool, DesktopErrorDto>
 where
-    F: FnOnce(ProtocolFrame) -> Result<(), DesktopErrorDto>,
+    F: FnOnce(&ProtocolFrame) -> Result<bool, DesktopErrorDto>,
 {
     if stop.load(Ordering::Acquire) {
         return Ok(false);
     }
-    // Clone only audio when a monitor is present. The network owns the
-    // original frame, so its successful handoff must happen first.
-    let monitor_frame = (monitor_tap.is_some() && matches!(&frame, ProtocolFrame::Audio(_)))
-        .then(|| frame.clone());
-    broadcast(frame)?;
-    if let Some(monitor_frame) = monitor_frame.as_ref() {
-        forward_to_monitor_if_running(monitor_frame, monitor_tap, stop);
+    // The caller retains ownership when Pause defers the network handoff.
+    // Never mirror a frame that the transport did not accept.
+    if !broadcast(frame)? {
+        return Ok(false);
     }
+    forward_to_monitor_if_running(frame, monitor_tap, stop);
     Ok(true)
 }
 

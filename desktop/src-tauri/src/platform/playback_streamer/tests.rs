@@ -258,7 +258,7 @@ mod tests {
             "injected network failure",
         );
         let failed = broadcast_then_monitor(
-            audio_frame(1_000),
+            &audio_frame(1_000),
             |_frame| Err(failure),
             Some(&tap),
             &stop,
@@ -270,10 +270,10 @@ mod tests {
         );
 
         let accepted = broadcast_then_monitor(
-            audio_frame(2_000),
+            &audio_frame(2_000),
             |frame| {
                 assert!(matches!(frame, ProtocolFrame::Audio(_)));
-                Ok(())
+                Ok(true)
             },
             Some(&tap),
             &stop,
@@ -289,10 +289,10 @@ mod tests {
         let stop = AtomicBool::new(true);
         let broadcast_called = AtomicBool::new(false);
         let outcome = broadcast_then_monitor(
-            audio_frame(1_000),
+            &audio_frame(1_000),
             |_frame| {
                 broadcast_called.store(true, Ordering::Release);
-                Ok(())
+                Ok(true)
             },
             Some(&tap),
             &stop,
@@ -302,6 +302,19 @@ mod tests {
         assert!(receiver.try_recv().is_err());
     }
 
+
+    #[test]
+    fn pause_defers_network_frame_without_discarding_or_monitoring_it() {
+        let stop = AtomicBool::new(false);
+        let (tap, receiver) = std::sync::mpsc::sync_channel(1);
+        let frame = audio_frame(1_000);
+        let deferred = broadcast_then_monitor(&frame, |_frame| Ok(false), Some(&tap), &stop);
+        assert!(matches!(deferred, Ok(false)));
+        assert!(receiver.try_recv().is_err());
+        let delivered = broadcast_then_monitor(&frame, |_frame| Ok(true), Some(&tap), &stop);
+        assert!(matches!(delivered, Ok(true)));
+        assert!(receiver.try_recv().is_ok());
+    }
 
     #[test]
     fn pause_during_send_ahead_reanchors_the_held_frame_once() {

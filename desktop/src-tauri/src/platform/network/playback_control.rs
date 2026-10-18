@@ -11,7 +11,7 @@ use silent_disco_core::domain::{MonotonicMillis, PlaybackState};
 use silent_disco_core::protocol::{ControlMessage, Pause, ProtocolFrame, StreamStart};
 use silent_disco_core::runtime::{AudioEvent, CoreActorHandle};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Live queue-diagnostics readers for one active playback stream.
 pub(crate) struct StreamDiagnostics {
@@ -369,6 +369,35 @@ impl DesktopHostNetworkControl {
             .runtime
             .broadcast_frame(frame)
             .map_err(DesktopNetworkError::dto)
+    }
+
+    /// Atomically orders a pump frame against Pause using the same host
+    /// state mutex as pause_playback/resume_playback. If Pause won the lock,
+    /// leave the frame with the pump so it can be re-anchored after Resume.
+    /// A false return is not a transport failure and must not drop the frame.
+    pub(crate) fn broadcast_playback_frame_unless_paused(
+        &self,
+        frame: &ProtocolFrame,
+        paused: &AtomicBool,
+    ) -> Result<bool, DesktopErrorDto> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        let Some(active) = state.active.as_ref() else {
+            return Err(DesktopNetworkError::unavailable(
+                "desktop host network endpoint is not active",
+            )
+            .dto());
+        };
+        if paused.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        active
+            .runtime
+            .broadcast_frame(frame.clone())
+            .map_err(DesktopNetworkError::dto)?;
+        Ok(true)
     }
 
     /// Reports whether a playback stream is already running for the active
