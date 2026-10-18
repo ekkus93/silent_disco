@@ -704,3 +704,41 @@ fn network_control_shutdown_is_idempotent_when_inactive() {
     );
     control.shutdown().expect("inactive shutdown");
 }
+
+#[test]
+fn stopped_or_paused_host_never_accepts_a_late_pump_frame() {
+    let address = Ipv4Addr::new(192, 168, 50, 73);
+    let records = vec![interface("enp1s0", 2, IpAddr::V4(address))];
+    let control = DesktopHostNetworkControl::with_components(
+        Arc::new(SequenceProvider::new([records.clone(), records])),
+        Arc::new(FakeTransportFactory::new(Arc::new(AtomicBool::new(false)))),
+        TestHostPorts::default(),
+    );
+    control
+        .start_host_inner(&advertisement())
+        .expect("bind host for handoff guard");
+
+    let paused = AtomicBool::new(false);
+    let stop = AtomicBool::new(true);
+    let frame = ProtocolFrame::Control(ControlMessage::Disconnect(
+        silent_disco_core::protocol::Disconnect {
+            session_id: SessionId::new("session-block21").expect("session id"),
+            listener_id: DeviceId::new("late-frame-listener").expect("listener id"),
+            reason: "test".to_owned(),
+        },
+    ));
+
+    // The pump's earlier Stop check may have seen false. The guarded
+    // transport handoff must re-check under the host mutex.
+    assert!(matches!(
+        control.broadcast_playback_frame_unless_paused(&frame, &paused, &stop),
+        Ok(false)
+    ));
+    stop.store(false, Ordering::Release);
+    paused.store(true, Ordering::Release);
+    assert!(matches!(
+        control.broadcast_playback_frame_unless_paused(&frame, &paused, &stop),
+        Ok(false)
+    ));
+    control.stop_host_inner().expect("stop host");
+}
