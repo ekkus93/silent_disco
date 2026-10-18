@@ -556,4 +556,3 @@ fn wait_until_within_send_ahead_horizon_with_clock(
 use std::collections::VecDeque;
 
 use silent_disco_core::audio::CANONICAL_SAMPLE_RATE_HZ;
-use silent_disco_core::protocol::TrackBoundary;

@@ -179,43 +179,45 @@ fn start_after_buffering(
     // reservation waits for explicit actor application before successor PCM
     // can enter the packetizer's bounded output channel.
     let authority = handle.clone();
-    let reserve = Arc::new(move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
-        // A short first track may finish decoding while the host is still
-        // binding its stream identity. Wait without holding any decoder or
-        // actor locks; cancellation must also unblock an aborted start.
-        loop {
-            // An aborted startup must never wait on the actor for a stream
-            // that can no longer transition into Playing.
-            if cancelled.load(Ordering::Acquire) {
-                return Err(PacketizerWorkerError {
-                    kind: PacketizerWorkerErrorKind::Cancelled,
-                    message: "boundary reservation cancelled during playback startup".into(),
-                });
-            }
-            let state = authority
-                .current_snapshot()
-                .map_err(|error| reservation_error(&error.to_string(), &cancelled))?
-                .playback_state;
-            match state {
-                PlaybackState::Playing => break,
-                PlaybackState::Stopped | PlaybackState::Error => {
-                    return Err(reservation_error(
-                        "host playback stopped before boundary reservation",
-                        &cancelled,
-                    ));
+    let reserve = Arc::new(
+        move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
+            // A short first track may finish decoding while the host is still
+            // binding its stream identity. Wait without holding any decoder or
+            // actor locks; cancellation must also unblock an aborted start.
+            loop {
+                // An aborted startup must never wait on the actor for a stream
+                // that can no longer transition into Playing.
+                if cancelled.load(Ordering::Acquire) {
+                    return Err(PacketizerWorkerError {
+                        kind: PacketizerWorkerErrorKind::Cancelled,
+                        message: "boundary reservation cancelled during playback startup".into(),
+                    });
                 }
-                _ => std::thread::sleep(Duration::from_millis(20)),
+                let state = authority
+                    .current_snapshot()
+                    .map_err(|error| reservation_error(&error.to_string(), &cancelled))?
+                    .playback_state;
+                match state {
+                    PlaybackState::Playing => break,
+                    PlaybackState::Stopped | PlaybackState::Error => {
+                        return Err(reservation_error(
+                            "host playback stopped before boundary reservation",
+                            &cancelled,
+                        ));
+                    }
+                    _ => std::thread::sleep(Duration::from_millis(20)),
+                }
             }
-        }
-        authority
-            .reserve_host_track_boundary(
-                boundary.stream_id.clone(),
-                boundary.entry_id.clone(),
-                boundary.first_sample_index.get(),
-                Arc::clone(&cancelled),
-            )
-            .map_err(|error| reservation_error(&error.to_string(), &cancelled))
-    });
+            authority
+                .reserve_host_track_boundary(
+                    boundary.stream_id.clone(),
+                    boundary.entry_id.clone(),
+                    boundary.first_sample_index.get(),
+                    Arc::clone(&cancelled),
+                )
+                .map_err(|error| reservation_error(&error.to_string(), &cancelled))
+        },
+    );
     let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
         decoder,
         current.entry_id.clone(),
