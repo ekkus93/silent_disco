@@ -131,7 +131,12 @@ internal fun MainViewModel.startHostStreamingLoop(
                                 )
                             broadcastHostTrackBoundary(streamId, frame)
                             scheduleHostQueueBoundary(
-                                start,
+                                // New boundaries must share the pause-adjusted
+                                // clock of boundaries scheduled before Resume.
+                                start.copy(
+                                    hostStartTimeMs = start.hostStartTimeMs +
+                                        presentationOffsetMs.toULong(),
+                                ),
                                 frame,
                                 format.sampleRate,
                                 hostStreamDispatcher,
