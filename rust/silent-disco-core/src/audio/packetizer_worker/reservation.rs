@@ -4,8 +4,8 @@ use super::{
     PacketizerWorkerError, PacketizerWorkerErrorKind, PlaylistUpdateState, ProtocolFrame,
     SessionId, SharedStatistics, StreamId, StreamingDecodeHandle, StreamingPacketizeConfig,
     StreamingPacketizeHandle, StreamingPlaylistTrackFactory, StreamingPlaylistUpdater,
-    TrackBoundary, run_playlist_packetizer_worker, sync_channel, thread,
-    validate_playlist_entries, validate_track_identity,
+    run_playlist_packetizer_worker, sync_channel, thread, validate_playlist_entries,
+    validate_track_identity,
 };
 
 impl StreamingPacketizeHandle {

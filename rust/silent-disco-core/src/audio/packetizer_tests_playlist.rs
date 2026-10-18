@@ -322,7 +322,10 @@ fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
         SessionId::new("session-current-id").expect("session"),
         StreamId::new("stream-current-id").expect("stream"),
         MonotonicMillis::new(5_000),
-        StreamingPacketizeConfig::default(),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
     )
     .expect("playlist");
     let updater = packetizer.playlist_updater().expect("updater");
@@ -475,14 +478,13 @@ fn successor_audio_cannot_escape_before_authoritative_reservation_ack() {
     )
     .expect("packetizer");
 
-    let mut prefix = Vec::new();
     // A one-frame channel needs the consumer to drain the final first-track
     // packet before the producer can reach the boundary reservation.
-    prefix.push(
+    let mut prefix = vec![
         packetizer
             .recv_timeout(TEST_TIMEOUT)
             .expect("first audio packet"),
-    );
+    ];
     assert_eq!(
         entered_rx
             .recv_timeout(TEST_TIMEOUT)
