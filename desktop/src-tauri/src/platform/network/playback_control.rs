@@ -292,12 +292,16 @@ impl DesktopHostNetworkControl {
                 )
                 .dto());
             };
-            active
+            // Signal cancellation before releasing the same state mutex
+            // that guards the pump's paused-aware audio handoff. Otherwise
+            // an audio frame can overtake Stop after ownership is detached.
+            let playback = active
                 .playback
                 .take()
-                .ok_or_else(|| DesktopNetworkError::invalid_state("no playback is active").dto())?
+                .ok_or_else(|| DesktopNetworkError::invalid_state("no playback is active").dto())?;
+            playback.request_stop();
+            playback
         };
-        playback.request_stop();
         playback.join()
     }
 

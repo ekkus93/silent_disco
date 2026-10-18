@@ -327,13 +327,16 @@ impl DesktopHostNetworkControl {
                     "desktop host network endpoint is not active",
                 ));
             };
-            active.playback.take()
+            // Order session teardown against the pump's network handoff:
+            // Stop must become visible while this mutex is still held.
+            let playback = active.playback.take();
+            if let Some(ref playback) = playback {
+                playback.request_stop();
+            }
+            playback
         };
         let playback_result = match playback {
-            Some(playback) => {
-                playback.request_stop();
-                playback.join()
-            }
+            Some(playback) => playback.join(),
             None => Ok(()),
         };
 
