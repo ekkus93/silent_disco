@@ -19,7 +19,8 @@ concurrency:
 jobs:
   rust:
     name: Rust quality gates
-    runs-on: ubuntu-latest
+    # Protect the local runner from untrusted pull-request code.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
     timeout-minutes: 20
     steps:
       - name: Check out repository
