@@ -128,11 +128,17 @@ fn run_pump(
                 // Capture content progress before applying the pause offset.
                 // Do not report it until the network accepts the audio frame.
                 let content_position_ms = frame_content_position_ms(&frame, host_start_time_ms);
-                apply_pause_offset(
+                let mut applied_pause_offset_ms =
+                    accumulated_pause_offset_ms.load(Ordering::Acquire);
+                apply_pause_offset(&mut frame, applied_pause_offset_ms);
+                match wait_until_within_send_ahead_horizon(
                     &mut frame,
-                    accumulated_pause_offset_ms.load(Ordering::Acquire),
-                );
-                match wait_until_within_send_ahead_horizon(&frame, network, stop) {
+                    network,
+                    stop,
+                    paused,
+                    accumulated_pause_offset_ms,
+                    &mut applied_pause_offset_ms,
+                ) {
                     Ok(true) => {}
                     Ok(false) => break,
                     Err(error) => {
@@ -481,27 +487,64 @@ fn forward_to_monitor(frame: &ProtocolFrame, monitor_tap: Option<&SyncSender<Aud
     drop(tap.try_send(datagram.clone()));
 }
 
-/// Blocks, in short stop-responsive increments, until `frame`'s presentation
-/// time is no more than [`SEND_AHEAD_HORIZON_MS`] ahead of the transport's
-/// current time. Non-audio frames (there are none on this path today, but
-/// [`StreamingPacketizeHandle::recv_timeout`] returns `ProtocolFrame`) pass
-/// through immediately. Returns `false` if `stop` fired while waiting, so
-/// the caller can exit without sending a stale frame.
+/// Holds a frame until it is within the send-ahead horizon, also holding it
+/// across Pause. A frame that was already dequeued before Pause must receive
+/// the *additional* pause offset on Resume, not just frames dequeued later.
 fn wait_until_within_send_ahead_horizon(
-    frame: &ProtocolFrame,
+    frame: &mut ProtocolFrame,
     network: &Arc<DesktopHostNetworkControl>,
     stop: &AtomicBool,
+    paused: &AtomicBool,
+    accumulated_pause_offset_ms: &AtomicU64,
+    applied_pause_offset_ms: &mut u64,
 ) -> Result<bool, DesktopErrorDto> {
-    let ProtocolFrame::Audio(datagram) = frame else {
-        return Ok(true);
-    };
-    let presentation_time_ms = datagram.host_presentation_time_ms.get();
+    wait_until_within_send_ahead_horizon_with_clock(
+        frame,
+        || network.transport_now().map(MonotonicMillis::get),
+        stop,
+        paused,
+        accumulated_pause_offset_ms,
+        applied_pause_offset_ms,
+    )
+}
+
+/// The injected transport clock permits deterministic pause/Stop regressions.
+/// No lock is held across the pause poll or while the network clock is read.
+fn wait_until_within_send_ahead_horizon_with_clock(
+    frame: &mut ProtocolFrame,
+    mut now_ms: impl FnMut() -> Result<u64, DesktopErrorDto>,
+    stop: &AtomicBool,
+    paused: &AtomicBool,
+    accumulated_pause_offset_ms: &AtomicU64,
+    applied_pause_offset_ms: &mut u64,
+) -> Result<bool, DesktopErrorDto> {
     loop {
         if stop.load(Ordering::Acquire) {
             return Ok(false);
         }
-        let now = network.transport_now()?;
-        let lead_ms = presentation_time_ms.saturating_sub(now.get());
+        if paused.load(Ordering::Acquire) {
+            thread::sleep(PAUSE_POLL_INTERVAL);
+            continue;
+        }
+        // Resume publishes the accumulated offset before clearing Paused.
+        // Shift this in-flight frame only by what it has not yet received.
+        let latest_offset_ms = accumulated_pause_offset_ms.load(Ordering::Acquire);
+        if latest_offset_ms > *applied_pause_offset_ms {
+            apply_pause_offset(frame, latest_offset_ms - *applied_pause_offset_ms);
+            *applied_pause_offset_ms = latest_offset_ms;
+        }
+        if paused.load(Ordering::Acquire) {
+            continue;
+        }
+        let ProtocolFrame::Audio(datagram) = frame else {
+            return Ok(true);
+        };
+        let now = now_ms()?;
+        // Pause can arrive during the transport-clock lookup.
+        if paused.load(Ordering::Acquire) {
+            continue;
+        }
+        let lead_ms = datagram.host_presentation_time_ms.get().saturating_sub(now);
         if lead_ms <= SEND_AHEAD_HORIZON_MS {
             return Ok(true);
         }

@@ -4,6 +4,7 @@ mod tests {
         apply_pause_offset, boundary_schedule_event, broadcast_then_monitor,
         forward_to_monitor, forward_to_monitor_if_running, frame_content_position_ms,
         implicit_join_failure, terminal_audio_event,
+        wait_until_within_send_ahead_horizon_with_clock,
     };
     use silent_disco_core::domain::{
         MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
@@ -12,7 +13,8 @@ mod tests {
         AudioCodec, AudioDatagram, ControlMessage, Disconnect, ProtocolFrame, TrackBoundary,
     };
     use silent_disco_core::runtime::AudioEvent;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Duration;
 
 
     #[test]
@@ -298,6 +300,82 @@ mod tests {
         assert!(matches!(outcome, Ok(false)));
         assert!(!broadcast_called.load(Ordering::Acquire));
         assert!(receiver.try_recv().is_err());
+    }
+
+
+    #[test]
+    fn pause_during_send_ahead_reanchors_the_held_frame_once() {
+        let paused = AtomicBool::new(false);
+        let stop = AtomicBool::new(false);
+        let offset = AtomicU64::new(0);
+        let clock = AtomicU64::new(1_000);
+        let looked_up = AtomicBool::new(false);
+        let mut frame = audio_frame(3_000);
+        let mut applied = 0;
+
+        std::thread::scope(|scope| {
+            let controller = scope.spawn(|| {
+                while !looked_up.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                }
+                paused.store(true, Ordering::Release);
+                std::thread::sleep(Duration::from_millis(50));
+                offset.store(500, Ordering::Release);
+                clock.store(2_600, Ordering::Release);
+                paused.store(false, Ordering::Release);
+            });
+            let ready = wait_until_within_send_ahead_horizon_with_clock(
+                &mut frame,
+                || {
+                    looked_up.store(true, Ordering::Release);
+                    Ok(clock.load(Ordering::Acquire))
+                },
+                &stop,
+                &paused,
+                &offset,
+                &mut applied,
+            )
+            .expect("clock lookup");
+            assert!(ready);
+            controller.join().expect("pause controller");
+        });
+        let ProtocolFrame::Audio(audio) = &frame else {
+            panic!("expected audio frame");
+        };
+        assert_eq!(audio.host_presentation_time_ms.get(), 3_500);
+        assert_eq!(applied, 500);
+    }
+
+    #[test]
+    fn stop_interrupts_a_held_paused_frame_without_reading_clock() {
+        let paused = AtomicBool::new(true);
+        let stop = AtomicBool::new(false);
+        let offset = AtomicU64::new(0);
+        let clock_called = AtomicBool::new(false);
+        let mut frame = audio_frame(1_000);
+        let mut applied = 0;
+        std::thread::scope(|scope| {
+            let cancel = scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(20));
+                stop.store(true, Ordering::Release);
+            });
+            let ready = wait_until_within_send_ahead_horizon_with_clock(
+                &mut frame,
+                || {
+                    clock_called.store(true, Ordering::Release);
+                    Ok(1_000)
+                },
+                &stop,
+                &paused,
+                &offset,
+                &mut applied,
+            )
+            .expect("clock lookup");
+            assert!(!ready, "Stop must cancel even while Paused");
+            cancel.join().expect("Stop controller");
+        });
+        assert!(!clock_called.load(Ordering::Acquire));
+        assert_eq!(applied, 0);
     }
 
     /// The overwhelmingly common case -- no monitor active at all -- must
