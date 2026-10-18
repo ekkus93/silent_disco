@@ -127,6 +127,7 @@ impl ApplyOutcome {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct ProcessResult {
     pub(super) notifications: Vec<CoreNotification>,
     pub(super) stop_requested: bool,

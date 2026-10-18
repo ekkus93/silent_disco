@@ -5,13 +5,13 @@ use super::{
 
 impl ActorState {
     pub(super) fn retire_active_audio_stream(&mut self) {
-        if let Some(stream_id) = self.active_audio_stream_id.take() {
-            if !self.retired_audio_stream_ids.contains(&stream_id) {
-                if self.retired_audio_stream_ids.len() == super::MAX_RETIRED_AUDIO_STREAM_IDS {
-                    self.retired_audio_stream_ids.remove(0);
-                }
-                self.retired_audio_stream_ids.push(stream_id);
+        if let Some(stream_id) = self.active_audio_stream_id.take()
+            && !self.retired_audio_stream_ids.contains(&stream_id)
+        {
+            if self.retired_audio_stream_ids.len() == super::MAX_RETIRED_AUDIO_STREAM_IDS {
+                self.retired_audio_stream_ids.remove(0);
             }
+            self.retired_audio_stream_ids.push(stream_id);
         }
     }
 

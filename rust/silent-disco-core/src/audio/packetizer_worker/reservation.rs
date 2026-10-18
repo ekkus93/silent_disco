@@ -1,5 +1,12 @@
 //! Playlist packetizer constructors and optional synchronous boundary gate.
-use super::*;
+use super::{
+    Arc, AtomicBool, BoundaryReserver, ControlMessage, MonotonicMillis, Mutex, Packetizer,
+    PacketizerWorkerError, PacketizerWorkerErrorKind, PlaylistUpdateState, ProtocolFrame,
+    SessionId, SharedStatistics, StreamId, StreamingDecodeHandle, StreamingPacketizeConfig,
+    StreamingPacketizeHandle, StreamingPlaylistTrackFactory, StreamingPlaylistUpdater,
+    TrackBoundary, run_playlist_packetizer_worker, sync_channel, thread,
+    validate_playlist_entries, validate_track_identity,
+};
 
 impl StreamingPacketizeHandle {
     /// Starts one continuous stream across a bounded sequence of tracks.
@@ -51,11 +58,7 @@ impl StreamingPacketizeHandle {
         stream_id: StreamId,
         host_start_time_ms: MonotonicMillis,
         config: StreamingPacketizeConfig,
-        reserve: Arc<
-            dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError>
-                + Send
-                + Sync,
-        >,
+        reserve: BoundaryReserver,
     ) -> Result<Self, PacketizerWorkerError> {
         Self::spawn_playlist_inner(
             decoder,

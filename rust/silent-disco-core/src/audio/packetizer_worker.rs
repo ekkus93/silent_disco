@@ -15,7 +15,7 @@ mod reservation;
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 
-type BoundaryReserver = Arc<
+pub type BoundaryReserver = Arc<
     dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync,
 >;
 use playlist_worker::{

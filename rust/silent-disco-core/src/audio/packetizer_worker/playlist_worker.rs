@@ -52,7 +52,7 @@ pub(super) fn validate_track_identity(
 }
 
 /// Enforce the actor's queue bounds even for direct core/UniFFI packetizer
-/// callers that bypass HostQueue. A live updater reserves one current slot,
+/// callers that bypass `HostQueue`. A live updater reserves one current slot,
 /// although its current entry ID is owned by the running worker.
 pub(super) fn validate_playlist_entries(
     current_entry_id: Option<&str>,
@@ -80,6 +80,15 @@ pub(super) fn validate_playlist_entries(
         }
     }
     Ok(())
+}
+
+/// The shared terminal result for either natural queue-end path.
+fn playlist_completed_summary(statistics: &SharedStatistics) -> PacketizerSummary {
+    PacketizerSummary {
+        state: PacketizerWorkerState::Completed,
+        emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
+        backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -180,17 +189,9 @@ pub(super) fn run_playlist_packetizer_worker(
                         config.queue_capacity,
                     )?;
                 }
-                return Ok(PacketizerSummary {
-                    state: PacketizerWorkerState::Completed,
-                    emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
-                    backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
-                });
+                return Ok(playlist_completed_summary(statistics));
             }
-            return Ok(PacketizerSummary {
-                state: PacketizerWorkerState::Completed,
-                emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
-                backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
-            });
+            return Ok(playlist_completed_summary(statistics));
         };
         decoder = match next_decoder {
             Ok(decoder) => decoder,
@@ -364,11 +365,7 @@ fn packetize_playlist_track(
                     "final playlist track did not finish the packetizer stream",
                 ));
             }
-            return Ok(PacketizerSummary {
-                state: PacketizerWorkerState::Completed,
-                emitted_packets: statistics.emitted_packets.load(Ordering::Acquire),
-                backpressure_events: statistics.backpressure_events.load(Ordering::Acquire),
-            });
+            return Ok(playlist_completed_summary(statistics));
         }
     }
 }
@@ -517,11 +514,11 @@ mod promotion_identity_tests {
                 updater.replace_upcoming(vec![factory("appended")])
             });
             gate.wait();
-            let sealed = sealer.join().expect("sealer thread");
+            let did_seal = sealer.join().expect("sealer thread");
             let accepted = editor.join().expect("editor thread").is_ok();
             let final_state = state.lock().expect("state lock");
             assert_ne!(
-                sealed, accepted,
+                did_seal, accepted,
                 "EOF and an accepted append cannot both win or both lose"
             );
             if accepted {
