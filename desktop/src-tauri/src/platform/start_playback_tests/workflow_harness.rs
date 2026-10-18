@@ -28,7 +28,7 @@ use crate::platform::source_staging_control::{
 };
 use crate::profile::ProfileId;
 use crate::runtime_dto::CommandReceiptDto;
-use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId};
+use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, HostLifecycle};
 use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest};
 use silent_disco_core::runtime::{
     AudioSourcePatch, CoreActorHandle, CoreCommand, CoreNotification, CoreSnapshot, HostDraftPatch,
@@ -177,6 +177,17 @@ impl HostWorkflow {
         let deadline = Instant::now() + TEST_TIMEOUT;
         loop {
             if let Some(active) = self.network.active_host_session().expect("network state") {
+                // Binding the socket precedes the actor's AdvertisingStarted
+                // acknowledgment. A listener joining before that transition
+                // is rejected as host admission unavailable, even though the
+                // socket already answers Hello. Wait for authoritative
+                // readiness before exercising the listener workflow.
+                self.wait(|snapshot| {
+                    matches!(
+                        snapshot.host_lifecycle,
+                        HostLifecycle::WaitingForListeners | HostLifecycle::Ready
+                    )
+                });
                 return active.endpoint;
             }
             assert!(Instant::now() < deadline, "host transport never started");
