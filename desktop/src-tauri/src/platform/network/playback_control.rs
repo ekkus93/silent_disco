@@ -398,7 +398,7 @@ impl DesktopHostNetworkControl {
         // Pause and both Stop paths publish their flags while this same
         // mutex is held. Check both flags under the lock, so an audio handoff
         // cannot overtake a committed Stop or Pause.
-        if paused.load(Ordering::Acquire) || stop.load(Ordering::Acquire) {
+        if !audio_handoff_allowed(paused, stop) {
             return Ok(false);
         }
         active
@@ -425,5 +425,38 @@ impl DesktopHostNetworkControl {
             .as_ref()
             .and_then(|active| active.playback.as_ref())
             .is_some_and(|playback| !playback.is_finished()))
+    }
+}
+
+/// Called while the network state mutex is held. Pause and Stop publish
+/// their flags under that same mutex, making the decision linearizable
+/// with the corresponding control path.
+fn audio_handoff_allowed(paused: &AtomicBool, stop: &AtomicBool) -> bool {
+    !paused.load(Ordering::Acquire) && !stop.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::audio_handoff_allowed;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn handoff_rejects_frames_after_stop_even_when_not_paused() {
+        let paused = AtomicBool::new(false);
+        let stop = AtomicBool::new(false);
+        assert!(audio_handoff_allowed(&paused, &stop));
+        stop.store(true, Ordering::Release);
+        assert!(!audio_handoff_allowed(&paused, &stop));
+    }
+
+    #[test]
+    fn handoff_rejects_frames_during_pause_until_resume() {
+        let paused = AtomicBool::new(true);
+        let stop = AtomicBool::new(false);
+        assert!(!audio_handoff_allowed(&paused, &stop));
+        paused.store(false, Ordering::Release);
+        assert!(audio_handoff_allowed(&paused, &stop));
+        stop.store(true, Ordering::Release);
+        assert!(!audio_handoff_allowed(&paused, &stop));
     }
 }
