@@ -83,7 +83,8 @@ jobs:
 
   android:
     name: Android build, unit tests, and lint
-    runs-on: ubuntu-latest
+    # Trusted pushes use the dedicated runner; PRs remain GitHub-hosted.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
     timeout-minutes: 45
     steps:
       - name: Check out repository
