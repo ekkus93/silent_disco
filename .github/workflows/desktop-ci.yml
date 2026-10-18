@@ -252,7 +252,8 @@ jobs:
 
   linux-bundle:
     name: Linux desktop bundle smoke
-    runs-on: ubuntu-22.04
+    # Use the dedicated runner for trusted CI; keep untrusted PRs isolated.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-22.04"' || '["self-hosted","Linux","X64","silent-disco"]') }}
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -268,24 +269,31 @@ jobs:
           rustup toolchain install "${RUST_VERSION}" --profile minimal
           rustup default "${RUST_VERSION}"
 
-      - name: Install Linux Tauri bundle dependencies
+      - name: Check Linux bundle prerequisites
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            curl \
-            dbus-x11 \
-            file \
-            libasound2-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget \
-            xauth \
-            xvfb
+          set -euo pipefail
+          dependencies=(
+            build-essential curl dbus-x11 file libasound2-dev
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev
+            libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xauth xvfb
+          )
+          missing=()
+          for package in "${dependencies[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "${package}" 2>/dev/null | grep -Fxq 'install ok installed'; then
+              missing+=("${package}")
+            fi
+          done
+          if (( ${#missing[@]} == 0 )); then
+            echo "Linux bundle prerequisites already installed."
+          elif [[ "${RUNNER_ENVIRONMENT:-}" == "self-hosted" ]]; then
+            printf 'Missing dedicated-runner package(s): %s\n' "${missing[*]}" >&2
+            echo "::error::Install these prerequisites on the runner outside CI."
+            exit 1
+          else
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends "${missing[@]}"
+          fi
 
       - name: Generate exact lockfiles when missing
         shell: bash
@@ -344,6 +352,9 @@ jobs:
             --cargo-manifest desktop/src-tauri/Cargo.toml
 
       - name: Exercise Linux package lifecycle
+        # This invokes sudo apt-get install/remove of a real package, and is
+        # unsafe on the persistent self-hosted machine.
+        if: ${{ runner.environment == 'github-hosted' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -351,6 +362,35 @@ jobs:
             desktop/src-tauri/target/release/bundle \
             com.ekkus.silentdisco.desktop \
             silent-disco-desktop
+
+      - name: Exercise unprivileged AppImage launch on self-hosted runner
+        if: ${{ runner.environment == 'self-hosted' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t appimages < <(find desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -type f | sort)
+          if [[ "${#appimages[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one AppImage bundle."
+            exit 1
+          fi
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "${temp_dir}"' EXIT
+          mkdir -p "${temp_dir}/data" "${temp_dir}/config" "${temp_dir}/cache"
+          chmod +x "${appimages[0]}"
+          set +e
+          env XDG_DATA_HOME="${temp_dir}/data" \
+            XDG_CONFIG_HOME="${temp_dir}/config" XDG_CACHE_HOME="${temp_dir}/cache" \
+            APPIMAGE_EXTRACT_AND_RUN=1 \
+            timeout --signal=TERM 20s dbus-run-session -- xvfb-run -a "${appimages[0]}" \
+            >"${temp_dir}/launch.log" 2>&1
+          status="$?"
+          set -e
+          if [[ "${status}" -ne 124 ]]; then
+            cat "${temp_dir}/launch.log" >&2
+            echo "::error::AppImage failed the unprivileged 20-second launch smoke (exit ${status})."
+            exit 1
+          fi
+          echo "::warning::Package install/upgrade/uninstall lifecycle remains unqualified on this persistent runner."
 
       - name: Require committed lockfiles
         shell: bash

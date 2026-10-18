@@ -86,6 +86,8 @@ jobs:
     # Trusted pushes use the dedicated runner; PRs remain GitHub-hosted.
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
     timeout-minutes: 45
+    outputs:
+      release_candidate_upload: ${{ steps.android-release-candidate.outcome }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -149,7 +151,11 @@ jobs:
           ./gradlew test --stacktrace --console=plain 2>&1 | tee android-unit-tests.log
 
       - name: Upload Android release-candidate APK
+        id: android-release-candidate
         if: steps.android-build.outcome == 'success'
+        # Preserve build/test qualification when account-level artifact storage is unavailable.
+        # The separate publish gate below still fails CI until publication succeeds.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: android-release-candidate
@@ -159,6 +165,7 @@ jobs:
 
       - name: Upload Android build and test diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: android-build-test-diagnostics
@@ -174,21 +181,49 @@ jobs:
         if: always()
         run: ./gradlew lintDebug --stacktrace --console=plain
 
+  android-release-publication:
+    name: Android candidate publication gate
+    needs: android
+    if: ${{ always() && needs.android.result == 'success' }}
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    timeout-minutes: 5
+    steps:
+      - name: Require uploaded release candidate
+        shell: bash
+        env:
+          UPLOAD_OUTCOME: ${{ needs.android.outputs.release_candidate_upload }}
+        run: |
+          if [[ "${UPLOAD_OUTCOME}" != "success" ]]; then
+            echo "::error::Android candidate artifact was not uploaded; release qualification remains blocked."
+            exit 1
+          fi
+
   android-instrumentation:
     name: Android instrumentation tests
     needs: android
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
     timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
 
       - name: Enable KVM acceleration
+        if: ${{ runner.environment == 'github-hosted' }}
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      - name: Verify self-hosted KVM permissions
+        if: ${{ runner.environment == 'self-hosted' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "::error::Runner must expose writable /dev/kvm to its Actions service user. Configure KVM permissions outside CI."
+            exit 1
+          fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -210,6 +245,9 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
 
       - name: Reclaim unused Android SDK disk for emulator
+        # Never delete globally installed SDKs, apt caches, or other toolchains
+        # on the dedicated self-hosted runner.
+        if: ${{ runner.environment == 'github-hosted' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -266,6 +304,7 @@ jobs:
 
       - name: Upload instrumentation diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: android-instrumentation-diagnostics
