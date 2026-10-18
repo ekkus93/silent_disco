@@ -594,7 +594,8 @@ fn ffi_stop_does_not_deliver_buffered_audio_to_a_waiting_consumer() {
     fs::remove_dir_all(root).expect("cleanup");
 }
 
-fn open_gated_ffi_stream_for_cancellation_test() -> (Arc<FfiHostPlaylistStreamer>, std::path::PathBuf) {
+fn open_gated_ffi_stream_for_cancellation_test()
+-> (Arc<FfiHostPlaylistStreamer>, std::path::PathBuf) {
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::sync_channel;
     use std::time::Duration;

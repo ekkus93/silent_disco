@@ -111,7 +111,10 @@ impl FfiHostPlaylistStreamer {
     /// Production host constructor: the producer reserves each successor on
     /// the serialized actor before it enters the bounded output queue.
     // UniFFI's exported object parameter is owned; borrowing it would change the FFI contract.
-    #[expect(clippy::needless_pass_by_value, reason = "UniFFI requires an owned Arc object argument")]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI requires an owned Arc object argument"
+    )]
     #[uniffi::constructor]
     pub fn open_authoritative(
         session_id: String,
