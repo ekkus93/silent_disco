@@ -117,11 +117,10 @@ fn run_pump(
                     // the actor; do not resubmit a stale event after Stop.
                     if let Some(event) =
                         boundary_schedule_event(boundary, authoritative_boundaries)
+                        && let Err(error) = handle.submit_audio_event(event)
                     {
-                        if let Err(error) = handle.submit_audio_event(event) {
-                            streaming_error = Some(DesktopErrorDto::from(error));
-                            break;
-                        }
+                        streaming_error = Some(DesktopErrorDto::from(error));
+                        break;
                     }
                     pending_boundaries.push_back(boundary.clone());
                 }
@@ -158,7 +157,7 @@ fn run_pump(
                     ) {
                         Ok(true) => break true,
                         Ok(false) if stop.load(Ordering::Acquire) => break false,
-                        Ok(false) => continue,
+                        Ok(false) => {}
                         Err(error) => {
                             streaming_error = Some(error);
                             break false;
