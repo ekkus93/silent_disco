@@ -15,9 +15,8 @@ mod reservation;
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 
-pub type BoundaryReserver = Arc<
-    dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync,
->;
+pub type BoundaryReserver =
+    Arc<dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync>;
 use playlist_worker::{
     run_playlist_packetizer_worker, validate_playlist_entries, validate_track_identity,
 };
@@ -476,9 +475,9 @@ impl Drop for StreamingPacketizeHandle {
 #[cfg(test)]
 mod failure_visibility_tests {
     use super::{
-        DecodeError, DecodeErrorKind, PacketizerSummary, PacketizerWorkerError,
-        PacketizerWorkerErrorKind, SharedStatistics, StreamingPacketizeConfig,
-        StreamingPacketizeHandle, MAX_PACKETIZER_QUEUE_CAPACITY,
+        DecodeError, DecodeErrorKind, MAX_PACKETIZER_QUEUE_CAPACITY, PacketizerSummary,
+        PacketizerWorkerError, PacketizerWorkerErrorKind, SharedStatistics,
+        StreamingPacketizeConfig, StreamingPacketizeHandle,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::Arc;

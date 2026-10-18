@@ -16,9 +16,8 @@ use crate::host_control::FfiCoreHandle;
 
 const FRAME_CANCEL_POLL: Duration = Duration::from_millis(20);
 
-type FfiBoundaryReserver = Arc<
-    dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync,
->;
+type FfiBoundaryReserver =
+    Arc<dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FfiPlaylistSource {
@@ -122,9 +121,11 @@ impl FfiHostPlaylistStreamer {
         let actor = authority
             .actor_handle()
             .map_err(|error| FfiHostPlaylistError::Closed(error.to_string()))?;
-        let reserve = Arc::new(move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
-            reserve_authoritative_boundary(&actor, boundary, cancelled)
-        });
+        let reserve = Arc::new(
+            move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
+                reserve_authoritative_boundary(&actor, boundary, cancelled)
+            },
+        );
         Self::open_with_reserver(
             session_id,
             stream_id,
@@ -203,8 +204,7 @@ impl FfiHostPlaylistStreamer {
                 return Ok(None);
             }
             match result {
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                    if started.elapsed() < timeout => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if started.elapsed() < timeout => {}
                 other => break other,
             }
         };
@@ -363,13 +363,14 @@ fn reserve_authoritative_boundary(
             _ => std::thread::sleep(Duration::from_millis(20)),
         }
     }
-    actor.reserve_host_track_boundary(
-        boundary.stream_id.clone(),
-        boundary.entry_id.clone(),
-        boundary.first_sample_index.get(),
-        Arc::clone(&cancelled),
-    )
-    .map_err(|error| playlist_reservation_error(&error.to_string(), &cancelled))
+    actor
+        .reserve_host_track_boundary(
+            boundary.stream_id.clone(),
+            boundary.entry_id.clone(),
+            boundary.first_sample_index.get(),
+            Arc::clone(&cancelled),
+        )
+        .map_err(|error| playlist_reservation_error(&error.to_string(), &cancelled))
 }
 
 fn playlist_reservation_error(message: &str, cancelled: &AtomicBool) -> PacketizerWorkerError {

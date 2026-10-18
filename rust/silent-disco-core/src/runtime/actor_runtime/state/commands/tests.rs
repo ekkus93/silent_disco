@@ -248,7 +248,10 @@ mod host_queue_actor_tests {
                 first_sample_index: 48_000,
             })
             .expect("exact scheduled boundary may advance the queue");
-        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "three");
+        assert_eq!(
+            state.snapshot.host_queue.current().unwrap().entry_id,
+            "three"
+        );
     }
 
     #[test]
@@ -451,7 +454,10 @@ mod host_queue_actor_tests {
         assert_eq!(state.snapshot.playback_state, PlaybackState::Error);
         assert_eq!(state.snapshot.host_queue.revision(), revision);
         assert_eq!(state.snapshot.host_queue.entries().len(), 2);
-        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "failed");
+        assert_eq!(
+            state.snapshot.host_queue.current().unwrap().entry_id,
+            "failed"
+        );
         assert!(!state.snapshot.stream_ended_naturally);
     }
 
@@ -489,7 +495,13 @@ mod host_queue_actor_tests {
         assert_eq!(state.snapshot.host_queue.entries().len(), 2);
         assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
         assert_eq!(
-            state.snapshot.host_draft.audio_source.as_ref().unwrap().source_id,
+            state
+                .snapshot
+                .host_draft
+                .audio_source
+                .as_ref()
+                .unwrap()
+                .source_id,
             "source-one"
         );
         state

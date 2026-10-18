@@ -21,9 +21,8 @@ impl ActorState {
             let mut candidate = self.clone();
             // Reuse the validated host Playing transition, including the
             // WaitingForListeners -> Streaming path used after Stop/replay.
-            candidate.apply_audio_control(AudioEvent::PlaybackStateChanged(
-                PlaybackState::Playing,
-            ))?;
+            candidate
+                .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))?;
             let outcome = candidate.apply_audio(event)?;
             *self = candidate;
             return Ok(outcome);
@@ -211,7 +210,10 @@ mod tests {
             .expect_err("retired stream cannot start another generation");
         assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
         assert_eq!(state.snapshot.playback_state, PlaybackState::Buffering);
-        assert_eq!(state.snapshot.host_lifecycle, HostLifecycle::WaitingForListeners);
+        assert_eq!(
+            state.snapshot.host_lifecycle,
+            HostLifecycle::WaitingForListeners
+        );
         assert!(state.active_audio_stream_id.is_none());
     }
 

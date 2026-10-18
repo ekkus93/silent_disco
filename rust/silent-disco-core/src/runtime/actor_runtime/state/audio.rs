@@ -300,7 +300,11 @@ mod retired_stream_tests {
                     })
                     .is_err()
             );
-            assert!(state.apply_audio(AudioEvent::EndOfStream { stream_id }).is_err());
+            assert!(
+                state
+                    .apply_audio(AudioEvent::EndOfStream { stream_id })
+                    .is_err()
+            );
         }
         assert_eq!(state.snapshot.playback_position_ms, 0);
         state
@@ -340,17 +344,24 @@ mod retired_stream_tests {
             .expect("bind fresh stream before sending packets");
 
         let error = state
-            .apply_audio(AudioEvent::EndOfStream { stream_id: old.clone() })
+            .apply_audio(AudioEvent::EndOfStream {
+                stream_id: old.clone(),
+            })
             .expect_err("old EOF must not stop fresh stream before its first packet");
-        assert_eq!(error.code, crate::error::CoreErrorCode::InvalidStateTransition);
+        assert_eq!(
+            error.code,
+            crate::error::CoreErrorCode::InvalidStateTransition
+        );
         assert_eq!(state.snapshot.playback_state, PlaybackState::Playing);
         assert_eq!(state.snapshot.playback_position_ms, 0);
-        assert!(state
-            .apply_audio(AudioEvent::PositionAdvanced {
-                stream_id: old,
-                position_ms: 1,
-            })
-            .is_err());
+        assert!(
+            state
+                .apply_audio(AudioEvent::PositionAdvanced {
+                    stream_id: old,
+                    position_ms: 1,
+                })
+                .is_err()
+        );
         state
             .apply_audio(AudioEvent::PositionAdvanced {
                 stream_id: fresh,

@@ -32,9 +32,10 @@ impl ActorState {
                 .revision
                 .checked_next()
                 .map_err(|_| resource_limit("snapshot revision overflow", None))?;
-            candidate.snapshot.validate().map_err(|error| {
-                invalid_argument(error.to_string(), None)
-            })?;
+            candidate
+                .snapshot
+                .validate()
+                .map_err(|error| invalid_argument(error.to_string(), None))?;
             outcome
                 .notifications
                 .insert(0, CoreNotification::Snapshot(candidate.snapshot.clone()));
@@ -68,7 +69,8 @@ mod tests {
         state.host_session_id = Some(SessionId::new("reservation-session").expect("session ID"));
         state.snapshot.host_lifecycle = HostLifecycle::Ready;
         state.snapshot.playback_state = PlaybackState::Playing;
-        state.snapshot
+        state
+            .snapshot
             .host_queue
             .append(0, vec![entry("one"), entry("two"), entry("three")])
             .expect("queue");
@@ -83,7 +85,15 @@ mod tests {
         state
             .reserve_track_boundary(stream_id, "two".into(), 48_000)
             .expect("authoritative reservation");
-        assert_eq!(state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id, "two");
+        assert_eq!(
+            state
+                .snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .unwrap()
+                .entry_id,
+            "two"
+        );
         let remove_revision = state.snapshot.host_queue.revision();
         let error = state
             .apply_command(
@@ -112,11 +122,13 @@ mod tests {
     fn old_stream_cannot_reserve_after_new_stream_starts() {
         let (mut state, _) = host();
         let revision = state.snapshot.revision;
-        let error = state.reserve_track_boundary(
-            StreamId::new("retired-stream").expect("stream ID"),
-            "two".into(),
-            48_000,
-        ).expect_err("stale producer must not reserve");
+        let error = state
+            .reserve_track_boundary(
+                StreamId::new("retired-stream").expect("stream ID"),
+                "two".into(),
+                48_000,
+            )
+            .expect_err("stale producer must not reserve");
         assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
         assert_eq!(state.snapshot.revision, revision);
         assert!(state.snapshot.host_queue_next_boundary.is_none());
@@ -125,7 +137,8 @@ mod tests {
     #[test]
     fn queue_edit_winning_first_rejects_stale_target_reservation() {
         let (mut state, stream_id) = host();
-        state.snapshot
+        state
+            .snapshot
             .host_queue
             .remove(1, "two", true)
             .expect("edit next track first");
@@ -135,8 +148,17 @@ mod tests {
             .expect_err("removed target is stale");
         assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
         assert_eq!(state.snapshot.revision, revision);
-        state.reserve_track_boundary(stream_id, "three".into(), 48_000)
+        state
+            .reserve_track_boundary(stream_id, "three".into(), 48_000)
             .expect("new authoritative successor");
-        assert_eq!(state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id, "three");
+        assert_eq!(
+            state
+                .snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .unwrap()
+                .entry_id,
+            "three"
+        );
     }
 }

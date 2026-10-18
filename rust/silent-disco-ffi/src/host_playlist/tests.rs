@@ -4,8 +4,8 @@ use silent_disco_core::audio::PacketizerWorkerErrorKind;
 use silent_disco_core::domain::{SampleIndex, SessionId, StreamId};
 use silent_disco_core::protocol::TrackBoundary;
 use std::fs;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct QuietObserver;
@@ -18,11 +18,8 @@ impl FfiCoreObserver for QuietObserver {
 
 #[test]
 fn authoritative_ffi_playlist_rejects_closed_actor_before_opening_source() {
-    let actor = FfiCoreHandle::open(
-        "closed-playlist-actor".to_owned(),
-        Arc::new(QuietObserver),
-    )
-    .expect("actor opens");
+    let actor = FfiCoreHandle::open("closed-playlist-actor".to_owned(), Arc::new(QuietObserver))
+        .expect("actor opens");
     actor.shutdown().expect("actor shuts down");
     let error = FfiHostPlaylistStreamer::open_authoritative(
         "closed-session".to_owned(),
@@ -134,7 +131,8 @@ fn direct_ffi_playlist_cannot_bypass_authoritative_queue_entry_limits() {
         .expect_err("live update must reject duplicate upcoming IDs");
     assert!(error.to_string().contains("duplicate entry IDs"));
     stream.cancel().expect("cancel stream");
-    let error = stream.replace_upcoming(Vec::new())
+    let error = stream
+        .replace_upcoming(Vec::new())
         .expect_err("closed stream must not silently accept queue edits");
     assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
     fs::remove_dir_all(root).expect("remove temp directory");
@@ -166,7 +164,8 @@ fn ffi_update_reports_closed_when_producer_finished_but_end_not_consumed() {
     let worker = stream.inner.lock().expect("lock").take().expect("worker");
     worker.join().expect("producer completed");
     assert!(!stream.closed.load(std::sync::atomic::Ordering::Acquire));
-    let error = stream.replace_upcoming(Vec::new())
+    let error = stream
+        .replace_upcoming(Vec::new())
         .expect_err("completed producer must not accept a phantom update");
     assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
     fs::remove_dir_all(root).expect("cleanup");
@@ -263,11 +262,10 @@ fn ffi_playlist_stream_keeps_audio_sequence_and_sample_clock_across_boundary() {
             .next_back(),
         Some(720),
     );
-    assert!(
-        boundary_position.expect("boundary") < next_track_audio_position.expect("next audio")
-    );
+    assert!(boundary_position.expect("boundary") < next_track_audio_position.expect("next audio"));
     assert!(sequence.windows(2).all(|pair| pair[1] == pair[0] + 1));
-    let error = stream.replace_upcoming(Vec::new())
+    let error = stream
+        .replace_upcoming(Vec::new())
         .expect_err("completed stream must not accept queue edits");
     assert!(matches!(error, super::FfiHostPlaylistError::Closed(_)));
     fs::remove_dir_all(root).expect("remove temp directory");
@@ -524,14 +522,19 @@ fn ffi_cancel_signals_producer_before_waiting_for_frame_consumer_lock() {
         started_tx.send(()).expect("signal stopper");
         stop_stream.cancel()
     });
-    started_rx.recv_timeout(Duration::from_secs(2)).expect("stopper started");
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stopper started");
     let deadline = Instant::now() + Duration::from_secs(2);
     while !cancellation.load(Ordering::Acquire) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(1));
     }
     let signalled_before_unlock = cancellation.load(Ordering::Acquire);
     drop(held_consumer);
-    stopper.join().expect("stopper thread").expect("cancel playlist");
+    stopper
+        .join()
+        .expect("stopper thread")
+        .expect("cancel playlist");
     assert!(
         signalled_before_unlock,
         "cancellation must not wait for the frame-consumer mutex"
@@ -572,13 +575,21 @@ fn ffi_stop_does_not_deliver_buffered_audio_to_a_waiting_consumer() {
         started_tx.send(()).expect("consumer started");
         consumer_stream.next_frame(50)
     });
-    started_rx.recv_timeout(Duration::from_secs(2)).expect("consumer started");
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("consumer started");
     // Simulate a concurrent host Stop before releasing the frame mutex.
     stream.closed.store(true, Ordering::Release);
     stream.cancellation.store(true, Ordering::Release);
     drop(consumer_lock);
-    let frame = consumer.join().expect("consumer thread").expect("frame poll");
-    assert!(frame.is_none(), "stopped stream must not expose queued audio");
+    let frame = consumer
+        .join()
+        .expect("consumer thread")
+        .expect("frame poll");
+    assert!(
+        frame.is_none(),
+        "stopped stream must not expose queued audio"
+    );
     stream.cancel().expect("finalize Stop");
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -680,14 +691,22 @@ fn ffi_stop_interrupts_long_consumer_timeout_at_reserved_boundary() {
     if !locked {
         stream.cancellation.store(true, Ordering::Release);
         stream.closed.store(true, Ordering::Release);
-        waiting_consumer.join().expect("reader thread").expect("reader result");
+        waiting_consumer
+            .join()
+            .expect("reader thread")
+            .expect("reader result");
         panic!("consumer did not wait on the packet channel");
     }
 
     let stop_started = Instant::now();
-    stream.cancel().expect("cancel must not wait for long timeout");
+    stream
+        .cancel()
+        .expect("cancel must not wait for long timeout");
     let stop_elapsed = stop_started.elapsed();
-    let received = waiting_consumer.join().expect("consumer thread").expect("frame read");
+    let received = waiting_consumer
+        .join()
+        .expect("consumer thread")
+        .expect("frame read");
     assert!(received.is_none(), "Stop must suppress queued audio");
     assert!(
         stop_elapsed < Duration::from_secs(2),

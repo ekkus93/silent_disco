@@ -210,7 +210,11 @@ fn playlist_decoder_prebuffers_the_next_source_before_current_source_finishes() 
 fn an_empty_update_while_current_audio_is_backpressured_does_not_leak_a_boundary() {
     let _guard = super::super::tests::audio_test_guard();
     let temp = TempDir::new().expect("temp");
-    let current_path = write_bytes(&temp, "clear-current.wav", &pcm_wav_frames(48_000, 2, 48_000));
+    let current_path = write_bytes(
+        &temp,
+        "clear-current.wav",
+        &pcm_wav_frames(48_000, 2, 48_000),
+    );
     let next_path = write_bytes(&temp, "clear-next.wav", &pcm_wav_frames(48_000, 2, 480));
     let decoder = StreamingDecodeHandle::open(current_path, StreamingDecodeConfig::default())
         .expect("current decoder");
@@ -250,7 +254,9 @@ fn an_empty_update_while_current_audio_is_backpressured_does_not_leak_a_boundary
     }
     // The update is consumed while the current track is still packetizing;
     // no stale successor boundary is ever allowed to escape.
-    packetizer.join().expect("playlist completed after clearing next track");
+    packetizer
+        .join()
+        .expect("playlist completed after clearing next track");
     assert!(!saw_removed);
 }
 
@@ -296,11 +302,7 @@ fn empty_final_contiguous_chunk_flushes_only_the_retained_partial_packet() {
 fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
     let _guard = super::super::tests::audio_test_guard();
     let temp = TempDir::new().expect("temp");
-    let first_path = write_bytes(
-        &temp,
-        "identity-first.wav",
-        &pcm_wav_frames(48_000, 2, 241),
-    );
+    let first_path = write_bytes(&temp, "identity-first.wav", &pcm_wav_frames(48_000, 2, 241));
     let second_path = write_bytes(
         &temp,
         "identity-second.wav",
@@ -354,7 +356,9 @@ fn playlist_live_updater_rejects_current_entry_before_and_after_promotion() {
         }
     }
     assert!(saw_second);
-    packetizer.join().expect("rejected edits do not interrupt playback");
+    packetizer
+        .join()
+        .expect("rejected edits do not interrupt playback");
 }
 
 #[test]
@@ -375,8 +379,8 @@ fn playlist_updater_rejects_edits_after_producer_completes_before_consumer_join(
     let _guard = super::super::tests::audio_test_guard();
     let temp = TempDir::new().expect("temp");
     let path = write_bytes(&temp, "terminal.wav", &pcm_wav_frames(48_000, 2, 241));
-    let decoder = StreamingDecodeHandle::open(path, StreamingDecodeConfig::default())
-        .expect("open track");
+    let decoder =
+        StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).expect("open track");
     let handle = StreamingPacketizeHandle::spawn_playlist(
         decoder,
         "entry-terminal",
@@ -404,8 +408,8 @@ fn playlist_updater_rejects_edits_after_cancellation() {
     let _guard = super::super::tests::audio_test_guard();
     let temp = TempDir::new().expect("temp");
     let path = write_bytes(&temp, "cancelled.wav", &pcm_wav_frames(48_000, 2, 48_000));
-    let decoder = StreamingDecodeHandle::open(path, StreamingDecodeConfig::default())
-        .expect("open track");
+    let decoder =
+        StreamingDecodeHandle::open(path, StreamingDecodeConfig::default()).expect("open track");
     let handle = StreamingPacketizeHandle::spawn_playlist(
         decoder,
         "entry-cancelled",
@@ -414,7 +418,10 @@ fn playlist_updater_rejects_edits_after_cancellation() {
         SessionId::new("session-cancelled").expect("session ID"),
         StreamId::new("stream-cancelled").expect("stream ID"),
         MonotonicMillis::new(5_000),
-        StreamingPacketizeConfig { queue_capacity: 1, ..StreamingPacketizeConfig::default() },
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
     )
     .expect("start packetizer");
     let updater = handle.playlist_updater().expect("updater");
@@ -440,15 +447,18 @@ fn successor_audio_cannot_escape_before_authoritative_reservation_ack() {
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel::<()>(1);
     let release_rx = std::sync::Mutex::new(release_rx);
-    let reserver = std::sync::Arc::new(move |boundary: &crate::protocol::TrackBoundary, _cancel| {
-        entered_tx.send(boundary.first_sample_index.get()).expect("signal reservation");
-        release_rx
-            .lock()
-            .expect("gate lock")
-            .recv_timeout(TEST_TIMEOUT)
-            .expect("release reservation");
-        Ok(())
-    });
+    let reserver =
+        std::sync::Arc::new(move |boundary: &crate::protocol::TrackBoundary, _cancel| {
+            entered_tx
+                .send(boundary.first_sample_index.get())
+                .expect("signal reservation");
+            release_rx
+                .lock()
+                .expect("gate lock")
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("release reservation");
+            Ok(())
+        });
     let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
         decoder,
         "reserved-first",
@@ -457,20 +467,36 @@ fn successor_audio_cannot_escape_before_authoritative_reservation_ack() {
         SessionId::new("reserved-playlist-session").expect("session"),
         StreamId::new("reserved-playlist-stream").expect("stream"),
         MonotonicMillis::new(5_000),
-        StreamingPacketizeConfig { queue_capacity: 1, ..StreamingPacketizeConfig::default() },
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
         reserver,
-    ).expect("packetizer");
+    )
+    .expect("packetizer");
 
     let mut prefix = Vec::new();
     // A one-frame channel needs the consumer to drain the final first-track
     // packet before the producer can reach the boundary reservation.
-    prefix.push(packetizer.recv_timeout(TEST_TIMEOUT).expect("first audio packet"));
-    assert_eq!(entered_rx.recv_timeout(TEST_TIMEOUT).expect("reservation reached"), 241);
+    prefix.push(
+        packetizer
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("first audio packet"),
+    );
+    assert_eq!(
+        entered_rx
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("reservation reached"),
+        241
+    );
     assert!(matches!(prefix[0], ProtocolFrame::Audio(_)));
-    assert!(matches!(
-        packetizer.recv_timeout(Duration::from_millis(50)),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-    ), "successor frames must not pass an unacknowledged reservation");
+    assert!(
+        matches!(
+            packetizer.recv_timeout(Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "successor frames must not pass an unacknowledged reservation"
+    );
     release_tx.send(()).expect("ack reservation");
     let mut tail = Vec::new();
     loop {
@@ -523,7 +549,8 @@ fn rejected_reservation_fails_closed_without_emitting_successor_audio() {
         MonotonicMillis::new(5_000),
         StreamingPacketizeConfig::default(),
         reserver,
-    ).expect("packetizer");
+    )
+    .expect("packetizer");
     let mut frames = Vec::new();
     loop {
         match packetizer.recv_timeout(TEST_TIMEOUT) {
@@ -532,10 +559,20 @@ fn rejected_reservation_fails_closed_without_emitting_successor_audio() {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("denied playlist stalled"),
         }
     }
-    let error = packetizer.join().expect_err("rejected boundary must fail closed");
-    assert!(error.message.contains("injected authoritative queue conflict"));
-    assert!(frames.iter().all(|frame| matches!(frame, ProtocolFrame::Audio(_))),
-        "a rejected reservation must never enqueue the successor boundary");
+    let error = packetizer
+        .join()
+        .expect_err("rejected boundary must fail closed");
+    assert!(
+        error
+            .message
+            .contains("injected authoritative queue conflict")
+    );
+    assert!(
+        frames
+            .iter()
+            .all(|frame| matches!(frame, ProtocolFrame::Audio(_))),
+        "a rejected reservation must never enqueue the successor boundary"
+    );
     assert_eq!(frames.len(), 1, "only outgoing track audio may be queued");
 }
 

@@ -3,20 +3,20 @@
 use super::super::decoder::StreamingDecodeHandle;
 use super::super::packetizer::Packetizer;
 use super::super::types::DecodedPcmChunk;
-use crate::domain::SampleIndex;
 use super::super::types::{DecodeError, DecodeErrorKind};
 use super::{
     BoundaryReserver, PacketizerSummary, PacketizerWorkerError, PacketizerWorkerErrorKind,
-    PacketizerWorkerState, PlaylistUpdateState, PlaylistUpdates, SharedStatistics, StagedPlaylistTrack,
-    StreamingPacketizeConfig, StreamingPlaylistTrackFactory, WORKER_POLL_INTERVAL,
-    ensure_not_cancelled,
-    merge_decoder_shutdown_result, send_with_backpressure,
+    PacketizerWorkerState, PlaylistUpdateState, PlaylistUpdates, SharedStatistics,
+    StagedPlaylistTrack, StreamingPacketizeConfig, StreamingPlaylistTrackFactory,
+    WORKER_POLL_INTERVAL, ensure_not_cancelled, merge_decoder_shutdown_result,
+    send_with_backpressure,
 };
+use crate::domain::SampleIndex;
 use crate::protocol::{ControlMessage, MAX_DISPLAY_NAME_BYTES, ProtocolFrame, TrackBoundary};
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex};
 
 /// Marks the updater terminal under the same lock used to admit queue edits.
 /// A producer that has exited must not silently accept work it cannot emit.
@@ -146,12 +146,7 @@ pub(super) fn run_playlist_packetizer_worker(
         let had_successor = next.is_some();
         if had_successor {
             let mut final_track = false;
-            refresh_pending_playlist_update(
-                updates,
-                &mut upcoming,
-                &mut next,
-                &mut final_track,
-            )?;
+            refresh_pending_playlist_update(updates, &mut upcoming, &mut next, &mut final_track)?;
         }
         // Commit only after consuming every accepted edit. The check and
         // promotion share the updater mutex, preventing a lost retarget.
@@ -393,9 +388,10 @@ fn refresh_pending_playlist_update(
         // wasting the prebuffer, reopening can introduce a boundary underrun
         // or fail after a staged file becomes temporarily unavailable.
         if next.as_ref().is_some_and(|((id, name), opened)| {
-            opened.is_ok() && upcoming.front().is_some_and(|factory| {
-                same_staged_identity(id, name, factory)
-            })
+            opened.is_ok()
+                && upcoming
+                    .front()
+                    .is_some_and(|factory| same_staged_identity(id, name, factory))
         }) {
             upcoming.pop_front();
         } else {
