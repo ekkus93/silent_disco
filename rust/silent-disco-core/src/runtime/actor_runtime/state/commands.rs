@@ -172,11 +172,17 @@ impl ActorState {
                 | PlaybackState::Buffering
                 | PlaybackState::Underrun
         );
-        if let Some(boundary) = &self.snapshot.host_queue_next_boundary
-            && ordered_entry_ids.get(1).map(String::as_str) != Some(boundary.entry_id.as_str())
+        if self
+            .pending_host_boundaries
+            .iter()
+            .enumerate()
+            .any(|(index, boundary)| {
+                ordered_entry_ids.get(index + 1).map(String::as_str)
+                    != Some(boundary.entry_id.as_str())
+            })
         {
             return Err(invalid_state(
-                "queue reorder cannot change the already scheduled next track",
+                "queue reorder cannot change already reserved upcoming tracks",
                 Some(operation_id.clone()),
             ));
         }
@@ -205,10 +211,9 @@ impl ActorState {
                 | PlaybackState::Underrun
         );
         if self
-            .snapshot
-            .host_queue_next_boundary
-            .as_ref()
-            .is_some_and(|boundary| boundary.entry_id == entry_id)
+            .pending_host_boundaries
+            .iter()
+            .any(|boundary| boundary.entry_id == entry_id)
         {
             return Err(invalid_state(
                 "the already scheduled next track cannot be removed",
@@ -231,9 +236,9 @@ impl ActorState {
         expected_revision: u64,
     ) -> Result<ApplyOutcome, CoreError> {
         self.require_host_queue_editable(&operation_id)?;
-        if self.snapshot.host_queue_next_boundary.is_some() {
+        if !self.pending_host_boundaries.is_empty() {
             return Err(invalid_state(
-                "host queue cannot be cleared after the next track boundary has been scheduled",
+                "host queue cannot be cleared while upcoming tracks are reserved",
                 Some(operation_id.clone()),
             ));
         }
@@ -249,7 +254,7 @@ impl ActorState {
             .clear(expected_revision, current_locked)
             .map_err(|error| invalid_argument(error.to_string(), Some(operation_id.clone())))?;
         self.sync_legacy_audio_source();
-        self.snapshot.host_queue_next_boundary = None;
+        self.clear_host_boundary_reservations();
         self.clear_failure();
         Ok(ApplyOutcome::changed())
     }
@@ -274,19 +279,16 @@ impl ActorState {
     }
 
     fn clear_stale_host_queue_boundary(&mut self) {
-        let boundary_is_still_next =
-            self.snapshot
-                .host_queue_next_boundary
-                .as_ref()
-                .is_some_and(|boundary| {
-                    self.snapshot
-                        .host_queue
-                        .upcoming()
-                        .first()
-                        .is_some_and(|entry| entry.entry_id == boundary.entry_id)
-                });
-        if !boundary_is_still_next {
-            self.snapshot.host_queue_next_boundary = None;
+        let upcoming = self.snapshot.host_queue.upcoming();
+        if self
+            .pending_host_boundaries
+            .iter()
+            .enumerate()
+            .any(|(index, boundary)| {
+                upcoming.get(index).is_none_or(|entry| entry.entry_id != boundary.entry_id)
+            })
+        {
+            self.clear_host_boundary_reservations();
         }
     }
 

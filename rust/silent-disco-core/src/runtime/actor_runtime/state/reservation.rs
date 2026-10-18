@@ -119,6 +119,81 @@ mod tests {
     }
 
     #[test]
+    fn multiple_short_track_boundaries_reserve_before_the_first_is_audible() {
+        let (mut state, stream_id) = host();
+        state
+            .reserve_track_boundary(stream_id.clone(), "two".into(), 4_800)
+            .expect("first successor");
+        state
+            .reserve_track_boundary(stream_id.clone(), "three".into(), 9_600)
+            .expect("second successor prebuffered before first is applied");
+        assert_eq!(state.pending_host_boundaries.len(), 2);
+        assert_eq!(
+            state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+            "two"
+        );
+
+        let revision = state.snapshot.host_queue.revision();
+        assert!(state
+            .apply_command(
+                crate::domain::OperationId::new("remove-third-reserved").unwrap(),
+                CoreCommand::RemoveHostQueueEntry {
+                    expected_queue_revision: revision,
+                    entry_id: "three".into(),
+                },
+            )
+            .is_err());
+        assert!(state
+            .apply_command(
+                crate::domain::OperationId::new("reorder-reserved-prefix").unwrap(),
+                CoreCommand::ReorderHostQueue {
+                    expected_queue_revision: revision,
+                    ordered_entry_ids: vec!["one".into(), "three".into(), "two".into()],
+                },
+            )
+            .is_err());
+
+        state
+            .apply_audio_control(AudioEvent::TrackBoundaryApplied {
+                entry_id: "two".into(),
+                first_sample_index: 4_800,
+            })
+            .expect("first boundary");
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "two");
+        assert_eq!(
+            state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+            "three"
+        );
+
+        state
+            .apply_audio_control(AudioEvent::TrackBoundaryApplied {
+                entry_id: "three".into(),
+                first_sample_index: 9_600,
+            })
+            .expect("second boundary");
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "three");
+        assert!(state.pending_host_boundaries.is_empty());
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+    }
+
+    #[test]
+    fn stop_discards_all_prefetched_reservations_before_replay() {
+        let (mut state, stream_id) = host();
+        state
+            .reserve_track_boundary(stream_id.clone(), "two".into(), 4_800)
+            .expect("first successor");
+        state
+            .reserve_track_boundary(stream_id, "three".into(), 9_600)
+            .expect("second successor");
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("stop");
+        assert!(state.pending_host_boundaries.is_empty());
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+    }
+
+    #[test]
     fn old_stream_cannot_reserve_after_new_stream_starts() {
         let (mut state, _) = host();
         let revision = state.snapshot.revision;

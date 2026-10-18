@@ -46,6 +46,9 @@ pub(super) struct ActorState {
     // Last stream to report progress during this playback generation.
     // Kept actor-private; platform source identifiers never enter snapshots.
     active_audio_stream_id: Option<StreamId>,
+    // The producer can reserve several short successors before the first one
+    // becomes audible. The public snapshot shows only the earliest boundary.
+    pending_host_boundaries: Vec<HostQueueBoundary>,
     // Bounded stale-stream protection across repeated Stop/Play cycles.
     retired_audio_stream_ids: Vec<StreamId>,
     pending_platform: Vec<(OperationId, PendingPlatformOperation)>,
@@ -148,6 +151,7 @@ impl ActorState {
             local_device_id,
             host_session_id: None,
             active_audio_stream_id: None,
+            pending_host_boundaries: Vec::new(),
             retired_audio_stream_ids: Vec::new(),
             pending_platform: Vec::new(),
             pending_transport: Vec::new(),

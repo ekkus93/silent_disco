@@ -4,7 +4,17 @@ use super::{
 };
 
 impl ActorState {
+    pub(super) fn clear_host_boundary_reservations(&mut self) {
+        self.pending_host_boundaries.clear();
+        self.snapshot.host_queue_next_boundary = None;
+    }
+
+    fn publish_earliest_host_boundary(&mut self) {
+        self.snapshot.host_queue_next_boundary = self.pending_host_boundaries.first().cloned();
+    }
+
     pub(super) fn retire_active_audio_stream(&mut self) {
+        self.clear_host_boundary_reservations();
         if let Some(stream_id) = self.active_audio_stream_id.take()
             && !self.retired_audio_stream_ids.contains(&stream_id)
         {
@@ -39,10 +49,10 @@ impl ActorState {
                     self.snapshot.playback_position_ms = 0;
                     self.retire_active_audio_stream();
                     self.snapshot.stream_ended_naturally = false;
-                    self.snapshot.host_queue_next_boundary = None;
+                    self.clear_host_boundary_reservations();
                 }
                 if matches!(state, PlaybackState::Stopped | PlaybackState::Error) {
-                    self.snapshot.host_queue_next_boundary = None;
+                    self.clear_host_boundary_reservations();
                     self.retire_active_audio_stream();
                 }
                 if state == PlaybackState::Stopped {
@@ -114,7 +124,7 @@ impl ActorState {
                 // boundary. Without this check a stale event can advance the
                 // authoritative queue after a legal edit, Stop, or replay
                 // even if the next entry ID happens to match.
-                let Some(boundary) = &self.snapshot.host_queue_next_boundary else {
+                let Some(boundary) = self.pending_host_boundaries.first() else {
                     return Err(invalid_state(
                         "track boundary was applied without being scheduled",
                         None,
@@ -138,7 +148,8 @@ impl ActorState {
                     .host_queue
                     .current()
                     .map(|entry| entry.source.clone());
-                self.snapshot.host_queue_next_boundary = None;
+                self.pending_host_boundaries.remove(0);
+                self.publish_earliest_host_boundary();
                 Ok(ApplyOutcome::changed())
             }
             AudioEvent::TrackBoundaryScheduled {
@@ -151,28 +162,50 @@ impl ActorState {
                         None,
                     ));
                 }
-                let expected = self.snapshot.host_queue.upcoming().first().ok_or_else(|| {
-                    invalid_state("track boundary has no matching queued entry", None)
-                })?;
+                // A bounded producer can decode multiple short tracks before
+                // the consumer applies the first boundary. Reservations must
+                // follow queue order, not the current audible queue cursor.
+                if let Some(boundary) = self
+                    .pending_host_boundaries
+                    .iter()
+                    .find(|boundary| boundary.entry_id == entry_id)
+                {
+                    if boundary.first_sample_index == first_sample_index {
+                        return Ok(ApplyOutcome::default());
+                    }
+                    return Err(invalid_state(
+                        "track boundary already reserved at another sample index",
+                        None,
+                    ));
+                }
+                let expected = self
+                    .snapshot
+                    .host_queue
+                    .upcoming()
+                    .get(self.pending_host_boundaries.len())
+                    .ok_or_else(|| invalid_state("track boundary has no matching queued entry", None))?;
                 if expected.entry_id != entry_id {
                     return Err(invalid_state(
-                        "track boundary does not match the next queued entry",
+                        "track boundary does not match the next unreserved queued entry",
                         None,
                     ));
                 }
-                if let Some(boundary) = &self.snapshot.host_queue_next_boundary
-                    && (boundary.entry_id != entry_id
-                        || boundary.first_sample_index != first_sample_index)
+                if first_sample_index == 0
+                    || self
+                        .pending_host_boundaries
+                        .last()
+                        .is_some_and(|previous| first_sample_index <= previous.first_sample_index)
                 {
                     return Err(invalid_state(
-                        "a different queue boundary is already scheduled",
+                        "track boundaries must advance in sample order",
                         None,
                     ));
                 }
-                self.snapshot.host_queue_next_boundary = Some(HostQueueBoundary {
+                self.pending_host_boundaries.push(HostQueueBoundary {
                     entry_id,
                     first_sample_index,
                 });
+                self.publish_earliest_host_boundary();
                 Ok(ApplyOutcome::changed())
             }
             AudioEvent::SynchronizationUpdated { device_id, summary } => {
@@ -227,7 +260,7 @@ impl ActorState {
                     self.snapshot.playback_state = PlaybackState::Stopped;
                     self.snapshot.playback_position_ms = 0;
                     self.retire_active_audio_stream();
-                    self.snapshot.host_queue_next_boundary = None;
+                    self.clear_host_boundary_reservations();
                     self.snapshot.stream_ended_naturally = false;
                     return Ok(ApplyOutcome::changed());
                 }
@@ -237,7 +270,7 @@ impl ActorState {
                     .clear(queue_revision, false)
                     .map_err(|error| invalid_state(error.to_string(), None))?;
                 self.snapshot.host_draft.audio_source = None;
-                self.snapshot.host_queue_next_boundary = None;
+                self.clear_host_boundary_reservations();
                 self.retire_active_audio_stream();
                 self.snapshot.playback_state = PlaybackState::Stopped;
                 self.snapshot.stream_ended_naturally = true;
@@ -245,6 +278,7 @@ impl ActorState {
             }
             AudioEvent::Underrun { missing_frames } => {
                 self.snapshot.playback_state = PlaybackState::Underrun;
+                self.clear_host_boundary_reservations();
                 let mut outcome = self.diagnostic(
                     "audio_underrun",
                     vec![Self::field("missing_frames", &missing_frames.to_string())?],
@@ -255,7 +289,7 @@ impl ActorState {
             AudioEvent::Failed(error) => {
                 self.retire_active_audio_stream();
                 self.snapshot.playback_state = PlaybackState::Error;
-                self.snapshot.host_queue_next_boundary = None;
+                self.clear_host_boundary_reservations();
                 self.snapshot.last_error = Some(error.clone());
                 Ok(ApplyOutcome {
                     notifications: vec![CoreNotification::Error(error)],

@@ -213,7 +213,7 @@ impl ActorState {
     pub(super) fn reset_host_session(&mut self) {
         self.host_session_id = None;
         self.snapshot.host_queue = crate::runtime::HostQueue::default();
-        self.snapshot.host_queue_next_boundary = None;
+        self.clear_host_boundary_reservations();
         self.snapshot.host_draft.audio_source = None;
         self.pending_transport.clear();
         self.pending_storage
