@@ -118,7 +118,10 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
     // duplicate nor a non-leading shadow may replace the accepted retarget.
     for invalid in [
         vec![source("reserved", &paths[1]), source("reserved", &paths[1])],
-        vec![source("replacement", &paths[3]), source("reserved", &paths[1])],
+        vec![
+            source("replacement", &paths[3]),
+            source("reserved", &paths[1]),
+        ],
     ] {
         assert!(
             matches!(
