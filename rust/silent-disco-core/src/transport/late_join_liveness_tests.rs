@@ -146,7 +146,8 @@ fn late_joined_probing_listener_survives_when_an_earlier_listener_goes_silent() 
         display_name: "Next song".to_owned(),
     });
     host.broadcast_control(&start).expect("start stream");
-    host.broadcast_control(&boundary).expect("schedule boundary");
+    host.broadcast_control(&boundary)
+        .expect("schedule boundary");
 
     // A second listener joins after both control events were broadcast.
     let mut active = factory
