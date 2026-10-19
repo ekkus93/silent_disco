@@ -117,6 +117,8 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
     // successor is projected as the leading upcoming entry. Neither a
     // duplicate nor a non-leading shadow may replace the accepted retarget.
     for invalid in [
+        vec![],
+        vec![source("replacement", &paths[3])],
         vec![source("reserved", &paths[1]), source("reserved", &paths[1])],
         vec![
             source("replacement", &paths[3]),
