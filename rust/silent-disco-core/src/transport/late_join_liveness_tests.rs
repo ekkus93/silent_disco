@@ -235,5 +235,4 @@ fn assert_only_probing_late_joiner_survives(
             received == &frame
         });
     }
-
 }
