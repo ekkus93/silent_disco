@@ -1,12 +1,8 @@
 name: Stage Block 46.3 release candidate
 
 on:
+  # Hardware staging is opt-in only and must never run on a push.
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    paths:
-      - ".github/workflows/block46-self-hosted-stage.yml"
 
 permissions:
   contents: read
@@ -22,7 +18,8 @@ env:
 jobs:
   stage:
     name: Build and stage exact-head Block 46.3 artifacts
-    runs-on: self-hosted
+    # Manual device acceptance requires the dedicated hardware runner.
+    runs-on: [self-hosted, Linux, X64, silent-disco]
     timeout-minutes: 90
 
     steps:
@@ -129,28 +126,13 @@ jobs:
             fi
           done
 
+          # Never install or remove system packages on the persistent CI host.
           if (( ${#missing_packages[@]} > 0 )); then
-            printf 'Missing desktop prerequisites: %s\n' "${missing_packages[*]}"
-            echo "Checking non-interactive sudo access because package installation is required."
-            sudo -n true || {
-              echo "Missing required packages and the self-hosted runner cannot install them because passwordless non-interactive sudo is unavailable." >&2
-              echo "Install the missing packages manually or configure passwordless sudo for the runner account, then retry." >&2
-              exit 1
-            }
-
-            echo "Updating apt package metadata."
-            timeout --signal=TERM --kill-after=30s 5m \
-              sudo -n env DEBIAN_FRONTEND=noninteractive \
-              apt-get -o DPkg::Lock::Timeout=60 update
-
-            echo "Installing missing desktop build prerequisites."
-            timeout --signal=TERM --kill-after=30s 10m \
-              sudo -n env DEBIAN_FRONTEND=noninteractive \
-              apt-get -o DPkg::Lock::Timeout=60 install --yes --no-install-recommends \
-                "${missing_packages[@]}"
-          else
-            echo "All desktop build prerequisites are already installed; sudo is not required."
+            printf 'Missing desktop prerequisites: %s\\n' "${missing_packages[*]}" >&2
+            echo "::error::Install prerequisites outside CI with host-owner approval, then dispatch again." >&2
+            exit 1
           fi
+          echo "All desktop prerequisites are already installed."
 
           sdkmanager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           echo "Accepting Android SDK licenses."

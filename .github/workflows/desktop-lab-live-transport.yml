@@ -30,7 +30,7 @@ env:
 jobs:
   proof:
     name: Deterministic Lab live transport proofs
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository

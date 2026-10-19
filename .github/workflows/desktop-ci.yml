@@ -31,8 +31,8 @@ env:
 jobs:
   frontend:
     name: Desktop frontend quality
-    # Trusted runs use the dedicated Linux runner; untrusted PRs use GitHub-hosted runners.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    # Ephemeral hosted workers keep heavy build output off the owner's SSD.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -145,8 +145,8 @@ jobs:
 
   rust:
     name: Desktop Rust quality
-    # Trusted runs use the dedicated Linux runner; untrusted PRs use GitHub-hosted runners.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-24.04"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    # Ephemeral hosted workers keep heavy build output off the owner's SSD.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -253,7 +253,7 @@ jobs:
   linux-bundle:
     name: Linux desktop bundle smoke
     # Use the dedicated runner for trusted CI; keep untrusted PRs isolated.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-22.04"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - name: Check out repository

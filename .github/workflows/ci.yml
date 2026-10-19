@@ -5,9 +5,15 @@ on:
   push:
     branches:
       - master
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     branches:
       - master
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 permissions:
   contents: read
@@ -19,8 +25,8 @@ concurrency:
 jobs:
   rust:
     name: Rust quality gates
-    # Protect the local runner from untrusted pull-request code.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    # All pushes and PRs compile on ephemeral GitHub-hosted runners.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -83,8 +89,8 @@ jobs:
 
   android:
     name: Android build, unit tests, and lint
-    # Trusted pushes use the dedicated runner; PRs remain GitHub-hosted.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    # Keep trusted pushes and PRs on isolated hosted workers.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
       release_candidate_upload: ${{ steps.android-release-candidate.outcome }}
@@ -185,7 +191,7 @@ jobs:
     name: Android candidate publication gate
     needs: android
     if: ${{ always() && needs.android.result == 'success' }}
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require uploaded release candidate
@@ -201,7 +207,7 @@ jobs:
   android-instrumentation:
     name: Android instrumentation tests
     needs: android
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Check out repository

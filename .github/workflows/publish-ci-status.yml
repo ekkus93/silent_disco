@@ -6,9 +6,8 @@ on:
       - CI
       - Desktop CI
       - Source file line limit
+    # Only publish completed outcomes; avoid redundant requested/in-progress runs.
     types:
-      - requested
-      - in_progress
       - completed
 
 permissions:
