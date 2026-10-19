@@ -175,6 +175,26 @@ fn late_joined_probing_listener_survives_when_an_earlier_listener_goes_silent() 
         });
     }
 
+    assert_only_probing_late_joiner_survives(
+        &mut *host,
+        &mut *active,
+        &session_id,
+        &active_id,
+        &clock,
+    );
+
+    active.shutdown().expect("active listener shutdown");
+    silent.shutdown().expect("silent listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+fn assert_only_probing_late_joiner_survives(
+    host: &mut dyn super::HostTransportNode,
+    active: &mut dyn super::ListenerTransportNode,
+    session_id: &crate::domain::SessionId,
+    active_id: &crate::domain::DeviceId,
+    clock: &ManualTransportClock,
+) {
     // The first peer never probes. Only the late joiner sends real socket
     // synchronization requests, which must refresh its own liveness without
     // accidentally keeping the silent peer authorized.
@@ -216,7 +236,4 @@ fn late_joined_probing_listener_survives_when_an_earlier_listener_goes_silent() 
         });
     }
 
-    active.shutdown().expect("active listener shutdown");
-    silent.shutdown().expect("silent listener shutdown");
-    host.shutdown().expect("host shutdown");
 }
