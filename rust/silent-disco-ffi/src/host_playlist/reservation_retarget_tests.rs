@@ -30,6 +30,7 @@ fn pcm_wav(frames: u32, sample: i16) -> Vec<u8> {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "one complete reserved producer/edit race with packet-level assertions")]
 fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_audio() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -59,13 +60,18 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
     let resume_rx = Mutex::new(resume_rx);
     let reservations = Arc::new(Mutex::new(Vec::<(String, u64)>::new()));
     let observed = Arc::clone(&reservations);
-    let reserve = Arc::new(move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
-        observed.lock().expect("reservation log")
-            .push((boundary.entry_id.clone(), boundary.first_sample_index.get()));
+    let reserve = Arc::new(
+        move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
+        observed
+                .lock()
+                .expect("reservation log")
+                .push((boundary.entry_id.clone(), boundary.first_sample_index.get()));
         if boundary.entry_id == "reserved" {
             entered_tx.send(()).expect("signal first reservation");
-            resume_rx.lock().expect("resume lock")
-                .recv_timeout(Duration::from_secs(5))
+            resume_rx
+                    .lock()
+                    .expect("resume lock")
+                    .recv_timeout(Duration::from_secs(5))
                 .map_err(|error| PacketizerWorkerError {
                     kind: PacketizerWorkerErrorKind::Cancelled,
                     message: format!("test reservation gate not released: {error}"),
@@ -78,7 +84,8 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
             });
         }
         Ok(())
-    });
+        },
+    );
     let stream = FfiHostPlaylistStreamer::open_with_reserver(
         "session-retarget".to_owned(),
         "stream-retarget".to_owned(),
@@ -91,15 +98,18 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
         Some(reserve),
     )
     .expect("open producer");
-    entered_rx.recv_timeout(Duration::from_secs(5))
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
         .expect("producer reached first reservation");
 
     // Preserve the already-chosen successor while replacing only the
     // uncommitted third track. The first boundary must never be duplicated.
-    stream.replace_upcoming(vec![
-        source("reserved", &paths[1]),
-        source("replacement", &paths[3]),
-    ]).expect("retarget later entry");
+    stream
+        .replace_upcoming(vec![
+            source("reserved", &paths[1]),
+            source("replacement", &paths[3]),
+        ])
+        .expect("retarget later entry");
     resume_tx.send(()).expect("release reservation");
 
     let mut next_sample = 0_u64;
@@ -108,14 +118,25 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
     loop {
         match stream.next_frame(5_000).expect("stream frame") {
             Some(FfiPlaylistFrame::Audio {
-                sequence, first_sample_index, samples_per_packet, payload, ..
+                sequence,
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
             }) => {
                 assert_eq!(first_sample_index, next_sample, "PCM gap or overlap");
-                let expected = if next_sample < 480 { 3_000 } else if next_sample < 960 {
+                let expected = if next_sample < 480 {
+                    3_000
+                } else if next_sample < 960 {
                     6_000
-                } else { 12_000 };
-                assert_eq!(i16::from_le_bytes([payload[0], payload[1]]), expected,
-                    "obsolete successor PCM reached the consumer");
+                } else {
+                    12_000
+                };
+                assert_eq!(
+                    i16::from_le_bytes([payload[0], payload[1]]),
+                    expected,
+                    "obsolete successor PCM reached the consumer"
+                );
                 if let Some(previous) = last_sequence {
                     assert_eq!(sequence, previous + 1, "sequence discontinuity");
                 }
@@ -123,10 +144,14 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
                 next_sample += u64::from(samples_per_packet);
             }
             Some(FfiPlaylistFrame::TrackBoundary {
-                entry_id, first_sample_index, ..
+                entry_id,
+                first_sample_index,
+                ..
             }) => {
-                assert_eq!(first_sample_index, next_sample,
-                    "boundary must match the audible sample clock");
+                assert_eq!(
+                    first_sample_index, next_sample,
+                    "boundary must match the audible sample clock"
+                );
                 boundaries.push((entry_id, first_sample_index));
             }
             Some(FfiPlaylistFrame::End) => break,
@@ -135,10 +160,13 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
     }
     assert_eq!(next_sample, 1_440);
     assert_eq!(last_sequence, Some(5));
-    assert_eq!(boundaries, vec![
-        ("reserved".to_owned(), 480),
-        ("replacement".to_owned(), 960),
-    ]);
+    assert_eq!(
+        boundaries,
+        vec![
+            ("reserved".to_owned(), 480),
+            ("replacement".to_owned(), 960),
+        ]
+    );
     assert_eq!(*reservations.lock().expect("reservation log"), boundaries);
     fs::remove_dir_all(root).expect("remove fixtures");
 }

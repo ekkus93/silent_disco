@@ -152,7 +152,7 @@ pub(super) fn run_playlist_packetizer_worker(
         // promotion share the updater mutex, preventing a lost retarget.
         while next.as_ref().is_some_and(|(_, opened)| opened.is_ok()) {
             let id = &next.as_ref().expect("checked").0.0;
-            if promote_current_entry_if_unmodified(updates, id)? {
+            if promote_current_entry_if_unmodified(updates, id, boundary_reserver.is_some())? {
                 break;
             }
             let mut final_track = false;
@@ -261,6 +261,7 @@ fn apply_playlist_update(
 fn promote_current_entry_if_unmodified(
     updates: &Mutex<PlaylistUpdateState>,
     entry_id: &str,
+    reserved: bool,
 ) -> Result<bool, PacketizerWorkerError> {
     let mut state = updates.lock().map_err(|_| {
         PacketizerWorkerError::new(
@@ -273,6 +274,7 @@ fn promote_current_entry_if_unmodified(
     }
     state.current_entry_id.clear();
     state.current_entry_id.push_str(entry_id);
+    state.reservation_shadow_entry_id = reserved.then(|| entry_id.to_owned());
     Ok(true)
 }
 
@@ -452,6 +454,7 @@ mod promotion_identity_tests {
     fn accepted_append_wins_before_final_eof_seal() {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
+            reservation_shadow_entry_id: None,
             pending: Some(vec![factory("appended")]),
             terminal: false,
         });
@@ -468,6 +471,7 @@ mod promotion_identity_tests {
     fn final_eof_seal_rejects_late_edits_before_worker_exit() {
         let state = Arc::new(Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
+            reservation_shadow_entry_id: None,
             pending: None,
             terminal: false,
         }));
@@ -491,6 +495,7 @@ mod promotion_identity_tests {
         for _ in 0..32 {
             let state = Arc::new(Mutex::new(PlaylistUpdateState {
                 current_entry_id: "one".to_owned(),
+                reservation_shadow_entry_id: None,
                 pending: None,
                 terminal: false,
             }));
@@ -531,17 +536,50 @@ mod promotion_identity_tests {
     }
 
     #[test]
+    fn reserved_shadow_retargets_later_entries_without_permitting_duplicates() {
+        let state = Arc::new(Mutex::new(PlaylistUpdateState {
+            current_entry_id: "reserved".to_owned(),
+            reservation_shadow_entry_id: Some("reserved".to_owned()),
+            pending: None,
+            terminal: false,
+        }));
+        let updater = super::super::StreamingPlaylistUpdater {
+            pending: Arc::clone(&state),
+        };
+        updater
+            .replace_upcoming(vec![factory("reserved"), factory("replacement")])
+            .expect("leading producer-reserved ID is a shadow, not a new entry");
+        let state_lock = state.lock().expect("state");
+        assert_eq!(
+            state_lock.pending.as_ref().expect("pending").iter()
+                .map(|entry| entry.entry_id.as_str()).collect::<Vec<_>>(),
+            ["replacement"]
+        );
+        drop(state_lock);
+        for invalid in [
+            vec![factory("reserved"), factory("reserved")],
+            vec![factory("replacement"), factory("reserved")],
+        ] {
+            assert_eq!(
+                updater.replace_upcoming(invalid).expect_err("duplicate current ID").kind,
+                PacketizerWorkerErrorKind::Packetize
+            );
+        }
+    }
+
+    #[test]
     fn accepted_retarget_wins_before_promotion() {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
+            reservation_shadow_entry_id: None,
             pending: Some(vec![factory("replacement"), factory("three")]),
             terminal: false,
         });
-        assert!(!promote_current_entry_if_unmodified(&state, "two").expect("pending edit"));
+        assert!(!promote_current_entry_if_unmodified(&state, "two", false).expect("pending edit"));
         assert_eq!(state.lock().expect("lock").current_entry_id, "one");
         let mut upcoming = VecDeque::new();
         apply_playlist_update(&state, &mut upcoming).expect("apply accepted edit");
-        assert!(promote_current_entry_if_unmodified(&state, "replacement").expect("promotion"));
+        assert!(promote_current_entry_if_unmodified(&state, "replacement", false).expect("promotion"));
         assert_eq!(state.lock().expect("lock").current_entry_id, "replacement");
         assert_eq!(
             upcoming

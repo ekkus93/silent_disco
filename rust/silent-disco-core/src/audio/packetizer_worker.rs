@@ -27,6 +27,8 @@ const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
 /// cannot race validation of a new live replacement.
 struct PlaylistUpdateState {
     current_entry_id: String,
+    // The actor may still project a producer-reserved boundary as upcoming.
+    reservation_shadow_entry_id: Option<String>,
     pending: Option<Vec<StreamingPlaylistTrackFactory>>,
     terminal: bool,
 }
@@ -170,7 +172,7 @@ impl StreamingPlaylistUpdater {
     /// Returns a worker error if the updater's shared state was poisoned.
     pub fn replace_upcoming(
         &self,
-        upcoming: Vec<StreamingPlaylistTrackFactory>,
+        mut upcoming: Vec<StreamingPlaylistTrackFactory>,
     ) -> Result<(), PacketizerWorkerError> {
         let mut state = self.pending.lock().map_err(|_| {
             PacketizerWorkerError::new(
@@ -183,6 +185,14 @@ impl StreamingPlaylistUpdater {
                 PacketizerWorkerErrorKind::Cancelled,
                 "playlist packetizer has already terminated",
             ));
+        }
+        // Preserve the already promoted, actor-reserved successor without
+        // queuing it twice. Only its leading shadow is permitted; arbitrary
+        // duplicates and direct-stream current-entry edits stay invalid.
+        if let Some(shadow) = state.reservation_shadow_entry_id.as_deref()
+            && upcoming.first().is_some_and(|entry| entry.entry_id == shadow)
+        {
+            upcoming.remove(0);
         }
         validate_playlist_entries(Some(&state.current_entry_id), &upcoming)?;
         state.pending = Some(upcoming);

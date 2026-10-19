@@ -111,6 +111,7 @@ impl StreamingPacketizeHandle {
         let playlist_updater = StreamingPlaylistUpdater {
             pending: Arc::new(Mutex::new(PlaylistUpdateState {
                 current_entry_id: current_entry_id.clone(),
+                reservation_shadow_entry_id: None,
                 pending: None,
                 terminal: false,
             })),
