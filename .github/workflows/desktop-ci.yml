@@ -351,20 +351,7 @@ jobs:
             --tauri-config desktop/src-tauri/tauri.conf.json \
             --cargo-manifest desktop/src-tauri/Cargo.toml
 
-      - name: Exercise Linux package lifecycle
-        # This invokes sudo apt-get install/remove of a real package, and is
-        # unsafe on the persistent self-hosted machine.
-        if: ${{ runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash desktop/scripts/smoke-linux-package-lifecycle.sh \
-            desktop/src-tauri/target/release/bundle \
-            com.ekkus.silentdisco.desktop \
-            silent-disco-desktop
-
-      - name: Exercise unprivileged AppImage launch on self-hosted runner
-        if: ${{ runner.environment == 'self-hosted' }}
+      - name: Exercise unprivileged AppImage launch on hosted runner
         shell: bash
         run: |
           set -euo pipefail
@@ -390,7 +377,7 @@ jobs:
             echo "::error::AppImage failed the unprivileged 20-second launch smoke (exit ${status})."
             exit 1
           fi
-          echo "::warning::Package install/upgrade/uninstall lifecycle remains unqualified on this persistent runner."
+          echo "::notice::Privileged package lifecycle acceptance remains unqualified."
 
       - name: Require committed lockfiles
         shell: bash

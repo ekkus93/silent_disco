@@ -206,7 +206,6 @@ jobs:
 
   android-instrumentation:
     name: Android instrumentation tests
-    needs: android
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -220,16 +219,6 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-
-      - name: Verify self-hosted KVM permissions
-        if: ${{ runner.environment == 'self-hosted' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
-            echo "::error::Runner must expose writable /dev/kvm to its Actions service user. Configure KVM permissions outside CI."
-            exit 1
-          fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -250,39 +239,9 @@ jobs:
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Reclaim unused Android SDK disk for emulator
-        # Never delete globally installed SDKs, apt caches, or other toolchains
-        # on the dedicated self-hosted runner.
-        if: ${{ runner.environment == 'github-hosted' }}
+      - name: Report emulator runner disk availability
         shell: bash
-        run: |
-          set -euo pipefail
-          echo 'Disk before Android SDK cleanup:'
-          df -h /
-
-          keep_only() {
-            local root="$1"
-            local keep="$2"
-            [[ -d "${root}" ]] || return 0
-            for entry in "${root}"/*; do
-              [[ -e "${entry}" ]] || continue
-              [[ "$(basename "${entry}")" == "${keep}" ]] && continue
-              sudo rm -rf "${entry}"
-            done
-          }
-
-          keep_only "${ANDROID_HOME}/ndk" "28.2.13676358"
-          keep_only "${ANDROID_HOME}/platforms" "android-36"
-          keep_only "${ANDROID_HOME}/build-tools" "36.0.0"
-          sudo rm -rf \
-            "${ANDROID_HOME}/system-images" \
-            "${ANDROID_HOME}/sources" \
-            "${ANDROID_HOME}/extras" \
-            /var/lib/apt/lists/* \
-            /var/cache/apt/archives/*
-
-          echo 'Disk after Android SDK cleanup:'
-          df -h /
+        run: df -h /
 
       - name: Run instrumentation suite on snapshot-free API 29 emulator
         id: connected-tests
