@@ -47,7 +47,7 @@ fn stop_clears_cached_boundaries_and_pause_before_late_join_or_replay() {
     for message in [&start, &next, &held] {
         cached.update(message);
     }
-    assert_eq!(cached.snapshot(), vec![start.clone(), next.clone(), held]);
+    assert!(cached.snapshot() == vec![start.clone(), next.clone(), held]);
 
     cached.update(&ControlMessage::Stop(Stop {
         session_id: session_id.clone(),
@@ -66,7 +66,7 @@ fn stop_clears_cached_boundaries_and_pause_before_late_join_or_replay() {
     // An explicit new Play/StreamStart may reuse the stream ID, but the
     // previously cached boundary and pause must still be absent.
     cached.update(&start);
-    assert_eq!(cached.snapshot(), vec![start]);
+    assert!(cached.snapshot() == vec![start]);
 }
 
 #[test]
@@ -90,9 +90,8 @@ fn new_stream_drops_old_boundaries_and_rejects_stale_control_events() {
         stream_id: old_id,
         host_stop_time_ms: MonotonicMillis::new(2_000),
     }));
-    assert_eq!(
-        cached.snapshot(),
-        vec![new_start.clone()],
+    assert!(
+        cached.snapshot() == vec![new_start.clone()],
         "late controls from a retired stream cannot change new-stream replay"
     );
 
@@ -103,5 +102,5 @@ fn new_stream_drops_old_boundaries_and_rejects_stale_control_events() {
     // A same-stream StreamStart is a resume: retain queued boundaries but
     // withdraw paused state before replaying to a newly admitted listener.
     cached.update(&new_start);
-    assert_eq!(cached.snapshot(), vec![new_start, new_boundary]);
+    assert!(cached.snapshot() == vec![new_start, new_boundary]);
 }
