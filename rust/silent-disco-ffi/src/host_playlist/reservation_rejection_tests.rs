@@ -92,3 +92,87 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
     );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[test]
+fn accepted_ffi_reservation_keeps_contiguous_audio() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-ffi-accepted-boundary-{unique}"));
+    fs::create_dir_all(&root).expect("fixture directory");
+    let first = root.join("current.wav");
+    let second = root.join("successor.wav");
+    fs::write(&first, wav_pcm16(480, 3_000)).expect("current fixture");
+    fs::write(&second, wav_pcm16(480, 6_000)).expect("successor fixture");
+
+    let reservations = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&reservations);
+    let reserve = Arc::new(move |boundary: &TrackBoundary, _: Arc<AtomicBool>| {
+        assert_eq!(boundary.entry_id, "successor");
+        assert_eq!(boundary.first_sample_index.get(), 480);
+        callback_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    let source = |entry_id: &str, path: &std::path::Path| FfiPlaylistSource {
+        entry_id: entry_id.to_owned(),
+        display_name: entry_id.to_owned(),
+        staged_path: path.to_string_lossy().into_owned(),
+    };
+    let stream = FfiHostPlaylistStreamer::open_with_reserver(
+        "session-accepted".to_owned(),
+        "stream-accepted".to_owned(),
+        5_000,
+        vec![source("current", &first), source("successor", &second)],
+        Some(reserve),
+    )
+    .expect("reserved playlist opens");
+
+    let mut next_sample = 0_u64;
+    let mut last_sequence = None;
+    let mut audio_count = 0;
+    let mut saw_boundary = false;
+    loop {
+        match stream.next_frame(2_000).expect("next accepted frame") {
+            Some(FfiPlaylistFrame::Audio {
+                sequence,
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
+            }) => {
+                assert_eq!(first_sample_index, next_sample, "inserted or overlapping PCM");
+                assert_eq!(
+                    i16::from_le_bytes([payload[0], payload[1]]),
+                    if saw_boundary { 6_000 } else { 3_000 }
+                );
+                if let Some(previous) = last_sequence {
+                    assert_eq!(sequence, previous + 1, "packet sequence must remain continuous");
+                }
+                last_sequence = Some(sequence);
+                next_sample += u64::from(samples_per_packet);
+                audio_count += 1;
+            }
+            Some(FfiPlaylistFrame::TrackBoundary {
+                entry_id,
+                first_sample_index,
+                ..
+            }) => {
+                assert!(!saw_boundary, "unexpected duplicate track boundary");
+                assert_eq!(entry_id, "successor");
+                assert_eq!(first_sample_index, next_sample);
+                assert_eq!(first_sample_index, 480);
+                saw_boundary = true;
+            }
+            Some(FfiPlaylistFrame::End) => break,
+            None => panic!("accepted playlist stalled"),
+        }
+    }
+    assert!(saw_boundary, "reserved transition must reach the listener");
+    assert_eq!(next_sample, 960);
+    assert_eq!(audio_count, 4);
+    assert_eq!(reservations.load(Ordering::SeqCst), 1);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
