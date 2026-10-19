@@ -65,8 +65,13 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
     let mut current_packets = 0;
     let failure = loop {
         match stream.next_frame(2_000) {
-            Ok(Some(FfiPlaylistFrame::Audio { first_sample_index, .. })) => {
-                assert!(first_sample_index < 480, "successor PCM escaped a rejected reservation");
+            Ok(Some(FfiPlaylistFrame::Audio {
+                first_sample_index, ..
+            })) => {
+                assert!(
+                    first_sample_index < 480,
+                    "successor PCM escaped a rejected reservation"
+                );
                 current_packets += 1;
             }
             Ok(Some(FfiPlaylistFrame::TrackBoundary { .. })) => {
@@ -80,6 +85,10 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
         }
     };
     assert!(current_packets > 0, "current source must remain audible");
-    assert!(failure.to_string().contains("stale successor reservation rejected"));
+    assert!(
+        failure
+            .to_string()
+            .contains("stale successor reservation rejected")
+    );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
