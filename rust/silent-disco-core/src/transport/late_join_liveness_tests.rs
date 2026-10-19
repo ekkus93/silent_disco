@@ -1,0 +1,105 @@
+//! Late-join replay and recurring liveness probes must coexist on the real
+//! socket transport. A silent peer is evicted, but an active listener must not
+//! lose its cached boundary while a slow playback/emulator test progresses.
+use std::sync::Arc;
+
+use crate::domain::{MonotonicMillis, SampleIndex, StreamId};
+use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest, TrackBoundary};
+
+use super::test_support::{
+    audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
+    wait_for_control_from, wait_for_frame, wait_for_frame_from,
+};
+use super::{
+    HostTransportConfig, ListenerTransportConfig, ManualTransportClock, SocketTransportFactory,
+    TransportChannel, TransportClock, TransportFactory,
+};
+
+#[test]
+fn late_joined_listener_keeps_replayed_boundary_while_sync_probes_refresh_liveness() {
+    let session_id = id_session("late-join-live-session");
+    let device_id = id_device("late-join-active-listener");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let factory = SocketTransportFactory;
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("host binds");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("listener connects");
+
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Late listener"))
+        .expect("join request");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let start = stream_start(&session_id, 1_000);
+    let upcoming = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "entry-next".to_owned(),
+        display_name: "Next song".to_owned(),
+    });
+    // Both events precede authorization, as in production late-join replay.
+    host.broadcast_control(&start).expect("cache stream start");
+    host.broadcast_control(&upcoming).expect("cache boundary");
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize late listener");
+    wait_for_authorized(&mut *host, &device_id);
+    for expected in [start, upcoming] {
+        wait_for_frame(&mut *listener, TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(expected.clone())
+        });
+    }
+
+    // Cross 12 seconds of virtual host time (past the eight-second silence
+    // threshold) while exercising the production two-second sync cadence.
+    // Each probe is observed by the actual host socket worker before
+    // advancing the clock again. Audio follows the replayed boundary without
+    // an erroneous disconnect or a false "zero peers" delivery report.
+    for round in 0..6_u64 {
+        clock.advance(2_000);
+        listener
+            .send_sync_request(&SyncRequest {
+                session_id: session_id.clone(),
+                correlation_id: round + 1,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(clock.now().get()),
+            })
+            .expect("listener synchronization probe");
+        wait_for_frame_from(
+            &mut *host,
+            TransportChannel::Synchronization,
+            &device_id,
+            |frame| {
+                matches!(
+                    frame,
+                    ProtocolFrame::SyncRequest(request)
+                        if request.correlation_id == round + 1
+                )
+            },
+        );
+        let frame = audio_frame(&session_id, 240 + round);
+        let sent = host.broadcast_audio(&frame).expect("host audio delivery");
+        assert_eq!(sent.report.intended_peers, 1);
+        assert_eq!(sent.report.successful_peers, 1);
+        wait_for_frame(&mut *listener, TransportChannel::Audio, |received| {
+            received == &frame
+        });
+    }
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}

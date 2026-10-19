@@ -14,6 +14,8 @@ mod handshake_tests;
 #[cfg(test)]
 mod liveness_tests;
 #[cfg(test)]
+mod late_join_liveness_tests;
+#[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod virtual_fault_tests;
