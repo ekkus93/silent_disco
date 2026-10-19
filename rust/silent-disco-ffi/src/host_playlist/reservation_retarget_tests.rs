@@ -1,5 +1,5 @@
 //! Producer-side reservation must preserve a committed successor while retargeting later songs.
-use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
+use super::{FfiHostPlaylistError, FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use silent_disco_core::audio::{PacketizerWorkerError, PacketizerWorkerErrorKind};
 use silent_disco_core::protocol::TrackBoundary;
 use std::fs;
@@ -113,6 +113,21 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
             source("replacement", &paths[3]),
         ])
         .expect("retarget later entry");
+    // Invalid live edits must fail transactionally while a producer-reserved
+    // successor is projected as the leading upcoming entry. Neither a
+    // duplicate nor a non-leading shadow may replace the accepted retarget.
+    for invalid in [
+        vec![source("reserved", &paths[1]), source("reserved", &paths[1])],
+        vec![source("replacement", &paths[3]), source("reserved", &paths[1])],
+    ] {
+        assert!(
+            matches!(
+                stream.replace_upcoming(invalid),
+                Err(FfiHostPlaylistError::Packetizer(_))
+            ),
+            "an invalid reserved-entry edit must be rejected"
+        );
+    }
     resume_tx.send(()).expect("release reservation");
 
     let mut next_sample = 0_u64;
