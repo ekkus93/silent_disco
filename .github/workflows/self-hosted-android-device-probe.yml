@@ -2,11 +2,6 @@ name: Self-hosted Android device probe
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    paths:
-      - ".github/workflows/self-hosted-android-device-probe.yml"
 
 permissions:
   contents: read
@@ -18,6 +13,8 @@ concurrency:
 jobs:
   probe:
     name: Probe attached physical Android device
+    # Explicit owner authorization is required before any physical-device probe.
+    if: ${{ false }}
     runs-on: self-hosted
     timeout-minutes: 10
 

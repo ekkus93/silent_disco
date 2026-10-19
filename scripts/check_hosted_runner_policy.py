@@ -12,7 +12,10 @@ import re
 import sys
 from pathlib import Path
 
-STAGE_WORKFLOW = "block46-self-hosted-stage.yml"
+HARDWARE_WORKFLOWS = frozenset({
+    "block46-self-hosted-stage.yml",
+    "self-hosted-android-device-probe.yml",
+})
 HOSTED_UBUNTU = re.compile(r"ubuntu-(?:latest|[0-9]{2}\.[0-9]{2})\Z")
 RUNS_ON = re.compile(r"^(?P<indent>[ \t]*)runs-on:[ \t]*(?P<value>.*?)[ \t]*$")
 DISABLED = "if: ${{ false }}"
@@ -29,7 +32,7 @@ def check_workflow(name: str, source: str) -> list[str]:
             runners.append((number, len(match.group("indent")), value))
 
     errors: list[str] = []
-    if name != STAGE_WORKFLOW:
+    if name not in HARDWARE_WORKFLOWS:
         for number, _, value in runners:
             if not HOSTED_UBUNTU.fullmatch(value):
                 errors.append(

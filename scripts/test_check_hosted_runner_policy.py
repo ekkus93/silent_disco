@@ -38,6 +38,25 @@ class HostedRunnerPolicyTests(unittest.TestCase):
         )
         self.assertTrue(check_workflow("block46-self-hosted-stage.yml", stage))
 
+    def test_disabled_device_probe_is_manual_only(self):
+        probe = (
+            "on:\n  workflow_dispatch:\njobs:\n  probe:\n"
+            "    if: ${{ false }}\n    runs-on: self-hosted\n"
+        )
+        self.assertEqual(check_workflow("self-hosted-android-device-probe.yml", probe), [])
+        self.assertTrue(
+            check_workflow(
+                "self-hosted-android-device-probe.yml",
+                probe.replace("if: ${{ false }}", "if: ${{ true }}"),
+            )
+        )
+        self.assertTrue(
+            check_workflow(
+                "self-hosted-android-device-probe.yml",
+                probe.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  push:\n"),
+            )
+        )
+
     def test_hardware_stage_cannot_add_a_second_job(self):
         stage = (
             "jobs:\n  stage:\n    if: ${{ false }}\n"
