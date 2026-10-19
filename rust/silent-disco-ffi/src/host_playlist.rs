@@ -420,4 +420,6 @@ fn frame_to_ffi(frame: ProtocolFrame) -> Result<FfiPlaylistFrame, FfiHostPlaylis
 }
 
 #[cfg(test)]
+mod reservation_rejection_tests;
+#[cfg(test)]
 mod tests;
