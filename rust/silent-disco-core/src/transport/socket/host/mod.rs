@@ -25,6 +25,9 @@ mod lookup;
 mod node;
 mod peer;
 
+#[cfg(test)]
+mod playback_controls_tests;
+
 const MAX_CACHED_TRACK_BOUNDARIES: usize = 100;
 
 #[derive(Default)]
