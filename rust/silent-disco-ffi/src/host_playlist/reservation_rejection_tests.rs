@@ -184,22 +184,29 @@ fn accepted_ffi_reservation_keeps_contiguous_audio() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-#[test]
-fn second_rejected_reservation_never_exposes_third_track_after_a_valid_boundary() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
+fn three_track_pcm_fixtures() -> (std::path::PathBuf, [std::path::PathBuf; 3]) {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
     let root = std::env::temp_dir().join(format!("sd-ffi-second-rejection-{unique}"));
     fs::create_dir_all(&root).expect("fixture directory");
-    let first = root.join("first.wav");
-    let second = root.join("second.wav");
-    let rejected = root.join("rejected.wav");
-    for (path, sample) in [(&first, 3_000), (&second, 6_000), (&rejected, 9_000)] {
+    let paths = [
+        root.join("first.wav"),
+        root.join("second.wav"),
+        root.join("rejected.wav"),
+    ];
+    for (path, sample) in paths.iter().zip([3_000, 6_000, 9_000]) {
         fs::write(path, wav_pcm16(480, sample)).expect("PCM fixture");
     }
+    (root, paths)
+}
+
+#[test]
+fn second_rejected_reservation_never_exposes_third_track_after_a_valid_boundary() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (root, [first, second, rejected]) = three_track_pcm_fixtures();
 
     let reservation_count = Arc::new(AtomicUsize::new(0));
     let callbacks = Arc::clone(&reservation_count);
@@ -286,6 +293,10 @@ fn second_rejected_reservation_never_exposes_third_track_after_a_valid_boundary(
     assert_eq!(next_sample, 960, "both accepted tracks must finish");
     assert_eq!(last_sequence, Some(3));
     assert_eq!(reservation_count.load(Ordering::SeqCst), 2);
-    assert!(failure.to_string().contains("third-track reservation rejected"));
+    assert!(
+        failure
+            .to_string()
+            .contains("third-track reservation rejected")
+    );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
