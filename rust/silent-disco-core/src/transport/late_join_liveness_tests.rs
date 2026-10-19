@@ -210,7 +210,7 @@ fn assert_only_probing_late_joiner_survives(
         wait_for_frame_from(
             &mut *host,
             TransportChannel::Synchronization,
-            &active_id,
+            active_id,
             |frame| {
                 matches!(
                     frame,
@@ -219,7 +219,7 @@ fn assert_only_probing_late_joiner_survives(
                 )
             },
         );
-        let frame = audio_frame(&session_id, 300 + round);
+        let frame = audio_frame(session_id, 300 + round);
         let delivery = host.broadcast_audio(&frame).expect("broadcast audio");
         if round < 3 {
             assert_eq!(delivery.report.intended_peers, 2);
