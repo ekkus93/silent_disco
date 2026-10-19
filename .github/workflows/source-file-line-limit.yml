@@ -28,3 +28,8 @@ jobs:
 
       - name: Enforce source file line limit
         run: bash scripts/check-source-file-line-counts.sh
+
+      - name: Enforce hosted Ubuntu workflow runner policy
+        run: |
+          python3 scripts/test_check_hosted_runner_policy.py
+          python3 scripts/check_hosted_runner_policy.py
