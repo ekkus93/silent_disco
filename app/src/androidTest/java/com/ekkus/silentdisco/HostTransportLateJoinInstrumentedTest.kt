@@ -6,8 +6,14 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
 import com.google.common.truth.Truth.assertThat
 import java.net.ServerSocket
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Test
 
@@ -20,6 +26,7 @@ class HostTransportLateJoinInstrumentedTest {
         val sessionId = "android-late-join-${System.nanoTime()}"
         val host = HostTransportController()
         var listener: FfiListenerTransportHandle? = null
+        var syncKeepAlive: Job? = null
         try {
             host.bind(
                 scope = this,
@@ -64,6 +71,21 @@ class HostTransportLateJoinInstrumentedTest {
                 FfiListenerTransportEvent.JoinApproved::class.java,
             )
             host.authorizeListener(join.deviceId, join.syncPort, join.audioPort)
+            // The production listener probes every two seconds. Without probes, the
+            // host correctly evicts an otherwise silent streaming peer after eight
+            // seconds; a slow emulator can exceed that window during assertions.
+            // Keep the real transport alive rather than weakening its liveness gate.
+            val activeListener = requireNotNull(listener)
+            syncKeepAlive = launch(Dispatchers.IO) {
+                var correlationId = 1uL
+                while (isActive) {
+                    activeListener.sendSyncRequest(
+                        correlationId++,
+                        (System.nanoTime() / 1_000_000L).toULong(),
+                    )
+                    delay(2_000L)
+                }
+            }
 
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted }).isEqualTo(
                 FfiListenerTransportEvent.StreamStarted(
@@ -108,6 +130,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(audio.hostPresentationTimeMs).isEqualTo(1_500uL)
             assertThat(audio.payload.toList()).containsExactlyElementsIn(ByteArray(240 * 2 * 2).toList())
         } finally {
+            syncKeepAlive?.cancelAndJoin()
             listener?.shutdown()
             host.close()
         }
