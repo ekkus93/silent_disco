@@ -3,8 +3,8 @@
 //! lose its cached boundary while a slow playback/emulator test progresses.
 use std::sync::Arc;
 
-use crate::domain::{MonotonicMillis, SampleIndex, StreamId};
-use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest, TrackBoundary};
+use crate::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
+use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest, SyncResponse, TrackBoundary};
 
 use super::test_support::{
     audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
@@ -91,6 +91,15 @@ fn late_joined_listener_keeps_replayed_boundary_while_sync_probes_refresh_livene
                 )
             },
         );
+        // Exercise the complete host-to-listener synchronization round trip,
+        // not merely the inbound probe that refreshes host liveness.
+        let response = sync_response(&session_id, round + 1, clock.now().get());
+        let sync_delivery = host.broadcast_sync(&response).expect("host sync response");
+        assert_eq!(sync_delivery.report.intended_peers, 1);
+        assert_eq!(sync_delivery.report.successful_peers, 1);
+        wait_for_frame(&mut *listener, TransportChannel::Synchronization, |received| {
+            received == &response
+        });
         let frame = audio_frame(&session_id, 240 + round);
         let sent = host.broadcast_audio(&frame).expect("host audio delivery");
         assert_eq!(sent.report.intended_peers, 1);
@@ -219,6 +228,14 @@ fn assert_only_probing_late_joiner_survives(
                 )
             },
         );
+        // The active late joiner must receive the reply even while the
+        // earlier peer is being evicted for silence.
+        let response = sync_response(session_id, round + 1, clock.now().get());
+        let sync_delivery = host.broadcast_sync(&response).expect("host sync response");
+        assert!(sync_delivery.report.successful_peers >= 1);
+        wait_for_frame(active, TransportChannel::Synchronization, |received| {
+            received == &response
+        });
         let frame = audio_frame(session_id, 300 + round);
         let delivery = host.broadcast_audio(&frame).expect("broadcast audio");
         if round < 3 {
@@ -235,4 +252,14 @@ fn assert_only_probing_late_joiner_survives(
             received == &frame
         });
     }
+}
+
+fn sync_response(session_id: &SessionId, correlation_id: u64, now_ms: u64) -> ProtocolFrame {
+    ProtocolFrame::SyncResponse(SyncResponse {
+        session_id: session_id.clone(),
+        correlation_id,
+        t1_listener_send_elapsed_ms: MonotonicMillis::new(now_ms),
+        t2_host_receive_elapsed_ms: MonotonicMillis::new(now_ms),
+        t3_host_send_elapsed_ms: MonotonicMillis::new(now_ms),
+    })
 }
