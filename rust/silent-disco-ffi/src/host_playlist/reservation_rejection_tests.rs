@@ -183,3 +183,109 @@ fn accepted_ffi_reservation_keeps_contiguous_audio() {
     assert_eq!(reservations.load(Ordering::SeqCst), 1);
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[test]
+fn second_rejected_reservation_never_exposes_third_track_after_a_valid_boundary() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-ffi-second-rejection-{unique}"));
+    fs::create_dir_all(&root).expect("fixture directory");
+    let first = root.join("first.wav");
+    let second = root.join("second.wav");
+    let rejected = root.join("rejected.wav");
+    for (path, sample) in [(&first, 3_000), (&second, 6_000), (&rejected, 9_000)] {
+        fs::write(path, wav_pcm16(480, sample)).expect("PCM fixture");
+    }
+
+    let reservation_count = Arc::new(AtomicUsize::new(0));
+    let callbacks = Arc::clone(&reservation_count);
+    let reserve = Arc::new(move |boundary: &TrackBoundary, _: Arc<AtomicBool>| {
+        assert_eq!(boundary.stream_id.to_string(), "stream-second-rejection");
+        match callbacks.fetch_add(1, Ordering::SeqCst) {
+            0 => {
+                assert_eq!(boundary.entry_id, "second");
+                assert_eq!(boundary.first_sample_index.get(), 480);
+                Ok(())
+            }
+            1 => {
+                assert_eq!(boundary.entry_id, "rejected");
+                assert_eq!(boundary.first_sample_index.get(), 960);
+                Err(PacketizerWorkerError {
+                    kind: PacketizerWorkerErrorKind::Packetize,
+                    message: "third-track reservation rejected".to_owned(),
+                })
+            }
+            _ => panic!("producer retried a rejected reservation"),
+        }
+    });
+    let source = |entry_id: &str, path: &std::path::Path| FfiPlaylistSource {
+        entry_id: entry_id.to_owned(),
+        display_name: entry_id.to_owned(),
+        staged_path: path.to_string_lossy().into_owned(),
+    };
+    let stream = FfiHostPlaylistStreamer::open_with_reserver(
+        "session-second-rejection".to_owned(),
+        "stream-second-rejection".to_owned(),
+        5_000,
+        vec![
+            source("first", &first),
+            source("second", &second),
+            source("rejected", &rejected),
+        ],
+        Some(reserve),
+    )
+    .expect("reserved playlist opens");
+
+    let mut next_sample = 0_u64;
+    let mut last_sequence = None;
+    let mut saw_second = false;
+    let failure = loop {
+        match stream.next_frame(2_000) {
+            Ok(Some(FfiPlaylistFrame::Audio {
+                sequence,
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
+            })) => {
+                assert_eq!(first_sample_index, next_sample, "PCM discontinuity");
+                assert!(first_sample_index < 960, "rejected successor PCM escaped");
+                assert_eq!(
+                    i16::from_le_bytes([payload[0], payload[1]]),
+                    if saw_second { 6_000 } else { 3_000 }
+                );
+                if let Some(previous) = last_sequence {
+                    assert_eq!(sequence, previous + 1, "sequence discontinuity");
+                }
+                last_sequence = Some(sequence);
+                next_sample += u64::from(samples_per_packet);
+            }
+            Ok(Some(FfiPlaylistFrame::TrackBoundary {
+                entry_id,
+                first_sample_index,
+                ..
+            })) => {
+                assert!(!saw_second, "rejected third boundary escaped");
+                assert_eq!(entry_id, "second");
+                assert_eq!(first_sample_index, 480);
+                assert_eq!(first_sample_index, next_sample);
+                saw_second = true;
+            }
+            Ok(Some(FfiPlaylistFrame::End)) => {
+                panic!("rejected reservation must not report clean queue end")
+            }
+            Ok(None) => panic!("second rejected reservation stalled"),
+            Err(error) => break error,
+        }
+    };
+    assert!(saw_second, "the first reserved boundary must be delivered");
+    assert_eq!(next_sample, 960, "both accepted tracks must finish");
+    assert_eq!(last_sequence, Some(3));
+    assert_eq!(reservation_count.load(Ordering::SeqCst), 2);
+    assert!(failure.to_string().contains("third-track reservation rejected"));
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
