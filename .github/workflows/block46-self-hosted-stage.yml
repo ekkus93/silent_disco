@@ -18,7 +18,10 @@ env:
 jobs:
   stage:
     name: Build and stage exact-head Block 46.3 artifacts
-    # Manual device acceptance requires the dedicated hardware runner.
+    # Explicit owner preference: no work on the persistent runner.
+    # Physical-device staging cannot run on GitHub-hosted workers; leave
+    # this job disabled until the owner explicitly reauthorizes local hardware.
+    if: ${{ false }}
     runs-on: [self-hosted, Linux, X64, silent-disco]
     timeout-minutes: 90
 

@@ -19,9 +19,8 @@ concurrency:
 jobs:
   source-file-line-limit:
     name: Tracked source files stay below 800 lines
-    # Never run untrusted pull-request code on the private self-hosted runner.
-    # Trusted master pushes and manual validation use the labeled local runner.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '"ubuntu-latest"' || '["self-hosted","Linux","X64","silent-disco"]') }}
+    # Keep push, manual, and PR validation off the owner's persistent machine.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check out repository
