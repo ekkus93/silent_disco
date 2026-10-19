@@ -113,12 +113,18 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
             source("replacement", &paths[3]),
         ])
         .expect("retarget later entry");
-    // Invalid live edits must fail transactionally while a producer-reserved
-    // successor is projected as the leading upcoming entry. Neither a
-    // duplicate nor a non-leading shadow may replace the accepted retarget.
+    // Once the actor has applied a reserved boundary, its snapshot omits
+    // that now-current entry. Both an empty upcoming list and a later
+    // replacement are valid: neither may remove the committed successor.
+    stream
+        .replace_upcoming(vec![])
+        .expect("actor snapshot after boundary application");
+    stream
+        .replace_upcoming(vec![source("replacement", &paths[3])])
+        .expect("restore the later replacement without the reserved shadow");
+    // Invalid live edits must fail transactionally. Neither a duplicate nor
+    // a non-leading reserved shadow may replace the accepted retarget.
     for invalid in [
-        vec![],
-        vec![source("replacement", &paths[3])],
         vec![source("reserved", &paths[1]), source("reserved", &paths[1])],
         vec![
             source("replacement", &paths[3]),
