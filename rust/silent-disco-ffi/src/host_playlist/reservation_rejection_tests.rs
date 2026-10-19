@@ -143,13 +143,20 @@ fn accepted_ffi_reservation_keeps_contiguous_audio() {
                 payload,
                 ..
             }) => {
-                assert_eq!(first_sample_index, next_sample, "inserted or overlapping PCM");
+                assert_eq!(
+                    first_sample_index, next_sample,
+                    "inserted or overlapping PCM"
+                );
                 assert_eq!(
                     i16::from_le_bytes([payload[0], payload[1]]),
                     if saw_boundary { 6_000 } else { 3_000 }
                 );
                 if let Some(previous) = last_sequence {
-                    assert_eq!(sequence, previous + 1, "packet sequence must remain continuous");
+                    assert_eq!(
+                        sequence,
+                        previous + 1,
+                        "packet sequence must remain continuous"
+                    );
                 }
                 last_sequence = Some(sequence);
                 next_sample += u64::from(samples_per_packet);
