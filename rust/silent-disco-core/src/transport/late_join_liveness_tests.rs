@@ -103,3 +103,119 @@ fn late_joined_listener_keeps_replayed_boundary_while_sync_probes_refresh_livene
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn late_joined_probing_listener_survives_when_an_earlier_listener_goes_silent() {
+    let session_id = id_session("late-join-mixed-liveness");
+    let silent_id = id_device("late-join-silent-peer");
+    let active_id = id_device("late-join-probing-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let factory = SocketTransportFactory;
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("host binds");
+    let mut silent = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                silent_id.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("first listener connects");
+    silent
+        .send_control(&join_request(&session_id, &silent_id, "Silent peer"))
+        .expect("first join request");
+    wait_for_control_from(&mut *host, &silent_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&silent_id, silent.local_routes())
+        .expect("authorize first listener");
+    wait_for_authorized(&mut *host, &silent_id);
+
+    let start = stream_start(&session_id, 1_000);
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "entry-next".to_owned(),
+        display_name: "Next song".to_owned(),
+    });
+    host.broadcast_control(&start).expect("start stream");
+    host.broadcast_control(&boundary).expect("schedule boundary");
+
+    // A second listener joins after both control events were broadcast.
+    let mut active = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                active_id.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("late listener connects");
+    active
+        .send_control(&join_request(&session_id, &active_id, "Probing peer"))
+        .expect("late join request");
+    wait_for_control_from(&mut *host, &active_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&active_id, active.local_routes())
+        .expect("authorize late listener");
+    wait_for_authorized(&mut *host, &active_id);
+    for expected in [start, boundary] {
+        wait_for_frame(&mut *active, TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(expected.clone())
+        });
+    }
+
+    // The first peer never probes. Only the late joiner sends real socket
+    // synchronization requests, which must refresh its own liveness without
+    // accidentally keeping the silent peer authorized.
+    for round in 0..6_u64 {
+        clock.advance(2_000);
+        active
+            .send_sync_request(&SyncRequest {
+                session_id: session_id.clone(),
+                correlation_id: round + 1,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(clock.now().get()),
+            })
+            .expect("active peer sync request");
+        wait_for_frame_from(
+            &mut *host,
+            TransportChannel::Synchronization,
+            &active_id,
+            |frame| {
+                matches!(
+                    frame,
+                    ProtocolFrame::SyncRequest(request)
+                        if request.correlation_id == round + 1
+                )
+            },
+        );
+        let frame = audio_frame(&session_id, 300 + round);
+        let delivery = host.broadcast_audio(&frame).expect("broadcast audio");
+        if round < 3 {
+            assert_eq!(delivery.report.intended_peers, 2);
+            assert_eq!(delivery.report.successful_peers, 2);
+        } else if round >= 4 {
+            assert_eq!(
+                delivery.report.intended_peers, 1,
+                "only the actively probing late joiner should remain"
+            );
+            assert_eq!(delivery.report.successful_peers, 1);
+        }
+        wait_for_frame(&mut *active, TransportChannel::Audio, |received| {
+            received == &frame
+        });
+    }
+
+    active.shutdown().expect("active listener shutdown");
+    silent.shutdown().expect("silent listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
