@@ -97,9 +97,11 @@ fn late_joined_listener_keeps_replayed_boundary_while_sync_probes_refresh_livene
         let sync_delivery = host.broadcast_sync(&response).expect("host sync response");
         assert_eq!(sync_delivery.report.intended_peers, 1);
         assert_eq!(sync_delivery.report.successful_peers, 1);
-        wait_for_frame(&mut *listener, TransportChannel::Synchronization, |received| {
-            received == &response
-        });
+        wait_for_frame(
+            &mut *listener,
+            TransportChannel::Synchronization,
+            |received| received == &response,
+        );
         let frame = audio_frame(&session_id, 240 + round);
         let sent = host.broadcast_audio(&frame).expect("host audio delivery");
         assert_eq!(sent.report.intended_peers, 1);
