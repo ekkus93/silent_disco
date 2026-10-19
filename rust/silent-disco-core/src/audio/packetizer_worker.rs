@@ -190,7 +190,9 @@ impl StreamingPlaylistUpdater {
         // queuing it twice. Only its leading shadow is permitted; arbitrary
         // duplicates and direct-stream current-entry edits stay invalid.
         if let Some(shadow) = state.reservation_shadow_entry_id.as_deref()
-            && upcoming.first().is_some_and(|entry| entry.entry_id == shadow)
+            && upcoming
+                .first()
+                .is_some_and(|entry| entry.entry_id == shadow)
         {
             upcoming.remove(0);
         }

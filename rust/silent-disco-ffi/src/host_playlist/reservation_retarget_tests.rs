@@ -30,7 +30,10 @@ fn pcm_wav(frames: u32, sample: i16) -> Vec<u8> {
 }
 
 #[test]
-#[expect(clippy::too_many_lines, reason = "one complete reserved producer/edit race with packet-level assertions")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one complete reserved producer/edit race with packet-level assertions"
+)]
 fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_audio() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -62,28 +65,28 @@ fn ffi_edit_behind_reserved_successor_keeps_its_boundary_and_retargets_later_aud
     let observed = Arc::clone(&reservations);
     let reserve = Arc::new(
         move |boundary: &TrackBoundary, cancelled: Arc<AtomicBool>| {
-        observed
+            observed
                 .lock()
                 .expect("reservation log")
                 .push((boundary.entry_id.clone(), boundary.first_sample_index.get()));
-        if boundary.entry_id == "reserved" {
-            entered_tx.send(()).expect("signal first reservation");
-            resume_rx
+            if boundary.entry_id == "reserved" {
+                entered_tx.send(()).expect("signal first reservation");
+                resume_rx
                     .lock()
                     .expect("resume lock")
                     .recv_timeout(Duration::from_secs(5))
-                .map_err(|error| PacketizerWorkerError {
+                    .map_err(|error| PacketizerWorkerError {
+                        kind: PacketizerWorkerErrorKind::Cancelled,
+                        message: format!("test reservation gate not released: {error}"),
+                    })?;
+            }
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(PacketizerWorkerError {
                     kind: PacketizerWorkerErrorKind::Cancelled,
-                    message: format!("test reservation gate not released: {error}"),
-                })?;
-        }
-        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(PacketizerWorkerError {
-                kind: PacketizerWorkerErrorKind::Cancelled,
-                message: "test producer cancelled".to_owned(),
-            });
-        }
-        Ok(())
+                    message: "test producer cancelled".to_owned(),
+                });
+            }
+            Ok(())
         },
     );
     let stream = FfiHostPlaylistStreamer::open_with_reserver(

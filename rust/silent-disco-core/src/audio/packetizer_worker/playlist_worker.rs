@@ -551,8 +551,13 @@ mod promotion_identity_tests {
             .expect("leading producer-reserved ID is a shadow, not a new entry");
         let state_lock = state.lock().expect("state");
         assert_eq!(
-            state_lock.pending.as_ref().expect("pending").iter()
-                .map(|entry| entry.entry_id.as_str()).collect::<Vec<_>>(),
+            state_lock
+                .pending
+                .as_ref()
+                .expect("pending")
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<Vec<_>>(),
             ["replacement"]
         );
         drop(state_lock);
@@ -561,7 +566,10 @@ mod promotion_identity_tests {
             vec![factory("replacement"), factory("reserved")],
         ] {
             assert_eq!(
-                updater.replace_upcoming(invalid).expect_err("duplicate current ID").kind,
+                updater
+                    .replace_upcoming(invalid)
+                    .expect_err("duplicate current ID")
+                    .kind,
                 PacketizerWorkerErrorKind::Packetize
             );
         }
@@ -579,7 +587,9 @@ mod promotion_identity_tests {
         assert_eq!(state.lock().expect("lock").current_entry_id, "one");
         let mut upcoming = VecDeque::new();
         apply_playlist_update(&state, &mut upcoming).expect("apply accepted edit");
-        assert!(promote_current_entry_if_unmodified(&state, "replacement", false).expect("promotion"));
+        assert!(
+            promote_current_entry_if_unmodified(&state, "replacement", false).expect("promotion")
+        );
         assert_eq!(state.lock().expect("lock").current_entry_id, "replacement");
         assert_eq!(
             upcoming
