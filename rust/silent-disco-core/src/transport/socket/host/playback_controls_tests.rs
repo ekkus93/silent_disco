@@ -191,11 +191,19 @@ fn late_join_replay_bounds_boundary_history_and_deduplicates_the_latest_event() 
             _ => panic!("late-join replay must contain only track boundaries after StreamStart"),
         })
         .collect();
-    assert_eq!(boundaries.first().expect("oldest retained").entry_id, "upcoming-2");
-    assert_eq!(boundaries.last().expect("newest retained").entry_id, "upcoming-101");
-    assert!(boundaries.windows(2).all(|pair| {
-        pair[0].first_sample_index.get() < pair[1].first_sample_index.get()
-    }));
+    assert_eq!(
+        boundaries.first().expect("oldest retained").entry_id,
+        "upcoming-2"
+    );
+    assert_eq!(
+        boundaries.last().expect("newest retained").entry_id,
+        "upcoming-101"
+    );
+    assert!(
+        boundaries
+            .windows(2)
+            .all(|pair| { pair[0].first_sample_index.get() < pair[1].first_sample_index.get() })
+    );
 }
 
 #[test]

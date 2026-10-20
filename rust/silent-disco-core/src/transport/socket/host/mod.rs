@@ -41,12 +41,9 @@ impl PlaybackControls {
     pub(super) fn update(&mut self, message: &ControlMessage) {
         match message {
             ControlMessage::StreamStart(start) => {
-                let is_resume = self
-                    .stream_start
-                    .as_ref()
-                    .is_some_and(|previous| {
-                        previous.stream_id == start.stream_id && previous.session_id == start.session_id
-                    });
+                let is_resume = self.stream_start.as_ref().is_some_and(|previous| {
+                    previous.stream_id == start.stream_id && previous.session_id == start.session_id
+                });
                 if !is_resume {
                     self.boundaries.clear();
                 }
@@ -54,12 +51,9 @@ impl PlaybackControls {
                 self.pause = None;
             }
             ControlMessage::TrackBoundary(boundary)
-                if self
-                    .stream_start
-                    .as_ref()
-                    .is_some_and(|start| {
-                        start.stream_id == boundary.stream_id && start.session_id == boundary.session_id
-                    }) =>
+                if self.stream_start.as_ref().is_some_and(|start| {
+                    start.stream_id == boundary.stream_id && start.session_id == boundary.session_id
+                }) =>
             {
                 // A delayed or conflicting retransmission must not rewind the
                 // timeline replayed to an authorized late-joining listener.
@@ -73,22 +67,16 @@ impl PlaybackControls {
                 }
             }
             ControlMessage::Pause(pause)
-                if self
-                    .stream_start
-                    .as_ref()
-                    .is_some_and(|start| {
-                        start.stream_id == pause.stream_id && start.session_id == pause.session_id
-                    }) =>
+                if self.stream_start.as_ref().is_some_and(|start| {
+                    start.stream_id == pause.stream_id && start.session_id == pause.session_id
+                }) =>
             {
                 self.pause = Some(pause.clone());
             }
             ControlMessage::Stop(stop)
-                if self
-                    .stream_start
-                    .as_ref()
-                    .is_some_and(|start| {
-                        start.stream_id == stop.stream_id && start.session_id == stop.session_id
-                    }) =>
+                if self.stream_start.as_ref().is_some_and(|start| {
+                    start.stream_id == stop.stream_id && start.session_id == stop.session_id
+                }) =>
             {
                 *self = Self::default();
             }
