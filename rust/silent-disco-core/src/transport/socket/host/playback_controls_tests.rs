@@ -104,3 +104,52 @@ fn new_stream_drops_old_boundaries_and_rejects_stale_control_events() {
     cached.update(&new_start);
     assert!(cached.snapshot() == vec![new_start, new_boundary]);
 }
+
+#[test]
+fn same_stream_id_in_new_session_rejects_stale_controls_and_drops_old_cache() {
+    let old_session = SessionId::new("replay-old-session").expect("old session ID");
+    let new_session = SessionId::new("replay-new-session").expect("new session ID");
+    let reused_stream = StreamId::new("replay-reused-stream").expect("stream ID");
+    let old_start = stream_start(&old_session, &reused_stream);
+    let old_boundary = boundary(&old_session, &reused_stream);
+    let old_pause = pause(&old_session, &reused_stream);
+    let new_start = stream_start(&new_session, &reused_stream);
+    let new_boundary = boundary(&new_session, &reused_stream);
+    let new_pause = pause(&new_session, &reused_stream);
+    let mut cached = PlaybackControls::default();
+
+    cached.update(&old_start);
+    cached.update(&old_boundary);
+    cached.update(&old_pause);
+    cached.update(&new_start);
+    assert!(
+        cached.snapshot() == vec![new_start.clone()],
+        "a reused stream ID must not carry boundaries or pause into a new session"
+    );
+
+    cached.update(&old_boundary);
+    cached.update(&old_pause);
+    cached.update(&ControlMessage::Stop(Stop {
+        session_id: old_session,
+        stream_id: reused_stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    }));
+    assert!(
+        cached.snapshot() == vec![new_start.clone()],
+        "delayed old-session controls must not mutate the new session"
+    );
+
+    cached.update(&new_boundary);
+    cached.update(&new_pause);
+    assert!(cached.snapshot() == vec![new_start.clone(), new_boundary, new_pause]);
+
+    cached.update(&ControlMessage::Stop(Stop {
+        session_id: new_session,
+        stream_id: reused_stream,
+        host_stop_time_ms: MonotonicMillis::new(3_000),
+    }));
+    assert!(
+        cached.snapshot().is_empty(),
+        "the active session's Stop must clear replay"
+    );
+}

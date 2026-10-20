@@ -44,7 +44,9 @@ impl PlaybackControls {
                 let is_resume = self
                     .stream_start
                     .as_ref()
-                    .is_some_and(|previous| previous.stream_id == start.stream_id);
+                    .is_some_and(|previous| {
+                        previous.stream_id == start.stream_id && previous.session_id == start.session_id
+                    });
                 if !is_resume {
                     self.boundaries.clear();
                 }
@@ -55,7 +57,9 @@ impl PlaybackControls {
                 if self
                     .stream_start
                     .as_ref()
-                    .is_some_and(|start| start.stream_id == boundary.stream_id) =>
+                    .is_some_and(|start| {
+                        start.stream_id == boundary.stream_id && start.session_id == boundary.session_id
+                    }) =>
             {
                 if self.boundaries.back().is_none_or(|previous| {
                     previous.entry_id != boundary.entry_id
@@ -71,7 +75,9 @@ impl PlaybackControls {
                 if self
                     .stream_start
                     .as_ref()
-                    .is_some_and(|start| start.stream_id == pause.stream_id) =>
+                    .is_some_and(|start| {
+                        start.stream_id == pause.stream_id && start.session_id == pause.session_id
+                    }) =>
             {
                 self.pause = Some(pause.clone());
             }
@@ -79,7 +85,9 @@ impl PlaybackControls {
                 if self
                     .stream_start
                     .as_ref()
-                    .is_some_and(|start| start.stream_id == stop.stream_id) =>
+                    .is_some_and(|start| {
+                        start.stream_id == stop.stream_id && start.session_id == stop.session_id
+                    }) =>
             {
                 *self = Self::default();
             }
