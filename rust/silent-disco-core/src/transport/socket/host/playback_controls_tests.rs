@@ -153,3 +153,47 @@ fn same_stream_id_in_new_session_rejects_stale_controls_and_drops_old_cache() {
         "the active session's Stop must clear replay"
     );
 }
+
+#[test]
+fn late_join_replay_bounds_boundary_history_and_deduplicates_the_latest_event() {
+    let session_id = SessionId::new("replay-history-session").expect("session ID");
+    let stream_id = StreamId::new("replay-history-stream").expect("stream ID");
+    let start = stream_start(&session_id, &stream_id);
+    let mut cached = PlaybackControls::default();
+    cached.update(&start);
+
+    // A long-running session may cross more tracks than a late joiner should
+    // replay. Keep the newest 100 boundaries in their original sample order.
+    for index in 0..(super::MAX_CACHED_TRACK_BOUNDARIES + 2) {
+        let event = ControlMessage::TrackBoundary(TrackBoundary {
+            session_id: session_id.clone(),
+            stream_id: stream_id.clone(),
+            first_sample_index: SampleIndex::new(
+                u64::try_from(index + 1).expect("bounded index") * 960,
+            ),
+            entry_id: format!("upcoming-{index}"),
+            display_name: format!("Upcoming track {index}"),
+        });
+        cached.update(&event);
+        if index == super::MAX_CACHED_TRACK_BOUNDARIES + 1 {
+            cached.update(&event); // retransmitting the tail is idempotent
+        }
+    }
+
+    let replay = cached.snapshot();
+    assert_eq!(replay.len(), 1 + super::MAX_CACHED_TRACK_BOUNDARIES);
+    assert!(replay.first() == Some(&start));
+    let boundaries: Vec<_> = replay
+        .iter()
+        .skip(1)
+        .map(|message| match message {
+            ControlMessage::TrackBoundary(boundary) => boundary,
+            _ => panic!("late-join replay must contain only track boundaries after StreamStart"),
+        })
+        .collect();
+    assert_eq!(boundaries.first().expect("oldest retained").entry_id, "upcoming-2");
+    assert_eq!(boundaries.last().expect("newest retained").entry_id, "upcoming-101");
+    assert!(boundaries.windows(2).all(|pair| {
+        pair[0].first_sample_index.get() < pair[1].first_sample_index.get()
+    }));
+}
