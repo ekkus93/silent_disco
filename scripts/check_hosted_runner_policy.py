@@ -51,51 +51,95 @@ def is_manual_only_hardware_workflow(source: str) -> bool:
     return saw_on and event_count == 1
 
 
+
 def check_workflow(name: str, source: str) -> list[str]:
-    """Return actionable policy violations for a single workflow."""
-    lines = source.splitlines()
-    runners: list[tuple[int, int, str]] = []
-    for number, line in enumerate(lines, start=1):
-        match = RUNS_ON.match(line)
-        if match:
-            value = match.group("value").split(" #", 1)[0].strip()
-            runners.append((number, len(match.group("indent")), value))
+    """Reject unsafe job declarations, including reusable-workflow bypasses.
 
+    Only literal, top-level jobs with exactly one runner are accepted.
+    Job-level reusable workflows are intentionally disallowed because their
+    runner selection cannot be verified by this file-level policy checker.
+    """
     errors: list[str] = []
-    if name not in HARDWARE_WORKFLOWS:
-        for number, _, value in runners:
-            if not HOSTED_UBUNTU.fullmatch(value):
-                errors.append(
-                    f"{name}:{number}: routine job must use a literal "
-                    f"GitHub-hosted Ubuntu runner, not {value!r}"
-                )
-        return errors
-
-    if len(runners) != 1:
-        errors.append(f"{name}: expected exactly one disabled hardware-stage job")
-    if not is_manual_only_hardware_workflow(source):
+    if name in HARDWARE_WORKFLOWS and not is_manual_only_hardware_workflow(source):
         errors.append(
             f"{name}: hardware stage must declare exactly one top-level "
             "'on: workflow_dispatch' event block (no inline or automatic triggers)"
         )
 
-    for number, indent, _ in runners:
-        disabled = False
-        for preceding in reversed(lines[: number - 1]):
-            stripped = preceding.strip()
-            level = len(preceding) - len(preceding.lstrip(" \t"))
-            if stripped and level < indent:
-                break
-            if level == indent and stripped.startswith("if:"):
-                disabled = stripped == DISABLED
-                break
-        if not disabled:
-            errors.append(
-                f"{name}:{number}: self-hosted hardware stage requires "
-                "a job-level 'if: ${{ false }}' before runs-on"
-            )
-    return errors
+    in_jobs = False
+    saw_jobs = False
+    job_count = 0
+    current_job: str | None = None
+    runner_values: list[str] = []
+    disabled = False
+    reusable = False
 
+    def finish_job() -> None:
+        if current_job is None:
+            return
+        if len(runner_values) != 1:
+            errors.append(
+                f"{name}: job {current_job!r} requires exactly one literal runs-on"
+            )
+        elif name not in HARDWARE_WORKFLOWS and not HOSTED_UBUNTU.fullmatch(runner_values[0]):
+            errors.append(
+                f"{name}: job {current_job!r} must use a literal "
+                f"GitHub-hosted Ubuntu runner, not {runner_values[0]!r}"
+            )
+        if reusable:
+            errors.append(
+                f"{name}: job {current_job!r} must not delegate runner "
+                "selection through a job-level reusable workflow"
+            )
+        if name in HARDWARE_WORKFLOWS and not disabled:
+            errors.append(
+                f"{name}: job {current_job!r} requires "
+                "a job-level 'if: \${{ false }}'"
+            )
+
+    for number, line in enumerate(source.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" \t"))
+        if indent == 0:
+            if in_jobs:
+                finish_job()
+            in_jobs = False
+            if re.match(r"^jobs\s*:", line):
+                if saw_jobs or not re.fullmatch(r"jobs:[ \t]*(?:#.*)?", line):
+                    errors.append(f"{name}:{number}: invalid or duplicate jobs mapping")
+                else:
+                    saw_jobs = True
+                    in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if indent == 2:
+            finish_job()
+            current_job = None
+            runner_values = []
+            disabled = False
+            reusable = False
+            if not re.fullmatch(r"[A-Za-z0-9_-]+:[ \t]*(?:#.*)?", stripped):
+                errors.append(f"{name}:{number}: nonliteral job declaration")
+                continue
+            current_job = stripped.split(":", 1)[0]
+            job_count += 1
+        elif indent == 4 and current_job is not None:
+            if stripped.startswith("runs-on:"):
+                runner_values.append(stripped.split(":", 1)[1].split(" #", 1)[0].strip())
+            elif stripped.startswith("uses:"):
+                reusable = True
+            elif stripped.startswith("if:"):
+                disabled = stripped == DISABLED
+    if in_jobs:
+        finish_job()
+    if not saw_jobs or job_count == 0:
+        errors.append(f"{name}: expected a nonempty literal jobs mapping")
+    if name in HARDWARE_WORKFLOWS and job_count != 1:
+        errors.append(f"{name}: expected exactly one disabled hardware-stage job")
+    return errors
 
 def main() -> int:
     directory = Path(__file__).resolve().parents[1] / ".github" / "workflows"

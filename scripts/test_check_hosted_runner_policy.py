@@ -9,12 +9,14 @@ class HostedRunnerPolicyTests(unittest.TestCase):
     def test_accepts_hosted_ubuntu_versions(self):
         for runner in ("ubuntu-24.04", "ubuntu-22.04", "ubuntu-latest"):
             with self.subTest(runner=runner):
-                self.assertEqual(check_workflow("ci.yml", f"    runs-on: {runner}\n"), [])
+                workflow = f"on:\n  push:\njobs:\n  quality:\n    runs-on: {runner}\n"
+                self.assertEqual(check_workflow("ci.yml", workflow), [])
 
     def test_rejects_self_hosted_and_dynamic_runners(self):
         for runner in ("[self-hosted, Linux, X64]", "self-hosted", "${{ matrix.runner }}"):
             with self.subTest(runner=runner):
-                self.assertTrue(check_workflow("ci.yml", f"    runs-on: {runner}\n"))
+                workflow = f"on:\n  push:\njobs:\n  quality:\n    runs-on: {runner}\n"
+                self.assertTrue(check_workflow("ci.yml", workflow))
 
     def test_hardware_stage_requires_job_level_false(self):
         stage = (
@@ -98,6 +100,54 @@ class HostedRunnerPolicyTests(unittest.TestCase):
         self.assertTrue(check_workflow("block46-self-hosted-stage.yml", stage.replace(
             "on:\n  # Keep the stage opt-in.\n  workflow_dispatch:\n", ""
         )))
+
+
+    def test_rejects_reusable_job_bypass_and_missing_runner(self):
+        reusable = """on:
+  push:
+jobs:
+  delegate:
+    uses: example/repo/.github/workflows/unsafe.yml@main
+"""
+        self.assertTrue(check_workflow("ci.yml", reusable))
+        self.assertTrue(check_workflow("ci.yml", """on:
+  push:
+jobs:
+  empty:
+    steps:
+      - run: echo no-runner
+"""))
+
+    def test_rejects_hardware_second_job_without_runner(self):
+        stage = """on:
+  workflow_dispatch:
+jobs:
+  stage:
+    if: \${{ false }}
+    runs-on: self-hosted
+  delegate:
+    if: \${{ false }}
+    uses: example/repo/.github/workflows/unsafe.yml@main
+"""
+        self.assertTrue(check_workflow("block46-self-hosted-stage.yml", stage))
+
+    def test_accepts_two_literal_hosted_jobs_and_rejects_duplicate_runners(self):
+        hosted = """on:
+  push:
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+  package:
+    runs-on: ubuntu-22.04
+"""
+        self.assertEqual(check_workflow("ci.yml", hosted), [])
+        self.assertTrue(check_workflow("ci.yml", hosted.replace(
+            "    runs-on: ubuntu-22.04",
+            "    runs-on: ubuntu-22.04\n    runs-on: self-hosted",
+        )))
+        self.assertTrue(check_workflow("ci.yml", "jobs: {unsafe: {runs-on: self-hosted}}\n"))
 
 
 if __name__ == "__main__":
