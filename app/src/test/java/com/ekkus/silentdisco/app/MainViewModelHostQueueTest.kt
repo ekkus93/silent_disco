@@ -1,11 +1,13 @@
 package com.ekkus.silentdisco.app
 
+import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -21,6 +23,11 @@ class MainViewModelHostQueueTest {
     // Construct the scheduler explicitly before setMain: probing the real Android
     // Main dispatcher during JVM test initialization requires an absent Looper.
     private val dispatcher = StandardTestDispatcher(TestCoroutineScheduler())
+    private var activeViewModel: MainViewModel? = null
+
+    private fun newHarness() = newTestMainViewModelHarness().also {
+        activeViewModel = it.viewModel
+    }
 
     @Before
     fun setUpMainDispatcher() {
@@ -29,12 +36,16 @@ class MainViewModelHostQueueTest {
 
     @After
     fun resetMainDispatcher() {
+        // Cancel long-lived discovery observers before restoring the unmocked
+        // Android Main dispatcher in JVM tests (which has no real Looper).
+        activeViewModel?.viewModelScope?.cancel()
+        activeViewModel = null
         Dispatchers.resetMain()
     }
 
     @Test
     fun liveQueueReorderAndRemovalSubmitTypedRustCommands() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
+        val harness = newHarness()
         harness.viewModel._uiState.value = AppUiState(
             hostPlaybackState = PlaybackState.PLAYING,
             hostQueue = listOf(
@@ -57,7 +68,7 @@ class MainViewModelHostQueueTest {
 
     @Test
     fun staleQueueCommandFailureRemainsVisibleToTheHost() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
+        val harness = newHarness()
         harness.hostCoreController.queueCommandFailure = IllegalStateException("queue changed")
 
         harness.viewModel.reorderLiveQueue(listOf("current", "next"))
@@ -69,7 +80,7 @@ class MainViewModelHostQueueTest {
 
     @Test
     fun hostPlaybackFailureUsesRetryableRustFailureEvent() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
+        val harness = newHarness()
         harness.viewModel.hostCoreController = harness.hostCoreController
 
         harness.viewModel.reportRustHostPlaybackFailure("Second song could not be decoded")
@@ -81,7 +92,7 @@ class MainViewModelHostQueueTest {
 
     @Test
     fun stoppingPlaybackCancelsPendingBoundaryApplicationsBeforeSubmittingStop() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
+        val harness = newHarness()
         val pendingBoundary = Job()
         harness.viewModel.hostBoundaryJobs[960L] = pendingBoundary
         harness.viewModel._uiState.value = AppUiState(hostPlaybackState = PlaybackState.PLAYING)
