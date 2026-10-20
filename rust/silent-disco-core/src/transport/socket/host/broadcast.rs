@@ -146,7 +146,10 @@ impl SocketHostTransport {
 /// against was only reproducible on real hardware (confirmed 2026-08-09:
 /// a real, older Android phone under real Wi-Fi load).
 fn is_datagram_send_timeout(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::WouldBlock
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
 }
 
 #[cfg(test)]
@@ -155,9 +158,12 @@ mod send_timeout_classification_tests {
     use std::io;
 
     #[test]
-    fn would_block_is_classified_as_a_send_timeout() {
+    fn would_block_and_timed_out_are_classified_as_send_timeouts() {
         assert!(is_datagram_send_timeout(&io::Error::from(
             io::ErrorKind::WouldBlock
+        )));
+        assert!(is_datagram_send_timeout(&io::Error::from(
+            io::ErrorKind::TimedOut
         )));
     }
 
