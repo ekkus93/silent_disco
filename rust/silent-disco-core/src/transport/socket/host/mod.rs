@@ -61,9 +61,10 @@ impl PlaybackControls {
                         start.stream_id == boundary.stream_id && start.session_id == boundary.session_id
                     }) =>
             {
+                // A delayed or conflicting retransmission must not rewind the
+                // timeline replayed to an authorized late-joining listener.
                 if self.boundaries.back().is_none_or(|previous| {
-                    previous.entry_id != boundary.entry_id
-                        || previous.first_sample_index != boundary.first_sample_index
+                    boundary.first_sample_index.get() > previous.first_sample_index.get()
                 }) {
                     self.boundaries.push_back(boundary.clone());
                     while self.boundaries.len() > MAX_CACHED_TRACK_BOUNDARIES {

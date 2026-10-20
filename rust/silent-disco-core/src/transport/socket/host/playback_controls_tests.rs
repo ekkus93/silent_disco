@@ -197,3 +197,36 @@ fn late_join_replay_bounds_boundary_history_and_deduplicates_the_latest_event() 
         pair[0].first_sample_index.get() < pair[1].first_sample_index.get()
     }));
 }
+
+#[test]
+fn late_join_replay_rejects_out_of_order_and_conflicting_boundary_retransmissions() {
+    let session_id = SessionId::new("replay-ordered-session").expect("session ID");
+    let stream_id = StreamId::new("replay-ordered-stream").expect("stream ID");
+    let start = stream_start(&session_id, &stream_id);
+    let earlier = boundary(&session_id, &stream_id);
+    let later = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        first_sample_index: SampleIndex::new(96_000),
+        entry_id: "later".to_owned(),
+        display_name: "Later song".to_owned(),
+    });
+    let conflicting = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id,
+        stream_id,
+        first_sample_index: SampleIndex::new(96_000),
+        entry_id: "conflicting".to_owned(),
+        display_name: "Conflicting song".to_owned(),
+    });
+    let mut cached = PlaybackControls::default();
+    cached.update(&start);
+    cached.update(&earlier);
+    cached.update(&later);
+    cached.update(&earlier); // retransmitted older boundary
+    cached.update(&conflicting); // duplicate sample time with another entry
+    cached.update(&later); // exact retransmission of last boundary
+    assert!(
+        cached.snapshot() == vec![start, earlier, later],
+        "a late joiner must receive strictly ordered, nonconflicting boundaries"
+    );
+}
