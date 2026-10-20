@@ -21,7 +21,6 @@ RUNS_ON = re.compile(r"^(?P<indent>[ \t]*)runs-on:[ \t]*(?P<value>.*?)[ \t]*$")
 DISABLED = "if: ${{ false }}"
 
 
-
 def is_manual_only_hardware_workflow(source: str) -> bool:
     """Fail closed on inline, non-manual, missing, or ambiguous event syntax.
 
@@ -36,20 +35,21 @@ def is_manual_only_hardware_workflow(source: str) -> bool:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        indent = len(line) - len(line.lstrip(" \\t"))
+        indent = len(line) - len(line.lstrip(" \t"))
         if indent == 0:
             in_events = False
-            if re.match(r"^on[ \\t]*:", line):
-                if saw_on or not re.fullmatch(r"on[ \\t]*:[ \\t]*(?:#.*)?", line):
+            if re.match(r"^on[ \t]*:", line):
+                if saw_on or not re.fullmatch(r"on[ \t]*:[ \t]*(?:#.*)?", line):
                     return False
                 saw_on = True
                 in_events = True
             continue
         if in_events and indent == 2:
-            if not re.fullmatch(r"workflow_dispatch:[ \\t]*(?:#.*)?", stripped):
+            if not re.fullmatch(r"workflow_dispatch:[ \t]*(?:#.*)?", stripped):
                 return False
             event_count += 1
     return saw_on and event_count == 1
+
 
 def check_workflow(name: str, source: str) -> list[str]:
     """Return actionable policy violations for a single workflow."""

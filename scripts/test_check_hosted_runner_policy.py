@@ -65,39 +65,38 @@ class HostedRunnerPolicyTests(unittest.TestCase):
         )
         self.assertTrue(check_workflow("block46-self-hosted-stage.yml", stage))
 
-
     def test_hardware_stage_rejects_inline_and_additional_events(self):
         base = (
-            "on:\\n  workflow_dispatch:\\njobs:\\n  stage:\\n"
-            "    if: ${{ false }}\\n"
-            "    runs-on: [self-hosted, Linux, X64, silent-disco]\\n"
+            "on:\n  workflow_dispatch:\njobs:\n  stage:\n"
+            "    if: ${{ false }}\n"
+            "    runs-on: [self-hosted, Linux, X64, silent-disco]\n"
         )
         self.assertEqual(check_workflow("block46-self-hosted-stage.yml", base), [])
         for trigger in (
-            "on: [workflow_dispatch, push]\\n",
-            "on: workflow_dispatch\\n",
-            "on: {workflow_dispatch: {}, push: {}}\\n",
-            "on:\\n  workflow_dispatch:\\n  pull_request_target:\\n",
-            "on:\\n  workflow_dispatch:\\n  repository_dispatch:\\n",
-            "on:\\n  workflow_dispatch:\\n  workflow_call:\\n",
-            "on:\\n  workflow_dispatch:\\n  schedule:\\n",
-            "on:\\n  workflow_dispatch:\\n  merge_group:\\n",
+            "on: [workflow_dispatch, push]\n",
+            "on: workflow_dispatch\n",
+            "on: {workflow_dispatch: {}, push: {}}\n",
+            "on:\n  workflow_dispatch:\n  pull_request_target:\n",
+            "on:\n  workflow_dispatch:\n  repository_dispatch:\n",
+            "on:\n  workflow_dispatch:\n  workflow_call:\n",
+            "on:\n  workflow_dispatch:\n  schedule:\n",
+            "on:\n  workflow_dispatch:\n  merge_group:\n",
         ):
             with self.subTest(trigger=trigger):
-                changed = base.replace("on:\\n  workflow_dispatch:\\n", trigger)
+                changed = base.replace("on:\n  workflow_dispatch:\n", trigger)
                 self.assertTrue(check_workflow("block46-self-hosted-stage.yml", changed))
 
     def test_manual_dispatch_inputs_are_allowed_but_no_missing_event(self):
         stage = (
-            "on:\\n  # Keep the stage opt-in.\\n"
-            "  workflow_dispatch:\\n"
-            "    inputs:\\n      reason:\\n        required: true\\n"
-            "jobs:\\n  stage:\\n    if: ${{ false }}\\n"
-            "    runs-on: self-hosted\\n"
+            "on:\n  # Keep the stage opt-in.\n"
+            "  workflow_dispatch:\n"
+            "    inputs:\n      reason:\n        required: true\n"
+            "jobs:\n  stage:\n    if: ${{ false }}\n"
+            "    runs-on: self-hosted\n"
         )
         self.assertEqual(check_workflow("block46-self-hosted-stage.yml", stage), [])
         self.assertTrue(check_workflow("block46-self-hosted-stage.yml", stage.replace(
-            "on:\\n  # Keep the stage opt-in.\\n  workflow_dispatch:\\n", ""
+            "on:\n  # Keep the stage opt-in.\n  workflow_dispatch:\n", ""
         )))
 
 
