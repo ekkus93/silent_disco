@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -17,7 +18,9 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModelHostQueueTest {
-    private val dispatcher = StandardTestDispatcher()
+    // Construct the scheduler explicitly before setMain: probing the real Android
+    // Main dispatcher during JVM test initialization requires an absent Looper.
+    private val dispatcher = StandardTestDispatcher(TestCoroutineScheduler())
 
     @Before
     fun setUpMainDispatcher() {
