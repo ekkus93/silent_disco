@@ -17,7 +17,6 @@ HARDWARE_WORKFLOWS = frozenset({
     "self-hosted-android-device-probe.yml",
 })
 HOSTED_UBUNTU = re.compile(r"ubuntu-(?:latest|[0-9]{2}\.[0-9]{2})\Z")
-RUNS_ON = re.compile(r"^(?P<indent>[ \t]*)runs-on:[ \t]*(?P<value>.*?)[ \t]*$")
 DISABLED = "if: ${{ false }}"
 
 
@@ -94,7 +93,7 @@ def check_workflow(name: str, source: str) -> list[str]:
         if name in HARDWARE_WORKFLOWS and not disabled:
             errors.append(
                 f"{name}: job {current_job!r} requires "
-                "a job-level 'if: \${{ false }}'"
+                "a job-level 'if: ${{ false }}'"
             )
 
     for number, line in enumerate(source.splitlines(), start=1):

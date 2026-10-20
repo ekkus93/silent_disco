@@ -123,13 +123,15 @@ jobs:
   workflow_dispatch:
 jobs:
   stage:
-    if: \${{ false }}
+    if: ${{ false }}
     runs-on: self-hosted
   delegate:
-    if: \${{ false }}
+    if: ${{ false }}
     uses: example/repo/.github/workflows/unsafe.yml@main
 """
-        self.assertTrue(check_workflow("block46-self-hosted-stage.yml", stage))
+        errors = check_workflow("block46-self-hosted-stage.yml", stage)
+        self.assertTrue(any("delegate" in issue and "runs-on" in issue for issue in errors))
+        self.assertTrue(any("delegate" in issue and "reusable" in issue for issue in errors))
 
     def test_accepts_two_literal_hosted_jobs_and_rejects_duplicate_runners(self):
         hosted = """on:
