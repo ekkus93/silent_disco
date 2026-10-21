@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{ControlMessage, Hello, ProtocolFrame};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from,
+    id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
@@ -94,7 +93,9 @@ fn pending_hello_cannot_overtake_or_follow_authorization_replay() {
             channel: TransportChannel::Control,
             frame: ProtocolFrame::Control(message),
             ..
-        } = listener.recv_event(remaining).expect("listener control event")
+        } = listener
+            .recv_event(remaining)
+            .expect("listener control event")
         {
             received.push(message);
         }
