@@ -108,9 +108,9 @@ impl PlaybackControls {
             // transport did not cache an earlier StreamStart. A Stop for a
             // different active stream, however, must not interrupt playback.
             ControlMessage::Stop(_) if self.stream_start.is_none() => true,
-            ControlMessage::TrackBoundary(_) | ControlMessage::Pause(_) | ControlMessage::Stop(_) => {
-                false
-            }
+            ControlMessage::TrackBoundary(_)
+            | ControlMessage::Pause(_)
+            | ControlMessage::Stop(_) => false,
             _ => true,
         }
     }
