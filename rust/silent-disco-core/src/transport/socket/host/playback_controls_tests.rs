@@ -292,21 +292,17 @@ fn same_stream_resume_does_not_replay_delayed_pauses() {
     cached.update(&start); // same-stream Resume withdraws the active pause
     cached.update(&older_pause); // delayed prior Pause
     cached.update(&first_pause); // duplicated prior Pause at the watermark
-    assert_eq!(
-        cached.snapshot(),
-        vec![start.clone(), next.clone()],
+    assert!(
+        cached.snapshot() == vec![start.clone(), next.clone()],
         "prior pauses must not reappear in late-join replay after Resume"
     );
 
     cached.update(&newer_pause); // a genuinely later Pause still takes effect
-    assert_eq!(
-        cached.snapshot(),
-        vec![start.clone(), next.clone(), newer_pause.clone()]
-    );
+    assert!(cached.snapshot() == vec![start.clone(), next.clone(), newer_pause.clone()]);
     cached.update(&start); // Resume again, retaining the newer fence
     cached.update(&first_pause);
     cached.update(&newer_pause);
-    assert_eq!(cached.snapshot(), vec![start, next]);
+    assert!(cached.snapshot() == vec![start, next]);
 }
 
 #[test]
@@ -328,9 +324,8 @@ fn replacement_stream_resets_pause_retransmission_fence() {
     cached.update(&current_start);
     cached.update(&late_previous_pause);
     cached.update(&current_pause);
-    assert_eq!(
-        cached.snapshot(),
-        vec![current_start, current_pause],
+    assert!(
+        cached.snapshot() == vec![current_start, current_pause],
         "new streams must accept their own first Pause even if its timestamp is lower"
     );
 }
