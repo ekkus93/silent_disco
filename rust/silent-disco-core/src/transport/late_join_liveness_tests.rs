@@ -308,12 +308,14 @@ fn late_joiner_receives_replayed_start_before_immediately_broadcast_boundary() {
         entry_id: "next-entry".to_owned(),
         display_name: "Next song".to_owned(),
     });
-    host.broadcast_control(&start).expect("cache current stream");
+    host.broadcast_control(&start)
+        .expect("cache current stream");
     host.authorize_peer(&device_id, listener.local_routes())
         .expect("authorize late joiner");
     // A live boundary immediately after authorization must follow the
     // replayed StreamStart on the listener's actual TCP control channel.
-    host.broadcast_control(&next).expect("broadcast live boundary");
+    host.broadcast_control(&next)
+        .expect("broadcast live boundary");
     wait_for_authorized(&mut *host, &device_id);
 
     let expected = [start, next];
@@ -321,12 +323,17 @@ fn late_joiner_receives_replayed_start_before_immediately_broadcast_boundary() {
     let mut received = Vec::new();
     while received.len() < expected.len() {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "missing control frame after authorization");
+        assert!(
+            !remaining.is_zero(),
+            "missing control frame after authorization"
+        );
         if let super::TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame: ProtocolFrame::Control(message),
             ..
-        } = listener.recv_event(remaining).expect("listener control event")
+        } = listener
+            .recv_event(remaining)
+            .expect("listener control event")
         {
             received.push(message);
         }
