@@ -115,6 +115,7 @@ pub struct Packetizer {
     carry: Vec<i16>,
     carry_first_sample_index: Option<u64>,
     contiguous_sample_cursor: u64,
+    expected_chunk_sample_index: Option<u64>,
     finished: bool,
 }
 
@@ -182,6 +183,7 @@ impl Packetizer {
             carry: Vec::new(),
             carry_first_sample_index: None,
             contiguous_sample_cursor: 0,
+            expected_chunk_sample_index: None,
             finished: false,
         })
     }
@@ -283,6 +285,25 @@ impl Packetizer {
         chunk: DecodedPcmChunk,
     ) -> Result<PacketizeOutcome, PacketizerError> {
         self.validate_chunk(&chunk)?;
+        let first = chunk.first_sample_index.get();
+        if self.expected_chunk_sample_index.is_some_and(|next| first != next) {
+            return Err(PacketizerError::new(
+                PacketizerErrorKind::InvalidConfiguration,
+                "decoded PCM chunks have a gap or overlap in sample indices",
+            ));
+        }
+        let frames = u64::try_from(chunk.frame_count()).map_err(|_| {
+            PacketizerError::new(
+                PacketizerErrorKind::InvalidConfiguration,
+                "decoded PCM chunk exceeds the sample timeline",
+            )
+        })?;
+        let next_sample_index = first.checked_add(frames).ok_or_else(|| {
+            PacketizerError::new(
+                PacketizerErrorKind::InvalidConfiguration,
+                "decoded PCM chunk sample index overflowed",
+            )
+        })?;
 
         if self.carry.is_empty() {
             self.carry_first_sample_index = Some(chunk.first_sample_index.get());
@@ -310,6 +331,7 @@ impl Packetizer {
             outcome.end_of_stream = true;
         }
 
+        self.expected_chunk_sample_index = Some(next_sample_index);
         Ok(outcome)
     }
 

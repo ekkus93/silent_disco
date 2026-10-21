@@ -757,3 +757,34 @@ fn a_default_duration_audio_datagram_fits_one_unfragmented_udp_payload() {
 
 #[path = "packetizer_tests_playlist.rs"]
 mod playlist_tests;
+
+#[test]
+fn direct_chunk_gap_or_overlap_is_rejected_without_corrupting_carry() {
+    let format = mono_format(1_000);
+    for invalid_index in [9_u64, 11] {
+        let mut packetizer = Packetizer::new(
+            SessionId::new("chunk-continuity").expect("session"),
+            StreamId::new("chunk-continuity").expect("stream"),
+            format,
+            20,
+            MonotonicMillis::new(1_000),
+        )
+        .expect("packetizer");
+        packetizer
+            .push_chunk(chunk(format, 0, vec![1; 10], false))
+            .expect("first chunk");
+        let error = packetizer
+            .push_chunk(chunk(format, invalid_index, vec![9; 10], false))
+            .expect_err("gap or overlap must not be packetized");
+        assert_eq!(error.kind, PacketizerErrorKind::InvalidConfiguration);
+        let resumed = packetizer
+            .push_chunk(chunk(format, 10, vec![2; 10], true))
+            .expect("valid continuation");
+        assert_eq!(resumed.frames.len(), 1);
+        let audio = audio_datagram(&resumed.frames[0]);
+        assert_eq!(audio.sequence.get(), 0);
+        assert_eq!(audio.first_sample_index.get(), 0);
+        assert_eq!(&audio.payload[..20], vec![1, 0].repeat(10));
+        assert_eq!(&audio.payload[20..], vec![2, 0].repeat(10));
+    }
+}
