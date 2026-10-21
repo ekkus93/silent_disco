@@ -102,6 +102,17 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound pending control message belongs to a different session",
             ));
         }
+        // Pending Hello/approval delivery must not interleave with late-join
+        // authorization replay. Acquire the ordering guard before looking up
+        // the peer so a concurrent authorization cannot insert its route and
+        // replay StreamStart ahead of this pending control frame.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
         let peer = self.pending_peer_for_device(device_id)?;
         let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
             .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;

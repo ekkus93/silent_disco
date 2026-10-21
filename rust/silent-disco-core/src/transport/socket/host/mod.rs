@@ -19,6 +19,8 @@ use super::super::{HostTransportConfig, HostTransportNode, TransportClock, Trans
 use super::shared::CounterState;
 
 mod authorization;
+#[cfg(test)]
+mod authorization_order_tests;
 mod bind;
 mod broadcast;
 mod lookup;
