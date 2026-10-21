@@ -528,7 +528,7 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
         .expect("authorize resumed listener");
     wait_for_authorized(&mut *host, &resumed_id);
 
-    assert_resumed_late_join_controls(&mut *resumed, [start, next]);
+    assert_resumed_late_join_controls(&mut *resumed, &[start, next]);
 
     resumed.shutdown().expect("resumed listener shutdown");
     paused.shutdown().expect("paused listener shutdown");
@@ -537,7 +537,7 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
 
 fn assert_resumed_late_join_controls(
     listener: &mut dyn super::ListenerTransportNode,
-    expected: [ControlMessage; 2],
+    expected: &[ControlMessage],
 ) {
     use std::time::{Duration, Instant};
 
@@ -558,7 +558,7 @@ fn assert_resumed_late_join_controls(
         }
     }
     assert!(
-        received == expected,
+        received.as_slice() == expected,
         "resumed late join must replay StreamStart and upcoming boundary without stale Pause"
     );
 }
