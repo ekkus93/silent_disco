@@ -441,3 +441,117 @@ fn late_joiner_receives_replayed_start_before_immediately_broadcast_boundary() {
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
+    use std::time::{Duration, Instant};
+
+    use crate::protocol::Pause;
+
+    let session_id = id_session("late-join-paused-stream");
+    let paused_id = id_device("late-join-paused-peer");
+    let resumed_id = id_device("late-join-resumed-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let factory = SocketTransportFactory;
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("host binds");
+
+    let start = stream_start(&session_id, 1_000);
+    let next = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "paused-next".to_owned(),
+        display_name: "Track after pause".to_owned(),
+    });
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        host_pause_time_ms: MonotonicMillis::new(1_500),
+    });
+    for control in [&start, &next, &pause] {
+        host.broadcast_control(control).expect("cache playback control");
+    }
+
+    let mut paused = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                paused_id.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("paused listener connects");
+    paused
+        .send_control(&join_request(&session_id, &paused_id, "Paused listener"))
+        .expect("paused listener join");
+    wait_for_control_from(&mut *host, &paused_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&paused_id, paused.local_routes())
+        .expect("authorize paused listener");
+    wait_for_authorized(&mut *host, &paused_id);
+    for expected in [&start, &next, &pause] {
+        wait_for_frame(&mut *paused, TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(expected.clone())
+        });
+    }
+
+    // A same-stream StreamStart resumes output: it retains the upcoming
+    // boundary but withdraws the stale pause from subsequent late joins.
+    host.broadcast_control(&start).expect("resume same stream");
+    wait_for_frame(&mut *paused, TransportChannel::Control, |frame| {
+        frame == &ProtocolFrame::Control(start.clone())
+    });
+
+    let mut resumed = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                resumed_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("resumed listener connects");
+    resumed
+        .send_control(&join_request(&session_id, &resumed_id, "Resumed listener"))
+        .expect("resumed listener join");
+    wait_for_control_from(&mut *host, &resumed_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&resumed_id, resumed.local_routes())
+        .expect("authorize resumed listener");
+    wait_for_authorized(&mut *host, &resumed_id);
+
+    let expected = [start, next];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while received.len() < expected.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "missing resumed late-join controls");
+        if let super::TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(message),
+            ..
+        } = resumed
+            .recv_event(remaining)
+            .expect("resumed listener control event")
+        {
+            received.push(message);
+        }
+    }
+    assert!(
+        received == expected,
+        "resumed late join must replay StreamStart and upcoming boundary without stale Pause"
+    );
+
+    resumed.shutdown().expect("resumed listener shutdown");
+    paused.shutdown().expect("paused listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
