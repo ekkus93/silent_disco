@@ -238,3 +238,31 @@ fn late_join_replay_rejects_out_of_order_and_conflicting_boundary_retransmission
         "a late joiner must receive strictly ordered, nonconflicting boundaries"
     );
 }
+
+#[test]
+fn late_join_replay_does_not_regress_to_an_older_pause_in_the_same_stream() {
+    let session_id = SessionId::new("replay-pause-order-session").expect("session ID");
+    let stream_id = StreamId::new("replay-pause-order-stream").expect("stream ID");
+    let start = stream_start(&session_id, &stream_id);
+    let earlier = pause(&session_id, &stream_id);
+    let later = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(2_000),
+    });
+    let conflicting = ControlMessage::Pause(Pause {
+        session_id,
+        stream_id,
+        host_pause_time_ms: MonotonicMillis::new(2_000),
+    });
+    let mut cached = PlaybackControls::default();
+    cached.update(&start);
+    cached.update(&earlier);
+    cached.update(&later);
+    cached.update(&earlier); // delayed earlier pause
+    cached.update(&conflicting); // repeated same-timestamp pause
+    assert!(
+        cached.snapshot() == vec![start, later],
+        "late join must observe the most recent pause time, never a stale replay"
+    );
+}

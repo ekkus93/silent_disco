@@ -73,7 +73,13 @@ impl PlaybackControls {
                     start.stream_id == pause.stream_id && start.session_id == pause.session_id
                 }) =>
             {
-                self.pause = Some(pause.clone());
+                // Replay must never regress to a delayed or conflicting older
+                // pause timestamp from this active stream.
+                if self.pause.as_ref().is_none_or(|previous| {
+                    pause.host_pause_time_ms.get() > previous.host_pause_time_ms.get()
+                }) {
+                    self.pause = Some(pause.clone());
+                }
             }
             ControlMessage::Stop(stop)
                 if self.stream_start.as_ref().is_some_and(|start| {
