@@ -107,6 +107,63 @@ fn audio_datagram(frame: &ProtocolFrame) -> &crate::protocol::AudioDatagram {
 }
 
 #[test]
+fn zero_channel_format_is_rejected_before_packetization() {
+    let invalid = AudioFormat {
+        channels: 0,
+        ..AudioFormat::CANONICAL
+    };
+    let error = Packetizer::new(
+        SessionId::new("session-zero-channels").expect("session"),
+        StreamId::new("stream-zero-channels").expect("stream"),
+        invalid,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect_err("zero channels must not create a zero-width packetizer");
+    assert_eq!(error.kind, PacketizerErrorKind::InvalidConfiguration);
+}
+
+#[test]
+fn malformed_stereo_chunk_does_not_corrupt_contiguous_timeline_or_carry() {
+    let format = AudioFormat::CANONICAL;
+    let mut packetizer = Packetizer::new(
+        SessionId::new("session-interleaved").expect("session"),
+        StreamId::new("stream-interleaved").expect("stream"),
+        format,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect("valid packetizer");
+    let initial = packetizer
+        .push_contiguous_chunk(chunk(format, 0, vec![1; 2 * 13], false))
+        .expect("initial valid frames");
+    assert!(initial.frames.is_empty());
+    assert_eq!(packetizer.next_contiguous_sample_index(), 13);
+
+    let malformed = chunk(format, 0, vec![2; 3], false);
+    let error = packetizer
+        .push_contiguous_chunk(malformed.clone())
+        .expect_err("partial interleaved frame must be rejected");
+    assert_eq!(error.kind, PacketizerErrorKind::InvalidConfiguration);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 13);
+    let error = packetizer
+        .push_chunk(malformed)
+        .expect_err("direct chunk API must reject the same malformed frame");
+    assert_eq!(error.kind, PacketizerErrorKind::InvalidConfiguration);
+
+    let valid = packetizer
+        .push_contiguous_chunk(chunk(format, 0, vec![3; 2 * 227], true))
+        .expect("valid continuation after rejected chunk");
+    assert!(valid.end_of_stream);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 240);
+    assert_eq!(valid.frames.len(), 1);
+    let audio = audio_datagram(&valid.frames[0]);
+    assert_eq!(audio.first_sample_index.get(), 0);
+    assert_eq!(audio.sequence.get(), 0);
+    assert_eq!(audio.payload.len(), 240 * 2 * 2);
+}
+
+#[test]
 fn emits_exact_full_width_packets_from_an_aligned_chunk() {
     let format = mono_format(1_000);
     let mut packetizer = Packetizer::new(

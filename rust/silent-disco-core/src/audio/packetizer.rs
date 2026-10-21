@@ -142,6 +142,12 @@ impl Packetizer {
                 "packet duration is outside the supported range",
             ));
         }
+        if format.samples_per_frame() == 0 {
+            return Err(PacketizerError::new(
+                PacketizerErrorKind::InvalidConfiguration,
+                "packetizer format must have at least one audio channel",
+            ));
+        }
         let samples_per_packet =
             u32::try_from(u64::from(format.sample_rate_hz) * u64::from(packet_duration_ms) / 1_000)
                 .unwrap_or(u32::MAX);
@@ -242,6 +248,7 @@ impl Packetizer {
         &mut self,
         mut chunk: DecodedPcmChunk,
     ) -> Result<PacketizeOutcome, PacketizerError> {
+        self.validate_chunk(&chunk)?;
         let frame_count = u64::try_from(chunk.frame_count()).map_err(|_| {
             PacketizerError::new(
                 PacketizerErrorKind::InvalidConfiguration,
@@ -277,18 +284,7 @@ impl Packetizer {
         &mut self,
         chunk: DecodedPcmChunk,
     ) -> Result<PacketizeOutcome, PacketizerError> {
-        if self.finished {
-            return Err(PacketizerError::new(
-                PacketizerErrorKind::AlreadyFinished,
-                "cannot push a chunk after end-of-stream was already emitted",
-            ));
-        }
-        if chunk.format != self.format {
-            return Err(PacketizerError::new(
-                PacketizerErrorKind::FormatMismatch,
-                "decoded chunk format no longer matches the packetizer's fixed format",
-            ));
-        }
+        self.validate_chunk(&chunk)?;
 
         if self.carry.is_empty() {
             self.carry_first_sample_index = Some(chunk.first_sample_index.get());
@@ -317,6 +313,28 @@ impl Packetizer {
         }
 
         Ok(outcome)
+    }
+
+    fn validate_chunk(&self, chunk: &DecodedPcmChunk) -> Result<(), PacketizerError> {
+        if self.finished {
+            return Err(PacketizerError::new(
+                PacketizerErrorKind::AlreadyFinished,
+                "cannot push a chunk after end-of-stream was already emitted",
+            ));
+        }
+        if chunk.format != self.format {
+            return Err(PacketizerError::new(
+                PacketizerErrorKind::FormatMismatch,
+                "decoded chunk format no longer matches the packetizer's fixed format",
+            ));
+        }
+        if chunk.frames.len() % self.format.samples_per_frame() != 0 {
+            return Err(PacketizerError::new(
+                PacketizerErrorKind::InvalidConfiguration,
+                "decoded PCM chunk does not contain complete interleaved sample frames",
+            ));
+        }
+        Ok(())
     }
 
     fn advance_carry_start(&mut self, samples_per_packet: u32) {
