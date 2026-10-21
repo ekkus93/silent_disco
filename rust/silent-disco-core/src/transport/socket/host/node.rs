@@ -69,6 +69,15 @@ impl HostTransportNode for SocketHostTransport {
     }
 
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError> {
+        // Serialize removal with live and replayed control delivery, so a
+        // targeted sender cannot transmit after the route has been retired.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
         let route = self
             .routes
             .lock()

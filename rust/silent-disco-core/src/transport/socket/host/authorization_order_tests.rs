@@ -313,9 +313,9 @@ fn targeted_control_rechecks_authorized_route_after_delivery_gate() {
         approval_required: false,
     });
     // Hold the same mutex that serializes targeted sends and playback replay.
-    // Retire the route before releasing it, as disconnect_peer can do without
-    // acquiring the delivery mutex. The waiting send must look up the route
-    // again after the guard, rather than using an old selected Arc.
+    // Simulate independent route retirement while targeted delivery waits.
+    // The sender must look up the route only after acquiring the ordering
+    // gate, rather than caching an Arc before authorization changes.
     let route_registry = Arc::clone(&host.routes);
     let gate = Arc::clone(&host.control_delivery);
     let guard = gate.lock().expect("delivery ordering lock");
@@ -366,6 +366,93 @@ fn targeted_control_rechecks_authorized_route_after_delivery_gate() {
         host
     });
 
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn disconnect_waits_for_control_delivery_gate_before_removing_route() {
+    let session_id = id_session("disconnect-delivery-serialization");
+    let device_id = id_device("disconnect-delivery-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session_id.clone()),
+        clock.clone(),
+    )
+    .expect("host binds");
+    let factory = SocketTransportFactory;
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Disconnect listener"))
+        .expect("join request");
+    wait_for_control_from(&mut host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize listener");
+    wait_for_authorized(&mut host, &device_id);
+
+    // Hold the delivery gate while a concurrent disconnect is attempted.
+    let gate = Arc::clone(&host.control_delivery);
+    let routes = Arc::clone(&host.routes);
+    let guard = gate.lock().expect("delivery ordering lock");
+    let mut host = thread::scope(|scope| {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let target = device_id.clone();
+        scope.spawn(move || {
+            started_tx.send(()).expect("signal disconnect start");
+            let result = host.disconnect_peer(&target);
+            assert!(
+                done_tx.send((host, result)).is_ok(),
+                "return host and disconnect result"
+            );
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("disconnect starts");
+        assert!(
+            matches!(
+                done_rx.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "disconnect must wait for in-flight control delivery"
+        );
+        assert!(
+            routes.lock().expect("authorized routes").contains_key(&device_id),
+            "disconnect must not remove the route before the gate is released"
+        );
+        drop(guard);
+        let (host, result) = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("disconnect completes after delivery");
+        result.expect("disconnect authorized peer");
+        host
+    });
+
+    assert!(
+        !host.routes.lock().expect("authorized routes").contains_key(&device_id),
+        "disconnect must remove the route"
+    );
+    let stale = ControlMessage::Hello(Hello {
+        session_id,
+        session_name: "Disconnected target".to_owned(),
+        host_name: "Host".to_owned(),
+        approval_required: false,
+    });
+    assert!(
+        host.send_control(&device_id, &stale).is_err(),
+        "targeted control after disconnect must fail"
+    );
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
