@@ -444,8 +444,6 @@ fn late_joiner_receives_replayed_start_before_immediately_broadcast_boundary() {
 
 #[test]
 fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
-    use std::time::{Duration, Instant};
-
     use crate::protocol::Pause;
 
     let session_id = id_session("late-join-paused-stream");
@@ -530,7 +528,19 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
         .expect("authorize resumed listener");
     wait_for_authorized(&mut *host, &resumed_id);
 
-    let expected = [start, next];
+    assert_resumed_late_join_controls(&mut *resumed, [start, next]);
+
+    resumed.shutdown().expect("resumed listener shutdown");
+    paused.shutdown().expect("paused listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+fn assert_resumed_late_join_controls(
+    listener: &mut dyn super::ListenerTransportNode,
+    expected: [ControlMessage; 2],
+) {
+    use std::time::{Duration, Instant};
+
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut received = Vec::new();
     while received.len() < expected.len() {
@@ -540,7 +550,7 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
             channel: TransportChannel::Control,
             frame: ProtocolFrame::Control(message),
             ..
-        } = resumed
+        } = listener
             .recv_event(remaining)
             .expect("resumed listener control event")
         {
@@ -551,8 +561,4 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
         received == expected,
         "resumed late join must replay StreamStart and upcoming boundary without stale Pause"
     );
-
-    resumed.shutdown().expect("resumed listener shutdown");
-    paused.shutdown().expect("paused listener shutdown");
-    host.shutdown().expect("host shutdown");
 }
