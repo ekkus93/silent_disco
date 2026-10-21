@@ -286,7 +286,10 @@ impl Packetizer {
     ) -> Result<PacketizeOutcome, PacketizerError> {
         self.validate_chunk(&chunk)?;
         let first = chunk.first_sample_index.get();
-        if self.expected_chunk_sample_index.is_some_and(|next| first != next) {
+        if self
+            .expected_chunk_sample_index
+            .is_some_and(|next| first != next)
+        {
             return Err(PacketizerError::new(
                 PacketizerErrorKind::InvalidConfiguration,
                 "decoded PCM chunks have a gap or overlap in sample indices",
