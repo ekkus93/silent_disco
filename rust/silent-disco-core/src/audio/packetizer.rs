@@ -328,7 +328,7 @@ impl Packetizer {
                 "decoded chunk format no longer matches the packetizer's fixed format",
             ));
         }
-        if chunk.frames.len() % self.format.samples_per_frame() != 0 {
+        if !chunk.frames.len().is_multiple_of(self.format.samples_per_frame()) {
             return Err(PacketizerError::new(
                 PacketizerErrorKind::InvalidConfiguration,
                 "decoded PCM chunk does not contain complete interleaved sample frames",
