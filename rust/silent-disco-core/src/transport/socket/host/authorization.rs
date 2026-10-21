@@ -51,6 +51,16 @@ impl SocketHostTransport {
                 "datagram routes must use the authenticated control peer address",
             ));
         }
+        // The cache snapshot and route registration must be atomic relative to
+        // live control delivery; otherwise a broadcast can race ahead of the
+        // replayed StreamStart or be delivered twice.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
         let mut route_registry = self.routes.lock().map_err(|_| {
             TransportError::new(
                 TransportErrorKind::WorkerPanicked,

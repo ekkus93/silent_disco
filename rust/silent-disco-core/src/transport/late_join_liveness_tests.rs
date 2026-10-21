@@ -265,3 +265,77 @@ fn sync_response(session_id: &SessionId, correlation_id: u64, now_ms: u64) -> Pr
         t3_host_send_elapsed_ms: MonotonicMillis::new(now_ms),
     })
 }
+
+#[test]
+fn late_joiner_receives_replayed_start_before_immediately_broadcast_boundary() {
+    use std::time::{Duration, Instant};
+
+    use crate::domain::StreamId;
+    use crate::protocol::TrackBoundary;
+
+    let session_id = id_session("late-join-control-order");
+    let device_id = id_device("late-join-control-order-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let factory = SocketTransportFactory;
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("host binds");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Late listener"))
+        .expect("join request");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let start = stream_start(&session_id, 1_000);
+    let next = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "next-entry".to_owned(),
+        display_name: "Next song".to_owned(),
+    });
+    host.broadcast_control(&start).expect("cache current stream");
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize late joiner");
+    // A live boundary immediately after authorization must follow the
+    // replayed StreamStart on the listener's actual TCP control channel.
+    host.broadcast_control(&next).expect("broadcast live boundary");
+    wait_for_authorized(&mut *host, &device_id);
+
+    let expected = [start, next];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while received.len() < expected.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "missing control frame after authorization");
+        if let super::TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(message),
+            ..
+        } = listener.recv_event(remaining).expect("listener control event")
+        {
+            received.push(message);
+        }
+    }
+    assert!(
+        received == expected,
+        "late-join replay must precede a live boundary without duplication"
+    );
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}

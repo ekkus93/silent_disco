@@ -132,6 +132,16 @@ impl HostTransportNode for SocketHostTransport {
             ));
         }
         let peer = self.peer_for_device(device_id)?;
+        // Serialize with late-join authorization and its cached replay. Without
+        // this guard, a newly registered peer can receive a live boundary
+        // before its cached StreamStart, or receive the boundary twice.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
         let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
             .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
         let result = peer.sender.send(bytes);
@@ -159,6 +169,16 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound control message belongs to a different session",
             ));
         }
+        // Serialize with late-join authorization and its cached replay. Without
+        // this guard, a newly registered peer can receive a live boundary
+        // before its cached StreamStart, or receive the boundary twice.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
         let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
             .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
         self.playback_controls

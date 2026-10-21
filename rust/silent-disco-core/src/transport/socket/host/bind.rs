@@ -229,6 +229,7 @@ impl SocketHostTransport {
             counters,
             peers,
             routes,
+            control_delivery: Mutex::new(()),
             playback_controls: Mutex::new(super::PlaybackControls::default()),
             sync_socket,
             audio_socket,
