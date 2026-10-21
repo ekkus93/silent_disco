@@ -267,6 +267,101 @@ fn sync_response(session_id: &SessionId, correlation_id: u64, now_ms: u64) -> Pr
 }
 
 #[test]
+fn late_join_after_stop_and_replay_does_not_receive_retired_track_boundary() {
+    use std::time::{Duration, Instant};
+
+    use crate::protocol::Stop;
+
+    let session_id = id_session("late-join-stop-replay");
+    let device_id = id_device("late-join-stop-replay-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let factory = SocketTransportFactory;
+    let mut host = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("host binds");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Replay listener"))
+        .expect("join request");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let retired_start = stream_start(&session_id, 1_000);
+    let retired_boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "retired-next".to_owned(),
+        display_name: "Retired song".to_owned(),
+    });
+    host.broadcast_control(&retired_start)
+        .expect("cache first stream");
+    host.broadcast_control(&retired_boundary)
+        .expect("cache retired boundary");
+    host.broadcast_control(&ControlMessage::Stop(Stop {
+        session_id: session_id.clone(),
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    }))
+    .expect("stop first stream");
+
+    // Explicit replay reuses the stream ID but must not replay its old queue.
+    let replay_start = stream_start(&session_id, 3_000);
+    host.broadcast_control(&replay_start)
+        .expect("cache replayed stream");
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize after replay");
+    let live_boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id,
+        stream_id: StreamId::new("stream-1").expect("stream ID"),
+        first_sample_index: SampleIndex::new(960),
+        entry_id: "replayed-next".to_owned(),
+        display_name: "Replayed next song".to_owned(),
+    });
+    host.broadcast_control(&live_boundary)
+        .expect("broadcast replay successor");
+    wait_for_authorized(&mut *host, &device_id);
+
+    let expected = [replay_start, live_boundary];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while received.len() < expected.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "missing replay controls");
+        if let super::TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(message),
+            ..
+        } = listener
+            .recv_event(remaining)
+            .expect("listener replay control event")
+        {
+            received.push(message);
+        }
+    }
+    assert!(
+        received == expected,
+        "late join must not replay a stopped stream's old track boundary"
+    );
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
 fn late_joiner_receives_replayed_start_before_immediately_broadcast_boundary() {
     use std::time::{Duration, Instant};
 
