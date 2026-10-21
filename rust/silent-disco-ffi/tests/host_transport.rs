@@ -455,6 +455,18 @@ fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
     });
     assert_sync_response_matches(&sync_response);
 
+    // A track boundary is only valid after StreamStart has established the
+    // active timeline. Exercise that real protocol sequence rather than
+    // relying on the transport to forward an orphan boundary.
+    let stream_start_delivery = host
+        .broadcast_stream_start("stream-1".to_owned(), 1_000, 48_000, 2, 960, None, None)
+        .expect("broadcast stream start");
+    assert_eq!(stream_start_delivery.intended_peers, 1);
+    assert_eq!(stream_start_delivery.successful_peers, 1);
+    poll_listener_until(&listener, |event| {
+        matches!(event, FfiListenerTransportEvent::StreamStarted { .. })
+    });
+
     assert_track_boundary_broadcast(&host, &listener);
 
     // PCM16 stereo payload size must equal samples_per_packet * channels * 2 bytes.
