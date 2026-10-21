@@ -68,6 +68,8 @@ mod jitter_buffer_tests;
 #[cfg(test)]
 mod packetizer_tests;
 #[cfg(test)]
+mod packetizer_timing_tests;
+#[cfg(test)]
 mod ramp_tests;
 #[cfg(test)]
 mod render_ring_tests;

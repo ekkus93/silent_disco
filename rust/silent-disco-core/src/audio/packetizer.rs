@@ -109,7 +109,6 @@ pub struct Packetizer {
     session_id: SessionId,
     stream_id: StreamId,
     format: AudioFormat,
-    packet_duration_ms: u32,
     samples_per_packet: u32,
     host_start_time_ms: MonotonicMillis,
     next_sequence: u64,
@@ -177,7 +176,6 @@ impl Packetizer {
             session_id,
             stream_id,
             format,
-            packet_duration_ms,
             samples_per_packet,
             host_start_time_ms,
             next_sequence: 0,
@@ -351,8 +349,17 @@ impl Packetizer {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         let first_sample_index = self.carry_first_sample_index.unwrap_or(0);
-        let host_presentation_time_ms =
-            self.host_start_time_ms.get() + sequence * u64::from(self.packet_duration_ms);
+        // Nominal packet duration is not the exact duration of its integer
+        // frame count (e.g. 220 samples at 44.1 kHz is not quite 5 ms).
+        // Derive each deadline from the continuous sample timeline instead
+        // of accumulating nominal packet milliseconds. Round to the nearest
+        // millisecond using wide arithmetic to avoid precision loss.
+        let sample_offset_ms = (u128::from(first_sample_index) * 1_000
+            + u128::from(self.format.sample_rate_hz / 2))
+            / u128::from(self.format.sample_rate_hz);
+        let host_presentation_time_ms = self.host_start_time_ms.get().saturating_add(
+            u64::try_from(sample_offset_ms).unwrap_or(u64::MAX),
+        );
         let payload = payload_samples
             .iter()
             .flat_map(|sample| sample.to_le_bytes())
