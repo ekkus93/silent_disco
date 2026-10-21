@@ -78,7 +78,6 @@ impl PlaybackControls {
                     true
                 }
             }
-            ControlMessage::TrackBoundary(_) => false,
             ControlMessage::Pause(pause)
                 if self.stream_start.as_ref().is_some_and(|start| {
                     start.stream_id == pause.stream_id && start.session_id == pause.session_id
@@ -97,7 +96,6 @@ impl PlaybackControls {
                     true
                 }
             }
-            ControlMessage::Pause(_) => false,
             ControlMessage::Stop(stop)
                 if self.stream_start.as_ref().is_some_and(|start| {
                     start.stream_id == stop.stream_id && start.session_id == stop.session_id
@@ -106,7 +104,13 @@ impl PlaybackControls {
                 *self = Self::default();
                 true
             }
-            ControlMessage::Stop(_) => false,
+            // Explicit Stop must disarm idle listener liveness even when the
+            // transport did not cache an earlier StreamStart. A Stop for a
+            // different active stream, however, must not interrupt playback.
+            ControlMessage::Stop(_) if self.stream_start.is_none() => true,
+            ControlMessage::TrackBoundary(_) | ControlMessage::Pause(_) | ControlMessage::Stop(_) => {
+                false
+            }
             _ => true,
         }
     }
