@@ -79,9 +79,10 @@ impl PlaybackControls {
             {
                 // Replay must never regress to a delayed or conflicting older
                 // pause timestamp from this active stream.
-                if self.last_pause_time_ms.is_none_or(|previous| {
-                    pause.host_pause_time_ms.get() > previous
-                }) {
+                if self
+                    .last_pause_time_ms
+                    .is_none_or(|previous| pause.host_pause_time_ms.get() > previous)
+                {
                     self.last_pause_time_ms = Some(pause.host_pause_time_ms.get());
                     self.pause = Some(pause.clone());
                 }
