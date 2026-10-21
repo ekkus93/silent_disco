@@ -379,9 +379,7 @@ impl Packetizer {
         // Derive deadlines from emitted stream-relative PCM frame counts,
         // not absolute source sample indices (which may start nonzero) or
         // nominal packet milliseconds. Round using wide integer arithmetic.
-        let sample_offset_ms = (u128::from(sequence)
-            * u128::from(self.samples_per_packet)
-            * 1_000
+        let sample_offset_ms = (u128::from(sequence) * u128::from(self.samples_per_packet) * 1_000
             + u128::from(self.format.sample_rate_hz / 2))
             / u128::from(self.format.sample_rate_hz);
         let host_presentation_time_ms = self
