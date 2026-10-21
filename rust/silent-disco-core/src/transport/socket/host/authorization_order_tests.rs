@@ -3,7 +3,8 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{ControlMessage, Hello, ProtocolFrame};
+use crate::domain::{MonotonicMillis, SampleIndex};
+use crate::protocol::{ControlMessage, Hello, Pause, ProtocolFrame, TrackBoundary};
 use crate::transport::test_support::{
     id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
 };
@@ -364,6 +365,93 @@ fn targeted_control_rechecks_authorized_route_after_delivery_gate() {
         );
         host
     });
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
+    let session_id = id_session("live-stale-control-session");
+    let device_id = id_device("live-stale-control-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session_id.clone()),
+        clock.clone(),
+    )
+    .expect("host binds");
+    let factory = SocketTransportFactory;
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Live listener"))
+        .expect("join request");
+    wait_for_control_from(&mut host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize listener");
+    wait_for_authorized(&mut host, &device_id);
+
+    let start = stream_start(&session_id, 1_000);
+    let ControlMessage::StreamStart(details) = &start else {
+        panic!("test fixture must create StreamStart");
+    };
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: details.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_500),
+    });
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session_id.clone(),
+        stream_id: details.stream_id.clone(),
+        first_sample_index: SampleIndex::new(48_000),
+        entry_id: "following".to_owned(),
+        display_name: "Following song".to_owned(),
+    });
+    let later_pause = ControlMessage::Pause(Pause {
+        session_id,
+        stream_id: details.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(2_500),
+    });
+    host.broadcast_control(&start).expect("start stream");
+    host.broadcast_control(&boundary).expect("schedule boundary");
+    host.broadcast_control(&pause).expect("pause stream");
+    host.broadcast_control(&start).expect("resume same stream");
+
+    let sent_before = host.counters().control_frames_sent;
+    let stale_pause = host.broadcast_control(&pause).expect("reject old Pause");
+    let stale_boundary = host
+        .broadcast_control(&boundary)
+        .expect("reject repeated boundary");
+    assert_eq!(
+        stale_pause,
+        crate::transport::TransportDelivery::new(0, 0, 0, 0).expect("empty delivery")
+    );
+    assert_eq!(
+        stale_boundary,
+        crate::transport::TransportDelivery::new(0, 0, 0, 0).expect("empty delivery")
+    );
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_before,
+        "rejected replay events must not reach the active listener writer"
+    );
+    host.broadcast_control(&later_pause)
+        .expect("subsequent new Pause must be broadcast");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_before + 1,
+        "a genuinely later Pause must still reach the connected listener"
+    );
 
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");

@@ -43,7 +43,9 @@ pub(super) struct PlaybackControls {
 }
 
 impl PlaybackControls {
-    pub(super) fn update(&mut self, message: &ControlMessage) {
+    /// Returns false for stale or unrelated playback controls so that live
+    /// listeners cannot receive controls rejected by late-join replay.
+    pub(super) fn update(&mut self, message: &ControlMessage) -> bool {
         match message {
             ControlMessage::StreamStart(start) => {
                 let is_resume = self.stream_start.as_ref().is_some_and(|previous| {
@@ -55,6 +57,7 @@ impl PlaybackControls {
                 }
                 self.stream_start = Some(start.clone());
                 self.pause = None;
+                true
             }
             ControlMessage::TrackBoundary(boundary)
                 if self.stream_start.as_ref().is_some_and(|start| {
@@ -63,15 +66,19 @@ impl PlaybackControls {
             {
                 // A delayed or conflicting retransmission must not rewind the
                 // timeline replayed to an authorized late-joining listener.
-                if self.boundaries.back().is_none_or(|previous| {
-                    boundary.first_sample_index.get() > previous.first_sample_index.get()
+                if self.boundaries.back().is_some_and(|previous| {
+                    boundary.first_sample_index.get() <= previous.first_sample_index.get()
                 }) {
+                    false
+                } else {
                     self.boundaries.push_back(boundary.clone());
                     while self.boundaries.len() > MAX_CACHED_TRACK_BOUNDARIES {
                         self.boundaries.pop_front();
                     }
+                    true
                 }
             }
+            ControlMessage::TrackBoundary(_) => false,
             ControlMessage::Pause(pause)
                 if self.stream_start.as_ref().is_some_and(|start| {
                     start.stream_id == pause.stream_id && start.session_id == pause.session_id
@@ -81,20 +88,26 @@ impl PlaybackControls {
                 // pause timestamp from this active stream.
                 if self
                     .last_pause_time_ms
-                    .is_none_or(|previous| pause.host_pause_time_ms.get() > previous)
+                    .is_some_and(|previous| pause.host_pause_time_ms.get() <= previous)
                 {
+                    false
+                } else {
                     self.last_pause_time_ms = Some(pause.host_pause_time_ms.get());
                     self.pause = Some(pause.clone());
+                    true
                 }
             }
+            ControlMessage::Pause(_) => false,
             ControlMessage::Stop(stop)
                 if self.stream_start.as_ref().is_some_and(|start| {
                     start.stream_id == stop.stream_id && start.session_id == stop.session_id
                 }) =>
             {
                 *self = Self::default();
+                true
             }
-            _ => {}
+            ControlMessage::Stop(_) => false,
+            _ => true,
         }
     }
 

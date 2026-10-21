@@ -193,7 +193,11 @@ impl HostTransportNode for SocketHostTransport {
         })?;
         let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
             .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
-        self.playback_controls
+        // Keep live broadcasts consistent with late-join replay. A stale
+        // Pause, boundary or Stop must not reach active listeners after the
+        // authoritative cache has rejected it.
+        let accepted = self
+            .playback_controls
             .lock()
             .map_err(|_| {
                 TransportError::new(
@@ -203,6 +207,9 @@ impl HostTransportNode for SocketHostTransport {
                 )
             })?
             .update(message);
+        if !accepted {
+            return TransportDelivery::new(0, 0, 0, 0);
+        }
         let peers: Vec<Arc<PeerState>> = self
             .authorized_routes()?
             .into_iter()
