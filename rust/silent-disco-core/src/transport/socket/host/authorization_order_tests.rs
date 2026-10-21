@@ -392,7 +392,11 @@ fn disconnect_waits_for_control_delivery_gate_before_removing_route() {
         )
         .expect("listener connects");
     listener
-        .send_control(&join_request(&session_id, &device_id, "Disconnect listener"))
+        .send_control(&join_request(
+            &session_id,
+            &device_id,
+            "Disconnect listener",
+        ))
         .expect("join request");
     wait_for_control_from(&mut host, &device_id, |message| {
         matches!(message, ControlMessage::JoinRequest(_))
@@ -428,7 +432,10 @@ fn disconnect_waits_for_control_delivery_gate_before_removing_route() {
             "disconnect must wait for in-flight control delivery"
         );
         assert!(
-            routes.lock().expect("authorized routes").contains_key(&device_id),
+            routes
+                .lock()
+                .expect("authorized routes")
+                .contains_key(&device_id),
             "disconnect must not remove the route before the gate is released"
         );
         drop(guard);
@@ -440,7 +447,11 @@ fn disconnect_waits_for_control_delivery_gate_before_removing_route() {
     });
 
     assert!(
-        !host.routes.lock().expect("authorized routes").contains_key(&device_id),
+        !host
+            .routes
+            .lock()
+            .expect("authorized routes")
+            .contains_key(&device_id),
         "disconnect must remove the route"
     );
     let stale = ControlMessage::Hello(Hello {
