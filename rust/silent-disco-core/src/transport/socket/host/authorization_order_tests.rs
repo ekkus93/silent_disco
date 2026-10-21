@@ -53,14 +53,22 @@ fn pending_hello_cannot_overtake_or_follow_authorization_replay() {
 
     // Hold the exact mutex used by authorization and live broadcasts. The
     // pending sender must remain blocked until it can acquire this guard.
-    let guard = host.control_delivery.lock().expect("ordering mutex");
-    thread::scope(|scope| {
+    let delivery_gate = Arc::clone(&host.control_delivery);
+    let guard = delivery_gate.lock().expect("ordering mutex");
+    // Move the Send-only host into the sender thread. Borrowing it across
+    // threads would incorrectly require its event receiver to be Sync.
+    let host = thread::scope(|scope| {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
-        scope.spawn(|| {
+        let send_device_id = device_id.clone();
+        let send_hello = hello.clone();
+        scope.spawn(move || {
             ready_tx.send(()).expect("signal sender start");
-            let result = host.send_pending_control(&device_id, &hello);
-            done_tx.send(result.map(|_| ())).expect("send result");
+            let result = host.send_pending_control(&send_device_id, &send_hello);
+            assert!(
+                done_tx.send((host, result)).is_ok(),
+                "return host and pending delivery result"
+            );
         });
         ready_rx
             .recv_timeout(Duration::from_secs(5))
@@ -73,10 +81,11 @@ fn pending_hello_cannot_overtake_or_follow_authorization_replay() {
             "pending control delivery must hold the replay ordering gate"
         );
         drop(guard);
-        done_rx
+        let (host, result) = done_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("pending send completes")
-            .expect("pending Hello delivered");
+            .expect("pending send completes");
+        result.expect("pending Hello delivered");
+        host
     });
 
     host.authorize_peer(&device_id, listener.local_routes())

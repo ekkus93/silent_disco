@@ -116,7 +116,7 @@ pub struct SocketHostTransport {
     routes: Arc<Mutex<HashMap<DeviceId, PeerRoute>>>,
     // Serializes control broadcasts with authorization replay. The new peer
     // must receive its cached StreamStart before any live TrackBoundary.
-    control_delivery: Mutex<()>,
+    control_delivery: Arc<Mutex<()>>,
     playback_controls: Mutex<PlaybackControls>,
     sync_socket: Arc<UdpSocket>,
     audio_socket: Arc<UdpSocket>,
