@@ -57,7 +57,7 @@ fn pending_hello_cannot_overtake_or_follow_authorization_replay() {
     let guard = delivery_gate.lock().expect("ordering mutex");
     // Move the Send-only host into the sender thread. Borrowing it across
     // threads would incorrectly require its event receiver to be Sync.
-    let host = thread::scope(|scope| {
+    let mut host = thread::scope(|scope| {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
         let send_device_id = device_id.clone();
