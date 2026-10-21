@@ -40,6 +40,9 @@ class MainViewModelHostQueueTest {
         // Android Main dispatcher in JVM tests (which has no real Looper).
         activeViewModel?.viewModelScope?.cancel()
         activeViewModel = null
+        // Drain cancellation and observer finalizers while the mocked Main
+        // dispatcher is still installed (the JVM has no Android Looper).
+        dispatcher.scheduler.advanceUntilIdle()
         Dispatchers.resetMain()
     }
 
