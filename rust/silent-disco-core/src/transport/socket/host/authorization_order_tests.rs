@@ -418,7 +418,7 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
         display_name: "Following song".to_owned(),
     });
     let later_pause = ControlMessage::Pause(Pause {
-        session_id,
+        session_id: session_id.clone(),
         stream_id: details.stream_id.clone(),
         host_pause_time_ms: MonotonicMillis::new(2_500),
     });
@@ -452,6 +452,45 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
         host.counters().control_frames_sent,
         sent_before + 1,
         "a genuinely later Pause must still reach the connected listener"
+    );
+
+    // A delayed Stop from a replaced stream must not tear down the new
+    // stream for connected listeners. The matching Stop must still pass.
+    let replacement = ControlMessage::StreamStart(crate::protocol::StreamStart {
+        stream_id: crate::domain::StreamId::new("stream-2").expect("replacement stream ID"),
+        ..details.clone()
+    });
+    host.broadcast_control(&replacement)
+        .expect("replace active stream");
+    let sent_before_stale_stop = host.counters().control_frames_sent;
+    let stale_stop = ControlMessage::Stop(crate::protocol::Stop {
+        session_id: session_id.clone(),
+        stream_id: details.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(3_000),
+    });
+    assert_eq!(
+        host.broadcast_control(&stale_stop)
+            .expect("reject Stop from replaced stream"),
+        crate::transport::TransportDelivery::new(0, 0, 0, 0).expect("empty delivery")
+    );
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_before_stale_stop,
+        "a stale Stop must not reach the new stream's listeners"
+    );
+    let ControlMessage::StreamStart(new_details) = &replacement else {
+        panic!("replacement fixture must create StreamStart");
+    };
+    host.broadcast_control(&ControlMessage::Stop(crate::protocol::Stop {
+        session_id,
+        stream_id: new_details.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(3_500),
+    }))
+    .expect("stop active replacement stream");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_before_stale_stop + 1,
+        "a matching Stop must still reach the live listener"
     );
 
     listener.shutdown().expect("listener shutdown");
