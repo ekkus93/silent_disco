@@ -117,3 +117,54 @@ fn pending_hello_cannot_overtake_or_follow_authorization_replay() {
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn pending_control_is_rejected_after_authorization_replay() {
+    let session_id = id_session("post-authorization-pending");
+    let device_id = id_device("post-authorization-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session_id.clone()),
+        clock.clone(),
+    )
+    .expect("host binds");
+    let factory = SocketTransportFactory;
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Pending listener"))
+        .expect("join request");
+    wait_for_control_from(&mut host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let start = stream_start(&session_id, 1_000);
+    host.broadcast_control(&start).expect("cache stream start");
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize listener");
+    wait_for_authorized(&mut host, &device_id);
+
+    // Authorization already replayed StreamStart. A delayed pending Hello
+    // must not follow it and regress the listener to a pre-admission state.
+    let hello = ControlMessage::Hello(Hello {
+        session_id,
+        session_name: "Stale pending admission".to_owned(),
+        host_name: "Host".to_owned(),
+        approval_required: true,
+    });
+    assert!(
+        host.send_pending_control(&device_id, &hello).is_err(),
+        "a pending-only message must not be delivered after authorization"
+    );
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}

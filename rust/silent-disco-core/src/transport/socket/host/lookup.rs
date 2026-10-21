@@ -23,7 +23,9 @@ impl SocketHostTransport {
         peers
             .values()
             .find(|peer| {
-                peer.active.load(Ordering::Acquire) && peer.device_id().as_ref() == Some(device_id)
+                peer.active.load(Ordering::Acquire)
+                    && !peer.authorized.load(Ordering::Acquire)
+                    && peer.device_id().as_ref() == Some(device_id)
             })
             .cloned()
             .ok_or_else(|| {
