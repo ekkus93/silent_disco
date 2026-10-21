@@ -191,7 +191,11 @@ fn disconnected_pending_peer_cannot_be_authorized_after_selection() {
         )
         .expect("listener connects");
     listener
-        .send_control(&join_request(&session_id, &device_id, "Disconnecting listener"))
+        .send_control(&join_request(
+            &session_id,
+            &device_id,
+            "Disconnecting listener",
+        ))
         .expect("join request");
     wait_for_control_from(&mut host, &device_id, |message| {
         matches!(message, ControlMessage::JoinRequest(_))
@@ -242,7 +246,9 @@ fn disconnected_pending_peer_cannot_be_authorized_after_selection() {
             ),
             "authorization must wait behind the replay ordering gate"
         );
-        pending_peer.close().expect("disconnect selected pending peer");
+        pending_peer
+            .close()
+            .expect("disconnect selected pending peer");
         drop(guard);
         let (host, result) = done_rx
             .recv_timeout(Duration::from_secs(5))
@@ -252,7 +258,9 @@ fn disconnected_pending_peer_cannot_be_authorized_after_selection() {
             "a disconnected peer must not become authorized after selection"
         );
         assert!(
-            !pending_peer.authorized.load(std::sync::atomic::Ordering::Acquire),
+            !pending_peer
+                .authorized
+                .load(std::sync::atomic::Ordering::Acquire),
             "disconnected peer must remain unauthorized"
         );
         assert!(
