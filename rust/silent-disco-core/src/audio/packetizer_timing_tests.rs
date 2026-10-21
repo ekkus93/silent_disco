@@ -73,3 +73,37 @@ fn canonical_48000_hz_keeps_exact_five_millisecond_packet_deadlines() {
         );
     }
 }
+
+#[test]
+fn nonzero_source_sample_index_preserves_initial_host_deadline() {
+    let format = AudioFormat {
+        sample_rate_hz: 1_000,
+        channels: 1,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        SessionId::new("indexed-start-session").expect("session"),
+        StreamId::new("indexed-start-stream").expect("stream"),
+        format,
+        20,
+        MonotonicMillis::new(9_000),
+    )
+    .expect("packetizer");
+    let frames = packetizer
+        .push_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(400),
+            frames: vec![1; 40],
+            end_of_stream: true,
+        })
+        .expect("packetize nonzero indexed source")
+        .frames;
+    assert_eq!(frames.len(), 2);
+    for (i, frame) in frames.iter().enumerate() {
+        let ProtocolFrame::Audio(audio) = frame else {
+            panic!("audio frame");
+        };
+        assert_eq!(audio.first_sample_index.get(), 400 + i as u64 * 20);
+        assert_eq!(audio.host_presentation_time_ms.get(), 9_000 + i as u64 * 20);
+    }
+}

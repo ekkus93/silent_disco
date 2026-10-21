@@ -376,10 +376,12 @@ impl Packetizer {
         let first_sample_index = self.carry_first_sample_index.unwrap_or(0);
         // Nominal packet duration is not the exact duration of its integer
         // frame count (e.g. 220 samples at 44.1 kHz is not quite 5 ms).
-        // Derive each deadline from the continuous sample timeline instead
-        // of accumulating nominal packet milliseconds. Round to the nearest
-        // millisecond using wide arithmetic to avoid precision loss.
-        let sample_offset_ms = (u128::from(first_sample_index) * 1_000
+        // Derive deadlines from emitted stream-relative PCM frame counts,
+        // not absolute source sample indices (which may start nonzero) or
+        // nominal packet milliseconds. Round using wide integer arithmetic.
+        let sample_offset_ms = (u128::from(sequence)
+            * u128::from(self.samples_per_packet)
+            * 1_000
             + u128::from(self.format.sample_rate_hz / 2))
             / u128::from(self.format.sample_rate_hz);
         let host_presentation_time_ms = self

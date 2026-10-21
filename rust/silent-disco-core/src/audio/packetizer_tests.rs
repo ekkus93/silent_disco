@@ -784,7 +784,7 @@ fn direct_chunk_gap_or_overlap_is_rejected_without_corrupting_carry() {
         let audio = audio_datagram(&resumed.frames[0]);
         assert_eq!(audio.sequence.get(), 0);
         assert_eq!(audio.first_sample_index.get(), 0);
-        assert_eq!(&audio.payload[..20], vec![1, 0].repeat(10));
-        assert_eq!(&audio.payload[20..], vec![2, 0].repeat(10));
+        assert_eq!(&audio.payload[..20], [1, 0].repeat(10));
+        assert_eq!(&audio.payload[20..], [2, 0].repeat(10));
     }
 }
