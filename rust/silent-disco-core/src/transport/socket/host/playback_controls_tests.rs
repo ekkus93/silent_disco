@@ -266,3 +266,71 @@ fn late_join_replay_does_not_regress_to_an_older_pause_in_the_same_stream() {
         "late join must observe the most recent pause time, never a stale replay"
     );
 }
+
+#[test]
+fn same_stream_resume_does_not_replay_delayed_pauses() {
+    let session_id = SessionId::new("replay-resume-pause-session").expect("session ID");
+    let stream_id = StreamId::new("replay-resume-pause-stream").expect("stream ID");
+    let start = stream_start(&session_id, &stream_id);
+    let first_pause = pause(&session_id, &stream_id);
+    let older_pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_400),
+    });
+    let newer_pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(2_500),
+    });
+    let next = boundary(&session_id, &stream_id);
+    let mut cached = PlaybackControls::default();
+
+    cached.update(&start);
+    cached.update(&next);
+    cached.update(&first_pause);
+    cached.update(&start); // same-stream Resume withdraws the active pause
+    cached.update(&older_pause); // delayed prior Pause
+    cached.update(&first_pause); // duplicated prior Pause at the watermark
+    assert_eq!(
+        cached.snapshot(),
+        vec![start.clone(), next.clone()],
+        "prior pauses must not reappear in late-join replay after Resume"
+    );
+
+    cached.update(&newer_pause); // a genuinely later Pause still takes effect
+    assert_eq!(
+        cached.snapshot(),
+        vec![start.clone(), next.clone(), newer_pause.clone()]
+    );
+    cached.update(&start); // Resume again, retaining the newer fence
+    cached.update(&first_pause);
+    cached.update(&newer_pause);
+    assert_eq!(cached.snapshot(), vec![start, next]);
+}
+
+#[test]
+fn replacement_stream_resets_pause_retransmission_fence() {
+    let session_id = SessionId::new("replay-new-pause-session").expect("session ID");
+    let previous_id = StreamId::new("previous-pause-stream").expect("stream ID");
+    let current_id = StreamId::new("new-pause-stream").expect("stream ID");
+    let previous_start = stream_start(&session_id, &previous_id);
+    let current_start = stream_start(&session_id, &current_id);
+    let late_previous_pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: previous_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(9_000),
+    });
+    let current_pause = pause(&session_id, &current_id);
+    let mut cached = PlaybackControls::default();
+    cached.update(&previous_start);
+    cached.update(&late_previous_pause);
+    cached.update(&current_start);
+    cached.update(&late_previous_pause);
+    cached.update(&current_pause);
+    assert_eq!(
+        cached.snapshot(),
+        vec![current_start, current_pause],
+        "new streams must accept their own first Pause even if its timestamp is lower"
+    );
+}

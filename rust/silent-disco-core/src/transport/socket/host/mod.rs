@@ -37,6 +37,9 @@ pub(super) struct PlaybackControls {
     stream_start: Option<StreamStart>,
     boundaries: VecDeque<TrackBoundary>,
     pause: Option<Pause>,
+    // Highest pause timestamp already observed for this stream. A Resume
+    // clears the active pause but must not erase its retransmission fence.
+    last_pause_time_ms: Option<u64>,
 }
 
 impl PlaybackControls {
@@ -48,6 +51,7 @@ impl PlaybackControls {
                 });
                 if !is_resume {
                     self.boundaries.clear();
+                    self.last_pause_time_ms = None;
                 }
                 self.stream_start = Some(start.clone());
                 self.pause = None;
@@ -75,9 +79,10 @@ impl PlaybackControls {
             {
                 // Replay must never regress to a delayed or conflicting older
                 // pause timestamp from this active stream.
-                if self.pause.as_ref().is_none_or(|previous| {
-                    pause.host_pause_time_ms.get() > previous.host_pause_time_ms.get()
+                if self.last_pause_time_ms.is_none_or(|previous| {
+                    pause.host_pause_time_ms.get() > previous
                 }) {
+                    self.last_pause_time_ms = Some(pause.host_pause_time_ms.get());
                     self.pause = Some(pause.clone());
                 }
             }
