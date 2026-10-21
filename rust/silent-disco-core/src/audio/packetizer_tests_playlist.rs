@@ -665,8 +665,8 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel::<()>(1);
     let release_rx = std::sync::Mutex::new(release_rx);
-    let reserver = std::sync::Arc::new(
-        move |boundary: &crate::protocol::TrackBoundary, _cancel| {
+    let reserver =
+        std::sync::Arc::new(move |boundary: &crate::protocol::TrackBoundary, _cancel| {
             if boundary.entry_id == "locked-next" {
                 entered_tx
                     .send(boundary.first_sample_index.get())
@@ -678,8 +678,7 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
                     .expect("release reserved successor");
             }
             Ok(())
-        },
-    );
+        });
     let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
         decoder,
         "current",
@@ -701,7 +700,9 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
         .expect("outgoing audio before reservation");
     assert!(matches!(first_frame, ProtocolFrame::Audio(_)));
     assert_eq!(
-        entered_rx.recv_timeout(TEST_TIMEOUT).expect("reservation entered"),
+        entered_rx
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("reservation entered"),
         241
     );
     // The committed successor remains locked, but an edit behind it is safe.
@@ -711,11 +712,10 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
         unreachable!("reserved successor must not be reopened")
     })
     .expect("shadow factory");
-    let replacement =
-        StreamingPlaylistTrackFactory::new("replacement", "Replacement", move || {
-            StreamingDecodeHandle::open(replacement_path, StreamingDecodeConfig::default())
-        })
-        .expect("replacement factory");
+    let replacement = StreamingPlaylistTrackFactory::new("replacement", "Replacement", move || {
+        StreamingDecodeHandle::open(replacement_path, StreamingDecodeConfig::default())
+    })
+    .expect("replacement factory");
     updater
         .replace_upcoming(vec![shadow, replacement])
         .expect("edit only the track after the reserved successor");
@@ -745,6 +745,9 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
         }
     }
     packetizer.join().expect("playlist completed");
-    assert_eq!(boundaries, [("locked-next".into(), 241), ("replacement".into(), 738)]);
+    assert_eq!(
+        boundaries,
+        [("locked-next".into(), 241), ("replacement".into(), 738)]
+    );
     assert_eq!(audio_indices, [0, 240, 480, 720, 960, 1200]);
 }
