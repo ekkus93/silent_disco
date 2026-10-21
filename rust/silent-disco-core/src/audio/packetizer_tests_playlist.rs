@@ -639,6 +639,31 @@ fn cancelled_authoritative_reservation_joins_without_successor_frames() {
     assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
 }
 
+fn receive_reserved_playlist_tail(
+    packetizer: &StreamingPacketizeHandle,
+) -> (Vec<(String, u64)>, Vec<u64>) {
+    let mut boundaries = Vec::new();
+    // The caller has already consumed the first packet before releasing
+    // the reservation acknowledgment.
+    let mut audio_indices = vec![0_u64];
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                boundaries.push((boundary.entry_id, boundary.first_sample_index.get()));
+            }
+            Ok(ProtocolFrame::Audio(audio)) => {
+                audio_indices.push(audio.first_sample_index.get());
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("edited reserved playlist stalled")
+            }
+        }
+    }
+    (boundaries, audio_indices)
+}
+
 #[test]
 fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
     let _guard = super::super::tests::audio_test_guard();
@@ -727,23 +752,7 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
         "no boundary or successor audio before the reservation acknowledgment"
     );
     release_tx.send(()).expect("ack reserved next");
-    let mut boundaries = Vec::new();
-    let mut audio_indices = vec![0_u64];
-    loop {
-        match packetizer.recv_timeout(TEST_TIMEOUT) {
-            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
-                boundaries.push((boundary.entry_id, boundary.first_sample_index.get()));
-            }
-            Ok(ProtocolFrame::Audio(audio)) => {
-                audio_indices.push(audio.first_sample_index.get());
-            }
-            Ok(_) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                panic!("edited reserved playlist stalled")
-            }
-        }
-    }
+    let (boundaries, audio_indices) = receive_reserved_playlist_tail(&packetizer);
     packetizer.join().expect("playlist completed");
     assert_eq!(
         boundaries,
