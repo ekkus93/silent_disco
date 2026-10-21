@@ -157,12 +157,30 @@ impl Packetizer {
                 "packet duration produces zero samples per packet at this sample rate",
             ));
         }
-        let payload_bytes =
-            samples_per_packet as usize * format.samples_per_frame() * 2 /* i16 bytes */;
+        // Validate packet geometry with checked arithmetic: a malformed
+        // sample rate/channel count must return an error, not panic on a
+        // 32-bit target before the bounded wire-size check can reject it.
+        let payload_bytes = (samples_per_packet as usize)
+            .checked_mul(format.samples_per_frame())
+            .and_then(|samples| samples.checked_mul(std::mem::size_of::<i16>()))
+            .ok_or_else(|| {
+                PacketizerError::new(
+                    PacketizerErrorKind::InvalidConfiguration,
+                    "packet payload size exceeds addressable memory",
+                )
+            })?;
         let identifier_overhead = 2 * IDENTIFIER_LENGTH_PREFIX_BYTES
             + session_id.as_str().len()
             + stream_id.as_str().len();
-        let encoded_bytes = FIXED_AUDIO_DATAGRAM_FIELD_BYTES + identifier_overhead + payload_bytes;
+        let encoded_bytes = FIXED_AUDIO_DATAGRAM_FIELD_BYTES
+            .checked_add(identifier_overhead)
+            .and_then(|overhead| overhead.checked_add(payload_bytes))
+            .ok_or_else(|| {
+                PacketizerError::new(
+                    PacketizerErrorKind::InvalidConfiguration,
+                    "encoded packet size exceeds addressable memory",
+                )
+            })?;
         let maximum_encoded_bytes = MAX_AUDIO_DATAGRAM_BYTES - FRAME_HEADER_BYTES;
         if encoded_bytes > maximum_encoded_bytes {
             return Err(PacketizerError::new(

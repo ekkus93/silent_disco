@@ -107,3 +107,23 @@ fn nonzero_source_sample_index_preserves_initial_host_deadline() {
         assert_eq!(audio.host_presentation_time_ms.get(), 9_000 + i as u64 * 20);
     }
 }
+
+#[test]
+fn oversized_audio_geometry_is_rejected_without_arithmetic_overflow() {
+    // The sample and channel counts fit their protocol fields but their
+    // product exceeds 32-bit usize. Never panic before rejecting this frame.
+    let format = AudioFormat {
+        sample_rate_hz: u32::MAX,
+        channels: u16::MAX,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let error = Packetizer::new(
+        SessionId::new("oversized-geometry-session").expect("session"),
+        StreamId::new("oversized-geometry-stream").expect("stream"),
+        format,
+        1_000,
+        MonotonicMillis::new(0),
+    )
+    .expect_err("oversized PCM datagram must be rejected");
+    assert_eq!(error.kind, super::PacketizerErrorKind::InvalidConfiguration);
+}
