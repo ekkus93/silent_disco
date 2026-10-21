@@ -474,7 +474,8 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
         host_pause_time_ms: MonotonicMillis::new(1_500),
     });
     for control in [&start, &next, &pause] {
-        host.broadcast_control(control).expect("cache playback control");
+        host.broadcast_control(control)
+            .expect("cache playback control");
     }
 
     let mut paused = factory
