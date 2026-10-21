@@ -142,10 +142,10 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound control message belongs to a different session",
             ));
         }
-        let peer = self.peer_for_device(device_id)?;
-        // Serialize with late-join authorization and its cached replay. Without
-        // this guard, a newly registered peer can receive a live boundary
-        // before its cached StreamStart, or receive the boundary twice.
+        // Select the authorized route only after acquiring the replay/delivery
+        // guard. A concurrent disconnect may retire the route while a targeted
+        // send is waiting here; using an earlier selection could send to a
+        // disconnected peer after the delivery order becomes available.
         let _delivery_guard = self.control_delivery.lock().map_err(|_| {
             TransportError::new(
                 TransportErrorKind::WorkerPanicked,
@@ -153,6 +153,7 @@ impl HostTransportNode for SocketHostTransport {
                 "control delivery ordering lock is poisoned",
             )
         })?;
+        let peer = self.peer_for_device(device_id)?;
         let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
             .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
         let result = peer.sender.send(bytes);

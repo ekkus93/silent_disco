@@ -273,3 +273,94 @@ fn disconnected_pending_peer_cannot_be_authorized_after_selection() {
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn targeted_control_rechecks_authorized_route_after_delivery_gate() {
+    let session_id = id_session("targeted-disconnect-during-delivery");
+    let device_id = id_device("targeted-disconnect-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session_id.clone()),
+        clock.clone(),
+    )
+    .expect("host binds");
+    let factory = SocketTransportFactory;
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Targeted listener"))
+        .expect("join request");
+    wait_for_control_from(&mut host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("authorize listener");
+    wait_for_authorized(&mut host, &device_id);
+
+    let targeted = ControlMessage::Hello(Hello {
+        session_id,
+        session_name: "Expired target".to_owned(),
+        host_name: "Host".to_owned(),
+        approval_required: false,
+    });
+    // Hold the same mutex that serializes targeted sends and playback replay.
+    // Retire the route before releasing it, as disconnect_peer can do without
+    // acquiring the delivery mutex. The waiting send must look up the route
+    // again after the guard, rather than using an old selected Arc.
+    let route_registry = Arc::clone(&host.routes);
+    let gate = Arc::clone(&host.control_delivery);
+    let guard = gate.lock().expect("delivery ordering lock");
+    let mut host = thread::scope(|scope| {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let target = device_id.clone();
+        scope.spawn(move || {
+            ready_tx.send(()).expect("targeted send starts");
+            let result = host.send_control(&target, &targeted);
+            assert!(
+                done_tx.send((host, result)).is_ok(),
+                "return transport and targeted result"
+            );
+        });
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("targeted send starts");
+        assert!(
+            matches!(
+                done_rx.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "targeted control must wait for the replay ordering mutex"
+        );
+        let retired = route_registry
+            .lock()
+            .expect("authorized routes")
+            .remove(&device_id)
+            .expect("authorized route exists");
+        retired.peer.close().expect("disconnect retired peer");
+        drop(guard);
+        let (host, result) = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("targeted send completes");
+        assert!(
+            matches!(result, Err(error) if error.to_string().contains("authorized peer is not connected")),
+            "a retired route must be rejected by a fresh post-gate lookup"
+        );
+        assert!(
+            !host.routes.lock().expect("authorized routes").contains_key(&device_id),
+            "retired authorized route must stay absent"
+        );
+        host
+    });
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
