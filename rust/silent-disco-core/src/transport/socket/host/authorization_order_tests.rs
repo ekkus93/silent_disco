@@ -355,7 +355,11 @@ fn targeted_control_rechecks_authorized_route_after_delivery_gate() {
             "a retired route must be rejected by a fresh post-gate lookup"
         );
         assert!(
-            !host.routes.lock().expect("authorized routes").contains_key(&device_id),
+            !host
+                .routes
+                .lock()
+                .expect("authorized routes")
+                .contains_key(&device_id),
             "retired authorized route must stay absent"
         );
         host
