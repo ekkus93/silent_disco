@@ -638,3 +638,113 @@ fn cancelled_authoritative_reservation_joins_without_successor_frames() {
         .expect_err("cancellation must join the producer waiting for authority");
     assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
 }
+
+#[test]
+fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
+    let _guard = super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "edit-first.wav", &pcm_wav_frames(48_000, 2, 241));
+    let next_path = write_bytes(&temp, "edit-next.wav", &pcm_wav_frames(48_000, 2, 497));
+    let stale_path = write_bytes(&temp, "edit-stale.wav", &pcm_wav_frames(48_000, 2, 480));
+    let replacement_path = write_bytes(
+        &temp,
+        "edit-replacement.wav",
+        &pcm_wav_frames(48_000, 2, 480),
+    );
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("current decoder");
+    let next = StreamingPlaylistTrackFactory::new("locked-next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let stale = StreamingPlaylistTrackFactory::new("stale-later", "Stale", move || {
+        StreamingDecodeHandle::open(stale_path, StreamingDecodeConfig::default())
+    })
+    .expect("stale factory");
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let reserver = std::sync::Arc::new(
+        move |boundary: &crate::protocol::TrackBoundary, _cancel| {
+            if boundary.entry_id == "locked-next" {
+                entered_tx
+                    .send(boundary.first_sample_index.get())
+                    .expect("notify pending reservation");
+                release_rx
+                    .lock()
+                    .expect("gate lock")
+                    .recv_timeout(TEST_TIMEOUT)
+                    .expect("release reserved successor");
+            }
+            Ok(())
+        },
+    );
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "current",
+        "Current",
+        vec![next, stale],
+        SessionId::new("session-reservation-edit").expect("session"),
+        StreamId::new("stream-reservation-edit").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        reserver,
+    )
+    .expect("packetizer");
+    let updater = packetizer.playlist_updater().expect("updater");
+    let first_frame = packetizer
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("outgoing audio before reservation");
+    assert!(matches!(first_frame, ProtocolFrame::Audio(_)));
+    assert_eq!(
+        entered_rx.recv_timeout(TEST_TIMEOUT).expect("reservation entered"),
+        241
+    );
+    // The committed successor remains locked, but an edit behind it is safe.
+    // A shadow factory for that entry must never reopen the already-prepared
+    // decoder when the producer eventually accepts the acknowledgment.
+    let shadow = StreamingPlaylistTrackFactory::new("locked-next", "Next", || {
+        unreachable!("reserved successor must not be reopened")
+    })
+    .expect("shadow factory");
+    let replacement =
+        StreamingPlaylistTrackFactory::new("replacement", "Replacement", move || {
+            StreamingDecodeHandle::open(replacement_path, StreamingDecodeConfig::default())
+        })
+        .expect("replacement factory");
+    updater
+        .replace_upcoming(vec![shadow, replacement])
+        .expect("edit only the track after the reserved successor");
+    assert!(
+        matches!(
+            packetizer.recv_timeout(Duration::from_millis(20)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "no boundary or successor audio before the reservation acknowledgment"
+    );
+    release_tx.send(()).expect("ack reserved next");
+    let mut boundaries = Vec::new();
+    let mut audio_indices = vec![0_u64];
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                boundaries.push((boundary.entry_id, boundary.first_sample_index.get()));
+            }
+            Ok(ProtocolFrame::Audio(audio)) => {
+                audio_indices.push(audio.first_sample_index.get());
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("edited reserved playlist stalled")
+            }
+        }
+    }
+    packetizer.join().expect("playlist completed");
+    assert_eq!(boundaries, [("locked-next".into(), 241), ("replacement".into(), 738)]);
+    assert_eq!(audio_indices, [0, 240, 480, 720, 960, 1200]);
+}
