@@ -379,9 +379,10 @@ impl Packetizer {
         let sample_offset_ms = (u128::from(first_sample_index) * 1_000
             + u128::from(self.format.sample_rate_hz / 2))
             / u128::from(self.format.sample_rate_hz);
-        let host_presentation_time_ms = self.host_start_time_ms.get().saturating_add(
-            u64::try_from(sample_offset_ms).unwrap_or(u64::MAX),
-        );
+        let host_presentation_time_ms = self
+            .host_start_time_ms
+            .get()
+            .saturating_add(u64::try_from(sample_offset_ms).unwrap_or(u64::MAX));
         let payload = payload_samples
             .iter()
             .flat_map(|sample| sample.to_le_bytes())

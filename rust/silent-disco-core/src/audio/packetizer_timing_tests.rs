@@ -39,7 +39,10 @@ fn non_integral_44100_hz_packets_follow_sample_clock_without_accumulated_drift()
         };
         let first_sample = u64::try_from(sequence).expect("sequence") * 220;
         let exact_rounded_ms = (first_sample * 1_000 + 22_050) / 44_100;
-        assert_eq!(audio.sequence.get(), u64::try_from(sequence).expect("sequence"));
+        assert_eq!(
+            audio.sequence.get(),
+            u64::try_from(sequence).expect("sequence")
+        );
         assert_eq!(audio.samples_per_packet, 220);
         assert_eq!(audio.first_sample_index.get(), first_sample);
         assert_eq!(
@@ -64,6 +67,9 @@ fn canonical_48000_hz_keeps_exact_five_millisecond_packet_deadlines() {
         };
         assert_eq!(audio.samples_per_packet, 240);
         assert_eq!(audio.first_sample_index.get(), sequence as u64 * 240);
-        assert_eq!(audio.host_presentation_time_ms.get(), 10_000 + sequence as u64 * 5);
+        assert_eq!(
+            audio.host_presentation_time_ms.get(),
+            10_000 + sequence as u64 * 5
+        );
     }
 }
