@@ -423,7 +423,8 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
         host_pause_time_ms: MonotonicMillis::new(2_500),
     });
     host.broadcast_control(&start).expect("start stream");
-    host.broadcast_control(&boundary).expect("schedule boundary");
+    host.broadcast_control(&boundary)
+        .expect("schedule boundary");
     host.broadcast_control(&pause).expect("pause stream");
     host.broadcast_control(&start).expect("resume same stream");
 
