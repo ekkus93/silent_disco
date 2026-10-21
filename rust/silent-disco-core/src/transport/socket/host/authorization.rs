@@ -61,6 +61,16 @@ impl SocketHostTransport {
                 "control delivery ordering lock is poisoned",
             )
         })?;
+        // The peer may disconnect while authorization waits behind a cached
+        // replay or live control broadcast. Do not publish a dead route or a
+        // spurious PeerAuthorized event after the initial pending-peer lookup.
+        if !peer.active.load(Ordering::Acquire) {
+            return Err(TransportError::new(
+                TransportErrorKind::PeerNotFound,
+                TransportChannel::Control,
+                "pending control peer disconnected before authorization",
+            ));
+        }
         let mut route_registry = self.routes.lock().map_err(|_| {
             TransportError::new(
                 TransportErrorKind::WorkerPanicked,

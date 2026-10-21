@@ -168,3 +168,100 @@ fn pending_control_is_rejected_after_authorization_replay() {
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn disconnected_pending_peer_cannot_be_authorized_after_selection() {
+    let session_id = id_session("pending-disconnect-before-authorization");
+    let device_id = id_device("pending-disconnect-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session_id.clone()),
+        clock.clone(),
+    )
+    .expect("host binds");
+    let factory = SocketTransportFactory;
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("listener connects");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Disconnecting listener"))
+        .expect("join request");
+    wait_for_control_from(&mut host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    let pending_peer = host
+        .peers
+        .lock()
+        .expect("peer registry")
+        .values()
+        .find(|peer| peer.device_id().as_ref() == Some(&device_id))
+        .cloned()
+        .expect("identified pending peer");
+    let initial_references = Arc::strong_count(&pending_peer);
+    let delivery_gate = Arc::clone(&host.control_delivery);
+    let guard = delivery_gate.lock().expect("ordering mutex");
+    let routes = listener.local_routes();
+
+    let mut host = thread::scope(|scope| {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let target = device_id.clone();
+        scope.spawn(move || {
+            ready_tx.send(()).expect("signal authorization start");
+            let result = host.authorize_peer(&target, routes);
+            assert!(
+                done_tx.send((host, result)).is_ok(),
+                "return host and authorization result"
+            );
+        });
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("authorization starts");
+        // The extra Arc reference proves the authorization method already
+        // selected this live peer and is now blocked by the delivery gate.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&pending_peer) <= initial_references {
+            assert!(
+                Instant::now() < deadline,
+                "authorization did not select the pending peer"
+            );
+            thread::yield_now();
+        }
+        assert!(
+            matches!(
+                done_rx.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "authorization must wait behind the replay ordering gate"
+        );
+        pending_peer.close().expect("disconnect selected pending peer");
+        drop(guard);
+        let (host, result) = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("authorization completes");
+        assert!(
+            result.is_err(),
+            "a disconnected peer must not become authorized after selection"
+        );
+        assert!(
+            !pending_peer.authorized.load(std::sync::atomic::Ordering::Acquire),
+            "disconnected peer must remain unauthorized"
+        );
+        assert!(
+            !host.routes.lock().expect("routes").contains_key(&device_id),
+            "no dead authorized route may be published"
+        );
+        host
+    });
+
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
