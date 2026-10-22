@@ -51,8 +51,15 @@ fn stop_after_reservation_ack_under_backpressure_discards_the_successor() {
         handle.recv_timeout(TEST_TIMEOUT),
         Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
     ));
-    assert_eq!(entered_rx.recv_timeout(TEST_TIMEOUT).expect("reservation"), 480);
-    assert_eq!(handle.statistics().0, 1, "last outgoing packet occupies the channel");
+    assert_eq!(
+        entered_rx.recv_timeout(TEST_TIMEOUT).expect("reservation"),
+        480
+    );
+    assert_eq!(
+        handle.statistics().0,
+        1,
+        "last outgoing packet occupies the channel"
+    );
     let backpressure_before_ack = handle.statistics().2;
     ack_tx.send(()).expect("authorize next boundary");
     let start = Instant::now();
@@ -77,8 +84,11 @@ fn stop_after_reservation_ack_under_backpressure_discards_the_successor() {
     }
     let error = handle.join().expect_err("Stop cancels the producer");
     assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
-    assert!(matches!(
-        tail.as_slice(),
-        [ProtocolFrame::Audio(audio)] if audio.first_sample_index.get() == 240
-    ), "only the already-buffered outgoing audio may remain after Stop");
+    assert!(
+        matches!(
+            tail.as_slice(),
+            [ProtocolFrame::Audio(audio)] if audio.first_sample_index.get() == 240
+        ),
+        "only the already-buffered outgoing audio may remain after Stop"
+    );
 }
