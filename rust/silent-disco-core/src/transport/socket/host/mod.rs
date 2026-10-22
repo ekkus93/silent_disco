@@ -48,11 +48,11 @@ impl PlaybackControls {
     pub(super) fn update(&mut self, message: &ControlMessage) -> bool {
         match message {
             ControlMessage::StreamStart(start) => {
-                // A delayed start from an older generation reusing this stream ID
-                // must not rewind the active clock or clear its paused state.
+                // A delayed start from an older generation must not rewind
+                // the active clock or clear its paused state, even when a
+                // subsequent Play assigned a different stream ID.
                 if self.stream_start.as_ref().is_some_and(|previous| {
-                    previous.stream_id == start.stream_id
-                        && previous.session_id == start.session_id
+                    previous.session_id == start.session_id
                         && start.host_start_time_ms.get() < previous.host_start_time_ms.get()
                 }) {
                     return false;

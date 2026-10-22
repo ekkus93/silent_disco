@@ -387,3 +387,38 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
     })));
     assert!(cached.snapshot().is_empty());
 }
+
+#[test]
+fn older_stream_start_cannot_replace_the_current_reconnect_snapshot() {
+    let session_id = SessionId::new("replay-switch-generation-session").expect("session ID");
+    let old_id = StreamId::new("replay-switch-old-stream").expect("stream ID");
+    let new_id = StreamId::new("replay-switch-new-stream").expect("stream ID");
+    let old_start = stream_start(&session_id, &old_id);
+    let new_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session_id.clone(),
+        stream_id: new_id.clone(),
+        host_start_time_ms: MonotonicMillis::new(5_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 960,
+        current_entry_id: Some("new".to_owned()),
+        current_display_name: Some("New track".to_owned()),
+    });
+    let new_boundary = boundary(&session_id, &new_id);
+    let paused = ControlMessage::Pause(Pause {
+        session_id,
+        stream_id: new_id,
+        host_pause_time_ms: MonotonicMillis::new(6_000),
+    });
+    let mut cached = PlaybackControls::default();
+
+    assert!(cached.update(&old_start));
+    assert!(cached.update(&new_start));
+    assert!(cached.update(&new_boundary));
+    assert!(cached.update(&paused));
+    assert!(!cached.update(&old_start));
+    assert!(
+        cached.snapshot() == vec![new_start, new_boundary, paused],
+        "a delayed earlier StreamStart must not replace a newer track or unpause it"
+    );
+}
