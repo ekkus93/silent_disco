@@ -760,3 +760,6 @@ fn reserved_successor_survives_a_later_queue_edit_while_ack_is_pending() {
     );
     assert_eq!(audio_indices, [0, 240, 480, 720, 960, 1200]);
 }
+
+#[path = "packetizer_tests_playlist_stop.rs"]
+mod playlist_stop_tests;
