@@ -156,7 +156,14 @@ impl ActorState {
                 entry_id,
                 first_sample_index,
             } => {
-                if self.snapshot.playback_state != PlaybackState::Playing {
+                // The producer may reach a boundary reservation while the
+                // consumer is paused. It must still lock the next entry
+                // before enqueuing successor audio; application remains
+                // forbidden until the listener resumes playback.
+                if !matches!(
+                    self.snapshot.playback_state,
+                    PlaybackState::Playing | PlaybackState::Paused
+                ) {
                     return Err(invalid_state(
                         "track boundary scheduled while playback was inactive",
                         None,

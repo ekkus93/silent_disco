@@ -194,6 +194,58 @@ mod tests {
     }
 
     #[test]
+    fn pause_during_producer_reservation_preserves_the_next_track_until_resume() {
+        let (mut state, stream_id) = host();
+        state.snapshot.host_lifecycle = HostLifecycle::Streaming;
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+            .expect("pause while producer is prebuffering");
+        state
+            .reserve_track_boundary(stream_id, "two".into(), 4_800)
+            .expect("paused producer may lock the next entry");
+        assert_eq!(state.snapshot.playback_state, PlaybackState::Paused);
+        assert_eq!(
+            state.snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+            "two"
+        );
+
+        let revision = state.snapshot.host_queue.revision();
+        assert!(
+            state
+                .apply_command(
+                    crate::domain::OperationId::new("remove-during-pause").unwrap(),
+                    CoreCommand::RemoveHostQueueEntry {
+                        expected_queue_revision: revision,
+                        entry_id: "two".into(),
+                    },
+                )
+                .is_err(),
+            "a paused producer reservation must still reject stale queue edits"
+        );
+        assert!(
+            state
+                .apply_audio_control(AudioEvent::TrackBoundaryApplied {
+                    entry_id: "two".into(),
+                    first_sample_index: 4_800,
+                })
+                .is_err(),
+            "the next track cannot become current while paused"
+        );
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("resume");
+        state
+            .apply_audio_control(AudioEvent::TrackBoundaryApplied {
+                entry_id: "two".into(),
+                first_sample_index: 4_800,
+            })
+            .expect("apply the reserved boundary after resume");
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "two");
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+    }
+
+    #[test]
     fn stop_discards_all_prefetched_reservations_before_replay() {
         let (mut state, stream_id) = host();
         state
