@@ -7,10 +7,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const POLL_TIMEOUT_MS: u64 = 3_000;
 const HOST_ADDRESS: &str = "127.0.0.1";
-const CONTROL_PORT: u16 = 45_100;
-const SYNC_PORT: u16 = 45_101;
-const AUDIO_PORT: u16 = 45_102;
 const SESSION_ID: &str = "host-transport-test-session";
+
+/// Bind three independent ephemeral ports while holding the UDP reservations
+/// together, so concurrent workspace test binaries cannot contend for a
+/// hard-coded control or audio port.
+fn available_host_ports() -> (u16, u16, u16) {
+    let control = std::net::TcpListener::bind((HOST_ADDRESS, 0)).expect("reserve control port");
+    let sync = std::net::UdpSocket::bind((HOST_ADDRESS, 0)).expect("reserve sync port");
+    let audio = std::net::UdpSocket::bind((HOST_ADDRESS, 0)).expect("reserve audio port");
+    (
+        control.local_addr().unwrap().port(),
+        sync.local_addr().unwrap().port(),
+        audio.local_addr().unwrap().port(),
+    )
+}
 
 fn now_wall_clock_ms() -> u64 {
     SystemTime::now()
@@ -21,9 +32,14 @@ fn now_wall_clock_ms() -> u64 {
         .expect("current time fits in a u64 millisecond count")
 }
 
-fn manual_endpoint_payload() -> String {
+fn manual_endpoint_payload(
+    control_port: u16,
+    sync_port: u16,
+    audio_port: u16,
+    session_id: &str,
+) -> String {
     format!(
-        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{CONTROL_PORT},"syncPort":{SYNC_PORT},"audioPort":{AUDIO_PORT},"sessionId":"{SESSION_ID}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
+        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{control_port},"syncPort":{sync_port},"audioPort":{audio_port},"sessionId":"{session_id}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
         current_protocol_version(),
     )
 }
@@ -125,17 +141,18 @@ fn assert_sync_response_matches(event: &FfiListenerTransportEvent) {
 
 #[test]
 fn host_transport_completes_join_request_through_approval_and_disconnect() {
+    let (control_port, sync_port, audio_port) = available_host_ports();
     let host = FfiHostTransportHandle::bind(
         HOST_ADDRESS.to_owned(),
-        CONTROL_PORT,
-        SYNC_PORT,
-        AUDIO_PORT,
+        control_port,
+        sync_port,
+        audio_port,
         SESSION_ID.to_owned(),
     )
     .expect("bind host transport");
 
     let listener = FfiListenerTransportHandle::connect(
-        manual_endpoint_payload(),
+        manual_endpoint_payload(control_port, sync_port, audio_port, SESSION_ID),
         now_wall_clock_ms(),
         "listener-device".to_owned(),
         HOST_ADDRESS.to_owned(),
@@ -214,21 +231,16 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
 
 #[test]
 fn host_transport_targets_current_stream_and_boundary_to_late_joiner() {
+    let (control_port, sync_port, audio_port) = available_host_ports();
     let host = FfiHostTransportHandle::bind(
         HOST_ADDRESS.to_owned(),
-        CONTROL_PORT + 30,
-        SYNC_PORT + 30,
-        AUDIO_PORT + 30,
+        control_port,
+        sync_port,
+        audio_port,
         "late-join-session".to_owned(),
     )
     .expect("bind host transport");
-    let endpoint = format!(
-        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{} ,"syncPort":{},"audioPort":{},"sessionId":"late-join-session","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
-        CONTROL_PORT + 30,
-        SYNC_PORT + 30,
-        AUDIO_PORT + 30,
-        current_protocol_version(),
-    );
+    let endpoint = manual_endpoint_payload(control_port, sync_port, audio_port, "late-join-session");
     let listener = FfiListenerTransportHandle::connect(
         endpoint,
         now_wall_clock_ms(),
@@ -313,22 +325,17 @@ fn host_transport_targets_current_stream_and_boundary_to_late_joiner() {
 
 #[test]
 fn host_transport_delivers_join_rejection() {
+    let (control_port, sync_port, audio_port) = available_host_ports();
     let host = FfiHostTransportHandle::bind(
         HOST_ADDRESS.to_owned(),
-        CONTROL_PORT + 10,
-        SYNC_PORT + 10,
-        AUDIO_PORT + 10,
+        control_port,
+        sync_port,
+        audio_port,
         SESSION_ID.to_owned(),
     )
     .expect("bind host transport");
 
-    let payload = format!(
-        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{},"syncPort":{},"audioPort":{},"sessionId":"{SESSION_ID}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
-        CONTROL_PORT + 10,
-        SYNC_PORT + 10,
-        AUDIO_PORT + 10,
-        current_protocol_version(),
-    );
+    let payload = manual_endpoint_payload(control_port, sync_port, audio_port, SESSION_ID);
     let listener = FfiListenerTransportHandle::connect(
         payload,
         now_wall_clock_ms(),
@@ -401,22 +408,17 @@ fn join_approve_and_authorize(
 
 #[test]
 fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
+    let (control_port, sync_port, audio_port) = available_host_ports();
     let host = FfiHostTransportHandle::bind(
         HOST_ADDRESS.to_owned(),
-        CONTROL_PORT + 20,
-        SYNC_PORT + 20,
-        AUDIO_PORT + 20,
+        control_port,
+        sync_port,
+        audio_port,
         SESSION_ID.to_owned(),
     )
     .expect("bind host transport");
 
-    let payload = format!(
-        r#"{{"hostAddress":"{HOST_ADDRESS}","controlPort":{},"syncPort":{},"audioPort":{},"sessionId":"{SESSION_ID}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
-        CONTROL_PORT + 20,
-        SYNC_PORT + 20,
-        AUDIO_PORT + 20,
-        current_protocol_version(),
-    );
+    let payload = manual_endpoint_payload(control_port, sync_port, audio_port, SESSION_ID);
     let listener = FfiListenerTransportHandle::connect(
         payload,
         now_wall_clock_ms(),
