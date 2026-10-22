@@ -5,11 +5,7 @@ use super::*;
 fn authoritative_playlist_edit_during_backpressure_never_reserves_stale_successor() {
     let _guard = super::super::tests::audio_test_guard();
     let temp = TempDir::new().expect("temp");
-    let current_path = write_bytes(
-        &temp,
-        "edit-current.wav",
-        &pcm_wav_frames(48_000, 2, 4_800),
-    );
+    let current_path = write_bytes(&temp, "edit-current.wav", &pcm_wav_frames(48_000, 2, 4_800));
     let stale_path = write_bytes(&temp, "edit-stale.wav", &pcm_wav_frames(48_000, 2, 480));
     let replacement_path = write_bytes(
         &temp,
@@ -20,25 +16,21 @@ fn authoritative_playlist_edit_during_backpressure_never_reserves_stale_successo
         .expect("current decoder");
     let (opened_tx, opened_rx) = std::sync::mpsc::sync_channel(1);
     let stale = StreamingPlaylistTrackFactory::new("stale-next", "Stale", move || {
-        let opened = StreamingDecodeHandle::open(
-            stale_path.clone(),
-            StreamingDecodeConfig::default(),
-        )?;
+        let opened =
+            StreamingDecodeHandle::open(stale_path.clone(), StreamingDecodeConfig::default())?;
         opened_tx.send(()).expect("notify staged decoder");
         Ok(opened)
     })
     .expect("stale factory");
     let reserved = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let reserved_log = std::sync::Arc::clone(&reserved);
-    let reserve = std::sync::Arc::new(
-        move |boundary: &crate::protocol::TrackBoundary, _cancel| {
-            reserved_log
-                .lock()
-                .expect("reservation log")
-                .push((boundary.entry_id.clone(), boundary.first_sample_index.get()));
-            Ok(())
-        },
-    );
+    let reserve = std::sync::Arc::new(move |boundary: &crate::protocol::TrackBoundary, _cancel| {
+        reserved_log
+            .lock()
+            .expect("reservation log")
+            .push((boundary.entry_id.clone(), boundary.first_sample_index.get()));
+        Ok(())
+    });
     let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
         decoder,
         "current",
@@ -61,11 +53,10 @@ fn authoritative_playlist_edit_during_backpressure_never_reserves_stale_successo
     opened_rx
         .recv_timeout(TEST_TIMEOUT)
         .expect("the stale decoder was actually prebuffered");
-    let replacement =
-        StreamingPlaylistTrackFactory::new("replacement", "Replacement", move || {
-            StreamingDecodeHandle::open(replacement_path, StreamingDecodeConfig::default())
-        })
-        .expect("replacement factory");
+    let replacement = StreamingPlaylistTrackFactory::new("replacement", "Replacement", move || {
+        StreamingDecodeHandle::open(replacement_path, StreamingDecodeConfig::default())
+    })
+    .expect("replacement factory");
     packetizer
         .playlist_updater()
         .expect("live updater")
