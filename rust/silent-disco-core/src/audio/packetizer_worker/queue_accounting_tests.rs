@@ -3,9 +3,9 @@ use super::{Packetizer, PacketizerWorkerErrorKind, SharedStatistics, send_with_b
 use crate::audio::{AudioFormat, AudioSampleFormat, DecodedPcmChunk};
 use crate::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{TryRecvError, sync_channel};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -184,7 +184,9 @@ fn cancellation_while_boundary_waits_on_full_queue_preserves_audio_accounting() 
     cancellation.store(true, Ordering::Release);
     let result = blocked_sender.join().expect("sender thread must exit");
     assert_eq!(
-        result.expect_err("cancellation must prevent boundary delivery").kind,
+        result
+            .expect_err("cancellation must prevent boundary delivery")
+            .kind,
         PacketizerWorkerErrorKind::Cancelled
     );
     assert!(
@@ -194,7 +196,9 @@ fn cancellation_while_boundary_waits_on_full_queue_preserves_audio_accounting() 
     assert_eq!(statistics.queued_packets.load(Ordering::Acquire), 1);
     assert_eq!(statistics.emitted_packets.load(Ordering::Acquire), 1);
     assert!(matches!(
-        receiver.try_recv().expect("only the first audio was queued"),
+        receiver
+            .try_recv()
+            .expect("only the first audio was queued"),
         ProtocolFrame::Audio(_)
     ));
     assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
