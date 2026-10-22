@@ -12,6 +12,8 @@ use super::types::{DecodeError, DecodeErrorKind, DecodeSummary};
 
 mod playlist_worker;
 mod reservation;
+#[cfg(test)]
+mod queue_accounting_tests;
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 
@@ -747,6 +749,7 @@ fn send_with_backpressure(
     statistics: &SharedStatistics,
     queue_capacity: usize,
 ) -> Result<(), PacketizerWorkerError> {
+    let is_audio = matches!(&frame, ProtocolFrame::Audio(_));
     let mut backpressure_recorded = false;
     let mut pending = Some(frame);
     loop {
@@ -769,7 +772,11 @@ fn send_with_backpressure(
         }
         match sender.try_send(pending.take().expect("frame present until sent")) {
             Ok(()) => {
-                statistics.emitted_packets.fetch_add(1, Ordering::AcqRel);
+                // TrackBoundary uses the same bounded channel but is a
+                // control event, not an emitted PCM audio datagram.
+                if is_audio {
+                    statistics.emitted_packets.fetch_add(1, Ordering::AcqRel);
+                }
                 return Ok(());
             }
             Err(std::sync::mpsc::TrySendError::Full(returned)) => {
