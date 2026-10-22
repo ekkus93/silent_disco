@@ -127,3 +127,77 @@ fn oversized_audio_geometry_is_rejected_without_arithmetic_overflow() {
     .expect_err("oversized PCM datagram must be rejected");
     assert_eq!(error.kind, super::PacketizerErrorKind::InvalidConfiguration);
 }
+
+#[test]
+fn three_non_aligned_44100_hz_tracks_preserve_pcm_and_sample_clock() {
+    // All three decoders report source-local sample zero. Neither boundary
+    // aligns with a 220-frame packet, and the final packet needs padding.
+    // This catches premature carry flushing, inserted silence, duplicate
+    // samples, and nominal-5ms timestamp drift across multiple tracks.
+    let format = AudioFormat {
+        sample_rate_hz: 44_100,
+        channels: 1,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        SessionId::new("three-track-timing-session").expect("session"),
+        StreamId::new("three-track-timing-stream").expect("stream"),
+        format,
+        5,
+        MonotonicMillis::new(10_000),
+    )
+    .expect("valid packetizer");
+    let lengths = [219_usize, 44_101, 44_101];
+    let values = [101_i16, 202, 303];
+    let mut frames = Vec::new();
+    let mut boundary_indices = Vec::new();
+
+    for (index, (&length, &value)) in lengths.iter().zip(values.iter()).enumerate() {
+        if index > 0 {
+            boundary_indices.push(packetizer.next_contiguous_sample_index());
+        }
+        let outcome = packetizer
+            .push_contiguous_chunk(DecodedPcmChunk {
+                format,
+                first_sample_index: SampleIndex::new(0),
+                frames: vec![value; length],
+                end_of_stream: index == lengths.len() - 1,
+            })
+            .expect("contiguous track");
+        assert_eq!(outcome.end_of_stream, index == lengths.len() - 1);
+        frames.extend(outcome.frames);
+    }
+
+    assert_eq!(boundary_indices, [219, 44_320]);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 88_421);
+    assert_eq!(frames.len(), 402);
+    for (sequence, frame) in frames.iter().enumerate() {
+        let ProtocolFrame::Audio(audio) = frame else {
+            panic!("only audio packets expected");
+        };
+        let first = sequence as u64 * 220;
+        let rounded_ms = (first * 1_000 + 22_050) / 44_100;
+        assert_eq!(audio.sequence.get(), sequence as u64);
+        assert_eq!(audio.first_sample_index.get(), first);
+        assert_eq!(audio.host_presentation_time_ms.get(), 10_000 + rounded_ms);
+        assert_eq!(audio.payload.len(), 440);
+
+        for (offset, sample) in audio.payload.chunks_exact(2).enumerate() {
+            let absolute = first as usize + offset;
+            let expected = if absolute < 219 {
+                values[0]
+            } else if absolute < 44_320 {
+                values[1]
+            } else if absolute < 88_421 {
+                values[2]
+            } else {
+                0 // Only the last packet may contain end-of-queue padding.
+            };
+            assert_eq!(
+                i16::from_le_bytes([sample[0], sample[1]]),
+                expected,
+                "unexpected PCM at stream sample {absolute}"
+            );
+        }
+    }
+}
