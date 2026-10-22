@@ -365,7 +365,7 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
     assert!(!cached.update(&old_pause));
     assert!(!cached.update(&old_stop));
     assert!(!cached.update(&old_start));
-    assert_eq!(cached.snapshot(), vec![fresh_start.clone(), next.clone()]);
+    assert!(cached.snapshot() == vec![fresh_start.clone(), next.clone()]);
 
     let current_pause = ControlMessage::Pause(Pause {
         session_id: session_id.clone(),
@@ -375,9 +375,8 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
     assert!(cached.update(&current_pause));
     assert!(!cached.update(&old_start));
     assert!(!cached.update(&old_stop));
-    assert_eq!(
-        cached.snapshot(),
-        vec![fresh_start, next, current_pause],
+    assert!(
+        cached.snapshot() == vec![fresh_start, next, current_pause],
         "old-generation controls cannot unpause or retire the restarted stream"
     );
 
