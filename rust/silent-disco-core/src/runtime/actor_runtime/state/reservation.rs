@@ -286,11 +286,16 @@ mod tests {
     #[test]
     fn queue_edit_winning_first_rejects_stale_target_reservation() {
         let (mut state, stream_id) = host();
+        let queue_revision = state.snapshot.host_queue.revision();
         state
-            .snapshot
-            .host_queue
-            .remove(1, "two", true)
-            .expect("edit next track first");
+            .apply_command(
+                crate::domain::OperationId::new("remove-before-reserve").unwrap(),
+                CoreCommand::RemoveHostQueueEntry {
+                    expected_queue_revision: queue_revision,
+                    entry_id: "two".into(),
+                },
+            )
+            .expect("actor accepts the edit before producer reservation");
         let revision = state.snapshot.revision;
         let error = state
             .reserve_track_boundary(stream_id.clone(), "two".into(), 48_000)
@@ -300,6 +305,43 @@ mod tests {
         state
             .reserve_track_boundary(stream_id, "three".into(), 48_000)
             .expect("new authoritative successor");
+        assert_eq!(
+            state
+                .snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .unwrap()
+                .entry_id,
+            "three"
+        );
+    }
+
+    #[test]
+    fn queue_reorder_winning_first_rejects_the_old_successor_reservation() {
+        let (mut state, stream_id) = host();
+        let queue_revision = state.snapshot.host_queue.revision();
+        state
+            .apply_command(
+                crate::domain::OperationId::new("reorder-before-reserve").unwrap(),
+                CoreCommand::ReorderHostQueue {
+                    expected_queue_revision: queue_revision,
+                    ordered_entry_ids: vec!["one".into(), "three".into(), "two".into()],
+                },
+            )
+            .expect("actor reorders unreserved upcoming tracks");
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "three");
+
+        let revision = state.snapshot.revision;
+        let error = state
+            .reserve_track_boundary(stream_id.clone(), "two".into(), 4_800)
+            .expect_err("old successor must not be reserved after a reorder");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.revision, revision);
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+
+        state
+            .reserve_track_boundary(stream_id, "three".into(), 4_800)
+            .expect("producer can reserve the newly selected successor");
         assert_eq!(
             state
                 .snapshot
