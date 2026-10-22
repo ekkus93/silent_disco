@@ -89,11 +89,12 @@ impl PlaybackControls {
             }
             ControlMessage::Pause(pause)
                 if self.stream_start.as_ref().is_some_and(|start| {
-                    start.stream_id == pause.stream_id
-                        && start.session_id == pause.session_id
-                        && pause.host_pause_time_ms.get() >= start.host_start_time_ms.get()
+                    start.stream_id == pause.stream_id && start.session_id == pause.session_id
                 }) =>
             {
+                // A StreamStart is a *future audio presentation deadline*, not
+                // the time playback controls become valid. The host can Pause
+                // during its startup/send-ahead window, before that deadline.
                 // Replay must never regress to a delayed or conflicting older
                 // pause timestamp from this active stream.
                 if self
@@ -109,11 +110,12 @@ impl PlaybackControls {
             }
             ControlMessage::Stop(stop)
                 if self.stream_start.as_ref().is_some_and(|start| {
-                    start.stream_id == stop.stream_id
-                        && start.session_id == stop.session_id
-                        && stop.host_stop_time_ms.get() >= start.host_start_time_ms.get()
+                    start.stream_id == stop.stream_id && start.session_id == stop.session_id
                 }) =>
             {
+                // Stop is valid before the first scheduled sample is audible.
+                // The stream ID, not the future presentation timestamp,
+                // distinguishes a delayed Stop from a retired stream.
                 *self = Self::default();
                 true
             }

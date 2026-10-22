@@ -334,6 +334,7 @@ fn replacement_stream_resets_pause_retransmission_fence() {
 fn restarted_stream_rejects_delayed_old_generation_controls() {
     let session_id = SessionId::new("replay-generation-session").expect("session ID");
     let stream_id = StreamId::new("replay-generation-stream").expect("stream ID");
+    let fresh_id = StreamId::new("replay-fresh-stream").expect("new stream ID");
     let old_start = stream_start(&session_id, &stream_id);
     let old_pause = pause(&session_id, &stream_id);
     let old_stop = ControlMessage::Stop(Stop {
@@ -347,11 +348,11 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
     assert!(cached.update(&old_stop));
     assert!(cached.snapshot().is_empty());
 
-    // A fresh Play can reuse a stream ID after Stop, but has a later clock
-    // anchor. Earlier Stop/Pause/Start retransmissions belong to old playback.
+    // A fresh Play uses a new stream ID. Earlier Stop/Pause/Start
+    // retransmissions must never affect this newer playback generation.
     let fresh_start = ControlMessage::StreamStart(StreamStart {
         session_id: session_id.clone(),
-        stream_id: stream_id.clone(),
+        stream_id: fresh_id.clone(),
         host_start_time_ms: MonotonicMillis::new(5_000),
         sample_rate: 48_000,
         channels: 2,
@@ -359,7 +360,7 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
         current_entry_id: Some("current-again".to_owned()),
         current_display_name: Some("Restarted song".to_owned()),
     });
-    let next = boundary(&session_id, &stream_id);
+    let next = boundary(&session_id, &fresh_id);
     assert!(cached.update(&fresh_start));
     assert!(cached.update(&next));
     assert!(!cached.update(&old_pause));
@@ -369,7 +370,7 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
 
     let current_pause = ControlMessage::Pause(Pause {
         session_id: session_id.clone(),
-        stream_id: stream_id.clone(),
+        stream_id: fresh_id.clone(),
         host_pause_time_ms: MonotonicMillis::new(6_000),
     });
     assert!(cached.update(&current_pause));
@@ -382,7 +383,7 @@ fn restarted_stream_rejects_delayed_old_generation_controls() {
 
     assert!(cached.update(&ControlMessage::Stop(Stop {
         session_id,
-        stream_id,
+        stream_id: fresh_id,
         host_stop_time_ms: MonotonicMillis::new(7_000),
     })));
     assert!(cached.snapshot().is_empty());
@@ -420,5 +421,43 @@ fn older_stream_start_cannot_replace_the_current_reconnect_snapshot() {
     assert!(
         cached.snapshot() == vec![new_start, new_boundary, paused],
         "a delayed earlier StreamStart must not replace a newer track or unpause it"
+    );
+}
+
+#[test]
+fn pause_and_stop_are_valid_before_the_first_scheduled_audio_sample() {
+    let session_id = SessionId::new("replay-future-anchor-session").expect("session ID");
+    let stream_id = StreamId::new("replay-future-anchor-stream").expect("stream ID");
+    let future_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_start_time_ms: MonotonicMillis::new(10_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        current_entry_id: Some("first".to_owned()),
+        current_display_name: Some("First track".to_owned()),
+    });
+    // The desktop host advertises a start 400 ms ahead; a user can pause
+    // or stop immediately after Play, while every audio sample is still
+    // scheduled for the future. Both controls must reach live listeners.
+    let early_pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(9_650),
+    });
+    let early_stop = ControlMessage::Stop(Stop {
+        session_id,
+        stream_id,
+        host_stop_time_ms: MonotonicMillis::new(9_700),
+    });
+    let mut cached = PlaybackControls::default();
+    assert!(cached.update(&future_start));
+    assert!(cached.update(&early_pause), "Pause cannot be gated by future audio time");
+    assert!(cached.snapshot() == vec![future_start, early_pause]);
+    assert!(cached.update(&early_stop), "Stop must interrupt startup send-ahead");
+    assert!(
+        cached.snapshot().is_empty(),
+        "Stop must clear future playback from late-join replay"
     );
 }
