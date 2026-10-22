@@ -282,4 +282,4 @@ mod tests {
         assert_eq!(state.snapshot.revision, revision);
         assert!(state.snapshot.host_queue_next_boundary.is_none());
     }
-
+}
