@@ -758,6 +758,9 @@ fn a_default_duration_audio_datagram_fits_one_unfragmented_udp_payload() {
 #[path = "packetizer_tests_playlist.rs"]
 mod playlist_tests;
 
+#[path = "packetizer_tests_playlist_reserved_edit.rs"]
+mod reserved_edit_tests;
+
 #[test]
 fn direct_chunk_gap_or_overlap_is_rejected_without_corrupting_carry() {
     let format = mono_format(1_000);
