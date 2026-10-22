@@ -46,40 +46,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install Linux dependencies for Rust binding generator
-        shell: bash
-        run: |
-          set -euo pipefail
-          dependencies=(
-            build-essential
-            curl
-            file
-            libasound2-dev
-            libayatana-appindicator3-dev
-            librsvg2-dev
-            libssl-dev
-            libwebkit2gtk-4.1-dev
-            libxdo-dev
-            patchelf
-            wget
-          )
-          missing=()
-          for package in "${dependencies[@]}"; do
-            if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fxq 'install ok installed'; then
-              missing+=("$package")
-            fi
-          done
-          if (( ${#missing[@]} == 0 )); then
-            echo "Required Linux dependencies already installed; skipping apt."
-          elif [[ "${RUNNER_ENVIRONMENT:-}" == "self-hosted" ]]; then
-            printf 'Missing preinstalled runner dependencies: %s\n' "${missing[*]}" >&2
-            echo "Install the missing packages on the dedicated runner outside CI." >&2
-            exit 1
-          else
-            sudo apt-get update
-            sudo apt-get install --yes --no-install-recommends "${missing[@]}"
-          fi
-
       - name: Generate exact npm lockfile when missing
         shell: bash
         run: |
@@ -91,19 +57,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Create Rust binding frontend placeholder
-        working-directory: .
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p desktop/dist
-          printf '<!doctype html><title>Silent Disco binding CI placeholder</title>\n' > desktop/dist/index.html
-
-      - name: Verify Rust-derived TypeScript bindings
-        run: npm run bindings:check
-
-      - name: Check formatting
-        run: npm run format:check
+      - name: Check frontend formatting
+        run: npx biome format .
 
       - name: Run lint
         run: npm run lint
@@ -147,7 +102,7 @@ jobs:
     name: Desktop Rust quality
     # Ephemeral hosted workers keep heavy build output off the owner's SSD.
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -210,6 +165,10 @@ jobs:
           set -euo pipefail
           mkdir -p desktop/dist
           printf '<!doctype html><title>Silent Disco Rust CI placeholder</title>\n' > desktop/dist/index.html
+
+      - name: Verify Rust-derived TypeScript bindings
+        working-directory: desktop
+        run: cargo run --locked --manifest-path src-tauri/Cargo.toml --features binding-generator --bin generate_bindings -- --check
 
       - name: Run strict Clippy
         working-directory: desktop/src-tauri
