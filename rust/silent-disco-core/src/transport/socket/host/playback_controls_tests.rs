@@ -453,9 +453,15 @@ fn pause_and_stop_are_valid_before_the_first_scheduled_audio_sample() {
     });
     let mut cached = PlaybackControls::default();
     assert!(cached.update(&future_start));
-    assert!(cached.update(&early_pause), "Pause cannot be gated by future audio time");
+    assert!(
+        cached.update(&early_pause),
+        "Pause cannot be gated by future audio time"
+    );
     assert!(cached.snapshot() == vec![future_start, early_pause]);
-    assert!(cached.update(&early_stop), "Stop must interrupt startup send-ahead");
+    assert!(
+        cached.update(&early_stop),
+        "Stop must interrupt startup send-ahead"
+    );
     assert!(
         cached.snapshot().is_empty(),
         "Stop must clear future playback from late-join replay"
