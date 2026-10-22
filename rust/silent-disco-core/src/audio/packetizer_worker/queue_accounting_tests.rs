@@ -1,5 +1,5 @@
 //! Packetizer queue statistics must distinguish control boundaries from PCM datagrams.
-use super::{Packetizer, SharedStatistics, send_with_backpressure};
+use super::{Packetizer, PacketizerWorkerErrorKind, SharedStatistics, send_with_backpressure};
 use crate::audio::{AudioFormat, AudioSampleFormat, DecodedPcmChunk};
 use crate::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
@@ -65,4 +65,59 @@ fn reserved_track_boundary_does_not_inflate_emitted_audio_packet_count() {
         receiver.recv().expect("last"),
         ProtocolFrame::Audio(_)
     ));
+}
+
+#[test]
+fn disconnected_receiver_does_not_count_unsent_audio_or_leak_queue_slots() {
+    let session_id = SessionId::new("disconnect-session").expect("session");
+    let stream_id = StreamId::new("disconnect-stream").expect("stream");
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 1,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        session_id.clone(),
+        stream_id.clone(),
+        format,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect("packetizer");
+    let audio = packetizer
+        .push_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![7; 240],
+            end_of_stream: true,
+        })
+        .expect("audio datagram")
+        .frames
+        .into_iter()
+        .next()
+        .expect("one audio datagram");
+    let boundary = ProtocolFrame::Control(ControlMessage::TrackBoundary(TrackBoundary {
+        session_id,
+        stream_id,
+        first_sample_index: SampleIndex::new(240),
+        entry_id: "next".to_owned(),
+        display_name: "Next".to_owned(),
+    }));
+    for frame in [audio, boundary] {
+        let (sender, receiver) = sync_channel(1);
+        drop(receiver);
+        let statistics = SharedStatistics::default();
+        let error = send_with_backpressure(
+            &sender,
+            frame,
+            &AtomicBool::new(false),
+            &statistics,
+            1,
+        )
+        .expect_err("disconnected receiver must reject the frame");
+        assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+        assert_eq!(statistics.queued_packets.load(Ordering::Acquire), 0);
+        assert_eq!(statistics.emitted_packets.load(Ordering::Acquire), 0);
+        assert_eq!(statistics.backpressure_events.load(Ordering::Acquire), 0);
+    }
 }
