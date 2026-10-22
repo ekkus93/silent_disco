@@ -4,7 +4,10 @@ use crate::audio::{AudioFormat, AudioSampleFormat, DecodedPcmChunk};
 use crate::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::{TryRecvError, sync_channel};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
 fn reserved_track_boundary_does_not_inflate_emitted_audio_packet_count() {
@@ -114,4 +117,85 @@ fn disconnected_receiver_does_not_count_unsent_audio_or_leak_queue_slots() {
         assert_eq!(statistics.emitted_packets.load(Ordering::Acquire), 0);
         assert_eq!(statistics.backpressure_events.load(Ordering::Acquire), 0);
     }
+}
+
+#[test]
+fn cancellation_while_boundary_waits_on_full_queue_preserves_audio_accounting() {
+    let session_id = SessionId::new("backpressure-session").expect("session");
+    let stream_id = StreamId::new("backpressure-stream").expect("stream");
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 1,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        session_id.clone(),
+        stream_id.clone(),
+        format,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect("packetizer");
+    let audio = packetizer
+        .push_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![7; 240],
+            end_of_stream: true,
+        })
+        .expect("audio datagram")
+        .frames
+        .into_iter()
+        .next()
+        .expect("one audio datagram");
+    let boundary = ProtocolFrame::Control(ControlMessage::TrackBoundary(TrackBoundary {
+        session_id,
+        stream_id,
+        first_sample_index: SampleIndex::new(240),
+        entry_id: "next".to_owned(),
+        display_name: "Next".to_owned(),
+    }));
+    let (sender, receiver) = sync_channel(1);
+    let statistics = Arc::new(SharedStatistics::default());
+    let cancellation = Arc::new(AtomicBool::new(false));
+    send_with_backpressure(&sender, audio, &cancellation, &statistics, 1)
+        .expect("first audio fills the only queue slot");
+
+    let worker_statistics = Arc::clone(&statistics);
+    let worker_cancellation = Arc::clone(&cancellation);
+    let boundary_sender = sender.clone();
+    let blocked_sender = thread::spawn(move || {
+        send_with_backpressure(
+            &boundary_sender,
+            boundary,
+            &worker_cancellation,
+            &worker_statistics,
+            1,
+        )
+    });
+    // Observe actual bounded backpressure, not merely thread startup,
+    // before cancelling a producer that has committed no boundary frame.
+    let start = Instant::now();
+    while statistics.backpressure_events.load(Ordering::Acquire) == 0
+        && start.elapsed() < Duration::from_secs(5)
+    {
+        thread::sleep(Duration::from_millis(1));
+    }
+    cancellation.store(true, Ordering::Release);
+    let result = blocked_sender.join().expect("sender thread must exit");
+    assert_eq!(
+        result.expect_err("cancellation must prevent boundary delivery").kind,
+        PacketizerWorkerErrorKind::Cancelled
+    );
+    assert!(
+        statistics.backpressure_events.load(Ordering::Acquire) >= 1,
+        "the boundary sender must have encountered the full queue"
+    );
+    assert_eq!(statistics.queued_packets.load(Ordering::Acquire), 1);
+    assert_eq!(statistics.emitted_packets.load(Ordering::Acquire), 1);
+    assert!(matches!(
+        receiver.try_recv().expect("only the first audio was queued"),
+        ProtocolFrame::Audio(_)
+    ));
+    assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
 }
