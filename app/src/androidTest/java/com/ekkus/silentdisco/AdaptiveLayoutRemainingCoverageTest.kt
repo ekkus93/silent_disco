@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.ConnectionProgressState
+import com.ekkus.silentdisco.app.HostQueueItem
 import com.ekkus.silentdisco.app.StorageInitializationState
 import com.ekkus.silentdisco.app.TuningSettings
 import com.ekkus.silentdisco.core.model.AppRole
@@ -25,12 +27,16 @@ import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.feature.diagnostics.DiagnosticsScreen
 import com.ekkus.silentdisco.feature.host.HostDashboardScreen
+import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
+import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Rule
 import org.junit.Test
 
@@ -82,6 +88,51 @@ class AdaptiveLayoutRemainingCoverageTest {
         }
         composeRule.onNodeWithText("Always allow").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Reject").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun liveQueueEditControlsStayVisibleAndUsableInSmallLargeTextWindow() {
+        var addRequests = 0
+        var removedEntry: String? = null
+        var reorderedIds: List<String>? = null
+        composeRule.setContent {
+            RemainingAdaptiveSurface(width = 320.dp, height = 480.dp, fontScale = 2f) {
+                HostQueueManagementScreen(
+                    uiState = readyState().copy(
+                        hostPlaybackState = PlaybackState.PLAYING,
+                        hostQueue = listOf(
+                            HostQueueItem("current", "source-1", "Current song", null, null),
+                            HostQueueItem("second", "source-2", "Second song", null, null),
+                            HostQueueItem("third", "source-3", "Third song", null, null),
+                        ),
+                    ),
+                    onBack = {},
+                    onAddSongs = { addRequests += 1 },
+                    onReorderQueue = { reorderedIds = it },
+                    onRemoveQueueEntry = { removedEntry = it },
+                )
+            }
+        }
+
+        // Unlike the growing collection, Add songs must stay pinned and visible.
+        composeRule.onNodeWithTag("host-queue-add-songs").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("host-queue-upcoming-list").performScrollToIndex(0)
+
+        listOf("host-queue-move-down-second", "host-queue-remove-second").forEach { tag ->
+            val node = composeRule.onNodeWithTag(tag).assertIsDisplayed()
+            val bounds = node.fetchSemanticsNode().boundsInRoot
+            assertWithMessage("$tag left edge").that(bounds.left).isAtLeast(0f)
+            assertWithMessage("$tag right edge").that(bounds.right).isAtMost(320f)
+        }
+        composeRule.onNodeWithTag("host-queue-move-down-second").performClick()
+        composeRule.onNodeWithTag("host-queue-remove-second").performClick()
+        composeRule.runOnIdle {
+            assertThat(addRequests).isEqualTo(1)
+            assertThat(removedEntry).isEqualTo("second")
+            assertThat(reorderedIds)
+                .containsExactly("current", "third", "second")
+                .inOrder()
+        }
     }
 
     @Test
