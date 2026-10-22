@@ -348,7 +348,7 @@ pub(super) fn wait_for_control(
                 ..
             }) => {
                 unexpected_controls += 1;
-                last_unexpected_control = Some(format!("{message:?}"));
+                last_unexpected_control = Some(message.kind().stable_name().to_owned());
             }
             Ok(_) => other_events += 1,
             Err(error)
