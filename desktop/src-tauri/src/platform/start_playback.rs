@@ -165,7 +165,10 @@ fn start_after_buffering(
                     .map_err(|error| reservation_error(&error.to_string(), &cancelled))?
                     .playback_state;
                 match state {
-                    PlaybackState::Playing => break,
+                    // A producer reservation also remains valid across a
+                    // host pause; the actor still forbids application until
+                    // playback resumes.
+                    PlaybackState::Playing | PlaybackState::Paused => break,
                     PlaybackState::Stopped | PlaybackState::Error => {
                         return Err(reservation_error(
                             "host playback stopped before boundary reservation",
