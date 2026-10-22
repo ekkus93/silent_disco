@@ -332,3 +332,75 @@ fn empty_final_track_flushes_only_the_prior_tracks_unpadded_carry() {
     assert_eq!(&last.payload[..2], &7_i16.to_le_bytes());
     assert!(last.payload[2..].iter().all(|byte| *byte == 0));
 }
+
+#[test]
+fn invalid_contiguous_stereo_chunk_preserves_carry_and_recovers_at_exact_boundary() {
+    // A malformed upcoming track must not consume the previous track's
+    // partial packet or advance the stream clock. A corrected replacement
+    // starts at the original sample boundary without a gap or overlap.
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 2,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        SessionId::new("malformed-successor-session").expect("session"),
+        StreamId::new("malformed-successor-stream").expect("stream"),
+        format,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect("valid packetizer");
+
+    let first = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![11_i16, -11].repeat(239),
+            end_of_stream: false,
+        })
+        .expect("first partial packet");
+    assert!(first.frames.is_empty());
+    assert_eq!(packetizer.next_contiguous_sample_index(), 239);
+
+    let invalid = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![22, -22, 33],
+            end_of_stream: true,
+        })
+        .expect_err("incomplete stereo frame must not be packetized");
+    assert_eq!(invalid.kind, super::PacketizerErrorKind::InvalidConfiguration);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 239);
+    assert!(!packetizer.is_finished());
+
+    let recovered = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![22, -22, 33, -33],
+            end_of_stream: true,
+        })
+        .expect("corrected successor");
+    assert!(recovered.end_of_stream);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 241);
+    assert_eq!(recovered.frames.len(), 2);
+
+    let ProtocolFrame::Audio(first_packet) = &recovered.frames[0] else {
+        panic!("first recovered packet is audio");
+    };
+    assert_eq!(first_packet.sequence.get(), 0);
+    assert_eq!(first_packet.first_sample_index.get(), 0);
+    assert_eq!(first_packet.host_presentation_time_ms.get(), 1_000);
+    assert_eq!(&first_packet.payload[239 * 4..240 * 4], &[22, 0, 234, 255]);
+
+    let ProtocolFrame::Audio(last_packet) = &recovered.frames[1] else {
+        panic!("last recovered packet is audio");
+    };
+    assert_eq!(last_packet.sequence.get(), 1);
+    assert_eq!(last_packet.first_sample_index.get(), 240);
+    assert_eq!(last_packet.host_presentation_time_ms.get(), 1_005);
+    assert_eq!(&last_packet.payload[..4], &[33, 0, 223, 255]);
+    assert!(last_packet.payload[4..].iter().all(|byte| *byte == 0));
+}
