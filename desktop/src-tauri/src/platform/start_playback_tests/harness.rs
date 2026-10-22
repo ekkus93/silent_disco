@@ -332,6 +332,9 @@ pub(super) fn wait_for_control(
     matches_expected: impl Fn(&ControlMessage) -> bool,
 ) {
     let deadline = Instant::now() + TEST_TIMEOUT;
+    let mut unexpected_controls = 0_u32;
+    let mut other_events = 0_u32;
+    let mut last_unexpected_control = None;
     loop {
         match listener.recv_event(Duration::from_millis(100)) {
             Ok(TransportEvent::FrameReceived {
@@ -339,14 +342,26 @@ pub(super) fn wait_for_control(
                 frame: ProtocolFrame::Control(message),
                 ..
             }) if matches_expected(&message) => return,
-            Ok(_) => {}
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(message),
+                ..
+            }) => {
+                unexpected_controls += 1;
+                last_unexpected_control = Some(format!("{message:?}"));
+            }
+            Ok(_) => other_events += 1,
             Err(error)
                 if error.kind == silent_disco_core::transport::TransportErrorKind::Timeout => {}
             Err(error) => panic!("listener transport failed: {error}"),
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for expected control message"
+            "timed out waiting for expected control message: \
+             unexpected_controls={unexpected_controls}, other_events={other_events}, \
+             last_unexpected_control={last_unexpected_control:?}, \
+             listener_counters={:?}",
+            listener.counters()
         );
     }
 }
