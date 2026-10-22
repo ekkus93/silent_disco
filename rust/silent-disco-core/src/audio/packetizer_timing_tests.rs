@@ -356,7 +356,7 @@ fn invalid_contiguous_stereo_chunk_preserves_carry_and_recovers_at_exact_boundar
         .push_contiguous_chunk(DecodedPcmChunk {
             format,
             first_sample_index: SampleIndex::new(0),
-            frames: vec![11_i16, -11].repeat(239),
+            frames: [11_i16, -11].repeat(239),
             end_of_stream: false,
         })
         .expect("first partial packet");
