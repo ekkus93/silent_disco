@@ -11,9 +11,9 @@ use super::packetizer::{Packetizer, PacketizerError, PacketizerErrorKind};
 use super::types::{DecodeError, DecodeErrorKind, DecodeSummary};
 
 mod playlist_worker;
-mod reservation;
 #[cfg(test)]
 mod queue_accounting_tests;
+mod reservation;
 use crate::domain::{MonotonicMillis, SessionId, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 

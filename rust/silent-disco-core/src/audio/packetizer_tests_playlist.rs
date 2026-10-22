@@ -75,7 +75,7 @@ fn playlist_packetizer_emits_exact_boundary_on_one_contiguous_packet_timeline() 
     );
     assert!(boundary < frames.iter().position(|frame| matches!(frame, ProtocolFrame::Audio(packet) if packet.first_sample_index.get() == 240)).expect("boundary-spanning packet"));
     assert_eq!(audio[0].samples_per_packet, 240);
-    assert_eq!(summary.emitted_packets, 5); // one boundary control and four audio packets
+    assert_eq!(summary.emitted_packets, 4); // boundary control is not an audio datagram
 }
 
 #[test]

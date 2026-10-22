@@ -53,10 +53,16 @@ fn reserved_track_boundary_does_not_inflate_emitted_audio_packet_count() {
     assert_eq!(statistics.queued_packets.load(Ordering::Acquire), 3);
     assert_eq!(statistics.emitted_packets.load(Ordering::Acquire), 2);
     assert_eq!(statistics.backpressure_events.load(Ordering::Acquire), 0);
-    assert!(matches!(receiver.recv().expect("first"), ProtocolFrame::Audio(_)));
+    assert!(matches!(
+        receiver.recv().expect("first"),
+        ProtocolFrame::Audio(_)
+    ));
     assert!(matches!(
         receiver.recv().expect("boundary"),
         ProtocolFrame::Control(ControlMessage::TrackBoundary(_))
     ));
-    assert!(matches!(receiver.recv().expect("last"), ProtocolFrame::Audio(_)));
+    assert!(matches!(
+        receiver.recv().expect("last"),
+        ProtocolFrame::Audio(_)
+    ));
 }
