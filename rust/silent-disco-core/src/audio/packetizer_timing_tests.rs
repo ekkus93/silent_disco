@@ -201,3 +201,133 @@ fn three_non_aligned_44100_hz_tracks_preserve_pcm_and_sample_clock() {
         }
     }
 }
+
+#[test]
+fn stereo_split_tracks_and_empty_intermediate_entry_keep_one_pcm_timeline() {
+    // A 241-frame track crosses a packet boundary; an empty track must not
+    // flush the carry. The final track arrives in three arbitrarily sized
+    // decoder chunks, and only the final packet may contain silence padding.
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 2,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        SessionId::new("split-stereo-session").expect("session"),
+        StreamId::new("split-stereo-stream").expect("stream"),
+        format,
+        5,
+        MonotonicMillis::new(10_000),
+    )
+    .expect("valid packetizer");
+
+    let chunks = [
+        (100_usize, 11_i16, false),
+        (141, 11, false),
+        (0, 22, false), // Empty middle track, with its own entry identity.
+        (1, 33, false),
+        (239, 33, false),
+        (2, 33, true),
+    ];
+    let mut frames = Vec::new();
+    let mut boundaries = Vec::new();
+    for (index, (frame_count, value, end_of_stream)) in chunks.into_iter().enumerate() {
+        if index == 2 || index == 3 {
+            boundaries.push(packetizer.next_contiguous_sample_index());
+        }
+        let pcm = (0..frame_count)
+            .flat_map(|_| [value, -value])
+            .collect();
+        let outcome = packetizer
+            .push_contiguous_chunk(DecodedPcmChunk {
+                format,
+                first_sample_index: SampleIndex::new(0),
+                frames: pcm,
+                end_of_stream,
+            })
+            .expect("adjacent decoded chunk");
+        assert_eq!(outcome.end_of_stream, end_of_stream);
+        frames.extend(outcome.frames);
+    }
+
+    assert_eq!(boundaries, [241, 241]);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 483);
+    assert!(packetizer.is_finished());
+    assert_eq!(frames.len(), 3);
+    for (sequence, frame) in frames.iter().enumerate() {
+        let ProtocolFrame::Audio(audio) = frame else {
+            panic!("only audio packets expected");
+        };
+        assert_eq!(audio.sequence.get(), sequence as u64);
+        assert_eq!(audio.first_sample_index.get(), sequence as u64 * 240);
+        assert_eq!(audio.host_presentation_time_ms.get(), 10_000 + sequence as u64 * 5);
+        assert_eq!(audio.samples_per_packet, 240);
+        assert_eq!(audio.payload.len(), 960);
+        for (offset, stereo) in audio.payload.chunks_exact(4).enumerate() {
+            let absolute = sequence * 240 + offset;
+            let expected: i16 = if absolute < 241 {
+                11
+            } else if absolute < 483 {
+                33
+            } else {
+                0
+            };
+            assert_eq!(
+                i16::from_le_bytes([stereo[0], stereo[1]]),
+                expected,
+                "left sample {absolute}"
+            );
+            assert_eq!(
+                i16::from_le_bytes([stereo[2], stereo[3]]),
+                -expected,
+                "right sample {absolute}"
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_final_track_flushes_only_the_prior_tracks_unpadded_carry() {
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 1,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        SessionId::new("empty-final-session").expect("session"),
+        StreamId::new("empty-final-stream").expect("stream"),
+        format,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect("valid packetizer");
+    let first = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: vec![7; 241],
+            end_of_stream: false,
+        })
+        .expect("first track");
+    assert_eq!(first.frames.len(), 1);
+    assert!(!first.end_of_stream);
+    let final_track = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: Vec::new(),
+            end_of_stream: true,
+        })
+        .expect("empty final track");
+    assert!(final_track.end_of_stream);
+    assert_eq!(packetizer.next_contiguous_sample_index(), 241);
+    assert_eq!(final_track.frames.len(), 1);
+    let ProtocolFrame::Audio(last) = &final_track.frames[0] else {
+        panic!("last packet is audio");
+    };
+    assert_eq!(last.sequence.get(), 1);
+    assert_eq!(last.first_sample_index.get(), 240);
+    assert_eq!(last.host_presentation_time_ms.get(), 1_005);
+    assert_eq!(&last.payload[..2], &7_i16.to_le_bytes());
+    assert!(last.payload[2..].iter().all(|byte| *byte == 0));
+}
