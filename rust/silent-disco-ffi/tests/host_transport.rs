@@ -240,7 +240,8 @@ fn host_transport_targets_current_stream_and_boundary_to_late_joiner() {
         "late-join-session".to_owned(),
     )
     .expect("bind host transport");
-    let endpoint = manual_endpoint_payload(control_port, sync_port, audio_port, "late-join-session");
+    let endpoint =
+        manual_endpoint_payload(control_port, sync_port, audio_port, "late-join-session");
     let listener = FfiListenerTransportHandle::connect(
         endpoint,
         now_wall_clock_ms(),
