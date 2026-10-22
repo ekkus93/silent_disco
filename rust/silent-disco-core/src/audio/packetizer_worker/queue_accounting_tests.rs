@@ -107,14 +107,8 @@ fn disconnected_receiver_does_not_count_unsent_audio_or_leak_queue_slots() {
         let (sender, receiver) = sync_channel(1);
         drop(receiver);
         let statistics = SharedStatistics::default();
-        let error = send_with_backpressure(
-            &sender,
-            frame,
-            &AtomicBool::new(false),
-            &statistics,
-            1,
-        )
-        .expect_err("disconnected receiver must reject the frame");
+        let error = send_with_backpressure(&sender, frame, &AtomicBool::new(false), &statistics, 1)
+            .expect_err("disconnected receiver must reject the frame");
         assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
         assert_eq!(statistics.queued_packets.load(Ordering::Acquire), 0);
         assert_eq!(statistics.emitted_packets.load(Ordering::Acquire), 0);
