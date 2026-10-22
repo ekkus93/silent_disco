@@ -183,7 +183,7 @@ fn three_non_aligned_44100_hz_tracks_preserve_pcm_and_sample_clock() {
         assert_eq!(audio.payload.len(), 440);
 
         for (offset, sample) in audio.payload.chunks_exact(2).enumerate() {
-            let absolute = first as usize + offset;
+            let absolute = usize::try_from(first).expect("fixture index fits usize") + offset;
             let expected = if absolute < 219 {
                 values[0]
             } else if absolute < 44_320 {
