@@ -371,7 +371,10 @@ fn invalid_contiguous_stereo_chunk_preserves_carry_and_recovers_at_exact_boundar
             end_of_stream: true,
         })
         .expect_err("incomplete stereo frame must not be packetized");
-    assert_eq!(invalid.kind, super::PacketizerErrorKind::InvalidConfiguration);
+    assert_eq!(
+        invalid.kind,
+        super::PacketizerErrorKind::InvalidConfiguration
+    );
     assert_eq!(packetizer.next_contiguous_sample_index(), 239);
     assert!(!packetizer.is_finished());
 
