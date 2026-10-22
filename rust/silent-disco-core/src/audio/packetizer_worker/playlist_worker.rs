@@ -599,4 +599,63 @@ mod promotion_identity_tests {
             ["replacement", "three"]
         );
     }
+
+    #[test]
+    fn concurrent_upcoming_edit_and_successor_promotion_preserve_authoritative_order() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        // The edit and producer promotion contend for the same update mutex.
+        // If the edit gets there first, promotion must defer; otherwise the
+        // promoted successor remains current and the edit follows behind it.
+        // Neither ordering may silently drop a successfully accepted update.
+        for _ in 0..32 {
+            let state = Arc::new(Mutex::new(PlaylistUpdateState {
+                current_entry_id: "current".to_owned(),
+                reservation_shadow_entry_id: None,
+                pending: None,
+                terminal: false,
+            }));
+            let gate = Arc::new(Barrier::new(3));
+            let producer_state = Arc::clone(&state);
+            let producer_gate = Arc::clone(&gate);
+            let producer = thread::spawn(move || {
+                producer_gate.wait();
+                promote_current_entry_if_unmodified(&producer_state, "next", true)
+                    .expect("promotion")
+            });
+            let updater = super::super::StreamingPlaylistUpdater {
+                pending: Arc::clone(&state),
+            };
+            let editor_gate = Arc::clone(&gate);
+            let editor = thread::spawn(move || {
+                editor_gate.wait();
+                updater.replace_upcoming(vec![factory("replacement")])
+            });
+            gate.wait();
+            let promoted = producer.join().expect("producer thread");
+            editor
+                .join()
+                .expect("editor thread")
+                .expect("upcoming edit must be acknowledged");
+            let snapshot = state.lock().expect("update mutex");
+            assert_eq!(
+                snapshot
+                    .pending
+                    .as_ref()
+                    .expect("accepted edit stays pending")
+                    .iter()
+                    .map(|entry| entry.entry_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["replacement"]
+            );
+            if promoted {
+                assert_eq!(snapshot.current_entry_id, "next");
+                assert_eq!(snapshot.reservation_shadow_entry_id.as_deref(), Some("next"));
+            } else {
+                assert_eq!(snapshot.current_entry_id, "current");
+                assert!(snapshot.reservation_shadow_entry_id.is_none());
+            }
+        }
+    }
 }
