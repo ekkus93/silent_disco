@@ -282,4 +282,32 @@ mod tests {
         assert_eq!(state.snapshot.revision, revision);
         assert!(state.snapshot.host_queue_next_boundary.is_none());
     }
+
+    #[test]
+    fn queue_edit_winning_first_rejects_stale_target_reservation() {
+        let (mut state, stream_id) = host();
+        state
+            .snapshot
+            .host_queue
+            .remove(1, "two", true)
+            .expect("edit next track first");
+        let revision = state.snapshot.revision;
+        let error = state
+            .reserve_track_boundary(stream_id.clone(), "two".into(), 48_000)
+            .expect_err("removed target is stale");
+        assert_eq!(error.code, CoreErrorCode::InvalidStateTransition);
+        assert_eq!(state.snapshot.revision, revision);
+        state
+            .reserve_track_boundary(stream_id, "three".into(), 48_000)
+            .expect("new authoritative successor");
+        assert_eq!(
+            state
+                .snapshot
+                .host_queue_next_boundary
+                .as_ref()
+                .unwrap()
+                .entry_id,
+            "three"
+        );
+    }
 }
