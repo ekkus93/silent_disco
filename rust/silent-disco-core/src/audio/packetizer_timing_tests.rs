@@ -235,9 +235,7 @@ fn stereo_split_tracks_and_empty_intermediate_entry_keep_one_pcm_timeline() {
         if index == 2 || index == 3 {
             boundaries.push(packetizer.next_contiguous_sample_index());
         }
-        let pcm = (0..frame_count)
-            .flat_map(|_| [value, -value])
-            .collect();
+        let pcm = (0..frame_count).flat_map(|_| [value, -value]).collect();
         let outcome = packetizer
             .push_contiguous_chunk(DecodedPcmChunk {
                 format,
@@ -260,7 +258,10 @@ fn stereo_split_tracks_and_empty_intermediate_entry_keep_one_pcm_timeline() {
         };
         assert_eq!(audio.sequence.get(), sequence as u64);
         assert_eq!(audio.first_sample_index.get(), sequence as u64 * 240);
-        assert_eq!(audio.host_presentation_time_ms.get(), 10_000 + sequence as u64 * 5);
+        assert_eq!(
+            audio.host_presentation_time_ms.get(),
+            10_000 + sequence as u64 * 5
+        );
         assert_eq!(audio.samples_per_packet, 240);
         assert_eq!(audio.payload.len(), 960);
         for (offset, stereo) in audio.payload.chunks_exact(4).enumerate() {
