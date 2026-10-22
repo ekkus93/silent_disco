@@ -48,6 +48,15 @@ impl PlaybackControls {
     pub(super) fn update(&mut self, message: &ControlMessage) -> bool {
         match message {
             ControlMessage::StreamStart(start) => {
+                // A delayed start from an older generation reusing this stream ID
+                // must not rewind the active clock or clear its paused state.
+                if self.stream_start.as_ref().is_some_and(|previous| {
+                    previous.stream_id == start.stream_id
+                        && previous.session_id == start.session_id
+                        && start.host_start_time_ms.get() < previous.host_start_time_ms.get()
+                }) {
+                    return false;
+                }
                 let is_resume = self.stream_start.as_ref().is_some_and(|previous| {
                     previous.stream_id == start.stream_id && previous.session_id == start.session_id
                 });
@@ -80,7 +89,9 @@ impl PlaybackControls {
             }
             ControlMessage::Pause(pause)
                 if self.stream_start.as_ref().is_some_and(|start| {
-                    start.stream_id == pause.stream_id && start.session_id == pause.session_id
+                    start.stream_id == pause.stream_id
+                        && start.session_id == pause.session_id
+                        && pause.host_pause_time_ms.get() >= start.host_start_time_ms.get()
                 }) =>
             {
                 // Replay must never regress to a delayed or conflicting older
@@ -98,7 +109,9 @@ impl PlaybackControls {
             }
             ControlMessage::Stop(stop)
                 if self.stream_start.as_ref().is_some_and(|start| {
-                    start.stream_id == stop.stream_id && start.session_id == stop.session_id
+                    start.stream_id == stop.stream_id
+                        && start.session_id == stop.session_id
+                        && stop.host_stop_time_ms.get() >= start.host_start_time_ms.get()
                 }) =>
             {
                 *self = Self::default();

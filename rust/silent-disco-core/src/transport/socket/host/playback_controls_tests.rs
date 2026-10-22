@@ -329,3 +329,62 @@ fn replacement_stream_resets_pause_retransmission_fence() {
         "new streams must accept their own first Pause even if its timestamp is lower"
     );
 }
+
+#[test]
+fn restarted_stream_rejects_delayed_old_generation_controls() {
+    let session_id = SessionId::new("replay-generation-session").expect("session ID");
+    let stream_id = StreamId::new("replay-generation-stream").expect("stream ID");
+    let old_start = stream_start(&session_id, &stream_id);
+    let old_pause = pause(&session_id, &stream_id);
+    let old_stop = ControlMessage::Stop(Stop {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    });
+    let mut cached = PlaybackControls::default();
+
+    assert!(cached.update(&old_start));
+    assert!(cached.update(&old_stop));
+    assert!(cached.snapshot().is_empty());
+
+    // A fresh Play can reuse a stream ID after Stop, but has a later clock
+    // anchor. Earlier Stop/Pause/Start retransmissions belong to old playback.
+    let fresh_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_start_time_ms: MonotonicMillis::new(5_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 960,
+        current_entry_id: Some("current-again".to_owned()),
+        current_display_name: Some("Restarted song".to_owned()),
+    });
+    let next = boundary(&session_id, &stream_id);
+    assert!(cached.update(&fresh_start));
+    assert!(cached.update(&next));
+    assert!(!cached.update(&old_pause));
+    assert!(!cached.update(&old_stop));
+    assert!(!cached.update(&old_start));
+    assert_eq!(cached.snapshot(), vec![fresh_start.clone(), next.clone()]);
+
+    let current_pause = ControlMessage::Pause(Pause {
+        session_id: session_id.clone(),
+        stream_id: stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(6_000),
+    });
+    assert!(cached.update(&current_pause));
+    assert!(!cached.update(&old_start));
+    assert!(!cached.update(&old_stop));
+    assert_eq!(
+        cached.snapshot(),
+        vec![fresh_start, next, current_pause],
+        "old-generation controls cannot unpause or retire the restarted stream"
+    );
+
+    assert!(cached.update(&ControlMessage::Stop(Stop {
+        session_id,
+        stream_id,
+        host_stop_time_ms: MonotonicMillis::new(7_000),
+    })));
+    assert!(cached.snapshot().is_empty());
+}
