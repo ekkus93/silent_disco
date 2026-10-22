@@ -651,7 +651,10 @@ mod promotion_identity_tests {
             );
             if promoted {
                 assert_eq!(snapshot.current_entry_id, "next");
-                assert_eq!(snapshot.reservation_shadow_entry_id.as_deref(), Some("next"));
+                assert_eq!(
+                    snapshot.reservation_shadow_entry_id.as_deref(),
+                    Some("next")
+                );
             } else {
                 assert_eq!(snapshot.current_entry_id, "current");
                 assert!(snapshot.reservation_shadow_entry_id.is_none());
