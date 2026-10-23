@@ -173,7 +173,9 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                         channels,
                         samples_per_packet,
                         first_sample_index: SampleIndex::new(first_sample_index),
-                        host_presentation_time_ms: MonotonicMillis::new(1_000 + first_sample_index / 48),
+                        host_presentation_time_ms: MonotonicMillis::new(
+                            1_000 + first_sample_index / 48,
+                        ),
                         payload,
                     }))
                     .expect("send encoded-source PCM over production UDP");
@@ -192,7 +194,8 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                 };
                 assert_eq!(received.sequence.get(), sequence);
                 assert_eq!(received.first_sample_index.get(), first_sample_index);
-                let packet_samples: Vec<i16> = received.payload
+                let packet_samples: Vec<i16> = received
+                    .payload
                     .chunks_exact(2)
                     .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                     .collect();
