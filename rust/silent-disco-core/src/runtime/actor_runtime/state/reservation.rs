@@ -251,6 +251,94 @@ mod tests {
     }
 
     #[test]
+    fn paused_append_reorder_then_stop_replay_discards_only_old_reservations() {
+        let (mut state, original_stream) = host();
+        state.snapshot.host_lifecycle = HostLifecycle::Streaming;
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+            .expect("pause active host");
+        state
+            .reserve_track_boundary(original_stream.clone(), "two".into(), 4_800)
+            .expect("reserve the next entry while paused");
+
+        let revision = state.snapshot.host_queue.revision();
+        state
+            .apply_command(
+                crate::domain::OperationId::new("append-while-paused").unwrap(),
+                CoreCommand::AppendHostQueue {
+                    expected_queue_revision: revision,
+                    entries: vec![entry("four")],
+                },
+            )
+            .expect("append behind the reserved entry");
+        let revision = state.snapshot.host_queue.revision();
+        state
+            .apply_command(
+                crate::domain::OperationId::new("reorder-while-paused").unwrap(),
+                CoreCommand::ReorderHostQueue {
+                    expected_queue_revision: revision,
+                    ordered_entry_ids: vec![
+                        "one".into(),
+                        "two".into(),
+                        "four".into(),
+                        "three".into(),
+                    ],
+                },
+            )
+            .expect("reorder only unreserved entries while paused");
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "two");
+        assert_eq!(state.snapshot.host_queue.upcoming()[1].entry_id, "four");
+
+        let revision = state.snapshot.revision;
+        assert!(
+            state
+                .reserve_track_boundary(original_stream.clone(), "three".into(), 9_600)
+                .is_err(),
+            "a reordered former successor cannot reserve the second boundary"
+        );
+        assert_eq!(state.snapshot.revision, revision);
+        state
+            .reserve_track_boundary(original_stream.clone(), "four".into(), 9_600)
+            .expect("the reordered successor can reserve the next sample boundary");
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+            .expect("Stop while paused");
+        assert!(state.pending_host_boundaries.is_empty());
+        assert!(state.snapshot.host_queue_next_boundary.is_none());
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "one");
+        assert_eq!(state.snapshot.host_queue.upcoming()[1].entry_id, "four");
+
+        state
+            .apply_audio_control(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+            .expect("explicit replay");
+        let fresh_stream = StreamId::new("paused-replay-fresh-stream").unwrap();
+        state
+            .apply_audio_control(AudioEvent::PositionAdvanced {
+                stream_id: fresh_stream.clone(),
+                position_ms: 0,
+            })
+            .expect("bind the new playback identity");
+        assert!(
+            state
+                .reserve_track_boundary(original_stream, "two".into(), 4_800)
+                .is_err(),
+            "the stopped producer cannot reserve during replay"
+        );
+        state
+            .reserve_track_boundary(fresh_stream, "two".into(), 4_800)
+            .expect("fresh producer reserves the current successor");
+        state
+            .apply_audio_control(AudioEvent::TrackBoundaryApplied {
+                entry_id: "two".into(),
+                first_sample_index: 4_800,
+            })
+            .expect("replay follows the preserved queue");
+        assert_eq!(state.snapshot.host_queue.current().unwrap().entry_id, "two");
+        assert_eq!(state.snapshot.host_queue.upcoming()[0].entry_id, "four");
+    }
+
+    #[test]
     fn stop_discards_all_prefetched_reservations_before_replay() {
         let (mut state, stream_id) = host();
         state
