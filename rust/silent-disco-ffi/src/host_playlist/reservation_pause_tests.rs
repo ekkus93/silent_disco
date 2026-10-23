@@ -185,10 +185,10 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     // The producer can prebuffer while paused, but the output callback must
     // not consume those frames until Resume. Retain one native output token
     // across the boundary and compare callback-returned PCM after resuming.
-    let output = FfiAudioOutputHandle::open(960, 1).expect("native render ring");
+    let output = FfiAudioOutputHandle::open(4_800, 1).expect("native render ring");
     let token = u64::try_from(output.engine_token().expect("engine token"))
         .expect("nonnegative native token");
-    let tap = Arc::new(CallbackCaptureTap::new(960).expect("capture capacity"));
+    let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("capture capacity"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach capture");
     let mut samples = Vec::new();
     let mut boundaries = Vec::new();
@@ -270,10 +270,16 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
             "callback capture must match native output"
         );
         for stereo in pcm.chunks_exact(2) {
-            let expected = if absolute_frame < 480 { 3_000_i16 } else { 6_000_i16 };
+            let expected = if absolute_frame < 480 {
+                3_000_i16
+            } else {
+                6_000_i16
+            };
             let expected = f32::from(expected) / 32768.0;
             assert!(
-                stereo.iter().all(|sample| sample.to_bits() == expected.to_bits()),
+                stereo
+                    .iter()
+                    .all(|sample| sample.to_bits() == expected.to_bits()),
                 "wrong resumed callback PCM at sample {absolute_frame}"
             );
             absolute_frame += 1;
