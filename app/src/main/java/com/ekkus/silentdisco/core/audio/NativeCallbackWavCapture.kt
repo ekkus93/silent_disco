@@ -9,7 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 
 /** Result of opt-in native callback capture. A dropped frame invalidates the WAV. */
@@ -19,8 +18,30 @@ data class CallbackAudioCaptureReport(
     val capturedFrames: ULong,
     val lostFrames: ULong,
     val callbackCount: ULong,
+    val outputLifecycleAtStart: String,
+    val outputLifecycleAtEnd: String,
 ) {
     val complete: Boolean get() = lostFrames == 0uL && wavFrames.toULong() == capturedFrames
+    /** Unknown output state cannot count as a successful no-reopen check. */
+    val noUnexpectedOutputReopen: Boolean?
+        get() {
+            val initial = parseOutputLifecycle(outputLifecycleAtStart) ?: return null
+            val final = parseOutputLifecycle(outputLifecycleAtEnd) ?: return null
+            return initial.opens == final.opens
+        }
+}
+
+internal data class OutputLifecycle(val opens: Int, val rebinds: Int, val closes: Int)
+
+internal fun parseOutputLifecycle(summary: String): OutputLifecycle? {
+    val tokens = summary.split(' ')
+    fun number(key: String): Int? =
+        tokens.firstOrNull { it.startsWith("$key=") }?.substringAfter('=')?.toIntOrNull()
+    return OutputLifecycle(
+        opens = number("opens") ?: return null,
+        rebinds = number("rebinds") ?: return null,
+        closes = number("closes") ?: return null,
+    )
 }
 
 /**
@@ -34,7 +55,8 @@ data class CallbackAudioCaptureReport(
 class NativeCallbackWavCapture private constructor(
     private val playback: FfiListenerPlaybackHandle,
     private val writer: CallbackPcmWavWriter,
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
+    private val outputLifecycleAtStart: String,
 ) {
     private val stopRequested = AtomicBoolean(false)
     private val workerFailure = AtomicReference<Throwable?>(null)
@@ -69,6 +91,8 @@ class NativeCallbackWavCapture private constructor(
             capturedFrames = capturedFrames,
             lostFrames = lostFrames,
             callbackCount = callbackCount,
+            outputLifecycleAtStart = outputLifecycleAtStart,
+            outputLifecycleAtEnd = OboeBridge.lastOpenSummary(),
         )
     }
 
@@ -89,7 +113,7 @@ class NativeCallbackWavCapture private constructor(
                 opened = CallbackPcmWavWriter(
                     File.createTempFile("silent-disco-callback-", ".wav", privateDirectory),
                 )
-                return NativeCallbackWavCapture(playback, opened, scope)
+                return NativeCallbackWavCapture(playback, opened, scope, OboeBridge.lastOpenSummary())
             } catch (error: Throwable) {
                 opened?.close()
                 playback.clearCallbackCapture()
