@@ -2,7 +2,10 @@
 //! [`ListenerPlaybackRuntime`], plus the crate-internal fast path used by
 //! `listener_transport::handle`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use crate::audio_abi::{attach_callback_capture, detach_callback_capture};
+use crate::callback_capture::{CallbackCaptureTap, MAX_CAPTURE_FRAMES, MIN_CAPTURE_FRAMES};
 
 use silent_disco_core::audio::{PlaybackPumpConfig, RenderRingConfig, SchedulerConfig};
 use silent_disco_core::domain::{
@@ -11,7 +14,7 @@ use silent_disco_core::domain::{
 use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
 
 use super::ffi_types::{
-    FfiAudioPacket, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiPlaybackDiagnostics,
+    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiPlaybackDiagnostics,
     FfiSyncSampleOutcome,
 };
 use super::runtime::ListenerPlaybackRuntime;
@@ -25,6 +28,7 @@ use super::runtime::ListenerPlaybackRuntime;
 #[derive(Debug, uniffi::Object)]
 pub struct FfiListenerPlaybackHandle {
     runtime: ListenerPlaybackRuntime,
+    capture: Mutex<Option<Arc<CallbackCaptureTap>>>,
 }
 
 #[allow(
@@ -75,7 +79,7 @@ impl FfiListenerPlaybackHandle {
             },
             0.0,
         )?;
-        Ok(Arc::new(Self { runtime }))
+        Ok(Arc::new(Self { runtime, capture: Mutex::new(None) }))
     }
 
     /// The opaque token to hand to native audio setup exactly once.
@@ -248,6 +252,66 @@ impl FfiListenerPlaybackHandle {
     #[must_use]
     pub fn debug_capture_error(&self) -> Option<String> {
         self.runtime.debug_capture_error()
+    }
+
+    /// Enable nonblocking native callback PCM capture for this listener stream.
+    ///
+    /// The audio callback writes to a preallocated ring only; callers must
+    /// drain it on a non-real-time thread and write any WAV there.
+    /// Capture is opt-in and a single stream may have only one active tap.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid buffer bounds, duplicate captures, or stopped engines.
+    pub fn start_callback_capture(&self, capacity_frames: u32) -> Result<(), FfiListenerPlaybackError> {
+        let capacity = usize::try_from(capacity_frames).unwrap_or(usize::MAX);
+        let tap = Arc::new(CallbackCaptureTap::new(capacity).ok_or_else(|| {
+            FfiListenerPlaybackError::InvalidConfiguration(format!(
+                "capture capacity must be between {MIN_CAPTURE_FRAMES} and {MAX_CAPTURE_FRAMES} frames"
+            ))
+        })?);
+        let mut active = self.capture.lock().unwrap_or_else(PoisonError::into_inner);
+        if active.is_some() {
+            return Err(FfiListenerPlaybackError::DebugCapture(
+                "a callback capture is already active or awaiting final drain".to_owned(),
+            ));
+        }
+        attach_callback_capture(self.runtime.engine_token(), Arc::clone(&tap))
+            .map_err(|error| FfiListenerPlaybackError::DebugCapture(format!("{error:?}")))?;
+        *active = Some(tap);
+        Ok(())
+    }
+
+    /// Drain callback PCM on the caller's non-audio thread (maximum 4,800 frames).
+    ///
+    /// # Errors
+    ///
+    /// Fails when capture was never started or the caller requests zero frames.
+    pub fn read_callback_capture(&self, max_frames: u32) -> Result<FfiCallbackCaptureBatch, FfiListenerPlaybackError> {
+        if max_frames == 0 {
+            return Err(FfiListenerPlaybackError::InvalidConfiguration(
+                "callback capture reads must request at least one frame".to_owned(),
+            ));
+        }
+        let active = self.capture.lock().unwrap_or_else(PoisonError::into_inner);
+        let tap = active.as_ref().ok_or_else(|| {
+            FfiListenerPlaybackError::DebugCapture("no callback capture is configured".to_owned())
+        })?;
+        let samples = tap.drain(usize::try_from(max_frames).unwrap_or(usize::MAX).min(4_800));
+        let (captured_frames, lost_frames, callback_count) = tap.counters();
+        Ok(FfiCallbackCaptureBatch { samples, captured_frames, lost_frames, callback_count })
+    }
+
+    /// Stop accepting new callback PCM without discarding buffered samples.
+    /// Continue reading until empty to retrieve the captured tail.
+    pub fn end_callback_capture(&self) {
+        detach_callback_capture(self.runtime.engine_token());
+    }
+
+    /// Drop capture state after ending and fully draining it.
+    pub fn clear_callback_capture(&self) {
+        self.end_callback_capture();
+        *self.capture.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// Drains the buffered tail, stops the pump, and releases the ring.

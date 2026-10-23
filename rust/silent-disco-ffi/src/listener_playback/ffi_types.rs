@@ -59,6 +59,19 @@ pub struct FfiAudioPacket {
     pub payload: Vec<u8>,
 }
 
+/// Bounded callback-returned PCM read, collected without audio-thread file I/O.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiCallbackCaptureBatch {
+    /// Interleaved float32 stereo output returned by the native callback.
+    pub samples: Vec<f32>,
+    /// Cumulative frames accepted into the tap, including drained frames.
+    pub captured_frames: u64,
+    /// Cumulative frames dropped because the tap buffer filled.
+    pub lost_frames: u64,
+    /// Cumulative callback invocations seen while capture was attached.
+    pub callback_count: u64,
+}
+
 /// What the scheduler is currently doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiPlaybackPhase {
