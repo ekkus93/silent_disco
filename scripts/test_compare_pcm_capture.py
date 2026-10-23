@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic PCM capture comparator checks (standard library only)."""
+import json
+import subprocess
 import struct
 import sys
 import tempfile
@@ -38,6 +40,50 @@ class PcmCaptureComparisonTest(unittest.TestCase):
     def inspect(self, actual, **kwargs):
         save_wav(self.captured, actual)
         return compare(self.sources, self.captured, **kwargs)
+
+
+    def run_cli(self, actual, *, expected=None, extra_args=()):
+        """Exercise the public comparator command and its persisted CI evidence."""
+        save_wav(self.captured, actual)
+        report_path = Path(self.temp.name) / "comparison-report.json"
+        command = [
+            sys.executable,
+            str(Path(__file__).with_name("compare_pcm_capture.py")),
+            "--expected",
+            *(str(path) for path in (self.sources if expected is None else expected)),
+            "--captured",
+            str(self.captured),
+            "--report",
+            str(report_path),
+            *extra_args,
+        ]
+        process = subprocess.run(command, capture_output=True, text=True, check=False)
+        self.assertEqual(process.stderr, "")
+        self.assertTrue(report_path.exists())
+        stdout_report = json.loads(process.stdout)
+        self.assertEqual(json.loads(report_path.read_text(encoding="utf-8")), stdout_report)
+        return process.returncode, stdout_report
+
+    def test_cli_pass_exit_code_and_report_match(self):
+        code, report = self.run_cli(self.reference)
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["captured_frames"], len(self.reference))
+        self.assertEqual([item["frame"] for item in report["track_boundaries"]], [240, 480])
+
+    def test_cli_boundary_gap_is_a_failing_ci_exit_code(self):
+        actual = self.reference[:240] + [(0, 0)] + self.reference[240:]
+        code, report = self.run_cli(actual, extra_args=("--boundary-window-frames", "8"))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["extra_tail_frames"], 1)
+        self.assertGreater(report["track_boundaries"][0]["mismatch_frames"], 0)
+
+    def test_cli_invalid_reference_produces_error_evidence(self):
+        code, report = self.run_cli(self.reference, expected=[])
+        self.assertEqual(code, 2)
+        self.assertEqual(report["status"], "ERROR")
+        self.assertIn("at least one expected track", report["message"])
 
     def test_exact_gapless_pcm_passes_with_both_boundaries(self):
         result = self.inspect(self.reference, boundary_window_frames=24)
