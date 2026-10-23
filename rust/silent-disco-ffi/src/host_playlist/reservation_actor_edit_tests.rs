@@ -231,8 +231,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         },
     );
     let appended = snapshot_when(&actor, |s| {
-        s.host_queue.entries().len() == 3
-            && s.host_queue.upcoming()[1].entry_id == "tail-entry"
+        s.host_queue.entries().len() == 3 && s.host_queue.upcoming()[1].entry_id == "tail-entry"
     });
     assert!(appended.host_queue_next_boundary.is_none());
     stream
