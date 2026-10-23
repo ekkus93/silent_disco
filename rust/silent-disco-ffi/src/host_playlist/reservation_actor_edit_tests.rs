@@ -252,6 +252,34 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                     snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
                     "replacement-entry"
                 );
+                // Reservation has already won the actor's serialized race.
+                // A later host edit must not remove PCM that is committed to
+                // the producer's bounded output queue.
+                let queue_revision = snapshot.host_queue.revision();
+                submit(
+                    &actor,
+                    CoreCommand::RemoveHostQueueEntry {
+                        expected_queue_revision: queue_revision,
+                        entry_id: "replacement-entry".into(),
+                    },
+                );
+                let rejected = loop {
+                    match rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("reserved successor removal must be rejected")
+                    {
+                        FfiCoreNotification::Error { error } => break error,
+                        _ => {}
+                    }
+                };
+                assert!(!rejected.message.is_empty());
+                let protected = actor.current_snapshot().expect("protected queue");
+                assert_eq!(protected.host_queue.revision(), queue_revision);
+                assert_eq!(protected.host_queue.upcoming()[0].entry_id, "replacement-entry");
+                assert_eq!(
+                    protected.host_queue_next_boundary.as_ref().unwrap().entry_id,
+                    "replacement-entry"
+                );
                 boundaries.push((entry_id, first_sample_index));
             }
             Some(FfiPlaylistFrame::End) => break,
