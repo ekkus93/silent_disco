@@ -5,18 +5,18 @@ use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
     silent_disco_audio_read_interleaved_f32,
 };
+use crate::audio_abi::{register_render_ring, release_render_ring};
 use crate::audio_output::FfiAudioOutputHandle;
-use crate::audio_abi::{
-    register_render_ring, release_render_ring,
-};
+use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
+use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use silent_disco_core::audio::{
     PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
     SchedulerConfig,
 };
-use silent_disco_core::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
+use silent_disco_core::domain::{
+    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
 use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
-use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
-use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use std::fs;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -256,7 +256,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
                 ..
             }) => {
                 assert_eq!(sequence, next_sequence, "producer sequence continuity");
-                assert_eq!(first_sample_index, next_sample, "producer sample continuity");
+                assert_eq!(
+                    first_sample_index, next_sample,
+                    "producer sample continuity"
+                );
                 pump.scheduler_mut()
                     .submit_packet(AudioDatagram {
                         session_id: SessionId::new("end-to-end-session").expect("session"),
@@ -292,7 +295,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     // the real scheduler/pump must queue all decoded producer packets.
     for now in 1_000..=1_040 {
         for _ in 0..64 {
-            if !matches!(pump.tick(now), PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }) {
+            if !matches!(
+                pump.tick(now),
+                PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+            ) {
                 break;
             }
         }
@@ -311,7 +317,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             2,
             &raw mut frames_supplied,
         );
-        assert_eq!(status, 0, "no gap from listener scheduler to native callback");
+        assert_eq!(
+            status, 0,
+            "no gap from listener scheduler to native callback"
+        );
         from_ring_total += u64::from(frames_supplied);
         captured.extend(returned);
     }
@@ -320,8 +329,15 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         .iter()
         .flat_map(|value| std::iter::repeat_n(f32::from(*value) / 32768.0, TRACK_FRAMES * CHANNELS))
         .collect();
-    assert_eq!(captured, expected, "track data changed in listener scheduler");
-    assert_eq!(tap.drain(1_440), expected, "callback tap differs from returned PCM");
+    assert_eq!(
+        captured, expected,
+        "track data changed in listener scheduler"
+    );
+    assert_eq!(
+        tap.drain(1_440),
+        expected,
+        "callback tap differs from returned PCM"
+    );
     assert_eq!(tap.counters(), (1_440, 0, 3));
     detach_callback_capture(token);
     release_render_ring(token).expect("native ring release");
