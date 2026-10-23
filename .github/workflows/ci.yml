@@ -84,8 +84,20 @@ jobs:
       - name: Run Rust tests
         if: always()
         run: |
+          mkdir -p rust-pcm-evidence
           cd rust
-          cargo test --workspace --all-features -- --test-threads=1
+          SILENT_DISCO_PCM_EVIDENCE_DIR="$GITHUB_WORKSPACE/rust-pcm-evidence" \
+            cargo test --workspace --all-features -- --test-threads=1
+
+      - name: Upload objective PCM comparison evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: gapless-pcm-comparison-evidence
+          path: rust-pcm-evidence/*.json
+          if-no-files-found: warn
+          retention-days: 3
 
   android:
     name: Android build, unit tests, and lint

@@ -472,6 +472,19 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         "callback tap differs from returned PCM"
     );
     assert_eq!(tap.counters(), (1_440, 0, 3));
+    // Hosted CI writes metadata only, never the source tracks or recorded audio.
+    // The output is a reproducible, machine-readable PASS record bound to the
+    // GitHub SHA; non-matching PCM would have failed above before this write.
+    if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
+        let commit = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned());
+        let path = std::path::PathBuf::from(directory);
+        fs::create_dir_all(&path).expect("PCM evidence directory");
+        let json = format!(
+            "{{\n  \"schema\": 1,\n  \"status\": \"PASS\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\"],\n  \"source_boundaries\": [480, 960],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1440,\n  \"captured_frames\": 1440,\n  \"callback_count\": 3,\n  \"tap_lost_frames\": 0,\n  \"mismatched_samples\": 0,\n  \"physical_dac_verified\": false\n}}\n"
+        );
+        fs::write(path.join("mixed-rate-socket-callback.json"), json)
+            .expect("write machine-readable comparison evidence");
+    }
     detach_callback_capture(token);
     release_render_ring(token).expect("native ring release");
     playlist.cancel().expect("playlist cleanup");
