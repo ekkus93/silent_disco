@@ -208,3 +208,24 @@ rustfmt. The source-line policy passed; exact-head Rust/Android and desktop
 workflows were pending at this checkpoint. Do not mark the comprehensive
 production-path regression complete until those tests pass and the remaining
 scheduler, edit, pause, Stop/replay and recovery permutations are covered.
+
+## Encoded fixtures through both direct callback and listener scheduler (pending CI)
+
+At exact source `dc69129a`, the encoded WAV/FLAC/MP3 test sends the real
+playlist producer's original sample-indexed presentation timestamps over
+authenticated TCP/UDP sockets. In addition to the direct C-ABI ring/capture
+comparison, received UDP datagrams are submitted to the production Rust
+`PlaybackScheduler` and `PlaybackPump`, then captured using a second native
+callback. Virtual deadlines advance the bounded listener jitter buffer; the
+expected waveform independently decodes each file using the canonical Rust
+decoder and explicitly models only the initial listener startup fade and
+final-packet padding. Codec changes must not introduce another fade, silence,
+or output-ring reopen. The production Rust CI job writes only diagnostic JSON
+(`encoded-socket-callback.json`) with the exact `GITHUB_SHA`, boundary
+indices, first failing frame/channel and native scheduler/capture counters.
+No raw PCM or music is attached to a CI artifact.
+
+This additional coverage was **not yet qualified by exact-head CI** when
+recorded. It does not exercise real Oboe/desktop output-device lifecycle,
+actual acoustic output, late-join/reconnect, queue edits, or Stop/replay.
+Do not interpret the software callback test as physical gapless acceptance.
