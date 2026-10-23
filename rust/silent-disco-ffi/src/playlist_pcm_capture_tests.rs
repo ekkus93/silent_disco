@@ -3,7 +3,9 @@
 //! Android device mixer are separate outstanding acceptance gates.
 use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
-    silent_disco_audio_read_interleaved_f32,
+    silent_disco_audio_callback_count, silent_disco_audio_frames_rendered,
+    silent_disco_audio_read_interleaved_f32, silent_disco_audio_silence_filled_frames,
+    silent_disco_audio_underrun_count,
 };
 use crate::audio_abi::{register_render_ring, release_render_ring};
 use crate::audio_output::FfiAudioOutputHandle;
@@ -421,13 +423,18 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     assert_eq!(pump.diagnostics().packets_emitted, next_sequence);
     let mut from_ring_total = 0_u64;
     let mut captured = Vec::new();
-    for _ in 0..3 {
-        let mut returned = vec![0.0_f32; TRACK_FRAMES * CHANNELS];
+    // Deliberately *do not* align callback buffers to 480-frame source
+    // boundaries. Real Oboe callback sizes are not synchronized to a
+    // playlist, and the second/third reads must each cross a track boundary.
+    // 241 + 337 = 578 (> 480); 578 + 517 = 1_095 (> 960).
+    for callback_frames in [241_u32, 337, 517, 345] {
+        let mut returned =
+            vec![0.0_f32; usize::try_from(callback_frames).expect("bounded callback") * CHANNELS];
         let mut frames_supplied = 0;
         let status = silent_disco_audio_read_interleaved_f32(
             usize::try_from(token).expect("token") as *mut core::ffi::c_void,
             returned.as_mut_ptr(),
-            u32::try_from(TRACK_FRAMES).expect("track frames"),
+            callback_frames,
             2,
             &raw mut frames_supplied,
         );
@@ -435,10 +442,16 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             status, 0,
             "no gap from listener scheduler to native callback"
         );
+        assert_eq!(frames_supplied, callback_frames, "native callback underrun");
         from_ring_total += u64::from(frames_supplied);
         captured.extend(returned);
     }
     assert_eq!(from_ring_total, 1_440);
+    let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    assert_eq!(silent_disco_audio_callback_count(engine), 4);
+    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_440);
+    assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+    assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
     let mut expected: Vec<f32> = reference_pcm
         .into_iter()
         .map(|sample| f32::from(sample) / 32768.0)
@@ -471,7 +484,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         expected,
         "callback tap differs from returned PCM"
     );
-    assert_eq!(tap.counters(), (1_440, 0, 3));
+    assert_eq!(tap.counters(), (1_440, 0, 4));
     // Hosted CI writes metadata only, never the source tracks or recorded audio.
     // The output is a reproducible, machine-readable PASS record bound to the
     // GitHub SHA; non-matching PCM would have failed above before this write.
@@ -480,7 +493,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         let path = std::path::PathBuf::from(directory);
         fs::create_dir_all(&path).expect("PCM evidence directory");
         let json = format!(
-            "{{\n  \"schema\": 1,\n  \"status\": \"PASS\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\"],\n  \"source_boundaries\": [480, 960],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1440,\n  \"captured_frames\": 1440,\n  \"callback_count\": 3,\n  \"tap_lost_frames\": 0,\n  \"mismatched_samples\": 0,\n  \"physical_dac_verified\": false\n}}\n"
+            "{{\n  \"schema\": 1,\n  \"status\": \"PASS\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\"],\n  \"source_boundaries\": [480, 960],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1440,\n  \"captured_frames\": 1440,\n  \"callback_count\": 4,\n  \"native_underrun_callbacks\": 0,\n  \"native_silence_filled_frames\": 0,\n  \"callback_frame_chunks\": [241, 337, 517, 345],\n  \"tap_lost_frames\": 0,\n  \"mismatched_samples\": 0,\n  \"physical_dac_verified\": false\n}}\n"
         );
         fs::write(path.join("mixed-rate-socket-callback.json"), json)
             .expect("write machine-readable comparison evidence");

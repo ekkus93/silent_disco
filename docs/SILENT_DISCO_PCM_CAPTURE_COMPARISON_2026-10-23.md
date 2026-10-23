@@ -151,3 +151,16 @@ The `track_boundaries` report also records `first_mismatch_frame` for each
 boundary window (or `null` if that window is clean). This is independent of
 the globally capped `first_mismatches` examples, so heavy corruption around
 one transition cannot hide the location of a later transition's first error.
+
+## Non-track-aligned native callback regression
+
+The real decoded mixed-rate playlist -> authorized UDP socket -> listener scheduler/pump
+-> render ring -> native C-ABI callback test reads the 1,440 canonical output
+frames in callback chunks of 241, 337, 517 and 345 frames. Two callbacks
+cross the source boundaries at sample indices 480 and 960; no callback is
+track-aligned. Hosted PCM metadata records these chunk sizes and asserts four
+callbacks, 1,440 native frames, zero callback underruns, zero synthesized
+silence, zero capture-tap loss, and bit-exact PCM (apart from the modeled
+initial startup fade). This qualifies a deterministic software callback
+continuity regression, not physical output continuity or all pause/Stop/edit
+permutations.
