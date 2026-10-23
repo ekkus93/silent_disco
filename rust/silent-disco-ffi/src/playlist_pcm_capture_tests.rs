@@ -41,6 +41,10 @@ fn source_wav(sample: i16) -> Vec<u8> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one combined decoder, playlist boundary and native callback regression"
+)]
 fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
