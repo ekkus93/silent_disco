@@ -295,6 +295,76 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     assert_eq!(next_sample, 10_080);
     assert_eq!(last_sequence, Some(41));
     assert_eq!(boundaries, [("replacement-entry".to_owned(), 9_600)]);
+    // Stop invalidates any reservation made for the old stream. A fresh Play
+    // can reuse the same queue entry IDs, but a delayed producer belonging to
+    // the retired stream must fail closed before emitting its successor.
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+        .expect("stop first stream");
+    let stopped = snapshot_when(&actor, |s| s.playback_state == PlaybackState::Stopped);
+    assert!(stopped.host_queue_next_boundary.is_none());
+    assert_eq!(stopped.host_queue.upcoming()[0].entry_id, "replacement-entry");
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+        .expect("buffer replay");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Buffering);
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("play new stream");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
+    let replay_stream = StreamId::new("ffi-edit-first-new-stream").expect("replay stream");
+    actor
+        .submit_audio_event(AudioEvent::PositionAdvanced {
+            stream_id: replay_stream,
+            position_ms: 7,
+        })
+        .expect("bind new stream");
+    // A snapshot request follows the stream-binding message in actor order.
+    let replay = actor.current_snapshot().expect("replay snapshot");
+    assert_eq!(replay.playback_state, PlaybackState::Playing);
+    assert!(replay.host_queue_next_boundary.is_none());
+
+    let retired = FfiHostPlaylistStreamer::open_authoritative(
+        "ffi-edit-first-session".into(),
+        stream_id.to_string(),
+        5_000,
+        vec![
+            source(&current_id, &paths[1]),
+            source("replacement-entry", &paths[2]),
+        ],
+        Arc::clone(&ffi),
+    )
+    .expect("old stream opens, but cannot reserve a boundary");
+    let mut retired_frames = 0;
+    let failure = loop {
+        match retired.next_frame(5_000) {
+            Ok(Some(FfiPlaylistFrame::Audio {
+                first_sample_index,
+                payload,
+                ..
+            })) => {
+                assert!(first_sample_index < 480, "retired successor audio escaped");
+                assert_eq!(i16::from_le_bytes([payload[0], payload[1]]), 6_000);
+                retired_frames += 1;
+            }
+            Ok(Some(FfiPlaylistFrame::TrackBoundary { .. })) => {
+                panic!("retired producer published a boundary into replay")
+            }
+            Ok(Some(FfiPlaylistFrame::End)) => {
+                panic!("retired reservation cannot report a clean queue end")
+            }
+            Ok(None) => panic!("retired producer stalled instead of failing closed"),
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(retired_frames, 2, "old current PCM should precede rejection");
+    assert!(
+        failure.to_string().contains("reservation"),
+        "stale stream must be rejected by authoritative reservation: {failure}"
+    );
+    let untouched = actor.current_snapshot().expect("new stream remains unmodified");
+    assert!(untouched.host_queue_next_boundary.is_none());
+    assert_eq!(untouched.host_queue.upcoming()[0].entry_id, "replacement-entry");
     ffi.shutdown().expect("shutdown actor");
     fs::remove_dir_all(root).expect("remove fixtures");
 }
