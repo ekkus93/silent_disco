@@ -312,3 +312,85 @@ fn stop_replay_with_the_same_queue_ids_rejects_the_retired_streams_late_ack() {
         "a late old-stream acknowledgment must not publish a boundary or successor PCM"
     );
 }
+
+#[test]
+fn reserved_successor_becomes_final_when_later_track_is_removed_after_boundary_delivery() {
+    let _guard = super::super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "remove-first.wav", &pcm_wav_frames(48_000, 2, 240));
+    let next_path = write_bytes(&temp, "remove-next.wav", &pcm_wav_frames(48_000, 2, 4_800));
+    let removed_path = write_bytes(&temp, "remove-third.wav", &pcm_wav_frames(48_000, 2, 480));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let next = StreamingPlaylistTrackFactory::new("next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let removed = StreamingPlaylistTrackFactory::new("removed", "Removed", move || {
+        StreamingDecodeHandle::open(removed_path, StreamingDecodeConfig::default())
+    })
+    .expect("third factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "first",
+        "First",
+        vec![next, removed],
+        SessionId::new("remove-later-session").expect("session"),
+        StreamId::new("remove-later-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        Arc::new(|_boundary: &crate::protocol::TrackBoundary, _cancel| Ok(())),
+    )
+    .expect("reserved packetizer");
+    let updater = packetizer.playlist_updater().expect("updater");
+
+    // The reserved boundary is already visible to the consumer, but the
+    // one-slot channel prevents the producer from reaching the third track.
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
+    ));
+    let boundary = packetizer.recv_timeout(TEST_TIMEOUT).expect("reserved boundary");
+    assert!(matches!(
+        boundary,
+        ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))
+            if boundary.entry_id == "next" && boundary.first_sample_index.get() == 240
+    ));
+    // The actor still projects the reserved current entry as the first
+    // upcoming item. Its shadow must be stripped without re-opening it.
+    let shadow = StreamingPlaylistTrackFactory::new("next", "Next", || {
+        unreachable!("reserved successor must not be opened twice")
+    })
+    .expect("shadow");
+    updater
+        .replace_upcoming(vec![shadow])
+        .expect("remove the later track without replacing the reserved one");
+
+    let mut audio = vec![(0_u64, 0_u64)];
+    let mut later_boundaries = Vec::new();
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Audio(frame)) => {
+                audio.push((frame.sequence.get(), frame.first_sample_index.get()));
+            }
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                later_boundaries.push(boundary.entry_id);
+            }
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("retargeted stream stalled"),
+        }
+    }
+    let summary = packetizer.join().expect("queue ends after reserved successor");
+    assert_eq!(summary.state, PacketizerWorkerState::Completed);
+    assert!(later_boundaries.is_empty(), "removed third track must not play");
+    assert_eq!(
+        audio,
+        (0_u64..21).map(|packet| (packet, packet * 240)).collect::<Vec<_>>(),
+        "the retained successor must finish with no stale third-track samples"
+    );
+    assert_eq!(summary.emitted_packets, 21);
+}
