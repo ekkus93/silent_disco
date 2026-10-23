@@ -127,6 +127,10 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
         .expect("buffer");
     wait_until(&actor, |s| s.playback_state == PlaybackState::Buffering);
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("start playback before binding its stream identity");
+    wait_until(&actor, |s| s.playback_state == PlaybackState::Playing);
     let stream_id = StreamId::new("ffi-pause-stream").expect("stream ID");
     actor
         .submit_audio_event(AudioEvent::PositionAdvanced {
