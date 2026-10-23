@@ -284,3 +284,19 @@ This is a report integrity gate only: the Rust comparison regressions still
 must run successfully, and neither an emulator nor Rust callback proves a
 physical mixer, DAC, Bluetooth or speaker output was continuous. The new CI
 gate's exact-source qualification remained pending when these notes were written.
+
+## Exact code-head Rust qualification of PCM evidence gate
+
+At source `043d815b228f2d16db4085af406ca6c1a4ae9ae8`, the hosted Rust
+format, strict Clippy and workspace-test job passed. The regression logs
+explicitly show both the encoded source/scheduler callback and rejected
+successor native callback tests passing, plus 10 report-validator tests and
+`PCM_EVIDENCE_PASS`. The three JSON-only metadata reports were uploaded in
+GitHub Actions artifact `12537977844`. The uploaded reports prove software
+callback-level comparisons only, and the intentional post-rejection output
+underrun is reported rather than hidden as zero-gap playback.
+
+The separate Android build/emulator/release and desktop CI workflows were
+still running at the time this checkpoint was written; they must be checked
+before claiming a full exact-source platform pass. Hardware output and broad
+remaining software checklist items remain open.
