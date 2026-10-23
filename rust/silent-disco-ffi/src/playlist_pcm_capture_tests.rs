@@ -581,6 +581,29 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     }
     assert_eq!(tap_pcm, captured, "callback tap differs from returned PCM");
     assert_eq!(tap.counters(), (1_440, 0, 4));
+
+    // A final callback after the last real PCM frame must return explicit
+    // silence, count the underrun, and preserve those actual returned samples
+    // in the same nonblocking tap. It must not invent additional source PCM.
+    let mut final_tail = [f32::NAN; 17 * CHANNELS];
+    let mut tail_from_ring = u32::MAX;
+    let tail_status = silent_disco_audio_read_interleaved_f32(
+        usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+        final_tail.as_mut_ptr(),
+        17,
+        2,
+        &raw mut tail_from_ring,
+    );
+    assert_eq!(tail_status, 1, "end-of-stream silence must be observable");
+    assert_eq!(tail_from_ring, 0);
+    assert!(final_tail.iter().all(|sample| *sample == 0.0));
+    assert_eq!(tap.drain(17), final_tail);
+    assert_eq!(tap.counters(), (1_457, 0, 5));
+    assert_eq!(silent_disco_audio_callback_count(engine), 5);
+    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_440);
+    assert_eq!(silent_disco_audio_underrun_count(engine), 1);
+    assert_eq!(silent_disco_audio_silence_filled_frames(engine), 17);
+
     detach_callback_capture(token);
     release_render_ring(token).expect("native ring release");
     playlist.cancel().expect("playlist cleanup");
