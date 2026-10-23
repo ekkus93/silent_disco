@@ -89,6 +89,14 @@ jobs:
           SILENT_DISCO_PCM_EVIDENCE_DIR="$GITHUB_WORKSPACE/rust-pcm-evidence" \
             cargo test --workspace --all-features -- --test-threads=1
 
+      - name: Validate exact-head PCM callback evidence
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/test_check_pcm_evidence.py
+          python3 scripts/check_pcm_evidence.py \
+            --directory rust-pcm-evidence --commit-sha "$GITHUB_SHA"
+
       - name: Upload objective PCM comparison evidence
         if: always()
         continue-on-error: true
