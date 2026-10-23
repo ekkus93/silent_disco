@@ -82,11 +82,19 @@ def compare(
             "window_start": max(0, cumulative - boundary_window_frames),
             "window_end": min(expected_frames, cumulative + boundary_window_frames),
             "mismatch_frames": 0,
+            "first_mismatch_frame": None,
         })
 
     def reference_frames():
         for path in expected_paths:
             yield from _frames(path, capture_info["channels"])
+
+    def mark_boundary_mismatch(frame_index: int) -> None:
+        for boundary in boundaries:
+            if boundary["window_start"] <= frame_index < boundary["window_end"]:
+                boundary["mismatch_frames"] += 1
+                if boundary["first_mismatch_frame"] is None:
+                    boundary["first_mismatch_frame"] = frame_index
 
     missing = extra = mismatched_frames = mismatched_samples = 0
     observed_capture_frames = 0
@@ -107,17 +115,13 @@ def compare(
             observed_capture_frames += 1
         if wanted is absent:
             extra += 1
-            for boundary in boundaries:
-                if boundary["window_start"] <= index < boundary["window_end"]:
-                    boundary["mismatch_frames"] += 1
+            mark_boundary_mismatch(index)
             if len(examples) < MISMATCH_EXAMPLES:
                 examples.append({"frame": index, "kind": "extra", "captured": list(actual)})
             continue
         if actual is absent:
             missing += 1
-            for boundary in boundaries:
-                if boundary["window_start"] <= index < boundary["window_end"]:
-                    boundary["mismatch_frames"] += 1
+            mark_boundary_mismatch(index)
             if len(examples) < MISMATCH_EXAMPLES:
                 examples.append({"frame": index, "kind": "missing", "expected": list(wanted)})
             continue
@@ -137,9 +141,7 @@ def compare(
                     "frame": index, "kind": "sample_mismatch",
                     "expected": list(wanted), "captured": list(actual),
                 })
-            for boundary in boundaries:
-                if boundary["window_start"] <= index < boundary["window_end"]:
-                    boundary["mismatch_frames"] += 1
+            mark_boundary_mismatch(index)
 
     if observed_reference_frames != expected_frames:
         raise ValueError(

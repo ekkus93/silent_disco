@@ -138,6 +138,23 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertGreater(mismatch["track_boundaries"][1]["mismatch_frames"], 0)
         self.assertEqual(mismatch["first_mismatches"][0]["frame"], 190)
 
+    def test_each_boundary_reports_its_first_mismatch_even_after_example_limit(self):
+        # The global first_mismatches list is intentionally capped. A long
+        # corruption near track one must not conceal track two's boundary.
+        actual = self.reference.copy()
+        for index in range(230, 250):
+            left, right = actual[index]
+            actual[index] = (left + 1, right)
+        left, right = actual[480]
+        actual[480] = (left - 1, right)
+        result = self.inspect(actual, boundary_window_frames=12)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(len(result["first_mismatches"]), 8)
+        self.assertEqual(
+            [part["first_mismatch_frame"] for part in result["track_boundaries"]],
+            [230, 480],
+        )
+
     def test_inserted_silence_at_boundary_fails(self):
         actual = self.reference[:240] + [(0, 0)] + self.reference[240:]
         result = self.inspect(actual, boundary_window_frames=16)

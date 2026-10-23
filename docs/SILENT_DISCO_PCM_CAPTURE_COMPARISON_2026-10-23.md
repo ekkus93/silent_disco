@@ -146,3 +146,8 @@ provenance**, not cryptographic attestation: the caller must bind the checkout,
 reference WAV generation, capture, and comparator invocation to the same SHA.
 The comparison still requires explicit real audio capture and does not imply
 physical-device acceptance.
+
+The `track_boundaries` report also records `first_mismatch_frame` for each
+boundary window (or `null` if that window is clean). This is independent of
+the globally capped `first_mismatches` examples, so heavy corruption around
+one transition cannot hide the location of a later transition's first error.
