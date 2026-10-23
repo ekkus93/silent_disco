@@ -247,9 +247,9 @@ fn stop_replay_with_the_same_queue_ids_rejects_the_retired_streams_late_ack() {
             .expect("old current decoder");
     let old_successor_path = next_path.clone();
     let old_successor = StreamingPlaylistTrackFactory::new("next", "Next", move || {
-            StreamingDecodeHandle::open(old_successor_path, StreamingDecodeConfig::default())
-        })
-        .expect("old successor");
+        StreamingDecodeHandle::open(old_successor_path, StreamingDecodeConfig::default())
+    })
+    .expect("old successor");
     let (entered_tx, entered_rx) = mpsc::sync_channel::<()>(1);
     let (ack_tx, ack_rx) = mpsc::sync_channel::<()>(1);
     let ack_rx = Mutex::new(ack_rx);
