@@ -33,3 +33,6 @@ jobs:
         run: |
           python3 scripts/test_check_hosted_runner_policy.py
           python3 scripts/check_hosted_runner_policy.py
+
+      - name: Test objective listener PCM capture comparison
+        run: python3 scripts/test_compare_pcm_capture.py
