@@ -466,38 +466,61 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             expected[frame * CHANNELS + channel] = sample;
         }
     }
-    assert_eq!(captured.len(), expected.len(), "output sample count");
-    if let Some((index, (actual, reference))) = captured
+    // Record failure evidence before asserting. Without this ordering a
+    // regression emitted only a panic and CI uploaded no mismatch location.
+    let first_mismatch = captured
         .iter()
         .zip(&expected)
-        .enumerate()
-        .find(|(_, (actual, reference))| actual.to_bits() != reference.to_bits())
-    {
-        panic!(
-            "listener callback PCM mismatch at frame {} channel {}: got {actual}, expected {reference}; boundaries {boundaries:?}",
-            index / CHANNELS,
-            index % CHANNELS
-        );
-    }
-    assert_eq!(
-        tap.drain(1_440),
-        expected,
-        "callback tap differs from returned PCM"
-    );
-    assert_eq!(tap.counters(), (1_440, 0, 4));
-    // Hosted CI writes metadata only, never the source tracks or recorded audio.
-    // The output is a reproducible, machine-readable PASS record bound to the
-    // GitHub SHA; non-matching PCM would have failed above before this write.
+        .position(|(actual, reference)| actual.to_bits() != reference.to_bits())
+        .or_else(|| (captured.len() != expected.len()).then_some(captured.len().min(expected.len())));
+    let mismatched_samples = captured
+        .iter()
+        .zip(&expected)
+        .filter(|(actual, reference)| actual.to_bits() != reference.to_bits())
+        .count()
+        + captured.len().abs_diff(expected.len());
+    let tap_pcm = tap.drain(1_440);
+    let tap_mismatched_samples = tap_pcm
+        .iter()
+        .zip(&captured)
+        .filter(|(tapped, returned)| tapped.to_bits() != returned.to_bits())
+        .count()
+        + tap_pcm.len().abs_diff(captured.len());
+    let (tap_captured_frames, tap_lost_frames, tap_callbacks) = tap.counters();
+    let passed = mismatched_samples == 0 && tap_mismatched_samples == 0 && tap_lost_frames == 0;
+    // Hosted CI writes comparison *metadata* only, never source tracks or
+    // returned raw audio; an exact output-SHA is supplied by the CI runner.
     if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
         let commit = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned());
         let path = std::path::PathBuf::from(directory);
         fs::create_dir_all(&path).expect("PCM evidence directory");
+        let status = if passed { "PASS" } else { "FAIL" };
+        let first_frame = first_mismatch.map_or("null".to_owned(), |sample| {
+            (sample / CHANNELS).to_string()
+        });
+        let first_channel = first_mismatch.map_or("null".to_owned(), |sample| {
+            (sample % CHANNELS).to_string()
+        });
+        let callback_count = silent_disco_audio_callback_count(engine);
+        let native_underruns = silent_disco_audio_underrun_count(engine);
+        let native_silence = silent_disco_audio_silence_filled_frames(engine);
+        let captured_frames = captured.len() / CHANNELS;
         let json = format!(
-            "{{\n  \"schema\": 1,\n  \"status\": \"PASS\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\"],\n  \"source_boundaries\": [480, 960],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1440,\n  \"captured_frames\": 1440,\n  \"callback_count\": 4,\n  \"native_underrun_callbacks\": 0,\n  \"native_silence_filled_frames\": 0,\n  \"callback_frame_chunks\": [241, 337, 517, 345],\n  \"tap_lost_frames\": 0,\n  \"mismatched_samples\": 0,\n  \"physical_dac_verified\": false\n}}\n"
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\"],\n  \"source_boundaries\": [480, 960],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1440,\n  \"captured_frames\": {captured_frames},\n  \"callback_count\": {callback_count},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"callback_frame_chunks\": [241, 337, 517, 345],\n  \"tap_captured_frames\": {tap_captured_frames},\n  \"tap_lost_frames\": {tap_lost_frames},\n  \"tap_callback_count\": {tap_callbacks},\n  \"tap_mismatched_samples\": {tap_mismatched_samples},\n  \"mismatched_samples\": {mismatched_samples},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"physical_dac_verified\": false\n}}\n"
         );
         fs::write(path.join("mixed-rate-socket-callback.json"), json)
             .expect("write machine-readable comparison evidence");
     }
+    assert_eq!(captured.len(), expected.len(), "output sample count");
+    if let Some(index) = first_mismatch {
+        panic!(
+            "listener callback PCM mismatch at frame {} channel {}; boundaries {boundaries:?}",
+            index / CHANNELS,
+            index % CHANNELS
+        );
+    }
+    assert_eq!(tap_pcm, captured, "callback tap differs from returned PCM");
+    assert_eq!(tap.counters(), (1_440, 0, 4));
     detach_callback_capture(token);
     release_render_ring(token).expect("native ring release");
     playlist.cancel().expect("playlist cleanup");

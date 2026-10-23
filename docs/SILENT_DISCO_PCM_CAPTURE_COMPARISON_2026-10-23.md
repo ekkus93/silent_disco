@@ -164,3 +164,10 @@ silence, zero capture-tap loss, and bit-exact PCM (apart from the modeled
 initial startup fade). This qualifies a deterministic software callback
 continuity regression, not physical output continuity or all pause/Stop/edit
 permutations.
+
+The hosted mixed-rate socket/callback regression writes its comparison JSON
+**before** asserting on a PCM mismatch, so a failing Rust test can retain the
+first mismatching frame/channel, total mismatching samples, actual native
+callback/underrun/silence counters and tap-loss counts. The report includes
+only deterministic fixture metadata, never raw PCM. A failure does not become
+PASS merely because a diagnostic artifact was produced.
