@@ -86,6 +86,8 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     let replacement =
         AudioSourceDescriptor::new("replacement-source", "Replacement.wav", Some(1_920), None)
             .expect("replacement source");
+    let tail = AudioSourceDescriptor::new("tail-source", "Tail.wav", Some(1_920), None)
+        .expect("tail source");
 
     submit(
         &actor,
@@ -168,6 +170,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         root.join("first.wav"),
         root.join("obsolete.wav"),
         root.join("replacement.wav"),
+        root.join("tail.wav"),
     ];
     // Forty packets of current audio exceed the producer's 32-frame output
     // queue. Without a consumer, the worker cannot reach its first reservation.
@@ -175,6 +178,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         (&paths[0], 9_600, 3_000),
         (&paths[1], 480, 6_000),
         (&paths[2], 480, 12_000),
+        (&paths[3], 480, 15_000),
     ] {
         fs::write(path, wav(frames, sample)).expect("PCM fixture");
     }
@@ -215,6 +219,28 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     stream
         .replace_upcoming(vec![source("replacement-entry", &paths[2])])
         .expect("retarget producer from authoritative queue");
+    // A second accepted edit while the 32-frame producer queue is still
+    // backpressured appends behind the replacement. The latest authoritative
+    // snapshot must win, without resurrecting the removed source.
+    let after_removal = actor.current_snapshot().expect("queue after removal");
+    submit(
+        &actor,
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: after_removal.host_queue.revision(),
+            entries: vec![QueueEntry::new("tail-entry", tail).expect("tail entry")],
+        },
+    );
+    let appended = snapshot_when(&actor, |s| {
+        s.host_queue.entries().len() == 3
+            && s.host_queue.upcoming()[1].entry_id == "tail-entry"
+    });
+    assert!(appended.host_queue_next_boundary.is_none());
+    stream
+        .replace_upcoming(vec![
+            source("replacement-entry", &paths[2]),
+            source("tail-entry", &paths[3]),
+        ])
+        .expect("retarget producer from latest authoritative queue");
 
     let mut next_sample = 0_u64;
     let mut last_sequence = None;
@@ -236,7 +262,13 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                 let sample = i16::from_le_bytes([payload[0], payload[1]]);
                 assert_eq!(
                     sample,
-                    if next_sample < 9_600 { 3_000 } else { 12_000 },
+                    if next_sample < 9_600 {
+                        3_000
+                    } else if next_sample < 10_080 {
+                        12_000
+                    } else {
+                        15_000
+                    },
                     "removed track PCM must not escape"
                 );
                 next_sample += u64::from(samples_per_packet);
@@ -247,6 +279,16 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                 ..
             }) => {
                 assert_eq!(first_sample_index, next_sample);
+                if entry_id == "tail-entry" {
+                    assert_eq!(first_sample_index, 10_080);
+                    // The actor keeps ordered reservations even when the host
+                    // scheduler has not yet applied the earlier boundary.
+                    let snapshot = actor.current_snapshot().expect("ordered reservations");
+                    assert_eq!(snapshot.host_queue.upcoming()[1].entry_id, "tail-entry");
+                    boundaries.push((entry_id, first_sample_index));
+                    continue;
+                }
+                assert_eq!(entry_id, "replacement-entry");
                 let snapshot = snapshot_when(&actor, |s| s.host_queue_next_boundary.is_some());
                 assert_eq!(
                     snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
@@ -312,9 +354,15 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
             None => panic!("producer stalled after edit-first retarget"),
         }
     }
-    assert_eq!(next_sample, 10_080);
-    assert_eq!(last_sequence, Some(41));
-    assert_eq!(boundaries, [("replacement-entry".to_owned(), 9_600)]);
+    assert_eq!(next_sample, 10_560);
+    assert_eq!(last_sequence, Some(43));
+    assert_eq!(
+        boundaries,
+        [
+            ("replacement-entry".to_owned(), 9_600),
+            ("tail-entry".to_owned(), 10_080),
+        ]
+    );
     // Stop invalidates any reservation made for the old stream. A fresh Play
     // can reuse the same queue entry IDs, but a delayed producer belonging to
     // the retired stream must fail closed before emitting its successor.
