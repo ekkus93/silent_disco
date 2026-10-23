@@ -7,6 +7,7 @@ use crate::audio_abi::{
 };
 use crate::audio_output::FfiAudioOutputHandle;
 use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
+use crate::listener_playback::{FfiListenerPlaybackConfig, FfiListenerPlaybackHandle};
 use silent_disco_core::audio::DebugPcmRecorder;
 use std::ffi::c_void;
 use std::fs;
@@ -215,4 +216,72 @@ fn attached_native_callback_tap_captures_underruns_and_reports_overflow() {
         "detached capture must remain stable"
     );
     output.release();
+}
+
+#[test]
+fn uniffi_callback_capture_is_opt_in_drains_tail_and_can_restart() {
+    let _guard = registry_test_guard();
+    let playback = FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
+        session_id: "capture-lifecycle-session".to_owned(),
+        stream_id: "capture-lifecycle-stream".to_owned(),
+        sample_rate: RATE,
+        host_start_time_ms: 1_000,
+        samples_per_packet: TRACK_FRAMES,
+        channels: 2,
+        startup_buffer_target_ms: 0,
+        rebuffer_target_ms: 0,
+        ring_capacity_frames: 4_800,
+        ring_target_fill_frames: 1,
+        write_lead_ms: 0,
+        max_prefill_ms: 0,
+        volume: 1.0,
+    })
+    .expect("listener runtime");
+    assert!(playback.read_callback_capture(1).is_err(), "capture defaults off");
+    assert!(playback.start_callback_capture(0).is_err(), "zero capacity rejected");
+    playback
+        .start_callback_capture(u32::try_from(MIN_CAPTURE_FRAMES).expect("capacity"))
+        .expect("explicit opt-in");
+    assert!(
+        playback
+            .start_callback_capture(u32::try_from(MIN_CAPTURE_FRAMES).expect("capacity"))
+            .is_err(),
+        "duplicate tap must be rejected"
+    );
+    assert!(playback.read_callback_capture(0).is_err(), "zero read rejected");
+
+    let token = playback.engine_token();
+    let (_, _, returned) = callback_output(token, 3);
+    assert_eq!(returned, [0_i16; 6], "no source means native silence");
+    let batch = playback.read_callback_capture(3).expect("drain callback tail");
+    assert_eq!(batch.samples, [0.0_f32; 6]);
+    assert_eq!(batch.captured_frames, 3);
+    assert_eq!(batch.lost_frames, 0);
+    assert_eq!(batch.callback_count, 1);
+
+    playback.end_callback_capture();
+    let _ = callback_output(token, 1);
+    let after_end = playback.read_callback_capture(3).expect("final drain");
+    assert!(after_end.samples.is_empty());
+    assert_eq!(after_end.captured_frames, 3, "detach freezes counters");
+    assert_eq!(after_end.callback_count, 1);
+    assert!(
+        playback
+            .start_callback_capture(u32::try_from(MIN_CAPTURE_FRAMES).expect("capacity"))
+            .is_err(),
+        "a detached tap remains reserved until explicitly cleared"
+    );
+    playback.clear_callback_capture();
+    assert!(playback.read_callback_capture(1).is_err());
+    playback
+        .start_callback_capture(u32::try_from(MIN_CAPTURE_FRAMES).expect("capacity"))
+        .expect("restart after full drain and clear");
+    playback.clear_callback_capture();
+    playback.stop().expect("stop listener runtime");
+    assert!(
+        playback
+            .start_callback_capture(u32::try_from(MIN_CAPTURE_FRAMES).expect("capacity"))
+            .is_err(),
+        "stopped output must reject capture"
+    );
 }
