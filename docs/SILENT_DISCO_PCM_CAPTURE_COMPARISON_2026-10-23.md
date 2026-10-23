@@ -66,3 +66,20 @@ claimed solely on the basis of these new tests.
 Do not upload real copyrighted songs or listener audio into public CI
 artifacts automatically. Use generated fixtures and retain the exact source
 SHA, boundary samples, callback underrun counters and capture provenance.
+
+
+## Produce canonical references from real source tracks
+
+Use the repository's decoder, rather than Python/FFmpeg or manual
+resampling, when the original sources are MP3, 44.1kHz, mono, etc.:
+
+    cargo run --manifest-path rust/silent-disco-core/Cargo.toml \
+      --example gapless_reference_wav -- \
+      /tmp/silent-disco-references song-a.mp3 song-b.wav
+
+This writes 000.wav and 001.wav in source order, using the same
+StreamingDecodeHandle implementation as host preparation. Then compare
+those per-track files to the listener capture with the command above.
+These reference WAVs contain **decoded source frames**: any intentional
+final-packet padding or other output DSP must be represented in the expected
+data explicitly, not silently ignored by the comparator.
