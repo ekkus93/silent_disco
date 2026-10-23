@@ -11,7 +11,7 @@ use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use silent_disco_core::audio::{
     PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
-    SchedulerConfig,
+    SchedulerConfig, StreamingDecodeConfig, StreamingDecodeHandle,
 };
 use silent_disco_core::domain::{
     DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
@@ -31,8 +31,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const TRACK_FRAMES: usize = 480;
 const CHANNELS: usize = 2;
 
-fn source_wav(sample: i16) -> Vec<u8> {
-    let bytes = TRACK_FRAMES * CHANNELS * 2;
+fn source_wav_format(sample: i16, sample_rate: u32, channels: u16, frames: usize) -> Vec<u8> {
+    let bytes = frames * usize::from(channels) * 2;
     let mut data = Vec::with_capacity(44 + bytes);
     data.extend_from_slice(b"RIFF");
     data.extend_from_slice(
@@ -43,17 +43,21 @@ fn source_wav(sample: i16) -> Vec<u8> {
     data.extend_from_slice(b"WAVEfmt ");
     data.extend_from_slice(&16_u32.to_le_bytes());
     data.extend_from_slice(&1_u16.to_le_bytes());
-    data.extend_from_slice(&2_u16.to_le_bytes());
-    data.extend_from_slice(&48_000_u32.to_le_bytes());
-    data.extend_from_slice(&192_000_u32.to_le_bytes());
-    data.extend_from_slice(&4_u16.to_le_bytes());
+    data.extend_from_slice(&channels.to_le_bytes());
+    data.extend_from_slice(&sample_rate.to_le_bytes());
+    data.extend_from_slice(&(sample_rate * u32::from(channels) * 2).to_le_bytes());
+    data.extend_from_slice(&(channels * 2).to_le_bytes());
     data.extend_from_slice(&16_u16.to_le_bytes());
     data.extend_from_slice(b"data");
     data.extend_from_slice(&u32::try_from(bytes).expect("fixture").to_le_bytes());
-    for _ in 0..TRACK_FRAMES * CHANNELS {
+    for _ in 0..frames * usize::from(channels) {
         data.extend_from_slice(&sample.to_le_bytes());
     }
     data
+}
+
+fn source_wav(sample: i16) -> Vec<u8> {
+    source_wav_format(sample, 48_000, 2, TRACK_FRAMES)
 }
 
 #[test]
@@ -252,12 +256,17 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     let root = std::env::temp_dir().join(format!("sd-scheduler-callback-{unique}"));
     fs::create_dir_all(&root).expect("fixture directory");
     let values = [1_024_i16, 2_048, 4_096];
+    // Each source is exactly 10ms, but the decoder must normalize differing
+    // sample rates and mono/stereo input before packetization and UDP delivery.
+    let formats = [(48_000, 2, 480), (44_100, 1, 441), (96_000, 2, 960)];
     let sources = values
         .iter()
         .enumerate()
         .map(|(index, value)| {
             let path = root.join(format!("track-{index}.wav"));
-            fs::write(&path, source_wav(*value)).expect("source fixture");
+            let (rate, channels, frames) = formats[index];
+            fs::write(&path, source_wav_format(*value, rate, channels, frames))
+                .expect("source fixture");
             FfiPlaylistSource {
                 entry_id: format!("track-{index}"),
                 display_name: format!("Track {index}"),
@@ -265,6 +274,21 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             }
         })
         .collect();
+    // Independent canonical decoder run provides the expected source PCM,
+    // including the precise resampler output, not a guessed constant value.
+    let mut reference_pcm = Vec::new();
+    for index in 0..values.len() {
+        let decoder = StreamingDecodeHandle::open(
+            root.join(format!("track-{index}.wav")),
+            StreamingDecodeConfig::default(),
+        )
+        .expect("open reference decoder");
+        while let Ok(chunk) = decoder.recv() {
+            reference_pcm.extend(chunk.frames);
+        }
+        decoder.join().expect("reference decoder completed");
+    }
+    assert_eq!(reference_pcm.len(), 1_440 * CHANNELS);
     let (mut host, mut listener) = authorized_pcm_socket_pair();
     let playlist = FfiHostPlaylistStreamer::open(
         "end-to-end-session".to_owned(),
@@ -415,9 +439,9 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         captured.extend(returned);
     }
     assert_eq!(from_ring_total, 1_440);
-    let mut expected: Vec<f32> = values
-        .iter()
-        .flat_map(|value| std::iter::repeat_n(f32::from(*value) / 32768.0, TRACK_FRAMES * CHANNELS))
+    let mut expected: Vec<f32> = reference_pcm
+        .into_iter()
+        .map(|sample| f32::from(sample) / 32768.0)
         .collect();
     // Exactly model the intentional startup fade from the real scheduler.
     // Later track boundaries must not acquire additional fades or silence.
