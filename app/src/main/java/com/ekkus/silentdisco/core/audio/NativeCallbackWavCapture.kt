@@ -34,7 +34,13 @@ data class CallbackAudioCaptureReport(
         get() {
             val initial = parseOutputLifecycle(outputLifecycleAtStart) ?: return null
             val final = parseOutputLifecycle(outputLifecycleAtEnd) ?: return null
-            return initial.opens > 0 && initial.opens == final.opens && initial.closes == final.closes
+            // Historical opens alone do not prove an output is currently live:
+            // opens=closes means every previously opened stream was closed.
+            // An inactive stream cannot qualify callback continuity.
+            return initial.opens > initial.closes &&
+                final.opens > final.closes &&
+                initial.opens == final.opens &&
+                initial.closes == final.closes
         }
 }
 
@@ -60,11 +66,10 @@ internal fun parseOutputLifecycle(summary: String): OutputLifecycle? {
     val tokens = summary.split(' ')
     fun number(key: String): Int? =
         tokens.firstOrNull { it.startsWith("$key=") }?.substringAfter('=')?.toIntOrNull()
-    return OutputLifecycle(
-        opens = number("opens") ?: return null,
-        rebinds = number("rebinds") ?: return null,
-        closes = number("closes") ?: return null,
-    )
+    val opens = number("opens")?.takeIf { it >= 0 } ?: return null
+    val rebinds = number("rebinds")?.takeIf { it >= 0 } ?: return null
+    val closes = number("closes")?.takeIf { it >= 0 } ?: return null
+    return OutputLifecycle(opens, rebinds, closes)
 }
 
 /**

@@ -178,3 +178,14 @@ same authenticated host/listener socket pair that transports UDP audio. It
 checks that the listener receives each exact canonical sample index and entry
 metadata before evaluating native callback-returned PCM. This does not yet
 cover the Android UI boundary presentation or reconnect under live hardware.
+
+## Android output-lifecycle acceptance guard
+
+CallbackAudioCaptureReport.noUnexpectedOutputReopen requires a live output
+at both capture start and end (opens > closes), unchanged open/close counts,
+and successfully parsed nonnegative lifecycle counters. Historical
+opens=1/closes=1 is an already closed output, not successful no-reopen
+capture. Rebinding the same live output does not imply reopening. JVM
+regressions cover inactive output, close, replacement open, malformed summary,
+and complete versus truncated/dropped WAV evidence. Unknown counters remain
+unknown, not inferred as zero.

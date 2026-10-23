@@ -4,6 +4,9 @@ import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -41,4 +44,55 @@ class CallbackPcmWavWriterTest {
         writer.finish()
         assertThrows(IllegalStateException::class.java) { writer.append(listOf(0.5f, 0.6f)) }
     }
+
+    @Test
+    fun captureReportRequiresLiveOutputThroughoutCapture() {
+        fun report(start: String, end: String): CallbackAudioCaptureReport =
+            CallbackAudioCaptureReport(
+                file = temporaryFile(),
+                wavFrames = 100,
+                capturedFrames = 100uL,
+                lostFrames = 0uL,
+                callbackCount = 2uL,
+                outputLifecycleAtStart = start,
+                outputLifecycleAtEnd = end,
+            )
+        val live = "opens=1 rebinds=0 closes=0"
+        val closed = "opens=1 rebinds=0 closes=1"
+        assertTrue(report(live, live).complete)
+        assertEquals(true, report(live, live).noUnexpectedOutputReopen)
+        // Rebinding an existing stream is permitted, but actually closing
+        // the stream or opening its replacement is not gapless.
+        assertEquals(true, report(live, "opens=1 rebinds=1 closes=0").noUnexpectedOutputReopen)
+        assertFalse(report(closed, closed).noUnexpectedOutputReopen!!)
+        assertFalse(report(live, closed).noUnexpectedOutputReopen!!)
+        assertFalse(report(live, "opens=2 rebinds=0 closes=1").noUnexpectedOutputReopen!!)
+        assertNull(report(live, "output unavailable").noUnexpectedOutputReopen)
+        assertNull(report(live, "opens=-1 rebinds=0 closes=0").noUnexpectedOutputReopen)
+    }
+
+    @Test
+    fun callbackCaptureReportRejectsEmptyTruncatedOrLostRecording() {
+        fun evidence(wavFrames: Long, capturedFrames: ULong, lostFrames: ULong, callbacks: ULong) =
+            CallbackAudioCaptureReport(
+                file = temporaryFile(),
+                wavFrames = wavFrames,
+                capturedFrames = capturedFrames,
+                lostFrames = lostFrames,
+                callbackCount = callbacks,
+                outputLifecycleAtStart = "opens=1 rebinds=0 closes=0",
+                outputLifecycleAtEnd = "opens=1 rebinds=0 closes=0",
+                outputCountersAtStart = OutputCallbackCounters(2, 12),
+                outputCountersAtEnd = OutputCallbackCounters(3, 14),
+            )
+        assertTrue(evidence(10, 10uL, 0uL, 1uL).complete)
+        assertFalse(evidence(0, 0uL, 0uL, 1uL).complete)
+        assertFalse(evidence(10, 10uL, 1uL, 1uL).complete)
+        assertFalse(evidence(9, 10uL, 0uL, 1uL).complete)
+        assertFalse(evidence(10, 10uL, 0uL, 0uL).complete)
+        assertEquals(1L, evidence(10, 10uL, 0uL, 1uL).newUnderrunCallbacks)
+        assertEquals(2L, evidence(10, 10uL, 0uL, 1uL).newSilenceFilledFrames)
+        assertNull(outputCounterDelta(5, 4))
+    }
+
 }
