@@ -160,6 +160,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                 sample_rate,
                 channels,
                 samples_per_packet,
+                host_presentation_time_ms,
                 payload,
                 ..
             }) => {
@@ -182,7 +183,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                         samples_per_packet,
                         first_sample_index: SampleIndex::new(first_sample_index),
                         host_presentation_time_ms: MonotonicMillis::new(
-                            1_000 + first_sample_index / 48,
+                            host_presentation_time_ms,
                         ),
                         payload,
                     }))
@@ -376,7 +377,10 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         fs::write(path.join("encoded-socket-callback.json"), report)
             .expect("write encoded comparison evidence");
     }
-    assert!(passed, "encoded native callback comparison mismatch at frame {first_mismatch:?}");
+    assert!(
+        passed,
+        "encoded native callback comparison mismatch at frame {first_mismatch:?}"
+    );
     assert_eq!(
         &callback_pcm[..canonical_pcm.len()],
         canonical_pcm,
