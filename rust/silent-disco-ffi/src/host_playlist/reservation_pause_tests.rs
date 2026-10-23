@@ -1,4 +1,4 @@
-//! Production UniFFI reservation may commit a successor during a host pause.
+//! Production `UniFFI` reservation may commit a successor during a host pause.
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use crate::host_control::{
     FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver, FfiPlatformCompletion,
@@ -62,6 +62,10 @@ fn wav(frames: u32, sample: i16) -> Vec<u8> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end actor and producer pause/resume test with packet-level assertions"
+)]
 fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     let (tx, rx) = mpsc::channel();
     let ffi =
@@ -91,14 +95,13 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     wait_until(&actor, |s| s.host_draft.audio_source.is_some());
     submit(&actor, CoreCommand::CreateHostSession);
     let operation_id = loop {
-        match rx
+        if let FfiCoreNotification::PlatformEffect {
+            effect: FfiPlatformEffect::StartAdvertising { operation_id, .. },
+        } = rx
             .recv_timeout(Duration::from_secs(5))
             .expect("advertise effect")
         {
-            FfiCoreNotification::PlatformEffect {
-                effect: FfiPlatformEffect::StartAdvertising { operation_id, .. },
-            } => break operation_id,
-            _ => {}
+            break operation_id;
         }
     };
     ffi.platform_operation_succeeded(operation_id, FfiPlatformCompletion::AdvertisingStarted)
