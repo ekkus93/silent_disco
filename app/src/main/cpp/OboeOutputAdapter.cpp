@@ -160,6 +160,7 @@ void OboeOutputAdapter::close() {
     stream_->stop();
     stream_->close();
     stream_ = nullptr;
+    ++closeCount_;
     engineToken_.store(0, std::memory_order_release);
 }
 

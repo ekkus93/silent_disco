@@ -102,6 +102,8 @@ public:
     // reopening and the Shared-downgrade risk is back.
     int32_t openCount() const { return openCount_; }
     int32_t rebindCount() const { return rebindCount_; }
+    // Stream closes are retained after teardown for lifecycle evidence.
+    int32_t closeCount() const { return closeCount_; }
 
     // Non-real-time: returns and clears the fatal status last observed by
     // the real-time callback (SILENT_DISCO_AUDIO_PANIC_CONTAINED or
@@ -144,6 +146,7 @@ private:
     int32_t lastOpenPerformanceMode_ = -1;
     int32_t openCount_ = 0;
     int32_t rebindCount_ = 0;
+    int32_t closeCount_ = 0;
 };
 
 }  // namespace silentdisco

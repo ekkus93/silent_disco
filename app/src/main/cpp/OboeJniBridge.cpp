@@ -89,9 +89,10 @@ Java_com_ekkus_silentdisco_core_audio_OboeBridge_nativeOboeLastOpenSummary(
         JNIEnv *env, jobject /* this */) {
     char buffer[192];
     snprintf(buffer, sizeof(buffer),
-             "opens=%d rebinds=%d sampleRate=%d channels=%d sharing=%s perf=%s",
+             "opens=%d rebinds=%d closes=%d sampleRate=%d channels=%d sharing=%s perf=%s",
              adapter().openCount(),
              adapter().rebindCount(),
+             adapter().closeCount(),
              adapter().lastOpenSampleRate(),
              adapter().lastOpenChannelCount(),
              adapter().lastOpenSharingMode() == static_cast<int32_t>(oboe::SharingMode::Exclusive)
