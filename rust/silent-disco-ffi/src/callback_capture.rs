@@ -114,6 +114,48 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_audio_callback_and_background_drain_preserve_exact_frame_order() {
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        const FRAMES: usize = 24_000;
+        const BATCH: usize = 512;
+        let tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("capacity"));
+        let original: Vec<f32> = (0..FRAMES)
+            .flat_map(|frame| {
+                std::iter::repeat_n(
+                    f32::from(u16::try_from(frame).expect("bounded frame")),
+                    CHANNELS,
+                )
+            })
+            .collect();
+        let writer = Arc::clone(&tap);
+        let packets = original.clone();
+        let producer = std::thread::spawn(move || {
+            for chunk in packets.chunks_exact(BATCH * CHANNELS) {
+                // The actual C-ABI audio callback has one serialized producer.
+                // Every published frame is atomically visible before the
+                // background consumer observes the incremented write cursor.
+                writer.record_callback(chunk);
+                std::thread::yield_now();
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut received = Vec::with_capacity(original.len());
+        while received.len() < original.len() {
+            received.extend(tap.drain(73));
+            assert!(Instant::now() < deadline, "bounded background drain stalled");
+            if received.len() < original.len() {
+                std::thread::yield_now();
+            }
+        }
+        producer.join().expect("audio writer must finish");
+        assert_eq!(received, original, "no missing or duplicated callback PCM");
+        assert_eq!(tap.counters(), (24_000, 0, 46));
+        assert!(tap.drain(1).is_empty());
+    }
+
+    #[test]
     fn rejects_unbounded_capture_configuration() {
         assert!(CallbackCaptureTap::new(0).is_none());
         assert!(CallbackCaptureTap::new(MAX_CAPTURE_FRAMES + 1).is_none());
