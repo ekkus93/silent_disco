@@ -265,3 +265,22 @@ real C-ABI callback and compared sample-by-sample. A subsequent *intentional* re
 `rejected-boundary-callback.json` with the SHA, first mismatch sample/channel and
 native/tap counts. The new failure-path test remains pending exact-head CI; it is
 not evidence of any physical Android mixer/DAC output continuity.
+
+## Exact-SHA JSON-evidence gate in GitHub Actions (pending qualification)
+
+Source commit `043d815b` adds `scripts/check_pcm_evidence.py` and standard-library
+regressions that require `mixed-rate-socket-callback.json`,
+`encoded-socket-callback.json`, and `rejected-boundary-callback.json` on the
+exact hosted `GITHUB_SHA`. The validator checks report success and measurable
+callback/boundary counts, including exact scheduler samples and native tap loss,
+while treating 17 deliberately missing post-failure frames as an **expected
+reported underrun**, not as gapless playback. It rejects stale SHA labels,
+incomplete or malformed JSON, missing report files, and any unrecognized extra
+file (including copyrighted/raw audio) in the evidence directory. The GitHub
+Actions Rust quality job runs the validator regression suite and then the
+validator after actual workspace tests, before always-uploaded diagnostics.
+
+This is a report integrity gate only: the Rust comparison regressions still
+must run successfully, and neither an emulator nor Rust callback proves a
+physical mixer, DAC, Bluetooth or speaker output was continuous. The new CI
+gate's exact-source qualification remained pending when these notes were written.
