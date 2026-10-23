@@ -132,12 +132,7 @@ fn callback_capture_preserves_three_track_boundaries_with_variable_callback_size
     // Later callback sizes vary and the third ends at the second boundary.
     // Draining the tap between callbacks simulates the background writer.
     let mut sample_cursor = 0;
-    for requested in [
-        TRACK_FRAMES + 1,
-        17,
-        TRACK_FRAMES - 18,
-        TRACK_FRAMES,
-    ] {
+    for requested in [TRACK_FRAMES + 1, 17, TRACK_FRAMES - 18, TRACK_FRAMES] {
         let (status, supplied, returned) = callback_output(token, requested);
         assert_eq!(status, 0, "no boundary may inject silence");
         assert_eq!(supplied, requested);
@@ -148,15 +143,24 @@ fn callback_capture_preserves_three_track_boundaries_with_variable_callback_size
             .iter()
             .map(|sample| f32::from(*sample) / 32768.0)
             .collect();
-        assert_eq!(captured, canonical, "callback capture must match final output");
+        assert_eq!(
+            captured, canonical,
+            "callback capture must match final output"
+        );
         sample_cursor = end;
     }
     assert_eq!(sample_cursor, expected.len());
     assert_eq!(output.queued_frames().expect("ring readable"), 0);
     assert_eq!(tap.counters(), (u64::from(TRACK_FRAMES) * 3, 0, 4));
     let engine = usize::try_from(token).expect("token") as *const c_void;
-    assert_eq!(crate::audio_abi::silent_disco_audio_callback_count(engine), 4);
-    assert_eq!(crate::audio_abi::silent_disco_audio_underrun_count(engine), 0);
+    assert_eq!(
+        crate::audio_abi::silent_disco_audio_callback_count(engine),
+        4
+    );
+    assert_eq!(
+        crate::audio_abi::silent_disco_audio_underrun_count(engine),
+        0
+    );
     assert_eq!(
         crate::audio_abi::silent_disco_audio_silence_filled_frames(engine),
         0
