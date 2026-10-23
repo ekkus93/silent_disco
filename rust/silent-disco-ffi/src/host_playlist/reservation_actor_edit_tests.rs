@@ -264,20 +264,26 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                     },
                 );
                 let rejected = loop {
-                    match rx
+                    if let FfiCoreNotification::Error { error } = rx
                         .recv_timeout(Duration::from_secs(5))
                         .expect("reserved successor removal must be rejected")
                     {
-                        FfiCoreNotification::Error { error } => break error,
-                        _ => {}
+                        break error;
                     }
                 };
                 assert!(!rejected.message.is_empty());
                 let protected = actor.current_snapshot().expect("protected queue");
                 assert_eq!(protected.host_queue.revision(), queue_revision);
-                assert_eq!(protected.host_queue.upcoming()[0].entry_id, "replacement-entry");
                 assert_eq!(
-                    protected.host_queue_next_boundary.as_ref().unwrap().entry_id,
+                    protected.host_queue.upcoming()[0].entry_id,
+                    "replacement-entry"
+                );
+                assert_eq!(
+                    protected
+                        .host_queue_next_boundary
+                        .as_ref()
+                        .unwrap()
+                        .entry_id,
                     "replacement-entry"
                 );
                 boundaries.push((entry_id, first_sample_index));
