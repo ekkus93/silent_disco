@@ -107,6 +107,66 @@ fn native_callback_capture_exactly_matches_three_track_source_pcm() {
 }
 
 #[test]
+fn callback_capture_preserves_three_track_boundaries_with_variable_callback_sizes() {
+    let _guard = registry_test_guard();
+    let output = FfiAudioOutputHandle::open(4_800, 1).expect("register output ring");
+    let token = output.engine_token().expect("engine token");
+    let tap = std::sync::Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("tap"));
+    attach_callback_capture(
+        u64::try_from(token).expect("positive token"),
+        std::sync::Arc::clone(&tap),
+    )
+    .expect("attach callback capture");
+
+    let expected = three_track_pcm();
+    let source = expected
+        .iter()
+        .map(|sample| f32::from(*sample) / 32768.0)
+        .collect();
+    assert_eq!(
+        output.push_frames(source).expect("queue all three tracks"),
+        3 * TRACK_FRAMES
+    );
+
+    // The first callback crosses the track-one boundary by one frame.
+    // Later callback sizes vary and the third ends at the second boundary.
+    // Draining the tap between callbacks simulates the background writer.
+    let mut sample_cursor = 0;
+    for requested in [
+        TRACK_FRAMES + 1,
+        17,
+        TRACK_FRAMES - 18,
+        TRACK_FRAMES,
+    ] {
+        let (status, supplied, returned) = callback_output(token, requested);
+        assert_eq!(status, 0, "no boundary may inject silence");
+        assert_eq!(supplied, requested);
+        let end = sample_cursor + usize::try_from(requested).expect("bounded") * CHANNELS;
+        assert_eq!(returned, expected[sample_cursor..end]);
+        let captured = tap.drain(usize::try_from(requested).expect("bounded"));
+        let canonical: Vec<f32> = returned
+            .iter()
+            .map(|sample| f32::from(*sample) / 32768.0)
+            .collect();
+        assert_eq!(captured, canonical, "callback capture must match final output");
+        sample_cursor = end;
+    }
+    assert_eq!(sample_cursor, expected.len());
+    assert_eq!(output.queued_frames().expect("ring readable"), 0);
+    assert_eq!(tap.counters(), (u64::from(TRACK_FRAMES) * 3, 0, 4));
+    let engine = usize::try_from(token).expect("token") as *const c_void;
+    assert_eq!(crate::audio_abi::silent_disco_audio_callback_count(engine), 4);
+    assert_eq!(crate::audio_abi::silent_disco_audio_underrun_count(engine), 0);
+    assert_eq!(
+        crate::audio_abi::silent_disco_audio_silence_filled_frames(engine),
+        0
+    );
+
+    detach_callback_capture(u64::try_from(token).expect("token"));
+    output.release();
+}
+
+#[test]
 fn native_callback_capture_exposes_silence_injected_at_track_boundary() {
     let _guard = registry_test_guard();
     let output = FfiAudioOutputHandle::open(4_800, 1).expect("register callback ring");
