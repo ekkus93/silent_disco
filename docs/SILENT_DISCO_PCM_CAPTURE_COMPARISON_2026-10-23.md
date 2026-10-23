@@ -83,3 +83,30 @@ those per-track files to the listener capture with the command above.
 These reference WAVs contain **decoded source frames**: any intentional
 final-packet padding or other output DSP must be represented in the expected
 data explicitly, not silently ignored by the comparator.
+
+## Opt-in Android callback WAV capture (implementation checkpoint)
+
+The native callback tap and its UniFFI methods are now implemented in
+`rust/silent-disco-ffi/src/callback_capture.rs`, `audio_abi.rs`,
+and `listener_playback/ffi_handle.rs`. A live `FfiListenerPlaybackHandle`
+can call `startCallbackCapture(48_000u)` to attach a one-second bounded
+float32 stereo tap; `readCallbackCapture(4096u)` drains samples on a normal
+thread and reports cumulative captured, lost and callback counts;
+`endCallbackCapture()` detaches while preserving the buffered tail, and
+`clearCallbackCapture()` releases the diagnostic state. The audio thread
+does not perform file I/O or allocate diagnostic buffers.
+
+The Android helper `NativeCallbackWavCapture.start(playback, privateDirectory, scope)`
+in `core/audio/NativeCallbackWavCapture.kt` starts that capture explicitly,
+polls/dumps samples to an app-private WAV from `Dispatchers.IO`, and
+`stopAndReport()` detaches, drains, finalizes the WAV and returns counters.
+The separate `CallbackPcmWavWriter` limits recording to five minutes by
+default and rejects malformed or non-finite frames. The report's
+`complete` property must be true before trusting the WAV; a tap overflow
+invalidates that evidence. The helper is not automatically enabled during
+normal listening and is not a finished debug UI toggle.
+
+This tap captures the Rust callback-returned PCM, still upstream of Android's
+mixer, speaker, DAC and any Bluetooth device. Do not misreport this as an
+independently measured physical output recording; that hardware-level
+acceptance remains a separate device test.
