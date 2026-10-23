@@ -3,7 +3,8 @@
 //! Android device mixer are separate outstanding acceptance gates.
 use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
-    silent_disco_audio_callback_count, silent_disco_audio_frames_rendered,
+    silent_disco_audio_available_frames, silent_disco_audio_callback_count,
+    silent_disco_audio_frames_rendered,
     silent_disco_audio_read_interleaved_f32, silent_disco_audio_silence_filled_frames,
     silent_disco_audio_underrun_count,
 };
@@ -582,25 +583,28 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     assert_eq!(tap_pcm, captured, "callback tap differs from returned PCM");
     assert_eq!(tap.counters(), (1_440, 0, 4));
 
-    // A final callback after the last real PCM frame must return explicit
-    // silence, count the underrun, and preserve those actual returned samples
-    // in the same nonblocking tap. It must not invent additional source PCM.
-    let mut final_tail = [f32::NAN; 17 * CHANNELS];
+    // The packetizer may leave intentional final-packet zero padding in the
+    // render ring after all 1,440 source frames. Drain that padding and then
+    // request 17 additional frames to force an observable native underrun.
+    // The tap must record both the ring's padding and synthesized silence.
+    let padding_frames = silent_disco_audio_available_frames(engine);
+    let requested_tail = padding_frames.checked_add(17).expect("bounded padding");
+    let mut final_tail = vec![f32::NAN; usize::try_from(requested_tail).expect("frames") * CHANNELS];
     let mut tail_from_ring = u32::MAX;
     let tail_status = silent_disco_audio_read_interleaved_f32(
         usize::try_from(token).expect("token") as *mut core::ffi::c_void,
         final_tail.as_mut_ptr(),
-        17,
+        requested_tail,
         2,
         &raw mut tail_from_ring,
     );
-    assert_eq!(tail_status, 1, "end-of-stream silence must be observable");
-    assert_eq!(tail_from_ring, 0);
-    assert!(final_tail.iter().all(|sample| *sample == 0.0));
-    assert_eq!(tap.drain(17), final_tail);
-    assert_eq!(tap.counters(), (1_457, 0, 5));
+    assert_eq!(tail_status, 1, "end-of-stream underrun must be observable");
+    assert_eq!(tail_from_ring, padding_frames);
+    assert!(final_tail.iter().all(|sample| sample.to_bits() == 0));
+    assert_eq!(tap.drain(usize::try_from(requested_tail).expect("frames")), final_tail);
+    assert_eq!(tap.counters(), (1_440 + u64::from(requested_tail), 0, 5));
     assert_eq!(silent_disco_audio_callback_count(engine), 5);
-    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_440);
+    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_440 + u64::from(padding_frames));
     assert_eq!(silent_disco_audio_underrun_count(engine), 1);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 17);
 
