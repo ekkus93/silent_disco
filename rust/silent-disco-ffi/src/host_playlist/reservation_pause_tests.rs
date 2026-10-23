@@ -1,5 +1,12 @@
 //! Production `UniFFI` reservation may commit a successor during a host pause.
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
+use crate::audio_abi::{
+    attach_callback_capture, detach_callback_capture, registry_test_guard,
+    silent_disco_audio_read_interleaved_f32, silent_disco_audio_silence_filled_frames,
+    silent_disco_audio_underrun_count,
+};
+use crate::audio_output::FfiAudioOutputHandle;
+use crate::callback_capture::CallbackCaptureTap;
 use crate::host_control::{
     FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver, FfiPlatformCompletion,
     FfiPlatformEffect,
@@ -67,6 +74,7 @@ fn wav(frames: u32, sample: i16) -> Vec<u8> {
     reason = "one end-to-end actor and producer pause/resume test with packet-level assertions"
 )]
 fn authoritative_ffi_playlist_reserves_successor_while_paused() {
+    let _audio_guard = registry_test_guard();
     let (tx, rx) = mpsc::channel();
     let ffi =
         FfiCoreHandle::open("ffi-paused-actor".into(), Arc::new(Observer(tx))).expect("open actor");
@@ -174,13 +182,38 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     )
     .expect("open authoritative producer");
 
+    // The producer can prebuffer while paused, but the output callback must
+    // not consume those frames until Resume. Retain one native output token
+    // across the boundary and compare callback-returned PCM after resuming.
+    let output = FfiAudioOutputHandle::open(960, 1).expect("native render ring");
+    let token = u64::try_from(output.engine_token().expect("engine token"))
+        .expect("nonnegative native token");
+    let tap = Arc::new(CallbackCaptureTap::new(960).expect("capture capacity"));
+    attach_callback_capture(token, Arc::clone(&tap)).expect("attach capture");
     let mut samples = Vec::new();
     let mut boundaries = Vec::new();
     loop {
         match stream.next_frame(2_000).expect("paused producer frame") {
             Some(FfiPlaylistFrame::Audio {
-                first_sample_index, ..
-            }) => samples.push(first_sample_index),
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
+            }) => {
+                assert_eq!(
+                    payload.len(),
+                    usize::try_from(samples_per_packet).expect("packet frames") * 4
+                );
+                let pcm = payload
+                    .chunks_exact(2)
+                    .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+                    .collect();
+                assert_eq!(
+                    output.push_frames(pcm).expect("queue native PCM"),
+                    samples_per_packet
+                );
+                samples.push(first_sample_index);
+            }
             Some(FfiPlaylistFrame::TrackBoundary {
                 entry_id,
                 first_sample_index,
@@ -216,6 +249,43 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
             .is_some_and(|entry| entry.entry_id == "next-entry")
     });
     assert!(after.host_queue_next_boundary.is_none());
+    assert_eq!(output.queued_frames().expect("queued native PCM"), 960);
+    let mut absolute_frame = 0_u32;
+    // Neither callback boundary is aligned with the 480-frame track change.
+    for frames in [479_u32, 2, 479] {
+        let mut pcm = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
+        let mut supplied = 0_u32;
+        let status = silent_disco_audio_read_interleaved_f32(
+            usize::try_from(token).expect("native token") as *mut core::ffi::c_void,
+            pcm.as_mut_ptr(),
+            frames,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0, "resume must not underrun at the boundary");
+        assert_eq!(supplied, frames);
+        assert_eq!(
+            tap.drain(usize::try_from(frames).expect("frames")),
+            pcm,
+            "callback capture must match native output"
+        );
+        for stereo in pcm.chunks_exact(2) {
+            let expected = if absolute_frame < 480 { 3_000_i16 } else { 6_000_i16 };
+            let expected = f32::from(expected) / 32768.0;
+            assert!(
+                stereo.iter().all(|sample| sample.to_bits() == expected.to_bits()),
+                "wrong resumed callback PCM at sample {absolute_frame}"
+            );
+            absolute_frame += 1;
+        }
+    }
+    assert_eq!(absolute_frame, 960);
+    let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+    assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
+    assert_eq!(tap.counters(), (960, 0, 3));
+    detach_callback_capture(token);
+    output.release();
     ffi.shutdown().expect("shut down host");
     fs::remove_dir_all(dir).expect("clean fixtures");
 }
