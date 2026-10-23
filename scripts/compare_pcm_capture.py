@@ -82,6 +82,7 @@ def compare(
             yield from _frames(path, capture_info["channels"])
 
     missing = extra = mismatched_frames = mismatched_samples = 0
+    observed_capture_frames = 0
     compared_samples = squared_error = max_abs_error = 0
     examples = []
     absent = object()
@@ -92,13 +93,21 @@ def compare(
             fillvalue=absent,
         )
     ):
+        if actual is not absent:
+            observed_capture_frames += 1
         if wanted is absent:
             extra += 1
+            for boundary in boundaries:
+                if boundary["window_start"] <= index < boundary["window_end"]:
+                    boundary["mismatch_frames"] += 1
             if len(examples) < MISMATCH_EXAMPLES:
                 examples.append({"frame": index, "kind": "extra", "captured": list(actual)})
             continue
         if actual is absent:
             missing += 1
+            for boundary in boundaries:
+                if boundary["window_start"] <= index < boundary["window_end"]:
+                    boundary["mismatch_frames"] += 1
             if len(examples) < MISMATCH_EXAMPLES:
                 examples.append({"frame": index, "kind": "missing", "expected": list(wanted)})
             continue
@@ -127,7 +136,8 @@ def compare(
         "sample_rate": capture_info["sample_rate"],
         "channels": capture_info["channels"],
         "expected_frames": expected_frames,
-        "captured_frames": capture_info["frames"],
+        "captured_frames": observed_capture_frames,
+        "capture_header_frames": capture_info["frames"],
         "missing_tail_frames": missing,
         "extra_tail_frames": extra,
         "mismatched_frames": mismatched_frames,

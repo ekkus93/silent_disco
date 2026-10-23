@@ -84,6 +84,23 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(result["missing_tail_frames"], 10)
         self.assertEqual(result["status"], "FAIL")
 
+    def test_missing_boundary_frame_is_counted_in_boundary_window(self):
+        actual = self.reference[:240] + self.reference[241:]
+        result = self.inspect(actual, boundary_window_frames=4)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["missing_tail_frames"], 1)
+        self.assertGreater(result["track_boundaries"][0]["mismatch_frames"], 0)
+
+    def test_truncated_pcm_payload_reports_observed_not_declared_frames(self):
+        save_wav(self.captured, self.reference)
+        with self.captured.open("r+b") as capture:
+            capture.truncate(self.captured.stat().st_size - 8)
+        result = compare(self.sources, self.captured)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["capture_header_frames"], len(self.reference))
+        self.assertEqual(result["captured_frames"], len(self.reference) - 2)
+        self.assertEqual(result["missing_tail_frames"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
