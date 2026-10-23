@@ -4,8 +4,8 @@
 use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
     silent_disco_audio_available_frames, silent_disco_audio_callback_count,
-    silent_disco_audio_frames_rendered,
-    silent_disco_audio_read_interleaved_f32, silent_disco_audio_silence_filled_frames,
+    silent_disco_audio_frames_rendered, silent_disco_audio_read_interleaved_f32,
+    silent_disco_audio_silence_filled_frames,
     silent_disco_audio_underrun_count,
 };
 use crate::audio_abi::{register_render_ring, release_render_ring};
@@ -589,7 +589,8 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     // The tap must record both the ring's padding and synthesized silence.
     let padding_frames = silent_disco_audio_available_frames(engine);
     let requested_tail = padding_frames.checked_add(17).expect("bounded padding");
-    let mut final_tail = vec![f32::NAN; usize::try_from(requested_tail).expect("frames") * CHANNELS];
+    let mut final_tail =
+        vec![f32::NAN; usize::try_from(requested_tail).expect("frames") * CHANNELS];
     let mut tail_from_ring = u32::MAX;
     let tail_status = silent_disco_audio_read_interleaved_f32(
         usize::try_from(token).expect("token") as *mut core::ffi::c_void,
@@ -601,10 +602,16 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     assert_eq!(tail_status, 1, "end-of-stream underrun must be observable");
     assert_eq!(tail_from_ring, padding_frames);
     assert!(final_tail.iter().all(|sample| sample.to_bits() == 0));
-    assert_eq!(tap.drain(usize::try_from(requested_tail).expect("frames")), final_tail);
+    assert_eq!(
+        tap.drain(usize::try_from(requested_tail).expect("frames")),
+        final_tail
+    );
     assert_eq!(tap.counters(), (1_440 + u64::from(requested_tail), 0, 5));
     assert_eq!(silent_disco_audio_callback_count(engine), 5);
-    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_440 + u64::from(padding_frames));
+    assert_eq!(
+        silent_disco_audio_frames_rendered(engine),
+        1_440 + u64::from(padding_frames)
+    );
     assert_eq!(silent_disco_audio_underrun_count(engine), 1);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 17);
 
