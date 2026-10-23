@@ -16,8 +16,6 @@ mod android_p2_abi;
 mod audio_abi;
 #[cfg(test)]
 mod audio_callback_capture_tests;
-#[cfg(test)]
-mod playlist_pcm_capture_tests;
 mod audio_output;
 mod callback_capture;
 mod host_control;
@@ -25,6 +23,8 @@ mod host_playlist;
 mod host_transport;
 mod listener_playback;
 mod listener_transport;
+#[cfg(test)]
+mod playlist_pcm_capture_tests;
 mod sync;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};

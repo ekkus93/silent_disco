@@ -19,7 +19,11 @@ fn source_wav(sample: i16) -> Vec<u8> {
     let bytes = TRACK_FRAMES * CHANNELS * 2;
     let mut data = Vec::with_capacity(44 + bytes);
     data.extend_from_slice(b"RIFF");
-    data.extend_from_slice(&u32::try_from(36 + bytes).expect("fixture size").to_le_bytes());
+    data.extend_from_slice(
+        &u32::try_from(36 + bytes)
+            .expect("fixture size")
+            .to_le_bytes(),
+    );
     data.extend_from_slice(b"WAVEfmt ");
     data.extend_from_slice(&16_u32.to_le_bytes());
     data.extend_from_slice(&1_u16.to_le_bytes());
@@ -94,7 +98,10 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
                 assert_eq!(first_sample_index, audio_frames, "no PCM gap/overlap");
                 assert_eq!(sequence, next_sequence, "no sequence gap/overlap");
                 assert_eq!(channels, 2);
-                assert_eq!(payload.len(), usize::try_from(samples_per_packet).expect("packet") * 4);
+                assert_eq!(
+                    payload.len(),
+                    usize::try_from(samples_per_packet).expect("packet") * 4
+                );
                 let decoded: Vec<f32> = payload
                     .chunks_exact(2)
                     .map(|bytes| f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.0)
@@ -107,8 +114,7 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
                 next_sequence += 1;
             }
             Some(FfiPlaylistFrame::TrackBoundary {
-                first_sample_index,
-                ..
+                first_sample_index, ..
             }) => {
                 boundaries.push(first_sample_index);
             }
@@ -142,7 +148,10 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
         .iter()
         .flat_map(|value| std::iter::repeat_n(f32::from(*value) / 32768.0, TRACK_FRAMES * CHANNELS))
         .collect();
-    assert_eq!(returned, expected, "the actual callback PCM must match source tracks");
+    assert_eq!(
+        returned, expected,
+        "the actual callback PCM must match source tracks"
+    );
     assert_eq!(tap.drain(1_440), expected);
     assert_eq!(tap.counters(), (1_440, 0, 3));
 
