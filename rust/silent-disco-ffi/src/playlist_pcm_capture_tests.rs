@@ -181,14 +181,16 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
     fs::remove_dir_all(&root).expect("clean fixture directory");
 }
 
-
 fn authorized_pcm_socket_pair() -> (Box<dyn HostTransportNode>, Box<dyn ListenerTransportNode>) {
     let session = SessionId::new("end-to-end-session").expect("session");
     let device = DeviceId::new("pcm-regression-listener").expect("device");
     let clock = Arc::new(ManualTransportClock::new(1_000));
     let factory = SocketTransportFactory;
     let mut host = factory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("production socket host");
     let listener = factory
         .connect_listener(
@@ -213,9 +215,13 @@ fn authorized_pcm_socket_pair() -> (Box<dyn HostTransportNode>, Box<dyn Listener
         let event = host
             .recv_event(deadline.saturating_duration_since(Instant::now()))
             .expect("host receives join");
-        if matches!(event, TransportEvent::FrameReceived {
-            frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)), ..
-        }) {
+        if matches!(
+            event,
+            TransportEvent::FrameReceived {
+                frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+                ..
+            }
+        ) {
             break;
         }
     }
@@ -349,7 +355,8 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
                         channel: TransportChannel::Audio,
                         frame: ProtocolFrame::Audio(datagram),
                         ..
-                    } = event {
+                    } = event
+                    {
                         break datagram;
                     }
                 };
@@ -427,7 +434,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         .iter()
         .zip(&expected)
         .enumerate()
-        .find(|(_, (actual, reference))| actual != reference)
+        .find(|(_, (actual, reference))| actual.to_bits() != reference.to_bits())
     {
         panic!(
             "listener callback PCM mismatch at frame {} channel {}: got {actual}, expected {reference}; boundaries {boundaries:?}",
