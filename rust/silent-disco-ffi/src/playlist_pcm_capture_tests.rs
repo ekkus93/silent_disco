@@ -5,8 +5,7 @@ use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
     silent_disco_audio_available_frames, silent_disco_audio_callback_count,
     silent_disco_audio_frames_rendered, silent_disco_audio_read_interleaved_f32,
-    silent_disco_audio_silence_filled_frames,
-    silent_disco_audio_underrun_count,
+    silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
 };
 use crate::audio_abi::{register_render_ring, release_render_ring};
 use crate::audio_output::FfiAudioOutputHandle;
