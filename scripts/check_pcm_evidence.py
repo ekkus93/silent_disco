@@ -32,9 +32,22 @@ def require_integer(report, name, filename, minimum=0):
     return actual
 
 
+class AccessTrackingReport(dict):
+    """Record every field the report schema actually validates."""
+
+    def __init__(self, values):
+        super().__init__(values)
+        self.accessed = set()
+
+    def get(self, key, default=None):
+        self.accessed.add(key)
+        return super().get(key, default)
+
+
 def validate_report(filename, report, sha):
     if not isinstance(report, dict):
         raise ValueError(f"{filename}: root must be an object")
+    report = AccessTrackingReport(report)
     require_equal(report, "schema", 1, filename)
     require_equal(report, "status", "PASS", filename)
     require_equal(report, "commit", sha, filename)
@@ -125,6 +138,21 @@ def validate_report(filename, report, sha):
         require_equal(report, "tap_lost_frames", 0, filename)
     else:
         raise ValueError(f"unexpected PCM evidence name: {filename}")
+    # The evidence artifact is public: never permit unvalidated fields that
+    # could silently carry raw PCM, user filenames or other private content.
+    unexpected = set(report) - report.accessed
+    if unexpected:
+        raise ValueError(f"{filename}: unexpected metadata fields {sorted(unexpected)}")
+
+
+def reject_duplicate_keys(pairs):
+    """Reject ambiguous JSON keys instead of accepting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = value
+    return result
 
 
 def validate_directory(directory, sha):
@@ -146,9 +174,13 @@ def validate_directory(directory, sha):
         if path.stat().st_size > 32_768:
             raise ValueError(f"{filename}: JSON evidence exceeds 32 KiB")
         with path.open(encoding="utf-8") as stream:
-            report = json.load(stream, parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"{filename}: non-finite JSON constant {value}")
-            ))
+            report = json.load(
+                stream,
+                object_pairs_hook=reject_duplicate_keys,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(f"{filename}: non-finite JSON constant {value}")
+                ),
+            )
         validate_report(filename, report, sha)
 
 

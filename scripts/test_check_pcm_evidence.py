@@ -102,6 +102,32 @@ class EvidenceGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unexpected"):
             validate_directory(self.root, SHA)
 
+    def test_unexpected_json_audio_payload_is_rejected(self):
+        name = "encoded-socket-callback.json"
+        self.reports[name]["raw_audio_pcm"] = [0, 1, 2, 3]
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "unexpected metadata fields"):
+            validate_directory(self.root, SHA)
+
+    def test_duplicate_json_key_is_rejected_even_if_values_agree(self):
+        name = "mixed-rate-socket-callback.json"
+        path = self.root / name
+        original = path.read_text(encoding="utf-8")
+        path.write_text(original[:-1] + ', "status": "PASS"}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "duplicate JSON field: status"):
+            validate_directory(self.root, SHA)
+
+    def test_nested_duplicate_json_key_is_rejected(self):
+        name = "encoded-socket-callback.json"
+        path = self.root / name
+        original = path.read_text(encoding="utf-8")
+        path.write_text(
+            original[:-1] + ', "extra": {"a": 1, "a": 1}}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate JSON field: a"):
+            validate_directory(self.root, SHA)
+
     def test_wrong_exact_commit_is_rejected(self):
         self.reports["mixed-rate-socket-callback.json"]["commit"] = "b" * 40
         self.write_reports()
