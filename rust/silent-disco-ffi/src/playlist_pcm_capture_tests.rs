@@ -532,7 +532,9 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         .iter()
         .zip(&expected)
         .position(|(actual, reference)| actual.to_bits() != reference.to_bits())
-        .or_else(|| (captured.len() != expected.len()).then_some(captured.len().min(expected.len())));
+        .or_else(|| {
+            (captured.len() != expected.len()).then_some(captured.len().min(expected.len()))
+        });
     let mismatched_samples = captured
         .iter()
         .zip(&expected)
@@ -555,12 +557,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         let path = std::path::PathBuf::from(directory);
         fs::create_dir_all(&path).expect("PCM evidence directory");
         let status = if passed { "PASS" } else { "FAIL" };
-        let first_frame = first_mismatch.map_or("null".to_owned(), |sample| {
-            (sample / CHANNELS).to_string()
-        });
-        let first_channel = first_mismatch.map_or("null".to_owned(), |sample| {
-            (sample % CHANNELS).to_string()
-        });
+        let first_frame =
+            first_mismatch.map_or("null".to_owned(), |sample| (sample / CHANNELS).to_string());
+        let first_channel =
+            first_mismatch.map_or("null".to_owned(), |sample| (sample % CHANNELS).to_string());
         let callback_count = silent_disco_audio_callback_count(engine);
         let native_underruns = silent_disco_audio_underrun_count(engine);
         let native_silence = silent_disco_audio_silence_filled_frames(engine);
