@@ -353,7 +353,9 @@ fn reserved_successor_becomes_final_when_later_track_is_removed_after_boundary_d
         packetizer.recv_timeout(TEST_TIMEOUT),
         Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
     ));
-    let boundary = packetizer.recv_timeout(TEST_TIMEOUT).expect("reserved boundary");
+    let boundary = packetizer
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("reserved boundary");
     assert!(matches!(
         boundary,
         ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))
@@ -384,12 +386,19 @@ fn reserved_successor_becomes_final_when_later_track_is_removed_after_boundary_d
             Err(mpsc::RecvTimeoutError::Timeout) => panic!("retargeted stream stalled"),
         }
     }
-    let summary = packetizer.join().expect("queue ends after reserved successor");
+    let summary = packetizer
+        .join()
+        .expect("queue ends after reserved successor");
     assert_eq!(summary.state, PacketizerWorkerState::Completed);
-    assert!(later_boundaries.is_empty(), "removed third track must not play");
+    assert!(
+        later_boundaries.is_empty(),
+        "removed third track must not play"
+    );
     assert_eq!(
         audio,
-        (0_u64..21).map(|packet| (packet, packet * 240)).collect::<Vec<_>>(),
+        (0_u64..21)
+            .map(|packet| (packet, packet * 240))
+            .collect::<Vec<_>>(),
         "the retained successor must finish with no stale third-track samples"
     );
     assert_eq!(summary.emitted_packets, 21);
