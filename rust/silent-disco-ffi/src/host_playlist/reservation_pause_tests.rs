@@ -233,6 +233,39 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     }
     assert_eq!(boundaries, [("next-entry".to_owned(), 480)]);
     assert_eq!(samples, [0, 240, 480, 720]);
+    // The producer has already reserved the successor while paused. An edit
+    // that removes that prebuffered entry must fail rather than allowing the
+    // callback to render audio from an entry no longer in the host queue.
+    let paused_snapshot = actor.current_snapshot().expect("paused reservation");
+    let queue_revision = paused_snapshot.host_queue.revision();
+    submit(
+        &actor,
+        CoreCommand::RemoveHostQueueEntry {
+            expected_queue_revision: queue_revision,
+            entry_id: "next-entry".into(),
+        },
+    );
+    let rejected = loop {
+        if let FfiCoreNotification::Error { error } = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reserved successor removal must be rejected")
+        {
+            break error;
+        }
+    };
+    assert!(!rejected.message.is_empty());
+    let protected = actor.current_snapshot().expect("protected paused queue");
+    assert_eq!(protected.playback_state, PlaybackState::Paused);
+    assert_eq!(protected.host_queue.revision(), queue_revision);
+    assert_eq!(protected.host_queue.entries().len(), 2);
+    assert_eq!(
+        protected
+            .host_queue_next_boundary
+            .as_ref()
+            .expect("reserved successor")
+            .entry_id,
+        "next-entry"
+    );
     actor
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
         .expect("resume");
