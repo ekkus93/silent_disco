@@ -218,6 +218,13 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         start.channels,
     );
     scheduler_config.startup_buffer_target_ms = 0;
+    // The production scheduler intentionally fades in the first real packet
+    // from silence. This is an expected waveform transformation, not a lost
+    // frame or a gap at a subsequent track boundary.
+    let startup_ramp_frames = usize::try_from(
+        u64::from(start.sample_rate) * u64::from(scheduler_config.concealment_ramp_ms) / 1_000,
+    )
+    .expect("ramp fits usize");
     let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("scheduler");
     let (render_producer, token) = register_render_ring(RenderRingConfig {
         capacity_frames: 4_800,
@@ -325,14 +332,33 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         captured.extend(returned);
     }
     assert_eq!(from_ring_total, 1_440);
-    let expected: Vec<f32> = values
+    let mut expected: Vec<f32> = values
         .iter()
         .flat_map(|value| std::iter::repeat_n(f32::from(*value) / 32768.0, TRACK_FRAMES * CHANNELS))
         .collect();
-    assert_eq!(
-        captured, expected,
-        "track data changed in listener scheduler"
-    );
+    // Exactly model the intentional startup fade from the real scheduler.
+    // Later track boundaries must not acquire additional fades or silence.
+    for frame in 0..startup_ramp_frames {
+        let numerator = i32::from(values[0]) * i32::try_from(frame).expect("frame fits");
+        let sample = numerator / i32::try_from(startup_ramp_frames).expect("ramp fits");
+        let sample = f32::from(i16::try_from(sample).expect("sample fits")) / 32768.0;
+        for channel in 0..CHANNELS {
+            expected[frame * CHANNELS + channel] = sample;
+        }
+    }
+    assert_eq!(captured.len(), expected.len(), "output sample count");
+    if let Some((index, (actual, reference))) = captured
+        .iter()
+        .zip(&expected)
+        .enumerate()
+        .find(|(_, (actual, reference))| actual != reference)
+    {
+        panic!(
+            "listener callback PCM mismatch at frame {} channel {}: got {actual}, expected {reference}; boundaries {boundaries:?}",
+            index / CHANNELS,
+            index % CHANNELS
+        );
+    }
     assert_eq!(
         tap.drain(1_440),
         expected,
