@@ -188,7 +188,7 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
     fs::remove_dir_all(&root).expect("clean fixture directory");
 }
 
-fn authorized_pcm_socket_pair() -> (Box<dyn HostTransportNode>, Box<dyn ListenerTransportNode>) {
+pub(super) fn authorized_pcm_socket_pair() -> (Box<dyn HostTransportNode>, Box<dyn ListenerTransportNode>) {
     let session = SessionId::new("end-to-end-session").expect("session");
     let device = DeviceId::new("pcm-regression-listener").expect("device");
     let clock = Arc::new(ManualTransportClock::new(1_000));

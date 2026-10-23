@@ -9,8 +9,16 @@ use crate::audio_abi::{
 use crate::audio_output::FfiAudioOutputHandle;
 use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
+use crate::playlist_pcm_capture_tests::authorized_pcm_socket_pair;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use silent_disco_core::audio::{StreamingDecodeConfig, StreamingDecodeHandle};
+use silent_disco_core::domain::{
+    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
+use silent_disco_core::protocol::{
+    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, StreamStart, TrackBoundary,
+};
+use silent_disco_core::transport::{TransportChannel, TransportEvent};
 use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -79,9 +87,10 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         });
     }
     assert_eq!(expected_boundaries.len(), 2);
+    let (mut host, mut listener) = authorized_pcm_socket_pair();
     let playlist = FfiHostPlaylistStreamer::open(
-        "encoded-playlist-session".to_owned(),
-        "encoded-playlist-stream".to_owned(),
+        "end-to-end-session".to_owned(),
+        "end-to-end-stream".to_owned(),
         1_000,
         sources,
     )
@@ -89,6 +98,32 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     let start = playlist.stream_start();
     assert_eq!(start.sample_rate, 48_000);
     assert_eq!(start.channels, 2);
+    let sent_start = host
+        .broadcast_control(&ControlMessage::StreamStart(StreamStart {
+            session_id: SessionId::new("end-to-end-session").expect("session"),
+            stream_id: StreamId::new("end-to-end-stream").expect("stream"),
+            host_start_time_ms: MonotonicMillis::new(start.host_start_time_ms),
+            sample_rate: start.sample_rate,
+            channels: start.channels,
+            samples_per_packet: start.samples_per_packet,
+            current_entry_id: start.current_entry_id.clone(),
+            current_display_name: start.current_display_name.clone(),
+        }))
+        .expect("announce encoded stream over TCP");
+    assert_eq!(sent_start.report.successful_peers, 1);
+    let observed_start = loop {
+        if let TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Control(ControlMessage::StreamStart(start)),
+            ..
+        } = listener
+            .recv_event(Duration::from_secs(5))
+            .expect("receive encoded stream start")
+        {
+            break start;
+        }
+    };
+    assert_eq!(observed_start.sample_rate, start.sample_rate);
+    assert_eq!(observed_start.channels, start.channels);
 
     // Exercise the same native C ABI used by Android Oboe with the actual
     // encoded playlist output, not just the packetizer's decoded bytes.
@@ -128,7 +163,36 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                     payload.len(),
                     usize::try_from(samples_per_packet).expect("frames") * 4
                 );
-                let packet_samples: Vec<i16> = payload
+                let sent = host
+                    .broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
+                        session_id: SessionId::new("end-to-end-session").expect("session"),
+                        stream_id: StreamId::new("end-to-end-stream").expect("stream"),
+                        sequence: PacketSequence::new(sequence),
+                        codec: AudioCodec::PcmS16Le,
+                        sample_rate,
+                        channels,
+                        samples_per_packet,
+                        first_sample_index: SampleIndex::new(first_sample_index),
+                        host_presentation_time_ms: MonotonicMillis::new(1_000 + first_sample_index / 48),
+                        payload,
+                    }))
+                    .expect("send encoded-source PCM over production UDP");
+                assert_eq!(sent.report.successful_peers, 1);
+                let received = loop {
+                    if let TransportEvent::FrameReceived {
+                        channel: TransportChannel::Audio,
+                        frame: ProtocolFrame::Audio(datagram),
+                        ..
+                    } = listener
+                        .recv_event(Duration::from_secs(5))
+                        .expect("receive encoded-source PCM over UDP")
+                    {
+                        break datagram;
+                    }
+                };
+                assert_eq!(received.sequence.get(), sequence);
+                assert_eq!(received.first_sample_index.get(), first_sample_index);
+                let packet_samples: Vec<i16> = received.payload
                     .chunks_exact(2)
                     .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                     .collect();
@@ -169,11 +233,35 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
             }
             Some(FfiPlaylistFrame::TrackBoundary {
                 entry_id,
+                display_name,
                 first_sample_index,
                 ..
             }) => {
                 assert_eq!(first_sample_index, next_sample, "boundary ordering");
                 assert_eq!(entry_id, format!("encoded-entry-{}", boundaries.len() + 1));
+                let sent = host
+                    .broadcast_control(&ControlMessage::TrackBoundary(TrackBoundary {
+                        session_id: SessionId::new("end-to-end-session").expect("session"),
+                        stream_id: StreamId::new("end-to-end-stream").expect("stream"),
+                        first_sample_index: SampleIndex::new(first_sample_index),
+                        entry_id: entry_id.clone(),
+                        display_name,
+                    }))
+                    .expect("send encoded-source boundary over TCP");
+                assert_eq!(sent.report.successful_peers, 1);
+                let received = loop {
+                    if let TransportEvent::FrameReceived {
+                        frame: ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)),
+                        ..
+                    } = listener
+                        .recv_event(Duration::from_secs(5))
+                        .expect("receive encoded-source boundary over TCP")
+                    {
+                        break boundary;
+                    }
+                };
+                assert_eq!(received.first_sample_index.get(), first_sample_index);
+                assert_eq!(received.entry_id, entry_id);
                 boundaries.push(first_sample_index);
             }
             Some(FfiPlaylistFrame::End) => {
@@ -232,5 +320,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     detach_callback_capture(u64::try_from(token).expect("token"));
     output.release();
     playlist.cancel().expect("close encoded playlist");
+    listener.shutdown().expect("close socket listener");
+    host.shutdown().expect("close socket host");
     fs::remove_dir_all(root).expect("remove generated sources");
 }
