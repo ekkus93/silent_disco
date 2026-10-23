@@ -5,13 +5,17 @@ use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
     silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
     silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+    register_render_ring, release_render_ring,
 };
 use crate::audio_output::FfiAudioOutputHandle;
 use crate::callback_capture::CallbackCaptureTap;
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use crate::playlist_pcm_capture_tests::authorized_pcm_socket_pair;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use silent_disco_core::audio::{StreamingDecodeConfig, StreamingDecodeHandle};
+use silent_disco_core::audio::{
+    PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
+    SchedulerConfig, StreamingDecodeConfig, StreamingDecodeHandle,
+};
 use silent_disco_core::domain::{
     MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
@@ -141,6 +145,47 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     );
     attach_callback_capture(u64::try_from(token).expect("token"), Arc::clone(&tap))
         .expect("attach native capture");
+
+    // Feed the same received UDP datagrams to the production listener
+    // scheduler and pump, using a separate native render ring. Unlike the
+    // direct-ring comparison, this path tests presentation scheduling and
+    // the intentional initial fade as well as codec transitions.
+    let mut scheduler_config = SchedulerConfig::new(
+        SessionId::new("end-to-end-session").expect("session"),
+        StreamId::new("end-to-end-stream").expect("stream"),
+        start.sample_rate,
+        start.host_start_time_ms,
+        start.samples_per_packet,
+        start.channels,
+    );
+    scheduler_config.startup_buffer_target_ms = 0;
+    let ramp_frames = usize::try_from(
+        u64::from(start.sample_rate) * u64::from(scheduler_config.concealment_ramp_ms) / 1_000,
+    )
+    .expect("bounded startup ramp");
+    let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("listener scheduler");
+    let ring_capacity = usize::try_from(ring_frames).expect("bounded native ring");
+    let (scheduler_ring, scheduler_token) = register_render_ring(RenderRingConfig {
+        capacity_frames: ring_capacity,
+        target_fill_frames: ring_capacity,
+    })
+    .expect("listener scheduler render ring");
+    let mut pump = PlaybackPump::new(
+        scheduler,
+        scheduler_ring,
+        PlaybackPumpConfig {
+            volume: 1.0,
+            write_lead_ms: 0,
+            max_prefill_ms: 0,
+            target_depth_frames: ring_capacity,
+        },
+    )
+    .expect("listener playback pump");
+    pump.apply_sync_offset(0.0);
+    let scheduler_tap =
+        Arc::new(CallbackCaptureTap::new(ring_capacity).expect("scheduler callback tap"));
+    attach_callback_capture(scheduler_token, Arc::clone(&scheduler_tap))
+        .expect("attach listener scheduler capture");
     let mut callback_pcm = Vec::<f32>::new();
     let mut sequence = 0_u64;
     let mut next_sample = 0_u64;
@@ -203,6 +248,8 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                 };
                 assert_eq!(received.sequence.get(), sequence);
                 assert_eq!(received.first_sample_index.get(), first_sample_index);
+                let presentation_time = received.host_presentation_time_ms.get();
+                let packet_for_scheduler = received.clone();
                 let packet_samples: Vec<i16> = received
                     .payload
                     .chunks_exact(2)
@@ -219,6 +266,20 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                         .expect("native ring write"),
                     samples_per_packet
                 );
+
+                pump.scheduler_mut()
+                    .submit_packet(packet_for_scheduler)
+                    .expect("listener scheduler accepts encoded packet");
+                // Keep the finite jitter window moving in virtual time as
+                // packets arrive; never preload an unbounded whole playlist.
+                for _ in 0..64 {
+                    if !matches!(
+                        pump.tick(presentation_time),
+                        PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+                    ) {
+                        break;
+                    }
+                }
                 next_sample += u64::from(samples_per_packet);
                 sequence += 1;
             }
@@ -283,6 +344,11 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         actual[canonical.len()..].iter().all(|sample| *sample == 0),
         "only final packet padding may add silence"
     );
+    // The virtual listener should emit every real packet at its packetizer
+    // presentation deadline, without jitter-buffer concealment or an invented
+    // gap when moving between encoded containers.
+    assert_eq!(pump.diagnostics().packets_emitted, sequence);
+    assert_eq!(pump.diagnostics().concealed_packets, 0);
     // Read the continuous native output in callback sizes that deliberately
     // cross the WAV->FLAC and FLAC->MP3 boundaries by one frame. A callback
     // is not synchronized with source or packet boundaries in real playback.
@@ -324,6 +390,70 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         .iter()
         .map(|sample| f32::from(*sample) / 32768.0)
         .collect();
+
+    let mut scheduler_callback_pcm = Vec::<f32>::new();
+    for callback_frames in callback_sizes {
+        let mut returned = vec![f32::NAN; usize::try_from(callback_frames).expect("frames") * 2];
+        let mut supplied = 0_u32;
+        let status = silent_disco_audio_read_interleaved_f32(
+            usize::try_from(scheduler_token).expect("token") as *mut core::ffi::c_void,
+            returned.as_mut_ptr(),
+            callback_frames,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0, "encoded listener scheduler must not underrun");
+        assert_eq!(supplied, callback_frames);
+        assert_eq!(
+            scheduler_tap.drain(usize::try_from(callback_frames).expect("frames")),
+            returned,
+            "scheduler tap must match native callback"
+        );
+        scheduler_callback_pcm.extend(returned);
+    }
+    let mut expected_scheduler_pcm = canonical_pcm.clone();
+    expected_scheduler_pcm.resize(actual.len(), 0.0);
+    // The real listener intentionally ramps the first packet from silence.
+    // Do not allow that documented transformation to mask later boundaries.
+    for frame in 0..ramp_frames.min(canonical.len() / 2) {
+        for channel in 0..2 {
+            let index = frame * 2 + channel;
+            let scaled = i32::from(canonical[index])
+                * i32::try_from(frame).expect("ramp position")
+                / i32::try_from(ramp_frames).expect("nonzero ramp");
+            expected_scheduler_pcm[index] =
+                f32::from(i16::try_from(scaled).expect("ramped PCM")) / 32768.0;
+        }
+    }
+    let first_scheduler_mismatch = scheduler_callback_pcm
+        .iter()
+        .zip(&expected_scheduler_pcm)
+        .position(|(observed, reference)| observed.to_bits() != reference.to_bits())
+        .or_else(|| {
+            (scheduler_callback_pcm.len() != expected_scheduler_pcm.len())
+                .then_some(scheduler_callback_pcm.len().min(expected_scheduler_pcm.len()))
+        });
+    let scheduler_mismatch_count = scheduler_callback_pcm
+        .iter()
+        .zip(&expected_scheduler_pcm)
+        .filter(|(observed, reference)| observed.to_bits() != reference.to_bits())
+        .count()
+        + scheduler_callback_pcm.len().abs_diff(expected_scheduler_pcm.len());
+    let scheduler_engine =
+        usize::try_from(scheduler_token).expect("token") as *const core::ffi::c_void;
+    let scheduler_underruns = silent_disco_audio_underrun_count(scheduler_engine);
+    let scheduler_silence = silent_disco_audio_silence_filled_frames(scheduler_engine);
+    let scheduler_callbacks = silent_disco_audio_callback_count(scheduler_engine);
+    let (scheduler_tap_frames, scheduler_tap_loss, scheduler_tap_callbacks) =
+        scheduler_tap.counters();
+    let scheduler_passed = scheduler_mismatch_count == 0
+        && scheduler_callback_pcm.len() == expected_scheduler_pcm.len()
+        && scheduler_callbacks == 3
+        && scheduler_underruns == 0
+        && scheduler_silence == 0
+        && scheduler_tap_frames == next_sample
+        && scheduler_tap_loss == 0
+        && scheduler_tap_callbacks == 3;
     // Save sample-position evidence before the waveform assertion so hosted
     // CI can diagnose a callback regression without uploading audio data.
     // Explicitly model final packet padding rather than aligning each codec
@@ -356,7 +486,8 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         && native_callbacks == 3
         && native_underruns == 0
         && native_silence == 0
-        && boundaries == expected_boundaries;
+        && boundaries == expected_boundaries
+        && scheduler_passed;
     if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
         let commit = std::env::var("GITHUB_SHA")
             .ok()
@@ -369,8 +500,12 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
             first_mismatch.map_or("null".to_owned(), |sample| (sample / 2).to_string());
         let first_channel =
             first_mismatch.map_or("null".to_owned(), |sample| (sample % 2).to_string());
+        let first_scheduler_frame =
+            first_scheduler_mismatch.map_or("null".to_owned(), |sample| (sample / 2).to_string());
+        let first_scheduler_channel =
+            first_scheduler_mismatch.map_or("null".to_owned(), |sample| (sample % 2).to_string());
         let report = format!(
-            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-tcp-udp-sockets\",\n  \"source_formats\": [\"wav\", \"flac\", \"mp3\"],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"source_boundaries\": {expected_boundaries:?},\n  \"observed_boundaries\": {boundaries:?},\n  \"expected_frames_with_padding\": {},\n  \"captured_frames\": {},\n  \"callback_frame_chunks\": {callback_sizes:?},\n  \"callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_loss},\n  \"tap_callback_count\": {tap_callbacks},\n  \"mismatched_samples\": {mismatch_count},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"listener_scheduler_exercised\": false,\n  \"physical_dac_verified\": false\n}}\n",
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-tcp-udp-sockets\",\n  \"source_formats\": [\"wav\", \"flac\", \"mp3\"],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"source_boundaries\": {expected_boundaries:?},\n  \"observed_boundaries\": {boundaries:?},\n  \"expected_frames_with_padding\": {},\n  \"captured_frames\": {},\n  \"callback_frame_chunks\": {callback_sizes:?},\n  \"callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_loss},\n  \"tap_callback_count\": {tap_callbacks},\n  \"mismatched_samples\": {mismatch_count},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"listener_scheduler_exercised\": true,\n  \"scheduler_mismatched_samples\": {scheduler_mismatch_count},\n  \"scheduler_first_mismatch_frame\": {first_scheduler_frame},\n  \"scheduler_first_mismatch_channel\": {first_scheduler_channel},\n  \"scheduler_callback_count\": {scheduler_callbacks},\n  \"scheduler_underrun_callbacks\": {scheduler_underruns},\n  \"scheduler_silence_filled_frames\": {scheduler_silence},\n  \"scheduler_tap_captured_frames\": {scheduler_tap_frames},\n  \"scheduler_tap_lost_frames\": {scheduler_tap_loss},\n  \"scheduler_tap_callback_count\": {scheduler_tap_callbacks},\n  \"physical_dac_verified\": false\n}}\n",
             expected_callback_pcm.len() / 2,
             callback_pcm.len() / 2
         );
@@ -379,7 +514,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     }
     assert!(
         passed,
-        "encoded native callback comparison mismatch at frame {first_mismatch:?}"
+        "encoded native callback mismatch: direct {first_mismatch:?}; scheduler {first_scheduler_mismatch:?}"
     );
     assert_eq!(
         &callback_pcm[..canonical_pcm.len()],
@@ -396,6 +531,9 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
     assert_eq!(tap.counters(), (next_sample, 0, 3));
+    assert_eq!(scheduler_callback_pcm, expected_scheduler_pcm);
+    detach_callback_capture(scheduler_token);
+    release_render_ring(scheduler_token).expect("release listener scheduler ring");
     detach_callback_capture(u64::try_from(token).expect("token"));
     output.release();
     playlist.cancel().expect("close encoded playlist");
