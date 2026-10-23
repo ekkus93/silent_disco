@@ -1,8 +1,8 @@
 package com.ekkus.silentdisco.feature.listener
 
+import android.animation.ValueAnimator
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.LocalMotionDurationScale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,7 +34,7 @@ internal fun ClientWorkflowStepper(
     stage: ClientWorkflowStage,
     modifier: Modifier = Modifier,
 ) {
-    val motionDuration = workflowStateChangeDurationMs(LocalMotionDurationScale.current.scaleFactor)
+    val motionDuration = workflowStateChangeDurationMs(if (ValueAnimator.areAnimatorsEnabled()) 1f else 0f)
     Row(
         modifier = modifier
             .fillMaxWidth()
