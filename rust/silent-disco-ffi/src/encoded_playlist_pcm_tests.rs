@@ -128,7 +128,12 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     // Exercise the same native C ABI used by Android Oboe with the actual
     // encoded playlist output, not just the packetizer's decoded bytes.
     // The tap is drained after every callback, as a background writer would.
-    let output = FfiAudioOutputHandle::open(4_800, 1).expect("native output ring");
+    // Keep every encoded packet in one native ring until callbacks can span
+    // both codec boundaries instead of conveniently reading packet-by-packet.
+    let ring_frames = u32::try_from(canonical.len() / 2 + 480)
+        .expect("bounded encoded fixtures")
+        .max(4_800);
+    let output = FfiAudioOutputHandle::open(ring_frames, 1).expect("native output ring");
     let token = output.engine_token().expect("output token");
     let tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("tap"));
     attach_callback_capture(u64::try_from(token).expect("token"), Arc::clone(&tap))
@@ -210,27 +215,6 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                         .expect("native ring write"),
                     samples_per_packet
                 );
-                let mut returned = vec![f32::NAN; packet_pcm.len()];
-                let mut supplied = 0_u32;
-                let status = silent_disco_audio_read_interleaved_f32(
-                    usize::try_from(token).expect("token") as *mut core::ffi::c_void,
-                    returned.as_mut_ptr(),
-                    samples_per_packet,
-                    2,
-                    &raw mut supplied,
-                );
-                assert_eq!(
-                    status, 0,
-                    "encoded boundary must not underrun native output"
-                );
-                assert_eq!(supplied, samples_per_packet);
-                assert_eq!(returned, packet_pcm, "callback changed decoded samples");
-                assert_eq!(
-                    tap.drain(usize::try_from(samples_per_packet).expect("frames")),
-                    returned,
-                    "native tap must capture the callback-returned PCM"
-                );
-                callback_pcm.extend(returned);
                 next_sample += u64::from(samples_per_packet);
                 sequence += 1;
             }
@@ -295,6 +279,39 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         actual[canonical.len()..].iter().all(|sample| *sample == 0),
         "only final packet padding may add silence"
     );
+    // Read the continuous native output in callback sizes that deliberately
+    // cross the WAV->FLAC and FLAC->MP3 boundaries by one frame. A callback
+    // is not synchronized with source or packet boundaries in real playback.
+    let first_boundary = u32::try_from(expected_boundaries[0]).expect("first boundary");
+    let second_boundary = u32::try_from(expected_boundaries[1]).expect("second boundary");
+    let total_frames = u32::try_from(actual.len() / 2).expect("decoded frame count");
+    assert!(first_boundary > 0 && second_boundary > first_boundary + 1);
+    assert!(total_frames > second_boundary + 1);
+    let callback_sizes = [
+        first_boundary + 1,
+        second_boundary - first_boundary,
+        total_frames - second_boundary - 1,
+    ];
+    for callback_frames in callback_sizes {
+        let mut returned =
+            vec![f32::NAN; usize::try_from(callback_frames).expect("frames") * 2];
+        let mut supplied = 0_u32;
+        let status = silent_disco_audio_read_interleaved_f32(
+            usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+            returned.as_mut_ptr(),
+            callback_frames,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0, "codec boundary must not underrun native output");
+        assert_eq!(supplied, callback_frames, "no inserted callback silence");
+        assert_eq!(
+            tap.drain(usize::try_from(callback_frames).expect("frames")),
+            returned,
+            "native tap must capture callback-returned PCM"
+        );
+        callback_pcm.extend(returned);
+    }
     assert_eq!(
         callback_pcm.len(),
         actual.len(),
@@ -316,10 +333,10 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         "native callback may contain only final-packet padding"
     );
     let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
-    assert_eq!(silent_disco_audio_callback_count(engine), sequence);
+    assert_eq!(silent_disco_audio_callback_count(engine), 3);
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
-    assert_eq!(tap.counters(), (next_sample, 0, sequence));
+    assert_eq!(tap.counters(), (next_sample, 0, 3));
     detach_callback_capture(u64::try_from(token).expect("token"));
     output.release();
     playlist.cancel().expect("close encoded playlist");
