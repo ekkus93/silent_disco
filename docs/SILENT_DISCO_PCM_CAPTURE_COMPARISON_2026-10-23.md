@@ -243,3 +243,25 @@ must not share the same render-ring token.
 
 This new output comparison remains pending exact-head hosted test qualification.
 It is separate from a live Android Oboe device output or mixer/DAC measurement.
+
+## Dynamic gain and rejected-reservation failure callback (pending exact-head qualification)
+
+The gain test added at source `b0200694` drives real encoded WAV/FLAC/MP3 fixtures over the
+host TCP/UDP sockets and native Rust listener scheduler. It deliberately changes listener
+volume from unity to one-half at the first source boundary and to one-quarter at the
+second. Expected samples are independently decoded, adjusted for the initial native
+scheduler fade, and scaled by each explicit gain only **after** its sample boundary.
+The nonaligned native callback, capture-tap and machine-readable JSON must agree exactly;
+a gain change must not insert silence, corrupt a sample or reset the initial fade.
+Its hosted Rust test, formatter and strict Clippy gate passed, but exact-head Android and
+desktop qualification was still outstanding when recorded.
+
+A separate new reserved-boundary failure test at source `50b58ef0` checks that the
+production FFI playlist refuses a stale successor and publishes neither its track
+metadata nor its audio. The still-valid 480-frame current song is rendered through the
+real C-ABI callback and compared sample-by-sample. A subsequent *intentional* read of
+17 missing frames must produce explicit callback underrun/silence counters; this is
+**not** accepted as a gapless track transition. When hosted, the test saves only
+`rejected-boundary-callback.json` with the SHA, first mismatch sample/channel and
+native/tap counts. The new failure-path test remains pending exact-head CI; it is
+not evidence of any physical Android mixer/DAC output continuity.
