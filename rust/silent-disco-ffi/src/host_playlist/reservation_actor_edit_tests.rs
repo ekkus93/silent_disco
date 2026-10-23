@@ -100,18 +100,19 @@ fn submit_native_packet(output: &FfiAudioOutputHandle, payload: &[u8], frames: u
         .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
         .collect();
     assert_eq!(
-        output.push_frames(samples).expect("native output accepts actor PCM"),
+        output
+            .push_frames(samples)
+            .expect("native output accepts actor PCM"),
         frames,
         "producer output must not discard any samples"
     );
 }
 
-fn verify_native_callback(
-    output: &FfiAudioOutputHandle,
-    tap: &CallbackCaptureTap,
-    token: u64,
-) {
-    assert_eq!(output.queued_frames().expect("queued frames"), RETARGETED_FRAMES);
+fn verify_native_callback(output: &FfiAudioOutputHandle, tap: &CallbackCaptureTap, token: u64) {
+    assert_eq!(
+        output.queued_frames().expect("queued frames"),
+        RETARGETED_FRAMES
+    );
     let mut absolute_frame = 0_usize;
     // Both 9,600 and 10,080 fall inside callbacks rather than at a read edge.
     for frames in [4_799_u32, 4_802, 480, 479] {
@@ -141,13 +142,17 @@ fn verify_native_callback(
             };
             let expected = f32::from(expected) / 32768.0;
             assert!(
-                pair.iter().all(|sample| sample.to_bits() == expected.to_bits()),
+                pair.iter()
+                    .all(|sample| sample.to_bits() == expected.to_bits()),
                 "wrong native callback PCM at frame {absolute_frame}"
             );
             absolute_frame += 1;
         }
     }
-    assert_eq!(absolute_frame, usize::try_from(RETARGETED_FRAMES).expect("frames"));
+    assert_eq!(
+        absolute_frame,
+        usize::try_from(RETARGETED_FRAMES).expect("frames")
+    );
     let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
     assert_eq!(silent_disco_audio_callback_count(engine), 4);
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
@@ -552,7 +557,10 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     )
     .expect("open replay producer");
     let (replay_output, replay_tap, replay_token) = callback_output();
-    assert_ne!(replay_token, token, "Stop/replay must not reuse retired native token");
+    assert_ne!(
+        replay_token, token,
+        "Stop/replay must not reuse retired native token"
+    );
     let mut replay_sample = 0_u64;
     let mut replay_sequence = None;
     let mut replay_boundaries = Vec::new();
