@@ -21,13 +21,14 @@ data class CallbackAudioCaptureReport(
     val outputLifecycleAtStart: String,
     val outputLifecycleAtEnd: String,
 ) {
-    val complete: Boolean get() = lostFrames == 0uL && wavFrames.toULong() == capturedFrames
+    val complete: Boolean get() =
+        lostFrames == 0uL && wavFrames > 0 && callbackCount > 0uL && wavFrames.toULong() == capturedFrames
     /** Unknown output state cannot count as a successful no-reopen check. */
     val noUnexpectedOutputReopen: Boolean?
         get() {
             val initial = parseOutputLifecycle(outputLifecycleAtStart) ?: return null
             val final = parseOutputLifecycle(outputLifecycleAtEnd) ?: return null
-            return initial.opens == final.opens
+            return initial.opens > 0 && initial.opens == final.opens && initial.closes == final.closes
         }
 }
 
