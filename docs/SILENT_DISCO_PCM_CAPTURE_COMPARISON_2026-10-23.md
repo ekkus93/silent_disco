@@ -229,3 +229,17 @@ This additional coverage was **not yet qualified by exact-head CI** when
 recorded. It does not exercise real Oboe/desktop output-device lifecycle,
 actual acoustic output, late-join/reconnect, queue edits, or Stop/replay.
 Do not interpret the software callback test as physical gapless acceptance.
+
+## Authoritative queue edit, pause and replay through native callback (pending CI)
+
+Commit `705118ba` connects the actor's previously qualified edit-before-reservation
+backpressure test to two separate real native output rings and callback capture
+taps. Before Stop and after the fresh replay stream, it checks that callbacks
+which span both queued boundaries return only the current track, accepted
+replacement, and appended tail, with zero native underrun, inserted silence,
+or tap loss. The removed source must never appear, and the actor must refuse
+a delayed reservation from the retired stream. The two stream generations
+must not share the same render-ring token.
+
+This new output comparison remains pending exact-head hosted test qualification.
+It is separate from a live Android Oboe device output or mixer/DAC measurement.
