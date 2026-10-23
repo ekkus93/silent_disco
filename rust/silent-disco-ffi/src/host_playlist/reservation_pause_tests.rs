@@ -64,8 +64,8 @@ fn wav(frames: u32, sample: i16) -> Vec<u8> {
 #[test]
 fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     let (tx, rx) = mpsc::channel();
-    let ffi = FfiCoreHandle::open("ffi-paused-actor".into(), Arc::new(Observer(tx)))
-        .expect("open actor");
+    let ffi =
+        FfiCoreHandle::open("ffi-paused-actor".into(), Arc::new(Observer(tx))).expect("open actor");
     let actor = ffi.actor_handle().expect("live actor");
     let descriptor = AudioSourceDescriptor::new("source-first", "First.wav", Some(1_920), None)
         .expect("first source");
