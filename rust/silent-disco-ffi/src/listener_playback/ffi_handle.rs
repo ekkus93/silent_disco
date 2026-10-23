@@ -14,8 +14,8 @@ use silent_disco_core::domain::{
 use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
 
 use super::ffi_types::{
-    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiPlaybackDiagnostics,
-    FfiSyncSampleOutcome,
+    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
+    FfiPlaybackDiagnostics, FfiSyncSampleOutcome,
 };
 use super::runtime::ListenerPlaybackRuntime;
 
@@ -79,7 +79,10 @@ impl FfiListenerPlaybackHandle {
             },
             0.0,
         )?;
-        Ok(Arc::new(Self { runtime, capture: Mutex::new(None) }))
+        Ok(Arc::new(Self {
+            runtime,
+            capture: Mutex::new(None),
+        }))
     }
 
     /// The opaque token to hand to native audio setup exactly once.
@@ -263,7 +266,10 @@ impl FfiListenerPlaybackHandle {
     /// # Errors
     ///
     /// Rejects invalid buffer bounds, duplicate captures, or stopped engines.
-    pub fn start_callback_capture(&self, capacity_frames: u32) -> Result<(), FfiListenerPlaybackError> {
+    pub fn start_callback_capture(
+        &self,
+        capacity_frames: u32,
+    ) -> Result<(), FfiListenerPlaybackError> {
         let capacity = usize::try_from(capacity_frames).unwrap_or(usize::MAX);
         let tap = Arc::new(CallbackCaptureTap::new(capacity).ok_or_else(|| {
             FfiListenerPlaybackError::InvalidConfiguration(format!(
@@ -287,7 +293,10 @@ impl FfiListenerPlaybackHandle {
     /// # Errors
     ///
     /// Fails when capture was never started or the caller requests zero frames.
-    pub fn read_callback_capture(&self, max_frames: u32) -> Result<FfiCallbackCaptureBatch, FfiListenerPlaybackError> {
+    pub fn read_callback_capture(
+        &self,
+        max_frames: u32,
+    ) -> Result<FfiCallbackCaptureBatch, FfiListenerPlaybackError> {
         if max_frames == 0 {
             return Err(FfiListenerPlaybackError::InvalidConfiguration(
                 "callback capture reads must request at least one frame".to_owned(),
@@ -299,7 +308,12 @@ impl FfiListenerPlaybackHandle {
         })?;
         let samples = tap.drain(usize::try_from(max_frames).unwrap_or(usize::MAX).min(4_800));
         let (captured_frames, lost_frames, callback_count) = tap.counters();
-        Ok(FfiCallbackCaptureBatch { samples, captured_frames, lost_frames, callback_count })
+        Ok(FfiCallbackCaptureBatch {
+            samples,
+            captured_frames,
+            lost_frames,
+            callback_count,
+        })
     }
 
     /// Stop accepting new callback PCM without discarding buffered samples.

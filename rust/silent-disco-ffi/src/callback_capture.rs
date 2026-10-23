@@ -48,8 +48,10 @@ impl CallbackCaptureTap {
         for frame in 0..accepted {
             let slot = (write + frame) % self.capacity * CHANNELS;
             for channel in 0..CHANNELS {
-                self.slots[slot + channel]
-                    .store(samples[frame * CHANNELS + channel].to_bits(), Ordering::Relaxed);
+                self.slots[slot + channel].store(
+                    samples[frame * CHANNELS + channel].to_bits(),
+                    Ordering::Relaxed,
+                );
             }
         }
         self.written.store(write + accepted, Ordering::Release);
@@ -100,7 +102,10 @@ mod tests {
         let next = vec![0.75; 100 * CHANNELS];
         tap.record_callback(&next);
         assert_eq!(tap.counters(), (4_900, 0, 2));
-        assert_eq!(tap.drain(101), [&initial[4_799 * CHANNELS..], &next].concat());
+        assert_eq!(
+            tap.drain(101),
+            [&initial[4_799 * CHANNELS..], &next].concat()
+        );
 
         tap.record_callback(&vec![0.5; (MIN_CAPTURE_FRAMES + 3) * CHANNELS]);
         assert_eq!(tap.counters(), (9_700, 3, 3));

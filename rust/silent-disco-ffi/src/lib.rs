@@ -14,10 +14,10 @@ mod android_abi;
 mod android_database_abi;
 mod android_p2_abi;
 mod audio_abi;
-mod callback_capture;
 #[cfg(test)]
 mod audio_callback_capture_tests;
 mod audio_output;
+mod callback_capture;
 mod host_control;
 mod host_playlist;
 mod host_transport;
@@ -48,9 +48,9 @@ pub use host_transport::{
     FfiHostTransportEvent, FfiHostTransportHandle,
 };
 pub use listener_playback::{
-    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiListenerPlaybackHandle,
-    FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome,
-    ListenerPlaybackError, ListenerPlaybackRuntime,
+    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
+    FfiListenerPlaybackHandle, FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence,
+    FfiSyncSampleOutcome, ListenerPlaybackError, ListenerPlaybackRuntime,
 };
 pub use listener_transport::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,

@@ -202,10 +202,18 @@ pub(crate) fn release_render_ring(token: u64) -> Result<(), AudioAbiError> {
 }
 
 /// Attach a bounded diagnostic tap from the non-real-time control plane.
-pub(crate) fn attach_callback_capture(token: u64, tap: Arc<CallbackCaptureTap>) -> Result<(), AudioAbiError> {
-    let mut registry = audio_engine_registry().lock().unwrap_or_else(PoisonError::into_inner);
+pub(crate) fn attach_callback_capture(
+    token: u64,
+    tap: Arc<CallbackCaptureTap>,
+) -> Result<(), AudioAbiError> {
+    let mut registry = audio_engine_registry()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     match registry.entries.get_mut(&token) {
-        Some(AudioEngineEntry::Active(_, slot @ None)) => { *slot = Some(tap); Ok(()) }
+        Some(AudioEngineEntry::Active(_, slot @ None)) => {
+            *slot = Some(tap);
+            Ok(())
+        }
         Some(AudioEngineEntry::Active(_, Some(_))) => Err(AudioAbiError::AlreadyReleased),
         _ => Err(AudioAbiError::UnknownToken),
     }
@@ -213,7 +221,9 @@ pub(crate) fn attach_callback_capture(token: u64, tap: Arc<CallbackCaptureTap>) 
 
 /// Detach only after the caller has stopped its capture-draining worker.
 pub(crate) fn detach_callback_capture(token: u64) {
-    let mut registry = audio_engine_registry().lock().unwrap_or_else(PoisonError::into_inner);
+    let mut registry = audio_engine_registry()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     if let Some(AudioEngineEntry::Active(_, slot)) = registry.entries.get_mut(&token) {
         *slot = None;
     }

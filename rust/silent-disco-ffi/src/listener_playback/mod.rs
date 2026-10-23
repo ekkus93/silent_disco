@@ -30,7 +30,7 @@ mod tests;
 pub use error::ListenerPlaybackError;
 pub use ffi_handle::FfiListenerPlaybackHandle;
 pub use ffi_types::{
-    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError, FfiPlaybackDiagnostics,
-    FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome,
+    FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
+    FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome,
 };
 pub use runtime::ListenerPlaybackRuntime;

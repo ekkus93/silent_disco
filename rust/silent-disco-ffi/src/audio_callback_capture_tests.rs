@@ -5,8 +5,8 @@ use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
     silent_disco_audio_read_interleaved_f32,
 };
-use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
 use crate::audio_output::FfiAudioOutputHandle;
+use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
 use silent_disco_core::audio::DebugPcmRecorder;
 use std::ffi::c_void;
 use std::fs;
@@ -158,9 +158,8 @@ fn attached_native_callback_tap_captures_underruns_and_reports_overflow() {
     let _guard = registry_test_guard();
     let output = FfiAudioOutputHandle::open(4_800, 1).expect("register output");
     let token = output.engine_token().expect("engine token");
-    let tap = std::sync::Arc::new(
-        CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("bounded tap"),
-    );
+    let tap =
+        std::sync::Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("bounded tap"));
     attach_callback_capture(
         u64::try_from(token).expect("positive token"),
         std::sync::Arc::clone(&tap),
@@ -210,6 +209,10 @@ fn attached_native_callback_tap_captures_underruns_and_reports_overflow() {
     detach_callback_capture(u64::try_from(token).expect("token"));
     let before = tap.counters();
     let _ = callback_output(token, 1);
-    assert_eq!(tap.counters(), before, "detached capture must remain stable");
+    assert_eq!(
+        tap.counters(),
+        before,
+        "detached capture must remain stable"
+    );
     output.release();
 }
