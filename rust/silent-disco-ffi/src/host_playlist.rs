@@ -358,7 +358,10 @@ fn reserve_authoritative_boundary(
             .map_err(|error| playlist_reservation_error(&error.to_string(), cancelled))?
             .playback_state;
         match playback_state {
-            PlaybackState::Playing => break,
+            // Pausing never invalidates the active stream or its successor.
+            // The actor serializes reservations during Pause as during Play;
+            // boundary application is held until the host resumes.
+            PlaybackState::Playing | PlaybackState::Paused => break,
             PlaybackState::Stopped | PlaybackState::Error => {
                 return Err(playlist_reservation_error(
                     "playback stopped before reservation",
@@ -419,6 +422,8 @@ fn frame_to_ffi(frame: ProtocolFrame) -> Result<FfiPlaylistFrame, FfiHostPlaylis
     }
 }
 
+#[cfg(test)]
+mod reservation_pause_tests;
 #[cfg(test)]
 mod reservation_rejection_tests;
 #[cfg(test)]
