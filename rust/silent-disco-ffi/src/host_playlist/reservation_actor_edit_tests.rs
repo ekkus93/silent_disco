@@ -23,14 +23,20 @@ impl FfiCoreObserver for Observer {
     }
 }
 
-fn snapshot_when(actor: &CoreActorHandle, predicate: impl Fn(&CoreSnapshot) -> bool) -> CoreSnapshot {
+fn snapshot_when(
+    actor: &CoreActorHandle,
+    predicate: impl Fn(&CoreSnapshot) -> bool,
+) -> CoreSnapshot {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let snapshot = actor.current_snapshot().expect("actor snapshot");
         if predicate(&snapshot) {
             return snapshot;
         }
-        assert!(Instant::now() < deadline, "actor did not reach expected state");
+        assert!(
+            Instant::now() < deadline,
+            "actor did not reach expected state"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -77,15 +83,16 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         .expect("first source");
     let obsolete = AudioSourceDescriptor::new("obsolete-source", "Obsolete.wav", Some(1_920), None)
         .expect("obsolete source");
-    let replacement = AudioSourceDescriptor::new(
-        "replacement-source",
-        "Replacement.wav",
-        Some(1_920),
-        None,
-    )
-    .expect("replacement source");
+    let replacement =
+        AudioSourceDescriptor::new("replacement-source", "Replacement.wav", Some(1_920), None)
+            .expect("replacement source");
 
-    submit(&actor, CoreCommand::SelectRole { role: AppRole::Host });
+    submit(
+        &actor,
+        CoreCommand::SelectRole {
+            role: AppRole::Host,
+        },
+    );
     snapshot_when(&actor, |s| s.selected_role == Some(AppRole::Host));
     submit(
         &actor,
@@ -117,7 +124,12 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
             HostLifecycle::Ready | HostLifecycle::WaitingForListeners
         )
     });
-    let current_id = ready.host_queue.current().expect("current").entry_id.clone();
+    let current_id = ready
+        .host_queue
+        .current()
+        .expect("current")
+        .entry_id
+        .clone();
     submit(
         &actor,
         CoreCommand::AppendHostQueue {
