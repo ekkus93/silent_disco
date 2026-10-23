@@ -14,12 +14,19 @@ use silent_disco_core::audio::{
     SchedulerConfig,
 };
 use silent_disco_core::domain::{
-    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+    DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
-use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
+use silent_disco_core::protocol::{
+    AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame,
+};
+use silent_disco_core::transport::{
+    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
+    ManualTransportClock, SocketTransportFactory, TransportChannel, TransportEvent,
+    TransportFactory,
+};
 use std::fs;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TRACK_FRAMES: usize = 480;
 const CHANNELS: usize = 2;
@@ -174,10 +181,61 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
     fs::remove_dir_all(&root).expect("clean fixture directory");
 }
 
+
+fn authorized_pcm_socket_pair() -> (Box<dyn HostTransportNode>, Box<dyn ListenerTransportNode>) {
+    let session = SessionId::new("end-to-end-session").expect("session");
+    let device = DeviceId::new("pcm-regression-listener").expect("device");
+    let clock = Arc::new(ManualTransportClock::new(1_000));
+    let factory = SocketTransportFactory;
+    let mut host = factory
+        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .expect("production socket host");
+    let listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("production socket listener");
+    listener
+        .send_control(&ControlMessage::JoinRequest(JoinRequest {
+            session_id: session,
+            device: DeviceIdentity {
+                device_id: device.clone(),
+                display_name: "PCM regression listener".to_owned(),
+            },
+            invite_code: None,
+            sync_port: 0,
+            audio_port: 0,
+        }))
+        .expect("join handshake");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let event = host
+            .recv_event(deadline.saturating_duration_since(Instant::now()))
+            .expect("host receives join");
+        if matches!(event, TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)), ..
+        }) {
+            break;
+        }
+    }
+    host.authorize_peer(&device, listener.local_routes())
+        .expect("authorize socket listener");
+    loop {
+        let event = host
+            .recv_event(deadline.saturating_duration_since(Instant::now()))
+            .expect("host observes authorization");
+        if matches!(event, TransportEvent::PeerAuthorized { .. }) {
+            break;
+        }
+    }
+    (host, listener)
+}
+
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "one real playlist, scheduler, render ring and ABI continuity regression"
+    reason = "one real playlist, socket transport, scheduler, render ring and ABI regression"
 )]
 fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     let _guard = registry_test_guard();
@@ -201,6 +259,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             }
         })
         .collect();
+    let (mut host, mut listener) = authorized_pcm_socket_pair();
     let playlist = FfiHostPlaylistStreamer::open(
         "end-to-end-session".to_owned(),
         "end-to-end-stream".to_owned(),
@@ -267,8 +326,8 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
                     first_sample_index, next_sample,
                     "producer sample continuity"
                 );
-                pump.scheduler_mut()
-                    .submit_packet(AudioDatagram {
+                let sent = host
+                    .broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
                         session_id: SessionId::new("end-to-end-session").expect("session"),
                         stream_id: StreamId::new("end-to-end-stream").expect("stream"),
                         sequence: PacketSequence::new(sequence),
@@ -279,8 +338,25 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
                         first_sample_index: SampleIndex::new(first_sample_index),
                         host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
                         payload,
-                    })
-                    .expect("listener accepts production packet");
+                    }))
+                    .expect("production UDP socket delivery");
+                assert_eq!(sent.report.successful_peers, 1, "authorized listener");
+                let received = loop {
+                    let event = listener
+                        .recv_event(Duration::from_secs(5))
+                        .expect("production socket receives audio");
+                    if let TransportEvent::FrameReceived {
+                        channel: TransportChannel::Audio,
+                        frame: ProtocolFrame::Audio(datagram),
+                        ..
+                    } = event {
+                        break datagram;
+                    }
+                };
+                assert_eq!(received.sequence.get(), sequence, "socket packet order");
+                pump.scheduler_mut()
+                    .submit_packet(received)
+                    .expect("listener accepts socket packet");
                 next_sample += u64::from(samples_per_packet);
                 next_sequence += 1;
             }
@@ -368,5 +444,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     detach_callback_capture(token);
     release_render_ring(token).expect("native ring release");
     playlist.cancel().expect("playlist cleanup");
+    listener.shutdown().expect("listener socket shutdown");
+    host.shutdown().expect("host socket shutdown");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
