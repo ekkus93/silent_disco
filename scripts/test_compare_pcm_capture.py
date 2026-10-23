@@ -91,6 +91,19 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(result["missing_tail_frames"], 1)
         self.assertGreater(result["track_boundaries"][0]["mismatch_frames"], 0)
 
+    def test_empty_canonical_track_is_rejected_before_boundary_comparison(self):
+        save_wav(self.sources[1], [])
+        save_wav(self.captured, self.track_frames[0] + self.track_frames[2])
+        with self.assertRaisesRegex(ValueError, "canonical reference track has no PCM frames"):
+            compare(self.sources, self.captured)
+
+    def test_all_empty_canonical_audio_cannot_false_pass(self):
+        for source in self.sources:
+            save_wav(source, [])
+        save_wav(self.captured, [])
+        with self.assertRaisesRegex(ValueError, "canonical reference track has no PCM frames"):
+            compare(self.sources, self.captured)
+
     def test_truncated_canonical_reference_is_rejected_even_when_capture_matches(self):
         save_wav(self.captured, self.reference[:-2])
         with self.sources[-1].open("r+b") as source:

@@ -56,6 +56,9 @@ def compare(
     expected_paths = [Path(path) for path in expected_paths]
     captured_path = Path(captured_path)
     infos = [_wav_info(path) for path in expected_paths]
+    for path, info in zip(expected_paths, infos):
+        if info["frames"] == 0:
+            raise ValueError(f"{path}: canonical reference track has no PCM frames")
     capture_info = _wav_info(captured_path)
     for path, info in zip(expected_paths, infos):
         for field in ("channels", "sample_rate"):
