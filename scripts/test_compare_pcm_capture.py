@@ -111,6 +111,24 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "canonical reference PCM truncated"):
             compare(self.sources, self.captured)
 
+    def test_capture_header_claims_extra_unwritten_frames_cannot_pass(self):
+        save_wav(self.captured, self.reference)
+        with self.captured.open("r+b") as capture:
+            capture.seek(4)
+            riff_size = struct.unpack("<I", capture.read(4))[0]
+            capture.seek(4)
+            capture.write(struct.pack("<I", riff_size + 8))
+            capture.seek(40)
+            data_size = struct.unpack("<I", capture.read(4))[0]
+            capture.seek(40)
+            capture.write(struct.pack("<I", data_size + 8))
+        result = compare(self.sources, self.captured)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["captured_frames"], len(self.reference))
+        self.assertEqual(result["capture_header_frames"], len(self.reference) + 2)
+        self.assertEqual(result["capture_truncated_frames"], 2)
+        self.assertEqual(result["mismatched_samples"], 0)
+
     def test_truncated_pcm_payload_reports_observed_not_declared_frames(self):
         save_wav(self.captured, self.reference)
         with self.captured.open("r+b") as capture:
@@ -119,6 +137,7 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["capture_header_frames"], len(self.reference))
         self.assertEqual(result["captured_frames"], len(self.reference) - 2)
+        self.assertEqual(result["capture_truncated_frames"], 2)
         self.assertEqual(result["missing_tail_frames"], 2)
 
 

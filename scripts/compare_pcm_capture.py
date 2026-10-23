@@ -143,13 +143,19 @@ def compare(
             f"declared {expected_frames} frames, observed {observed_reference_frames}"
         )
 
+    # A WAV header can declare frames that are absent from its payload. If the
+    # actual capture happens to equal the reference length, an index-aligned
+    # comparison alone would otherwise report a false PASS.
+    capture_truncated_frames = max(0, capture_info["frames"] - observed_capture_frames)
+
     return {
-        "status": "PASS" if not (missing or extra or mismatched_samples) else "FAIL",
+        "status": "PASS" if not (missing or extra or mismatched_samples or capture_truncated_frames) else "FAIL",
         "sample_rate": capture_info["sample_rate"],
         "channels": capture_info["channels"],
         "expected_frames": expected_frames,
         "captured_frames": observed_capture_frames,
         "capture_header_frames": capture_info["frames"],
+        "capture_truncated_frames": capture_truncated_frames,
         "missing_tail_frames": missing,
         "extra_tail_frames": extra,
         "mismatched_frames": mismatched_frames,
