@@ -488,3 +488,106 @@ fn append_behind_reserved_successor_keeps_one_stream_and_both_boundaries() {
     );
     assert_eq!(summary.emitted_packets, 23);
 }
+
+#[test]
+fn reorder_behind_reserved_successor_changes_only_later_boundaries() {
+    let _guard = super::super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "reorder-first.wav", &pcm_wav_frames(48_000, 2, 240));
+    let next_path = write_bytes(&temp, "reorder-next.wav", &pcm_wav_frames(48_000, 2, 4_800));
+    let alpha_path = write_bytes(&temp, "reorder-alpha.wav", &pcm_wav_frames(48_000, 2, 480));
+    let beta_path = write_bytes(&temp, "reorder-beta.wav", &pcm_wav_frames(48_000, 2, 720));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let next = StreamingPlaylistTrackFactory::new("next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let initial_alpha_path = alpha_path.clone();
+    let alpha = StreamingPlaylistTrackFactory::new("alpha", "Alpha", move || {
+        StreamingDecodeHandle::open(initial_alpha_path, StreamingDecodeConfig::default())
+    })
+    .expect("alpha factory");
+    let initial_beta_path = beta_path.clone();
+    let beta = StreamingPlaylistTrackFactory::new("beta", "Beta", move || {
+        StreamingDecodeHandle::open(initial_beta_path, StreamingDecodeConfig::default())
+    })
+    .expect("beta factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "first",
+        "First",
+        vec![next, alpha, beta],
+        SessionId::new("reorder-later-session").expect("session"),
+        StreamId::new("reorder-later-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        Arc::new(|_boundary: &crate::protocol::TrackBoundary, _cancel| Ok(())),
+    )
+    .expect("reserved packetizer");
+    let updater = packetizer.playlist_updater().expect("updater");
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
+    ));
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))
+            ) if boundary.entry_id == "next" && boundary.first_sample_index.get() == 240
+    ));
+
+    // The first successor has already been reserved by the actor. Reorder
+    // only the later entries while the bounded sender is backpressured.
+    let shadow = StreamingPlaylistTrackFactory::new("next", "Next", || {
+        unreachable!("the reserved successor must not be reopened")
+    })
+    .expect("shadow");
+    let beta = StreamingPlaylistTrackFactory::new("beta", "Beta", move || {
+        StreamingDecodeHandle::open(beta_path, StreamingDecodeConfig::default())
+    })
+    .expect("reordered beta");
+    let alpha = StreamingPlaylistTrackFactory::new("alpha", "Alpha", move || {
+        StreamingDecodeHandle::open(alpha_path, StreamingDecodeConfig::default())
+    })
+    .expect("reordered alpha");
+    updater
+        .replace_upcoming(vec![shadow, beta, alpha])
+        .expect("reorder only entries behind the reserved successor");
+
+    let mut audio = vec![(0_u64, 0_u64)];
+    let mut boundaries = vec![("next".to_owned(), 240_u64)];
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Audio(frame)) => {
+                audio.push((frame.sequence.get(), frame.first_sample_index.get()));
+            }
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                boundaries.push((boundary.entry_id, boundary.first_sample_index.get()));
+            }
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("reordered stream stalled"),
+        }
+    }
+    let summary = packetizer.join().expect("reordered playlist completes");
+    assert_eq!(summary.state, PacketizerWorkerState::Completed);
+    assert_eq!(
+        boundaries,
+        [
+            ("next".to_owned(), 240),
+            ("beta".to_owned(), 5_040),
+            ("alpha".to_owned(), 5_760),
+        ]
+    );
+    assert_eq!(
+        audio,
+        (0_u64..26)
+            .map(|packet| (packet, packet * 240))
+            .collect::<Vec<_>>(),
+        "reordering later tracks must preserve one contiguous packet timeline"
+    );
+    assert_eq!(summary.emitted_packets, 26);
+}
