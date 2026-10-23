@@ -144,7 +144,10 @@ mod tests {
         let mut received = Vec::with_capacity(original.len());
         while received.len() < original.len() {
             received.extend(tap.drain(73));
-            assert!(Instant::now() < deadline, "bounded background drain stalled");
+            assert!(
+                Instant::now() < deadline,
+                "bounded background drain stalled"
+            );
             if received.len() < original.len() {
                 std::thread::yield_now();
             }
