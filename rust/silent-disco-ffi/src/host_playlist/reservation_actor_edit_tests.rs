@@ -458,6 +458,13 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         ]
     );
     verify_native_callback(&output, &tap, token);
+    let first_engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    let first_counters = (
+        silent_disco_audio_callback_count(first_engine),
+        silent_disco_audio_underrun_count(first_engine),
+        silent_disco_audio_silence_filled_frames(first_engine),
+    );
+    let first_tap_counters = tap.counters();
     output.release();
     // Stop invalidates any reservation made for the old stream. A fresh Play
     // can reuse the same queue entry IDs, but a delayed producer belonging to
@@ -607,6 +614,14 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     }
     assert_eq!(replay_sample, 10_560);
     verify_native_callback(&replay_output, &replay_tap, replay_token);
+    let replay_engine =
+        usize::try_from(replay_token).expect("token") as *const core::ffi::c_void;
+    let replay_counters = (
+        silent_disco_audio_callback_count(replay_engine),
+        silent_disco_audio_underrun_count(replay_engine),
+        silent_disco_audio_silence_filled_frames(replay_engine),
+    );
+    let replay_tap_counters = replay_tap.counters();
     replay_output.release();
     assert_eq!(replay_sequence, Some(43));
     assert_eq!(
@@ -626,6 +641,60 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
             .entry_id,
         "replacement-entry"
     );
+
+    // The same native callback tests must produce exact-SHA, JSON-only CI
+    // evidence for the actor-authorized edit, pause/resume and Stop/replay
+    // path. These counters are read from the actual callback and tap.
+    if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
+        let commit = std::env::var("GITHUB_SHA")
+            .ok()
+            .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .unwrap_or_else(|| "local".to_owned());
+        let (first_callbacks, first_underruns, first_silence) = first_counters;
+        let (first_tap_frames, first_tap_loss, first_tap_callbacks) = first_tap_counters;
+        let (replay_callbacks, replay_underruns, replay_silence) = replay_counters;
+        let (replay_tap_frames, replay_tap_loss, replay_tap_callbacks) = replay_tap_counters;
+        let first_boundaries: Vec<u64> = boundaries.iter().map(|(_, frame)| *frame).collect();
+        let replay_boundaries: Vec<u64> =
+            replay_boundaries.iter().map(|(_, frame)| *frame).collect();
+        let retired_rejected = failure.to_string().contains("reservation");
+        let replay_token_distinct = replay_token != token;
+        let report = format!(
+            r#"{{
+  "schema": 1,
+  "status": "PASS",
+  "commit": "{commit}",
+  "capture": "actor-authorized-ffi-producer-native-callback",
+  "source_boundaries": [9600, 10080],
+  "first_observed_boundaries": {first_boundaries:?},
+  "replay_observed_boundaries": {replay_boundaries:?},
+  "expected_frames": 10560,
+  "first_captured_frames": {next_sample},
+  "replay_captured_frames": {replay_sample},
+  "callback_frame_chunks": [4799, 4802, 480, 479],
+  "first_callback_count": {first_callbacks},
+  "first_native_underruns": {first_underruns},
+  "first_native_silence_frames": {first_silence},
+  "first_tap_frames": {first_tap_frames},
+  "first_tap_lost_frames": {first_tap_loss},
+  "first_tap_callbacks": {first_tap_callbacks},
+  "replay_callback_count": {replay_callbacks},
+  "replay_native_underruns": {replay_underruns},
+  "replay_native_silence_frames": {replay_silence},
+  "replay_tap_frames": {replay_tap_frames},
+  "replay_tap_lost_frames": {replay_tap_loss},
+  "replay_tap_callbacks": {replay_tap_callbacks},
+  "retired_audio_packets_before_rejection": {retired_frames},
+  "retired_successor_rejected": {retired_rejected},
+  "replay_token_distinct": {replay_token_distinct},
+  "physical_dac_verified": false
+}}"#
+        );
+        let directory = std::path::PathBuf::from(directory);
+        fs::create_dir_all(&directory).expect("create actor callback evidence directory");
+        fs::write(directory.join("authoritative-edit-replay-callback.json"), report)
+            .expect("write authoritative edit/replay evidence");
+    }
     ffi.shutdown().expect("shutdown actor");
     fs::remove_dir_all(root).expect("remove fixtures");
 }

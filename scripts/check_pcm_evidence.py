@@ -14,6 +14,7 @@ REPORT_NAMES = frozenset({
     "mixed-rate-socket-callback.json",
     "encoded-socket-callback.json",
     "rejected-boundary-callback.json",
+    "authoritative-edit-replay-callback.json",
 })
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -87,6 +88,26 @@ def validate_report(filename, report, sha):
         for name in ("callback_count", "scheduler_callback_count", "tap_callback_count",
                      "scheduler_tap_callback_count"):
             require_equal(report, name, 3, filename)
+    elif filename == "authoritative-edit-replay-callback.json":
+        require_equal(report, "capture", "actor-authorized-ffi-producer-native-callback", filename)
+        require_equal(report, "source_boundaries", [9600, 10080], filename)
+        for name in ("first_observed_boundaries", "replay_observed_boundaries"):
+            require_equal(report, name, [9600, 10080], filename)
+        require_equal(report, "expected_frames", 10560, filename)
+        require_equal(report, "callback_frame_chunks", [4799, 4802, 480, 479], filename)
+        for name in ("first_captured_frames", "replay_captured_frames",
+                     "first_tap_frames", "replay_tap_frames"):
+            require_equal(report, name, 10560, filename)
+        for name in ("first_callback_count", "replay_callback_count",
+                     "first_tap_callbacks", "replay_tap_callbacks"):
+            require_equal(report, name, 4, filename)
+        for name in ("first_native_underruns", "replay_native_underruns",
+                     "first_native_silence_frames", "replay_native_silence_frames",
+                     "first_tap_lost_frames", "replay_tap_lost_frames"):
+            require_equal(report, name, 0, filename)
+        require_equal(report, "retired_audio_packets_before_rejection", 2, filename)
+        require_equal(report, "retired_successor_rejected", True, filename)
+        require_equal(report, "replay_token_distinct", True, filename)
     elif filename == "rejected-boundary-callback.json":
         require_equal(report, "rejected_boundary_frame", 480, filename)
         require_equal(report, "valid_source_frames", 480, filename)

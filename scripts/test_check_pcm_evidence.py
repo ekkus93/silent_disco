@@ -40,6 +40,24 @@ def sample_report(name):
             callback_count=3, scheduler_callback_count=3,
             tap_callback_count=3, scheduler_tap_callback_count=3,
         )
+    elif name == "authoritative-edit-replay-callback.json":
+        base.update(
+            capture="actor-authorized-ffi-producer-native-callback",
+            source_boundaries=[9600, 10080],
+            first_observed_boundaries=[9600, 10080],
+            replay_observed_boundaries=[9600, 10080],
+            expected_frames=10560, first_captured_frames=10560,
+            replay_captured_frames=10560,
+            callback_frame_chunks=[4799, 4802, 480, 479],
+            first_callback_count=4, replay_callback_count=4,
+            first_native_underruns=0, replay_native_underruns=0,
+            first_native_silence_frames=0, replay_native_silence_frames=0,
+            first_tap_frames=10560, replay_tap_frames=10560,
+            first_tap_lost_frames=0, replay_tap_lost_frames=0,
+            first_tap_callbacks=4, replay_tap_callbacks=4,
+            retired_audio_packets_before_rejection=2,
+            retired_successor_rejected=True, replay_token_distinct=True,
+        )
     else:
         base.update(
             rejected_boundary_frame=480, valid_source_frames=480,
@@ -122,6 +140,37 @@ class EvidenceGateTests(unittest.TestCase):
         self.reports["rejected-boundary-callback.json"]["native_underrun_callbacks"] = 0
         self.write_reports()
         with self.assertRaisesRegex(ValueError, "native_underrun_callbacks"):
+            validate_directory(self.root, SHA)
+
+    def test_authoritative_replay_rejects_stale_pcm_or_missing_callback(self):
+        name = "authoritative-edit-replay-callback.json"
+        self.reports[name]["first_observed_boundaries"] = [9600, 10081]
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "first_observed_boundaries"):
+            validate_directory(self.root, SHA)
+        self.reports[name] = sample_report(name)
+        self.reports[name]["replay_tap_frames"] = 10559
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "replay_tap_frames"):
+            validate_directory(self.root, SHA)
+
+    def test_authoritative_replay_requires_rejection_and_distinct_output(self):
+        name = "authoritative-edit-replay-callback.json"
+        self.reports[name]["retired_successor_rejected"] = False
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "retired_successor_rejected"):
+            validate_directory(self.root, SHA)
+        self.reports[name] = sample_report(name)
+        self.reports[name]["replay_token_distinct"] = False
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "replay_token_distinct"):
+            validate_directory(self.root, SHA)
+
+    def test_authoritative_replay_rejects_native_silence(self):
+        name = "authoritative-edit-replay-callback.json"
+        self.reports[name]["replay_native_silence_frames"] = 1
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "replay_native_silence_frames"):
             validate_directory(self.root, SHA)
 
     def test_no_dac_claim_or_nonfinite_values_are_accepted(self):
