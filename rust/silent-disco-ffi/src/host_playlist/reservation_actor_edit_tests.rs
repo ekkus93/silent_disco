@@ -303,7 +303,10 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         .expect("stop first stream");
     let stopped = snapshot_when(&actor, |s| s.playback_state == PlaybackState::Stopped);
     assert!(stopped.host_queue_next_boundary.is_none());
-    assert_eq!(stopped.host_queue.upcoming()[0].entry_id, "replacement-entry");
+    assert_eq!(
+        stopped.host_queue.upcoming()[0].entry_id,
+        "replacement-entry"
+    );
     actor
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
         .expect("buffer replay");
@@ -357,14 +360,22 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
             Err(error) => break error,
         }
     };
-    assert_eq!(retired_frames, 2, "old current PCM should precede rejection");
+    assert_eq!(
+        retired_frames, 2,
+        "old current PCM should precede rejection"
+    );
     assert!(
         failure.to_string().contains("reservation"),
         "stale stream must be rejected by authoritative reservation: {failure}"
     );
-    let untouched = actor.current_snapshot().expect("new stream remains unmodified");
+    let untouched = actor
+        .current_snapshot()
+        .expect("new stream remains unmodified");
     assert!(untouched.host_queue_next_boundary.is_none());
-    assert_eq!(untouched.host_queue.upcoming()[0].entry_id, "replacement-entry");
+    assert_eq!(
+        untouched.host_queue.upcoming()[0].entry_id,
+        "replacement-entry"
+    );
     ffi.shutdown().expect("shutdown actor");
     fs::remove_dir_all(root).expect("remove fixtures");
 }
