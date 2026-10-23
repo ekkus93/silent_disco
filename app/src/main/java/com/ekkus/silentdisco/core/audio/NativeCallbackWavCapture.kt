@@ -20,10 +20,16 @@ data class CallbackAudioCaptureReport(
     val callbackCount: ULong,
     val outputLifecycleAtStart: String,
     val outputLifecycleAtEnd: String,
+    val outputCountersAtStart: OutputCallbackCounters? = null,
+    val outputCountersAtEnd: OutputCallbackCounters? = null,
 ) {
     val complete: Boolean get() =
         lostFrames == 0uL && wavFrames > 0 && callbackCount > 0uL && wavFrames.toULong() == capturedFrames
     /** Unknown output state cannot count as a successful no-reopen check. */
+    val newUnderrunCallbacks: Long?
+        get() = outputCounterDelta(outputCountersAtStart?.underruns, outputCountersAtEnd?.underruns)
+    val newSilenceFilledFrames: Long?
+        get() = outputCounterDelta(outputCountersAtStart?.silenceFrames, outputCountersAtEnd?.silenceFrames)
     val noUnexpectedOutputReopen: Boolean?
         get() {
             val initial = parseOutputLifecycle(outputLifecycleAtStart) ?: return null
@@ -33,6 +39,22 @@ data class CallbackAudioCaptureReport(
 }
 
 internal data class OutputLifecycle(val opens: Int, val rebinds: Int, val closes: Int)
+
+/** Native output telemetry is only meaningful while the same Oboe stream remains open. */
+data class OutputCallbackCounters(val underruns: Long, val silenceFrames: Long)
+
+internal fun outputCounterDelta(before: Long?, after: Long?): Long? =
+    if (before != null && after != null && before >= 0 && after >= before) after - before else null
+
+internal fun currentOutputCallbackCounters(): OutputCallbackCounters? {
+    if (!OboeBridge.isAvailable) return null
+    return runCatching {
+        if (!OboeBridge.nativeOboeIsOpen()) null else OutputCallbackCounters(
+            underruns = OboeBridge.nativeOboeUnderrunCount(),
+            silenceFrames = OboeBridge.nativeOboeSilenceFilledFrames(),
+        )
+    }.getOrNull()
+}
 
 internal fun parseOutputLifecycle(summary: String): OutputLifecycle? {
     val tokens = summary.split(' ')
@@ -58,6 +80,7 @@ class NativeCallbackWavCapture private constructor(
     private val writer: CallbackPcmWavWriter,
     scope: CoroutineScope,
     private val outputLifecycleAtStart: String,
+    private val outputCountersAtStart: OutputCallbackCounters?,
 ) {
     private val stopRequested = AtomicBoolean(false)
     private val workerFailure = AtomicReference<Throwable?>(null)
@@ -94,6 +117,8 @@ class NativeCallbackWavCapture private constructor(
             callbackCount = callbackCount,
             outputLifecycleAtStart = outputLifecycleAtStart,
             outputLifecycleAtEnd = OboeBridge.lastOpenSummary(),
+            outputCountersAtStart = outputCountersAtStart,
+            outputCountersAtEnd = currentOutputCallbackCounters(),
         )
     }
 
@@ -114,7 +139,10 @@ class NativeCallbackWavCapture private constructor(
                 opened = CallbackPcmWavWriter(
                     File.createTempFile("silent-disco-callback-", ".wav", privateDirectory),
                 )
-                return NativeCallbackWavCapture(playback, opened, scope, OboeBridge.lastOpenSummary())
+                return NativeCallbackWavCapture(
+                    playback, opened, scope, OboeBridge.lastOpenSummary(),
+                    currentOutputCallbackCounters(),
+                )
             } catch (error: Throwable) {
                 opened?.close()
                 playback.clearCallbackCapture()

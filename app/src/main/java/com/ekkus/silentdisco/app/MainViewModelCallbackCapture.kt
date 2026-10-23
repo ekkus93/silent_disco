@@ -38,13 +38,17 @@ internal fun MainViewModel.stopCallbackPcmCapture() {
     viewModelScope.launch {
         runCatching { capture.stopAndReport() }
             .onSuccess { report ->
-                _callbackCaptureStatus.value = if (report.complete && report.noUnexpectedOutputReopen == true) {
+                _callbackCaptureStatus.value = if (report.complete && report.noUnexpectedOutputReopen == true &&
+                    report.newUnderrunCallbacks == 0L && report.newSilenceFilledFrames == 0L
+                ) {
                     "Capture saved: ${report.file.name} (${report.wavFrames} frames; " +
-                        "${report.callbackCount} callbacks; no reopen). Location: ${report.file.parent}"
+                        "${report.callbackCount} callbacks; no reopen/underrun). Location: ${report.file.parent}"
                 } else {
                     "Unqualified capture: ${report.file.name}; ${report.lostFrames} dropped frames, " +
                         "${report.wavFrames} written, ${report.capturedFrames} captured; " +
-                        "no output reopen=${report.noUnexpectedOutputReopen}. " +
+                        "no output reopen=${report.noUnexpectedOutputReopen}; " +
+                        "new underruns=${report.newUnderrunCallbacks}, " +
+                        "silence frames=${report.newSilenceFilledFrames}. " +
                         "Do not count this recording as gapless acceptance."
                 }
             }

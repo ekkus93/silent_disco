@@ -34,6 +34,20 @@ class CallbackOutputLifecycleTest {
     }
 
     @Test
+    fun nativeUnderrunAndSilenceDeltasRequireMonotonicAvailableCounters() {
+        val before = OutputCallbackCounters(5, 100)
+        val clean = report("opens=1 rebinds=0 closes=0", "opens=1 rebinds=0 closes=0")
+            .copy(outputCountersAtStart = before, outputCountersAtEnd = before)
+        assertEquals(0L, clean.newUnderrunCallbacks)
+        assertEquals(0L, clean.newSilenceFilledFrames)
+        val gap = clean.copy(outputCountersAtEnd = OutputCallbackCounters(6, 102))
+        assertEquals(1L, gap.newUnderrunCallbacks)
+        assertEquals(2L, gap.newSilenceFilledFrames)
+        assertNull(clean.copy(outputCountersAtEnd = null).newUnderrunCallbacks)
+        assertNull(clean.copy(outputCountersAtEnd = OutputCallbackCounters(4, 99)).newSilenceFilledFrames)
+    }
+
+    @Test
     fun missingNativeSummaryDoesNotSilentlyPassLifecycleEvidence() {
         assertNull(parseOutputLifecycle("Native bridge unavailable"))
         assertNull(report("Native bridge unavailable", "opens=2 rebinds=0 closes=1")
