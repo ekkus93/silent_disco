@@ -470,7 +470,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
 
     // Virtual presentation time, no wall-clock sleeps or hardware emulator:
     // the real scheduler/pump must queue all decoded producer packets.
-    for now in 1_000..=1_040 {
+    // Only advance through the three real 10 ms packets. Polling past the
+    // natural queue end without a Stop control would legitimately make the
+    // still-running scheduler conceal a hypothetical missing fourth packet.
+    for now in 1_000..=1_029 {
         for _ in 0..64 {
             if !matches!(
                 pump.tick(now),
@@ -482,6 +485,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     }
     assert_eq!(pump.diagnostics().prefill_frames, 0);
     assert_eq!(pump.diagnostics().packets_emitted, next_sequence);
+    assert_eq!(pump.diagnostics().concealed_packets, 0);
     let mut from_ring_total = 0_u64;
     let mut captured = Vec::new();
     // Deliberately *do not* align callback buffers to 480-frame source
