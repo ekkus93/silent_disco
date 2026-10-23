@@ -385,7 +385,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     let replay_stream = StreamId::new("ffi-edit-first-new-stream").expect("replay stream");
     actor
         .submit_audio_event(AudioEvent::PositionAdvanced {
-            stream_id: replay_stream,
+            stream_id: replay_stream.clone(),
             position_ms: 7,
         })
         .expect("bind new stream");
@@ -441,6 +441,80 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     assert!(untouched.host_queue_next_boundary.is_none());
     assert_eq!(
         untouched.host_queue.upcoming()[0].entry_id,
+        "replacement-entry"
+    );
+
+    // The retired producer's rejected reservation must not poison the new
+    // stream's authority. A fresh producer for the replayed stream can still
+    // reserve and deliver the same queued successors in sample order.
+    let replay_producer = FfiHostPlaylistStreamer::open_authoritative(
+        "ffi-edit-first-session".into(),
+        replay_stream.to_string(),
+        5_000,
+        vec![
+            source(&current_id, &paths[0]),
+            source("replacement-entry", &paths[2]),
+            source("tail-entry", &paths[3]),
+        ],
+        Arc::clone(&ffi),
+    )
+    .expect("open replay producer");
+    let mut replay_sample = 0_u64;
+    let mut replay_sequence = None;
+    let mut replay_boundaries = Vec::new();
+    loop {
+        match replay_producer.next_frame(5_000).expect("replay frame") {
+            Some(FfiPlaylistFrame::Audio {
+                sequence,
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
+            }) => {
+                assert_eq!(first_sample_index, replay_sample, "replay PCM continuity");
+                if let Some(previous) = replay_sequence {
+                    assert_eq!(sequence, previous + 1, "replay packet sequence");
+                }
+                replay_sequence = Some(sequence);
+                let sample = i16::from_le_bytes([payload[0], payload[1]]);
+                assert_eq!(
+                    sample,
+                    if replay_sample < 9_600 {
+                        3_000
+                    } else if replay_sample < 10_080 {
+                        12_000
+                    } else {
+                        15_000
+                    },
+                    "replay must not contain retired source PCM"
+                );
+                replay_sample += u64::from(samples_per_packet);
+            }
+            Some(FfiPlaylistFrame::TrackBoundary {
+                entry_id,
+                first_sample_index,
+                ..
+            }) => {
+                assert_eq!(first_sample_index, replay_sample);
+                replay_boundaries.push((entry_id, first_sample_index));
+            }
+            Some(FfiPlaylistFrame::End) => break,
+            None => panic!("authorized replay producer stalled"),
+        }
+    }
+    assert_eq!(replay_sample, 10_560);
+    assert_eq!(replay_sequence, Some(43));
+    assert_eq!(
+        replay_boundaries,
+        [
+            ("replacement-entry".to_owned(), 9_600),
+            ("tail-entry".to_owned(), 10_080),
+        ]
+    );
+    let replay_reserved = actor.current_snapshot().expect("replay reservation");
+    assert_eq!(replay_reserved.playback_state, PlaybackState::Playing);
+    assert_eq!(
+        replay_reserved.host_queue_next_boundary.as_ref().unwrap().entry_id,
         "replacement-entry"
     );
     ffi.shutdown().expect("shutdown actor");
