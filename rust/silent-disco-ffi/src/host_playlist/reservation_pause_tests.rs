@@ -71,19 +71,30 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
         .expect("first source");
     let next_source = AudioSourceDescriptor::new("source-next", "Next.wav", Some(1_920), None)
         .expect("next source");
-    submit(&actor, CoreCommand::SelectRole { role: AppRole::Host });
+    submit(
+        &actor,
+        CoreCommand::SelectRole {
+            role: AppRole::Host,
+        },
+    );
     wait_until(&actor, |s| s.selected_role == Some(AppRole::Host));
-    submit(&actor, CoreCommand::UpdateHostDraft(HostDraftPatch {
-        session_name: Some("Pause proof".to_owned()),
-        approval_mode: Some(ApprovalMode::Manual),
-        invite_code: InviteCodePatch::Unchanged,
-        audio_source: AudioSourcePatch::Set(descriptor),
-        remember_approved_devices: Some(false),
-    }));
+    submit(
+        &actor,
+        CoreCommand::UpdateHostDraft(HostDraftPatch {
+            session_name: Some("Pause proof".to_owned()),
+            approval_mode: Some(ApprovalMode::Manual),
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(descriptor),
+            remember_approved_devices: Some(false),
+        }),
+    );
     wait_until(&actor, |s| s.host_draft.audio_source.is_some());
     submit(&actor, CoreCommand::CreateHostSession);
     let operation_id = loop {
-        match rx.recv_timeout(Duration::from_secs(5)).expect("advertise effect") {
+        match rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("advertise effect")
+        {
             FfiCoreNotification::PlatformEffect {
                 effect: FfiPlatformEffect::StartAdvertising { operation_id, .. },
             } => break operation_id,
@@ -93,28 +104,46 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     ffi.platform_operation_succeeded(operation_id, FfiPlatformCompletion::AdvertisingStarted)
         .expect("advertisement acknowledged");
     let before = wait_until(&actor, |s| {
-        matches!(s.host_lifecycle, HostLifecycle::Ready | HostLifecycle::WaitingForListeners)
+        matches!(
+            s.host_lifecycle,
+            HostLifecycle::Ready | HostLifecycle::WaitingForListeners
+        )
     });
-    let first_id = before.host_queue.current().expect("first entry").entry_id.clone();
-    submit(&actor, CoreCommand::AppendHostQueue {
-        expected_queue_revision: before.host_queue.revision(),
-        entries: vec![QueueEntry::new("next-entry", next_source).expect("next entry")],
-    });
+    let first_id = before
+        .host_queue
+        .current()
+        .expect("first entry")
+        .entry_id
+        .clone();
+    submit(
+        &actor,
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: before.host_queue.revision(),
+            entries: vec![QueueEntry::new("next-entry", next_source).expect("next entry")],
+        },
+    );
     wait_until(&actor, |s| s.host_queue.entries().len() == 2);
-    actor.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
         .expect("buffer");
     wait_until(&actor, |s| s.playback_state == PlaybackState::Buffering);
     let stream_id = StreamId::new("ffi-pause-stream").expect("stream ID");
-    actor.submit_audio_event(AudioEvent::PositionAdvanced {
-        stream_id: stream_id.clone(),
-        position_ms: 0,
-    }).expect("start and bind stream");
+    actor
+        .submit_audio_event(AudioEvent::PositionAdvanced {
+            stream_id: stream_id.clone(),
+            position_ms: 0,
+        })
+        .expect("start and bind stream");
     wait_until(&actor, |s| s.playback_state == PlaybackState::Playing);
-    actor.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
         .expect("pause");
     wait_until(&actor, |s| s.playback_state == PlaybackState::Paused);
 
-    let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let dir = std::env::temp_dir().join(format!("ffi-pause-reservation-{unique}"));
     fs::create_dir_all(&dir).expect("fixtures directory");
     let first_path = dir.join("first.wav");
@@ -130,20 +159,32 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
         "ffi-paused-session".into(),
         stream_id.to_string(),
         5_000,
-        vec![source(&first_id, &first_path), source("next-entry", &next_path)],
+        vec![
+            source(&first_id, &first_path),
+            source("next-entry", &next_path),
+        ],
         Arc::clone(&ffi),
-    ).expect("open authoritative producer");
+    )
+    .expect("open authoritative producer");
 
     let mut samples = Vec::new();
     let mut boundaries = Vec::new();
     loop {
         match stream.next_frame(2_000).expect("paused producer frame") {
-            Some(FfiPlaylistFrame::Audio { first_sample_index, .. }) =>
-                samples.push(first_sample_index),
-            Some(FfiPlaylistFrame::TrackBoundary { entry_id, first_sample_index, .. }) => {
+            Some(FfiPlaylistFrame::Audio {
+                first_sample_index, ..
+            }) => samples.push(first_sample_index),
+            Some(FfiPlaylistFrame::TrackBoundary {
+                entry_id,
+                first_sample_index,
+                ..
+            }) => {
                 let snapshot = wait_until(&actor, |s| s.host_queue_next_boundary.is_some());
                 assert_eq!(snapshot.playback_state, PlaybackState::Paused);
-                assert_eq!(snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id, entry_id);
+                assert_eq!(
+                    snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+                    entry_id
+                );
                 boundaries.push((entry_id, first_sample_index));
             }
             Some(FfiPlaylistFrame::End) => break,
@@ -152,15 +193,20 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     }
     assert_eq!(boundaries, [("next-entry".to_owned(), 480)]);
     assert_eq!(samples, [0, 240, 480, 720]);
-    actor.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
         .expect("resume");
     wait_until(&actor, |s| s.playback_state == PlaybackState::Playing);
-    actor.submit_audio_event(AudioEvent::TrackBoundaryApplied {
-        entry_id: "next-entry".into(),
-        first_sample_index: 480,
-    }).expect("apply after resume");
+    actor
+        .submit_audio_event(AudioEvent::TrackBoundaryApplied {
+            entry_id: "next-entry".into(),
+            first_sample_index: 480,
+        })
+        .expect("apply after resume");
     let after = wait_until(&actor, |s| {
-        s.host_queue.current().is_some_and(|entry| entry.entry_id == "next-entry")
+        s.host_queue
+            .current()
+            .is_some_and(|entry| entry.entry_id == "next-entry")
     });
     assert!(after.host_queue_next_boundary.is_none());
     ffi.shutdown().expect("shut down host");
