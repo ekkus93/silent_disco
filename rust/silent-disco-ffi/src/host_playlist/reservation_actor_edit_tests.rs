@@ -1,6 +1,13 @@
 //! Exercise the real actor authority and FFI producer when a queued edit wins
 //! before a backpressured worker can reserve the next track.
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
+use crate::audio_abi::{
+    attach_callback_capture, detach_callback_capture, registry_test_guard,
+    silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
+    silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+};
+use crate::audio_output::FfiAudioOutputHandle;
+use crate::callback_capture::CallbackCaptureTap;
 use crate::host_control::{
     FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver, FfiPlatformCompletion,
     FfiPlatformEffect,
@@ -69,12 +76,93 @@ fn wav(frames: u32, sample: i16) -> Vec<u8> {
     data
 }
 
+const RETARGETED_FRAMES: u32 = 10_560;
+const OUTPUT_CAPACITY_FRAMES: u32 = 11_520;
+
+/// A native callback still must return precisely the actor-approved PCM when
+/// it reads across both the edited and retained successor boundaries.
+fn callback_output() -> (Arc<FfiAudioOutputHandle>, Arc<CallbackCaptureTap>, u64) {
+    let output = FfiAudioOutputHandle::open(OUTPUT_CAPACITY_FRAMES, 1)
+        .expect("native render ring for authoritative producer");
+    let token = u64::try_from(output.engine_token().expect("engine token"))
+        .expect("nonnegative native token");
+    let tap = Arc::new(
+        CallbackCaptureTap::new(usize::try_from(OUTPUT_CAPACITY_FRAMES).expect("capacity"))
+            .expect("callback tap capacity"),
+    );
+    attach_callback_capture(token, Arc::clone(&tap)).expect("attach callback tap");
+    (output, tap, token)
+}
+
+fn submit_native_packet(output: &FfiAudioOutputHandle, payload: &[u8], frames: u32) {
+    let samples = payload
+        .chunks_exact(2)
+        .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+        .collect();
+    assert_eq!(
+        output.push_frames(samples).expect("native output accepts actor PCM"),
+        frames,
+        "producer output must not discard any samples"
+    );
+}
+
+fn verify_native_callback(
+    output: &FfiAudioOutputHandle,
+    tap: &CallbackCaptureTap,
+    token: u64,
+) {
+    assert_eq!(output.queued_frames().expect("queued frames"), RETARGETED_FRAMES);
+    let mut absolute_frame = 0_usize;
+    // Both 9,600 and 10,080 fall inside callbacks rather than at a read edge.
+    for frames in [4_799_u32, 4_802, 480, 479] {
+        let mut pcm = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
+        let mut supplied = 0_u32;
+        let status = silent_disco_audio_read_interleaved_f32(
+            usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+            pcm.as_mut_ptr(),
+            frames,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0, "no native underrun across reserved boundary");
+        assert_eq!(supplied, frames);
+        assert_eq!(
+            tap.drain(usize::try_from(frames).expect("frames")),
+            pcm,
+            "capture tap must contain exactly the callback-returned samples"
+        );
+        for pair in pcm.chunks_exact(2) {
+            let expected = if absolute_frame < 9_600 {
+                3_000_i16
+            } else if absolute_frame < 10_080 {
+                12_000_i16
+            } else {
+                15_000_i16
+            };
+            let expected = f32::from(expected) / 32768.0;
+            assert!(
+                pair.iter().all(|sample| sample.to_bits() == expected.to_bits()),
+                "wrong native callback PCM at frame {absolute_frame}"
+            );
+            absolute_frame += 1;
+        }
+    }
+    assert_eq!(absolute_frame, usize::try_from(RETARGETED_FRAMES).expect("frames"));
+    let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    assert_eq!(silent_disco_audio_callback_count(engine), 4);
+    assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+    assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
+    assert_eq!(tap.counters(), (u64::from(RETARGETED_FRAMES), 0, 4));
+    detach_callback_capture(token);
+}
+
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "one real actor/FFI backpressure and queue-edit interleaving"
 )]
 fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
+    let _audio_guard = registry_test_guard();
     let (tx, rx) = mpsc::channel();
     let ffi = FfiCoreHandle::open("ffi-edit-first-actor".into(), Arc::new(Observer(tx)))
         .expect("open actor");
@@ -241,6 +329,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         ])
         .expect("retarget producer from latest authoritative queue");
 
+    let (output, tap, token) = callback_output();
     let mut next_sample = 0_u64;
     let mut last_sequence = None;
     let mut boundaries = Vec::new();
@@ -270,6 +359,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                     },
                     "removed track PCM must not escape"
                 );
+                submit_native_packet(&output, &payload, samples_per_packet);
                 next_sample += u64::from(samples_per_packet);
             }
             Some(FfiPlaylistFrame::TrackBoundary {
@@ -362,6 +452,8 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
             ("tail-entry".to_owned(), 10_080),
         ]
     );
+    verify_native_callback(&output, &tap, token);
+    output.release();
     // Stop invalidates any reservation made for the old stream. A fresh Play
     // can reuse the same queue entry IDs, but a delayed producer belonging to
     // the retired stream must fail closed before emitting its successor.
@@ -459,6 +551,8 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         Arc::clone(&ffi),
     )
     .expect("open replay producer");
+    let (replay_output, replay_tap, replay_token) = callback_output();
+    assert_ne!(replay_token, token, "Stop/replay must not reuse retired native token");
     let mut replay_sample = 0_u64;
     let mut replay_sequence = None;
     let mut replay_boundaries = Vec::new();
@@ -488,6 +582,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                     },
                     "replay must not contain retired source PCM"
                 );
+                submit_native_packet(&replay_output, &payload, samples_per_packet);
                 replay_sample += u64::from(samples_per_packet);
             }
             Some(FfiPlaylistFrame::TrackBoundary {
@@ -503,6 +598,8 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         }
     }
     assert_eq!(replay_sample, 10_560);
+    verify_native_callback(&replay_output, &replay_tap, replay_token);
+    replay_output.release();
     assert_eq!(replay_sequence, Some(43));
     assert_eq!(
         replay_boundaries,
