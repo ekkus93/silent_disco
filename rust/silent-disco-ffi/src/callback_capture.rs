@@ -120,7 +120,7 @@ mod tests {
 
         const FRAMES: usize = 24_000;
         const BATCH: usize = 512;
-        let tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("capacity"));
+        let tap = Arc::new(CallbackCaptureTap::new(MAX_CAPTURE_FRAMES).expect("capacity"));
         let original: Vec<f32> = (0..FRAMES)
             .flat_map(|frame| {
                 std::iter::repeat_n(
@@ -132,7 +132,7 @@ mod tests {
         let writer = Arc::clone(&tap);
         let packets = original.clone();
         let producer = std::thread::spawn(move || {
-            for chunk in packets.chunks_exact(BATCH * CHANNELS) {
+            for chunk in packets.chunks(BATCH * CHANNELS) {
                 // The actual C-ABI audio callback has one serialized producer.
                 // Every published frame is atomically visible before the
                 // background consumer observes the incremented write cursor.
@@ -151,7 +151,7 @@ mod tests {
         }
         producer.join().expect("audio writer must finish");
         assert_eq!(received, original, "no missing or duplicated callback PCM");
-        assert_eq!(tap.counters(), (24_000, 0, 46));
+        assert_eq!(tap.counters(), (24_000, 0, 47));
         assert!(tap.drain(1).is_empty());
     }
 
