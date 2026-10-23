@@ -1,0 +1,254 @@
+//! Exercise the real actor authority and FFI producer when a queued edit wins
+//! before a backpressured worker can reserve the next track.
+use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
+use crate::host_control::{
+    FfiBridgeError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver, FfiPlatformCompletion,
+    FfiPlatformEffect,
+};
+use silent_disco_core::domain::{AppRole, ApprovalMode, HostLifecycle, PlaybackState, StreamId};
+use silent_disco_core::runtime::{
+    AudioEvent, AudioSourceDescriptor, AudioSourcePatch, CoreActorHandle, CoreCommand,
+    CoreCommandRequest, CoreSnapshot, HostDraftPatch, InviteCodePatch, QueueEntry,
+};
+use std::fs;
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+struct Observer(mpsc::Sender<FfiCoreNotification>);
+
+impl FfiCoreObserver for Observer {
+    fn on_notification(&self, notification: FfiCoreNotification) -> Result<(), FfiBridgeError> {
+        self.0.send(notification).expect("observer receiver");
+        Ok(())
+    }
+}
+
+fn snapshot_when(actor: &CoreActorHandle, predicate: impl Fn(&CoreSnapshot) -> bool) -> CoreSnapshot {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = actor.current_snapshot().expect("actor snapshot");
+        if predicate(&snapshot) {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "actor did not reach expected state");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn submit(actor: &CoreActorHandle, command: CoreCommand) {
+    let revision = actor.current_snapshot().expect("actor revision").revision;
+    actor
+        .submit_command(CoreCommandRequest::new(revision, command).expect("command"))
+        .expect("submit command");
+}
+
+fn wav(frames: u32, sample: i16) -> Vec<u8> {
+    let bytes = frames * 4;
+    let mut data = Vec::with_capacity(44 + bytes as usize);
+    data.extend_from_slice(b"RIFF");
+    data.extend_from_slice(&(36 + bytes).to_le_bytes());
+    data.extend_from_slice(b"WAVEfmt ");
+    data.extend_from_slice(&16_u32.to_le_bytes());
+    data.extend_from_slice(&1_u16.to_le_bytes());
+    data.extend_from_slice(&2_u16.to_le_bytes());
+    data.extend_from_slice(&48_000_u32.to_le_bytes());
+    data.extend_from_slice(&192_000_u32.to_le_bytes());
+    data.extend_from_slice(&4_u16.to_le_bytes());
+    data.extend_from_slice(&16_u16.to_le_bytes());
+    data.extend_from_slice(b"data");
+    data.extend_from_slice(&bytes.to_le_bytes());
+    for _ in 0..frames * 2 {
+        data.extend_from_slice(&sample.to_le_bytes());
+    }
+    data
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real actor/FFI backpressure and queue-edit interleaving"
+)]
+fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
+    let (tx, rx) = mpsc::channel();
+    let ffi = FfiCoreHandle::open("ffi-edit-first-actor".into(), Arc::new(Observer(tx)))
+        .expect("open actor");
+    let actor = ffi.actor_handle().expect("live actor");
+    let first = AudioSourceDescriptor::new("first-source", "First.wav", Some(38_400), None)
+        .expect("first source");
+    let obsolete = AudioSourceDescriptor::new("obsolete-source", "Obsolete.wav", Some(1_920), None)
+        .expect("obsolete source");
+    let replacement = AudioSourceDescriptor::new(
+        "replacement-source",
+        "Replacement.wav",
+        Some(1_920),
+        None,
+    )
+    .expect("replacement source");
+
+    submit(&actor, CoreCommand::SelectRole { role: AppRole::Host });
+    snapshot_when(&actor, |s| s.selected_role == Some(AppRole::Host));
+    submit(
+        &actor,
+        CoreCommand::UpdateHostDraft(HostDraftPatch {
+            session_name: Some("Edit-first proof".to_owned()),
+            approval_mode: Some(ApprovalMode::Manual),
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(first),
+            remember_approved_devices: Some(false),
+        }),
+    );
+    snapshot_when(&actor, |s| s.host_draft.audio_source.is_some());
+    submit(&actor, CoreCommand::CreateHostSession);
+    let operation_id = loop {
+        if let FfiCoreNotification::PlatformEffect {
+            effect: FfiPlatformEffect::StartAdvertising { operation_id, .. },
+        } = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("advertise effect")
+        {
+            break operation_id;
+        }
+    };
+    ffi.platform_operation_succeeded(operation_id, FfiPlatformCompletion::AdvertisingStarted)
+        .expect("advertising acknowledged");
+    let ready = snapshot_when(&actor, |s| {
+        matches!(
+            s.host_lifecycle,
+            HostLifecycle::Ready | HostLifecycle::WaitingForListeners
+        )
+    });
+    let current_id = ready.host_queue.current().expect("current").entry_id.clone();
+    submit(
+        &actor,
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: ready.host_queue.revision(),
+            entries: vec![
+                QueueEntry::new("obsolete-entry", obsolete).expect("obsolete entry"),
+                QueueEntry::new("replacement-entry", replacement).expect("replacement entry"),
+            ],
+        },
+    );
+    snapshot_when(&actor, |s| s.host_queue.entries().len() == 3);
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+        .expect("buffer");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Buffering);
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("play");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
+    let stream_id = StreamId::new("ffi-edit-first-stream").expect("stream");
+    actor
+        .submit_audio_event(AudioEvent::PositionAdvanced {
+            stream_id: stream_id.clone(),
+            position_ms: 0,
+        })
+        .expect("bind stream");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-ffi-edit-first-{unique}"));
+    fs::create_dir_all(&root).expect("fixtures");
+    let paths = [
+        root.join("first.wav"),
+        root.join("obsolete.wav"),
+        root.join("replacement.wav"),
+    ];
+    // Forty packets of current audio exceed the producer's 32-frame output
+    // queue. Without a consumer, the worker cannot reach its first reservation.
+    for (path, frames, sample) in [
+        (&paths[0], 9_600, 3_000),
+        (&paths[1], 480, 6_000),
+        (&paths[2], 480, 12_000),
+    ] {
+        fs::write(path, wav(frames, sample)).expect("PCM fixture");
+    }
+    let source = |id: &str, path: &std::path::Path| FfiPlaylistSource {
+        entry_id: id.to_owned(),
+        display_name: id.to_owned(),
+        staged_path: path.to_string_lossy().into_owned(),
+    };
+    let stream = FfiHostPlaylistStreamer::open_authoritative(
+        "ffi-edit-first-session".into(),
+        stream_id.to_string(),
+        5_000,
+        vec![
+            source(&current_id, &paths[0]),
+            source("obsolete-entry", &paths[1]),
+            source("replacement-entry", &paths[2]),
+        ],
+        Arc::clone(&ffi),
+    )
+    .expect("open authoritative producer");
+
+    let before = actor.current_snapshot().expect("snapshot before edit");
+    assert!(
+        before.host_queue_next_boundary.is_none(),
+        "the backpressured producer must not reserve before the edit"
+    );
+    submit(
+        &actor,
+        CoreCommand::RemoveHostQueueEntry {
+            expected_queue_revision: before.host_queue.revision(),
+            entry_id: "obsolete-entry".into(),
+        },
+    );
+    snapshot_when(&actor, |s| {
+        s.host_queue.entries().len() == 2
+            && s.host_queue.upcoming()[0].entry_id == "replacement-entry"
+    });
+    stream
+        .replace_upcoming(vec![source("replacement-entry", &paths[2])])
+        .expect("retarget producer from authoritative queue");
+
+    let mut next_sample = 0_u64;
+    let mut last_sequence = None;
+    let mut boundaries = Vec::new();
+    loop {
+        match stream.next_frame(5_000).expect("stream frame") {
+            Some(FfiPlaylistFrame::Audio {
+                sequence,
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
+            }) => {
+                assert_eq!(first_sample_index, next_sample, "sample gap or overlap");
+                if let Some(previous) = last_sequence {
+                    assert_eq!(sequence, previous + 1, "packet sequence gap");
+                }
+                last_sequence = Some(sequence);
+                let sample = i16::from_le_bytes([payload[0], payload[1]]);
+                assert_eq!(
+                    sample,
+                    if next_sample < 9_600 { 3_000 } else { 12_000 },
+                    "removed track PCM must not escape"
+                );
+                next_sample += u64::from(samples_per_packet);
+            }
+            Some(FfiPlaylistFrame::TrackBoundary {
+                entry_id,
+                first_sample_index,
+                ..
+            }) => {
+                assert_eq!(first_sample_index, next_sample);
+                let snapshot = snapshot_when(&actor, |s| s.host_queue_next_boundary.is_some());
+                assert_eq!(
+                    snapshot.host_queue_next_boundary.as_ref().unwrap().entry_id,
+                    "replacement-entry"
+                );
+                boundaries.push((entry_id, first_sample_index));
+            }
+            Some(FfiPlaylistFrame::End) => break,
+            None => panic!("producer stalled after edit-first retarget"),
+        }
+    }
+    assert_eq!(next_sample, 10_080);
+    assert_eq!(last_sequence, Some(41));
+    assert_eq!(boundaries, [("replacement-entry".to_owned(), 9_600)]);
+    ffi.shutdown().expect("shutdown actor");
+    fs::remove_dir_all(root).expect("remove fixtures");
+}
