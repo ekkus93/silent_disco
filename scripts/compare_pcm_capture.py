@@ -83,6 +83,7 @@ def compare(
 
     missing = extra = mismatched_frames = mismatched_samples = 0
     observed_capture_frames = 0
+    observed_reference_frames = 0
     compared_samples = squared_error = max_abs_error = 0
     examples = []
     absent = object()
@@ -93,6 +94,8 @@ def compare(
             fillvalue=absent,
         )
     ):
+        if wanted is not absent:
+            observed_reference_frames += 1
         if actual is not absent:
             observed_capture_frames += 1
         if wanted is absent:
@@ -130,6 +133,12 @@ def compare(
             for boundary in boundaries:
                 if boundary["window_start"] <= index < boundary["window_end"]:
                     boundary["mismatch_frames"] += 1
+
+    if observed_reference_frames != expected_frames:
+        raise ValueError(
+            "canonical reference PCM truncated: "
+            f"declared {expected_frames} frames, observed {observed_reference_frames}"
+        )
 
     return {
         "status": "PASS" if not (missing or extra or mismatched_samples) else "FAIL",

@@ -91,6 +91,13 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(result["missing_tail_frames"], 1)
         self.assertGreater(result["track_boundaries"][0]["mismatch_frames"], 0)
 
+    def test_truncated_canonical_reference_is_rejected_even_when_capture_matches(self):
+        save_wav(self.captured, self.reference[:-2])
+        with self.sources[-1].open("r+b") as source:
+            source.truncate(self.sources[-1].stat().st_size - 8)
+        with self.assertRaisesRegex(ValueError, "canonical reference PCM truncated"):
+            compare(self.sources, self.captured)
+
     def test_truncated_pcm_payload_reports_observed_not_declared_frames(self):
         save_wav(self.captured, self.reference)
         with self.captured.open("r+b") as capture:
