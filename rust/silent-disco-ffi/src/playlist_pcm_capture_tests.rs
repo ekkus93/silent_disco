@@ -6,6 +6,15 @@ use crate::audio_abi::{
     silent_disco_audio_read_interleaved_f32,
 };
 use crate::audio_output::FfiAudioOutputHandle;
+use crate::audio_abi::{
+    register_render_ring, release_render_ring,
+};
+use silent_disco_core::audio::{
+    PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
+    SchedulerConfig,
+};
+use silent_disco_core::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
+use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
 use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use std::fs;
@@ -163,4 +172,159 @@ fn real_playlist_pcm_survives_multiple_boundaries_through_native_output_callback
     output.release();
     producer.cancel().expect("close worker");
     fs::remove_dir_all(&root).expect("clean fixture directory");
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real playlist, scheduler, render ring and ABI continuity regression"
+)]
+fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
+    let _guard = registry_test_guard();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-scheduler-callback-{unique}"));
+    fs::create_dir_all(&root).expect("fixture directory");
+    let values = [1_024_i16, 2_048, 4_096];
+    let sources = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let path = root.join(format!("track-{index}.wav"));
+            fs::write(&path, source_wav(*value)).expect("source fixture");
+            FfiPlaylistSource {
+                entry_id: format!("track-{index}"),
+                display_name: format!("Track {index}"),
+                staged_path: path.to_string_lossy().into_owned(),
+            }
+        })
+        .collect();
+    let playlist = FfiHostPlaylistStreamer::open(
+        "end-to-end-session".to_owned(),
+        "end-to-end-stream".to_owned(),
+        1_000,
+        sources,
+    )
+    .expect("production playlist");
+    let start = playlist.stream_start();
+    let mut scheduler_config = SchedulerConfig::new(
+        SessionId::new("end-to-end-session").expect("session"),
+        StreamId::new("end-to-end-stream").expect("stream"),
+        start.sample_rate,
+        start.host_start_time_ms,
+        start.samples_per_packet,
+        start.channels,
+    );
+    scheduler_config.startup_buffer_target_ms = 0;
+    let scheduler = PlaybackScheduler::new(scheduler_config, 0.0).expect("scheduler");
+    let (render_producer, token) = register_render_ring(RenderRingConfig {
+        capacity_frames: 4_800,
+        target_fill_frames: 4_800,
+    })
+    .expect("native render ring");
+    let mut pump = PlaybackPump::new(
+        scheduler,
+        render_producer,
+        PlaybackPumpConfig {
+            volume: 1.0,
+            write_lead_ms: 0,
+            max_prefill_ms: 0,
+            target_depth_frames: 4_800,
+        },
+    )
+    .expect("listener playback pump");
+    pump.apply_sync_offset(0.0);
+    let tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("capture tap"));
+    attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
+
+    let mut next_sample = 0;
+    let mut next_sequence = 0;
+    let mut boundaries = Vec::new();
+    let mut finished = false;
+    for _ in 0..64 {
+        match playlist.next_frame(1_000).expect("host frame") {
+            Some(FfiPlaylistFrame::Audio {
+                sequence,
+                sample_rate,
+                channels,
+                samples_per_packet,
+                first_sample_index,
+                host_presentation_time_ms,
+                payload,
+                ..
+            }) => {
+                assert_eq!(sequence, next_sequence, "producer sequence continuity");
+                assert_eq!(first_sample_index, next_sample, "producer sample continuity");
+                pump.scheduler_mut()
+                    .submit_packet(AudioDatagram {
+                        session_id: SessionId::new("end-to-end-session").expect("session"),
+                        stream_id: StreamId::new("end-to-end-stream").expect("stream"),
+                        sequence: PacketSequence::new(sequence),
+                        codec: AudioCodec::PcmS16Le,
+                        sample_rate,
+                        channels,
+                        samples_per_packet,
+                        first_sample_index: SampleIndex::new(first_sample_index),
+                        host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+                        payload,
+                    })
+                    .expect("listener accepts production packet");
+                next_sample += u64::from(samples_per_packet);
+                next_sequence += 1;
+            }
+            Some(FfiPlaylistFrame::TrackBoundary {
+                first_sample_index, ..
+            }) => boundaries.push(first_sample_index),
+            Some(FfiPlaylistFrame::End) => {
+                finished = true;
+                break;
+            }
+            None => {}
+        }
+    }
+    assert!(finished);
+    assert_eq!(boundaries, [480, 960]);
+    assert_eq!(next_sample, 1_440);
+
+    // Virtual presentation time, no wall-clock sleeps or hardware emulator:
+    // the real scheduler/pump must queue all decoded producer packets.
+    for now in 1_000..=1_040 {
+        for _ in 0..64 {
+            if !matches!(pump.tick(now), PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }) {
+                break;
+            }
+        }
+    }
+    assert_eq!(pump.diagnostics().prefill_frames, 0);
+    assert_eq!(pump.diagnostics().packets_emitted, next_sequence);
+    let mut from_ring_total = 0_u64;
+    let mut captured = Vec::new();
+    for _ in 0..3 {
+        let mut returned = vec![0.0_f32; TRACK_FRAMES * CHANNELS];
+        let mut frames_supplied = 0;
+        let status = silent_disco_audio_read_interleaved_f32(
+            usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+            returned.as_mut_ptr(),
+            u32::try_from(TRACK_FRAMES).expect("track frames"),
+            2,
+            &raw mut frames_supplied,
+        );
+        assert_eq!(status, 0, "no gap from listener scheduler to native callback");
+        from_ring_total += u64::from(frames_supplied);
+        captured.extend(returned);
+    }
+    assert_eq!(from_ring_total, 1_440);
+    let expected: Vec<f32> = values
+        .iter()
+        .flat_map(|value| std::iter::repeat_n(f32::from(*value) / 32768.0, TRACK_FRAMES * CHANNELS))
+        .collect();
+    assert_eq!(captured, expected, "track data changed in listener scheduler");
+    assert_eq!(tap.drain(1_440), expected, "callback tap differs from returned PCM");
+    assert_eq!(tap.counters(), (1_440, 0, 3));
+    detach_callback_capture(token);
+    release_render_ring(token).expect("native ring release");
+    playlist.cancel().expect("playlist cleanup");
+    fs::remove_dir_all(root).expect("fixture cleanup");
 }
