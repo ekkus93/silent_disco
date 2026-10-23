@@ -7,7 +7,7 @@ use crate::audio_abi::{
     silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
 };
 use crate::audio_output::FfiAudioOutputHandle;
-use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
+use crate::callback_capture::CallbackCaptureTap;
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use crate::playlist_pcm_capture_tests::authorized_pcm_socket_pair;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -135,7 +135,10 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         .max(4_800);
     let output = FfiAudioOutputHandle::open(ring_frames, 1).expect("native output ring");
     let token = output.engine_token().expect("output token");
-    let tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("tap"));
+    let tap = Arc::new(
+        CallbackCaptureTap::new(usize::try_from(ring_frames).expect("capture capacity"))
+            .expect("bounded capture tap"),
+    );
     attach_callback_capture(u64::try_from(token).expect("token"), Arc::clone(&tap))
         .expect("attach native capture");
     let mut callback_pcm = Vec::<f32>::new();
@@ -293,8 +296,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         total_frames - second_boundary - 1,
     ];
     for callback_frames in callback_sizes {
-        let mut returned =
-            vec![f32::NAN; usize::try_from(callback_frames).expect("frames") * 2];
+        let mut returned = vec![f32::NAN; usize::try_from(callback_frames).expect("frames") * 2];
         let mut supplied = 0_u32;
         let status = silent_disco_audio_read_interleaved_f32(
             usize::try_from(token).expect("token") as *mut core::ffi::c_void,
