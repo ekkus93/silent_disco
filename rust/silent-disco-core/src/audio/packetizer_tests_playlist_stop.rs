@@ -591,3 +591,98 @@ fn reorder_behind_reserved_successor_changes_only_later_boundaries() {
     );
     assert_eq!(summary.emitted_packets, 26);
 }
+
+#[test]
+fn remove_behind_reserved_successor_does_not_emit_removed_track() {
+    let _guard = super::super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "remove-first.wav", &pcm_wav_frames(48_000, 2, 240));
+    let next_path = write_bytes(&temp, "remove-next.wav", &pcm_wav_frames(48_000, 2, 4_800));
+    let removed_path = write_bytes(&temp, "remove-discard.wav", &pcm_wav_frames(48_000, 2, 480));
+    let kept_path = write_bytes(&temp, "remove-kept.wav", &pcm_wav_frames(48_000, 2, 720));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let next = StreamingPlaylistTrackFactory::new("next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let removed = StreamingPlaylistTrackFactory::new("removed", "Removed", move || {
+        StreamingDecodeHandle::open(removed_path, StreamingDecodeConfig::default())
+    })
+    .expect("removed factory");
+    let initial_kept_path = kept_path.clone();
+    let kept = StreamingPlaylistTrackFactory::new("kept", "Kept", move || {
+        StreamingDecodeHandle::open(initial_kept_path, StreamingDecodeConfig::default())
+    })
+    .expect("kept factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "first",
+        "First",
+        vec![next, removed, kept],
+        SessionId::new("remove-later-session").expect("session"),
+        StreamId::new("remove-later-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        Arc::new(|_boundary: &crate::protocol::TrackBoundary, _cancel| Ok(())),
+    )
+    .expect("reserved packetizer");
+    let updater = packetizer.playlist_updater().expect("updater");
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
+    ));
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))
+            ) if boundary.entry_id == "next" && boundary.first_sample_index.get() == 240
+    ));
+
+    // The actor has committed next; removal of an entry behind it must
+    // leave the reserved decoder untouched and never publish removed PCM.
+    let shadow = StreamingPlaylistTrackFactory::new("next", "Next", || {
+        unreachable!("reserved successor must not be reopened")
+    })
+    .expect("shadow");
+    let kept = StreamingPlaylistTrackFactory::new("kept", "Kept", move || {
+        StreamingDecodeHandle::open(kept_path, StreamingDecodeConfig::default())
+    })
+    .expect("remaining factory");
+    updater
+        .replace_upcoming(vec![shadow, kept])
+        .expect("remove only an unreserved upcoming entry");
+
+    let mut audio = vec![(0_u64, 0_u64)];
+    let mut boundaries = vec![("next".to_owned(), 240_u64)];
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Audio(frame)) => {
+                audio.push((frame.sequence.get(), frame.first_sample_index.get()));
+            }
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                boundaries.push((boundary.entry_id, boundary.first_sample_index.get()));
+            }
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("removal stream stalled"),
+        }
+    }
+    let summary = packetizer.join().expect("playlist completes after removal");
+    assert_eq!(summary.state, PacketizerWorkerState::Completed);
+    assert_eq!(
+        boundaries,
+        [("next".to_owned(), 240), ("kept".to_owned(), 5_040)],
+        "removed entry must never become an audible boundary"
+    );
+    assert_eq!(
+        audio,
+        (0_u64..24)
+            .map(|packet| (packet, packet * 240))
+            .collect::<Vec<_>>(),
+        "removing later entries must preserve contiguous packet sequence and sample indices"
+    );
+    assert_eq!(summary.emitted_packets, 24);
+}
