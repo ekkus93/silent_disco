@@ -20,6 +20,7 @@ use silent_disco_core::domain::{
 };
 use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame,
+    StreamStart, TrackBoundary,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -300,6 +301,35 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     )
     .expect("production playlist");
     let start = playlist.stream_start();
+    // Exercise the production TCP control route as well as its UDP audio
+    // route: the listener must observe the stream metadata before boundaries.
+    let announced = host
+        .broadcast_control(&ControlMessage::StreamStart(StreamStart {
+            session_id: SessionId::new("end-to-end-session").expect("session"),
+            stream_id: StreamId::new("end-to-end-stream").expect("stream"),
+            host_start_time_ms: MonotonicMillis::new(start.host_start_time_ms),
+            sample_rate: start.sample_rate,
+            channels: start.channels,
+            samples_per_packet: start.samples_per_packet,
+            current_entry_id: start.current_entry_id.clone(),
+            current_display_name: start.current_display_name.clone(),
+        }))
+        .expect("broadcast stream start");
+    assert_eq!(announced.successful_peers, 1);
+    let received_start = loop {
+        let event = listener
+            .recv_event(Duration::from_secs(5))
+            .expect("listener receives stream start");
+        if let TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Control(ControlMessage::StreamStart(start)),
+            ..
+        } = event
+        {
+            break start;
+        }
+    };
+    assert_eq!(received_start.stream_id.as_str(), "end-to-end-stream");
+    assert_eq!(received_start.sample_rate, start.sample_rate);
     let mut scheduler_config = SchedulerConfig::new(
         SessionId::new("end-to-end-session").expect("session"),
         StreamId::new("end-to-end-stream").expect("stream"),
@@ -394,8 +424,38 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
                 next_sequence += 1;
             }
             Some(FfiPlaylistFrame::TrackBoundary {
-                first_sample_index, ..
-            }) => boundaries.push(first_sample_index),
+                first_sample_index,
+                entry_id,
+                display_name,
+                ..
+            }) => {
+                let sent = host
+                    .broadcast_control(&ControlMessage::TrackBoundary(TrackBoundary {
+                        session_id: SessionId::new("end-to-end-session").expect("session"),
+                        stream_id: StreamId::new("end-to-end-stream").expect("stream"),
+                        first_sample_index: SampleIndex::new(first_sample_index),
+                        entry_id: entry_id.clone(),
+                        display_name: display_name.clone(),
+                    }))
+                    .expect("broadcast real boundary on TCP");
+                assert_eq!(sent.successful_peers, 1);
+                let received = loop {
+                    let event = listener
+                        .recv_event(Duration::from_secs(5))
+                        .expect("listener receives track boundary");
+                    if let TransportEvent::FrameReceived {
+                        frame: ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary)),
+                        ..
+                    } = event
+                    {
+                        break boundary;
+                    }
+                };
+                assert_eq!(received.first_sample_index.get(), first_sample_index);
+                assert_eq!(received.entry_id, entry_id);
+                assert_eq!(received.display_name, display_name);
+                boundaries.push(received.first_sample_index.get());
+            }
             Some(FfiPlaylistFrame::End) => {
                 finished = true;
                 break;

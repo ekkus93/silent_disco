@@ -171,3 +171,10 @@ first mismatching frame/channel, total mismatching samples, actual native
 callback/underrun/silence counters and tap-loss counts. The report includes
 only deterministic fixture metadata, never raw PCM. A failure does not become
 PASS merely because a diagnostic artifact was produced.
+
+The mixed-rate native-callback regression also exercises **production TCP
+StreamStart and TrackBoundary control delivery** for both boundaries over the
+same authenticated host/listener socket pair that transports UDP audio. It
+checks that the listener receives each exact canonical sample index and entry
+metadata before evaluating native callback-returned PCM. This does not yet
+cover the Android UI boundary presentation or reconnect under live hardware.
