@@ -168,7 +168,10 @@ fn stop_while_reservation_callback_is_pending_discards_stale_acknowledgment() {
 }
 
 // Replay can complete independently while the previous stream awaits a stale ack.
-fn assert_replay_stream_is_contiguous(first_path: std::path::PathBuf, next_path: std::path::PathBuf) {
+fn assert_replay_stream_is_contiguous(
+    first_path: std::path::PathBuf,
+    next_path: std::path::PathBuf,
+) {
     let new_decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
         .expect("new current decoder");
     let new_successor = StreamingPlaylistTrackFactory::new("next", "Next", move || {
