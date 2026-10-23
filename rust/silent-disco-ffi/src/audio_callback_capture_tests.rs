@@ -219,6 +219,52 @@ fn attached_native_callback_tap_captures_underruns_and_reports_overflow() {
 }
 
 #[test]
+fn partial_native_callback_underrun_is_recorded_with_exact_silence_tail() {
+    let _guard = registry_test_guard();
+    let output = FfiAudioOutputHandle::open(4_800, 1).expect("register output ring");
+    let token = output.engine_token().expect("engine token");
+    let tap = std::sync::Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("tap"));
+    attach_callback_capture(
+        u64::try_from(token).expect("positive token"),
+        std::sync::Arc::clone(&tap),
+    )
+    .expect("attach capture");
+
+    // The render ring has only three frames when the real native callback
+    // requests five. The tap must record both the three audible frames and
+    // the two zero-filled frames actually returned to the audio device.
+    let source = [1_024_i16, 2_048, 3_072, 4_096, 5_120, 6_144];
+    let decoded = source
+        .iter()
+        .map(|sample| f32::from(*sample) / 32768.0)
+        .collect();
+    assert_eq!(output.push_frames(decoded).expect("push source"), 3);
+    let (status, from_ring, returned) = callback_output(token, 5);
+    assert_eq!(status, 1, "partial callback must report underrun");
+    assert_eq!(from_ring, 3);
+    assert_eq!(returned, [1_024, 2_048, 3_072, 4_096, 5_120, 6_144, 0, 0, 0, 0]);
+    assert_eq!(
+        tap.drain(5),
+        returned
+            .iter()
+            .map(|sample| f32::from(*sample) / 32768.0)
+            .collect::<Vec<_>>(),
+        "capture must contain the exact callback-returned silence tail"
+    );
+    assert_eq!(tap.counters(), (5, 0, 1), "no silent capture loss");
+    let engine = usize::try_from(token).expect("token") as *const c_void;
+    assert_eq!(crate::audio_abi::silent_disco_audio_callback_count(engine), 1);
+    assert_eq!(crate::audio_abi::silent_disco_audio_underrun_count(engine), 1);
+    assert_eq!(
+        crate::audio_abi::silent_disco_audio_silence_filled_frames(engine),
+        2
+    );
+
+    detach_callback_capture(u64::try_from(token).expect("token"));
+    output.release();
+}
+
+#[test]
 fn uniffi_callback_capture_is_opt_in_drains_tail_and_can_restart() {
     let _guard = registry_test_guard();
     let playback = FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
