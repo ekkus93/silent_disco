@@ -292,9 +292,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                 actor
                     .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
                     .expect("pause at reserved boundary");
-                let paused = snapshot_when(&actor, |s| {
-                    s.playback_state == PlaybackState::Paused
-                });
+                let paused = snapshot_when(&actor, |s| s.playback_state == PlaybackState::Paused);
                 assert_eq!(
                     paused.host_queue_next_boundary.as_ref().unwrap().entry_id,
                     "replacement-entry"
@@ -302,9 +300,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                 actor
                     .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
                     .expect("resume at reserved boundary");
-                let resumed = snapshot_when(&actor, |s| {
-                    s.playback_state == PlaybackState::Playing
-                });
+                let resumed = snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
                 assert_eq!(resumed.host_queue.revision(), queue_revision);
                 assert_eq!(
                     resumed.host_queue_next_boundary.as_ref().unwrap().entry_id,
