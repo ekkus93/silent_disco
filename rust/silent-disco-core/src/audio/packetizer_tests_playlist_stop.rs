@@ -111,9 +111,7 @@ fn stop_while_reservation_callback_is_pending_discards_stale_acknowledgment() {
     let (ack_tx, ack_rx) = mpsc::sync_channel::<()>(1);
     let ack_rx = Mutex::new(ack_rx);
     let reserver = Arc::new(move |_boundary: &crate::protocol::TrackBoundary, cancel| {
-        entered_tx
-            .send(cancel)
-            .expect("reservation entered");
+        entered_tx.send(cancel).expect("reservation entered");
         ack_rx
             .lock()
             .expect("ack mutex")
