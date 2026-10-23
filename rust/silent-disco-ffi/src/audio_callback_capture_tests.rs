@@ -237,8 +237,14 @@ fn uniffi_callback_capture_is_opt_in_drains_tail_and_can_restart() {
         volume: 1.0,
     })
     .expect("listener runtime");
-    assert!(playback.read_callback_capture(1).is_err(), "capture defaults off");
-    assert!(playback.start_callback_capture(0).is_err(), "zero capacity rejected");
+    assert!(
+        playback.read_callback_capture(1).is_err(),
+        "capture defaults off"
+    );
+    assert!(
+        playback.start_callback_capture(0).is_err(),
+        "zero capacity rejected"
+    );
     playback
         .start_callback_capture(u32::try_from(MIN_CAPTURE_FRAMES).expect("capacity"))
         .expect("explicit opt-in");
@@ -248,12 +254,17 @@ fn uniffi_callback_capture_is_opt_in_drains_tail_and_can_restart() {
             .is_err(),
         "duplicate tap must be rejected"
     );
-    assert!(playback.read_callback_capture(0).is_err(), "zero read rejected");
+    assert!(
+        playback.read_callback_capture(0).is_err(),
+        "zero read rejected"
+    );
 
     let token = playback.engine_token();
     let (_, _, returned) = callback_output(token, 3);
     assert_eq!(returned, [0_i16; 6], "no source means native silence");
-    let batch = playback.read_callback_capture(3).expect("drain callback tail");
+    let batch = playback
+        .read_callback_capture(3)
+        .expect("drain callback tail");
     assert_eq!(batch.samples, [0.0_f32; 6]);
     assert_eq!(batch.captured_frames, 3);
     assert_eq!(batch.lost_frames, 0);
