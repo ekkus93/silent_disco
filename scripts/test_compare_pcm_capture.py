@@ -45,6 +45,36 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual([part["frame"] for part in result["track_boundaries"]], [240, 480])
         self.assertEqual(result["mismatched_samples"], 0)
 
+    def test_nonuniform_mono_44100_boundaries_are_exact(self):
+        # Exercise the capture comparator with the other supported channel
+        # layout and a non-48kHz clock; no resampling or frame alignment.
+        lengths = (117, 73, 205)
+        tracks = [
+            [(1000 + track * 200 + frame * 3,) for frame in range(length)]
+            for track, length in enumerate(lengths)
+        ]
+        for path, frames in zip(self.sources, tracks):
+            save_wav(path, frames, rate=44100, channels=1)
+        expected = [frame for track in tracks for frame in track]
+        save_wav(self.captured, expected, rate=44100, channels=1)
+        matched = compare(self.sources, self.captured, boundary_window_frames=7)
+        self.assertEqual(matched["status"], "PASS")
+        self.assertEqual(matched["sample_rate"], 44100)
+        self.assertEqual(matched["channels"], 1)
+        self.assertEqual(
+            [boundary["frame"] for boundary in matched["track_boundaries"]],
+            [117, 190],
+        )
+
+        # One duplicated frame at the second boundary must be observable.
+        actual = expected[:190] + [expected[189]] + expected[190:]
+        save_wav(self.captured, actual, rate=44100, channels=1)
+        mismatch = compare(self.sources, self.captured, boundary_window_frames=7)
+        self.assertEqual(mismatch["status"], "FAIL")
+        self.assertEqual(mismatch["extra_tail_frames"], 1)
+        self.assertGreater(mismatch["track_boundaries"][1]["mismatch_frames"], 0)
+        self.assertEqual(mismatch["first_mismatches"][0]["frame"], 190)
+
     def test_inserted_silence_at_boundary_fails(self):
         actual = self.reference[:240] + [(0, 0)] + self.reference[240:]
         result = self.inspect(actual, boundary_window_frames=16)
