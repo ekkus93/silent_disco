@@ -102,9 +102,16 @@ polls/dumps samples to an app-private WAV from `Dispatchers.IO`, and
 `stopAndReport()` detaches, drains, finalizes the WAV and returns counters.
 The separate `CallbackPcmWavWriter` limits recording to five minutes by
 default and rejects malformed or non-finite frames. The report's
-`complete` property must be true before trusting the WAV; a tap overflow
-invalidates that evidence. The helper is not automatically enabled during
-normal listening and is not a finished debug UI toggle.
+`complete` property must be true before trusting the WAV: it requires a
+nonempty capture, at least one callback, no tap loss, and agreement between
+written and captured frame counts. A tap overflow or truncated/empty recording
+invalidates that evidence. `noUnexpectedOutputReopen` additionally requires a
+previously opened native stream and unchanged native open **and close** counts
+through the capture interval; rebinding the same output stream is permitted.
+Unknown native lifecycle state is never treated as a pass. These checks do not
+establish acoustic/DAC continuity or rule out underruns; compare the PCM against
+canonical source data and inspect native underrun/silence counters separately.
+The helper is disabled until explicitly enabled through developer diagnostics.
 
 This tap captures the Rust callback-returned PCM, still upstream of Android's
 mixer, speaker, DAC and any Bluetooth device. Do not misreport this as an
