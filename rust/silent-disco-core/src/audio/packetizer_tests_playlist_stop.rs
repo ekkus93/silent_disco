@@ -167,63 +167,10 @@ fn stop_while_reservation_callback_is_pending_discards_stale_acknowledgment() {
     );
 }
 
-#[test]
-fn stop_replay_with_the_same_queue_ids_rejects_the_retired_streams_late_ack() {
-    let _guard = super::super::super::tests::audio_test_guard();
-    let temp = TempDir::new().expect("temp");
-    let first_path = write_bytes(&temp, "replay-first.wav", &pcm_wav_frames(48_000, 2, 480));
-    let next_path = write_bytes(&temp, "replay-next.wav", &pcm_wav_frames(48_000, 2, 480));
-    let old_decoder =
-        StreamingDecodeHandle::open(first_path.clone(), StreamingDecodeConfig::default())
-            .expect("old current decoder");
-    let old_successor_path = next_path.clone();
-    let old_successor =
-        StreamingPlaylistTrackFactory::new("next", "Next", move || {
-            StreamingDecodeHandle::open(old_successor_path, StreamingDecodeConfig::default())
-        })
-        .expect("old successor");
-    let (entered_tx, entered_rx) = mpsc::sync_channel::<()>(1);
-    let (ack_tx, ack_rx) = mpsc::sync_channel::<()>(1);
-    let ack_rx = Mutex::new(ack_rx);
-    let old_reserver = Arc::new(move |_boundary: &crate::protocol::TrackBoundary, _cancel| {
-        entered_tx.send(()).expect("old reservation entered");
-        ack_rx
-            .lock()
-            .expect("old acknowledgment mutex")
-            .recv_timeout(TEST_TIMEOUT)
-            .expect("release old reservation");
-        // A delayed success response from a retired stream must be harmless.
-        Ok(())
-    });
-    let old = StreamingPacketizeHandle::spawn_playlist_reserved(
-        old_decoder,
-        "current",
-        "Current",
-        vec![old_successor],
-        SessionId::new("replay-session").expect("session"),
-        StreamId::new("retired-stream").expect("retired stream"),
-        MonotonicMillis::new(5_000),
-        StreamingPacketizeConfig {
-            queue_capacity: 1,
-            ..StreamingPacketizeConfig::default()
-        },
-        old_reserver,
-    )
-    .expect("old packetizer");
-    assert!(matches!(
-        old.recv_timeout(TEST_TIMEOUT),
-        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
-    ));
-    entered_rx
-        .recv_timeout(TEST_TIMEOUT)
-        .expect("old producer reached reservation");
-    old.cancel();
-
-    // Replay reuses queue entry IDs but starts a distinct stream and sample
-    // timeline. The retired producer is still waiting for its stale reply.
-    let new_decoder =
-        StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
-            .expect("new current decoder");
+// Replay can complete independently while the previous stream awaits a stale ack.
+fn assert_replay_stream_is_contiguous(first_path: std::path::PathBuf, next_path: std::path::PathBuf) {
+    let new_decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("new current decoder");
     let new_successor = StreamingPlaylistTrackFactory::new("next", "Next", move || {
         StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
     })
@@ -266,8 +213,14 @@ fn stop_replay_with_the_same_queue_ids_rejects_the_retired_streams_late_ack() {
             Err(mpsc::RecvTimeoutError::Timeout) => panic!("replay producer stalled"),
         }
     }
-    assert_eq!(new.join().expect("replay completes").state, PacketizerWorkerState::Completed);
-    assert_eq!(new_boundaries, [("replay-stream".to_owned(), "next".to_owned(), 480)]);
+    assert_eq!(
+        new.join().expect("replay completes").state,
+        PacketizerWorkerState::Completed
+    );
+    assert_eq!(
+        new_boundaries,
+        [("replay-stream".to_owned(), "next".to_owned(), 480)]
+    );
     assert_eq!(
         new_audio,
         [
@@ -278,7 +231,61 @@ fn stop_replay_with_the_same_queue_ids_rejects_the_retired_streams_late_ack() {
         ],
         "replay starts a new contiguous stream despite an outstanding old reservation"
     );
+}
 
+#[test]
+fn stop_replay_with_the_same_queue_ids_rejects_the_retired_streams_late_ack() {
+    let _guard = super::super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "replay-first.wav", &pcm_wav_frames(48_000, 2, 480));
+    let next_path = write_bytes(&temp, "replay-next.wav", &pcm_wav_frames(48_000, 2, 480));
+    let old_decoder =
+        StreamingDecodeHandle::open(first_path.clone(), StreamingDecodeConfig::default())
+            .expect("old current decoder");
+    let old_successor_path = next_path.clone();
+    let old_successor = StreamingPlaylistTrackFactory::new("next", "Next", move || {
+            StreamingDecodeHandle::open(old_successor_path, StreamingDecodeConfig::default())
+        })
+        .expect("old successor");
+    let (entered_tx, entered_rx) = mpsc::sync_channel::<()>(1);
+    let (ack_tx, ack_rx) = mpsc::sync_channel::<()>(1);
+    let ack_rx = Mutex::new(ack_rx);
+    let old_reserver = Arc::new(move |_boundary: &crate::protocol::TrackBoundary, _cancel| {
+        entered_tx.send(()).expect("old reservation entered");
+        ack_rx
+            .lock()
+            .expect("old acknowledgment mutex")
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("release old reservation");
+        // A delayed success response from a retired stream must be harmless.
+        Ok(())
+    });
+    let old = StreamingPacketizeHandle::spawn_playlist_reserved(
+        old_decoder,
+        "current",
+        "Current",
+        vec![old_successor],
+        SessionId::new("replay-session").expect("session"),
+        StreamId::new("retired-stream").expect("retired stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        old_reserver,
+    )
+    .expect("old packetizer");
+    assert!(matches!(
+        old.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
+    ));
+    entered_rx
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("old producer reached reservation");
+    old.cancel();
+
+    // The retired producer remains blocked while replay crosses its boundary.
+    assert_replay_stream_is_contiguous(first_path, next_path);
     ack_tx.send(()).expect("late old-stream acknowledgment");
     let mut retired_tail = Vec::new();
     loop {
