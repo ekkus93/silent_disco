@@ -1,7 +1,11 @@
 //! Offline test harness for the **native callback return buffer** rather than
 //! the existing pre-render-ring debug tap. File I/O happens after the callback
 //! returns, never within the real-time audio function.
-use crate::audio_abi::{registry_test_guard, silent_disco_audio_read_interleaved_f32};
+use crate::audio_abi::{
+    attach_callback_capture, detach_callback_capture, registry_test_guard,
+    silent_disco_audio_read_interleaved_f32,
+};
+use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
 use crate::audio_output::FfiAudioOutputHandle;
 use silent_disco_core::audio::DebugPcmRecorder;
 use std::ffi::c_void;
@@ -146,5 +150,66 @@ fn native_callback_capture_exposes_silence_injected_at_track_boundary() {
         samples[..TRACK_FRAMES as usize * CHANNELS]
     );
     assert_ne!(capture, samples, "a one-frame dropout must be detectable");
+    output.release();
+}
+
+#[test]
+fn attached_native_callback_tap_captures_underruns_and_reports_overflow() {
+    let _guard = registry_test_guard();
+    let output = FfiAudioOutputHandle::open(4_800, 1).expect("register output");
+    let token = output.engine_token().expect("engine token");
+    let tap = std::sync::Arc::new(
+        CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("bounded tap"),
+    );
+    attach_callback_capture(
+        u64::try_from(token).expect("positive token"),
+        std::sync::Arc::clone(&tap),
+    )
+    .expect("attach exactly one capture");
+
+    let expected = three_track_pcm();
+    let frames = expected
+        .iter()
+        .map(|sample| f32::from(*sample) / 32768.0)
+        .collect();
+    assert_eq!(
+        output.push_frames(frames).expect("send three tracks"),
+        3 * TRACK_FRAMES
+    );
+    let (status, supplied, heard) = callback_output(token, 3 * TRACK_FRAMES);
+    assert_eq!(status, 0);
+    assert_eq!(supplied, 3 * TRACK_FRAMES);
+    assert_eq!(heard, expected);
+    assert_eq!(tap.counters(), (720, 0, 1));
+
+    // The next frame did not exist in the producer ring. Capture the actual
+    // zero returned by the C ABI, not only the pre-ring scheduler PCM.
+    let (status, supplied, silence) = callback_output(token, 1);
+    assert_eq!(status, 1);
+    assert_eq!(supplied, 0);
+    assert_eq!(silence, [0, 0]);
+    let recorded = tap.drain(721);
+    assert_eq!(recorded.len(), 721 * CHANNELS);
+    let canonical: Vec<f32> = expected
+        .iter()
+        .map(|sample| f32::from(*sample) / 32768.0)
+        .collect();
+    assert_eq!(&recorded[..canonical.len()], canonical);
+    assert_eq!(&recorded[canonical.len()..], [0.0, 0.0]);
+    assert_eq!(tap.counters(), (721, 0, 2));
+
+    // Fill the fixed-size tap without draining and then request one more
+    // callback. A genuine drop must increment telemetry rather than silently
+    // presenting an incomplete WAV as full-fidelity evidence.
+    for _ in 0..MIN_CAPTURE_FRAMES {
+        let _ = callback_output(token, 1);
+    }
+    assert_eq!(tap.counters(), (5_521, 0, 4_802));
+    let _ = callback_output(token, 1);
+    assert_eq!(tap.counters(), (5_521, 1, 4_803));
+    detach_callback_capture(u64::try_from(token).expect("token"));
+    let before = tap.counters();
+    let _ = callback_output(token, 1);
+    assert_eq!(tap.counters(), before, "detached capture must remain stable");
     output.release();
 }
