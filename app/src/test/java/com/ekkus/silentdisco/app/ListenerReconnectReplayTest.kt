@@ -108,6 +108,29 @@ class ListenerReconnectReplayTest {
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Third track")
     }
 
+
+    @Test
+    fun duplicateCachedBoundariesNeverScheduleDuplicateOrRewindCurrentTrack() = runTest(dispatcher) {
+        val fixture = reconnectingListener(pendingBeforeDisconnect = null)
+        fixture.deliver(streamStarted(hostStartTimeMs = 9_000uL, title = "First track"))
+        fixture.deliver(boundary(PAST_SAMPLE, "Second track"))
+        fixture.deliver(boundary(PAST_SAMPLE, "Second track"))
+        fixture.deliver(boundary(LATER_SAMPLE, "Third track"))
+        fixture.deliver(boundary(LATER_SAMPLE, "Third track"))
+
+        assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
+        assertThat(fixture.viewModel.pendingListenerTrackBoundaries.keys).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerTrackBoundaryJobs.keys).containsExactly(LATER_SAMPLE)
+
+        advanceTimeBy(3_999L)
+        runCurrent()
+        assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
+        advanceTimeBy(1L)
+        runCurrent()
+        assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Third track")
+        assertThat(fixture.viewModel.pendingListenerTrackBoundaries).isEmpty()
+    }
+
     @Test
     fun runtimePollPromotesOnlyBufferingToPlaying() {
         assertThat(shouldReportListenerPlaying(FfiPlaybackPhase.PLAYING, PlaybackState.BUFFERING)).isTrue()
