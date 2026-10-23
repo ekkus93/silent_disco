@@ -80,10 +80,11 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertGreater(report["track_boundaries"][0]["mismatch_frames"], 0)
 
     def test_cli_invalid_reference_produces_error_evidence(self):
-        code, report = self.run_cli(self.reference, expected=[])
+        save_wav(self.sources[1], [])
+        code, report = self.run_cli(self.reference)
         self.assertEqual(code, 2)
         self.assertEqual(report["status"], "ERROR")
-        self.assertIn("at least one expected track", report["message"])
+        self.assertIn("canonical reference track has no PCM frames", report["message"])
 
     def test_exact_gapless_pcm_passes_with_both_boundaries(self):
         result = self.inspect(self.reference, boundary_window_frames=24)
