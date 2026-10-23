@@ -189,3 +189,22 @@ capture. Rebinding the same live output does not imply reopening. JVM
 regressions cover inactive output, close, replacement open, malformed summary,
 and complete versus truncated/dropped WAV evidence. Unknown counters remain
 unknown, not inferred as zero.
+
+## Encoded-source callbacks crossing codec boundaries
+
+The WAV/FLAC/MP3 production-playlist regression now retains all decoded
+packets in a single native output ring and requests three non-packet-aligned
+callbacks. The first callback spans the WAV-to-FLAC decoded-sample boundary,
+and the second spans the FLAC-to-MP3 boundary. The test compares the returned
+float PCM with independently decoded canonical samples, permits only explicit
+final-packet zero padding, and checks native callback underruns, silence and
+capture-tap loss. This is software callback evidence, not physical DAC evidence.
+
+The first version at `68fd7235` exposed a **test harness** limitation: its
+4,800-frame capture tap was smaller than the deliberately long first callback,
+so the tap correctly reported dropped diagnostic frames. Commit `bfcc983e`
+sizes the tap to the bounded encoded playlist's output ring and applies pinned
+rustfmt. The source-line policy passed; exact-head Rust/Android and desktop
+workflows were pending at this checkpoint. Do not mark the comprehensive
+production-path regression complete until those tests pass and the remaining
+scheduler, edit, pause, Stop/replay and recovery permutations are covered.
