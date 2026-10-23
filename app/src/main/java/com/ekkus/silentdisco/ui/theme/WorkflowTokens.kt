@@ -23,3 +23,7 @@ internal object WorkflowMotion {
 internal object WorkflowTouchTarget {
     val minimum = 48.dp
 }
+
+/** The system animation-scale preference overrides decorative workflow color motion. */
+internal fun workflowStateChangeDurationMs(scaleFactor: Float): Int =
+    if (scaleFactor <= 0f || !scaleFactor.isFinite()) 0 else WorkflowMotion.stateChangeMs

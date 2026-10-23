@@ -13,14 +13,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalMotionDurationScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import com.ekkus.silentdisco.ui.theme.WorkflowMotion
 import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
+import com.ekkus.silentdisco.ui.theme.workflowStateChangeDurationMs
 
 internal enum class ClientWorkflowStage(val label: String) {
     FIND("Find"),
@@ -33,6 +34,7 @@ internal fun ClientWorkflowStepper(
     stage: ClientWorkflowStage,
     modifier: Modifier = Modifier,
 ) {
+    val motionDuration = workflowStateChangeDurationMs(LocalMotionDurationScale.current.scaleFactor)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -56,7 +58,7 @@ internal fun ClientWorkflowStepper(
             }
             val color by animateColorAsState(
                 targetValue = targetColor,
-                animationSpec = tween(durationMillis = WorkflowMotion.stateChangeMs),
+                animationSpec = tween(durationMillis = motionDuration),
                 label = "client_workflow_step_${item.name.lowercase()}_color",
             )
             Text(
