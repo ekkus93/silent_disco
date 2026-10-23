@@ -286,6 +286,30 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
                         .entry_id,
                     "replacement-entry"
                 );
+                // Pausing with a reserved successor must retain the actor's
+                // committed boundary. Resume must not unlock the successor
+                // or change which PCM the already-buffered producer emits.
+                actor
+                    .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Paused))
+                    .expect("pause at reserved boundary");
+                let paused = snapshot_when(&actor, |s| {
+                    s.playback_state == PlaybackState::Paused
+                });
+                assert_eq!(
+                    paused.host_queue_next_boundary.as_ref().unwrap().entry_id,
+                    "replacement-entry"
+                );
+                actor
+                    .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+                    .expect("resume at reserved boundary");
+                let resumed = snapshot_when(&actor, |s| {
+                    s.playback_state == PlaybackState::Playing
+                });
+                assert_eq!(resumed.host_queue.revision(), queue_revision);
+                assert_eq!(
+                    resumed.host_queue_next_boundary.as_ref().unwrap().entry_id,
+                    "replacement-entry"
+                );
                 boundaries.push((entry_id, first_sample_index));
             }
             Some(FfiPlaylistFrame::End) => break,
