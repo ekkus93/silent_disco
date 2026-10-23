@@ -1,8 +1,8 @@
 //! Generate one canonical PCM16 WAV per source using Silent Disco's own
 //! decoder, so listeners can be compared against the same normalization path.
 //! Usage:
-//! cargo run --manifest-path rust/silent-disco-core/Cargo.toml --example gapless_reference_wav --
-//!   /tmp/references source-one.mp3 source-two.wav
+//! `cargo run --manifest-path rust/silent-disco-core/Cargo.toml --example gapless_reference_wav --`
+//! `/tmp/references source-one.mp3 source-two.wav`
 use silent_disco_core::audio::{DebugPcmRecorder, StreamingDecodeConfig, StreamingDecodeHandle};
 use std::error::Error;
 use std::fs;
