@@ -21,6 +21,9 @@
 //! itself, is ordinary safe Rust.
 
 use core::ffi::c_void;
+use std::sync::Arc;
+
+use crate::callback_capture::CallbackCaptureTap;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -53,7 +56,7 @@ impl SilentDiscoAudioStatus {
 }
 
 enum AudioEngineEntry {
-    Active(RenderRingConsumer),
+    Active(RenderRingConsumer, Option<Arc<CallbackCaptureTap>>),
     Released,
     /// Only ever inserted by test code, to verify the panic boundary in
     /// 17.4 without any always-compiled panic path in production code.
@@ -79,7 +82,7 @@ impl Default for AudioEngineRegistry {
 impl core::fmt::Debug for AudioEngineEntry {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Active(_) => formatter.write_str("Active"),
+            Self::Active(_, _) => formatter.write_str("Active"),
             Self::Released => formatter.write_str("Released"),
             #[cfg(test)]
             Self::PanicOnRead => formatter.write_str("PanicOnRead"),
@@ -168,7 +171,7 @@ pub(crate) fn register_render_ring(
     }
     registry
         .entries
-        .insert(token, AudioEngineEntry::Active(consumer));
+        .insert(token, AudioEngineEntry::Active(consumer, None));
     // `checked_add` overflowing means `token` was `u64::MAX`, the last
     // representable token; store the reserved `0` sentinel so every future
     // call fails explicitly instead of wrapping around to a reused value.
@@ -187,7 +190,7 @@ pub(crate) fn release_render_ring(token: u64) -> Result<(), AudioAbiError> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     match registry.entries.get_mut(&token) {
-        Some(entry @ AudioEngineEntry::Active(_)) => {
+        Some(entry @ AudioEngineEntry::Active(_, _)) => {
             *entry = AudioEngineEntry::Released;
             Ok(())
         }
@@ -195,6 +198,24 @@ pub(crate) fn release_render_ring(token: u64) -> Result<(), AudioAbiError> {
         #[cfg(test)]
         Some(AudioEngineEntry::PanicOnRead) => Err(AudioAbiError::AlreadyReleased),
         None => Err(AudioAbiError::UnknownToken),
+    }
+}
+
+/// Attach a bounded diagnostic tap from the non-real-time control plane.
+pub(crate) fn attach_callback_capture(token: u64, tap: Arc<CallbackCaptureTap>) -> Result<(), AudioAbiError> {
+    let mut registry = audio_engine_registry().lock().unwrap_or_else(PoisonError::into_inner);
+    match registry.entries.get_mut(&token) {
+        Some(AudioEngineEntry::Active(_, slot @ None)) => { *slot = Some(tap); Ok(()) }
+        Some(AudioEngineEntry::Active(_, Some(_))) => Err(AudioAbiError::AlreadyReleased),
+        _ => Err(AudioAbiError::UnknownToken),
+    }
+}
+
+/// Detach only after the caller has stopped its capture-draining worker.
+pub(crate) fn detach_callback_capture(token: u64) {
+    let mut registry = audio_engine_registry().lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(AudioEngineEntry::Active(_, slot)) = registry.entries.get_mut(&token) {
+        *slot = None;
     }
 }
 
@@ -206,7 +227,7 @@ fn with_active_consumer<T>(token: u64, default: T, f: impl FnOnce(&RenderRingCon
         return default;
     };
     match registry.entries.get(&token) {
-        Some(AudioEngineEntry::Active(consumer)) => f(consumer),
+        Some(AudioEngineEntry::Active(consumer, _)) => f(consumer),
         _ => default,
     }
 }
@@ -225,9 +246,12 @@ fn read_interleaved_f32_impl(token: u64, output: &mut [f32]) -> (i32, u32) {
         return (SilentDiscoAudioStatus::Stopping.code(), 0);
     };
     match registry.entries.get(&token) {
-        Some(AudioEngineEntry::Active(consumer)) => {
+        Some(AudioEngineEntry::Active(consumer, capture)) => {
             consumer.record_callback_invocation();
             let outcome = consumer.read_frames(output);
+            if let Some(tap) = capture {
+                tap.record_callback(output);
+            }
             let frames_from_ring = u32::try_from(outcome.frames_supplied).unwrap_or(u32::MAX);
             let status = if outcome.frames_silence_filled > 0 {
                 SilentDiscoAudioStatus::Partial
