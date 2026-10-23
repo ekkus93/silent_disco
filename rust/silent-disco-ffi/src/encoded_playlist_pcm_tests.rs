@@ -2,10 +2,10 @@
 //! Expected samples come from independent runs of the canonical Rust decoder;
 //! protocol boundary and packet sequence continuity must survive codec changes.
 use crate::audio_abi::{
-    attach_callback_capture, detach_callback_capture, registry_test_guard,
-    silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
-    silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
-    register_render_ring, release_render_ring,
+    attach_callback_capture, detach_callback_capture, register_render_ring, registry_test_guard,
+    release_render_ring, silent_disco_audio_callback_count,
+    silent_disco_audio_read_interleaved_f32, silent_disco_audio_silence_filled_frames,
+    silent_disco_audio_underrun_count,
 };
 use crate::audio_output::FfiAudioOutputHandle;
 use crate::callback_capture::CallbackCaptureTap;
@@ -227,9 +227,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                         channels,
                         samples_per_packet,
                         first_sample_index: SampleIndex::new(first_sample_index),
-                        host_presentation_time_ms: MonotonicMillis::new(
-                            host_presentation_time_ms,
-                        ),
+                        host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
                         payload,
                     }))
                     .expect("send encoded-source PCM over production UDP");
@@ -418,8 +416,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     for frame in 0..ramp_frames.min(canonical.len() / 2) {
         for channel in 0..2 {
             let index = frame * 2 + channel;
-            let scaled = i32::from(canonical[index])
-                * i32::try_from(frame).expect("ramp position")
+            let scaled = i32::from(canonical[index]) * i32::try_from(frame).expect("ramp position")
                 / i32::try_from(ramp_frames).expect("nonzero ramp");
             expected_scheduler_pcm[index] =
                 f32::from(i16::try_from(scaled).expect("ramped PCM")) / 32768.0;
@@ -430,15 +427,20 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         .zip(&expected_scheduler_pcm)
         .position(|(observed, reference)| observed.to_bits() != reference.to_bits())
         .or_else(|| {
-            (scheduler_callback_pcm.len() != expected_scheduler_pcm.len())
-                .then_some(scheduler_callback_pcm.len().min(expected_scheduler_pcm.len()))
+            (scheduler_callback_pcm.len() != expected_scheduler_pcm.len()).then_some(
+                scheduler_callback_pcm
+                    .len()
+                    .min(expected_scheduler_pcm.len()),
+            )
         });
     let scheduler_mismatch_count = scheduler_callback_pcm
         .iter()
         .zip(&expected_scheduler_pcm)
         .filter(|(observed, reference)| observed.to_bits() != reference.to_bits())
         .count()
-        + scheduler_callback_pcm.len().abs_diff(expected_scheduler_pcm.len());
+        + scheduler_callback_pcm
+            .len()
+            .abs_diff(expected_scheduler_pcm.len());
     let scheduler_engine =
         usize::try_from(scheduler_token).expect("token") as *const core::ffi::c_void;
     let scheduler_underruns = silent_disco_audio_underrun_count(scheduler_engine);
