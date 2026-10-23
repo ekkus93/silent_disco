@@ -14,6 +14,8 @@ mod android_abi;
 mod android_database_abi;
 mod android_p2_abi;
 mod audio_abi;
+#[cfg(test)]
+mod audio_callback_capture_tests;
 mod audio_output;
 mod host_control;
 mod host_playlist;
