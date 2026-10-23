@@ -26,10 +26,7 @@ fn three_track_pcm() -> Vec<i16> {
 }
 
 fn callback_output(token: i64, frames: u32) -> (i32, u32, Vec<i16>) {
-    let mut samples = vec![
-        0_f32;
-        usize::try_from(frames).expect("fixture fits") * CHANNELS
-    ];
+    let mut samples = vec![0_f32; usize::try_from(frames).expect("fixture fits") * CHANNELS];
     let mut from_ring = 0;
     // The token is intentionally pointer-shaped but never dereferenced.
     let engine = usize::try_from(token).expect("positive token") as *mut c_void;
@@ -83,7 +80,9 @@ fn native_callback_capture_exactly_matches_three_track_source_pcm() {
         let (status, frames_read, samples) = callback_output(token, TRACK_FRAMES);
         assert_eq!(status, 0, "unexpected native callback underrun");
         assert_eq!(frames_read, TRACK_FRAMES);
-        recording.append(&samples).expect("record returned callback PCM");
+        recording
+            .append(&samples)
+            .expect("record returned callback PCM");
     }
     recording.finish(RATE).expect("finalize callback WAV");
     assert_eq!(output.queued_frames().expect("ring readable"), 0);
@@ -112,7 +111,10 @@ fn native_callback_capture_exposes_silence_injected_at_track_boundary() {
         .iter()
         .map(|sample| f32::from(*sample) / 32768.0)
         .collect();
-    assert_eq!(output.push_frames(first_track).expect("first track"), TRACK_FRAMES);
+    assert_eq!(
+        output.push_frames(first_track).expect("first track"),
+        TRACK_FRAMES
+    );
     let (status, read, first) = callback_output(token, TRACK_FRAMES);
     assert_eq!(status, 0);
     assert_eq!(read, TRACK_FRAMES);
@@ -127,7 +129,10 @@ fn native_callback_capture_exposes_silence_injected_at_track_boundary() {
         .iter()
         .map(|sample| f32::from(*sample) / 32768.0)
         .collect();
-    assert_eq!(output.push_frames(rest).expect("remaining tracks"), 2 * TRACK_FRAMES);
+    assert_eq!(
+        output.push_frames(rest).expect("remaining tracks"),
+        2 * TRACK_FRAMES
+    );
     let (status, read, final_pcm) = callback_output(token, 2 * TRACK_FRAMES);
     assert_eq!(status, 0);
     assert_eq!(read, 2 * TRACK_FRAMES);
@@ -136,7 +141,10 @@ fn native_callback_capture_exposes_silence_injected_at_track_boundary() {
     capture.extend(gap);
     capture.extend(final_pcm);
     assert_eq!(capture.len(), samples.len() + CHANNELS);
-    assert_eq!(capture[..TRACK_FRAMES as usize * CHANNELS], samples[..TRACK_FRAMES as usize * CHANNELS]);
+    assert_eq!(
+        capture[..TRACK_FRAMES as usize * CHANNELS],
+        samples[..TRACK_FRAMES as usize * CHANNELS]
+    );
     assert_ne!(capture, samples, "a one-frame dropout must be detectable");
     output.release();
 }
