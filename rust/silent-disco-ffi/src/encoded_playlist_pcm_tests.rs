@@ -312,6 +312,12 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                 };
                 assert_eq!(received.first_sample_index.get(), first_sample_index);
                 assert_eq!(received.entry_id, entry_id);
+                // Exercise live local volume changes precisely at each
+                // codec boundary. Already-rendered PCM retains its prior
+                // gain; subsequent converted packets use the new gain.
+                let gain = if boundaries.is_empty() { 0.5 } else { 0.25 };
+                pump.set_volume(gain)
+                    .expect("set local listener gain at source boundary");
                 boundaries.push(first_sample_index);
             }
             Some(FfiPlaylistFrame::End) => {
@@ -347,6 +353,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     // gap when moving between encoded containers.
     assert_eq!(pump.diagnostics().packets_emitted, sequence);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
+    assert_eq!(boundaries.len(), 2, "two explicit gain-change points");
     // Read the continuous native output in callback sizes that deliberately
     // cross the WAV->FLAC and FLAC->MP3 boundaries by one frame. A callback
     // is not synchronized with source or packet boundaries in real playback.
@@ -420,6 +427,18 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                 / i32::try_from(ramp_frames).expect("nonzero ramp");
             expected_scheduler_pcm[index] =
                 f32::from(i16::try_from(scaled).expect("ramped PCM")) / 32768.0;
+        }
+    }
+    // The production pump applies the output gain *after* the canonical
+    // PCM16 conversion and startup fade. Use exact binary fractional gains
+    // to make the comparison bit-exact while exercising both live changes.
+    // Critically, neither track change is allowed to reset the initial fade.
+    for (sample_index, sample) in expected_scheduler_pcm.iter_mut().enumerate() {
+        let frame = u64::try_from(sample_index / 2).expect("bounded fixture");
+        if frame >= expected_boundaries[1] {
+            *sample *= 0.25;
+        } else if frame >= expected_boundaries[0] {
+            *sample *= 0.5;
         }
     }
     let first_scheduler_mismatch = scheduler_callback_pcm
@@ -507,7 +526,7 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         let first_scheduler_channel =
             first_scheduler_mismatch.map_or("null".to_owned(), |sample| (sample % 2).to_string());
         let report = format!(
-            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-tcp-udp-sockets\",\n  \"source_formats\": [\"wav\", \"flac\", \"mp3\"],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"source_boundaries\": {expected_boundaries:?},\n  \"observed_boundaries\": {boundaries:?},\n  \"expected_frames_with_padding\": {},\n  \"captured_frames\": {},\n  \"callback_frame_chunks\": {callback_sizes:?},\n  \"callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_loss},\n  \"tap_callback_count\": {tap_callbacks},\n  \"mismatched_samples\": {mismatch_count},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"listener_scheduler_exercised\": true,\n  \"scheduler_mismatched_samples\": {scheduler_mismatch_count},\n  \"scheduler_first_mismatch_frame\": {first_scheduler_frame},\n  \"scheduler_first_mismatch_channel\": {first_scheduler_channel},\n  \"scheduler_callback_count\": {scheduler_callbacks},\n  \"scheduler_underrun_callbacks\": {scheduler_underruns},\n  \"scheduler_silence_filled_frames\": {scheduler_silence},\n  \"scheduler_tap_captured_frames\": {scheduler_tap_frames},\n  \"scheduler_tap_lost_frames\": {scheduler_tap_loss},\n  \"scheduler_tap_callback_count\": {scheduler_tap_callbacks},\n  \"physical_dac_verified\": false\n}}\n",
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-tcp-udp-sockets\",\n  \"source_formats\": [\"wav\", \"flac\", \"mp3\"],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"source_boundaries\": {expected_boundaries:?},\n  \"observed_boundaries\": {boundaries:?},\n  \"listener_volume_gains\": [1.0, 0.5, 0.25],\n  \"expected_frames_with_padding\": {},\n  \"captured_frames\": {},\n  \"callback_frame_chunks\": {callback_sizes:?},\n  \"callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_loss},\n  \"tap_callback_count\": {tap_callbacks},\n  \"mismatched_samples\": {mismatch_count},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"listener_scheduler_exercised\": true,\n  \"scheduler_mismatched_samples\": {scheduler_mismatch_count},\n  \"scheduler_first_mismatch_frame\": {first_scheduler_frame},\n  \"scheduler_first_mismatch_channel\": {first_scheduler_channel},\n  \"scheduler_callback_count\": {scheduler_callbacks},\n  \"scheduler_underrun_callbacks\": {scheduler_underruns},\n  \"scheduler_silence_filled_frames\": {scheduler_silence},\n  \"scheduler_tap_captured_frames\": {scheduler_tap_frames},\n  \"scheduler_tap_lost_frames\": {scheduler_tap_loss},\n  \"scheduler_tap_callback_count\": {scheduler_tap_callbacks},\n  \"physical_dac_verified\": false\n}}\n",
             expected_callback_pcm.len() / 2,
             callback_pcm.len() / 2
         );
