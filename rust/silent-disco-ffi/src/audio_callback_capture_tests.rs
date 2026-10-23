@@ -242,7 +242,10 @@ fn partial_native_callback_underrun_is_recorded_with_exact_silence_tail() {
     let (status, from_ring, returned) = callback_output(token, 5);
     assert_eq!(status, 1, "partial callback must report underrun");
     assert_eq!(from_ring, 3);
-    assert_eq!(returned, [1_024, 2_048, 3_072, 4_096, 5_120, 6_144, 0, 0, 0, 0]);
+    assert_eq!(
+        returned,
+        [1_024, 2_048, 3_072, 4_096, 5_120, 6_144, 0, 0, 0, 0]
+    );
     assert_eq!(
         tap.drain(5),
         returned
@@ -253,8 +256,14 @@ fn partial_native_callback_underrun_is_recorded_with_exact_silence_tail() {
     );
     assert_eq!(tap.counters(), (5, 0, 1), "no silent capture loss");
     let engine = usize::try_from(token).expect("token") as *const c_void;
-    assert_eq!(crate::audio_abi::silent_disco_audio_callback_count(engine), 1);
-    assert_eq!(crate::audio_abi::silent_disco_audio_underrun_count(engine), 1);
+    assert_eq!(
+        crate::audio_abi::silent_disco_audio_callback_count(engine),
+        1
+    );
+    assert_eq!(
+        crate::audio_abi::silent_disco_audio_underrun_count(engine),
+        1
+    );
     assert_eq!(
         crate::audio_abi::silent_disco_audio_silence_filled_frames(engine),
         2
