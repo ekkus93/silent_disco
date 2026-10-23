@@ -71,6 +71,22 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(report["captured_frames"], len(self.reference))
         self.assertEqual([item["frame"] for item in report["track_boundaries"]], [240, 480])
 
+    def test_cli_records_explicit_exact_source_commit(self):
+        sha = "AbCd" * 10
+        code, report = self.run_cli(self.reference, extra_args=("--commit-sha", sha))
+        self.assertEqual(code, 0)
+        self.assertEqual(report["commit_sha"], sha.lower())
+
+    def test_cli_rejects_ambiguous_or_malformed_source_commit(self):
+        for sha in ("master", "1234567", "z" * 40, "a" * 41):
+            with self.subTest(sha=sha):
+                code, report = self.run_cli(
+                    self.reference, extra_args=("--commit-sha", sha)
+                )
+                self.assertEqual(code, 2)
+                self.assertEqual(report["status"], "ERROR")
+                self.assertIn("commit SHA must be exactly 40", report["message"])
+
     def test_cli_boundary_gap_is_a_failing_ci_exit_code(self):
         actual = self.reference[:240] + [(0, 0)] + self.reference[240:]
         code, report = self.run_cli(actual, extra_args=("--boundary-window-frames", "8"))

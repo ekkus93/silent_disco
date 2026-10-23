@@ -10,6 +10,7 @@ import argparse
 from itertools import zip_longest
 import json
 import math
+import re
 from pathlib import Path
 import struct
 import sys
@@ -47,12 +48,15 @@ def compare(
     *,
     tolerance_lsb: int = 0,
     boundary_window_frames: int = 480,
+    commit_sha: str | None = None,
 ) -> dict:
     """Compare full ordered content, exact length and each track boundary."""
     if not expected_paths:
         raise ValueError("at least one expected track is required")
     if not 0 <= tolerance_lsb <= 32767 or boundary_window_frames < 1:
         raise ValueError("invalid sample tolerance or boundary window")
+    if commit_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+        raise ValueError("commit SHA must be exactly 40 hexadecimal characters")
     expected_paths = [Path(path) for path in expected_paths]
     captured_path = Path(captured_path)
     infos = [_wav_info(path) for path in expected_paths]
@@ -150,6 +154,7 @@ def compare(
 
     return {
         "status": "PASS" if not (missing or extra or mismatched_samples or capture_truncated_frames) else "FAIL",
+        "commit_sha": commit_sha.lower() if commit_sha is not None else None,
         "sample_rate": capture_info["sample_rate"],
         "channels": capture_info["channels"],
         "expected_frames": expected_frames,
@@ -180,6 +185,7 @@ def main() -> int:
                         help="Canonical PCM16 WAV tracks in playback order")
     parser.add_argument("--captured", type=Path, required=True)
     parser.add_argument("--report", type=Path, help="Optional JSON evidence")
+    parser.add_argument("--commit-sha", help="Exact source commit for evidence provenance (40 hex digits)")
     parser.add_argument("--tolerance-lsb", type=int, default=0)
     parser.add_argument("--boundary-window-frames", type=int, default=480)
     args = parser.parse_args()
@@ -188,6 +194,7 @@ def main() -> int:
             args.expected, args.captured,
             tolerance_lsb=args.tolerance_lsb,
             boundary_window_frames=args.boundary_window_frames,
+            commit_sha=args.commit_sha,
         )
     except (ValueError, OSError, EOFError, wave.Error) as error:
         report = {"status": "ERROR", "message": str(error)}

@@ -134,3 +134,15 @@ from the device for comparison against canonical reference WAV files.
 Hardware acceptance must still check playback under a real output route
 (speaker, headphone or Bluetooth) and independently measure or otherwise
 verify OS/mixer/DAC discontinuity, as in the authoritative TODO.
+
+## Exact source identity in machine-readable comparison evidence
+
+Pass `--commit-sha "$GITHUB_SHA"` when running the comparator in GitHub Actions,
+using the exact 40-character checkout SHA rather than a moving branch name.
+The JSON report records `commit_sha` (lowercase), or `null` when no commit
+identity was supplied. Invalid or abbreviated identities produce ERROR/exit 2;
+they cannot silently label a passing comparison. This is **caller-supplied
+provenance**, not cryptographic attestation: the caller must bind the checkout,
+reference WAV generation, capture, and comparator invocation to the same SHA.
+The comparison still requires explicit real audio capture and does not imply
+physical-device acceptance.
