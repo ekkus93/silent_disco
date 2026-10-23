@@ -514,7 +514,11 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     let replay_reserved = actor.current_snapshot().expect("replay reservation");
     assert_eq!(replay_reserved.playback_state, PlaybackState::Playing);
     assert_eq!(
-        replay_reserved.host_queue_next_boundary.as_ref().unwrap().entry_id,
+        replay_reserved
+            .host_queue_next_boundary
+            .as_ref()
+            .unwrap()
+            .entry_id,
         "replacement-entry"
     );
     ffi.shutdown().expect("shutdown actor");
