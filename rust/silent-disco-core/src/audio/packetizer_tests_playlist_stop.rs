@@ -92,3 +92,79 @@ fn stop_after_reservation_ack_under_backpressure_discards_the_successor() {
         "only the already-buffered outgoing audio may remain after Stop"
     );
 }
+
+#[test]
+fn stop_while_reservation_callback_is_pending_discards_stale_acknowledgment() {
+    use std::sync::atomic::Ordering;
+
+    let _guard = super::super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "pending-first.wav", &pcm_wav_frames(48_000, 2, 480));
+    let next_path = write_bytes(&temp, "pending-next.wav", &pcm_wav_frames(48_000, 2, 480));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("current decoder");
+    let successor = StreamingPlaylistTrackFactory::new("pending-next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (ack_tx, ack_rx) = mpsc::sync_channel::<()>(1);
+    let ack_rx = Mutex::new(ack_rx);
+    let reserver = Arc::new(move |_boundary: &crate::protocol::TrackBoundary, cancel| {
+        entered_tx
+            .send(cancel)
+            .expect("reservation entered");
+        ack_rx
+            .lock()
+            .expect("ack mutex")
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("release reservation");
+        // Simulate an actor acknowledgment that arrives after Stop.
+        Ok(())
+    });
+    let handle = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "pending-first",
+        "First",
+        vec![successor],
+        SessionId::new("stop-pending-session").expect("session"),
+        StreamId::new("stop-pending-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        reserver,
+    )
+    .expect("reserved packetizer");
+
+    assert!(matches!(
+        handle.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
+    ));
+    let cancellation = entered_rx
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("producer reached actor reservation");
+    assert!(!cancellation.load(Ordering::SeqCst));
+    handle.cancel();
+    assert!(cancellation.load(Ordering::SeqCst));
+    ack_tx.send(()).expect("late reservation acknowledgment");
+
+    let mut tail = Vec::new();
+    loop {
+        match handle.recv_timeout(TEST_TIMEOUT) {
+            Ok(frame) => tail.push(frame),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("stopped producer did not exit"),
+        }
+    }
+    let error = handle.join().expect_err("Stop cancels the producer");
+    assert_eq!(error.kind, PacketizerWorkerErrorKind::Cancelled);
+    assert!(
+        matches!(
+            tail.as_slice(),
+            [ProtocolFrame::Audio(audio)] if audio.first_sample_index.get() == 240
+        ),
+        "a late reservation acknowledgment must not publish a boundary or successor PCM"
+    );
+}
