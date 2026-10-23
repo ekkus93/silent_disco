@@ -138,7 +138,9 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                     .map(|sample| f32::from(*sample) / 32768.0)
                     .collect();
                 assert_eq!(
-                    output.push_frames(packet_pcm.clone()).expect("native ring write"),
+                    output
+                        .push_frames(packet_pcm.clone())
+                        .expect("native ring write"),
                     samples_per_packet
                 );
                 let mut returned = vec![f32::NAN; packet_pcm.len()];
@@ -150,7 +152,10 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                     2,
                     &raw mut supplied,
                 );
-                assert_eq!(status, 0, "encoded boundary must not underrun native output");
+                assert_eq!(
+                    status, 0,
+                    "encoded boundary must not underrun native output"
+                );
                 assert_eq!(supplied, samples_per_packet);
                 assert_eq!(returned, packet_pcm, "callback changed decoded samples");
                 assert_eq!(
@@ -199,7 +204,11 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         actual[canonical.len()..].iter().all(|sample| *sample == 0),
         "only final packet padding may add silence"
     );
-    assert_eq!(callback_pcm.len(), actual.len(), "native callback frame count");
+    assert_eq!(
+        callback_pcm.len(),
+        actual.len(),
+        "native callback frame count"
+    );
     let canonical_pcm: Vec<f32> = canonical
         .iter()
         .map(|sample| f32::from(*sample) / 32768.0)
