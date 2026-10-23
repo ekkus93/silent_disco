@@ -315,7 +315,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             current_display_name: start.current_display_name.clone(),
         }))
         .expect("broadcast stream start");
-    assert_eq!(announced.successful_peers, 1);
+    assert_eq!(announced.report.successful_peers, 1);
     let received_start = loop {
         let event = listener
             .recv_event(Duration::from_secs(5))
@@ -438,7 +438,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
                         display_name: display_name.clone(),
                     }))
                     .expect("broadcast real boundary on TCP");
-                assert_eq!(sent.successful_peers, 1);
+                assert_eq!(sent.report.successful_peers, 1);
                 let received = loop {
                     let event = listener
                         .recv_event(Duration::from_secs(5))
