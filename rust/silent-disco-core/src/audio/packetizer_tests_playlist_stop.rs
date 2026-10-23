@@ -403,3 +403,88 @@ fn reserved_successor_becomes_final_when_later_track_is_removed_after_boundary_d
     );
     assert_eq!(summary.emitted_packets, 21);
 }
+
+#[test]
+fn append_behind_reserved_successor_keeps_one_stream_and_both_boundaries() {
+    let _guard = super::super::super::tests::audio_test_guard();
+    let temp = TempDir::new().expect("temp");
+    let first_path = write_bytes(&temp, "append-first.wav", &pcm_wav_frames(48_000, 2, 240));
+    let next_path = write_bytes(&temp, "append-next.wav", &pcm_wav_frames(48_000, 2, 4_800));
+    let appended_path = write_bytes(&temp, "append-third.wav", &pcm_wav_frames(48_000, 2, 480));
+    let decoder = StreamingDecodeHandle::open(first_path, StreamingDecodeConfig::default())
+        .expect("first decoder");
+    let next = StreamingPlaylistTrackFactory::new("next", "Next", move || {
+        StreamingDecodeHandle::open(next_path, StreamingDecodeConfig::default())
+    })
+    .expect("next factory");
+    let packetizer = StreamingPacketizeHandle::spawn_playlist_reserved(
+        decoder,
+        "first",
+        "First",
+        vec![next],
+        SessionId::new("append-later-session").expect("session"),
+        StreamId::new("append-later-stream").expect("stream"),
+        MonotonicMillis::new(5_000),
+        StreamingPacketizeConfig {
+            queue_capacity: 1,
+            ..StreamingPacketizeConfig::default()
+        },
+        Arc::new(|_boundary: &crate::protocol::TrackBoundary, _cancel| Ok(())),
+    )
+    .expect("reserved packetizer");
+    let updater = packetizer.playlist_updater().expect("updater");
+
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Audio(audio)) if audio.first_sample_index.get() == 0
+    ));
+    assert!(matches!(
+        packetizer.recv_timeout(TEST_TIMEOUT),
+        Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))
+            ) if boundary.entry_id == "next" && boundary.first_sample_index.get() == 240
+    ));
+
+    // The actor still includes the reserved successor as the leading upcoming
+    // entry. Its shadow must not cause a second decode or boundary.
+    let shadow = StreamingPlaylistTrackFactory::new("next", "Next", || {
+        unreachable!("reserved successor must not be opened twice")
+    })
+    .expect("shadow");
+    let appended = StreamingPlaylistTrackFactory::new("appended", "Appended", move || {
+        StreamingDecodeHandle::open(appended_path, StreamingDecodeConfig::default())
+    })
+    .expect("appended factory");
+    updater
+        .replace_upcoming(vec![shadow, appended])
+        .expect("append after reserved successor");
+
+    let mut audio = vec![(0_u64, 0_u64)];
+    let mut boundaries = vec![("next".to_owned(), 240_u64)];
+    loop {
+        match packetizer.recv_timeout(TEST_TIMEOUT) {
+            Ok(ProtocolFrame::Audio(frame)) => {
+                audio.push((frame.sequence.get(), frame.first_sample_index.get()));
+            }
+            Ok(ProtocolFrame::Control(ControlMessage::TrackBoundary(boundary))) => {
+                boundaries.push((boundary.entry_id, boundary.first_sample_index.get()));
+            }
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("appended stream stalled"),
+        }
+    }
+    let summary = packetizer.join().expect("appended playlist completes");
+    assert_eq!(summary.state, PacketizerWorkerState::Completed);
+    assert_eq!(
+        boundaries,
+        [("next".to_owned(), 240), ("appended".to_owned(), 5_040)]
+    );
+    assert_eq!(
+        audio,
+        (0_u64..23)
+            .map(|packet| (packet, packet * 240))
+            .collect::<Vec<_>>(),
+        "append must preserve sequence and sample continuity without replaying next"
+    );
+    assert_eq!(summary.emitted_packets, 23);
+}
