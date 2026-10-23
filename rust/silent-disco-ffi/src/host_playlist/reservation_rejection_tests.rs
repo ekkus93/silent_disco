@@ -35,6 +35,10 @@ fn wav_pcm16(frames: u32, value: i16) -> Vec<u8> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one combined producer reservation failure, native callback and diagnostic evidence test"
+)]
 fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
@@ -74,8 +78,8 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
     // is rejected. Neither a rejected boundary nor its successor's samples
     // may escape through the audio callback.
     let output = FfiAudioOutputHandle::open(4_800, 1).expect("native output ring");
-    let token = u64::try_from(output.engine_token().expect("native token"))
-        .expect("nonnegative token");
+    let token =
+        u64::try_from(output.engine_token().expect("native token")).expect("nonnegative token");
     let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("bounded callback tap"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach callback tap");
     let mut next_sample_index = 0_u64;
@@ -98,7 +102,9 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
                     .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
                     .collect();
                 assert_eq!(
-                    output.push_frames(samples).expect("queue valid current PCM"),
+                    output
+                        .push_frames(samples)
+                        .expect("queue valid current PCM"),
                     samples_per_packet
                 );
                 next_sample_index += u64::from(samples_per_packet);
@@ -164,7 +170,12 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
     let native_callbacks = silent_disco_audio_callback_count(engine);
     let native_underruns = silent_disco_audio_underrun_count(engine);
     let native_silence = silent_disco_audio_silence_filled_frames(engine);
-    let passed = mismatch.is_none()
+    let rejected_sample = f32::from(6_000_i16) / 32768.0;
+    let rejected_audio_leaked = captured
+        .iter()
+        .any(|sample| sample.to_bits() == rejected_sample.to_bits());
+    let passed = !rejected_audio_leaked
+        && mismatch.is_none()
         && capture_mismatch.is_none()
         && tapped.len() == captured.len()
         && tap_frames == 497
@@ -188,13 +199,16 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
         let capture_mismatch_frame =
             capture_mismatch.map_or("null".to_owned(), |sample| (sample / 2).to_string());
         let report = format!(
-            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-callback-after-rejected-production-reservation\",\n  \"rejected_boundary_frame\": 480,\n  \"valid_source_frames\": 480,\n  \"captured_valid_frames\": {},\n  \"first_mismatch_frame\": {first_mismatch_frame},\n  \"first_mismatch_channel\": {first_mismatch_channel},\n  \"tap_first_mismatch_frame\": {capture_mismatch_frame},\n  \"native_callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_lost},\n  \"tap_callback_count\": {tap_callbacks},\n  \"expected_tail_silence_frames\": 17,\n  \"rejected_successor_audio_leaked\": false,\n  \"physical_dac_verified\": false\n}}\n",
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-callback-after-rejected-production-reservation\",\n  \"rejected_boundary_frame\": 480,\n  \"valid_source_frames\": 480,\n  \"captured_valid_frames\": {},\n  \"first_mismatch_frame\": {first_mismatch_frame},\n  \"first_mismatch_channel\": {first_mismatch_channel},\n  \"tap_first_mismatch_frame\": {capture_mismatch_frame},\n  \"native_callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_lost},\n  \"tap_callback_count\": {tap_callbacks},\n  \"expected_tail_silence_frames\": 17,\n  \"rejected_successor_audio_leaked\": {rejected_audio_leaked},\n  \"physical_dac_verified\": false\n}}\n",
             captured.len() / 2
         );
         fs::write(path.join("rejected-boundary-callback.json"), report)
             .expect("write rejection callback evidence");
     }
-    assert!(passed, "native failure-path callback corruption at sample {mismatch:?}");
+    assert!(
+        passed,
+        "native failure-path callback corruption at sample {mismatch:?}"
+    );
     detach_callback_capture(token);
     output.release();
     stream.cancel().expect("close failed stream");
