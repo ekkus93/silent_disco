@@ -110,3 +110,20 @@ This tap captures the Rust callback-returned PCM, still upstream of Android's
 mixer, speaker, DAC and any Bluetooth device. Do not misreport this as an
 independently measured physical output recording; that hardware-level
 acceptance remains a separate device test.
+
+## Android debug-screen capture controls
+
+Commit `a8d5d41d` adds a developer-only control under
+**Advanced diagnostics → Playback output**. On a DEBUG build and when the
+device is a listener, tap **Start PCM capture** after the listener runtime
+has opened, play a representative multi-track sequence, then tap
+**Stop PCM capture** (or leave the session). The helper writes an app-specific
+diagnostics WAV and displays its filename, callback count and captured
+frame count, or explicitly warns if the native tap lost data.
+Release builds do not expose these controls and recordings are never uploaded
+to GitHub Actions by default. Retrieve a user-authorized debug capture
+from the device for comparison against canonical reference WAV files.
+
+Hardware acceptance must still check playback under a real output route
+(speaker, headphone or Bluetooth) and independently measure or otherwise
+verify OS/mixer/DAC discontinuity, as in the authoritative TODO.
