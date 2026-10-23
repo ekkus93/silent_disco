@@ -323,6 +323,60 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         .iter()
         .map(|sample| f32::from(*sample) / 32768.0)
         .collect();
+    // Save sample-position evidence before the waveform assertion so hosted
+    // CI can diagnose a callback regression without uploading audio data.
+    // Explicitly model final packet padding rather than aligning each codec
+    // boundary or silently accepting a shifted callback timeline.
+    let mut expected_callback_pcm = canonical_pcm.clone();
+    expected_callback_pcm.resize(actual.len(), 0.0);
+    let first_mismatch = callback_pcm
+        .iter()
+        .zip(&expected_callback_pcm)
+        .position(|(observed, reference)| observed.to_bits() != reference.to_bits())
+        .or_else(|| {
+            (callback_pcm.len() != expected_callback_pcm.len())
+                .then_some(callback_pcm.len().min(expected_callback_pcm.len()))
+        });
+    let mismatch_count = callback_pcm
+        .iter()
+        .zip(&expected_callback_pcm)
+        .filter(|(observed, reference)| observed.to_bits() != reference.to_bits())
+        .count()
+        + callback_pcm.len().abs_diff(expected_callback_pcm.len());
+    let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    let native_callbacks = silent_disco_audio_callback_count(engine);
+    let native_underruns = silent_disco_audio_underrun_count(engine);
+    let native_silence = silent_disco_audio_silence_filled_frames(engine);
+    let (tap_frames, tap_loss, tap_callbacks) = tap.counters();
+    let passed = mismatch_count == 0
+        && tap_loss == 0
+        && tap_frames == next_sample
+        && tap_callbacks == 3
+        && native_callbacks == 3
+        && native_underruns == 0
+        && native_silence == 0
+        && boundaries == expected_boundaries;
+    if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
+        let commit = std::env::var("GITHUB_SHA")
+            .ok()
+            .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .unwrap_or_else(|| "local".to_owned());
+        let path = std::path::PathBuf::from(directory);
+        fs::create_dir_all(&path).expect("create encoded comparison evidence directory");
+        let status = if passed { "PASS" } else { "FAIL" };
+        let first_frame =
+            first_mismatch.map_or("null".to_owned(), |sample| (sample / 2).to_string());
+        let first_channel =
+            first_mismatch.map_or("null".to_owned(), |sample| (sample % 2).to_string());
+        let report = format!(
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-tcp-udp-sockets\",\n  \"source_formats\": [\"wav\", \"flac\", \"mp3\"],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"source_boundaries\": {expected_boundaries:?},\n  \"observed_boundaries\": {boundaries:?},\n  \"expected_frames_with_padding\": {},\n  \"captured_frames\": {},\n  \"callback_frame_chunks\": {callback_sizes:?},\n  \"callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_loss},\n  \"tap_callback_count\": {tap_callbacks},\n  \"mismatched_samples\": {mismatch_count},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"listener_scheduler_exercised\": false,\n  \"physical_dac_verified\": false\n}}\n",
+            expected_callback_pcm.len() / 2,
+            callback_pcm.len() / 2
+        );
+        fs::write(path.join("encoded-socket-callback.json"), report)
+            .expect("write encoded comparison evidence");
+    }
+    assert!(passed, "encoded native callback comparison mismatch at frame {first_mismatch:?}");
     assert_eq!(
         &callback_pcm[..canonical_pcm.len()],
         canonical_pcm,
@@ -334,7 +388,6 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
             .all(|sample| sample.to_bits() == 0),
         "native callback may contain only final-packet padding"
     );
-    let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
     assert_eq!(silent_disco_audio_callback_count(engine), 3);
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
