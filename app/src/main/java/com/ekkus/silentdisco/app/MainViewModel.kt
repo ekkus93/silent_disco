@@ -9,6 +9,7 @@ import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.core.audio.OboeBridge
+import com.ekkus.silentdisco.core.audio.NativeCallbackWavCapture
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
 import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
 import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
@@ -147,6 +148,9 @@ class MainViewModel @JvmOverloads constructor(
     internal val listenerPlaybackControlExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "silent-disco-listener-playback-control").apply { isDaemon = true }
     }
+    internal var listenerCallbackCapture: NativeCallbackWavCapture? = null
+    internal val _callbackCaptureStatus = MutableStateFlow("Capture off")
+    val callbackCaptureStatus: StateFlow<String> = _callbackCaptureStatus.asStateFlow()
     private val listenerPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
     internal var listenerPlayback: FfiListenerPlaybackHandle?
         get() = listenerPlaybackRef.get()
@@ -576,6 +580,7 @@ class MainViewModel @JvmOverloads constructor(
         clearScanState()
         hostStreamJob?.cancel()
         stopListenerPlayback()
+        stopCallbackPcmCapture()
         resyncJob?.cancel()
         resetListenerSyncAcquisition()
         pendingEstablishNetworkOperationId = null
@@ -661,6 +666,10 @@ class MainViewModel @JvmOverloads constructor(
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
         stopListenerPlayback()
+        listenerCallbackCapture?.let { capture ->
+            listenerCallbackCapture = null
+            runBlocking(Dispatchers.IO) { runCatching { capture.stopAndReport() } }
+        }
         listenerPlaybackControlExecutor.shutdown()
         closeListenerSyncEstimator()
         bleService.stop()

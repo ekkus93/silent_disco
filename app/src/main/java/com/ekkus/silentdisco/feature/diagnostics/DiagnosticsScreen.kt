@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.TuningField
 import com.ekkus.silentdisco.app.TuningSettings
@@ -55,6 +56,9 @@ fun DiagnosticsScreen(
     onShare: (String) -> Unit,
     initialExpertExpanded: Boolean = false,
     initialExpertEnabled: Boolean = false,
+    callbackCaptureStatus: String = "Capture off",
+    onStartCallbackCapture: () -> Unit = {},
+    onStopCallbackCapture: () -> Unit = {},
 ) {
     var hostExpanded by rememberSaveable { mutableStateOf(false) }
     var listenerExpanded by rememberSaveable { mutableStateOf(false) }
@@ -173,6 +177,29 @@ fun DiagnosticsScreen(
                 DiagnosticValue("Underrun count", OboeBridge.nativeOboeUnderrunCount().toString())
                 DiagnosticValue("Silence-filled frames", OboeBridge.nativeOboeSilenceFilledFrames().toString())
                 DiagnosticValue("Last granted stream config", OboeBridge.lastOpenSummary())
+                if (BuildConfig.DEBUG && showListener) {
+                    Text(
+                        "Optional callback PCM recording (developer diagnostics only). " +
+                            "Captured WAVs stay on this device until explicitly exported.",
+                    )
+                    Text(callbackCaptureStatus, modifier = Modifier.testTag("callback-capture-status"))
+                    if (callbackCaptureStatus.startsWith("Recording")) {
+                        TextButton(
+                            onClick = onStopCallbackCapture,
+                            modifier = Modifier.testTag("stop-callback-capture"),
+                        ) {
+                            Text("Stop PCM capture")
+                        }
+                    } else {
+                        TextButton(
+                            onClick = onStartCallbackCapture,
+                            enabled = callbackCaptureStatus != "Finalizing capture",
+                            modifier = Modifier.testTag("start-callback-capture"),
+                        ) {
+                            Text("Start PCM capture")
+                        }
+                    }
+                }
             }
 
             Card(modifier = Modifier.fillMaxWidth()) {

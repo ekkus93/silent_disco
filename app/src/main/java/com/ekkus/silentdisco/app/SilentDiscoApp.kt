@@ -72,6 +72,7 @@ fun SilentDiscoApp(
     p2ViewModel: P2ViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val captureStatus by viewModel.callbackCaptureStatus.collectAsStateWithLifecycle()
     val trustedDevicesUiState by trustedDevicesViewModel.uiState.collectAsStateWithLifecycle()
     val p2UiState by p2ViewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
@@ -559,6 +560,9 @@ fun SilentDiscoApp(
                     onManualResync = viewModel::manualResync,
                     onAdjustTuning = viewModel::adjustTuning,
                     onShare = { shareSupportReport() },
+                    callbackCaptureStatus = captureStatus,
+                    onStartCallbackCapture = viewModel::startCallbackPcmCapture,
+                    onStopCallbackCapture = viewModel::stopCallbackPcmCapture,
                 )
             }
 
