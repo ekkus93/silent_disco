@@ -1,5 +1,12 @@
 //! FFI boundary reservation must fail closed before exposing successor PCM.
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
+use crate::audio_abi::{
+    attach_callback_capture, detach_callback_capture, registry_test_guard,
+    silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
+    silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+};
+use crate::audio_output::FfiAudioOutputHandle;
+use crate::callback_capture::CallbackCaptureTap;
 use silent_disco_core::audio::{PacketizerWorkerError, PacketizerWorkerErrorKind};
 use silent_disco_core::protocol::TrackBoundary;
 use std::fs;
@@ -29,6 +36,7 @@ fn wav_pcm16(frames: u32, value: i16) -> Vec<u8> {
 
 #[test]
 fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
+    let _guard = registry_test_guard();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -62,16 +70,38 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
     )
     .expect("reserved playlist opens");
 
+    // Keep the actual native C-ABI output open while a producer reservation
+    // is rejected. Neither a rejected boundary nor its successor's samples
+    // may escape through the audio callback.
+    let output = FfiAudioOutputHandle::open(4_800, 1).expect("native output ring");
+    let token = u64::try_from(output.engine_token().expect("native token"))
+        .expect("nonnegative token");
+    let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("bounded callback tap"));
+    attach_callback_capture(token, Arc::clone(&tap)).expect("attach callback tap");
+    let mut next_sample_index = 0_u64;
     let mut current_packets = 0;
     let failure = loop {
         match stream.next_frame(2_000) {
             Ok(Some(FfiPlaylistFrame::Audio {
-                first_sample_index, ..
+                first_sample_index,
+                samples_per_packet,
+                payload,
+                ..
             })) => {
-                assert!(
-                    first_sample_index < 480,
-                    "successor PCM escaped a rejected reservation"
+                assert_eq!(
+                    first_sample_index, next_sample_index,
+                    "rejected successor must not hide an audio gap"
                 );
+                assert!(first_sample_index < 480, "rejected successor PCM escaped");
+                let samples: Vec<f32> = payload
+                    .chunks_exact(2)
+                    .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+                    .collect();
+                assert_eq!(
+                    output.push_frames(samples).expect("queue valid current PCM"),
+                    samples_per_packet
+                );
+                next_sample_index += u64::from(samples_per_packet);
                 current_packets += 1;
             }
             Ok(Some(FfiPlaylistFrame::TrackBoundary { .. })) => {
@@ -90,6 +120,84 @@ fn rejected_ffi_boundary_cannot_leak_successor_pcm_or_metadata() {
             .to_string()
             .contains("stale successor reservation rejected")
     );
+    assert_eq!(next_sample_index, 480, "current track was truncated");
+    assert_eq!(output.queued_frames().expect("valid queued PCM"), 480);
+    let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    let mut captured = vec![f32::NAN; 480 * 2];
+    let mut supplied = u32::MAX;
+    let status = silent_disco_audio_read_interleaved_f32(
+        usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+        captured.as_mut_ptr(),
+        480,
+        2,
+        &raw mut supplied,
+    );
+    assert_eq!(status, 0, "entire current track must reach native callback");
+    assert_eq!(supplied, 480);
+    let expected_sample = f32::from(3_000_i16) / 32768.0;
+    let mismatch = captured
+        .iter()
+        .position(|sample| sample.to_bits() != expected_sample.to_bits());
+    let tapped = tap.drain(480);
+    let capture_mismatch = tapped
+        .iter()
+        .zip(&captured)
+        .position(|(tapped, returned)| tapped.to_bits() != returned.to_bits());
+    assert_eq!(output.queued_frames().expect("drained output"), 0);
+
+    // A callback *after* the valid track ends is allowed to synthesize
+    // silence, but must report it as missing output, not false gaplessness.
+    let mut missing_tail = [f32::NAN; 17 * 2];
+    let mut tail_from_ring = u32::MAX;
+    let tail_status = silent_disco_audio_read_interleaved_f32(
+        usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+        missing_tail.as_mut_ptr(),
+        17,
+        2,
+        &raw mut tail_from_ring,
+    );
+    assert_eq!(tail_status, 1, "output starvation must be observable");
+    assert_eq!(tail_from_ring, 0);
+    assert!(missing_tail.iter().all(|sample| sample.to_bits() == 0));
+    assert_eq!(tap.drain(17), missing_tail);
+    let (tap_frames, tap_lost, tap_callbacks) = tap.counters();
+    let native_callbacks = silent_disco_audio_callback_count(engine);
+    let native_underruns = silent_disco_audio_underrun_count(engine);
+    let native_silence = silent_disco_audio_silence_filled_frames(engine);
+    let passed = mismatch.is_none()
+        && capture_mismatch.is_none()
+        && tapped.len() == captured.len()
+        && tap_frames == 497
+        && tap_lost == 0
+        && tap_callbacks == 2
+        && native_callbacks == 2
+        && native_underruns == 1
+        && native_silence == 17;
+
+    // Capture only reproducible failure-location metadata in public CI:
+    // never upload the generated samples or source audio.
+    if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
+        let path = std::path::PathBuf::from(directory);
+        fs::create_dir_all(&path).expect("PCM evidence directory");
+        let commit = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned());
+        let status = if passed { "PASS" } else { "FAIL" };
+        let first_mismatch_frame =
+            mismatch.map_or("null".to_owned(), |sample| (sample / 2).to_string());
+        let first_mismatch_channel =
+            mismatch.map_or("null".to_owned(), |sample| (sample % 2).to_string());
+        let capture_mismatch_frame =
+            capture_mismatch.map_or("null".to_owned(), |sample| (sample / 2).to_string());
+        let report = format!(
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-callback-after-rejected-production-reservation\",\n  \"rejected_boundary_frame\": 480,\n  \"valid_source_frames\": 480,\n  \"captured_valid_frames\": {},\n  \"first_mismatch_frame\": {first_mismatch_frame},\n  \"first_mismatch_channel\": {first_mismatch_channel},\n  \"tap_first_mismatch_frame\": {capture_mismatch_frame},\n  \"native_callback_count\": {native_callbacks},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"tap_captured_frames\": {tap_frames},\n  \"tap_lost_frames\": {tap_lost},\n  \"tap_callback_count\": {tap_callbacks},\n  \"expected_tail_silence_frames\": 17,\n  \"rejected_successor_audio_leaked\": false,\n  \"physical_dac_verified\": false\n}}\n",
+            captured.len() / 2
+        );
+        fs::write(path.join("rejected-boundary-callback.json"), report)
+            .expect("write rejection callback evidence");
+    }
+    assert!(passed, "native failure-path callback corruption at sample {mismatch:?}");
+    detach_callback_capture(token);
+    output.release();
+    stream.cancel().expect("close failed stream");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
