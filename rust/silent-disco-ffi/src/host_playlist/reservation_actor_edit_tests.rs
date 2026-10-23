@@ -614,8 +614,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     }
     assert_eq!(replay_sample, 10_560);
     verify_native_callback(&replay_output, &replay_tap, replay_token);
-    let replay_engine =
-        usize::try_from(replay_token).expect("token") as *const core::ffi::c_void;
+    let replay_engine = usize::try_from(replay_token).expect("token") as *const core::ffi::c_void;
     let replay_counters = (
         silent_disco_audio_callback_count(replay_engine),
         silent_disco_audio_underrun_count(replay_engine),
@@ -692,8 +691,11 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         );
         let directory = std::path::PathBuf::from(directory);
         fs::create_dir_all(&directory).expect("create actor callback evidence directory");
-        fs::write(directory.join("authoritative-edit-replay-callback.json"), report)
-            .expect("write authoritative edit/replay evidence");
+        fs::write(
+            directory.join("authoritative-edit-replay-callback.json"),
+            report,
+        )
+        .expect("write authoritative edit/replay evidence");
     }
     ffi.shutdown().expect("shutdown actor");
     fs::remove_dir_all(root).expect("remove fixtures");
