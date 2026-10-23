@@ -8,6 +8,10 @@ use std::fs;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one combined source decode, playlist packet sequence and boundary regression"
+)]
 fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -19,9 +23,18 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     ));
     fs::create_dir_all(&root).expect("create fixtures directory");
     let encoded_sources = [
-        ("wav", include_str!("../../silent-disco-core/src/audio/fixtures/short.wav.b64")),
-        ("flac", include_str!("../../silent-disco-core/src/audio/fixtures/short.flac.b64")),
-        ("mp3", include_str!("../../silent-disco-core/src/audio/fixtures/short.mp3.b64")),
+        (
+            "wav",
+            include_str!("../../silent-disco-core/src/audio/fixtures/short.wav.b64"),
+        ),
+        (
+            "flac",
+            include_str!("../../silent-disco-core/src/audio/fixtures/short.flac.b64"),
+        ),
+        (
+            "mp3",
+            include_str!("../../silent-disco-core/src/audio/fixtures/short.mp3.b64"),
+        ),
     ];
     let mut canonical = Vec::<i16>::new();
     let mut expected_boundaries = Vec::new();
@@ -29,7 +42,9 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
 
     for (index, (extension, contents)) in encoded_sources.iter().enumerate() {
         let path = root.join(format!("song-{index}.{extension}"));
-        let bytes = STANDARD.decode(contents.trim()).expect("known decoder fixture");
+        let bytes = STANDARD
+            .decode(contents.trim())
+            .expect("known decoder fixture");
         fs::write(&path, bytes).expect("stage encoded source");
         let decoder = StreamingDecodeHandle::open(&path, StreamingDecodeConfig::default())
             .expect("decode canonical PCM reference");
@@ -74,7 +89,10 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
     // These bundled fixtures are intentionally small; an ordinary playlist
     // must not stall or silently drop an encoded successor.
     for _ in 0..1_024 {
-        match playlist.next_frame(5_000).expect("production playlist frame") {
+        match playlist
+            .next_frame(5_000)
+            .expect("production playlist frame")
+        {
             Some(FfiPlaylistFrame::Audio {
                 sequence: observed_sequence,
                 first_sample_index,
@@ -88,9 +106,13 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
                 assert_eq!(first_sample_index, next_sample, "PCM index gap/overlap");
                 assert_eq!(sample_rate, 48_000);
                 assert_eq!(channels, 2);
-                assert_eq!(payload.len(), usize::try_from(samples_per_packet).expect("frames") * 4);
+                assert_eq!(
+                    payload.len(),
+                    usize::try_from(samples_per_packet).expect("frames") * 4
+                );
                 actual.extend(
-                    payload.chunks_exact(2)
+                    payload
+                        .chunks_exact(2)
                         .map(|pair| i16::from_le_bytes([pair[0], pair[1]])),
                 );
                 next_sample += u64::from(samples_per_packet);
@@ -113,9 +135,19 @@ fn encoded_flac_mp3_and_wav_playlist_matches_independent_canonical_pcm() {
         }
     }
     assert!(ended, "production playlist must reach End");
-    assert_eq!(boundaries, expected_boundaries, "exact decoded sample boundaries");
-    assert!(actual.len() >= canonical.len(), "must not drop decoded PCM tail");
-    assert_eq!(&actual[..canonical.len()], canonical, "codec switch altered PCM");
+    assert_eq!(
+        boundaries, expected_boundaries,
+        "exact decoded sample boundaries"
+    );
+    assert!(
+        actual.len() >= canonical.len(),
+        "must not drop decoded PCM tail"
+    );
+    assert_eq!(
+        &actual[..canonical.len()],
+        canonical,
+        "codec switch altered PCM"
+    );
     // The only permitted excess is the producer's final-packet padding, not
     // silence inserted at either track boundary.
     assert!(actual.len() - canonical.len() < 480);
