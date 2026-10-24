@@ -67,6 +67,8 @@ def sample_report(name):
             replay_observed_boundaries=[9600, 10080],
             expected_frames=10560, first_captured_frames=10560,
             replay_captured_frames=10560,
+            first_native_ring_remaining_frames=0,
+            replay_native_ring_remaining_frames=0,
             callback_frame_chunks=[4799, 4802, 480, 479],
             first_callback_count=4, replay_callback_count=4,
             first_native_underruns=0, replay_native_underruns=0,
@@ -211,6 +213,21 @@ class EvidenceGateTests(unittest.TestCase):
         self.write_reports()
         with self.assertRaisesRegex(ValueError, "replay_token_distinct"):
             validate_directory(self.root, SHA)
+
+    def test_authoritative_replay_requires_both_native_rings_drained(self):
+        name = "authoritative-edit-replay-callback.json"
+        for field in ("first_native_ring_remaining_frames",
+                      "replay_native_ring_remaining_frames"):
+            with self.subTest(field=field):
+                self.reports[name] = sample_report(name)
+                self.reports[name][field] = 1
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_directory(self.root, SHA)
+                self.reports[name].pop(field)
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_directory(self.root, SHA)
 
     def test_authoritative_replay_rejects_native_silence(self):
         name = "authoritative-edit-replay-callback.json"

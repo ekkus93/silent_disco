@@ -158,6 +158,13 @@ fn verify_native_callback(output: &FfiAudioOutputHandle, tap: &CallbackCaptureTa
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
     assert_eq!(tap.counters(), (u64::from(RETARGETED_FRAMES), 0, 4));
+    // A byte-exact callback prefix must not conceal stale queued PCM that
+    // could leak into a later callback or the next playback generation.
+    assert_eq!(
+        output.queued_frames().expect("remaining native PCM"),
+        0,
+        "unexpected buffered PCM after actor-authorized callback drain"
+    );
     detach_callback_capture(token);
 }
 
@@ -465,6 +472,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         silent_disco_audio_silence_filled_frames(first_engine),
     );
     let first_tap_counters = tap.counters();
+    let first_remaining_frames = output.queued_frames().expect("first output drain");
     output.release();
     // Stop invalidates any reservation made for the old stream. A fresh Play
     // can reuse the same queue entry IDs, but a delayed producer belonging to
@@ -621,6 +629,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         silent_disco_audio_silence_filled_frames(replay_engine),
     );
     let replay_tap_counters = replay_tap.counters();
+    let replay_remaining_frames = replay_output.queued_frames().expect("replay output drain");
     replay_output.release();
     assert_eq!(replay_sequence, Some(43));
     assert_eq!(
@@ -670,6 +679,8 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
   "expected_frames": 10560,
   "first_captured_frames": {next_sample},
   "replay_captured_frames": {replay_sample},
+  "first_native_ring_remaining_frames": {first_remaining_frames},
+  "replay_native_ring_remaining_frames": {replay_remaining_frames},
   "callback_frame_chunks": [4799, 4802, 480, 479],
   "first_callback_count": {first_callbacks},
   "first_native_underruns": {first_underruns},

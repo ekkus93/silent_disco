@@ -139,6 +139,9 @@ def validate_report(filename, report, sha):
         for name in ("first_observed_boundaries", "replay_observed_boundaries"):
             require_equal(report, name, [9600, 10080], filename)
         require_equal(report, "expected_frames", 10560, filename)
+        for name in ("first_native_ring_remaining_frames",
+                     "replay_native_ring_remaining_frames"):
+            require_equal(report, name, 0, filename)
         require_equal(report, "callback_frame_chunks", [4799, 4802, 480, 479], filename)
         for name in ("first_captured_frames", "replay_captured_frames",
                      "first_tap_frames", "replay_tap_frames"):
