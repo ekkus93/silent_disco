@@ -576,6 +576,34 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         replay_token, token,
         "Stop/replay must not reuse retired native token"
     );
+    // Seed the *new* native ring with real replay PCM before probing the
+    // retired token. An empty replay ring could conceal a stale callback
+    // accidentally targeting the new stream, since both would return silence.
+    let first_replay_packet = replay_producer
+        .next_frame(5_000)
+        .expect("first replay frame")
+        .expect("replay must begin with audio");
+    let FfiPlaylistFrame::Audio {
+        sequence: first_replay_sequence,
+        first_sample_index: first_replay_index,
+        samples_per_packet: first_replay_frames,
+        payload: first_replay_payload,
+        ..
+    } = first_replay_packet
+    else {
+        panic!("replay must begin with current-track audio");
+    };
+    assert_eq!(first_replay_sequence, 0);
+    assert_eq!(first_replay_index, 0);
+    assert_eq!(first_replay_frames, 240);
+    assert_eq!(
+        i16::from_le_bytes([first_replay_payload[0], first_replay_payload[1]]),
+        3_000
+    );
+    submit_native_packet(&replay_output, &first_replay_payload, first_replay_frames);
+    let replay_canary_frames = replay_output.queued_frames().expect("preloaded replay PCM");
+    assert_eq!(replay_canary_frames, first_replay_frames);
+
     // A delayed Oboe callback holding the retired token must be stopped
     // and silence-filled even after the replay output has been registered.
     // It must never consume the new stream's PCM or report an unknown token.
@@ -596,11 +624,16 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         replay_output
             .queued_frames()
             .expect("new output is untouched"),
-        0,
-        "retired callback must not read from the new output"
+        replay_canary_frames,
+        "retired callback must not consume buffered replay PCM"
     );
-    let mut replay_sample = 0_u64;
-    let mut replay_sequence = None;
+    assert_eq!(
+        replay_tap.counters(),
+        (0, 0, 0),
+        "retired callback must not write to the new capture tap"
+    );
+    let mut replay_sample = u64::from(first_replay_frames);
+    let mut replay_sequence = Some(first_replay_sequence);
     let mut replay_boundaries = Vec::new();
     loop {
         match replay_producer.next_frame(5_000).expect("replay frame") {
@@ -723,6 +756,7 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
   "retired_native_token_status": {retired_status},
   "retired_native_token_supplied_frames": {retired_supplied},
   "retired_native_token_zeroed": {retired_callback_zeroed},
+  "retired_native_token_preserved_replay_frames": {replay_canary_frames},
   "physical_dac_verified": false
 }}"#
         );

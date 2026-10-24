@@ -371,3 +371,7 @@ pass a byte-for-byte comparison. Multiple `fmt ` chunks also fail closed.
 Synthetic regressions cover both the canonical references and captured WAVs,
 while a restored valid header still passes. This is evidence integrity, not
 proof of the physical DAC or comprehensive playback lifecycle qualification.
+
+## Retired native token cannot drain preloaded replay PCM
+
+The actor/FFI Stop/replay regression now loads the first real 240-frame replay packet into the new native ring before invoking a delayed callback with the old output token. It verifies the retired callback returns Stopping with silence and zero supplied frames, that the fresh output still has all 240 frames, and that the fresh callback tap has zero callbacks and zero captured/lost frames. The test then renders the complete 10,560-frame replay (including that preserved packet) and requires exact canonical PCM, zero underruns, zero tap loss, and an empty ring. The exact-SHA JSON gate rejects missing or incorrect `retired_native_token_preserved_replay_frames` metadata. This is deterministic native callback generation isolation, not a physical Oboe/mixer/DAC measurement.

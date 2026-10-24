@@ -161,6 +161,7 @@ def validate_report(filename, report, sha):
         require_equal(report, "retired_native_token_status", 2, filename)
         require_equal(report, "retired_native_token_supplied_frames", 0, filename)
         require_equal(report, "retired_native_token_zeroed", True, filename)
+        require_equal(report, "retired_native_token_preserved_replay_frames", 240, filename)
     elif filename == "paused-resume-callback.json":
         require_equal(report, "capture", "actor-authorized-ffi-paused-resume-native-callback",
                       filename)

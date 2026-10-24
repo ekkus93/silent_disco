@@ -81,6 +81,7 @@ def sample_report(name):
             retired_native_token_status=2,
             retired_native_token_supplied_frames=0,
             retired_native_token_zeroed=True,
+            retired_native_token_preserved_replay_frames=240,
         )
     else:
         base.update(
@@ -239,6 +240,8 @@ class EvidenceGateTests(unittest.TestCase):
             ("retired_native_token_status", -2),
             ("retired_native_token_supplied_frames", 1),
             ("retired_native_token_zeroed", False),
+            ("retired_native_token_preserved_replay_frames", 0),
+            ("retired_native_token_preserved_replay_frames", 239),
         )
         for field, invalid in cases:
             with self.subTest(field=field, invalid=invalid):
@@ -249,7 +252,8 @@ class EvidenceGateTests(unittest.TestCase):
                     validate_directory(self.root, SHA)
         for field in ("retired_native_token_status",
                       "retired_native_token_supplied_frames",
-                      "retired_native_token_zeroed"):
+                      "retired_native_token_zeroed",
+                      "retired_native_token_preserved_replay_frames"):
             with self.subTest(field=field, missing=True):
                 self.reports[name] = sample_report(name)
                 self.reports[name].pop(field)
