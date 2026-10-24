@@ -320,7 +320,10 @@ fn same_stream_resume_does_not_replay_delayed_pauses() {
 
     cached.update(&newer_pause); // a genuinely later Pause still takes effect
     assert!(cached.snapshot() == vec![resume.clone(), next.clone(), newer_pause.clone()]);
-    assert!(!cached.update(&resume), "stale resume cannot lift newer Pause");
+    assert!(
+        !cached.update(&resume),
+        "stale resume cannot lift newer Pause"
+    );
     reanchored.host_start_time_ms = MonotonicMillis::new(1_200);
     let resume_again = ControlMessage::StreamStart(reanchored);
     assert!(cached.update(&resume_again));

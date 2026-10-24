@@ -93,7 +93,10 @@ fn delayed_same_stream_start_does_not_cancel_pause_or_overwrite_boundary_replay(
     assert!(cache.update(&paused));
     let expected_paused = vec![original.clone(), next.clone(), paused.clone()];
 
-    assert!(!cache.update(&original), "retransmitted original start is not Resume");
+    assert!(
+        !cache.update(&original),
+        "retransmitted original start is not Resume"
+    );
     let mut duplicate_metadata = start.clone();
     duplicate_metadata.current_display_name = Some("Unverified title".to_owned());
     assert!(!cache.update(&ControlMessage::StreamStart(duplicate_metadata)));
@@ -105,7 +108,10 @@ fn delayed_same_stream_start_does_not_cancel_pause_or_overwrite_boundary_replay(
     let resumed = ControlMessage::StreamStart(reanchored.clone());
     assert!(cache.update(&resumed));
     assert_eq!(cache.snapshot(), vec![resumed.clone(), next.clone()]);
-    assert!(!cache.update(&original), "old start cannot rewind reanchored stream");
+    assert!(
+        !cache.update(&original),
+        "old start cannot rewind reanchored stream"
+    );
 
     let paused_again = ControlMessage::Pause(Pause {
         session_id: session,
@@ -113,7 +119,10 @@ fn delayed_same_stream_start_does_not_cancel_pause_or_overwrite_boundary_replay(
         host_pause_time_ms: MonotonicMillis::new(2_500),
     });
     assert!(cache.update(&paused_again));
-    assert!(!cache.update(&resumed), "old Resume cannot clear a later Pause");
+    assert!(
+        !cache.update(&resumed),
+        "old Resume cannot clear a later Pause"
+    );
     assert_eq!(cache.snapshot(), vec![resumed, next.clone(), paused_again]);
 
     reanchored.host_start_time_ms = MonotonicMillis::new(1_200);
