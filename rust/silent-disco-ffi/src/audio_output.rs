@@ -277,6 +277,62 @@ mod tests {
     }
 
     #[test]
+    fn malformed_pcm_preserves_prebuffered_output_and_callback_order() {
+        use crate::audio_abi::silent_disco_audio_read_interleaved_f32;
+
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        let token = handle.engine_token().expect("live output token");
+        let initial = [0.125_f32, -0.25, 0.5, -0.75];
+        assert_eq!(handle.push_frames(initial.to_vec()).expect("prebuffer"), 2);
+
+        // Rejected writes must not advance the producer cursor or overwrite
+        // valid PCM already queued for the real-time callback.
+        for invalid in [
+            vec![0.25, -0.25, 0.5],
+            vec![0.25, -0.25, f32::NAN, 0.5],
+            vec![0.25, -0.25, f32::INFINITY, 0.5],
+            vec![0.25, -0.25, f32::NEG_INFINITY, 0.5],
+        ] {
+            assert!(matches!(
+                handle.push_frames(invalid),
+                Err(FfiAudioOutputError::InvalidConfiguration(_))
+            ));
+            assert_eq!(handle.queued_frames().expect("buffer preserved"), 2);
+        }
+
+        let engine = usize::try_from(token).unwrap_or(usize::MAX) as *mut core::ffi::c_void;
+        let mut callback_pcm = [-9.0_f32; 4];
+        let mut supplied = 99_u32;
+        let status = silent_disco_audio_read_interleaved_f32(
+            engine,
+            callback_pcm.as_mut_ptr(),
+            2,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0, "prebuffered frames must render without silence");
+        assert_eq!(supplied, 2);
+        assert_eq!(callback_pcm, initial);
+        assert_eq!(handle.queued_frames().expect("drained"), 0);
+
+        // A valid packet following rejected writes must still render in order.
+        assert_eq!(handle.push_frames(vec![0.75, -0.875]).expect("recovery"), 1);
+        let mut resumed_pcm = [-9.0_f32; 2];
+        let status = silent_disco_audio_read_interleaved_f32(
+            engine,
+            resumed_pcm.as_mut_ptr(),
+            1,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0);
+        assert_eq!(supplied, 1);
+        assert_eq!(resumed_pcm, [0.75, -0.875]);
+        assert_eq!(handle.queued_frames().expect("fully drained"), 0);
+    }
+
+    #[test]
     fn release_is_idempotent_and_subsequent_calls_report_closed() {
         let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
