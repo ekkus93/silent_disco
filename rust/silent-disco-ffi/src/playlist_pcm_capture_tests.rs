@@ -34,7 +34,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const TRACK_FRAMES: usize = 480;
 const CHANNELS: usize = 2;
 
-pub(super) fn source_wav_format(sample: i16, sample_rate: u32, channels: u16, frames: usize) -> Vec<u8> {
+pub(super) fn source_wav_format(
+    sample: i16,
+    sample_rate: u32,
+    channels: u16,
+    frames: usize,
+) -> Vec<u8> {
     let bytes = frames * usize::from(channels) * 2;
     let mut data = Vec::with_capacity(44 + bytes);
     data.extend_from_slice(b"RIFF");
