@@ -21,6 +21,8 @@ use super::shared::CounterState;
 mod authorization;
 #[cfg(test)]
 mod authorization_order_tests;
+#[cfg(test)]
+mod reconnect_snapshot_tests;
 mod bind;
 mod broadcast;
 mod lookup;
