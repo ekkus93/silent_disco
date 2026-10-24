@@ -56,9 +56,13 @@ impl PlaybackControls {
                 // Stop retires this generation, including its original
                 // StreamStart. A fresh Play must advertise a later anchor;
                 // the stream ID alone cannot distinguish delayed delivery.
-                if self.last_stopped_start.as_ref().is_some_and(|(session, anchor)| {
-                    *session == start.session_id && start.host_start_time_ms.get() <= *anchor
-                }) {
+                if self
+                    .last_stopped_start
+                    .as_ref()
+                    .is_some_and(|(session, anchor)| {
+                        *session == start.session_id && start.host_start_time_ms.get() <= *anchor
+                    })
+                {
                     return false;
                 }
                 // A delayed start from an older generation must not rewind
@@ -142,7 +146,10 @@ impl PlaybackControls {
                 // Stop is valid before the first scheduled sample is audible.
                 // The stream ID, not the future presentation timestamp,
                 // distinguishes a delayed Stop from a retired stream.
-                let retired = self.stream_start.take().expect("active stream checked above");
+                let retired = self
+                    .stream_start
+                    .take()
+                    .expect("active stream checked above");
                 self.last_stopped_start =
                     Some((retired.session_id, retired.host_start_time_ms.get()));
                 self.boundaries.clear();
