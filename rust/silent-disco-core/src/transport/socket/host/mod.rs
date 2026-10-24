@@ -21,13 +21,13 @@ use super::shared::CounterState;
 mod authorization;
 #[cfg(test)]
 mod authorization_order_tests;
-#[cfg(test)]
-mod reconnect_snapshot_tests;
 mod bind;
 mod broadcast;
 mod lookup;
 mod node;
 mod peer;
+#[cfg(test)]
+mod reconnect_snapshot_tests;
 
 #[cfg(test)]
 mod playback_controls_format_tests;

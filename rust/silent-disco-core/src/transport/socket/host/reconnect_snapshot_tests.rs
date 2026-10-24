@@ -25,11 +25,7 @@ fn connect_authorized(
     let device = id_device(name);
     let mut listener = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock.clone(),
         )
         .expect("connect listener");
@@ -45,15 +41,15 @@ fn connect_authorized(
     listener
 }
 
-fn assert_tcp_controls(
-    listener: &mut dyn ListenerTransportNode,
-    expected: &[ControlMessage],
-) {
+fn assert_tcp_controls(listener: &mut dyn ListenerTransportNode, expected: &[ControlMessage]) {
     let deadline = Instant::now() + Duration::from_secs(5);
     for control in expected {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "missing ordered TCP replay/control frame");
+            assert!(
+                !remaining.is_zero(),
+                "missing ordered TCP replay/control frame"
+            );
             if let TransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(received),
@@ -100,7 +96,10 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
     // Listener A joins while paused: it must receive the original timeline,
     // the pending boundary and Pause, in that exact TCP order.
     let mut a = connect_authorized(&mut host, &factory, &clock, &session, "reconnect-a");
-    assert_tcp_controls(a.as_mut(), &[original.clone(), boundary.clone(), pause.clone()]);
+    assert_tcp_controls(
+        a.as_mut(),
+        &[original.clone(), boundary.clone(), pause.clone()],
+    );
     let sent_before_stale = host.counters().control_frames_sent;
     host.broadcast_control(&original)
         .expect("reject delayed original while paused");
@@ -110,7 +109,8 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
     resumed_start.host_start_time_ms = MonotonicMillis::new(1_100);
     resumed_start.current_display_name = Some("Now resumed".to_owned());
     let resume = ControlMessage::StreamStart(resumed_start);
-    host.broadcast_control(&resume).expect("real reanchored Resume");
+    host.broadcast_control(&resume)
+        .expect("real reanchored Resume");
     assert_tcp_controls(a.as_mut(), std::slice::from_ref(&resume));
 
     // Listener B joins after Resume: its snapshot must have the shifted
