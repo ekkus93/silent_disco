@@ -593,7 +593,9 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
     assert_eq!(retired_supplied, 0, "retired output must supply no frames");
     assert!(retired_callback_zeroed, "retired callback must be silent");
     assert_eq!(
-        replay_output.queued_frames().expect("new output is untouched"),
+        replay_output
+            .queued_frames()
+            .expect("new output is untouched"),
         0,
         "retired callback must not read from the new output"
     );
