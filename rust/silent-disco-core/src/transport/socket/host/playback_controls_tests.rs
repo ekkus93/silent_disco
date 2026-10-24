@@ -63,10 +63,19 @@ fn stop_clears_cached_boundaries_and_pause_before_late_join_or_replay() {
     cached.update(&next);
     assert!(cached.snapshot().is_empty());
 
-    // An explicit new Play/StreamStart may reuse the stream ID, but the
-    // previously cached boundary and pause must still be absent.
-    cached.update(&start);
-    assert!(cached.snapshot() == vec![start]);
+    // A delayed copy of the retired start cannot revive a stopped stream.
+    assert!(!cached.update(&start));
+    assert!(cached.snapshot().is_empty());
+
+    // A new Play may reuse the stream ID with a strictly newer anchor,
+    // without restoring the old boundary or pause.
+    let ControlMessage::StreamStart(mut restarted) = start else {
+        panic!("expected StreamStart");
+    };
+    restarted.host_start_time_ms = MonotonicMillis::new(3_000);
+    let restarted = ControlMessage::StreamStart(restarted);
+    assert!(cached.update(&restarted));
+    assert!(cached.snapshot() == vec![restarted]);
 }
 
 #[test]
@@ -466,4 +475,35 @@ fn pause_and_stop_are_valid_before_the_first_scheduled_audio_sample() {
         cached.snapshot().is_empty(),
         "Stop must clear future playback from late-join replay"
     );
+}
+
+#[test]
+fn stopped_generation_rejects_delayed_stream_starts_even_with_another_stream_id() {
+    let session = SessionId::new("stop-start-fence-session").expect("session");
+    let old_id = StreamId::new("stop-start-fence-old").expect("old stream");
+    let start = stream_start(&session, &old_id);
+    let mut cached = PlaybackControls::default();
+    assert!(cached.update(&start));
+    assert!(cached.update(&ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: old_id,
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    })));
+
+    let ControlMessage::StreamStart(mut delayed) = start.clone() else {
+        panic!("expected StreamStart");
+    };
+    delayed.stream_id = StreamId::new("stop-start-fence-other").expect("other stream");
+    assert!(!cached.update(&start));
+    assert!(!cached.update(&ControlMessage::StreamStart(delayed.clone())));
+    assert!(cached.snapshot().is_empty());
+
+    // A genuinely newer Play in the same session is accepted; a delayed
+    // start from before Stop must not replace its reconnect snapshot.
+    delayed.stream_id = StreamId::new("stop-start-fence-new").expect("new stream");
+    delayed.host_start_time_ms = MonotonicMillis::new(3_000);
+    let fresh = ControlMessage::StreamStart(delayed);
+    assert!(cached.update(&fresh));
+    assert!(!cached.update(&start));
+    assert!(cached.snapshot() == vec![fresh]);
 }

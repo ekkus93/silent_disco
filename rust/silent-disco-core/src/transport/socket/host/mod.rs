@@ -42,6 +42,9 @@ pub(super) struct PlaybackControls {
     // Highest pause timestamp already observed for this stream. A Resume
     // clears the active pause but must not erase its retransmission fence.
     last_pause_time_ms: Option<u64>,
+    // A delayed StreamStart must not resurrect playback after Stop. Preserve
+    // the most recently retired session's start-time fence across idle state.
+    last_stopped_start: Option<(SessionId, u64)>,
 }
 
 impl PlaybackControls {
@@ -50,6 +53,14 @@ impl PlaybackControls {
     pub(super) fn update(&mut self, message: &ControlMessage) -> bool {
         match message {
             ControlMessage::StreamStart(start) => {
+                // Stop retires this generation, including its original
+                // StreamStart. A fresh Play must advertise a later anchor;
+                // the stream ID alone cannot distinguish delayed delivery.
+                if self.last_stopped_start.as_ref().is_some_and(|(session, anchor)| {
+                    *session == start.session_id && start.host_start_time_ms.get() <= *anchor
+                }) {
+                    return false;
+                }
                 // A delayed start from an older generation must not rewind
                 // the active clock or clear its paused state, even when a
                 // subsequent Play assigned a different stream ID.
@@ -131,7 +142,12 @@ impl PlaybackControls {
                 // Stop is valid before the first scheduled sample is audible.
                 // The stream ID, not the future presentation timestamp,
                 // distinguishes a delayed Stop from a retired stream.
-                *self = Self::default();
+                let retired = self.stream_start.take().expect("active stream checked above");
+                self.last_stopped_start =
+                    Some((retired.session_id, retired.host_start_time_ms.get()));
+                self.boundaries.clear();
+                self.pause = None;
+                self.last_pause_time_ms = None;
                 true
             }
             // Explicit Stop must disarm idle listener liveness even when the
