@@ -107,6 +107,8 @@ def validate_report(filename, report, sha):
             raise ValueError(f"{filename}: source boundaries must be increasing positive frames")
         require_equal(report, "observed_boundaries", boundaries, filename)
         frames = require_integer(report, "captured_frames", filename, minimum=1)
+        if boundaries[1] >= frames:
+            raise ValueError(f"{filename}: source boundaries must precede the captured output end")
         require_equal(report, "expected_frames_with_padding", frames, filename)
         chunks = report.get("callback_frame_chunks")
         if (not isinstance(chunks, list) or len(chunks) != 3

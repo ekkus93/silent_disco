@@ -322,3 +322,13 @@ Synthetic regressions exercise malformed callback and canonical-source WAVs,
 while verifying that a valid odd-numbered mono frame count still passes.
 This improves software evidence integrity; it does not establish device output
 continuity or complete the production-path regression.
+
+## Reject out-of-range encoded callback boundary evidence
+
+The exact-SHA JSON gate also requires both encoded WAV/FLAC/MP3 source
+boundaries to fall strictly inside the captured PCM output. A report whose
+observed and expected boundaries agree but point past the final captured
+frame cannot certify any transition. Negative tests cover boundaries at
+and beyond the output end; real production callback comparisons remain the
+source of the reports. This is a metadata consistency check, not physical
+output acceptance.

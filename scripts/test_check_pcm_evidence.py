@@ -239,5 +239,18 @@ class EvidenceGateTests(unittest.TestCase):
             validate_directory(self.root, SHA)
 
 
+    def test_encoded_boundaries_must_fit_inside_captured_audio(self):
+        # A self-consistent pair of impossible boundary positions is not
+        # evidence that either track transition reached the callback.
+        name = "encoded-socket-callback.json"
+        for boundaries in ([480, 1440], [1441, 1442], [999999, 1000000]):
+            with self.subTest(boundaries=boundaries):
+                self.reports[name] = sample_report(name)
+                self.reports[name]["source_boundaries"] = boundaries
+                self.reports[name]["observed_boundaries"] = boundaries
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, "source boundaries must precede"):
+                    validate_directory(self.root, SHA)
+
 if __name__ == "__main__":
     unittest.main()
