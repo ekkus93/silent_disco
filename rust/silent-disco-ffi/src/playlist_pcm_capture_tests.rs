@@ -259,15 +259,15 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("sd-scheduler-callback-{unique}"));
     fs::create_dir_all(&root).expect("fixture directory");
-    let values = [1_024_i16, 2_048, 4_096];
+    let values = [1_024_i16, 2_048, 4_096, 1_024];
     // Each source is exactly 10ms, but the decoder must normalize differing
     // sample rates and mono/stereo input before packetization and UDP delivery.
-    let formats = [(48_000, 2, 480), (44_100, 1, 441), (96_000, 2, 960)];
-    let sources = values
+    let formats = [(48_000, 2, 480), (44_100, 1, 441), (96_000, 2, 960), (48_000, 2, 480)];
+    let sources: Vec<FfiPlaylistSource> = values
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            let path = root.join(format!("track-{index}.wav"));
+            let path = root.join(format!("track-{}.wav", if index == 3 { 0 } else { index }));
             let (rate, channels, frames) = formats[index];
             fs::write(&path, source_wav_format(*value, rate, channels, frames))
                 .expect("source fixture");
@@ -278,12 +278,15 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
             }
         })
         .collect();
+    // A distinct queue entry deliberately reuses the first staged source.
+    assert_eq!(sources[0].staged_path, sources[3].staged_path);
+    assert_ne!(sources[0].entry_id, sources[3].entry_id);
     // Independent canonical decoder run provides the expected source PCM,
     // including the precise resampler output, not a guessed constant value.
     let mut reference_pcm = Vec::new();
     for index in 0..values.len() {
         let decoder = StreamingDecodeHandle::open(
-            root.join(format!("track-{index}.wav")),
+            root.join(format!("track-{}.wav", if index == 3 { 0 } else { index })),
             StreamingDecodeConfig::default(),
         )
         .expect("open reference decoder");
@@ -292,7 +295,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         }
         decoder.join().expect("reference decoder completed");
     }
-    assert_eq!(reference_pcm.len(), 1_440 * CHANNELS);
+    assert_eq!(reference_pcm.len(), 1_920 * CHANNELS);
     let (mut host, mut listener) = authorized_pcm_socket_pair();
     let playlist = FfiHostPlaylistStreamer::open(
         "end-to-end-session".to_owned(),
@@ -465,15 +468,15 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         }
     }
     assert!(finished);
-    assert_eq!(boundaries, [480, 960]);
-    assert_eq!(next_sample, 1_440);
+    assert_eq!(boundaries, [480, 960, 1_440]);
+    assert_eq!(next_sample, 1_920);
 
     // Virtual presentation time, no wall-clock sleeps or hardware emulator:
     // the real scheduler/pump must queue all decoded producer packets.
-    // Only advance through the three real 10 ms packets. Polling past the
+    // Only advance through the four real 10 ms packets. Polling past the
     // natural queue end without a Stop control would legitimately make the
-    // still-running scheduler conceal a hypothetical missing fourth packet.
-    for now in 1_000..=1_029 {
+    // still-running scheduler conceal a hypothetical missing fifth packet.
+    for now in 1_000..=1_039 {
         for _ in 0..64 {
             if !matches!(
                 pump.tick(now),
@@ -491,8 +494,9 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     // Deliberately *do not* align callback buffers to 480-frame source
     // boundaries. Real Oboe callback sizes are not synchronized to a
     // playlist, and the second/third reads must each cross a track boundary.
-    // 241 + 337 = 578 (> 480); 578 + 517 = 1_095 (> 960).
-    for callback_frames in [241_u32, 337, 517, 345] {
+    // 241 + 337 = 578 (> 480); 578 + 517 = 1_095 (> 960),
+    // and the final callback crosses the reused source's 1,440-frame boundary.
+    for callback_frames in [241_u32, 337, 517, 345, 480] {
         let mut returned =
             vec![0.0_f32; usize::try_from(callback_frames).expect("bounded callback") * CHANNELS];
         let mut frames_supplied = 0;
@@ -511,10 +515,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         from_ring_total += u64::from(frames_supplied);
         captured.extend(returned);
     }
-    assert_eq!(from_ring_total, 1_440);
+    assert_eq!(from_ring_total, 1_920);
     let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
-    assert_eq!(silent_disco_audio_callback_count(engine), 4);
-    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_440);
+    assert_eq!(silent_disco_audio_callback_count(engine), 5);
+    assert_eq!(silent_disco_audio_frames_rendered(engine), 1_920);
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
     let mut expected: Vec<f32> = reference_pcm
@@ -546,7 +550,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         .filter(|(actual, reference)| actual.to_bits() != reference.to_bits())
         .count()
         + captured.len().abs_diff(expected.len());
-    let tap_pcm = tap.drain(1_440);
+    let tap_pcm = tap.drain(1_920);
     let tap_mismatched_samples = tap_pcm
         .iter()
         .zip(&captured)
@@ -571,7 +575,7 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         let native_silence = silent_disco_audio_silence_filled_frames(engine);
         let captured_frames = captured.len() / CHANNELS;
         let json = format!(
-            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\"],\n  \"source_boundaries\": [480, 960],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1440,\n  \"captured_frames\": {captured_frames},\n  \"callback_count\": {callback_count},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"callback_frame_chunks\": [241, 337, 517, 345],\n  \"tap_captured_frames\": {tap_captured_frames},\n  \"tap_lost_frames\": {tap_lost_frames},\n  \"tap_callback_count\": {tap_callbacks},\n  \"tap_mismatched_samples\": {tap_mismatched_samples},\n  \"mismatched_samples\": {mismatched_samples},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"physical_dac_verified\": false\n}}\n"
+            "{{\n  \"schema\": 1,\n  \"status\": \"{status}\",\n  \"commit\": \"{commit}\",\n  \"capture\": \"native-rust-callback-after-real-udp-socket\",\n  \"source_formats\": [\"48000-stereo\", \"44100-mono\", \"96000-stereo\", \"48000-stereo-reused\"],\n  \"reused_source_entry_ids\": [\"track-0\", \"track-3\"],\n  \"source_boundaries\": [480, 960, 1440],\n  \"sample_rate\": 48000,\n  \"channels\": 2,\n  \"expected_frames\": 1920,\n  \"captured_frames\": {captured_frames},\n  \"callback_count\": {callback_count},\n  \"native_underrun_callbacks\": {native_underruns},\n  \"native_silence_filled_frames\": {native_silence},\n  \"callback_frame_chunks\": [241, 337, 517, 345, 480],\n  \"tap_captured_frames\": {tap_captured_frames},\n  \"tap_lost_frames\": {tap_lost_frames},\n  \"tap_callback_count\": {tap_callbacks},\n  \"tap_mismatched_samples\": {tap_mismatched_samples},\n  \"mismatched_samples\": {mismatched_samples},\n  \"first_mismatch_frame\": {first_frame},\n  \"first_mismatch_channel\": {first_channel},\n  \"physical_dac_verified\": false\n}}\n"
         );
         fs::write(path.join("mixed-rate-socket-callback.json"), json)
             .expect("write machine-readable comparison evidence");
@@ -585,10 +589,10 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         );
     }
     assert_eq!(tap_pcm, captured, "callback tap differs from returned PCM");
-    assert_eq!(tap.counters(), (1_440, 0, 4));
+    assert_eq!(tap.counters(), (1_920, 0, 5));
 
     // The packetizer may leave intentional final-packet zero padding in the
-    // render ring after all 1,440 source frames. Drain that padding and then
+    // render ring after all 1,920 source frames. Drain that padding and then
     // request 17 additional frames to force an observable native underrun.
     // The tap must record both the ring's padding and synthesized silence.
     let padding_frames = silent_disco_audio_available_frames(engine);
@@ -610,11 +614,11 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
         tap.drain(usize::try_from(requested_tail).expect("frames")),
         final_tail
     );
-    assert_eq!(tap.counters(), (1_440 + u64::from(requested_tail), 0, 5));
-    assert_eq!(silent_disco_audio_callback_count(engine), 5);
+    assert_eq!(tap.counters(), (1_920 + u64::from(requested_tail), 0, 6));
+    assert_eq!(silent_disco_audio_callback_count(engine), 6);
     assert_eq!(
         silent_disco_audio_frames_rendered(engine),
-        1_440 + u64::from(padding_frames)
+        1_920 + u64::from(padding_frames)
     );
     assert_eq!(silent_disco_audio_underrun_count(engine), 1);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 17);

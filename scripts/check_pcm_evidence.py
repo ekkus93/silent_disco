@@ -76,13 +76,14 @@ def validate_report(filename, report, sha):
     if filename == "mixed-rate-socket-callback.json":
         require_equal(report, "capture", "native-rust-callback-after-real-udp-socket", filename)
         require_equal(report, "source_formats",
-                      ["48000-stereo", "44100-mono", "96000-stereo"], filename)
+                      ["48000-stereo", "44100-mono", "96000-stereo", "48000-stereo-reused"], filename)
+        require_equal(report, "reused_source_entry_ids", ["track-0", "track-3"], filename)
         require_equal(report, "sample_rate", 48000, filename)
         require_equal(report, "channels", 2, filename)
-        require_equal(report, "source_boundaries", [480, 960], filename)
-        require_equal(report, "callback_frame_chunks", [241, 337, 517, 345], filename)
-        require_equal(report, "expected_frames", 1440, filename)
-        require_equal(report, "captured_frames", 1440, filename)
+        require_equal(report, "source_boundaries", [480, 960, 1440], filename)
+        require_equal(report, "callback_frame_chunks", [241, 337, 517, 345, 480], filename)
+        require_equal(report, "expected_frames", 1920, filename)
+        require_equal(report, "captured_frames", 1920, filename)
         for name in (
             "mismatched_samples", "tap_mismatched_samples", "native_underrun_callbacks",
             "native_silence_filled_frames", "tap_lost_frames",
@@ -90,9 +91,9 @@ def validate_report(filename, report, sha):
             require_equal(report, name, 0, filename)
         for name in ("first_mismatch_frame", "first_mismatch_channel"):
             require_equal(report, name, None, filename)
-        require_equal(report, "tap_captured_frames", 1440, filename)
-        require_equal(report, "callback_count", 4, filename)
-        require_equal(report, "tap_callback_count", 4, filename)
+        require_equal(report, "tap_captured_frames", 1920, filename)
+        require_equal(report, "callback_count", 5, filename)
+        require_equal(report, "tap_callback_count", 5, filename)
     elif filename == "encoded-socket-callback.json":
         require_equal(report, "capture", "native-rust-callback-after-real-tcp-udp-sockets",
                       filename)

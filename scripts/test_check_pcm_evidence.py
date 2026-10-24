@@ -17,14 +17,15 @@ def sample_report(name):
     if name == "mixed-rate-socket-callback.json":
         base.update(
             capture="native-rust-callback-after-real-udp-socket",
-            source_formats=["48000-stereo", "44100-mono", "96000-stereo"],
+            source_formats=["48000-stereo", "44100-mono", "96000-stereo", "48000-stereo-reused"],
+            reused_source_entry_ids=["track-0", "track-3"],
             sample_rate=48000, channels=2,
-            source_boundaries=[480, 960], callback_frame_chunks=[241, 337, 517, 345],
-            expected_frames=1440, captured_frames=1440, mismatched_samples=0,
+            source_boundaries=[480, 960, 1440], callback_frame_chunks=[241, 337, 517, 345, 480],
+            expected_frames=1920, captured_frames=1920, mismatched_samples=0,
             tap_mismatched_samples=0, native_underrun_callbacks=0,
             native_silence_filled_frames=0, tap_lost_frames=0,
             first_mismatch_frame=None, first_mismatch_channel=None,
-            tap_captured_frames=1440, callback_count=4, tap_callback_count=4,
+            tap_captured_frames=1920, callback_count=5, tap_callback_count=5,
         )
     elif name == "encoded-socket-callback.json":
         base.update(
@@ -270,9 +271,10 @@ class EvidenceGateTests(unittest.TestCase):
 
     def test_nested_boolean_and_float_impostors_do_not_pass_pcm_evidence(self):
         cases = (
-            ("mixed-rate-socket-callback.json", "source_boundaries", [480.0, 960]),
+            ("mixed-rate-socket-callback.json", "source_boundaries", [480.0, 960, 1440]),
+            ("mixed-rate-socket-callback.json", "reused_source_entry_ids", ["track-0", "track-0"]),
             ("mixed-rate-socket-callback.json", "callback_frame_chunks",
-             [241, 337, 517.0, 345]),
+             [241, 337, 517.0, 345, 480]),
             ("encoded-socket-callback.json", "listener_volume_gains",
              [True, 0.5, 0.25]),
             ("authoritative-edit-replay-callback.json", "source_boundaries",
