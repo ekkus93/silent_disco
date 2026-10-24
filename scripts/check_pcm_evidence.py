@@ -162,6 +162,7 @@ def validate_report(filename, report, sha):
         require_equal(report, "packet_first_sample_indices", [0, 240, 480, 720], filename)
         require_equal(report, "expected_frames", 960, filename)
         require_equal(report, "captured_frames", 960, filename)
+        require_equal(report, "native_ring_remaining_frames", 0, filename)
         require_equal(report, "callback_frame_chunks", [479, 2, 479], filename)
         for name in ("callback_count", "tap_callback_count"):
             require_equal(report, name, 3, filename)

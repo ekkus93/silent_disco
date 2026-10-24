@@ -354,6 +354,13 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
         }
     }
     assert_eq!(absolute_frame, 960);
+    // The callback must have consumed the entire resumed stream. Matching
+    // the expected prefix is insufficient if stale PCM remains queued.
+    let native_ring_remaining_frames = output.queued_frames().expect("remaining native PCM");
+    assert_eq!(
+        native_ring_remaining_frames, 0,
+        "unexpected buffered PCM after the resumed track boundary"
+    );
     let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
@@ -381,6 +388,7 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
   "packet_first_sample_indices": {samples:?},
   "expected_frames": 960,
   "captured_frames": {absolute_frame},
+  "native_ring_remaining_frames": {native_ring_remaining_frames},
   "callback_frame_chunks": [479, 2, 479],
   "callback_count": {native_callbacks},
   "native_underrun_callbacks": {native_underruns},

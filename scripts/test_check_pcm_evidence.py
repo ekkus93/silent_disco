@@ -52,7 +52,7 @@ def sample_report(name):
             packet_sequences=[0, 1, 2, 3],
             packet_first_sample_indices=[0, 240, 480, 720],
             expected_frames=960, captured_frames=960,
-            callback_frame_chunks=[479, 2, 479],
+            native_ring_remaining_frames=0, callback_frame_chunks=[479, 2, 479],
             callback_count=3, native_underrun_callbacks=0,
             native_silence_filled_frames=0, tap_captured_frames=960,
             tap_lost_frames=0, tap_callback_count=3,
@@ -249,6 +249,7 @@ class EvidenceGateTests(unittest.TestCase):
             ("packet_first_sample_indices", [0, 240, 240, 720]),
             ("callback_frame_chunks", [480, 1, 479]),
             ("native_silence_filled_frames", 1),
+            ("native_ring_remaining_frames", 1),
             ("tap_lost_frames", 1),
             ("pause_boundary_retained", False),
             ("paused_removal_rejected", False),
@@ -261,6 +262,13 @@ class EvidenceGateTests(unittest.TestCase):
                 self.write_reports()
                 with self.assertRaisesRegex(ValueError, field):
                     validate_directory(self.root, SHA)
+
+    def test_paused_callback_evidence_requires_ring_drain_field(self):
+        name = "paused-resume-callback.json"
+        self.reports[name].pop("native_ring_remaining_frames")
+        self.write_reports()
+        with self.assertRaisesRegex(ValueError, "native_ring_remaining_frames"):
+            validate_directory(self.root, SHA)
 
     def test_no_dac_claim_or_nonfinite_values_are_accepted(self):
         self.reports["mixed-rate-socket-callback.json"]["physical_dac_verified"] = True
