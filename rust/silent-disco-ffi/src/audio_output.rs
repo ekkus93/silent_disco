@@ -693,8 +693,6 @@ mod tests {
         assert_eq!(stale_pcm, [0.0; 4]);
         assert_eq!(second_tap.counters(), (2, 0, 1));
         assert!(second_tap.drain(2).is_empty());
-
-
     }
 
     #[test]
