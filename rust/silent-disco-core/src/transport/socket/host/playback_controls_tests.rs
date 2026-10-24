@@ -108,10 +108,16 @@ fn new_stream_drops_old_boundaries_and_rejects_stale_control_events() {
     cached.update(&pause(&session_id, &new_id));
     assert_eq!(cached.snapshot().len(), 3);
 
-    // A same-stream StreamStart is a resume: retain queued boundaries but
-    // withdraw paused state before replaying to a newly admitted listener.
-    cached.update(&new_start);
-    assert!(cached.snapshot() == vec![new_start, new_boundary]);
+    // Resume advances the presentation anchor; a delayed original start
+    // cannot unpause the cached listener state.
+    assert!(!cached.update(&new_start));
+    let ControlMessage::StreamStart(mut resumed) = new_start else {
+        panic!("expected StreamStart");
+    };
+    resumed.host_start_time_ms = MonotonicMillis::new(1_100);
+    let resumed = ControlMessage::StreamStart(resumed);
+    assert!(cached.update(&resumed));
+    assert!(cached.snapshot() == vec![resumed, new_boundary]);
 }
 
 #[test]
@@ -298,20 +304,29 @@ fn same_stream_resume_does_not_replay_delayed_pauses() {
     cached.update(&start);
     cached.update(&next);
     cached.update(&first_pause);
-    cached.update(&start); // same-stream Resume withdraws the active pause
+    assert!(!cached.update(&start), "duplicate start cannot lift Pause");
+    let ControlMessage::StreamStart(mut reanchored) = start.clone() else {
+        panic!("expected StreamStart");
+    };
+    reanchored.host_start_time_ms = MonotonicMillis::new(1_100);
+    let resume = ControlMessage::StreamStart(reanchored.clone());
+    assert!(cached.update(&resume));
     cached.update(&older_pause); // delayed prior Pause
     cached.update(&first_pause); // duplicated prior Pause at the watermark
     assert!(
-        cached.snapshot() == vec![start.clone(), next.clone()],
+        cached.snapshot() == vec![resume.clone(), next.clone()],
         "prior pauses must not reappear in late-join replay after Resume"
     );
 
     cached.update(&newer_pause); // a genuinely later Pause still takes effect
-    assert!(cached.snapshot() == vec![start.clone(), next.clone(), newer_pause.clone()]);
-    cached.update(&start); // Resume again, retaining the newer fence
+    assert!(cached.snapshot() == vec![resume.clone(), next.clone(), newer_pause.clone()]);
+    assert!(!cached.update(&resume), "stale resume cannot lift newer Pause");
+    reanchored.host_start_time_ms = MonotonicMillis::new(1_200);
+    let resume_again = ControlMessage::StreamStart(reanchored);
+    assert!(cached.update(&resume_again));
     cached.update(&first_pause);
     cached.update(&newer_pause);
-    assert!(cached.snapshot() == vec![start, next]);
+    assert!(cached.snapshot() == vec![resume_again, next]);
 }
 
 #[test]

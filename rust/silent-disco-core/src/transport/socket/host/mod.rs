@@ -90,6 +90,18 @@ impl PlaybackControls {
                 {
                     return false;
                 }
+                // Resume advances the presentation anchor by the pause
+                // duration. A delayed retransmission of the original start
+                // (including a metadata variant) must never clear Pause or
+                // release a held track boundary to a reconnecting listener.
+                if is_resume
+                    && self.pause.is_some()
+                    && self.stream_start.as_ref().is_some_and(|previous| {
+                        start.host_start_time_ms.get() <= previous.host_start_time_ms.get()
+                    })
+                {
+                    return false;
+                }
                 if !is_resume {
                     self.boundaries.clear();
                     self.last_pause_time_ms = None;
