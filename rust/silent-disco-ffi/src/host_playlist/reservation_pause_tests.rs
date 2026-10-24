@@ -3,8 +3,7 @@ use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
     silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
-    silent_disco_audio_silence_filled_frames,
-    silent_disco_audio_underrun_count,
+    silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
 };
 use crate::audio_output::FfiAudioOutputHandle;
 use crate::callback_capture::CallbackCaptureTap;
@@ -289,11 +288,14 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
             .is_some_and(|entry| entry.entry_id == "next-entry")
     });
     assert!(after.host_queue_next_boundary.is_none());
-    let resume_token_preserved = u64::try_from(
-        output.engine_token().expect("native token after resume"),
-    )
-    .expect("nonnegative resumed token") == token;
-    assert!(resume_token_preserved, "resume must not reopen the native output");
+    let resume_token_preserved =
+        u64::try_from(output.engine_token().expect("native token after resume"))
+            .expect("nonnegative resumed token")
+            == token;
+    assert!(
+        resume_token_preserved,
+        "resume must not reopen the native output"
+    );
     assert_eq!(output.queued_frames().expect("queued native PCM"), 960);
     let mut absolute_frame = 0_u32;
     // Neither callback boundary is aligned with the 480-frame track change.
@@ -345,8 +347,7 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     // Never upload raw source or callback samples to public CI artifacts.
     if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
         let commit = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned());
-        let observed_boundaries: Vec<u64> =
-            boundaries.iter().map(|(_, frame)| *frame).collect();
+        let observed_boundaries: Vec<u64> = boundaries.iter().map(|(_, frame)| *frame).collect();
         let report = format!(
             r#"{{
   "schema": 1,
