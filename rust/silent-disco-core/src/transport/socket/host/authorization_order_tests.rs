@@ -528,7 +528,8 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
     // It must neither unpause the cache nor reach the live TCP listener.
     let count_while_paused = host.counters().control_frames_sent;
     assert_eq!(
-        host.broadcast_control(&start).expect("reject old start while paused"),
+        host.broadcast_control(&start)
+            .expect("reject old start while paused"),
         crate::transport::TransportDelivery::new(0, 0, 0, 0).expect("empty delivery")
     );
     assert_eq!(host.counters().control_frames_sent, count_while_paused);
