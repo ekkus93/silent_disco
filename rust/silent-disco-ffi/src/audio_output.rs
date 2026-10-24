@@ -408,7 +408,9 @@ mod tests {
         let successor = [0.25_f32, -0.25, 0.5, -0.5, 0.75, -0.75];
         assert_eq!(handle.push_frames(prefill.clone()).expect("prefill"), 4_799);
         assert_eq!(
-            handle.push_frames(successor.to_vec()).expect("partial push"),
+            handle
+                .push_frames(successor.to_vec())
+                .expect("partial push"),
             1
         );
         assert_eq!(handle.queued_frames().expect("full ring"), 4_800);
@@ -432,7 +434,9 @@ mod tests {
         // Retry only the two unwritten frames, not the whole packet. The
         // callback must cross the physical ring wrap without a gap or repeat.
         assert_eq!(
-            handle.push_frames(successor[2..].to_vec()).expect("retry suffix"),
+            handle
+                .push_frames(successor[2..].to_vec())
+                .expect("retry suffix"),
             2
         );
         let mut second_callback = [f32::NAN; 6];
