@@ -191,15 +191,24 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("capture capacity"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach capture");
     let mut samples = Vec::new();
+    let mut packet_sequences = Vec::new();
+    let mut next_sequence = 0_u64;
+    let mut next_sample_index = 0_u64;
     let mut boundaries = Vec::new();
     loop {
         match stream.next_frame(2_000).expect("paused producer frame") {
             Some(FfiPlaylistFrame::Audio {
+                sequence,
                 first_sample_index,
                 samples_per_packet,
                 payload,
                 ..
             }) => {
+                assert_eq!(sequence, next_sequence, "missing/duplicate PCM packet at pause boundary");
+                assert_eq!(first_sample_index, next_sample_index, "gap/overlap in paused PCM timeline");
+                next_sequence += 1;
+                next_sample_index += u64::from(samples_per_packet);
+                packet_sequences.push(sequence);
                 assert_eq!(
                     payload.len(),
                     usize::try_from(samples_per_packet).expect("packet frames") * 4
@@ -219,6 +228,7 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
                 first_sample_index,
                 ..
             }) => {
+                assert_eq!(first_sample_index, next_sample_index, "boundary must follow current PCM exactly");
                 let snapshot = wait_until(&actor, |s| s.host_queue_next_boundary.is_some());
                 assert_eq!(snapshot.playback_state, PlaybackState::Paused);
                 assert_eq!(
@@ -233,6 +243,8 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     }
     assert_eq!(boundaries, [("next-entry".to_owned(), 480)]);
     assert_eq!(samples, [0, 240, 480, 720]);
+    assert_eq!(packet_sequences, [0, 1, 2, 3]);
+    assert_eq!(next_sample_index, 960);
     // The producer has already reserved the successor while paused. An edit
     // that removes that prebuffered entry must fail rather than allowing the
     // callback to render audio from an entry no longer in the host queue.
@@ -356,6 +368,8 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
   "capture": "actor-authorized-ffi-paused-resume-native-callback",
   "source_boundaries": [480],
   "observed_boundaries": {observed_boundaries:?},
+  "packet_sequences": {packet_sequences:?},
+  "packet_first_sample_indices": {samples:?},
   "expected_frames": 960,
   "captured_frames": {absolute_frame},
   "callback_frame_chunks": [479, 2, 479],

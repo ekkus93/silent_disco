@@ -347,3 +347,16 @@ and fails if any pause, removal, callback or tap condition is not met.
 The test exercises Rust producer/actor/callback software behavior; it does
 not yet prove Android Oboe, desktop audio-device, TCP/UDP scheduler, or
 physical mixer/DAC continuity under pause/resume.
+
+## Paused actor-reserved producer: packet-order evidence
+
+The deterministic authoritative UniFFI pause/resume regression now checks every
+producer audio packet's sequence and first sample index before pushing decoded
+PCM to the same native output ring. It requires sequences `[0, 1, 2, 3]`,
+starts `[0, 240, 480, 720]`, and a reserved successor boundary at exactly
+sample 480, while the actor remains paused. The callback comparison then
+verifies 960 exact frames across non-track-aligned callback reads after resume.
+The public metadata report includes packet sequences and first sample indices;
+its fail-closed validator rejects missing, duplicate, reordered, or gapped
+packet evidence. This verifies producer ordering and native callback continuity,
+not physical speaker/DAC output or real-device pause behavior.

@@ -49,6 +49,8 @@ def sample_report(name):
         base.update(
             capture="actor-authorized-ffi-paused-resume-native-callback",
             source_boundaries=[480], observed_boundaries=[480],
+            packet_sequences=[0, 1, 2, 3],
+            packet_first_sample_indices=[0, 240, 480, 720],
             expected_frames=960, captured_frames=960,
             callback_frame_chunks=[479, 2, 479],
             callback_count=3, native_underrun_callbacks=0,
@@ -241,6 +243,10 @@ class EvidenceGateTests(unittest.TestCase):
         name = "paused-resume-callback.json"
         cases = (
             ("observed_boundaries", [481]),
+            ("packet_sequences", [0, 1, 1, 3]),
+            ("packet_sequences", [0, 1, 3, 4]),
+            ("packet_first_sample_indices", [0, 240, 481, 720]),
+            ("packet_first_sample_indices", [0, 240, 240, 720]),
             ("callback_frame_chunks", [480, 1, 479]),
             ("native_silence_filled_frames", 1),
             ("tap_lost_frames", 1),
