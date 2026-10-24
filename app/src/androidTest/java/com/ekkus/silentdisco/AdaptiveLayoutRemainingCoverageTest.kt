@@ -228,10 +228,14 @@ class AdaptiveLayoutRemainingCoverageTest {
         }
 
         composeRule.onNodeWithText("Playback output").performScrollTo().performClick()
-        composeRule.onNodeWithTag("start-callback-capture")
-            .performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
-        composeRule.onNodeWithTag("stop-callback-capture")
-            .performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+        val startButton = composeRule.onNodeWithTag("start-callback-capture")
+            .performScrollTo().assertIsDisplayed().assertIsEnabled()
+        assertThat(startButton.fetchSemanticsNode().boundsInRoot.height).isAtLeast(48f)
+        startButton.performClick()
+        val stopButton = composeRule.onNodeWithTag("stop-callback-capture")
+            .performScrollTo().assertIsDisplayed().assertIsEnabled()
+        assertThat(stopButton.fetchSemanticsNode().boundsInRoot.height).isAtLeast(48f)
+        stopButton.performClick()
         composeRule.onNodeWithTag("start-callback-capture")
             .performScrollTo().assertIsDisplayed().assertIsNotEnabled()
         composeRule.runOnIdle {

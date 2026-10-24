@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -186,7 +187,7 @@ fun DiagnosticsScreen(
                     if (callbackCaptureStatus.startsWith("Recording")) {
                         TextButton(
                             onClick = onStopCallbackCapture,
-                            modifier = Modifier.testTag("stop-callback-capture"),
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("stop-callback-capture"),
                         ) {
                             Text("Stop PCM capture")
                         }
@@ -194,7 +195,7 @@ fun DiagnosticsScreen(
                         TextButton(
                             onClick = onStartCallbackCapture,
                             enabled = callbackCaptureStatus != "Finalizing capture",
-                            modifier = Modifier.testTag("start-callback-capture"),
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("start-callback-capture"),
                         ) {
                             Text("Start PCM capture")
                         }
