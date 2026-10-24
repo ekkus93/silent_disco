@@ -46,6 +46,46 @@ class CallbackPcmWavWriterTest {
     }
 
     @Test
+    fun invalidWavGeometryDoesNotOpenOrCreateACaptureFile() {
+        val file = temporaryFile()
+        assertFalse(file.exists())
+        assertThrows(IllegalArgumentException::class.java) {
+            CallbackPcmWavWriter(file, sampleRate = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CallbackPcmWavWriter(file, sampleRate = Int.MAX_VALUE)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CallbackPcmWavWriter(file, maxFrames = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CallbackPcmWavWriter(file, maxFrames = Long.MAX_VALUE)
+        }
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun nonFiniteCallbackBatchDoesNotCorruptPreviouslyCapturedPcm() {
+        val file = temporaryFile()
+        val writer = CallbackPcmWavWriter(file)
+        writer.append(listOf(0.125f, -0.125f))
+        assertThrows(IllegalArgumentException::class.java) {
+            writer.append(listOf(0.5f, Float.NaN))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            writer.append(listOf(Float.POSITIVE_INFINITY, 0.5f))
+        }
+        writer.append(listOf(0.25f, -0.25f))
+        assertEquals(2L, writer.finish())
+        val bytes = file.readBytes()
+        assertEquals(52, bytes.size)
+        assertArrayEquals(
+            byteArrayOf(0, 16, 0, -16, 0, 32, 0, -32),
+            bytes.copyOfRange(44, 52),
+        )
+    }
+
+    @Test
     fun captureReportRequiresLiveOutputThroughoutCapture() {
         fun report(start: String, end: String): CallbackAudioCaptureReport =
             CallbackAudioCaptureReport(

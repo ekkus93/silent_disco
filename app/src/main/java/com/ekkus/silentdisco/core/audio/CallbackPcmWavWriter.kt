@@ -18,13 +18,20 @@ internal class CallbackPcmWavWriter(
     val sampleRate: Int = 48_000,
     private val maxFrames: Long = 48_000L * 300L,
 ) : Closeable {
-    private val output = RandomAccessFile(file, "rw")
+    private val output: RandomAccessFile
     private var samplesWritten = 0L
     private var finished = false
 
     init {
-        require(sampleRate > 0 && maxFrames > 0)
-        require(maxFrames <= (Int.MAX_VALUE - 44L) / 4L)
+        // Validate before opening the file: an invalid capture configuration
+        // must not leak a file descriptor or create a misleading empty WAV.
+        require(sampleRate > 0 && sampleRate <= Int.MAX_VALUE / 4) {
+            "callback WAV sample rate would overflow the PCM16 byte rate"
+        }
+        require(maxFrames > 0 && maxFrames <= (Int.MAX_VALUE - 44L) / 4L) {
+            "callback WAV frame limit exceeds the supported RIFF size"
+        }
+        output = RandomAccessFile(file, "rw")
         output.setLength(0)
         output.writeBytes("RIFF")
         output.writeLe32(36)
