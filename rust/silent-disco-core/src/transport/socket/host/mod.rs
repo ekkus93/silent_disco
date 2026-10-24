@@ -28,9 +28,9 @@ mod node;
 mod peer;
 
 #[cfg(test)]
-mod playback_controls_tests;
-#[cfg(test)]
 mod playback_controls_format_tests;
+#[cfg(test)]
+mod playback_controls_tests;
 
 const MAX_CACHED_TRACK_BOUNDARIES: usize = 100;
 

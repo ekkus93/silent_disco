@@ -44,7 +44,10 @@ fn malformed_same_stream_resume_preserves_paused_reconnect_snapshot() {
         invalid.samples_per_packet = packet_frames;
         invalid.current_display_name = Some("Stale format".to_owned());
         assert!(!cache.update(&ControlMessage::StreamStart(invalid)));
-        assert!(cache.snapshot() == held, "rejected resume must not unpause or change replay");
+        assert!(
+            cache.snapshot() == held,
+            "rejected resume must not unpause or change replay"
+        );
     }
 
     // Same-format metadata refresh remains valid, retaining the boundary
