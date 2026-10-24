@@ -333,6 +333,111 @@ mod tests {
     }
 
     #[test]
+    fn full_ring_backpressure_retries_without_reordering_native_callback_pcm() {
+        use crate::audio_abi::{
+            silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
+            silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+        };
+
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        let token = handle.engine_token().expect("live output token");
+        let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
+        let first = vec![0.25_f32, -0.25].repeat(4_800);
+        let deferred = vec![0.75_f32, -0.75, 0.875, -0.875];
+        assert_eq!(handle.push_frames(first.clone()).expect("fill ring"), 4_800);
+        assert_eq!(handle.queued_frames().expect("full ring"), 4_800);
+        assert_eq!(handle.push_frames(deferred.clone()).expect("backpressure"), 0);
+        assert_eq!(handle.queued_frames().expect("unchanged full ring"), 4_800);
+
+        let mut first_callback = vec![f32::NAN; 2_400 * 2];
+        let mut supplied = u32::MAX;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                first_callback.as_mut_ptr(),
+                2_400,
+                2,
+                &raw mut supplied,
+            ),
+            0,
+        );
+        assert_eq!(supplied, 2_400);
+        assert_eq!(first_callback, first[..4_800]);
+
+        assert_eq!(handle.push_frames(deferred.clone()).expect("retry"), 2);
+        let mut second_callback = vec![f32::NAN; 2_402 * 2];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                second_callback.as_mut_ptr(),
+                2_402,
+                2,
+                &raw mut supplied,
+            ),
+            0,
+        );
+        assert_eq!(supplied, 2_402);
+        assert_eq!(second_callback[..4_800], first[4_800..]);
+        assert_eq!(second_callback[4_800..], deferred);
+        assert_eq!(handle.queued_frames().expect("drained"), 0);
+        assert_eq!(handle.engine_token().expect("same stream"), token);
+        assert_eq!(silent_disco_audio_callback_count(engine), 2);
+        assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+        assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
+    }
+
+    #[test]
+    fn partial_callback_underrun_recovers_on_same_native_output_token() {
+        use crate::audio_abi::{
+            silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
+            silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+        };
+
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        let token = handle.engine_token().expect("live output token");
+        let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
+        assert_eq!(handle.push_frames(vec![0.125, -0.125, 0.25, -0.25]).expect("first packet"), 2);
+
+        let mut starving_callback = [f32::NAN; 6];
+        let mut supplied = u32::MAX;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                starving_callback.as_mut_ptr(),
+                3,
+                2,
+                &raw mut supplied,
+            ),
+            1,
+        );
+        assert_eq!(supplied, 2);
+        assert_eq!(starving_callback, [0.125, -0.125, 0.25, -0.25, 0.0, 0.0]);
+        assert_eq!(handle.queued_frames().expect("starved ring"), 0);
+
+        assert_eq!(handle.push_frames(vec![0.5, -0.5, 0.75, -0.75]).expect("replenish"), 2);
+        let mut recovered_callback = [f32::NAN; 4];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                recovered_callback.as_mut_ptr(),
+                2,
+                2,
+                &raw mut supplied,
+            ),
+            0,
+        );
+        assert_eq!(supplied, 2);
+        assert_eq!(recovered_callback, [0.5, -0.5, 0.75, -0.75]);
+        assert_eq!(handle.engine_token().expect("no output reopen"), token);
+        assert_eq!(handle.queued_frames().expect("recovered ring drained"), 0);
+        assert_eq!(silent_disco_audio_callback_count(engine), 2);
+        assert_eq!(silent_disco_audio_underrun_count(engine), 1);
+        assert_eq!(silent_disco_audio_silence_filled_frames(engine), 1);
+    }
+
+    #[test]
     fn release_is_idempotent_and_subsequent_calls_report_closed() {
         let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
