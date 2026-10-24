@@ -610,6 +610,86 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_capture_detach_and_reattach_preserve_live_callback_pcm() {
+        use std::sync::Arc;
+
+        use crate::audio_abi::{
+            attach_callback_capture, detach_callback_capture, silent_disco_audio_callback_count,
+            silent_disco_audio_frames_rendered, silent_disco_audio_read_interleaved_f32,
+            silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+        };
+        use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
+
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        let token = u64::try_from(handle.engine_token().expect("live token")).expect("token");
+        let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
+        let first_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("first tap"));
+        let second_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("second tap"));
+        attach_callback_capture(token, Arc::clone(&first_tap)).expect("start capture");
+
+        let packets = [
+            [0.125_f32, -0.125, 0.25, -0.25],
+            [0.375_f32, -0.375, 0.5, -0.5],
+            [0.625_f32, -0.625, 0.75, -0.75],
+        ];
+        for (index, packet) in packets.iter().enumerate() {
+            if index == 1 {
+                detach_callback_capture(token);
+            } else if index == 2 {
+                attach_callback_capture(token, Arc::clone(&second_tap))
+                    .expect("restart capture on same output");
+            }
+            assert_eq!(handle.push_frames(packet.to_vec()).expect("live PCM"), 2);
+            let mut callback_pcm = [f32::NAN; 4];
+            let mut supplied = u32::MAX;
+            assert_eq!(
+                silent_disco_audio_read_interleaved_f32(
+                    engine,
+                    callback_pcm.as_mut_ptr(),
+                    2,
+                    2,
+                    &raw mut supplied,
+                ),
+                0
+            );
+            assert_eq!(supplied, 2);
+            assert_eq!(callback_pcm, *packet, "capture changes cannot alter playback");
+        }
+
+        assert_eq!(first_tap.drain(4_800), packets[0]);
+        assert_eq!(first_tap.counters(), (2, 0, 1));
+        assert_eq!(second_tap.drain(4_800), packets[2]);
+        assert_eq!(second_tap.counters(), (2, 0, 1));
+        assert_eq!(handle.engine_token().expect("same output"), i64::try_from(token).expect("token"));
+        assert_eq!(handle.queued_frames().expect("ring drained"), 0);
+        assert_eq!(silent_disco_audio_callback_count(engine), 3);
+        assert_eq!(silent_disco_audio_frames_rendered(engine), 6);
+        assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+        assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
+
+        // Releasing with capture still attached must invalidate the old
+        // callback token without writing artificial silence into the tap.
+        handle.release();
+        let mut stale_pcm = [f32::NAN; 4];
+        let mut supplied = u32::MAX;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                stale_pcm.as_mut_ptr(),
+                2,
+                2,
+                &raw mut supplied,
+            ),
+            2
+        );
+        assert_eq!(supplied, 0);
+        assert_eq!(stale_pcm, [0.0; 4]);
+        assert_eq!(second_tap.counters(), (2, 0, 1));
+        assert!(second_tap.drain(2).is_empty());
+    }
+
+    #[test]
     fn release_is_idempotent_and_subsequent_calls_report_closed() {
         let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
