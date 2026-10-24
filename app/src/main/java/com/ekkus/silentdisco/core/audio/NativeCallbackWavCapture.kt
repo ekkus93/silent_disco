@@ -40,10 +40,15 @@ data class CallbackAudioCaptureReport(
             // Historical opens alone do not prove an output is currently live:
             // opens=closes means every previously opened stream was closed.
             // An inactive stream cannot qualify callback continuity.
-            return initial.opens > initial.closes &&
-                final.opens > final.closes &&
+            // Exactly one live output must exist at each endpoint. Merely
+            // observing unchanged cumulative opens/closes can conceal a
+            // leaked second output or an impossible lifecycle snapshot.
+            return initial.opens - initial.closes == 1 &&
+                final.opens - final.closes == 1 &&
                 initial.opens == final.opens &&
-                initial.closes == final.closes
+                initial.closes == final.closes &&
+                // Rebinds are cumulative too: a reset is not valid evidence.
+                final.rebinds >= initial.rebinds
         }
 }
 
@@ -68,7 +73,7 @@ internal fun currentOutputCallbackCounters(): OutputCallbackCounters? {
 internal fun parseOutputLifecycle(summary: String): OutputLifecycle? {
     val tokens = summary.split(' ')
     fun number(key: String): Int? =
-        tokens.firstOrNull { it.startsWith("$key=") }?.substringAfter('=')?.toIntOrNull()
+        tokens.filter { it.startsWith("$key=") }.singleOrNull()?.substringAfter('=')?.toIntOrNull()
     val opens = number("opens")?.takeIf { it >= 0 } ?: return null
     val rebinds = number("rebinds")?.takeIf { it >= 0 } ?: return null
     val closes = number("closes")?.takeIf { it >= 0 } ?: return null

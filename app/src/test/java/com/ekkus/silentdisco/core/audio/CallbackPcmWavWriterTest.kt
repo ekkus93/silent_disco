@@ -65,6 +65,17 @@ class CallbackPcmWavWriterTest {
         // Rebinding an existing stream is permitted, but actually closing
         // the stream or opening its replacement is not gapless.
         assertEquals(true, report(live, "opens=1 rebinds=1 closes=0").noUnexpectedOutputReopen)
+        assertEquals(
+            true,
+            report("opens=2 rebinds=1 closes=1", "opens=2 rebinds=2 closes=1")
+                .noUnexpectedOutputReopen,
+        )
+        // An unchanged but impossible output state cannot certify continuity.
+        assertFalse(report("opens=2 rebinds=0 closes=0", "opens=2 rebinds=0 closes=0")
+            .noUnexpectedOutputReopen!!)
+        assertFalse(report("opens=1 rebinds=2 closes=0", "opens=1 rebinds=1 closes=0")
+            .noUnexpectedOutputReopen!!)
+        assertNull(report(live, "opens=1 opens=2 rebinds=0 closes=0").noUnexpectedOutputReopen)
         assertFalse(report(closed, closed).noUnexpectedOutputReopen!!)
         assertFalse(report(live, closed).noUnexpectedOutputReopen!!)
         assertFalse(report(live, "opens=2 rebinds=0 closes=1").noUnexpectedOutputReopen!!)
