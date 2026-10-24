@@ -300,3 +300,14 @@ The separate Android build/emulator/release and desktop CI workflows were
 still running at the time this checkpoint was written; they must be checked
 before claiming a full exact-source platform pass. Hardware output and broad
 remaining software checklist items remain open.
+
+## Truncated RIFF metadata cannot certify complete callback PCM
+
+The PCM comparator now scans RIFF chunks even when the physical WAV file is
+shorter than its declared RIFF size. A missing trailing metadata chunk or a
+partially written non-audio chunk fails closed instead of returning PASS merely
+because the first audio data chunk matches the reference. Only an actually
+truncated audio data payload proceeds to frame-level accounting, preserving
+explicit missing-frame diagnostics. Synthetic regressions cover both the
+captured WAV and canonical source WAV. This is evidence-integrity hardening,
+not new physical output or complete lifecycle qualification.

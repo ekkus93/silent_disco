@@ -282,6 +282,34 @@ class PcmCaptureComparisonTest(unittest.TestCase):
             stream.write(b"LIST" + struct.pack("<I", 4) + b"info")
         self.assertEqual(compare(self.sources, self.captured)["status"], "PASS")
 
+    def test_missing_trailing_riff_metadata_cannot_false_pass(self):
+        # A valid audio chunk followed by missing non-audio RIFF bytes must
+        # not be mistaken for a complete callback capture or reference.
+        for path in (self.captured, self.sources[0]):
+            with self.subTest(path=path.name):
+                save_wav(self.captured, self.reference)
+                with path.open("r+b") as stream:
+                    stream.seek(4)
+                    original_size = struct.unpack("<I", stream.read(4))[0]
+                    stream.seek(4)
+                    stream.write(struct.pack("<I", original_size + 12))
+                with self.assertRaisesRegex(ValueError, "truncated RIFF payload"):
+                    compare(self.sources, self.captured)
+                if path != self.captured:
+                    save_wav(path, self.track_frames[0])
+
+    def test_partial_trailing_metadata_chunk_cannot_false_pass(self):
+        save_wav(self.captured, self.reference)
+        with self.captured.open("r+b") as stream:
+            stream.seek(4)
+            original_size = struct.unpack("<I", stream.read(4))[0]
+            stream.seek(4)
+            stream.write(struct.pack("<I", original_size + 16))
+            stream.seek(0, 2)
+            stream.write(b"LIST" + struct.pack("<I", 8) + b"info")
+        with self.assertRaisesRegex(ValueError, "truncated RIFF metadata"):
+            compare(self.sources, self.captured)
+
     def test_truncated_pcm_payload_reports_observed_not_declared_frames(self):
         save_wav(self.captured, self.reference)
         with self.captured.open("r+b") as capture:
