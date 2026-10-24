@@ -39,6 +39,7 @@ def _wav_info(path: Path) -> dict[str, int]:
     with path.open("rb") as source:
         offset = 12
         audio_chunks = 0
+        format_chunks = 0
         declared_audio_bytes = None
         truncated_audio = False
         while offset < physical_size:
@@ -52,6 +53,20 @@ def _wav_info(path: Path) -> dict[str, int]:
             if next_offset > riff_end:
                 raise ValueError(f"{path}: RIFF chunk exceeds declared payload")
             is_audio = chunk_header[:4] == b"data"
+            if chunk_header[:4] == b"fmt ":
+                format_chunks += 1
+                if chunk_size < 16 or offset + 24 > physical_size:
+                    raise ValueError(f"{path}: incomplete PCM fmt chunk")
+                source.seek(offset + 8)
+                format_tag, channels, rate, byte_rate, block_align, bits = struct.unpack(
+                    "<HHIIHH", source.read(16)
+                )
+                # wave.open() accepts incorrect block alignment and byte rate,
+                # which can make corrupted callback evidence appear valid.
+                if (format_tag not in (1, 0xFFFE) or channels not in (1, 2)
+                        or bits != 16 or rate == 0 or block_align != channels * 2
+                        or byte_rate != rate * block_align):
+                    raise ValueError(f"{path}: inconsistent PCM fmt header")
             if is_audio:
                 audio_chunks += 1
                 declared_audio_bytes = chunk_size
@@ -61,6 +76,8 @@ def _wav_info(path: Path) -> dict[str, int]:
                 truncated_audio = True
                 break
             offset = next_offset
+        if format_chunks != 1:
+            raise ValueError(f"{path}: expected exactly one PCM fmt chunk")
         if audio_chunks != 1:
             raise ValueError(f"{path}: expected exactly one PCM data chunk")
         if physical_size < riff_end and not truncated_audio:

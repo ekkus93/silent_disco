@@ -345,6 +345,47 @@ class PcmCaptureComparisonTest(unittest.TestCase):
                 if path != self.captured:
                     save_wav(path, self.track_frames[0])
 
+    def test_corrupt_pcm_fmt_rate_or_alignment_cannot_false_pass(self):
+        # wave.open() ignores nAvgBytesPerSec and nBlockAlign. A capture
+        # with an inconsistent PCM header must not certify bit-exact output.
+        for path in (self.captured, self.sources[0]):
+            for offset, replacement in ((28, struct.pack("<I", 1)),
+                                        (32, struct.pack("<H", 2))):
+                with self.subTest(path=path.name, offset=offset):
+                    save_wav(self.captured, self.reference)
+                    if path != self.captured:
+                        save_wav(path, self.track_frames[0])
+                    with path.open("r+b") as stream:
+                        stream.seek(offset)
+                        stream.write(replacement)
+                    with self.assertRaisesRegex(ValueError, "inconsistent PCM fmt header"):
+                        compare(self.sources, self.captured)
+        save_wav(self.captured, self.reference)
+        save_wav(self.sources[0], self.track_frames[0])
+        self.assertEqual(compare(self.sources, self.captured)["status"], "PASS")
+
+    def test_duplicate_pcm_fmt_chunk_cannot_false_pass(self):
+        # A second fmt chunk is ignored by wave.open(), but leaves the WAV
+        # ambiguous and unsuitable as canonical or captured PCM evidence.
+        for path in (self.captured, self.sources[0]):
+            with self.subTest(path=path.name):
+                save_wav(self.captured, self.reference)
+                if path != self.captured:
+                    save_wav(path, self.track_frames[0])
+                with path.open("r+b") as stream:
+                    stream.seek(4)
+                    riff_size = struct.unpack("<I", stream.read(4))[0]
+                    stream.seek(4)
+                    stream.write(struct.pack("<I", riff_size + 24))
+                    stream.seek(0, 2)
+                    stream.write(b"fmt " + struct.pack("<I", 16))
+                    stream.write(struct.pack("<HHIIHH", 1, 2, 48000, 192000, 4, 16))
+                with self.assertRaisesRegex(ValueError, "exactly one PCM fmt chunk"):
+                    compare(self.sources, self.captured)
+        save_wav(self.captured, self.reference)
+        save_wav(self.sources[0], self.track_frames[0])
+        self.assertEqual(compare(self.sources, self.captured)["status"], "PASS")
+
     def test_mono_data_size_remains_valid_when_frame_aligned(self):
         tracks = [[(index + 1,) for index in range(101)] for _ in self.sources]
         for path, frames in zip(self.sources, tracks):

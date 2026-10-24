@@ -360,3 +360,14 @@ The public metadata report includes packet sequences and first sample indices;
 its fail-closed validator rejects missing, duplicate, reordered, or gapped
 packet evidence. This verifies producer ordering and native callback continuity,
 not physical speaker/DAC output or real-device pause behavior.
+
+## Reject inconsistent or ambiguous WAV format metadata
+
+The standalone PCM comparator now checks each RIFF `fmt ` chunk's PCM16
+channel/frame alignment and declared byte rate against its sample rate.
+Python's `wave` reader accepts malformed `nBlockAlign`/`nAvgBytesPerSec`
+values, which could otherwise let corrupted canonical or callback evidence
+pass a byte-for-byte comparison. Multiple `fmt ` chunks also fail closed.
+Synthetic regressions cover both the canonical references and captured WAVs,
+while a restored valid header still passes. This is evidence integrity, not
+proof of the physical DAC or comprehensive playback lifecycle qualification.
