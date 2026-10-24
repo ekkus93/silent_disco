@@ -391,6 +391,71 @@ mod tests {
     }
 
     #[test]
+    fn partial_backpressure_retries_only_unwritten_frames_across_ring_wrap() {
+        use crate::audio_abi::{
+            silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
+            silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+        };
+
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        let token = handle.engine_token().expect("live output token");
+        let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
+
+        // Leave exactly one frame free: the first frame of the successor
+        // packet is accepted, but the remaining two must be retried later.
+        let prefill = [0.125_f32, -0.125].repeat(4_799);
+        let successor = [0.25_f32, -0.25, 0.5, -0.5, 0.75, -0.75];
+        assert_eq!(handle.push_frames(prefill.clone()).expect("prefill"), 4_799);
+        assert_eq!(
+            handle.push_frames(successor.to_vec()).expect("partial push"),
+            1
+        );
+        assert_eq!(handle.queued_frames().expect("full ring"), 4_800);
+
+        let mut first_callback = vec![f32::NAN; 4_799 * 2];
+        let mut supplied = u32::MAX;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                first_callback.as_mut_ptr(),
+                4_799,
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, 4_799);
+        assert_eq!(first_callback, prefill);
+        assert_eq!(handle.queued_frames().expect("successor head retained"), 1);
+
+        // Retry only the two unwritten frames, not the whole packet. The
+        // callback must cross the physical ring wrap without a gap or repeat.
+        assert_eq!(
+            handle.push_frames(successor[2..].to_vec()).expect("retry suffix"),
+            2
+        );
+        let mut second_callback = [f32::NAN; 6];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                second_callback.as_mut_ptr(),
+                3,
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, 3);
+        assert_eq!(second_callback, successor);
+        assert_eq!(handle.queued_frames().expect("drained"), 0);
+        assert_eq!(handle.engine_token().expect("same stream"), token);
+        assert_eq!(silent_disco_audio_callback_count(engine), 2);
+        assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+        assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
+    }
+
+    #[test]
     fn partial_callback_underrun_recovers_on_same_native_output_token() {
         use crate::audio_abi::{
             silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
