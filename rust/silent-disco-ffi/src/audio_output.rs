@@ -249,7 +249,9 @@ mod tests {
         ));
         assert_eq!(handle.queued_frames().expect("unchanged output"), 0);
         assert_eq!(
-            handle.push_frames(vec![0.25, -0.25]).expect("valid recovery"),
+            handle
+                .push_frames(vec![0.25, -0.25])
+                .expect("valid recovery"),
             1
         );
         assert_eq!(handle.queued_frames().expect("valid frame retained"), 1);
