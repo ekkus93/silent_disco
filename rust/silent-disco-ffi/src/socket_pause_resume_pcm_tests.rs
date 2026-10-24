@@ -243,7 +243,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 ..
             }) => {
                 assert_eq!(sequence, audio_packets);
-                assert_eq!(first_sample_index, next_sample_index, "contiguous producer PCM");
+                assert_eq!(
+                    first_sample_index, next_sample_index,
+                    "contiguous producer PCM"
+                );
                 assert_eq!(samples_per_packet, 240, "production 5 ms packets");
                 // Pause applies only to successor audio. The current track's
                 // second packet must retain its original presentation anchor.
