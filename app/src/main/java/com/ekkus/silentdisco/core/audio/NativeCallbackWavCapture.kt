@@ -18,13 +18,16 @@ data class CallbackAudioCaptureReport(
     val capturedFrames: ULong,
     val lostFrames: ULong,
     val callbackCount: ULong,
+    /** A cancelled or prematurely stopped writer cannot certify complete audio. */
+    val tapFullyDrained: Boolean = false,
     val outputLifecycleAtStart: String,
     val outputLifecycleAtEnd: String,
     val outputCountersAtStart: OutputCallbackCounters? = null,
     val outputCountersAtEnd: OutputCallbackCounters? = null,
 ) {
     val complete: Boolean get() =
-        lostFrames == 0uL && wavFrames > 0 && callbackCount > 0uL && wavFrames.toULong() == capturedFrames
+        tapFullyDrained && lostFrames == 0uL && wavFrames > 0 &&
+            callbackCount > 0uL && wavFrames.toULong() == capturedFrames
     /** Unknown output state cannot count as a successful no-reopen check. */
     val newUnderrunCallbacks: Long?
         get() = outputCounterDelta(outputCountersAtStart?.underruns, outputCountersAtEnd?.underruns)
@@ -88,6 +91,7 @@ class NativeCallbackWavCapture private constructor(
     private val outputCountersAtStart: OutputCallbackCounters?,
 ) {
     private val stopRequested = AtomicBoolean(false)
+    private val tapFullyDrained = AtomicBoolean(false)
     private val workerFailure = AtomicReference<Throwable?>(null)
     private var capturedFrames: ULong = 0u
     private var lostFrames: ULong = 0u
@@ -100,7 +104,10 @@ class NativeCallbackWavCapture private constructor(
                 capturedFrames = batch.capturedFrames
                 lostFrames = batch.lostFrames
                 callbackCount = batch.callbackCount
-                if (stopRequested.get() && batch.samples.isEmpty()) break
+                if (stopRequested.get() && batch.samples.isEmpty()) {
+                    tapFullyDrained.set(true)
+                    break
+                }
                 delay(10)
             }
         } catch (error: Throwable) {
@@ -120,6 +127,7 @@ class NativeCallbackWavCapture private constructor(
             capturedFrames = capturedFrames,
             lostFrames = lostFrames,
             callbackCount = callbackCount,
+            tapFullyDrained = tapFullyDrained.get(),
             outputLifecycleAtStart = outputLifecycleAtStart,
             outputLifecycleAtEnd = OboeBridge.lastOpenSummary(),
             outputCountersAtStart = outputCountersAtStart,

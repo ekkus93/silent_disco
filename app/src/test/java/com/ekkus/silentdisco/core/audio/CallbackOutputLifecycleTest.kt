@@ -14,6 +14,7 @@ class CallbackOutputLifecycleTest {
         capturedFrames = 480u,
         lostFrames = 0u,
         callbackCount = 3u,
+        tapFullyDrained = true,
         outputLifecycleAtStart = start,
         outputLifecycleAtEnd = end,
     )
@@ -58,6 +59,9 @@ class CallbackOutputLifecycleTest {
     fun incompletePcmCaptureFailsEvenWithoutNativeStreamReopen() {
         val report = report("opens=1 rebinds=0 closes=0", "opens=1 rebinds=0 closes=0")
         assertTrue(report.complete)
+        // When the scope cancels its reader before it reaches an empty
+        // native tap, even apparently matching frame counts are unqualified.
+        assertFalse(report.copy(tapFullyDrained = false).complete)
         assertFalse(report.copy(lostFrames = 1u).complete)
         assertFalse(report.copy(capturedFrames = 479u).complete)
         assertFalse(report.copy(callbackCount = 0u).complete)
