@@ -39,6 +39,7 @@ def _wav_info(path: Path) -> dict[str, int]:
     with path.open("rb") as source:
         offset = 12
         audio_chunks = 0
+        declared_audio_bytes = None
         truncated_audio = False
         while offset < physical_size:
             source.seek(offset)
@@ -53,6 +54,7 @@ def _wav_info(path: Path) -> dict[str, int]:
             is_audio = chunk_header[:4] == b"data"
             if is_audio:
                 audio_chunks += 1
+                declared_audio_bytes = chunk_size
             if next_offset > physical_size:
                 if not is_audio or physical_size >= payload_end:
                     raise ValueError(f"{path}: truncated RIFF metadata or chunk padding")
@@ -68,6 +70,12 @@ def _wav_info(path: Path) -> dict[str, int]:
             raise ValueError(f"{path}: expected uncompressed 16-bit PCM WAV")
         if wav.getnchannels() not in (1, 2) or wav.getframerate() <= 0:
             raise ValueError(f"{path}: unsupported channels or sample rate")
+        # wave.getnframes() rounds down an incomplete interleaved PCM frame.
+        # A malformed header can therefore claim extra half-frames while the
+        # decoded prefix still matches perfectly. Never certify such a file.
+        frame_bytes = wav.getnchannels() * wav.getsampwidth()
+        if declared_audio_bytes is None or declared_audio_bytes % frame_bytes:
+            raise ValueError(f"{path}: PCM data chunk is not frame-aligned")
         return {
             "channels": wav.getnchannels(),
             "sample_rate": wav.getframerate(),

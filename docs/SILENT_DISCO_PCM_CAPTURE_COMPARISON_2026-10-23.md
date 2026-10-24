@@ -311,3 +311,14 @@ truncated audio data payload proceeds to frame-level accounting, preserving
 explicit missing-frame diagnostics. Synthetic regressions cover both the
 captured WAV and canonical source WAV. This is evidence-integrity hardening,
 not new physical output or complete lifecycle qualification.
+
+## Reject incomplete interleaved PCM frames in declared WAV chunks
+
+The WAV comparator now rejects a RIFF `data` chunk whose declared byte count
+is not a multiple of the PCM16 channel-frame width (2 bytes for mono, 4 for
+stereo). Python's `wave.getnframes()` rounds down such a malformed header,
+which could otherwise obscure a partial callback frame in the evidence.
+Synthetic regressions exercise malformed callback and canonical-source WAVs,
+while verifying that a valid odd-numbered mono frame count still passes.
+This improves software evidence integrity; it does not establish device output
+continuity or complete the production-path regression.

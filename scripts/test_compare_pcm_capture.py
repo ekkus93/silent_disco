@@ -322,5 +322,35 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(result["missing_tail_frames"], 2)
 
 
+    def test_declared_stereo_data_with_orphan_sample_is_rejected(self):
+        # wave.getnframes() rounds down 2 extra bytes for stereo PCM16.
+        # Reject malformed canonical tracks and callback captures alike,
+        # even if every complete frame would otherwise compare exactly.
+        for path in (self.captured, self.sources[0]):
+            with self.subTest(path=path.name):
+                save_wav(self.captured, self.reference)
+                with path.open("r+b") as stream:
+                    stream.seek(4)
+                    original_riff = struct.unpack("<I", stream.read(4))[0]
+                    stream.seek(40)
+                    original_data = struct.unpack("<I", stream.read(4))[0]
+                    stream.seek(4)
+                    stream.write(struct.pack("<I", original_riff + 2))
+                    stream.seek(40)
+                    stream.write(struct.pack("<I", original_data + 2))
+                    stream.seek(0, 2)
+                    stream.write(struct.pack("<h", 1234))
+                with self.assertRaisesRegex(ValueError, "PCM data chunk is not frame-aligned"):
+                    compare(self.sources, self.captured)
+                if path != self.captured:
+                    save_wav(path, self.track_frames[0])
+
+    def test_mono_data_size_remains_valid_when_frame_aligned(self):
+        tracks = [[(index + 1,) for index in range(101)] for _ in self.sources]
+        for path, frames in zip(self.sources, tracks):
+            save_wav(path, frames, channels=1)
+        save_wav(self.captured, [frame for track in tracks for frame in track], channels=1)
+        self.assertEqual(compare(self.sources, self.captured)["status"], "PASS")
+
 if __name__ == "__main__":
     unittest.main()
