@@ -17,13 +17,13 @@ use super::SocketHostTransport;
 
 fn connect_authorized(
     host: &mut SocketHostTransport,
-    factory: &SocketTransportFactory,
+    factory: SocketTransportFactory,
     clock: &Arc<ManualTransportClock>,
     session: &crate::domain::SessionId,
     name: &str,
 ) -> Box<dyn ListenerTransportNode> {
     let device = id_device(name);
-    let mut listener = factory
+    let listener = factory
         .connect_listener(
             ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock.clone(),
@@ -95,7 +95,7 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
 
     // Listener A joins while paused: it must receive the original timeline,
     // the pending boundary and Pause, in that exact TCP order.
-    let mut a = connect_authorized(&mut host, &factory, &clock, &session, "reconnect-a");
+    let mut a = connect_authorized(&mut host, factory, &clock, &session, "reconnect-a");
     assert_tcp_controls(
         a.as_mut(),
         &[original.clone(), boundary.clone(), pause.clone()],
@@ -115,7 +115,7 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
 
     // Listener B joins after Resume: its snapshot must have the shifted
     // timeline and upcoming boundary, but never the old Pause.
-    let mut b = connect_authorized(&mut host, &factory, &clock, &session, "reconnect-b");
+    let mut b = connect_authorized(&mut host, factory, &clock, &session, "reconnect-b");
     assert_tcp_controls(b.as_mut(), &[resume.clone(), boundary.clone()]);
     let later_pause = ControlMessage::Pause(Pause {
         session_id: session.clone(),
@@ -137,7 +137,7 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
     // Stop must leave no stale replay for listener C. Nor may a delayed
     // original start resurrect the stopped generation.
     let sent_at_stop = host.counters().control_frames_sent;
-    let mut c = connect_authorized(&mut host, &factory, &clock, &session, "reconnect-c");
+    let mut c = connect_authorized(&mut host, factory, &clock, &session, "reconnect-c");
     assert_eq!(host.counters().control_frames_sent, sent_at_stop);
     host.broadcast_control(&original)
         .expect("reject retired generation");
@@ -152,7 +152,7 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
     for listener in [&mut a, &mut b, &mut c] {
         assert_tcp_controls(listener.as_mut(), std::slice::from_ref(&play));
     }
-    let mut d = connect_authorized(&mut host, &factory, &clock, &session, "reconnect-d");
+    let mut d = connect_authorized(&mut host, factory, &clock, &session, "reconnect-d");
     assert_tcp_controls(d.as_mut(), std::slice::from_ref(&play));
 
     for listener in [&mut a, &mut b, &mut c, &mut d] {
