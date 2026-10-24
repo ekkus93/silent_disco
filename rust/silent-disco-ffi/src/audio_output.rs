@@ -694,44 +694,7 @@ mod tests {
         assert_eq!(second_tap.counters(), (2, 0, 1));
         assert!(second_tap.drain(2).is_empty());
 
-        // Retired-token cleanup must not detach or pollute a fresh replay tap.
-        let replay = FfiAudioOutputHandle::open(4_800, 1).expect("replay output");
-        let replay_token =
-            u64::try_from(replay.engine_token().expect("replay token")).expect("replay token");
-        assert_ne!(token, replay_token);
-        let replay_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("replay tap"));
-        assert!(attach_callback_capture(token, Arc::clone(&replay_tap)).is_err());
-        attach_callback_capture(replay_token, Arc::clone(&replay_tap))
-            .expect("attach replay capture");
-        detach_callback_capture(token);
 
-        let replay_pcm = [0.875_f32, -0.875];
-        assert_eq!(
-            replay.push_frames(replay_pcm.to_vec()).expect("replay PCM"),
-            1
-        );
-        let replay_engine =
-            usize::try_from(replay_token).expect("replay token") as *mut core::ffi::c_void;
-        let mut replay_output = [f32::NAN; 2];
-        let mut replay_supplied = u32::MAX;
-        assert_eq!(
-            silent_disco_audio_read_interleaved_f32(
-                replay_engine,
-                replay_output.as_mut_ptr(),
-                1,
-                2,
-                &raw mut replay_supplied,
-            ),
-            0
-        );
-        assert_eq!(replay_supplied, 1);
-        assert_eq!(replay_output, replay_pcm);
-        assert_eq!(replay_tap.drain(1), replay_pcm);
-        assert_eq!(replay_tap.counters(), (1, 0, 1));
-        assert_eq!(second_tap.counters(), (2, 0, 1));
-        assert_eq!(replay.queued_frames().expect("drained"), 0);
-        detach_callback_capture(replay_token);
-        replay.release();
     }
 
     #[test]
@@ -792,3 +755,7 @@ mod tests {
         assert_eq!(output, [0.0, 0.0]);
     }
 }
+
+#[cfg(test)]
+#[path = "audio_output_replay_capture_tests.rs"]
+mod replay_capture_tests;
