@@ -16,15 +16,20 @@ def sample_report(name):
     base = {"schema": 1, "status": "PASS", "commit": SHA, "physical_dac_verified": False}
     if name == "mixed-rate-socket-callback.json":
         base.update(
+            capture="native-rust-callback-after-real-udp-socket",
+            source_formats=["48000-stereo", "44100-mono", "96000-stereo"],
+            sample_rate=48000, channels=2,
             source_boundaries=[480, 960], callback_frame_chunks=[241, 337, 517, 345],
             expected_frames=1440, captured_frames=1440, mismatched_samples=0,
             tap_mismatched_samples=0, native_underrun_callbacks=0,
             native_silence_filled_frames=0, tap_lost_frames=0,
             first_mismatch_frame=None, first_mismatch_channel=None,
-            tap_captured_frames=1440, callback_count=4,
+            tap_captured_frames=1440, callback_count=4, tap_callback_count=4,
         )
     elif name == "encoded-socket-callback.json":
         base.update(
+            capture="native-rust-callback-after-real-tcp-udp-sockets",
+            sample_rate=48000, channels=2,
             source_formats=["wav", "flac", "mp3"], listener_scheduler_exercised=True,
             listener_volume_gains=[1.0, 0.5, 0.25],
             source_boundaries=[480, 960], observed_boundaries=[480, 960],
@@ -60,6 +65,7 @@ def sample_report(name):
         )
     else:
         base.update(
+            capture="native-callback-after-rejected-production-reservation",
             rejected_boundary_frame=480, valid_source_frames=480,
             captured_valid_frames=480, expected_tail_silence_frames=17,
             rejected_successor_audio_leaked=False,
