@@ -501,11 +501,22 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
         });
     }
 
-    // A same-stream StreamStart resumes output: it retains the upcoming
-    // boundary but withdraws the stale pause from subsequent late joins.
-    host.broadcast_control(&start).expect("resume same stream");
+    // An old StreamStart cannot lift Pause. Only an advanced anchor from
+    // the real host Resume can re-anchor this stream; its existing boundary
+    // must be retained for both the connected peer and the next late joiner.
+    let sent_while_paused = host.counters().control_frames_sent;
+    host.broadcast_control(&start)
+        .expect("ignore retransmitted pre-pause start");
+    assert_eq!(host.counters().control_frames_sent, sent_while_paused);
+    let ControlMessage::StreamStart(mut shifted) = start.clone() else {
+        panic!("expected StreamStart");
+    };
+    shifted.host_start_time_ms = MonotonicMillis::new(1_100);
+    let reanchored = ControlMessage::StreamStart(shifted);
+    host.broadcast_control(&reanchored)
+        .expect("resume with shifted presentation anchor");
     wait_for_frame(&mut *paused, TransportChannel::Control, |frame| {
-        frame == &ProtocolFrame::Control(start.clone())
+        frame == &ProtocolFrame::Control(reanchored.clone())
     });
 
     let mut resumed = factory
@@ -528,7 +539,7 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
         .expect("authorize resumed listener");
     wait_for_authorized(&mut *host, &resumed_id);
 
-    assert_resumed_late_join_controls(&mut *resumed, &[start, next]);
+    assert_resumed_late_join_controls(&mut *resumed, &[reanchored, next]);
 
     resumed.shutdown().expect("resumed listener shutdown");
     paused.shutdown().expect("paused listener shutdown");
