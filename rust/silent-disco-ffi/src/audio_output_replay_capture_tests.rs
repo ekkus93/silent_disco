@@ -51,6 +51,27 @@ fn retired_capture_cleanup_cannot_detach_or_pollute_replay_capture() {
         replay.push_frames(replay_pcm.to_vec()).expect("replay PCM"),
         1
     );
+    // A delayed callback from the retired output must not consume replay PCM,
+    // record it in either diagnostic tap, or advance the new ring's cursor.
+    old_output.fill(f32::NAN);
+    supplied = u32::MAX;
+    assert_eq!(
+        silent_disco_audio_read_interleaved_f32(
+            old_engine,
+            old_output.as_mut_ptr(),
+            1,
+            2,
+            &raw mut supplied,
+        ),
+        2 // Stopping: the old token remains retired across replay.
+    );
+    assert_eq!(supplied, 0);
+    assert_eq!(old_output, [0.0, 0.0]);
+    assert_eq!(replay.queued_frames().expect("replay PCM untouched"), 1);
+    assert_eq!(old_tap.counters(), (1, 0, 1));
+    assert_eq!(replay_tap.counters(), (0, 0, 0));
+    assert!(replay_tap.drain(1).is_empty());
+
     let replay_engine =
         usize::try_from(replay_token).expect("replay token") as *mut core::ffi::c_void;
     let mut replay_output = [f32::NAN; 2];
