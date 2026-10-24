@@ -347,7 +347,10 @@ mod tests {
         let deferred = vec![0.75_f32, -0.75, 0.875, -0.875];
         assert_eq!(handle.push_frames(first.clone()).expect("fill ring"), 4_800);
         assert_eq!(handle.queued_frames().expect("full ring"), 4_800);
-        assert_eq!(handle.push_frames(deferred.clone()).expect("backpressure"), 0);
+        assert_eq!(
+            handle.push_frames(deferred.clone()).expect("backpressure"),
+            0
+        );
         assert_eq!(handle.queued_frames().expect("unchanged full ring"), 4_800);
 
         let mut first_callback = vec![f32::NAN; 2_400 * 2];
@@ -398,7 +401,12 @@ mod tests {
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
         let token = handle.engine_token().expect("live output token");
         let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
-        assert_eq!(handle.push_frames(vec![0.125, -0.125, 0.25, -0.25]).expect("first packet"), 2);
+        assert_eq!(
+            handle
+                .push_frames(vec![0.125, -0.125, 0.25, -0.25])
+                .expect("first packet"),
+            2
+        );
 
         let mut starving_callback = [f32::NAN; 6];
         let mut supplied = u32::MAX;
@@ -416,7 +424,12 @@ mod tests {
         assert_eq!(starving_callback, [0.125, -0.125, 0.25, -0.25, 0.0, 0.0]);
         assert_eq!(handle.queued_frames().expect("starved ring"), 0);
 
-        assert_eq!(handle.push_frames(vec![0.5, -0.5, 0.75, -0.75]).expect("replenish"), 2);
+        assert_eq!(
+            handle
+                .push_frames(vec![0.5, -0.5, 0.75, -0.75])
+                .expect("replenish"),
+            2
+        );
         let mut recovered_callback = [f32::NAN; 4];
         assert_eq!(
             silent_disco_audio_read_interleaved_f32(
