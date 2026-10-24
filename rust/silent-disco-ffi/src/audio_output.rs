@@ -625,9 +625,7 @@ mod tests {
         let token = u64::try_from(handle.engine_token().expect("live token")).expect("token");
         let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
         let first_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("first tap"));
-        let second_tap = Arc::new(
-            CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("second tap"),
-        );
+        let second_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("second tap"));
         attach_callback_capture(token, Arc::clone(&first_tap)).expect("start capture");
 
         let packets = [
@@ -656,7 +654,10 @@ mod tests {
                 0
             );
             assert_eq!(supplied, 2);
-            assert_eq!(callback_pcm, *packet, "capture changes cannot alter playback");
+            assert_eq!(
+                callback_pcm, *packet,
+                "capture changes cannot alter playback"
+            );
         }
 
         assert_eq!(first_tap.drain(4_800), packets[0]);
