@@ -15,6 +15,7 @@ REPORT_NAMES = frozenset({
     "encoded-socket-callback.json",
     "rejected-boundary-callback.json",
     "authoritative-edit-replay-callback.json",
+    "paused-resume-callback.json",
 })
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -152,6 +153,23 @@ def validate_report(filename, report, sha):
         require_equal(report, "retired_audio_packets_before_rejection", 2, filename)
         require_equal(report, "retired_successor_rejected", True, filename)
         require_equal(report, "replay_token_distinct", True, filename)
+    elif filename == "paused-resume-callback.json":
+        require_equal(report, "capture", "actor-authorized-ffi-paused-resume-native-callback",
+                      filename)
+        require_equal(report, "source_boundaries", [480], filename)
+        require_equal(report, "observed_boundaries", [480], filename)
+        require_equal(report, "expected_frames", 960, filename)
+        require_equal(report, "captured_frames", 960, filename)
+        require_equal(report, "callback_frame_chunks", [479, 2, 479], filename)
+        for name in ("callback_count", "tap_callback_count"):
+            require_equal(report, name, 3, filename)
+        require_equal(report, "tap_captured_frames", 960, filename)
+        for name in ("native_underrun_callbacks", "native_silence_filled_frames",
+                     "tap_lost_frames"):
+            require_equal(report, name, 0, filename)
+        for name in ("pause_boundary_retained", "paused_removal_rejected",
+                     "resume_token_preserved"):
+            require_equal(report, name, True, filename)
     elif filename == "rejected-boundary-callback.json":
         require_equal(report, "capture", "native-callback-after-rejected-production-reservation",
                       filename)

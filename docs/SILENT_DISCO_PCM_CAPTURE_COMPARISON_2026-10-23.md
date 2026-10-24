@@ -332,3 +332,18 @@ frame cannot certify any transition. Negative tests cover boundaries at
 and beyond the output end; real production callback comparisons remain the
 source of the reports. This is a metadata consistency check, not physical
 output acceptance.
+
+## Hosted authoritative pause/resume callback evidence
+
+The production UniFFI actor-reserved playlist pause test now retains the
+prebuffered successor while the host is Paused, rejects removal of that
+reserved successor, resumes without replacing the native render-ring token,
+and compares non-track-aligned C-ABI callback-returned PCM against both
+synthetic source tracks. Its new `paused-resume-callback.json` CI report
+records the actual source boundary, callback frame chunks, tap counts,
+underruns, synthesized silence, actor reservation state and output-token
+continuity. The exact-SHA validator requires this fifth JSON-only report
+and fails if any pause, removal, callback or tap condition is not met.
+The test exercises Rust producer/actor/callback software behavior; it does
+not yet prove Android Oboe, desktop audio-device, TCP/UDP scheduler, or
+physical mixer/DAC continuity under pause/resume.

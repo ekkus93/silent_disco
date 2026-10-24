@@ -2,7 +2,8 @@
 use super::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use crate::audio_abi::{
     attach_callback_capture, detach_callback_capture, registry_test_guard,
-    silent_disco_audio_read_interleaved_f32, silent_disco_audio_silence_filled_frames,
+    silent_disco_audio_callback_count, silent_disco_audio_read_interleaved_f32,
+    silent_disco_audio_silence_filled_frames,
     silent_disco_audio_underrun_count,
 };
 use crate::audio_output::FfiAudioOutputHandle;
@@ -253,7 +254,8 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
             break error;
         }
     };
-    assert!(!rejected.message.is_empty());
+    let paused_removal_rejected = !rejected.message.is_empty();
+    assert!(paused_removal_rejected);
     let protected = actor.current_snapshot().expect("protected paused queue");
     assert_eq!(protected.playback_state, PlaybackState::Paused);
     assert_eq!(protected.host_queue.revision(), queue_revision);
@@ -266,6 +268,11 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
             .entry_id,
         "next-entry"
     );
+    let paused_boundary_retained = protected
+        .host_queue_next_boundary
+        .as_ref()
+        .is_some_and(|boundary| boundary.entry_id == "next-entry");
+    assert!(paused_boundary_retained);
     actor
         .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
         .expect("resume");
@@ -282,6 +289,11 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
             .is_some_and(|entry| entry.entry_id == "next-entry")
     });
     assert!(after.host_queue_next_boundary.is_none());
+    let resume_token_preserved = u64::try_from(
+        output.engine_token().expect("native token after resume"),
+    )
+    .expect("nonnegative resumed token") == token;
+    assert!(resume_token_preserved, "resume must not reopen the native output");
     assert_eq!(output.queued_frames().expect("queued native PCM"), 960);
     let mut absolute_frame = 0_u32;
     // Neither callback boundary is aligned with the 480-frame track change.
@@ -322,7 +334,47 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
     let engine = usize::try_from(token).expect("token") as *const core::ffi::c_void;
     assert_eq!(silent_disco_audio_underrun_count(engine), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
-    assert_eq!(tap.counters(), (960, 0, 3));
+    let (tap_frames, tap_lost, tap_callbacks) = tap.counters();
+    let native_callbacks = silent_disco_audio_callback_count(engine);
+    let native_underruns = silent_disco_audio_underrun_count(engine);
+    let native_silence = silent_disco_audio_silence_filled_frames(engine);
+    assert_eq!((tap_frames, tap_lost, tap_callbacks), (960, 0, 3));
+    assert_eq!(native_callbacks, 3);
+    // A hosted report is written only after the actual paused producer,
+    // actor reservation, and resumed native callback have all passed.
+    // Never upload raw source or callback samples to public CI artifacts.
+    if let Some(directory) = std::env::var_os("SILENT_DISCO_PCM_EVIDENCE_DIR") {
+        let commit = std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned());
+        let observed_boundaries: Vec<u64> =
+            boundaries.iter().map(|(_, frame)| *frame).collect();
+        let report = format!(
+            r#"{{
+  "schema": 1,
+  "status": "PASS",
+  "commit": "{commit}",
+  "capture": "actor-authorized-ffi-paused-resume-native-callback",
+  "source_boundaries": [480],
+  "observed_boundaries": {observed_boundaries:?},
+  "expected_frames": 960,
+  "captured_frames": {absolute_frame},
+  "callback_frame_chunks": [479, 2, 479],
+  "callback_count": {native_callbacks},
+  "native_underrun_callbacks": {native_underruns},
+  "native_silence_filled_frames": {native_silence},
+  "tap_captured_frames": {tap_frames},
+  "tap_lost_frames": {tap_lost},
+  "tap_callback_count": {tap_callbacks},
+  "pause_boundary_retained": {paused_boundary_retained},
+  "paused_removal_rejected": {paused_removal_rejected},
+  "resume_token_preserved": {resume_token_preserved},
+  "physical_dac_verified": false
+}}"#
+        );
+        let directory = std::path::PathBuf::from(directory);
+        fs::create_dir_all(&directory).expect("pause/resume evidence directory");
+        fs::write(directory.join("paused-resume-callback.json"), report)
+            .expect("write pause/resume callback evidence");
+    }
     detach_callback_capture(token);
     output.release();
     ffi.shutdown().expect("shut down host");

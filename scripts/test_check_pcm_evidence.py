@@ -45,6 +45,18 @@ def sample_report(name):
             callback_count=3, scheduler_callback_count=3,
             tap_callback_count=3, scheduler_tap_callback_count=3,
         )
+    elif name == "paused-resume-callback.json":
+        base.update(
+            capture="actor-authorized-ffi-paused-resume-native-callback",
+            source_boundaries=[480], observed_boundaries=[480],
+            expected_frames=960, captured_frames=960,
+            callback_frame_chunks=[479, 2, 479],
+            callback_count=3, native_underrun_callbacks=0,
+            native_silence_filled_frames=0, tap_captured_frames=960,
+            tap_lost_frames=0, tap_callback_count=3,
+            pause_boundary_retained=True, paused_removal_rejected=True,
+            resume_token_preserved=True,
+        )
     elif name == "authoritative-edit-replay-callback.json":
         base.update(
             capture="actor-authorized-ffi-producer-native-callback",
@@ -220,6 +232,25 @@ class EvidenceGateTests(unittest.TestCase):
         for name, field, value in cases:
             with self.subTest(report=name, field=field):
                 self.reports = {item: sample_report(item) for item in REPORT_NAMES}
+                self.reports[name][field] = value
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_directory(self.root, SHA)
+
+    def test_paused_reservation_requires_native_continuity_and_rejection(self):
+        name = "paused-resume-callback.json"
+        cases = (
+            ("observed_boundaries", [481]),
+            ("callback_frame_chunks", [480, 1, 479]),
+            ("native_silence_filled_frames", 1),
+            ("tap_lost_frames", 1),
+            ("pause_boundary_retained", False),
+            ("paused_removal_rejected", False),
+            ("resume_token_preserved", False),
+        )
+        for field, value in cases:
+            with self.subTest(field=field):
+                self.reports[name] = sample_report(name)
                 self.reports[name][field] = value
                 self.write_reports()
                 with self.assertRaisesRegex(ValueError, field):
