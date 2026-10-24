@@ -375,3 +375,14 @@ proof of the physical DAC or comprehensive playback lifecycle qualification.
 ## Retired native token cannot drain preloaded replay PCM
 
 The actor/FFI Stop/replay regression now loads the first real 240-frame replay packet into the new native ring before invoking a delayed callback with the old output token. It verifies the retired callback returns Stopping with silence and zero supplied frames, that the fresh output still has all 240 frames, and that the fresh callback tap has zero callbacks and zero captured/lost frames. The test then renders the complete 10,560-frame replay (including that preserved packet) and requires exact canonical PCM, zero underruns, zero tap loss, and an empty ring. The exact-SHA JSON gate rejects missing or incorrect `retired_native_token_preserved_replay_frames` metadata. This is deterministic native callback generation isolation, not a physical Oboe/mixer/DAC measurement.
+
+## Reject capture/reference file aliasing (2026-10-24)
+
+The standalone comparator now rejects a captured WAV that is the same file as
+any canonical source reference, including hard-linked or symlinked aliases.
+Otherwise a self-comparison can report PASS even for a capture containing an
+undetected gap or duplicated frame. This is a provenance guard, not proof that
+two distinct files were independently generated; CI must still decode its
+canonical reference from source fixtures and capture native callback output.
+Intentionally repeated source tracks remain supported in the expected playlist.
+CLI and direct comparator regressions exercise the rejection and duplicate case.

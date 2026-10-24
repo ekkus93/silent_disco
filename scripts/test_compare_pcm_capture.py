@@ -64,6 +64,31 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(json.loads(report_path.read_text(encoding="utf-8")), stdout_report)
         return process.returncode, stdout_report
 
+    def test_capture_cannot_be_its_own_canonical_reference(self):
+        # A self-comparison would always certify a corrupted callback capture.
+        with self.assertRaisesRegex(ValueError, "cannot also be a canonical reference"):
+            compare([self.sources[0]], self.sources[0])
+        code, report = self.run_cli(
+            self.reference, expected=[self.captured]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(report["status"], "ERROR")
+        self.assertIn("cannot also be a canonical reference", report["message"])
+
+    def test_hardlinked_capture_alias_cannot_certify_continuity(self):
+        alias = Path(self.temp.name) / "callback-hardlink.wav"
+        alias.hardlink_to(self.sources[0])
+        with self.assertRaisesRegex(ValueError, "cannot also be a canonical reference"):
+            compare([self.sources[0]], alias)
+
+    def test_repeated_canonical_source_is_allowed_for_playlist_duplicates(self):
+        # Playing one source twice is legitimate; only the capture itself
+        # must be independent of every canonical reference file.
+        save_wav(self.captured, self.track_frames[0] * 2)
+        report = compare([self.sources[0], self.sources[0]], self.captured)
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual([part["frame"] for part in report["track_boundaries"]], [240])
+
     def test_cli_pass_exit_code_and_report_match(self):
         code, report = self.run_cli(self.reference)
         self.assertEqual(code, 0)

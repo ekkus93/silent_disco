@@ -126,6 +126,15 @@ def compare(
         raise ValueError("commit SHA must be exactly 40 hexadecimal characters")
     expected_paths = [Path(path) for path in expected_paths]
     captured_path = Path(captured_path)
+    # A capture compared against itself can always report perfect continuity,
+    # even when the real output has dropped or duplicated audio. Detect file
+    # identity, not just path spelling: hard links and symlinks also alias.
+    for path in expected_paths:
+        if path.samefile(captured_path):
+            raise ValueError(
+                f"{captured_path}: callback capture cannot also be a canonical "
+                f"reference ({path}); decode the independent source first"
+            )
     infos = [_wav_info(path) for path in expected_paths]
     for path, info in zip(expected_paths, infos):
         if info["frames"] == 0:
