@@ -696,8 +696,8 @@ mod tests {
 
         // Retired-token cleanup must not detach or pollute a fresh replay tap.
         let replay = FfiAudioOutputHandle::open(4_800, 1).expect("replay output");
-        let replay_token = u64::try_from(replay.engine_token().expect("replay token"))
-            .expect("replay token");
+        let replay_token =
+            u64::try_from(replay.engine_token().expect("replay token")).expect("replay token");
         assert_ne!(token, replay_token);
         let replay_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("replay tap"));
         assert!(attach_callback_capture(token, Arc::clone(&replay_tap)).is_err());
@@ -706,7 +706,10 @@ mod tests {
         detach_callback_capture(token);
 
         let replay_pcm = [0.875_f32, -0.875];
-        assert_eq!(replay.push_frames(replay_pcm.to_vec()).expect("replay PCM"), 1);
+        assert_eq!(
+            replay.push_frames(replay_pcm.to_vec()).expect("replay PCM"),
+            1
+        );
         let replay_engine =
             usize::try_from(replay_token).expect("replay token") as *mut core::ffi::c_void;
         let mut replay_output = [f32::NAN; 2];
