@@ -21,6 +21,16 @@ MISMATCH_EXAMPLES = 8
 
 
 def _wav_info(path: Path) -> dict[str, int]:
+    # The wave reader stops at the declared RIFF/data lengths. A callback
+    # capture with extra raw samples appended after a stale RIFF header could
+    # otherwise compare PASS while silently ignoring audible tail frames.
+    with path.open("rb") as source:
+        header = source.read(12)
+    if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
+        raise ValueError(f"{path}: expected RIFF/WAVE header")
+    riff_end = struct.unpack_from("<I", header, 4)[0] + 8
+    if path.stat().st_size > riff_end:
+        raise ValueError(f"{path}: unaccounted trailing bytes outside RIFF payload")
     with wave.open(str(path), "rb") as wav:
         if wav.getcomptype() != "NONE" or wav.getsampwidth() != 2:
             raise ValueError(f"{path}: expected uncompressed 16-bit PCM WAV")

@@ -239,6 +239,20 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         self.assertEqual(result["capture_truncated_frames"], 2)
         self.assertEqual(result["mismatched_samples"], 0)
 
+    def test_extra_callback_pcm_after_stale_riff_header_cannot_pass(self):
+        save_wav(self.captured, self.reference)
+        with self.captured.open("ab") as capture:
+            capture.write(struct.pack("<hh", 1234, -1234))
+        with self.assertRaisesRegex(ValueError, "unaccounted trailing bytes"):
+            compare(self.sources, self.captured)
+
+    def test_extra_reference_pcm_after_stale_riff_header_is_rejected(self):
+        save_wav(self.captured, self.reference)
+        with self.sources[0].open("ab") as reference:
+            reference.write(struct.pack("<hh", 1234, -1234))
+        with self.assertRaisesRegex(ValueError, "unaccounted trailing bytes"):
+            compare(self.sources, self.captured)
+
     def test_truncated_pcm_payload_reports_observed_not_declared_frames(self):
         save_wav(self.captured, self.reference)
         with self.captured.open("r+b") as capture:
