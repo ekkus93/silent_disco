@@ -29,8 +29,32 @@ def _wav_info(path: Path) -> dict[str, int]:
     if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
         raise ValueError(f"{path}: expected RIFF/WAVE header")
     riff_end = struct.unpack_from("<I", header, 4)[0] + 8
-    if path.stat().st_size > riff_end:
+    physical_size = path.stat().st_size
+    if physical_size > riff_end:
         raise ValueError(f"{path}: unaccounted trailing bytes outside RIFF payload")
+    # The standard wave reader consumes only the first RIFF "data" chunk.
+    # A second declared audio chunk inside an otherwise valid RIFF envelope
+    # would be ignored and could turn an overlong callback into a false PASS.
+    # For an incomplete file leave the declared-vs-observed frame accounting
+    # below in charge of reporting truncated captured audio.
+    if physical_size == riff_end:
+        with path.open("rb") as source:
+            offset = 12
+            audio_chunks = 0
+            while offset < riff_end:
+                source.seek(offset)
+                chunk_header = source.read(8)
+                if len(chunk_header) != 8:
+                    raise ValueError(f"{path}: incomplete RIFF chunk header")
+                chunk_size = struct.unpack_from("<I", chunk_header, 4)[0]
+                next_offset = offset + 8 + chunk_size + (chunk_size & 1)
+                if next_offset > riff_end:
+                    raise ValueError(f"{path}: RIFF chunk exceeds declared payload")
+                if chunk_header[:4] == b"data":
+                    audio_chunks += 1
+                offset = next_offset
+            if audio_chunks != 1:
+                raise ValueError(f"{path}: expected exactly one PCM data chunk")
     with wave.open(str(path), "rb") as wav:
         if wav.getcomptype() != "NONE" or wav.getsampwidth() != 2:
             raise ValueError(f"{path}: expected uncompressed 16-bit PCM WAV")

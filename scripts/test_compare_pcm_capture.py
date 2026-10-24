@@ -253,6 +253,35 @@ class PcmCaptureComparisonTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unaccounted trailing bytes"):
             compare(self.sources, self.captured)
 
+    def test_second_audio_chunk_inside_valid_riff_cannot_false_pass(self):
+        # The WAV reader ignores extra data chunks even when RIFF correctly
+        # accounts for them. Verify BOTH capture and reference fail closed.
+        for path in (self.captured, self.sources[0]):
+            with self.subTest(path=path.name):
+                save_wav(self.captured, self.reference)
+                with path.open("r+b") as stream:
+                    stream.seek(4)
+                    original_size = struct.unpack("<I", stream.read(4))[0]
+                    stream.seek(4)
+                    stream.write(struct.pack("<I", original_size + 12))
+                    stream.seek(0, 2)
+                    stream.write(b"data" + struct.pack("<Ihh", 4, 1234, -1234))
+                with self.assertRaisesRegex(ValueError, "exactly one PCM data chunk"):
+                    compare(self.sources, self.captured)
+                if path != self.captured:
+                    save_wav(path, self.track_frames[0])
+
+    def test_valid_non_audio_riff_metadata_does_not_invalidate_pcm(self):
+        save_wav(self.captured, self.reference)
+        with self.captured.open("r+b") as stream:
+            stream.seek(4)
+            original_size = struct.unpack("<I", stream.read(4))[0]
+            stream.seek(4)
+            stream.write(struct.pack("<I", original_size + 12))
+            stream.seek(0, 2)
+            stream.write(b"LIST" + struct.pack("<I", 4) + b"info")
+        self.assertEqual(compare(self.sources, self.captured)["status"], "PASS")
+
     def test_truncated_pcm_payload_reports_observed_not_declared_frames(self):
         save_wav(self.captured, self.reference)
         with self.captured.open("r+b") as capture:

@@ -205,6 +205,26 @@ class EvidenceGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "replay_native_silence_frames"):
             validate_directory(self.root, SHA)
 
+    def test_nested_boolean_and_float_impostors_do_not_pass_pcm_evidence(self):
+        cases = (
+            ("mixed-rate-socket-callback.json", "source_boundaries", [480.0, 960]),
+            ("mixed-rate-socket-callback.json", "callback_frame_chunks",
+             [241, 337, 517.0, 345]),
+            ("encoded-socket-callback.json", "listener_volume_gains",
+             [True, 0.5, 0.25]),
+            ("authoritative-edit-replay-callback.json", "source_boundaries",
+             [9600, 10080.0]),
+            ("authoritative-edit-replay-callback.json", "callback_frame_chunks",
+             [4799, 4802, 480.0, 479]),
+        )
+        for name, field, value in cases:
+            with self.subTest(report=name, field=field):
+                self.reports = {item: sample_report(item) for item in REPORT_NAMES}
+                self.reports[name][field] = value
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_directory(self.root, SHA)
+
     def test_no_dac_claim_or_nonfinite_values_are_accepted(self):
         self.reports["mixed-rate-socket-callback.json"]["physical_dac_verified"] = True
         self.write_reports()

@@ -19,9 +19,28 @@ REPORT_NAMES = frozenset({
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
+def exactly_equal(actual, expected):
+    """Compare decoded JSON scalars and every nested value by exact type.
+
+    Python equates True with 1 and 480.0 with 480; neither is valid
+    evidence for an integer sample index or a float gain.
+    """
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            exactly_equal(item, wanted) for item, wanted in zip(actual, expected)
+        )
+    if isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(
+            exactly_equal(actual[key], wanted) for key, wanted in expected.items()
+        )
+    return actual == expected
+
+
 def require_equal(report, name, expected, filename):
     actual = report.get(name)
-    if type(actual) is not type(expected) or actual != expected:
+    if not exactly_equal(actual, expected):
         raise ValueError(f"{filename}: {name} expected {expected!r}, got {actual!r}")
 
 
