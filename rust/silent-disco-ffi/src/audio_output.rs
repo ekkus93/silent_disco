@@ -583,10 +583,7 @@ mod tests {
         // Once the non-real-time capture consumer catches up, later audio
         // must be recorded normally without resurrecting the lost frames.
         let recovered = [0.5_f32, -0.5, 0.75, -0.75];
-        assert_eq!(
-            handle.push_frames(recovered.to_vec()).expect("recovery"),
-            2
-        );
+        assert_eq!(handle.push_frames(recovered.to_vec()).expect("recovery"), 2);
         let mut third_output = [f32::NAN; 4];
         assert_eq!(
             silent_disco_audio_read_interleaved_f32(
