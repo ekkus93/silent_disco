@@ -524,7 +524,21 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
     host.broadcast_control(&boundary)
         .expect("schedule boundary");
     host.broadcast_control(&pause).expect("pause stream");
-    host.broadcast_control(&start).expect("resume same stream");
+    // A retransmitted StreamStart with the original timeline is not Resume.
+    // It must neither unpause the cache nor reach the live TCP listener.
+    let count_while_paused = host.counters().control_frames_sent;
+    assert_eq!(
+        host.broadcast_control(&start).expect("reject old start while paused"),
+        crate::transport::TransportDelivery::new(0, 0, 0, 0).expect("empty delivery")
+    );
+    assert_eq!(host.counters().control_frames_sent, count_while_paused);
+
+    let ControlMessage::StreamStart(mut resumed) = start.clone() else {
+        panic!("expected StreamStart");
+    };
+    resumed.host_start_time_ms = MonotonicMillis::new(1_100);
+    host.broadcast_control(&ControlMessage::StreamStart(resumed))
+        .expect("deliver re-anchored Resume");
 
     let sent_before = host.counters().control_frames_sent;
     let stale_pause = host.broadcast_control(&pause).expect("reject old Pause");
@@ -556,6 +570,7 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
     // stream for connected listeners. The matching Stop must still pass.
     let replacement = ControlMessage::StreamStart(crate::protocol::StreamStart {
         stream_id: crate::domain::StreamId::new("stream-2").expect("replacement stream ID"),
+        host_start_time_ms: MonotonicMillis::new(2_000),
         ..details.clone()
     });
     host.broadcast_control(&replacement)
