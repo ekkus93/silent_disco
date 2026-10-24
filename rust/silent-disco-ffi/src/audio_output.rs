@@ -520,6 +520,99 @@ mod tests {
     }
 
     #[test]
+    fn callback_capture_overflow_does_not_block_audio_and_recovers_after_drain() {
+        use std::sync::Arc;
+
+        use crate::audio_abi::{
+            attach_callback_capture, detach_callback_capture, silent_disco_audio_callback_count,
+            silent_disco_audio_frames_rendered, silent_disco_audio_read_interleaved_f32,
+            silent_disco_audio_silence_filled_frames, silent_disco_audio_underrun_count,
+        };
+        use crate::callback_capture::{CallbackCaptureTap, MIN_CAPTURE_FRAMES};
+
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        let token = u64::try_from(handle.engine_token().expect("live token")).expect("token");
+        let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
+        let tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("tap"));
+        attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
+
+        // Fill the diagnostic tap without losing any native callback audio.
+        let first = [0.125_f32, -0.125].repeat(MIN_CAPTURE_FRAMES);
+        assert_eq!(handle.push_frames(first.clone()).expect("prefill"), 4_800);
+        let mut first_output = vec![f32::NAN; first.len()];
+        let mut supplied = u32::MAX;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                first_output.as_mut_ptr(),
+                4_800,
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, 4_800);
+        assert_eq!(first_output, first);
+
+        // The diagnostic tap is full. Its overflow must be explicit, but it
+        // must never backpressure, silence, or reorder the live audio output.
+        let dropped_from_tap = [0.25_f32, -0.25, 0.375, -0.375];
+        assert_eq!(
+            handle
+                .push_frames(dropped_from_tap.to_vec())
+                .expect("second packet"),
+            2
+        );
+        let mut second_output = [f32::NAN; 4];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                second_output.as_mut_ptr(),
+                2,
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, 2);
+        assert_eq!(second_output, dropped_from_tap);
+        assert_eq!(tap.counters(), (4_800, 2, 2));
+        assert_eq!(tap.drain(MIN_CAPTURE_FRAMES), first);
+
+        // Once the non-real-time capture consumer catches up, later audio
+        // must be recorded normally without resurrecting the lost frames.
+        let recovered = [0.5_f32, -0.5, 0.75, -0.75];
+        assert_eq!(
+            handle.push_frames(recovered.to_vec()).expect("recovery"),
+            2
+        );
+        let mut third_output = [f32::NAN; 4];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                third_output.as_mut_ptr(),
+                2,
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, 2);
+        assert_eq!(third_output, recovered);
+        assert_eq!(tap.drain(2), recovered);
+        assert_eq!(tap.counters(), (4_802, 2, 3));
+        assert_eq!(handle.queued_frames().expect("drained ring"), 0);
+        assert_eq!(silent_disco_audio_callback_count(engine), 3);
+        assert_eq!(silent_disco_audio_frames_rendered(engine), 4_804);
+        assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+        assert_eq!(silent_disco_audio_silence_filled_frames(engine), 0);
+
+        detach_callback_capture(token);
+        handle.release();
+    }
+
+    #[test]
     fn release_is_idempotent_and_subsequent_calls_report_closed() {
         let _guard = registry_test_guard();
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
