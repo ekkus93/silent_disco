@@ -576,6 +576,27 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
         replay_token, token,
         "Stop/replay must not reuse retired native token"
     );
+    // A delayed Oboe callback holding the retired token must be stopped
+    // and silence-filled even after the replay output has been registered.
+    // It must never consume the new stream's PCM or report an unknown token.
+    let mut retired_callback = [1.0_f32; 2];
+    let mut retired_supplied = 99_u32;
+    let retired_status = silent_disco_audio_read_interleaved_f32(
+        usize::try_from(token).expect("retired token") as *mut core::ffi::c_void,
+        retired_callback.as_mut_ptr(),
+        1,
+        2,
+        &raw mut retired_supplied,
+    );
+    let retired_callback_zeroed = retired_callback.iter().all(|sample| sample.to_bits() == 0);
+    assert_eq!(retired_status, 2, "retired output must report Stopping");
+    assert_eq!(retired_supplied, 0, "retired output must supply no frames");
+    assert!(retired_callback_zeroed, "retired callback must be silent");
+    assert_eq!(
+        replay_output.queued_frames().expect("new output is untouched"),
+        0,
+        "retired callback must not read from the new output"
+    );
     let mut replay_sample = 0_u64;
     let mut replay_sequence = None;
     let mut replay_boundaries = Vec::new();
@@ -697,6 +718,9 @@ fn actor_edit_before_ffi_reservation_retargets_without_stale_successor_pcm() {
   "retired_audio_packets_before_rejection": {retired_frames},
   "retired_successor_rejected": {retired_rejected},
   "replay_token_distinct": {replay_token_distinct},
+  "retired_native_token_status": {retired_status},
+  "retired_native_token_supplied_frames": {retired_supplied},
+  "retired_native_token_zeroed": {retired_callback_zeroed},
   "physical_dac_verified": false
 }}"#
         );

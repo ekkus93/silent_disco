@@ -78,6 +78,9 @@ def sample_report(name):
             first_tap_callbacks=4, replay_tap_callbacks=4,
             retired_audio_packets_before_rejection=2,
             retired_successor_rejected=True, replay_token_distinct=True,
+            retired_native_token_status=2,
+            retired_native_token_supplied_frames=0,
+            retired_native_token_zeroed=True,
         )
     else:
         base.update(
@@ -224,6 +227,31 @@ class EvidenceGateTests(unittest.TestCase):
                 self.write_reports()
                 with self.assertRaisesRegex(ValueError, field):
                     validate_directory(self.root, SHA)
+                self.reports[name].pop(field)
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_directory(self.root, SHA)
+
+    def test_retired_native_callback_must_stop_without_replay_audio(self):
+        name = "authoritative-edit-replay-callback.json"
+        cases = (
+            ("retired_native_token_status", 0),
+            ("retired_native_token_status", -2),
+            ("retired_native_token_supplied_frames", 1),
+            ("retired_native_token_zeroed", False),
+        )
+        for field, invalid in cases:
+            with self.subTest(field=field, invalid=invalid):
+                self.reports[name] = sample_report(name)
+                self.reports[name][field] = invalid
+                self.write_reports()
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_directory(self.root, SHA)
+        for field in ("retired_native_token_status",
+                      "retired_native_token_supplied_frames",
+                      "retired_native_token_zeroed"):
+            with self.subTest(field=field, missing=True):
+                self.reports[name] = sample_report(name)
                 self.reports[name].pop(field)
                 self.write_reports()
                 with self.assertRaisesRegex(ValueError, field):

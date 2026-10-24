@@ -156,6 +156,11 @@ def validate_report(filename, report, sha):
         require_equal(report, "retired_audio_packets_before_rejection", 2, filename)
         require_equal(report, "retired_successor_rejected", True, filename)
         require_equal(report, "replay_token_distinct", True, filename)
+        # Stop/replay must also retire the old native callback token. A
+        # delayed callback cannot consume PCM from the new output ring.
+        require_equal(report, "retired_native_token_status", 2, filename)
+        require_equal(report, "retired_native_token_supplied_frames", 0, filename)
+        require_equal(report, "retired_native_token_zeroed", True, filename)
     elif filename == "paused-resume-callback.json":
         require_equal(report, "capture", "actor-authorized-ffi-paused-resume-native-callback",
                       filename)
