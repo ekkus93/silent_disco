@@ -222,7 +222,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("capture ring"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
 
-    let mut late = None;
+    let mut late: Option<Box<dyn ListenerTransportNode>> = None;
     let mut audio_packets = 0_u64;
     let mut boundaries = Vec::new();
     let mut captured = Vec::<f32>::new();
