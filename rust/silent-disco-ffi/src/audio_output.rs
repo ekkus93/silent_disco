@@ -343,7 +343,7 @@ mod tests {
         let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
         let token = handle.engine_token().expect("live output token");
         let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
-        let first = vec![0.25_f32, -0.25].repeat(4_800);
+        let first = [0.25_f32, -0.25].repeat(4_800);
         let deferred = vec![0.75_f32, -0.75, 0.875, -0.875];
         assert_eq!(handle.push_frames(first.clone()).expect("fill ring"), 4_800);
         assert_eq!(handle.queued_frames().expect("full ring"), 4_800);
