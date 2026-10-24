@@ -625,7 +625,9 @@ mod tests {
         let token = u64::try_from(handle.engine_token().expect("live token")).expect("token");
         let engine = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
         let first_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("first tap"));
-        let second_tap = Arc::new(CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("second tap"));
+        let second_tap = Arc::new(
+            CallbackCaptureTap::new(MIN_CAPTURE_FRAMES).expect("second tap"),
+        );
         attach_callback_capture(token, Arc::clone(&first_tap)).expect("start capture");
 
         let packets = [
@@ -661,7 +663,10 @@ mod tests {
         assert_eq!(first_tap.counters(), (2, 0, 1));
         assert_eq!(second_tap.drain(4_800), packets[2]);
         assert_eq!(second_tap.counters(), (2, 0, 1));
-        assert_eq!(handle.engine_token().expect("same output"), i64::try_from(token).expect("token"));
+        assert_eq!(
+            handle.engine_token().expect("same output"),
+            i64::try_from(token).expect("token")
+        );
         assert_eq!(handle.queued_frames().expect("ring drained"), 0);
         assert_eq!(silent_disco_audio_callback_count(engine), 3);
         assert_eq!(silent_disco_audio_frames_rendered(engine), 6);
