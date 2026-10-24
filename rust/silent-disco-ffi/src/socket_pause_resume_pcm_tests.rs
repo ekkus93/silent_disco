@@ -224,6 +224,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
 
     let mut late: Option<Box<dyn ListenerTransportNode>> = None;
     let mut audio_packets = 0_u64;
+    let mut next_sample_index = 0_u64;
     let mut boundaries = Vec::new();
     let mut captured = Vec::<f32>::new();
     // Callback 2 crosses the paused 480-frame track transition at frame 480.
@@ -242,9 +243,11 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 ..
             }) => {
                 assert_eq!(sequence, audio_packets);
-                assert_eq!(first_sample_index, audio_packets * 480);
-                assert_eq!(samples_per_packet, 480);
-                let shift = if audio_packets == 0 { 0 } else { 200 };
+                assert_eq!(first_sample_index, next_sample_index, "contiguous producer PCM");
+                assert_eq!(samples_per_packet, 240, "production 5 ms packets");
+                // Pause applies only to successor audio. The current track's
+                // second packet must retain its original presentation anchor.
+                let shift = if first_sample_index < 480 { 0 } else { 200 };
                 let packet = AudioDatagram {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
@@ -286,6 +289,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                         break;
                     }
                 }
+                next_sample_index += u64::from(samples_per_packet);
                 audio_packets += 1;
             }
             Some(FfiPlaylistFrame::TrackBoundary {
@@ -348,7 +352,8 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         }
     }
     assert!(done, "playlist EOF");
-    assert_eq!(audio_packets, 2);
+    assert_eq!(audio_packets, 4);
+    assert_eq!(next_sample_index, 960);
     assert_eq!(boundaries, [480]);
     // Playback callbacks are suspended during Pause. The producer and
     // scheduler may have queued the first track, but the single native ring
@@ -391,7 +396,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         captured, expected,
         "canonical PCM with exactly one startup fade"
     );
-    assert_eq!(pump.diagnostics().packets_emitted, 2);
+    assert_eq!(pump.diagnostics().packets_emitted, 4);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
     let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
     assert_eq!(silent_disco_audio_callback_count(native), 3);
