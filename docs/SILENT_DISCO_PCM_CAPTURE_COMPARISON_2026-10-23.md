@@ -386,3 +386,14 @@ two distinct files were independently generated; CI must still decode its
 canonical reference from source fixtures and capture native callback output.
 Intentionally repeated source tracks remain supported in the expected playlist.
 CLI and direct comparator regressions exercise the rejection and duplicate case.
+
+## Native UniFFI output-frame validation (2026-10-24)
+
+The production `FfiAudioOutputHandle.push_frames` entry point now rejects
+incomplete stereo pairs and NaN/infinite float samples **before** writing
+anything to the native render ring. The underlying low-level SPSC ring is
+intentionally permissive about trailing partial frames; the platform-facing
+boundary must not silently drop a half-frame or propagate non-finite output.
+Rust regressions verify the ring is unchanged after each malformed input and
+that a subsequent valid packet is still accepted. This improves failure-path
+PCM integrity but is not a full socket-to-device gapless acceptance test.

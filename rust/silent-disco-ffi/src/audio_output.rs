@@ -101,13 +101,25 @@ impl FfiAudioOutputHandle {
     /// # Errors
     ///
     /// Returns [`FfiAudioOutputError::Closed`] if [`Self::release`] was
-    /// already called.
+    /// already called. Rejects incomplete stereo frames and non-finite PCM
+    /// before mutating the native ring; the low-level ring intentionally
+    /// ignores trailing half-frames, which must not be silent at this API.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "uniffi::export requires owned Vec parameters at the foreign boundary"
     )]
     pub fn push_frames(&self, samples: Vec<f32>) -> Result<u32, FfiAudioOutputError> {
         self.with_inner(|inner| {
+            if !samples.len().is_multiple_of(2) {
+                return Err(FfiAudioOutputError::InvalidConfiguration(
+                    "native output PCM must contain complete interleaved stereo frames".to_owned(),
+                ));
+            }
+            if samples.iter().any(|sample| !sample.is_finite()) {
+                return Err(FfiAudioOutputError::InvalidConfiguration(
+                    "native output PCM must contain only finite samples".to_owned(),
+                ));
+            }
             Ok(u32::try_from(inner.producer.push_frames(&samples)).unwrap_or(u32::MAX))
         })
     }
@@ -224,6 +236,42 @@ mod tests {
                 "audio output handle is closed".to_owned()
             ))
         );
+    }
+
+    #[test]
+    fn rejects_incomplete_stereo_frames_without_poisoning_next_packet() {
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        assert!(matches!(
+            handle.push_frames(vec![0.25, -0.25, 0.5]),
+            Err(FfiAudioOutputError::InvalidConfiguration(message))
+                if message.contains("complete interleaved stereo frames")
+        ));
+        assert_eq!(handle.queued_frames().expect("unchanged output"), 0);
+        assert_eq!(
+            handle.push_frames(vec![0.25, -0.25]).expect("valid recovery"),
+            1
+        );
+        assert_eq!(handle.queued_frames().expect("valid frame retained"), 1);
+    }
+
+    #[test]
+    fn rejects_nonfinite_pcm_atomically_and_recovers() {
+        let _guard = registry_test_guard();
+        let handle = FfiAudioOutputHandle::open(4_800, 1).expect("valid config");
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(matches!(
+                handle.push_frames(vec![0.25, -0.25, invalid, 0.5]),
+                Err(FfiAudioOutputError::InvalidConfiguration(message))
+                    if message.contains("only finite samples")
+            ));
+            assert_eq!(handle.queued_frames().expect("no partial write"), 0);
+        }
+        assert_eq!(
+            handle.push_frames(vec![0.5, -0.5]).expect("valid recovery"),
+            1
+        );
+        assert_eq!(handle.queued_frames().expect("recovered output"), 1);
     }
 
     #[test]
