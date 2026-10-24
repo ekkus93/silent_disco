@@ -27,6 +27,8 @@ mod listener_playback;
 mod listener_transport;
 #[cfg(test)]
 mod playlist_pcm_capture_tests;
+#[cfg(test)]
+mod socket_pause_resume_pcm_tests;
 mod sync;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
