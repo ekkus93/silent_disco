@@ -63,7 +63,10 @@ fn repeated_stop_replay_keeps_registry_bounded_and_old_callbacks_silent() {
         assert_eq!(actual, pcm);
 
         output.release();
-        assert_eq!(release_render_ring(token), Err(AudioAbiError::AlreadyReleased));
+        assert_eq!(
+            release_render_ring(token),
+            Err(AudioAbiError::AlreadyReleased)
+        );
         retired.push(token);
         assert_eq!(
             audio_engine_registry()
