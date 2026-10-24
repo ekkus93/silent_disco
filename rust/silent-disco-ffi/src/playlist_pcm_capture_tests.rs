@@ -262,7 +262,12 @@ fn playlist_pcm_survives_listener_scheduler_and_native_audio_callback() {
     let values = [1_024_i16, 2_048, 4_096, 1_024];
     // Each source is exactly 10ms, but the decoder must normalize differing
     // sample rates and mono/stereo input before packetization and UDP delivery.
-    let formats = [(48_000, 2, 480), (44_100, 1, 441), (96_000, 2, 960), (48_000, 2, 480)];
+    let formats = [
+        (48_000, 2, 480),
+        (44_100, 1, 441),
+        (96_000, 2, 960),
+        (48_000, 2, 480),
+    ];
     let sources: Vec<FfiPlaylistSource> = values
         .iter()
         .enumerate()
