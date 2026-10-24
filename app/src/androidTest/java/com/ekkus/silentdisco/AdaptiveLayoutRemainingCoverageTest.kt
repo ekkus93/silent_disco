@@ -3,10 +3,15 @@ package com.ekkus.silentdisco
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -194,6 +199,48 @@ class AdaptiveLayoutRemainingCoverageTest {
         composeRule.onNodeWithTag("advanced-persistent-problem").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("advanced-resynchronize").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("advanced-share-report").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun callbackCaptureControlsFollowRecordingAndFinalizingStatesInCompactLandscape() {
+        var captureStatus by mutableStateOf("Capture off")
+        var startRequests = 0
+        var stopRequests = 0
+        composeRule.setContent {
+            RemainingAdaptiveSurface(width = 640.dp, height = 360.dp, fontScale = 1.5f) {
+                DiagnosticsScreen(
+                    uiState = readyState().copy(selectedRole = AppRole.LISTENER),
+                    onBack = {},
+                    onManualResync = {},
+                    onAdjustTuning = { _, _ -> },
+                    onShare = {},
+                    callbackCaptureStatus = captureStatus,
+                    onStartCallbackCapture = {
+                        startRequests += 1
+                        captureStatus = "Recording callback PCM"
+                    },
+                    onStopCallbackCapture = {
+                        stopRequests += 1
+                        captureStatus = "Finalizing capture"
+                    },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Playback output").performScrollTo().performClick()
+        composeRule.onNodeWithTag("start-callback-capture")
+            .performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("stop-callback-capture")
+            .performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("start-callback-capture")
+            .performScrollTo().assertIsDisplayed().assertIsNotEnabled()
+        composeRule.runOnIdle {
+            assertThat(startRequests).isEqualTo(1)
+            assertThat(stopRequests).isEqualTo(1)
+            captureStatus = "Saved 480 callback frames"
+        }
+        composeRule.onNodeWithTag("start-callback-capture")
+            .performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
 
     @Test
