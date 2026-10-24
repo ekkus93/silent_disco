@@ -54,6 +54,11 @@ def validate_report(filename, report, sha):
     require_equal(report, "physical_dac_verified", False, filename)
 
     if filename == "mixed-rate-socket-callback.json":
+        require_equal(report, "capture", "native-rust-callback-after-real-udp-socket", filename)
+        require_equal(report, "source_formats",
+                      ["48000-stereo", "44100-mono", "96000-stereo"], filename)
+        require_equal(report, "sample_rate", 48000, filename)
+        require_equal(report, "channels", 2, filename)
         require_equal(report, "source_boundaries", [480, 960], filename)
         require_equal(report, "callback_frame_chunks", [241, 337, 517, 345], filename)
         require_equal(report, "expected_frames", 1440, filename)
@@ -67,7 +72,12 @@ def validate_report(filename, report, sha):
             require_equal(report, name, None, filename)
         require_equal(report, "tap_captured_frames", 1440, filename)
         require_equal(report, "callback_count", 4, filename)
+        require_equal(report, "tap_callback_count", 4, filename)
     elif filename == "encoded-socket-callback.json":
+        require_equal(report, "capture", "native-rust-callback-after-real-tcp-udp-sockets",
+                      filename)
+        require_equal(report, "sample_rate", 48000, filename)
+        require_equal(report, "channels", 2, filename)
         require_equal(report, "source_formats", ["wav", "flac", "mp3"], filename)
         require_equal(report, "listener_scheduler_exercised", True, filename)
         require_equal(report, "listener_volume_gains", [1.0, 0.5, 0.25], filename)
@@ -122,6 +132,8 @@ def validate_report(filename, report, sha):
         require_equal(report, "retired_successor_rejected", True, filename)
         require_equal(report, "replay_token_distinct", True, filename)
     elif filename == "rejected-boundary-callback.json":
+        require_equal(report, "capture", "native-callback-after-rejected-production-reservation",
+                      filename)
         require_equal(report, "rejected_boundary_frame", 480, filename)
         require_equal(report, "valid_source_frames", 480, filename)
         require_equal(report, "captured_valid_frames", 480, filename)
