@@ -29,6 +29,8 @@ mod peer;
 
 #[cfg(test)]
 mod playback_controls_tests;
+#[cfg(test)]
+mod playback_controls_format_tests;
 
 const MAX_CACHED_TRACK_BOUNDARIES: usize = 100;
 
@@ -60,6 +62,19 @@ impl PlaybackControls {
                 let is_resume = self.stream_start.as_ref().is_some_and(|previous| {
                     previous.stream_id == start.stream_id && previous.session_id == start.session_id
                 });
+                // A resume may refresh presentation metadata, but the audio
+                // format is immutable for the lifetime of a stream. Reject a
+                // malformed same-stream start before it can unpause playback
+                // or corrupt the format replayed to a reconnecting listener.
+                if is_resume
+                    && self.stream_start.as_ref().is_some_and(|previous| {
+                        previous.sample_rate != start.sample_rate
+                            || previous.channels != start.channels
+                            || previous.samples_per_packet != start.samples_per_packet
+                    })
+                {
+                    return false;
+                }
                 if !is_resume {
                     self.boundaries.clear();
                     self.last_pause_time_ms = None;
