@@ -57,7 +57,6 @@ impl SilentDiscoAudioStatus {
 
 enum AudioEngineEntry {
     Active(RenderRingConsumer, Option<Arc<CallbackCaptureTap>>),
-    Released,
     /// Only ever inserted by test code, to verify the panic boundary in
     /// 17.4 without any always-compiled panic path in production code.
     #[cfg(test)]
@@ -68,6 +67,12 @@ enum AudioEngineEntry {
 struct AudioEngineRegistry {
     next_token: u64,
     entries: BTreeMap<u64, AudioEngineEntry>,
+}
+
+impl AudioEngineRegistry {
+    fn was_issued(&self, token: u64) -> bool {
+        token != 0 && (self.next_token == 0 || token < self.next_token)
+    }
 }
 
 impl Default for AudioEngineRegistry {
@@ -83,7 +88,6 @@ impl core::fmt::Debug for AudioEngineEntry {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Active(_, _) => formatter.write_str("Active"),
-            Self::Released => formatter.write_str("Released"),
             #[cfg(test)]
             Self::PanicOnRead => formatter.write_str("PanicOnRead"),
         }
@@ -129,11 +133,8 @@ impl From<RenderRingConfigError> for AudioAbiError {
 }
 
 /// Creates a render ring, registers its consumer half under a fresh token,
-/// and returns the producer half plus that token. Tokens are never reused
-/// across the process lifetime, so there is no ABA risk: a token either
-/// refers to the engine that was registered under it, refers to that same
-/// engine after release (a distinct, explicit released state), or has never
-/// existed at all.
+/// and returns the producer half plus that token. Tokens never repeat;
+/// the allocation high-water identifies released tokens without tombstones.
 ///
 /// Not part of the real-time C ABI; this is the control-plane entry point a
 /// non-real-time caller ([`crate::audio_output::FfiAudioOutputHandle`]) uses
@@ -189,14 +190,11 @@ pub(crate) fn release_render_ring(token: u64) -> Result<(), AudioAbiError> {
     let mut registry = audio_engine_registry()
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    match registry.entries.get_mut(&token) {
-        Some(entry @ AudioEngineEntry::Active(_, _)) => {
-            *entry = AudioEngineEntry::Released;
-            Ok(())
-        }
-        Some(AudioEngineEntry::Released) => Err(AudioAbiError::AlreadyReleased),
+    match registry.entries.remove(&token) {
+        Some(AudioEngineEntry::Active(_, _)) => Ok(()),
         #[cfg(test)]
         Some(AudioEngineEntry::PanicOnRead) => Err(AudioAbiError::AlreadyReleased),
+        None if registry.was_issued(token) => Err(AudioAbiError::AlreadyReleased),
         None => Err(AudioAbiError::UnknownToken),
     }
 }
@@ -270,17 +268,18 @@ fn read_interleaved_f32_impl(token: u64, output: &mut [f32]) -> (i32, u32) {
             };
             (status.code(), frames_from_ring)
         }
-        Some(AudioEngineEntry::Released) => {
-            output.fill(0.0);
-            (SilentDiscoAudioStatus::Stopping.code(), 0)
-        }
         #[cfg(test)]
         Some(AudioEngineEntry::PanicOnRead) => {
             panic!("test-only injected panic in silent_disco_audio_read_interleaved_f32");
         }
         None => {
             output.fill(0.0);
-            (SilentDiscoAudioStatus::InvalidState.code(), 0)
+            let status = if registry.was_issued(token) {
+                SilentDiscoAudioStatus::Stopping
+            } else {
+                SilentDiscoAudioStatus::InvalidState
+            };
+            (status.code(), 0)
         }
     }
 }
@@ -393,11 +392,14 @@ telemetry_query_export!(silent_disco_audio_contained_panic_count, u64, |consumer
 });
 
 #[cfg(test)]
+mod retirement_tests;
+#[cfg(test)]
 mod tests {
     // Every comparison here checks an exact, bit-identical round trip through
     // the ring's `AtomicU32`-backed storage (real writes) or an exact silence
     // fill (zeroed slots), never approximate arithmetic — exact equality is
     // the correct check, not a precision-loss risk.
+
     #![allow(clippy::float_cmp)]
 
     use super::{
