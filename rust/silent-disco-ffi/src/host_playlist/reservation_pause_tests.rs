@@ -204,8 +204,14 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
                 payload,
                 ..
             }) => {
-                assert_eq!(sequence, next_sequence, "missing/duplicate PCM packet at pause boundary");
-                assert_eq!(first_sample_index, next_sample_index, "gap/overlap in paused PCM timeline");
+                assert_eq!(
+                    sequence, next_sequence,
+                    "missing/duplicate PCM packet at pause boundary"
+                );
+                assert_eq!(
+                    first_sample_index, next_sample_index,
+                    "gap/overlap in paused PCM timeline"
+                );
                 next_sequence += 1;
                 next_sample_index += u64::from(samples_per_packet);
                 packet_sequences.push(sequence);
@@ -228,7 +234,10 @@ fn authoritative_ffi_playlist_reserves_successor_while_paused() {
                 first_sample_index,
                 ..
             }) => {
-                assert_eq!(first_sample_index, next_sample_index, "boundary must follow current PCM exactly");
+                assert_eq!(
+                    first_sample_index, next_sample_index,
+                    "boundary must follow current PCM exactly"
+                );
                 let snapshot = wait_until(&actor, |s| s.host_queue_next_boundary.is_some());
                 assert_eq!(snapshot.playback_state, PlaybackState::Paused);
                 assert_eq!(
