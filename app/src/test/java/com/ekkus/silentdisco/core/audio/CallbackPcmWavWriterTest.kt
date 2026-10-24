@@ -54,6 +54,7 @@ class CallbackPcmWavWriterTest {
                 capturedFrames = 100uL,
                 lostFrames = 0uL,
                 callbackCount = 2uL,
+                tapFullyDrained = true,
                 outputLifecycleAtStart = start,
                 outputLifecycleAtEnd = end,
             )
@@ -80,12 +81,14 @@ class CallbackPcmWavWriterTest {
                 capturedFrames = capturedFrames,
                 lostFrames = lostFrames,
                 callbackCount = callbacks,
+                tapFullyDrained = true,
                 outputLifecycleAtStart = "opens=1 rebinds=0 closes=0",
                 outputLifecycleAtEnd = "opens=1 rebinds=0 closes=0",
                 outputCountersAtStart = OutputCallbackCounters(2, 12),
                 outputCountersAtEnd = OutputCallbackCounters(3, 14),
             )
         assertTrue(evidence(10, 10uL, 0uL, 1uL).complete)
+        assertFalse(evidence(10, 10uL, 0uL, 1uL).copy(tapFullyDrained = false).complete)
         assertFalse(evidence(0, 0uL, 0uL, 1uL).complete)
         assertFalse(evidence(10, 10uL, 1uL, 1uL).complete)
         assertFalse(evidence(9, 10uL, 0uL, 1uL).complete)
