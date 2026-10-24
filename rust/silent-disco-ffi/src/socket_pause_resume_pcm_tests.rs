@@ -226,7 +226,8 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     let mut audio_packets = 0_u64;
     let mut boundaries = Vec::new();
     let mut captured = Vec::<f32>::new();
-    let mut callback_chunks = Vec::new();
+    // Callback 2 crosses the paused 480-frame track transition at frame 480.
+    let callback_chunks = [241_u32, 337, 382];
     let mut done = false;
     for _ in 0..32 {
         match playlist.next_frame(5_000).expect("next producer event") {
@@ -285,34 +286,6 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                         break;
                     }
                 }
-                // Native callbacks do not align to source packet boundaries:
-                // 241 + 239 crosses the first track's tail exactly; the
-                // successor callback is split into 337 + 143 frames.
-                let chunks: &[u32] = if audio_packets == 0 {
-                    &[241, 239]
-                } else {
-                    &[337, 143]
-                };
-                for &frames in chunks {
-                    let mut returned = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
-                    let mut supplied = 0_u32;
-                    let status = silent_disco_audio_read_interleaved_f32(
-                        usize::try_from(token).expect("token") as *mut core::ffi::c_void,
-                        returned.as_mut_ptr(),
-                        frames,
-                        2,
-                        &raw mut supplied,
-                    );
-                    assert_eq!(status, 0, "a boundary or Resume must not underrun");
-                    assert_eq!(supplied, frames, "no native inserted silence");
-                    assert_eq!(
-                        tap.drain(usize::try_from(frames).expect("frames")),
-                        returned,
-                        "capture tap must equal native callback output"
-                    );
-                    captured.extend(returned);
-                    callback_chunks.push(frames);
-                }
                 audio_packets += 1;
             }
             Some(FfiPlaylistFrame::TrackBoundary {
@@ -341,6 +314,8 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 host.broadcast_control(&paused)
                     .expect("pause before successor");
                 assert!(recv_control(listener.as_mut()) == paused);
+                let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+                assert_eq!(silent_disco_audio_callback_count(native), 0);
                 let count = host.counters().control_frames_sent;
                 host.broadcast_control(&start_control)
                     .expect("drop stale start");
@@ -375,7 +350,30 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     assert!(done, "playlist EOF");
     assert_eq!(audio_packets, 2);
     assert_eq!(boundaries, [480]);
-    assert_eq!(callback_chunks, [241, 239, 337, 143]);
+    // Playback callbacks are suspended during Pause. The producer and
+    // scheduler may have queued the first track, but the single native ring
+    // must retain it while a reconnected peer receives the paused snapshot.
+    // Resume queues the successor without closing the existing output; the
+    // next callback spans the original 480-frame boundary.
+    for callback_frames in callback_chunks {
+        let mut returned = vec![f32::NAN; usize::try_from(callback_frames).expect("frames") * 2];
+        let mut supplied = 0_u32;
+        let status = silent_disco_audio_read_interleaved_f32(
+            usize::try_from(token).expect("token") as *mut core::ffi::c_void,
+            returned.as_mut_ptr(),
+            callback_frames,
+            2,
+            &raw mut supplied,
+        );
+        assert_eq!(status, 0, "a resumed boundary must not underrun");
+        assert_eq!(supplied, callback_frames, "no native inserted silence");
+        assert_eq!(
+            tap.drain(usize::try_from(callback_frames).expect("frames")),
+            returned,
+            "capture tap must equal native callback output",
+        );
+        captured.extend(returned);
+    }
     assert_eq!(captured.len(), canonical.len());
     let mut expected: Vec<f32> = canonical
         .iter()
@@ -396,10 +394,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     assert_eq!(pump.diagnostics().packets_emitted, 2);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
     let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
-    assert_eq!(silent_disco_audio_callback_count(native), 4);
+    assert_eq!(silent_disco_audio_callback_count(native), 3);
     assert_eq!(silent_disco_audio_underrun_count(native), 0);
     assert_eq!(silent_disco_audio_silence_filled_frames(native), 0);
-    assert_eq!(tap.counters(), (960, 0, 4));
+    assert_eq!(tap.counters(), (960, 0, 3));
     detach_callback_capture(token);
     release_render_ring(token).expect("release same native output after resume");
     playlist.cancel().expect("stop playlist");
