@@ -292,6 +292,7 @@ jobs:
           name: android-instrumentation-diagnostics
           path: |
             android-instrumentation-tests.log
+            android-screenshot-capture.log
             android-workflow-screenshots/
             app/build/outputs/androidTest-results/connected/
             app/build/reports/androidTests/connected/
