@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use crate::domain::{MonotonicMillis, SampleIndex, StreamId};
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, TrackBoundary};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
+    audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
+    wait_for_control_from, wait_for_frame,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -158,5 +159,132 @@ fn real_tcp_reconnect_replays_paused_and_resumed_queue_then_fences_stop_replay()
     for listener in [&mut a, &mut b, &mut c, &mut d] {
         listener.shutdown().expect("listener shutdown");
     }
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_controls() {
+    let session = id_session("same-identity-reconnect-controls");
+    let device = id_device("returning-listener");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production TCP/UDP host");
+    let factory = SocketTransportFactory;
+    let start = stream_start(&session, 1_000);
+    let ControlMessage::StreamStart(mut resumed) = start.clone() else {
+        panic!("start fixture");
+    };
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: resumed.stream_id.clone(),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "second-song".to_owned(),
+        display_name: "Second song".to_owned(),
+    });
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: resumed.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_010),
+    });
+    let mut first = connect_authorized(&mut host, factory, &clock, &session, "returning-listener");
+    for control in [&start, &boundary, &pause] {
+        assert_eq!(
+            host.broadcast_control(control)
+                .expect("broadcast active queue state")
+                .report
+                .successful_peers,
+            1,
+        );
+    }
+    assert_tcp_controls(first.as_mut(), &[start.clone(), boundary.clone(), pause.clone()]);
+
+    // Retiring the old TCP identity must also retire its UDP route before
+    // the same device can authorize a new socket. No ghost audio delivery.
+    host.disconnect_peer(&device).expect("retire first connection");
+    first.shutdown().expect("close first socket");
+    let packet = audio_frame(&session, 0);
+    assert_eq!(
+        host.broadcast_audio(&packet)
+            .expect("no UDP route after disconnect")
+            .report
+            .intended_peers,
+        0,
+    );
+
+    let mut second = connect_authorized(&mut host, factory, &clock, &session, "returning-listener");
+    assert_tcp_controls(
+        second.as_mut(),
+        &[start.clone(), boundary.clone(), pause.clone()],
+    );
+    resumed.host_start_time_ms = MonotonicMillis::new(1_200);
+    let resume = ControlMessage::StreamStart(resumed.clone());
+    assert_eq!(
+        host.broadcast_control(&resume)
+            .expect("resume live stream")
+            .report
+            .successful_peers,
+        1,
+    );
+    assert_tcp_controls(second.as_mut(), std::slice::from_ref(&resume));
+    assert_eq!(
+        host.broadcast_audio(&packet)
+            .expect("UDP to reconnected identity")
+            .report
+            .successful_peers,
+        1,
+    );
+    wait_for_frame(second.as_mut(), TransportChannel::Audio, |frame| frame == &packet);
+
+    // Reconnecting again after Resume must replay the new anchor and queue,
+    // not the earlier Pause or the retired original start.
+    host.disconnect_peer(&device).expect("retire second connection");
+    second.shutdown().expect("close second socket");
+    let mut third = connect_authorized(&mut host, factory, &clock, &session, "returning-listener");
+    assert_tcp_controls(third.as_mut(), &[resume.clone(), boundary.clone()]);
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: resumed.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_420),
+    });
+    host.broadcast_control(&stop).expect("stop current stream");
+    assert_tcp_controls(third.as_mut(), std::slice::from_ref(&stop));
+    host.disconnect_peer(&device).expect("retire stopped connection");
+    third.shutdown().expect("close stopped socket");
+
+    let sent_at_stop = host.counters().control_frames_sent;
+    let mut fourth = connect_authorized(&mut host, factory, &clock, &session, "returning-listener");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_at_stop,
+        "Stop clears the snapshot even for a returning device",
+    );
+    host.broadcast_control(&start).expect("drop delayed start");
+    host.broadcast_control(&boundary).expect("drop delayed boundary");
+    assert_eq!(host.counters().control_frames_sent, sent_at_stop);
+
+    // Fresh Play may intentionally reuse the stream ID with a newer anchor.
+    // Its TCP start and UDP payload must reach only the newly authorized route.
+    resumed.host_start_time_ms = MonotonicMillis::new(2_000);
+    let play = ControlMessage::StreamStart(resumed);
+    assert_eq!(
+        host.broadcast_control(&play)
+            .expect("fresh Play")
+            .report
+            .successful_peers,
+        1,
+    );
+    assert_tcp_controls(fourth.as_mut(), std::slice::from_ref(&play));
+    assert_eq!(
+        host.broadcast_audio(&packet)
+            .expect("fresh UDP route")
+            .report
+            .successful_peers,
+        1,
+    );
+    wait_for_frame(fourth.as_mut(), TransportChannel::Audio, |frame| frame == &packet);
+    fourth.shutdown().expect("final listener shutdown");
     host.shutdown().expect("host shutdown");
 }
