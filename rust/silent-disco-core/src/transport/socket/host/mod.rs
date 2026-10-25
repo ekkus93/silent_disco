@@ -294,7 +294,7 @@ impl PlaybackControls {
     }
 
     /// A reconnecting listener needs the track audible *now*, not the track
-    /// that was current when StreamStart was originally broadcast. Host
+    /// that was current when `StreamStart` was originally broadcast. Host
     /// send-ahead can queue future boundaries, so derive the position from
     /// the presentation clock rather than the most recently sent UDP packet.
     /// While paused, freeze at the pause deadline; Resume reanchors Start.
