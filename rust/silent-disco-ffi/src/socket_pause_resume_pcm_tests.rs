@@ -514,7 +514,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         late.as_mut().expect("late listener").as_mut(),
         reconnect.as_mut().expect("reconnected listener").as_mut(),
     ] {
-        assert_eq!(recv_control(peer), stop, "all peers receive Stop");
+        assert!(recv_control(peer) == stop, "all peers receive Stop");
     }
     let stopped_count = host.counters().control_frames_sent;
     let mut after_stop = authorized_late_joiner(host.as_mut(), "listener-after-stop");
@@ -574,7 +574,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         reconnect.as_mut().expect("reconnected listener").as_mut(),
         after_stop.as_mut(),
     ] {
-        assert_eq!(recv_control(peer), play, "new stream replaces old snapshot");
+        assert!(recv_control(peer) == play, "new stream replaces old snapshot");
     }
     let replay_config = SchedulerConfig::new(
         session.clone(),
@@ -643,13 +643,13 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     4,
                 );
                 let received = recv_audio(listener.as_mut());
-                assert_eq!(received, packet);
+                assert!(received == packet, "replay UDP matches producer");
                 for peer in [
                     late.as_mut().expect("late listener").as_mut(),
                     reconnect.as_mut().expect("reconnected listener").as_mut(),
                     after_stop.as_mut(),
                 ] {
-                    assert_eq!(recv_audio(peer), packet, "all peers receive replay PCM");
+                    assert!(recv_audio(peer) == packet, "all peers receive replay PCM");
                 }
                 replay_pump.scheduler_mut()
                     .submit_packet(received)
@@ -689,7 +689,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     reconnect.as_mut().expect("reconnected listener").as_mut(),
                     after_stop.as_mut(),
                 ] {
-                    assert_eq!(recv_control(peer), boundary);
+                    assert!(recv_control(peer) == boundary, "replay boundary TCP");
                 }
                 replay_boundaries.push(first_sample_index);
             }
