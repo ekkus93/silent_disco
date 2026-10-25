@@ -348,7 +348,7 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
 
     let fresh_pause = ControlMessage::Pause(Pause {
         session_id: session.clone(),
-        stream_id: start.stream_id.clone(),
+        stream_id: resumed.stream_id.clone(),
         host_pause_time_ms: MonotonicMillis::new(2_200),
     });
     host.broadcast_control(&fresh_pause)
