@@ -580,7 +580,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         reconnect.as_mut().expect("reconnected listener").as_mut(),
         after_stop.as_mut(),
     ] {
-        assert!(recv_control(peer) == play, "new stream replaces old snapshot");
+        assert!(
+            recv_control(peer) == play,
+            "new stream replaces old snapshot"
+        );
     }
     let replay_config = SchedulerConfig::new(
         session.clone(),
