@@ -211,6 +211,7 @@ class HostTransportLateJoinInstrumentedTest {
         val sessionId = "android-paused-join-${System.nanoTime()}"
         val host = HostTransportController()
         val listeners = mutableListOf<FfiListenerTransportHandle>()
+        val syncKeepAlives = mutableListOf<Job>()
         try {
             host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
             val startMs = SystemClock.elapsedRealtime() - 1_000L
@@ -241,6 +242,20 @@ class HostTransportLateJoinInstrumentedTest {
                 assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
                     .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
                 host.authorizeListener(request.deviceId, request.syncPort, request.audioPort)
+                // The host expires silent peers after eight seconds. This
+                // multi-stage emulator regression can exceed that interval;
+                // exercise the production sync heartbeat instead of keeping
+                // an otherwise disconnected listener alive artificially.
+                syncKeepAlives += launch(Dispatchers.IO) {
+                    var correlationId = 1uL
+                    while (isActive) {
+                        listener.sendSyncRequest(
+                            correlationId++,
+                            (System.nanoTime() / 1_000_000L).toULong(),
+                        )
+                        delay(2_000L)
+                    }
+                }
                 return listener
             }
 
@@ -350,6 +365,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(replayAudio.payload.toList())
                 .containsExactlyElementsIn(ByteArray(240 * 2 * 2) { 0x35.toByte() }.toList())
         } finally {
+            syncKeepAlives.forEach { it.cancelAndJoin() }
             listeners.forEach { runCatching { it.shutdown() } }
             host.close()
         }
