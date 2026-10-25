@@ -47,9 +47,21 @@ pub(super) struct PlaybackControls {
     // A delayed StreamStart must not resurrect playback after Stop. Preserve
     // the most recently retired session's start-time fence across idle state.
     last_stopped_start: Option<(SessionId, u64)>,
+    // The wall-clock control time of the last Stop, independent of its
+    // future presentation anchor. A replay may reuse the stream ID; delayed
+    // Pause/Stop from the retired generation must not affect the new Play.
+    last_stopped_control: Option<(SessionId, u64)>,
 }
 
 impl PlaybackControls {
+    fn retired_control(&self, session: &SessionId, control_time_ms: u64) -> bool {
+        self.last_stopped_control
+            .as_ref()
+            .is_some_and(|(stopped_session, stopped_at)| {
+                stopped_session == session && control_time_ms <= *stopped_at
+            })
+    }
+
     /// Returns false for stale or unrelated playback controls so that live
     /// listeners cannot receive controls rejected by late-join replay.
     pub(super) fn update(&mut self, message: &ControlMessage) -> bool {
@@ -136,6 +148,9 @@ impl PlaybackControls {
                     start.stream_id == pause.stream_id && start.session_id == pause.session_id
                 }) =>
             {
+                if self.retired_control(&pause.session_id, pause.host_pause_time_ms.get()) {
+                    return false;
+                }
                 // A StreamStart is a *future audio presentation deadline*, not
                 // the time playback controls become valid. The host can Pause
                 // during its startup/send-ahead window, before that deadline.
@@ -157,6 +172,9 @@ impl PlaybackControls {
                     start.stream_id == stop.stream_id && start.session_id == stop.session_id
                 }) =>
             {
+                if self.retired_control(&stop.session_id, stop.host_stop_time_ms.get()) {
+                    return false;
+                }
                 // Stop is valid before the first scheduled sample is audible.
                 // The stream ID, not the future presentation timestamp,
                 // distinguishes a delayed Stop from a retired stream.
@@ -164,8 +182,12 @@ impl PlaybackControls {
                     .stream_start
                     .take()
                     .expect("active stream checked above");
-                self.last_stopped_start =
-                    Some((retired.session_id, retired.host_start_time_ms.get()));
+                self.last_stopped_start = Some((
+                    retired.session_id.clone(),
+                    retired.host_start_time_ms.get(),
+                ));
+                self.last_stopped_control =
+                    Some((retired.session_id, stop.host_stop_time_ms.get()));
                 self.boundaries.clear();
                 self.pause = None;
                 self.last_pause_time_ms = None;
@@ -174,7 +196,9 @@ impl PlaybackControls {
             // Explicit Stop must disarm idle listener liveness even when the
             // transport did not cache an earlier StreamStart. A Stop for a
             // different active stream, however, must not interrupt playback.
-            ControlMessage::Stop(_) if self.stream_start.is_none() => true,
+            ControlMessage::Stop(stop) if self.stream_start.is_none() => {
+                !self.retired_control(&stop.session_id, stop.host_stop_time_ms.get())
+            },
             ControlMessage::TrackBoundary(_)
             | ControlMessage::Pause(_)
             | ControlMessage::Stop(_) => false,

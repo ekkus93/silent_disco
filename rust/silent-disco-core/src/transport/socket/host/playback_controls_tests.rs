@@ -525,3 +525,84 @@ fn stopped_generation_rejects_delayed_stream_starts_even_with_another_stream_id(
     assert!(!cached.update(&start));
     assert!(cached.snapshot() == vec![fresh]);
 }
+
+#[test]
+fn replay_with_reused_stream_id_rejects_retired_pause_and_stop() {
+    let session = SessionId::new("reused-stream-control-fence").expect("session");
+    let stream = StreamId::new("reused-stream-control-fence").expect("stream");
+    let original = stream_start(&session, &stream);
+    let old_pause = pause(&session, &stream);
+    let old_stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    });
+    let mut cache = PlaybackControls::default();
+    assert!(cache.update(&original));
+    assert!(cache.update(&old_pause));
+    assert!(cache.update(&old_stop));
+
+    let ControlMessage::StreamStart(mut restarted) = original else {
+        panic!("expected start");
+    };
+    restarted.host_start_time_ms = MonotonicMillis::new(3_000);
+    let replay = ControlMessage::StreamStart(restarted);
+    let next = boundary(&session, &stream);
+    assert!(cache.update(&replay));
+    assert!(cache.update(&next));
+    assert!(!cache.update(&old_pause), "old Pause must not pause replay");
+    assert!(!cache.update(&old_stop), "old Stop must not end replay");
+    assert!(cache.snapshot() == vec![replay.clone(), next.clone()]);
+
+    let fresh_pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_pause_time_ms: MonotonicMillis::new(3_500),
+    });
+    assert!(cache.update(&fresh_pause));
+    assert!(cache.snapshot() == vec![replay, next, fresh_pause]);
+    let fresh_stop = ControlMessage::Stop(Stop {
+        session_id: session,
+        stream_id: stream,
+        host_stop_time_ms: MonotonicMillis::new(3_600),
+    });
+    assert!(cache.update(&fresh_stop));
+    assert!(!cache.update(&old_stop), "retired idle Stop is not broadcast");
+    assert!(cache.snapshot().is_empty());
+}
+
+#[test]
+fn replay_control_fence_allows_pause_before_new_future_audio_anchor() {
+    let session = SessionId::new("future-replay-control-fence").expect("session");
+    let stream = StreamId::new("future-replay-control-fence").expect("stream");
+    let ControlMessage::StreamStart(mut original) = stream_start(&session, &stream) else {
+        panic!("expected start");
+    };
+    original.host_start_time_ms = MonotonicMillis::new(10_000);
+    let mut cache = PlaybackControls::default();
+    assert!(cache.update(&ControlMessage::StreamStart(original.clone())));
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(9_700),
+    });
+    assert!(cache.update(&stop));
+
+    original.host_start_time_ms = MonotonicMillis::new(10_300);
+    let replay = ControlMessage::StreamStart(original);
+    assert!(cache.update(&replay));
+    let old_pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_pause_time_ms: MonotonicMillis::new(9_650),
+    });
+    assert!(!cache.update(&old_pause));
+    assert!(!cache.update(&stop));
+    let early_new_pause = ControlMessage::Pause(Pause {
+        session_id: session,
+        stream_id: stream,
+        host_pause_time_ms: MonotonicMillis::new(9_800),
+    });
+    assert!(cache.update(&early_new_pause));
+    assert!(cache.snapshot() == vec![replay, early_new_pause]);
+}

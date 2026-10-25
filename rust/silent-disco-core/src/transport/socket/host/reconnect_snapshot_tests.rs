@@ -321,6 +321,37 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     wait_for_frame(fourth.as_mut(), TransportChannel::Audio, |frame| {
         frame == &packet
     });
+
+    // Reusing the stream ID must not let delayed controls from before Stop
+    // interrupt this new Play or poison a late-join snapshot.
+    let before_stale = host.counters().control_frames_sent;
+    assert_eq!(
+        host.broadcast_control(&pause)
+            .expect("drop retired Pause")
+            .report
+            .intended_peers,
+        0,
+    );
+    assert_eq!(
+        host.broadcast_control(&stop)
+            .expect("drop retired Stop")
+            .report
+            .intended_peers,
+        0,
+    );
+    assert_eq!(host.counters().control_frames_sent, before_stale);
+
+    let fresh_pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: start.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(2_200),
+    });
+    host.broadcast_control(&fresh_pause)
+        .expect("new generation Pause");
+    assert_tcp_controls(fourth.as_mut(), std::slice::from_ref(&fresh_pause));
+    let mut fifth = connect_authorized(&mut host, factory, &clock, &session, "late-replay");
+    assert_tcp_controls(fifth.as_mut(), &[play, fresh_pause]);
+    fifth.shutdown().expect("late listener shutdown");
     fourth.shutdown().expect("final listener shutdown");
     host.shutdown().expect("host shutdown");
 }
