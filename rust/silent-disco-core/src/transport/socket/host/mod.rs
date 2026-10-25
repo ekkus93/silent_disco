@@ -201,7 +201,16 @@ impl PlaybackControls {
             // transport did not cache an earlier StreamStart. A Stop for a
             // different active stream, however, must not interrupt playback.
             ControlMessage::Stop(stop) if self.stream_start.is_none() => {
-                !self.retired_control(&stop.session_id, stop.host_stop_time_ms.get())
+                if self.retired_control(&stop.session_id, stop.host_stop_time_ms.get()) {
+                    false
+                } else {
+                    // Stop may race ahead of StreamStart during admission or
+                    // reconnect. Remember the idle Stop watermark so a late
+                    // start cannot resurrect playback for a new listener.
+                    self.last_stopped_control =
+                        Some((stop.session_id.clone(), stop.host_stop_time_ms.get()));
+                    true
+                }
             }
             ControlMessage::TrackBoundary(_)
             | ControlMessage::Pause(_)

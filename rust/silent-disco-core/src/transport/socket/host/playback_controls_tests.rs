@@ -613,3 +613,36 @@ fn replay_control_fence_allows_pause_before_new_future_audio_anchor() {
     assert!(cache.update(&early_new_pause));
     assert!(cache.snapshot() == vec![replay, early_new_pause]);
 }
+
+#[test]
+fn idle_stop_fences_delayed_play_across_stream_ids_without_blocking_fresh_play() {
+    let session = SessionId::new("idle-stop-fence-session").expect("session");
+    let old_stream = StreamId::new("idle-stop-old").expect("old stream");
+    let mut cache = PlaybackControls::default();
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: old_stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    });
+    assert!(cache.update(&stop), "idle Stop must reach existing listeners");
+    assert!(cache.snapshot().is_empty());
+    assert!(!cache.update(&stop), "duplicate idle Stop must not broadcast");
+    for (name, anchor) in [("idle-stop-old", 1_000), ("idle-stop-other", 1_900), ("idle-stop-equal", 2_000)] {
+        let stream = StreamId::new(name).expect("stream");
+        let ControlMessage::StreamStart(mut start) = stream_start(&session, &stream) else {
+            panic!("start fixture");
+        };
+        start.host_start_time_ms = MonotonicMillis::new(anchor);
+        assert!(!cache.update(&ControlMessage::StreamStart(start)));
+        assert!(cache.snapshot().is_empty(), "retired start must not revive idle playback");
+    }
+    let fresh_stream = StreamId::new("idle-stop-fresh").expect("fresh stream");
+    let ControlMessage::StreamStart(mut fresh) = stream_start(&session, &fresh_stream) else {
+        panic!("start fixture");
+    };
+    fresh.host_start_time_ms = MonotonicMillis::new(2_500);
+    let play = ControlMessage::StreamStart(fresh);
+    assert!(cache.update(&play));
+    assert!(!cache.update(&stop), "retired idle Stop cannot kill fresh Play");
+    assert!(cache.snapshot() == vec![play]);
+}

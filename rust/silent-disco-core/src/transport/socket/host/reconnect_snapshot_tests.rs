@@ -360,3 +360,67 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     fourth.shutdown().expect("final listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn real_socket_idle_stop_fences_late_starts_before_and_after_authorization() {
+    let session = id_session("socket-idle-stop-fence");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind host");
+    let factory = SocketTransportFactory;
+    let mut first = connect_authorized(&mut host, factory, &clock, &session, "idle-stop-first");
+    let ControlMessage::StreamStart(mut start) = stream_start(&session, 1_000) else {
+        panic!("start fixture");
+    };
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: start.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(2_000),
+    });
+    assert_eq!(host.broadcast_control(&stop).expect("idle Stop").report.successful_peers, 1);
+    assert_tcp_controls(first.as_mut(), std::slice::from_ref(&stop));
+    let count = host.counters().control_frames_sent;
+    let mut second = connect_authorized(&mut host, factory, &clock, &session, "idle-stop-second");
+    assert_eq!(host.counters().control_frames_sent, count, "no stopped playback snapshot");
+
+    for anchor in [1_000, 1_900, 2_000] {
+        start.host_start_time_ms = MonotonicMillis::new(anchor);
+        start.stream_id = StreamId::new(format!("stale-{anchor}")).expect("stale stream");
+        assert_eq!(
+            host.broadcast_control(&ControlMessage::StreamStart(start.clone()))
+                .expect("reject delayed Play").report.intended_peers,
+            0,
+        );
+    }
+    assert_eq!(host.counters().control_frames_sent, count);
+
+    start.host_start_time_ms = MonotonicMillis::new(3_000);
+    start.stream_id = StreamId::new("new-play").expect("fresh stream");
+    let play = ControlMessage::StreamStart(start.clone());
+    assert_eq!(host.broadcast_control(&play).expect("fresh Play").report.successful_peers, 2);
+    assert_tcp_controls(first.as_mut(), std::slice::from_ref(&play));
+    assert_tcp_controls(second.as_mut(), std::slice::from_ref(&play));
+    let mut third = connect_authorized(&mut host, factory, &clock, &session, "idle-stop-third");
+    assert_tcp_controls(third.as_mut(), std::slice::from_ref(&play));
+    let count = host.counters().control_frames_sent;
+    assert_eq!(host.broadcast_control(&stop).expect("old Stop").report.intended_peers, 0);
+    assert_eq!(host.counters().control_frames_sent, count);
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: start.stream_id,
+        host_pause_time_ms: MonotonicMillis::new(3_500),
+    });
+    assert_eq!(host.broadcast_control(&pause).expect("fresh Pause").report.successful_peers, 3);
+    for listener in [&mut first, &mut second, &mut third] {
+        assert_tcp_controls(listener.as_mut(), std::slice::from_ref(&pause));
+    }
+    let mut fourth = connect_authorized(&mut host, factory, &clock, &session, "idle-stop-fourth");
+    assert_tcp_controls(fourth.as_mut(), &[play, pause]);
+    for listener in [&mut first, &mut second, &mut third, &mut fourth] {
+        listener.shutdown().expect("listener shutdown");
+    }
+    host.shutdown().expect("host shutdown");
+}
