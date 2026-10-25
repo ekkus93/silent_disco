@@ -258,7 +258,11 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 }
                 boundaries.push(first_sample_index);
                 boundary_controls.push(boundary);
-                let pause_anchor = if first_sample_index == 480 { 1_010 } else { 1_220 };
+                let pause_anchor = if first_sample_index == 480 {
+                    1_010
+                } else {
+                    1_220
+                };
                 let pause = ControlMessage::Pause(Pause {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
@@ -306,7 +310,11 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 let ControlMessage::StreamStart(mut resumed) = active_start.clone() else {
                     panic!("start fixture");
                 };
-                let resume_anchor = if first_sample_index == 480 { 1_200 } else { 1_400 };
+                let resume_anchor = if first_sample_index == 480 {
+                    1_200
+                } else {
+                    1_400
+                };
                 resumed.host_start_time_ms = MonotonicMillis::new(resume_anchor);
                 let resume = ControlMessage::StreamStart(resumed);
                 assert_eq!(
