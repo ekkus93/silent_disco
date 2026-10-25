@@ -59,7 +59,9 @@ impl TransportClock for SystemTransportClock {
             let seconds = u64::try_from(now.tv_sec).unwrap_or(0);
             let nanoseconds = u64::try_from(now.tv_nsec).unwrap_or(0);
             return MonotonicMillis::new(
-                seconds.saturating_mul(1_000).saturating_add(nanoseconds / 1_000_000),
+                seconds
+                    .saturating_mul(1_000)
+                    .saturating_add(nanoseconds / 1_000_000),
             );
         }
         let elapsed = self.origin.elapsed().as_millis();
