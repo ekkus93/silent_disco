@@ -143,16 +143,18 @@ fun SilentDiscoApp(
         if (granted) continuation?.invoke()
     }
 
-    var addingLiveQueueAudio by remember { mutableStateOf(false) }
+    // The system document picker may return after an Activity recreation.
+    // Save the destination so live additions never overwrite setup selections.
+    val audioPickerDestination = rememberAudioPickerDestination()
     val audioPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris: List<Uri> ->
-        if (addingLiveQueueAudio) {
-            addingLiveQueueAudio = false
-            viewModel.addSongsToLiveQueue(uris)
-        } else {
-            viewModel.selectAudioFiles(uris)
-        }
+        dispatchAudioPickerResult(
+            destination = audioPickerDestination,
+            uris = uris,
+            onSetup = viewModel::selectAudioFiles,
+            onLiveQueue = viewModel::addSongsToLiveQueue,
+        )
     }
 
     val qrScannerLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -371,7 +373,7 @@ fun SilentDiscoApp(
                     onSessionNameChanged = { viewModel.updateHostForm(sessionName = it) },
                     onChooseAudio = {
                         requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
-                            addingLiveQueueAudio = false
+                            audioPickerDestination.value = AudioPickerDestination.SETUP
                             audioPickerLauncher.launch(arrayOf("audio/*"))
                         }
                     },
@@ -432,7 +434,7 @@ fun SilentDiscoApp(
                     onAddDemoJoinRequest = viewModel::addDemoJoinRequest,
                     onAddSongs = {
                         requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
-                            addingLiveQueueAudio = true
+                            audioPickerDestination.value = AudioPickerDestination.LIVE_QUEUE
                             audioPickerLauncher.launch(arrayOf("audio/*"))
                         }
                     },
@@ -446,7 +448,7 @@ fun SilentDiscoApp(
                     onBack = { navController.popBackStack() },
                     onAddSongs = {
                         requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
-                            addingLiveQueueAudio = true
+                            audioPickerDestination.value = AudioPickerDestination.LIVE_QUEUE
                             audioPickerLauncher.launch(arrayOf("audio/*"))
                         }
                     },
