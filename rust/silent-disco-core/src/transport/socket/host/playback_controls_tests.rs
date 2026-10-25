@@ -514,6 +514,10 @@ fn stopped_generation_rejects_delayed_stream_starts_even_with_another_stream_id(
     delayed.stream_id = StreamId::new("stop-start-fence-other").expect("other stream");
     assert!(!cached.update(&start));
     assert!(!cached.update(&ControlMessage::StreamStart(delayed.clone())));
+    // A delayed Play can have an anchor later than the stopped stream's
+    // original anchor yet still precede Stop's actual control timestamp.
+    delayed.host_start_time_ms = MonotonicMillis::new(1_500);
+    assert!(!cached.update(&ControlMessage::StreamStart(delayed.clone())));
     assert!(cached.snapshot().is_empty());
 
     // A genuinely newer Play in the same session is accepted; a delayed

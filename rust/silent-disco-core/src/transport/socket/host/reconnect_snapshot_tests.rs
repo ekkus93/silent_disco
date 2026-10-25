@@ -297,6 +297,11 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     host.broadcast_control(&start).expect("drop delayed start");
     host.broadcast_control(&boundary)
         .expect("drop delayed boundary");
+    let mut delayed_play = resumed.clone();
+    delayed_play.stream_id = StreamId::new("stale-play-variant").expect("stream ID");
+    delayed_play.host_start_time_ms = MonotonicMillis::new(1_300);
+    host.broadcast_control(&ControlMessage::StreamStart(delayed_play))
+        .expect("drop delayed Play from before Stop");
     assert_eq!(host.counters().control_frames_sent, sent_at_stop);
 
     // Fresh Play may intentionally reuse the stream ID with a newer anchor.

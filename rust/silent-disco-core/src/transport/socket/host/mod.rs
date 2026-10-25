@@ -79,6 +79,12 @@ impl PlaybackControls {
                 {
                     return false;
                 }
+                // A different stream ID does not make an earlier start
+                // legitimate: a delayed Play from before Stop can have an
+                // anchor later than the retired stream's original anchor.
+                if self.retired_control(&start.session_id, start.host_start_time_ms.get()) {
+                    return false;
+                }
                 // A delayed start from an older generation must not rewind
                 // the active clock or clear its paused state, even when a
                 // subsequent Play assigned a different stream ID.
