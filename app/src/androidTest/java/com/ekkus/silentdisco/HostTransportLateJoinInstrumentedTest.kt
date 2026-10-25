@@ -137,6 +137,67 @@ class HostTransportLateJoinInstrumentedTest {
             host.close()
         }
     }
+
+    @Test
+    fun listenerJoiningAfterFirstBoundaryReceivesAudibleTrackAndOnlyUpcomingBoundary() = runBlocking<Unit> {
+        val sockets = List(3) { ServerSocket(0) }
+        val ports = sockets.map(ServerSocket::getLocalPort)
+        sockets.forEach(ServerSocket::close)
+        val sessionId = "android-past-boundary-${System.nanoTime()}"
+        val host = HostTransportController()
+        var listener: FfiListenerTransportHandle? = null
+        try {
+            host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
+            // The production transport clock begins at bind. The first
+            // boundary is already audible, while the second is far enough
+            // ahead to remain pending even on a loaded hosted emulator.
+            host.broadcastStreamStart(
+                "active-stream", 0, 48_000, 2, 240, "entry-first", "First song",
+            )
+            host.broadcastTrackBoundary("active-stream", 240, "entry-second", "Second song")
+            host.broadcastTrackBoundary("active-stream", 2_400_000, "entry-third", "Third song")
+            delay(50L)
+
+            val endpoint = """
+                {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "inviteCodeRequired":false,"expiresAtMs":null}
+            """.trimIndent().replace("\n", "")
+            listener = FfiListenerTransportHandle.connect(
+                endpoint,
+                System.currentTimeMillis().toULong(),
+                "android-past-boundary-listener",
+                "127.0.0.1",
+            )
+            listener.sendJoinRequest("Late Listener", null)
+            val join = withTimeout(5_000) {
+                host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
+            } as FfiHostTransportEvent.JoinRequestReceived
+            host.sendJoinApproval(join.deviceId, false)
+            assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
+                .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
+            host.authorizeListener(join.deviceId, join.syncPort, join.audioPort)
+
+            assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", 0uL, 48_000u, 2u, 240u,
+                        "entry-second", "Second song",
+                    ),
+                )
+            // The already-audible first boundary must not be replayed;
+            // only the future third entry remains in the reconnect cache.
+            assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.TrackBoundary })
+                .isEqualTo(
+                    FfiListenerTransportEvent.TrackBoundary(
+                        "active-stream", 2_400_000uL, "entry-third", "Third song",
+                    ),
+                )
+        } finally {
+            listener?.shutdown()
+            host.close()
+        }
+    }
 }
 
 private suspend fun awaitListenerEvent(
