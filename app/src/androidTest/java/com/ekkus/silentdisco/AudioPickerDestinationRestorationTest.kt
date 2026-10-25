@@ -41,8 +41,8 @@ class AudioPickerDestinationRestorationTest {
                         dispatchAudioPickerResult(
                             destination,
                             listOf(song),
-                            onSetup = setupBatches::add,
-                            onLiveQueue = liveBatches::add,
+                            onSetup = { setupBatches.add(it) },
+                            onLiveQueue = { liveBatches.add(it) },
                         )
                     },
                     modifier = Modifier.testTag("deliver-result"),
@@ -52,8 +52,8 @@ class AudioPickerDestinationRestorationTest {
                         dispatchAudioPickerResult(
                             destination,
                             emptyList(),
-                            onSetup = setupBatches::add,
-                            onLiveQueue = liveBatches::add,
+                            onSetup = { setupBatches.add(it) },
+                            onLiveQueue = { liveBatches.add(it) },
                         )
                     },
                     modifier = Modifier.testTag("cancel-picker"),
