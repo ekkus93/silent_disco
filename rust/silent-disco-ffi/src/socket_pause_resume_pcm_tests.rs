@@ -19,7 +19,7 @@ use silent_disco_core::domain::{
 };
 use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, Pause, ProtocolFrame,
-    StreamStart, TrackBoundary,
+    Stop, StreamStart, TrackBoundary,
 };
 use silent_disco_core::transport::{
     HostTransportNode, ListenerTransportConfig, ListenerTransportNode, ManualTransportClock,
@@ -496,6 +496,264 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     detach_callback_capture(token);
     release_render_ring(token).expect("release same native output after resume");
     playlist.cancel().expect("stop playlist");
+
+    // Stop and fresh Play must replay PCM through real sockets without
+    // resurrecting the old boundary, leaking buffered PCM or letting a
+    // delayed callback from the retired native output consume replay audio.
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_420),
+    });
+    assert_eq!(
+        host.broadcast_control(&stop).expect("Stop old stream").report.successful_peers,
+        3,
+    );
+    for peer in [
+        listener.as_mut(),
+        late.as_mut().expect("late listener").as_mut(),
+        reconnect.as_mut().expect("reconnected listener").as_mut(),
+    ] {
+        assert_eq!(recv_control(peer), stop, "all peers receive Stop");
+    }
+    let stopped_count = host.counters().control_frames_sent;
+    let mut after_stop = authorized_late_joiner(host.as_mut(), "listener-after-stop");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        stopped_count,
+        "post-Stop authorization must replay no retired controls",
+    );
+    host.broadcast_control(&start_control)
+        .expect("old start is retired");
+    host.broadcast_control(cached_boundary.as_ref().expect("old boundary"))
+        .expect("old boundary is retired");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        stopped_count,
+        "delayed start and boundary must not reach a newly authorized peer",
+    );
+
+    let replay_stream = StreamId::new("pause-replay-stream").expect("replay stream");
+    let replay_sources = formats
+        .iter()
+        .enumerate()
+        .map(|(index, _)| FfiPlaylistSource {
+            entry_id: format!("replay-entry-{index}"),
+            display_name: format!("Replay track {index}"),
+            staged_path: root
+                .join(format!("source-{index}.wav"))
+                .to_string_lossy()
+                .into_owned(),
+        })
+        .collect();
+    let replay_playlist = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        replay_stream.to_string(),
+        2_000,
+        replay_sources,
+    )
+    .expect("fresh production playlist");
+    let fresh = replay_playlist.stream_start();
+    let play = ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: replay_stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(2_000),
+        sample_rate: fresh.sample_rate,
+        channels: fresh.channels,
+        samples_per_packet: fresh.samples_per_packet,
+        current_entry_id: fresh.current_entry_id,
+        current_display_name: fresh.current_display_name,
+    });
+    assert_eq!(
+        host.broadcast_control(&play).expect("fresh Play").report.successful_peers,
+        4,
+    );
+    for peer in [
+        listener.as_mut(),
+        late.as_mut().expect("late listener").as_mut(),
+        reconnect.as_mut().expect("reconnected listener").as_mut(),
+        after_stop.as_mut(),
+    ] {
+        assert_eq!(recv_control(peer), play, "new stream replaces old snapshot");
+    }
+    let replay_config = SchedulerConfig::new(
+        session.clone(),
+        replay_stream.clone(),
+        48_000,
+        2_000,
+        fresh.samples_per_packet,
+        2,
+    );
+    let mut replay_config = replay_config;
+    replay_config.startup_buffer_target_ms = 0;
+    let (replay_producer, replay_token) = register_render_ring(RenderRingConfig {
+        capacity_frames: 4_800,
+        target_fill_frames: 4_800,
+    })
+    .expect("fresh native ring");
+    assert_ne!(replay_token, token, "Stop/Play must retire the prior native token");
+    let mut replay_pump = PlaybackPump::new(
+        PlaybackScheduler::new(replay_config, 0.0).expect("replay scheduler"),
+        replay_producer,
+        PlaybackPumpConfig {
+            volume: 1.0,
+            write_lead_ms: 0,
+            max_prefill_ms: 0,
+            target_depth_frames: 4_800,
+        },
+    )
+    .expect("fresh listener pump");
+    replay_pump.apply_sync_offset(0.0);
+    let replay_tap = Arc::new(CallbackCaptureTap::new(4_800).expect("replay tap"));
+    attach_callback_capture(replay_token, Arc::clone(&replay_tap))
+        .expect("attach replay tap");
+    let mut replay_sequence = 0;
+    let mut replay_sample = 0;
+    let mut replay_boundaries = Vec::new();
+    let mut replay_finished = false;
+    for _ in 0..32 {
+        match replay_playlist.next_frame(5_000).expect("replay producer frame") {
+            Some(FfiPlaylistFrame::Audio {
+                sequence,
+                sample_rate,
+                channels,
+                samples_per_packet,
+                first_sample_index,
+                host_presentation_time_ms,
+                payload,
+                ..
+            }) => {
+                assert_eq!(sequence, replay_sequence, "new generation resets sequence");
+                assert_eq!(first_sample_index, replay_sample, "no cross-generation gap");
+                let packet = AudioDatagram {
+                    session_id: session.clone(),
+                    stream_id: replay_stream.clone(),
+                    sequence: PacketSequence::new(sequence),
+                    codec: AudioCodec::PcmS16Le,
+                    sample_rate,
+                    channels,
+                    samples_per_packet,
+                    first_sample_index: SampleIndex::new(first_sample_index),
+                    host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+                    payload,
+                };
+                assert_eq!(
+                    host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
+                        .expect("replay UDP").report.successful_peers,
+                    4,
+                );
+                let received = recv_audio(listener.as_mut());
+                assert_eq!(received, packet);
+                for peer in [
+                    late.as_mut().expect("late listener").as_mut(),
+                    reconnect.as_mut().expect("reconnected listener").as_mut(),
+                    after_stop.as_mut(),
+                ] {
+                    assert_eq!(recv_audio(peer), packet, "all peers receive replay PCM");
+                }
+                replay_pump.scheduler_mut()
+                    .submit_packet(received)
+                    .expect("schedule fresh PCM");
+                for _ in 0..64 {
+                    if !matches!(
+                        replay_pump.tick(host_presentation_time_ms),
+                        PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+                    ) {
+                        break;
+                    }
+                }
+                replay_sequence += 1;
+                replay_sample += u64::from(samples_per_packet);
+            }
+            Some(FfiPlaylistFrame::TrackBoundary {
+                first_sample_index,
+                entry_id,
+                display_name,
+                ..
+            }) => {
+                let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+                    session_id: session.clone(),
+                    stream_id: replay_stream.clone(),
+                    first_sample_index: SampleIndex::new(first_sample_index),
+                    entry_id,
+                    display_name,
+                });
+                assert_eq!(
+                    host.broadcast_control(&boundary).expect("replay boundary")
+                        .report.successful_peers,
+                    4,
+                );
+                for peer in [
+                    listener.as_mut(),
+                    late.as_mut().expect("late listener").as_mut(),
+                    reconnect.as_mut().expect("reconnected listener").as_mut(),
+                    after_stop.as_mut(),
+                ] {
+                    assert_eq!(recv_control(peer), boundary);
+                }
+                replay_boundaries.push(first_sample_index);
+            }
+            Some(FfiPlaylistFrame::End) => {
+                replay_finished = true;
+                break;
+            }
+            None => {}
+        }
+    }
+    assert!(replay_finished, "fresh playlist must reach natural end");
+    assert_eq!((replay_sequence, replay_sample), (4, 960));
+    assert_eq!(replay_boundaries, [480]);
+    assert_eq!(replay_pump.diagnostics().concealed_packets, 0);
+
+    // Probe the retired Oboe-style C-ABI token while the *new* ring is
+    // prebuffered, so a stale callback would be detected by corrupted PCM.
+    let mut retired_output = [f32::NAN; 2];
+    let mut retired_supplied = u32::MAX;
+    assert_eq!(
+        silent_disco_audio_read_interleaved_f32(
+            usize::try_from(token).expect("old token") as *mut core::ffi::c_void,
+            retired_output.as_mut_ptr(),
+            1,
+            2,
+            &raw mut retired_supplied,
+        ),
+        2,
+        "old callback must stop after replay begins",
+    );
+    assert_eq!(retired_supplied, 0);
+    assert_eq!(retired_output, [0.0, 0.0]);
+
+    let mut replay_capture = Vec::new();
+    for frames in callback_chunks {
+        let mut output = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
+        let mut supplied = 0;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                usize::try_from(replay_token).expect("replay token") as *mut core::ffi::c_void,
+                output.as_mut_ptr(),
+                frames,
+                2,
+                &raw mut supplied,
+            ),
+            0,
+            "replay must not insert silence",
+        );
+        assert_eq!(supplied, frames);
+        assert_eq!(replay_tap.drain(usize::try_from(frames).expect("frames")), output);
+        replay_capture.extend(output);
+    }
+    assert_eq!(replay_capture, expected, "replay PCM must exactly match both source decodes");
+    assert_eq!(replay_pump.diagnostics().packets_emitted, 4);
+    let replay_native =
+        usize::try_from(replay_token).expect("replay token") as *const core::ffi::c_void;
+    assert_eq!(silent_disco_audio_callback_count(replay_native), 3);
+    assert_eq!(silent_disco_audio_underrun_count(replay_native), 0);
+    assert_eq!(silent_disco_audio_silence_filled_frames(replay_native), 0);
+    assert_eq!(replay_tap.counters(), (960, 0, 3));
+    detach_callback_capture(replay_token);
+    release_render_ring(replay_token).expect("release replay output");
+    replay_playlist.cancel().expect("cancel replay producer");
+    after_stop.shutdown().expect("post-Stop listener shutdown");
     if let Some(mut newcomer) = late {
         newcomer.shutdown().expect("late listener shutdown");
     }
