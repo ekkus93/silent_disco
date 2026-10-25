@@ -175,7 +175,7 @@ impl PlaybackControls {
                 {
                     return false;
                 }
-                let mut current_start = start.clone();
+                let current_start = start.clone();
                 if is_resume {
                     self.advance_paused_track(&current_start);
                 } else {
