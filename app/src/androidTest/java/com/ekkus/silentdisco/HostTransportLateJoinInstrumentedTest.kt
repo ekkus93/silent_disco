@@ -38,7 +38,9 @@ class HostTransportLateJoinInstrumentedTest {
             )
             host.broadcastStreamStart(
                 streamId = "active-stream",
-                hostStartTimeMs = 1_000,
+                // The production socket clock starts at bind. Leave enough time for
+                // a slow emulator to authorize the listener before the first boundary.
+                hostStartTimeMs = 60_000,
                 sampleRate = 48_000,
                 channels = 2,
                 samplesPerPacket = 240,
@@ -90,7 +92,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted }).isEqualTo(
                 FfiListenerTransportEvent.StreamStarted(
                     streamId = "active-stream",
-                    hostStartTimeMs = 1_000uL,
+                    hostStartTimeMs = 60_000uL,
                     sampleRate = 48_000u,
                     channels = 2u,
                     samplesPerPacket = 240u,
@@ -115,7 +117,7 @@ class HostTransportLateJoinInstrumentedTest {
                 channels = 2,
                 samplesPerPacket = 240,
                 firstSampleIndex = 24_000,
-                hostPresentationTimeMs = 1_500,
+                hostPresentationTimeMs = 60_500,
                 payload = ByteArray(240 * 2 * 2),
             )
             val audio = awaitListenerEvent(listener) {
@@ -127,7 +129,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(audio.channels).isEqualTo(2u.toUShort())
             assertThat(audio.samplesPerPacket).isEqualTo(240u)
             assertThat(audio.firstSampleIndex).isEqualTo(24_000uL)
-            assertThat(audio.hostPresentationTimeMs).isEqualTo(1_500uL)
+            assertThat(audio.hostPresentationTimeMs).isEqualTo(60_500uL)
             assertThat(audio.payload.toList()).containsExactlyElementsIn(ByteArray(240 * 2 * 2).toList())
         } finally {
             syncKeepAlive?.cancelAndJoin()

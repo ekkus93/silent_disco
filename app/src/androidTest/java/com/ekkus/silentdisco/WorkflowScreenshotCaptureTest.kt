@@ -2,6 +2,7 @@ package com.ekkus.silentdisco
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
@@ -99,7 +100,10 @@ class WorkflowScreenshotCaptureTest {
             listenerId = "visual-fixture-listener",
             listenerName = "Sample listener",
             inviteCode = null,
-            requestedAtMs = 0L,
+            // The approval card uses an OS-clock ticker. Pin this synthetic
+            // request safely in the future so two screenshot passes cannot
+            // change its elapsed-time label as the emulator suite runs.
+            requestedAtMs = SystemClock.elapsedRealtime() + 3_600_000L,
         )
         val state = AppUiState(storageState = StorageInitializationState.READY)
         val staged = listOf("Opening track", "Next track", "Final track").mapIndexed { i, name ->
