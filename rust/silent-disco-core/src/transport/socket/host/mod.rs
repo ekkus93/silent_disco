@@ -182,10 +182,8 @@ impl PlaybackControls {
                     .stream_start
                     .take()
                     .expect("active stream checked above");
-                self.last_stopped_start = Some((
-                    retired.session_id.clone(),
-                    retired.host_start_time_ms.get(),
-                ));
+                self.last_stopped_start =
+                    Some((retired.session_id.clone(), retired.host_start_time_ms.get()));
                 self.last_stopped_control =
                     Some((retired.session_id, stop.host_stop_time_ms.get()));
                 self.boundaries.clear();
@@ -198,7 +196,7 @@ impl PlaybackControls {
             // different active stream, however, must not interrupt playback.
             ControlMessage::Stop(stop) if self.stream_start.is_none() => {
                 !self.retired_control(&stop.session_id, stop.host_stop_time_ms.get())
-            },
+            }
             ControlMessage::TrackBoundary(_)
             | ControlMessage::Pause(_)
             | ControlMessage::Stop(_) => false,

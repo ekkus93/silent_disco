@@ -567,7 +567,10 @@ fn replay_with_reused_stream_id_rejects_retired_pause_and_stop() {
         host_stop_time_ms: MonotonicMillis::new(3_600),
     });
     assert!(cache.update(&fresh_stop));
-    assert!(!cache.update(&old_stop), "retired idle Stop is not broadcast");
+    assert!(
+        !cache.update(&old_stop),
+        "retired idle Stop is not broadcast"
+    );
     assert!(cache.snapshot().is_empty());
 }
 
