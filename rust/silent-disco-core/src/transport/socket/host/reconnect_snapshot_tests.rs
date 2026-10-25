@@ -203,6 +203,14 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
 
     // Retiring the old TCP identity must also retire its UDP route before
     // the same device can authorize a new socket. No ghost audio delivery.
+    let first_peer_number = host
+        .routes
+        .lock()
+        .expect("first route")
+        .get(&device)
+        .expect("first peer route")
+        .peer
+        .number;
     host.disconnect_peer(&device).expect("retire first connection");
     first.shutdown().expect("close first socket");
     let packet = audio_frame(&session, 0);
@@ -218,6 +226,24 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     assert_tcp_controls(
         second.as_mut(),
         &[start.clone(), boundary.clone(), pause.clone()],
+    );
+    // Deterministically replay a delayed cleanup from the retired reader.
+    // It must not revoke the replacement socket's TCP/UDP authorization.
+    assert!(!super::super::host_workers::remove_route_if_current(
+        &host.routes,
+        &device,
+        first_peer_number,
+    ));
+    assert_eq!(
+        host.routes
+            .lock()
+            .expect("replacement route")
+            .get(&device)
+            .expect("replacement must remain authorized")
+            .peer
+            .active
+            .load(std::sync::atomic::Ordering::Acquire),
+        true,
     );
     resumed.host_start_time_ms = MonotonicMillis::new(1_200);
     let resume = ControlMessage::StreamStart(resumed.clone());

@@ -268,11 +268,13 @@ fn register_peer(
                     .and_then(|mut peers| peers.remove(&reader_peer.number)),
             );
             if let Some(device_id) = reader_peer.device_id() {
-                drop(
-                    routes_for_reader
-                        .lock()
-                        .ok()
-                        .and_then(|mut routes| routes.remove(&device_id)),
+                // A replacement socket for the same device may have been
+                // authorized while this retired reader was unwinding. Never
+                // let its cleanup remove the replacement's live UDP route.
+                let _ = remove_route_if_current(
+                    &routes_for_reader,
+                    &device_id,
+                    reader_peer.number,
                 );
             }
             counters_for_reader.closed();
@@ -299,6 +301,28 @@ fn register_peer(
         drop(peer.close());
     }
     Ok(())
+}
+
+/// Retire only the route owned by the reader that is actually exiting.
+/// Device identity alone is not sufficient: the same device may reconnect
+/// before the old TCP reader finishes its asynchronous shutdown.
+pub(super) fn remove_route_if_current(
+    routes: &Mutex<HashMap<DeviceId, PeerRoute>>,
+    device_id: &DeviceId,
+    peer_number: u64,
+) -> bool {
+    let Ok(mut routes) = routes.lock() else {
+        return false;
+    };
+    if routes
+        .get(device_id)
+        .is_some_and(|route| route.peer.number == peer_number)
+    {
+        routes.remove(device_id);
+        true
+    } else {
+        false
+    }
 }
 
 fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), TransportError> {
