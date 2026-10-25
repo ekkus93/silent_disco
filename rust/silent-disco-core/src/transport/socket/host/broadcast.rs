@@ -48,6 +48,11 @@ impl SocketHostTransport {
         } else {
             None
         };
+        // Validate the entire wire frame before mutating the replay-generation
+        // sequence watermark. A malformed packet zero (or successor) must
+        // not consume a valid producer's turn and strand playback after Stop.
+        let bytes =
+            encode_frame(frame).map_err(|error| TransportError::protocol(channel, &error))?;
         if let ProtocolFrame::Audio(packet) = frame {
             let mut controls = self.playback_controls.lock().map_err(|_| {
                 TransportError::new(
@@ -61,8 +66,6 @@ impl SocketHostTransport {
                 return TransportDelivery::new(0, 0, 0, 0);
             }
         }
-        let bytes =
-            encode_frame(frame).map_err(|error| TransportError::protocol(channel, &error))?;
         let routes = self.authorized_routes()?;
         let intended = u32::try_from(routes.len()).map_err(|_| {
             TransportError::new(

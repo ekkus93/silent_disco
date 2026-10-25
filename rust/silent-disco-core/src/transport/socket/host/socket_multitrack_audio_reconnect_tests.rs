@@ -203,6 +203,17 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
             .intended_peers,
         0,
     );
+    // A malformed packet-zero attempt must fail wire validation without
+    // consuming the replay handshake or poisoning the fresh producer.
+    let mut malformed_first = packet(&session, 0, 1_500);
+    let ProtocolFrame::Audio(ref mut malformed_audio) = malformed_first else {
+        panic!("malformed packet fixture");
+    };
+    malformed_audio.payload.pop();
+    assert!(
+        host.broadcast_audio(&malformed_first).is_err(),
+        "invalid PCM geometry must fail before replay state advances"
+    );
     let mut replay_first = packet(&session, 0, 1_500);
     let ProtocolFrame::Audio(ref mut audio) = replay_first else {
         panic!("replay packet");
@@ -251,6 +262,14 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
     );
     let mut fresh_join = join(&mut host, &clock, &session, "replay-queue-listener");
     received_control(fresh_join.as_mut(), &replay);
+    // Invalid successor geometry also must not advance the contiguous
+    // replay watermark. The correctly encoded successor remains deliverable.
+    let mut malformed_second = packet(&session, 1, 1_501);
+    let ProtocolFrame::Audio(ref mut malformed_audio) = malformed_second else {
+        panic!("malformed successor fixture");
+    };
+    malformed_audio.payload.pop();
+    assert!(host.broadcast_audio(&malformed_second).is_err());
     let replay_second = packet(&session, 1, 1_501);
     deliver_audio(
         &host,
