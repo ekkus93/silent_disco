@@ -202,6 +202,111 @@ class HostTransportLateJoinInstrumentedTest {
             host.close()
         }
     }
+
+    @Test
+    fun pausedLateJoinAndResumedLateJoinUseBootClockAndAuthoritativeTrack() = runBlocking<Unit> {
+        val sockets = List(3) { ServerSocket(0) }
+        val ports = sockets.map(ServerSocket::getLocalPort)
+        sockets.forEach(ServerSocket::close)
+        val sessionId = "android-paused-join-${System.nanoTime()}"
+        val host = HostTransportController()
+        val listeners = mutableListOf<FfiListenerTransportHandle>()
+        try {
+            host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
+            val startMs = SystemClock.elapsedRealtime() - 1_000L
+            val pauseMs = SystemClock.elapsedRealtime() - 100L
+            host.broadcastStreamStart(
+                "active-stream", startMs, 48_000, 2, 240, "first", "First track",
+            )
+            host.broadcastTrackBoundary("active-stream", 240, "second", "Second track")
+            host.broadcastTrackBoundary("active-stream", 2_400_000, "third", "Third track")
+            host.broadcastPause("active-stream", pauseMs)
+
+            val endpoint = """
+                {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "inviteCodeRequired":false,"expiresAtMs":null}
+            """.trimIndent().replace("\n", "")
+
+            suspend fun join(id: String): FfiListenerTransportHandle {
+                val listener = FfiListenerTransportHandle.connect(
+                    endpoint, System.currentTimeMillis().toULong(), id, "127.0.0.1",
+                )
+                listeners += listener
+                listener.sendJoinRequest(id, null)
+                val request = withTimeout(5_000) {
+                    host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
+                } as FfiHostTransportEvent.JoinRequestReceived
+                host.sendJoinApproval(request.deviceId, false)
+                assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
+                    .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
+                host.authorizeListener(request.deviceId, request.syncPort, request.audioPort)
+                return listener
+            }
+
+            val paused = join("paused-listener")
+            assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", startMs.toULong(), 48_000u, 2u, 240u,
+                        "second", "Second track",
+                    ),
+                )
+            assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.TrackBoundary })
+                .isEqualTo(
+                    FfiListenerTransportEvent.TrackBoundary(
+                        "active-stream", 2_400_000uL, "third", "Third track",
+                    ),
+                )
+            assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.Paused })
+                .isEqualTo(FfiListenerTransportEvent.Paused("active-stream", pauseMs.toULong()))
+
+            // Resume shifts the host timeline without reintroducing the
+            // already-audible first boundary. A new socket must see the
+            // current second track, future third boundary and no old Pause.
+            val resumedAnchor = SystemClock.elapsedRealtime() + 60_000L
+            host.broadcastStreamStart(
+                "active-stream", resumedAnchor, 48_000, 2, 240, "second", "Second track",
+            )
+            assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", resumedAnchor.toULong(), 48_000u, 2u, 240u,
+                        "second", "Second track",
+                    ),
+                )
+            val resumed = join("resumed-listener")
+            assertThat(awaitListenerEvent(resumed) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", resumedAnchor.toULong(), 48_000u, 2u, 240u,
+                        "second", "Second track",
+                    ),
+                )
+            assertThat(awaitListenerEvent(resumed) { it is FfiListenerTransportEvent.TrackBoundary })
+                .isEqualTo(
+                    FfiListenerTransportEvent.TrackBoundary(
+                        "active-stream", 2_400_000uL, "third", "Third track",
+                    ),
+                )
+            // A real UDP packet proves that the transport's paused gate
+            // was lifted by the authoritative re-anchored StreamStart.
+            host.broadcastAudio(
+                "active-stream", 0, 48_000, 2, 240, 0, resumedAnchor,
+                ByteArray(240 * 2 * 2) { 0x2a.toByte() },
+            )
+            val audio = awaitListenerEvent(resumed) { it is FfiListenerTransportEvent.AudioReceived }
+                as FfiListenerTransportEvent.AudioReceived
+            assertThat(audio.sequence).isEqualTo(0uL)
+            assertThat(audio.firstSampleIndex).isEqualTo(0uL)
+            assertThat(audio.hostPresentationTimeMs).isEqualTo(resumedAnchor.toULong())
+            assertThat(audio.payload.toList())
+                .containsExactlyElementsIn(ByteArray(240 * 2 * 2) { 0x2a.toByte() }.toList())
+        } finally {
+            listeners.forEach { runCatching { it.shutdown() } }
+            host.close()
+        }
+    }
 }
 
 private suspend fun awaitListenerEvent(
