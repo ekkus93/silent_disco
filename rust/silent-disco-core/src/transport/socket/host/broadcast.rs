@@ -49,17 +49,14 @@ impl SocketHostTransport {
             None
         };
         if let ProtocolFrame::Audio(packet) = frame {
-            let allowed = self
-                .playback_controls
-                .lock()
-                .map_err(|_| {
-                    TransportError::new(
-                        TransportErrorKind::WorkerPanicked,
-                        TransportChannel::Runtime,
-                        "playback control cache is poisoned",
-                    )
-                })?
-                .permits_audio(packet);
+            let mut controls = self.playback_controls.lock().map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "playback control cache is poisoned",
+                )
+            })?;
+            let allowed = controls.permits_audio(packet);
             if !allowed {
                 return TransportDelivery::new(0, 0, 0, 0);
             }

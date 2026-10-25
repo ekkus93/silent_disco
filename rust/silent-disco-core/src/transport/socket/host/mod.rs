@@ -53,6 +53,10 @@ pub(super) struct PlaybackControls {
     // future presentation anchor. A replay may reuse the stream ID; delayed
     // Pause/Stop from the retired generation must not affect the new Play.
     last_stopped_control: Option<(SessionId, u64)>,
+    // After Stop, a new Play must begin at packet zero before accepting
+    // subsequent UDP. This fences future-dated packets from a retired
+    // same-ID producer that were buffered beyond the replay start anchor.
+    awaiting_replay_first_packet: bool,
 }
 
 impl PlaybackControls {
@@ -197,6 +201,7 @@ impl PlaybackControls {
                 self.boundaries.clear();
                 self.pause = None;
                 self.last_pause_time_ms = None;
+                self.awaiting_replay_first_packet = true;
                 true
             }
             // Explicit Stop must disarm idle listener liveness even when the
@@ -211,6 +216,7 @@ impl PlaybackControls {
                     // start cannot resurrect playback for a new listener.
                     self.last_stopped_control =
                         Some((stop.session_id.clone(), stop.host_stop_time_ms.get()));
+                    self.awaiting_replay_first_packet = true;
                     true
                 }
             }
@@ -225,8 +231,8 @@ impl PlaybackControls {
     /// Older low-level transport callers can send fixture audio before any
     /// `StreamStart`, but once playback controls are established, a paused or
     /// retired producer must never leak its buffered UDP frames.
-    pub(super) fn permits_audio(&self, packet: &AudioDatagram) -> bool {
-        match &self.stream_start {
+    pub(super) fn permits_audio(&mut self, packet: &AudioDatagram) -> bool {
+        let allowed = match &self.stream_start {
             Some(start) => {
                 start.session_id == packet.session_id
                     && start.stream_id == packet.stream_id
@@ -244,7 +250,17 @@ impl PlaybackControls {
                     })
             }
             None => self.last_stopped_control.is_none(),
+        };
+        if !allowed {
+            return false;
         }
+        if self.awaiting_replay_first_packet {
+            if packet.sequence.get() != 0 || packet.first_sample_index.get() != 0 {
+                return false;
+            }
+            self.awaiting_replay_first_packet = false;
+        }
+        true
     }
 
     pub(super) fn snapshot(&self) -> Vec<ControlMessage> {

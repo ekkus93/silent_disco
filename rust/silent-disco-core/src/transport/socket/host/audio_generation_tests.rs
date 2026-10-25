@@ -164,6 +164,22 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
         frame == &ProtocolFrame::Control(replay.clone())
     });
+    // A retired producer can hold a future-dated packet whose presentation
+    // timestamp is newer than Play. The first packet of a new generation
+    // must reset both sequence and sample position, even with ID reuse.
+    let mut future_retired = current_packet.clone();
+    let ProtocolFrame::Audio(ref mut old) = future_retired else {
+        panic!("retired packet fixture");
+    };
+    old.host_presentation_time_ms = MonotonicMillis::new(3_005);
+    assert_eq!(
+        host.broadcast_audio(&future_retired)
+            .expect("reject future-dated retired UDP")
+            .report
+            .intended_peers,
+        0,
+        "a stale producer cannot preempt the new packet-zero handshake"
+    );
     // The retired UDP producer still has the same session and stream ID.
     // Its old presentation anchor must not bypass the Stop/replay fence.
     assert_eq!(

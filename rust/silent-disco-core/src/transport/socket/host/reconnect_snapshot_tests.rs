@@ -324,6 +324,18 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
         0,
         "the old stream's packet cannot leak to the new listener"
     );
+    let mut future_retired = audio_frame(&session, 2);
+    let ProtocolFrame::Audio(ref mut stale) = future_retired else {
+        panic!("retired PCM fixture");
+    };
+    stale.host_presentation_time_ms = MonotonicMillis::new(2_005);
+    assert_eq!(
+        host.broadcast_audio(&future_retired)
+            .expect("reject future-dated old producer")
+            .report
+            .intended_peers,
+        0,
+    );
     let mut fresh_packet = packet.clone();
     let ProtocolFrame::Audio(ref mut audio) = fresh_packet else {
         panic!("PCM fixture");
