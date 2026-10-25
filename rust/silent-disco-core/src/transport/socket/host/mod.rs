@@ -30,6 +30,8 @@ mod node;
 mod peer;
 #[cfg(test)]
 mod reconnect_snapshot_tests;
+#[cfg(test)]
+mod socket_multitrack_audio_reconnect_tests;
 
 #[cfg(test)]
 mod playback_controls_format_tests;
