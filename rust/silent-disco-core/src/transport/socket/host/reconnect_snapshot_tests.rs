@@ -665,7 +665,8 @@ fn overlapping_same_identity_reconnect_replays_before_replacing_live_tcp_udp_rou
     });
     let mut old = connect_authorized(&mut host, factory, &clock, &session, "overlap-listener");
     for control in [&start, &boundary, &pause] {
-        host.broadcast_control(control).expect("cache active playback");
+        host.broadcast_control(control)
+            .expect("cache active playback");
     }
     assert_tcp_controls(
         old.as_mut(),
@@ -685,11 +686,7 @@ fn overlapping_same_identity_reconnect_replays_before_replacing_live_tcp_udp_rou
     // select this pending peer rather than the already-authorized old peer.
     let mut replacement = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock.clone(),
         )
         .expect("connect replacement");
@@ -757,8 +754,8 @@ fn overlapping_same_identity_reconnect_replays_before_replacing_live_tcp_udp_rou
     });
     host.broadcast_control(&stop).expect("stop after reconnect");
     assert_tcp_controls(replacement.as_mut(), std::slice::from_ref(&stop));
-    let mut late = connect_authorized(&mut host, factory, &clock, &session, "overlap-late");
     let sent_at_stop = host.counters().control_frames_sent;
+    let mut late = connect_authorized(&mut host, factory, &clock, &session, "overlap-late");
     assert_eq!(
         host.counters().control_frames_sent,
         sent_at_stop,
