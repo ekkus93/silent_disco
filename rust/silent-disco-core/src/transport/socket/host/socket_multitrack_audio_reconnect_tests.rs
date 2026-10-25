@@ -323,7 +323,8 @@ fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
         display_name: "Third track".to_owned(),
     });
     for control in [&start, &second, &third] {
-        host.broadcast_control(control).expect("cache queued controls");
+        host.broadcast_control(control)
+            .expect("cache queued controls");
     }
 
     // Boundary one became audible at 2,000 ms, but boundary two is
@@ -333,7 +334,10 @@ fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
     let mut second_start = first.clone();
     second_start.current_entry_id = Some("second".to_owned());
     second_start.current_display_name = Some("Second track".to_owned());
-    received_control(second_join.as_mut(), &ControlMessage::StreamStart(second_start.clone()));
+    received_control(
+        second_join.as_mut(),
+        &ControlMessage::StreamStart(second_start.clone()),
+    );
     received_control(second_join.as_mut(), &third);
 
     // A long Pause cannot advance the title across the next boundary.
@@ -347,7 +351,10 @@ fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
     received_control(second_join.as_mut(), &pause);
     clock.set(3_500);
     let mut paused_join = join(&mut host, &clock, &session, "paused-second");
-    received_control(paused_join.as_mut(), &ControlMessage::StreamStart(second_start.clone()));
+    received_control(
+        paused_join.as_mut(),
+        &ControlMessage::StreamStart(second_start.clone()),
+    );
     received_control(paused_join.as_mut(), &third);
     received_control(paused_join.as_mut(), &pause);
 
@@ -360,7 +367,10 @@ fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
     received_control(paused_join.as_mut(), &resume);
     let mut resumed_join = join(&mut host, &clock, &session, "resumed-second");
     second_start.host_start_time_ms = MonotonicMillis::new(1_900);
-    received_control(resumed_join.as_mut(), &ControlMessage::StreamStart(second_start));
+    received_control(
+        resumed_join.as_mut(),
+        &ControlMessage::StreamStart(second_start),
+    );
     received_control(resumed_join.as_mut(), &third);
 
     clock.set(4_000);
@@ -369,7 +379,12 @@ fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
     first.current_display_name = Some("Third track".to_owned());
     received_control(third_join.as_mut(), &ControlMessage::StreamStart(first));
 
-    for listener in [&mut second_join, &mut paused_join, &mut resumed_join, &mut third_join] {
+    for listener in [
+        &mut second_join,
+        &mut paused_join,
+        &mut resumed_join,
+        &mut third_join,
+    ] {
         listener.shutdown().expect("close listener");
     }
     host.shutdown().expect("close host");

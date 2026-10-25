@@ -302,10 +302,9 @@ impl PlaybackControls {
         let Some(mut start) = self.stream_start.clone() else {
             return Vec::new();
         };
-        let effective_now = self
-            .pause
-            .as_ref()
-            .map_or(now.get(), |pause| now.get().min(pause.host_pause_time_ms.get()));
+        let effective_now = self.pause.as_ref().map_or(now.get(), |pause| {
+            now.get().min(pause.host_pause_time_ms.get())
+        });
         let elapsed_ms = effective_now.saturating_sub(start.host_start_time_ms.get());
         let elapsed_samples = u128::from(elapsed_ms) * u128::from(start.sample_rate);
         let mut upcoming = Vec::new();
