@@ -72,7 +72,9 @@ fn deliver_audio(
         u32::try_from(listeners.len()).expect("bounded listeners"),
     );
     for listener in listeners {
-        wait_for_frame(*listener, TransportChannel::Audio, |received| received == frame);
+        wait_for_frame(*listener, TransportChannel::Audio, |received| {
+            received == frame
+        });
     }
 }
 
@@ -103,7 +105,8 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
         })
         .collect();
     for control in std::iter::once(&start).chain(boundaries.iter()) {
-        host.broadcast_control(control).expect("cache authoritative queue");
+        host.broadcast_control(control)
+            .expect("cache authoritative queue");
     }
 
     // Admission after playback has started replays the entire ordered queue.
@@ -134,7 +137,8 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
     // Same-identity reconnection must replace the old authorized route and
     // replay Start, both boundaries, then Pause before accepting new UDP.
     let device = id_device("returning-queue-listener");
-    host.disconnect_peer(&device).expect("disconnect first socket");
+    host.disconnect_peer(&device)
+        .expect("disconnect first socket");
     first.shutdown().expect("close old socket");
     let mut returning = join(&mut host, &clock, &session, "returning-queue-listener");
     for control in std::iter::once(&start)
@@ -145,7 +149,8 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
     }
     current.host_start_time_ms = MonotonicMillis::new(1_200);
     let resume = ControlMessage::StreamStart(current.clone());
-    host.broadcast_control(&resume).expect("resume same output timeline");
+    host.broadcast_control(&resume)
+        .expect("resume same output timeline");
     received_control(returning.as_mut(), &resume);
     for sequence in 2..4 {
         let frame = packet(&session, sequence, 1_200 + sequence);
@@ -206,11 +211,7 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
     audio.first_sample_index = SampleIndex::new(0);
     deliver_audio(
         &host,
-        &mut [
-            returning.as_mut(),
-            late.as_mut(),
-            stopped_join.as_mut(),
-        ],
+        &mut [returning.as_mut(), late.as_mut(), stopped_join.as_mut()],
         &replay_first,
     );
     let mut fresh_join = join(&mut host, &clock, &session, "replay-queue-listener");
@@ -227,7 +228,12 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
         &replay_second,
     );
 
-    for listener in [&mut returning, &mut late, &mut stopped_join, &mut fresh_join] {
+    for listener in [
+        &mut returning,
+        &mut late,
+        &mut stopped_join,
+        &mut fresh_join,
+    ] {
         listener.shutdown().expect("close listener");
     }
     host.shutdown().expect("close host");
