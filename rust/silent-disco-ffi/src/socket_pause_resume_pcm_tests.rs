@@ -59,9 +59,12 @@ fn recv_audio(listener: &mut dyn ListenerTransportNode) -> AudioDatagram {
     }
 }
 
-fn authorized_late_joiner(host: &mut dyn HostTransportNode) -> Box<dyn ListenerTransportNode> {
+fn authorized_late_joiner(
+    host: &mut dyn HostTransportNode,
+    device_name: &str,
+) -> Box<dyn ListenerTransportNode> {
     let session = SessionId::new("end-to-end-session").expect("session");
-    let device = DeviceId::new("paused-gapless-late-joiner").expect("device");
+    let device = DeviceId::new(device_name).expect("device");
     let clock = Arc::new(ManualTransportClock::new(1_010));
     let factory = SocketTransportFactory;
     let listener = factory
@@ -223,6 +226,9 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
 
     let mut late: Option<Box<dyn ListenerTransportNode>> = None;
+    let mut reconnect: Option<Box<dyn ListenerTransportNode>> = None;
+    let mut active_start = start_control.clone();
+    let mut cached_boundary: Option<ControlMessage> = None;
     let mut audio_packets = 0_u64;
     let mut next_sample_index = 0_u64;
     let mut boundaries = Vec::new();
@@ -250,7 +256,13 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 assert_eq!(samples_per_packet, 240, "production 5 ms packets");
                 // Pause applies only to successor audio. The current track's
                 // second packet must retain its original presentation anchor.
-                let shift = if first_sample_index < 480 { 0 } else { 200 };
+                let shift = if first_sample_index < 480 {
+                    0
+                } else if first_sample_index < 720 {
+                    200
+                } else {
+                    400
+                };
                 let packet = AudioDatagram {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
@@ -270,7 +282,11 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     .expect("broadcast source PCM via UDP");
                 assert_eq!(
                     sent.report.successful_peers,
-                    if late.is_some() { 2 } else { 1 }
+                    match (late.is_some(), reconnect.is_some()) {
+                        (false, false) => 1,
+                        (true, false) | (false, true) => 2,
+                        (true, true) => 3,
+                    }
                 );
                 let received = recv_audio(listener.as_mut());
                 assert!(
@@ -279,6 +295,9 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 );
                 if let Some(ref mut newcomer) = late {
                     assert!(recv_audio(newcomer.as_mut()) == packet, "late joiner audio");
+                }
+                if let Some(ref mut newcomer) = reconnect {
+                    assert!(recv_audio(newcomer.as_mut()) == packet, "reconnected listener audio");
                 }
                 pump.scheduler_mut()
                     .submit_packet(received)
@@ -291,6 +310,69 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     ) {
                         break;
                     }
+                }
+                // Pause a second time *after* successor PCM has crossed the
+                // real UDP socket. A new authorized listener must receive
+                // the latest re-anchor, the cached boundary, and Pause, not
+                // the original start or a falsely resumed snapshot.
+                if first_sample_index == 480 {
+                    let paused_again = ControlMessage::Pause(Pause {
+                        session_id: session.clone(),
+                        stream_id: stream.clone(),
+                        host_pause_time_ms: MonotonicMillis::new(1_215),
+                    });
+                    assert_eq!(
+                        host.broadcast_control(&paused_again)
+                            .expect("second pause")
+                            .report
+                            .successful_peers,
+                        2
+                    );
+                    assert_eq!(recv_control(listener.as_mut()), paused_again);
+                    assert_eq!(
+                        recv_control(late.as_mut().expect("first late listener").as_mut()),
+                        paused_again
+                    );
+                    let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+                    assert_eq!(silent_disco_audio_callback_count(native), 0);
+                    let count = host.counters().control_frames_sent;
+                    host.broadcast_control(&start_control)
+                        .expect("reject stale original start after second pause");
+                    assert_eq!(host.counters().control_frames_sent, count);
+
+                    let mut newcomer =
+                        authorized_late_joiner(host.as_mut(), "second-paused-reconnect");
+                    for expected in [
+                        &active_start,
+                        cached_boundary.as_ref().expect("cached track boundary"),
+                        &paused_again,
+                    ] {
+                        assert_eq!(
+                            recv_control(newcomer.as_mut()),
+                            *expected,
+                            "second paused reconnect must replay authoritative state"
+                        );
+                    }
+                    let ControlMessage::StreamStart(mut resumed) = active_start.clone() else {
+                        panic!("active stream start expected");
+                    };
+                    resumed.host_start_time_ms = MonotonicMillis::new(1_400);
+                    let second_resume = ControlMessage::StreamStart(resumed);
+                    assert_eq!(
+                        host.broadcast_control(&second_resume)
+                            .expect("second re-anchor")
+                            .report
+                            .successful_peers,
+                        3
+                    );
+                    assert_eq!(recv_control(listener.as_mut()), second_resume);
+                    assert_eq!(
+                        recv_control(late.as_mut().expect("first late listener").as_mut()),
+                        second_resume
+                    );
+                    assert_eq!(recv_control(newcomer.as_mut()), second_resume);
+                    pump.scheduler_mut().set_host_start_time_ms(1_400);
+                    reconnect = Some(newcomer);
                 }
                 next_sample_index += u64::from(samples_per_packet);
                 audio_packets += 1;
@@ -312,6 +394,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 host.broadcast_control(&boundary).expect("boundary TCP");
                 assert!(recv_control(listener.as_mut()) == boundary);
                 boundaries.push(first_sample_index);
+                cached_boundary = Some(boundary.clone());
 
                 let paused = ControlMessage::Pause(Pause {
                     session_id: session.clone(),
@@ -328,7 +411,8 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     .expect("drop stale start");
                 assert_eq!(host.counters().control_frames_sent, count);
 
-                let mut newcomer = authorized_late_joiner(host.as_mut());
+                let mut newcomer =
+                    authorized_late_joiner(host.as_mut(), "paused-gapless-late-joiner");
                 for expected in [&start_control, &boundary, &paused] {
                     assert!(
                         recv_control(newcomer.as_mut()) == *expected,
@@ -345,6 +429,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 assert!(recv_control(listener.as_mut()) == resume);
                 assert!(recv_control(newcomer.as_mut()) == resume);
                 pump.scheduler_mut().set_host_start_time_ms(1_200);
+                active_start = resume;
                 late = Some(newcomer);
             }
             Some(FfiPlaylistFrame::End) => {
@@ -411,6 +496,9 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     playlist.cancel().expect("stop playlist");
     if let Some(mut newcomer) = late {
         newcomer.shutdown().expect("late listener shutdown");
+    }
+    if let Some(mut newcomer) = reconnect {
+        newcomer.shutdown().expect("reconnected listener shutdown");
     }
     listener.shutdown().expect("primary listener shutdown");
     host.shutdown().expect("host shutdown");
