@@ -76,7 +76,7 @@ impl FfiHostTransportHandle {
     }
 
     /// Binds using Android's boot-relative elapsedRealtime clock domain.
-    /// On Android, a nonzero anchor selects the kernel CLOCK_BOOTTIME source
+    /// On Android, a nonzero anchor selects the kernel `CLOCK_BOOTTIME` source
     /// directly: unlike Instant, it includes device suspend and avoids bind
     /// handoff skew. Other targets retain anchored relative time for tests.
     /// The legacy zero-anchor constructor keeps its original relative clock.
