@@ -454,3 +454,141 @@ fn real_socket_idle_stop_fences_late_starts_before_and_after_authorization() {
     }
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_pause_stop() {
+    let session = id_session("multitrack-socket-reconnect");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind host");
+    let factory = SocketTransportFactory;
+    let original = stream_start(&session, 1_000);
+    let ControlMessage::StreamStart(mut resumed) = original.clone() else {
+        panic!("StreamStart fixture");
+    };
+    // Two adjacent two-frame PCM packets form three consecutive songs.
+    resumed.samples_per_packet = 2;
+    let original = ControlMessage::StreamStart(resumed.clone());
+    let boundaries: Vec<ControlMessage> = [(2, "second"), (4, "third")]
+        .into_iter()
+        .map(|(index, entry)| {
+            ControlMessage::TrackBoundary(TrackBoundary {
+                session_id: session.clone(),
+                stream_id: resumed.stream_id.clone(),
+                first_sample_index: SampleIndex::new(index),
+                entry_id: entry.to_owned(),
+                display_name: entry.to_owned(),
+            })
+        })
+        .collect();
+    let paused = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: resumed.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_050),
+    });
+    for message in std::iter::once(&original)
+        .chain(boundaries.iter())
+        .chain(std::iter::once(&paused))
+    {
+        host.broadcast_control(message).expect("cache timeline");
+    }
+
+    let mut first = connect_authorized(&mut host, factory, &clock, &session, "returning-multitrack");
+    assert_tcp_controls(
+        first.as_mut(),
+        &[original.clone(), boundaries[0].clone(), boundaries[1].clone(), paused.clone()],
+    );
+    let device = id_device("returning-multitrack");
+    host.disconnect_peer(&device).expect("disconnect paused listener");
+    first.shutdown().expect("retire paused socket");
+
+    let mut second = connect_authorized(&mut host, factory, &clock, &session, "returning-multitrack");
+    assert_tcp_controls(
+        second.as_mut(),
+        &[original.clone(), boundaries[0].clone(), boundaries[1].clone(), paused.clone()],
+    );
+    resumed.host_start_time_ms = MonotonicMillis::new(1_200);
+    resumed.current_display_name = Some("Resumed first song".to_owned());
+    let resume = ControlMessage::StreamStart(resumed.clone());
+    assert_eq!(
+        host.broadcast_control(&resume).expect("resume").report.successful_peers,
+        1
+    );
+    assert_tcp_controls(second.as_mut(), std::slice::from_ref(&resume));
+    let mut live = connect_authorized(&mut host, factory, &clock, &session, "multitrack-live");
+    assert_tcp_controls(
+        live.as_mut(),
+        &[resume.clone(), boundaries[0].clone(), boundaries[1].clone()],
+    );
+
+    // Send each actual UDP frame to both authorized sockets before advancing
+    // to the next track. Assert the exact sample index, sequence and shifted
+    // presentation timestamp survive transport without an extra StreamStart.
+    for sequence in 0..3 {
+        let mut packet = audio_frame(&session, sequence);
+        let ProtocolFrame::Audio(ref mut audio) = packet else {
+            panic!("PCM fixture");
+        };
+        audio.host_presentation_time_ms = MonotonicMillis::new(1_200 + sequence);
+        assert_eq!(audio.first_sample_index.get(), sequence * 2);
+        assert_eq!(
+            host.broadcast_audio(&packet).expect("UDP broadcast").report.successful_peers,
+            2
+        );
+        for listener in [&mut second, &mut live] {
+            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |received| {
+                received == &packet
+            });
+        }
+    }
+
+    let pause_again = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: resumed.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_300),
+    });
+    host.broadcast_control(&pause_again).expect("second pause");
+    for listener in [&mut second, &mut live] {
+        assert_tcp_controls(listener.as_mut(), std::slice::from_ref(&pause_again));
+    }
+    let mut late = connect_authorized(&mut host, factory, &clock, &session, "multitrack-late");
+    assert_tcp_controls(
+        late.as_mut(),
+        &[resume.clone(), boundaries[0].clone(), boundaries[1].clone(), pause_again.clone()],
+    );
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: resumed.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_400),
+    });
+    host.broadcast_control(&stop).expect("Stop");
+    for listener in [&mut second, &mut live, &mut late] {
+        assert_tcp_controls(listener.as_mut(), std::slice::from_ref(&stop));
+    }
+    let sent_at_stop = host.counters().control_frames_sent;
+    let mut stopped_join = connect_authorized(&mut host, factory, &clock, &session, "after-multitrack-stop");
+    assert_eq!(host.counters().control_frames_sent, sent_at_stop);
+    for stale in [&original, &boundaries[0], &boundaries[1], &paused, &pause_again, &stop] {
+        assert_eq!(
+            host.broadcast_control(stale).expect("reject retired control").report.intended_peers,
+            0
+        );
+    }
+    assert_eq!(host.counters().control_frames_sent, sent_at_stop);
+
+    resumed.stream_id = StreamId::new("multitrack-replay").expect("new generation");
+    resumed.host_start_time_ms = MonotonicMillis::new(1_500);
+    let replay = ControlMessage::StreamStart(resumed);
+    assert_eq!(
+        host.broadcast_control(&replay).expect("fresh Play").report.successful_peers,
+        4
+    );
+    for listener in [&mut second, &mut live, &mut late, &mut stopped_join] {
+        assert_tcp_controls(listener.as_mut(), std::slice::from_ref(&replay));
+        listener.shutdown().expect("listener shutdown");
+    }
+    host.shutdown().expect("host shutdown");
+}
