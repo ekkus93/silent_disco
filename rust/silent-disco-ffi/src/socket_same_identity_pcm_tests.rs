@@ -357,7 +357,8 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
         }
     }
     assert_eq!(
-        *captured.borrow(), expected,
+        *captured.borrow(),
+        expected,
         "exact PCM across takeover and boundary"
     );
     assert_eq!(pump.diagnostics().packets_emitted, 6);
