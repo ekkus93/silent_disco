@@ -21,6 +21,7 @@ use silent_disco_core::domain::{
 use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, Pause, ProtocolFrame, StreamStart, TrackBoundary,
 };
+use silent_disco_core::transport::ListenerTransportNode;
 use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -151,7 +152,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
         captured.extend(output);
     };
 
-    let mut replacement = None;
+    let mut replacement: Option<Box<dyn ListenerTransportNode>> = None;
     let mut next_sample = 0_u64;
     let mut next_sequence = 0_u64;
     let mut boundaries = Vec::new();
