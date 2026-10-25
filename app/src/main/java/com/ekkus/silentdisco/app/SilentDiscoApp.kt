@@ -152,7 +152,7 @@ fun SilentDiscoApp(
         dispatchAudioPickerResult(
             destination = audioPickerDestination,
             uris = uris,
-            onSetup = viewModel::selectAudioFiles,
+            onSetup = { viewModel.selectAudioFiles(it) },
             onLiveQueue = viewModel::addSongsToLiveQueue,
         )
     }
