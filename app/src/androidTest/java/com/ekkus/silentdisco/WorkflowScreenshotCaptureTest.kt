@@ -52,6 +52,10 @@ class WorkflowScreenshotCaptureTest {
     private enum class Scene(val basename: String, val width: Int, val height: Int, val fontScale: Float) {
         EMPTY_QUEUE("host_queue_empty", 360, 640, 1f),
         PLAYING_QUEUE("host_queue_playing", 360, 640, 1f),
+        QUEUE_LARGE_TEXT("host_queue_large_text", 320, 480, 2f),
+        LIVE_PLAYING("host_live_playing", 360, 640, 1f),
+        LIVE_PAUSED("host_live_paused", 360, 640, 1f),
+        LIVE_LANDSCAPE("host_live_landscape", 640, 360, 1f),
         PENDING_APPROVAL("host_pending_approval", 360, 640, 1f),
         CLIENT_RECOVERY("client_recovery_large_text", 320, 480, 2f),
         STARTUP_RECOVERY("startup_recovery_large_text", 320, 480, 2f),
@@ -95,7 +99,8 @@ class WorkflowScreenshotCaptureTest {
                             .testTag("visual-review-canvas"),
                     ) {
                         when (scene) {
-                            Scene.EMPTY_QUEUE, Scene.PLAYING_QUEUE -> HostQueueManagementScreen(
+                            Scene.EMPTY_QUEUE, Scene.PLAYING_QUEUE, Scene.QUEUE_LARGE_TEXT ->
+                                HostQueueManagementScreen(
                                 uiState = state.copy(
                                     hostQueue = if (scene == Scene.EMPTY_QUEUE) emptyList() else queued,
                                     hostPlaybackState = if (scene == Scene.EMPTY_QUEUE) {
@@ -109,11 +114,28 @@ class WorkflowScreenshotCaptureTest {
                                 onReorderQueue = {},
                                 onRemoveQueueEntry = {},
                             )
-                            Scene.PENDING_APPROVAL -> HostDashboardScreen(
+                            Scene.PENDING_APPROVAL, Scene.LIVE_PLAYING, Scene.LIVE_PAUSED,
+                            Scene.LIVE_LANDSCAPE -> HostDashboardScreen(
                                 uiState = state.copy(
                                     selectedRole = AppRole.HOST,
                                     hostState = HostLifecycleState.READY,
-                                    pendingJoinRequests = listOf(pending),
+                                    hostQueue = if (scene == Scene.PENDING_APPROVAL) {
+                                        emptyList()
+                                    } else {
+                                        queued
+                                    },
+                                    hostPlaybackState = if (scene == Scene.LIVE_PAUSED) {
+                                        PlaybackState.PAUSED
+                                    } else if (scene == Scene.PENDING_APPROVAL) {
+                                        PlaybackState.STOPPED
+                                    } else {
+                                        PlaybackState.PLAYING
+                                    },
+                                    pendingJoinRequests = if (scene == Scene.PENDING_APPROVAL) {
+                                        listOf(pending)
+                                    } else {
+                                        emptyList()
+                                    },
                                 ),
                                 onBackRequest = {},
                                 onInvite = {},

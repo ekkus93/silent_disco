@@ -32,6 +32,10 @@ root = Path("android-workflow-screenshots")
 expected = {
     "host_queue_empty": (360, 640),
     "host_queue_playing": (360, 640),
+    "host_queue_large_text": (320, 480),
+    "host_live_playing": (360, 640),
+    "host_live_paused": (360, 640),
+    "host_live_landscape": (640, 360),
     "host_pending_approval": (360, 640),
     "client_recovery_large_text": (320, 480),
     "startup_recovery_large_text": (320, 480),
