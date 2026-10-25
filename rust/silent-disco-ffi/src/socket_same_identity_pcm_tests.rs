@@ -131,7 +131,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
     let native = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
     let captured = std::cell::RefCell::new(Vec::new());
-    let mut callback = |frames: u32| {
+    let callback = |frames: u32| {
         let mut output = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
         let mut supplied = 0;
         assert_eq!(
