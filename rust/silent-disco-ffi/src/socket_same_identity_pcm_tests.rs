@@ -42,6 +42,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     let formats = [
         (48_000_u32, 2_u16, 480_usize, 1_024_i16),
         (44_100, 1, 441, 2_048),
+        (96_000, 2, 960, 4_096),
     ];
     let mut reference = Vec::<i16>::new();
     let mut sources = Vec::new();
@@ -68,7 +69,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
             staged_path: path.to_string_lossy().into_owned(),
         });
     }
-    assert_eq!(reference.len(), 960 * 2);
+    assert_eq!(reference.len(), 1_440 * 2);
     let (mut host, mut first) = authorized_pcm_socket_pair();
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("same-identity-pcm").expect("stream");
@@ -153,6 +154,8 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     };
 
     let mut replacement: Option<Box<dyn ListenerTransportNode>> = None;
+    let mut active_start = start.clone();
+    let mut boundary_controls = Vec::new();
     let mut next_sample = 0_u64;
     let mut next_sequence = 0_u64;
     let mut boundaries = Vec::new();
@@ -171,7 +174,13 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
             }) => {
                 assert_eq!(sequence, next_sequence, "no lost/repeated packets");
                 assert_eq!(first_sample_index, next_sample, "no PCM gap/overlap");
-                let shift = if replacement.is_some() { 200 } else { 0 };
+                let shift = if first_sample_index >= 960 {
+                    400
+                } else if replacement.is_some() {
+                    200
+                } else {
+                    0
+                };
                 let packet = AudioDatagram {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
@@ -220,8 +229,14 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 display_name,
                 ..
             }) => {
-                assert_eq!(first_sample_index, 480);
-                assert_eq!(next_sample, 480, "boundary follows all first-track PCM");
+                assert!(
+                    matches!(first_sample_index, 480 | 960),
+                    "only the two canonical track boundaries"
+                );
+                assert_eq!(
+                    next_sample, first_sample_index,
+                    "boundary follows all preceding PCM"
+                );
                 let boundary = ControlMessage::TrackBoundary(TrackBoundary {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
@@ -229,36 +244,72 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                     entry_id,
                     display_name,
                 });
-                host.broadcast_control(&boundary).expect("boundary TCP");
-                assert!(recv_control(first.as_mut()) == boundary);
+                assert_eq!(
+                    host.broadcast_control(&boundary)
+                        .expect("boundary TCP")
+                        .report
+                        .successful_peers,
+                    1
+                );
+                if let Some(ref mut peer) = replacement {
+                    assert!(recv_control(peer.as_mut()) == boundary);
+                } else {
+                    assert!(recv_control(first.as_mut()) == boundary);
+                }
                 boundaries.push(first_sample_index);
+                boundary_controls.push(boundary);
                 let pause = ControlMessage::Pause(Pause {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
-                    host_pause_time_ms: MonotonicMillis::new(1_010),
+                    host_pause_time_ms: MonotonicMillis::new(
+                        if first_sample_index == 480 { 1_010 } else { 1_220 },
+                    ),
                 });
-                host.broadcast_control(&pause).expect("Pause TCP");
-                assert!(recv_control(first.as_mut()) == pause);
-                callback(241);
+                assert_eq!(
+                    host.broadcast_control(&pause)
+                        .expect("Pause TCP")
+                        .report
+                        .successful_peers,
+                    1
+                );
+                if let Some(ref mut peer) = replacement {
+                    assert!(recv_control(peer.as_mut()) == pause);
+                } else {
+                    assert!(recv_control(first.as_mut()) == pause);
+                }
+
+                // A callback can cross a track boundary even while the
+                // host is paused: the same output ring survives both route
+                // takeovers and both presentation-clock re-anchors.
+                callback(if first_sample_index == 480 { 241 } else { 337 });
                 assert_eq!(
                     silent_disco_audio_callback_count(native.cast_const()),
-                    1,
+                    u64::try_from(boundaries.len()).expect("bounded callbacks"),
                     "Pause and route replacement must not reopen the output"
                 );
 
-                // Overlapping TCP connections deliberately claim the SAME
-                // identity. Authorization must atomically replace old routes,
-                // replay Start/Boundary/Pause, and survive old-reader cleanup.
+                // Reconnect using the SAME identity while the previous TCP
+                // reader is still alive. Every boundary must be replayed
+                // before Pause, with the latest authoritative Start anchor.
                 let mut returning =
                     authorized_late_joiner(host.as_mut(), "pcm-regression-listener");
-                for expected in [&start, &boundary, &pause] {
-                    assert!(recv_control(returning.as_mut()) == *expected);
+                assert!(recv_control(returning.as_mut()) == active_start);
+                for cached in &boundary_controls {
+                    assert!(recv_control(returning.as_mut()) == *cached);
                 }
-                first.shutdown().expect("retire original socket");
-                let ControlMessage::StreamStart(mut resumed) = start.clone() else {
+                assert!(recv_control(returning.as_mut()) == pause);
+                if let Some(old) = replacement.take() {
+                    old.shutdown().expect("retire previous replacement");
+                } else {
+                    first.shutdown().expect("retire original socket");
+                }
+
+                let ControlMessage::StreamStart(mut resumed) = active_start.clone() else {
                     panic!("start fixture");
                 };
-                resumed.host_start_time_ms = MonotonicMillis::new(1_200);
+                resumed.host_start_time_ms = MonotonicMillis::new(
+                    if first_sample_index == 480 { 1_200 } else { 1_400 },
+                );
                 let resume = ControlMessage::StreamStart(resumed);
                 assert_eq!(
                     host.broadcast_control(&resume)
@@ -268,7 +319,10 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                     1
                 );
                 assert!(recv_control(returning.as_mut()) == resume);
-                pump.scheduler_mut().set_host_start_time_ms(1_200);
+                pump.scheduler_mut().set_host_start_time_ms(
+                    if first_sample_index == 480 { 1_200 } else { 1_400 },
+                );
+                active_start = resume;
                 replacement = Some(returning);
             }
             Some(FfiPlaylistFrame::End) => {
@@ -279,11 +333,11 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
         }
     }
     assert!(finished, "playlist reaches natural end");
-    assert_eq!(next_sequence, 4);
-    assert_eq!(next_sample, 960);
-    assert_eq!(boundaries, [480]);
-    callback(337);
+    assert_eq!(next_sequence, 6);
+    assert_eq!(next_sample, 1_440);
+    assert_eq!(boundaries, [480, 960]);
     callback(382);
+    callback(480);
     assert_eq!(captured.len(), reference.len());
     let mut expected: Vec<f32> = reference
         .iter()
@@ -298,15 +352,15 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
         }
     }
     assert_eq!(captured, expected, "exact PCM across takeover and boundary");
-    assert_eq!(pump.diagnostics().packets_emitted, 4);
+    assert_eq!(pump.diagnostics().packets_emitted, 6);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
-    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 3);
+    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 4);
     assert_eq!(silent_disco_audio_underrun_count(native.cast_const()), 0);
     assert_eq!(
         silent_disco_audio_silence_filled_frames(native.cast_const()),
         0
     );
-    assert_eq!(tap.counters(), (960, 0, 3));
+    assert_eq!(tap.counters(), (1_440, 0, 4));
     detach_callback_capture(token);
     release_render_ring(token).expect("release one native output");
     playlist.cancel().expect("cancel producer");
