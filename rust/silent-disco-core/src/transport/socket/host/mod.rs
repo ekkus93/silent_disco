@@ -99,9 +99,11 @@ impl PlaybackControls {
         let Some(confirmed_index) = confirmed else {
             return;
         };
-        while self.boundaries.front().is_some_and(|boundary| {
-            boundary.first_sample_index.get() <= confirmed_index
-        }) {
+        while self
+            .boundaries
+            .front()
+            .is_some_and(|boundary| boundary.first_sample_index.get() <= confirmed_index)
+        {
             let applied = self.boundaries.pop_front().expect("front boundary exists");
             self.last_applied_boundary_sample_index = Some(applied.first_sample_index.get());
         }
