@@ -297,7 +297,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     assert!(recv_audio(newcomer.as_mut()) == packet, "late joiner audio");
                 }
                 if let Some(ref mut newcomer) = reconnect {
-                    assert!(recv_audio(newcomer.as_mut()) == packet, "reconnected listener audio");
+                    assert!(
+                        recv_audio(newcomer.as_mut()) == packet,
+                        "reconnected listener audio"
+                    );
                 }
                 pump.scheduler_mut()
                     .submit_packet(received)
@@ -328,10 +331,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                             .successful_peers,
                         2
                     );
-                    assert_eq!(recv_control(listener.as_mut()), paused_again);
-                    assert_eq!(
-                        recv_control(late.as_mut().expect("first late listener").as_mut()),
-                        paused_again
+                    assert!(recv_control(listener.as_mut()) == paused_again);
+                    assert!(
+                        recv_control(late.as_mut().expect("first late listener").as_mut())
+                            == paused_again
                     );
                     let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
                     assert_eq!(silent_disco_audio_callback_count(native), 0);
@@ -347,9 +350,8 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                         cached_boundary.as_ref().expect("cached track boundary"),
                         &paused_again,
                     ] {
-                        assert_eq!(
-                            recv_control(newcomer.as_mut()),
-                            *expected,
+                        assert!(
+                            recv_control(newcomer.as_mut()) == *expected,
                             "second paused reconnect must replay authoritative state"
                         );
                     }
@@ -365,12 +367,12 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                             .successful_peers,
                         3
                     );
-                    assert_eq!(recv_control(listener.as_mut()), second_resume);
-                    assert_eq!(
-                        recv_control(late.as_mut().expect("first late listener").as_mut()),
-                        second_resume
+                    assert!(recv_control(listener.as_mut()) == second_resume);
+                    assert!(
+                        recv_control(late.as_mut().expect("first late listener").as_mut())
+                            == second_resume
                     );
-                    assert_eq!(recv_control(newcomer.as_mut()), second_resume);
+                    assert!(recv_control(newcomer.as_mut()) == second_resume);
                     pump.scheduler_mut().set_host_start_time_ms(1_400);
                     reconnect = Some(newcomer);
                 }
