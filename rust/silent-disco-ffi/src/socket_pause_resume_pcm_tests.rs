@@ -29,7 +29,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-fn recv_control(listener: &mut dyn ListenerTransportNode) -> ControlMessage {
+pub(super) fn recv_control(listener: &mut dyn ListenerTransportNode) -> ControlMessage {
     loop {
         if let TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
@@ -44,7 +44,7 @@ fn recv_control(listener: &mut dyn ListenerTransportNode) -> ControlMessage {
     }
 }
 
-fn recv_audio(listener: &mut dyn ListenerTransportNode) -> AudioDatagram {
+pub(super) fn recv_audio(listener: &mut dyn ListenerTransportNode) -> AudioDatagram {
     loop {
         if let TransportEvent::FrameReceived {
             channel: TransportChannel::Audio,
@@ -59,7 +59,7 @@ fn recv_audio(listener: &mut dyn ListenerTransportNode) -> AudioDatagram {
     }
 }
 
-fn authorized_late_joiner(
+pub(super) fn authorized_late_joiner(
     host: &mut dyn HostTransportNode,
     device_name: &str,
 ) -> Box<dyn ListenerTransportNode> {
