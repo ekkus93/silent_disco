@@ -712,6 +712,8 @@ fn paused_resume_prunes_already_audible_boundaries_before_reanchoring_late_join(
         panic!("start fixture");
     };
     resumed.host_start_time_ms = MonotonicMillis::new(60_000);
+    resumed.current_entry_id = Some("second".to_owned());
+    resumed.current_display_name = Some("Second song".to_owned());
     assert!(cache.update(&ControlMessage::StreamStart(resumed)));
     assert!(
         cache.snapshot_at(MonotonicMillis::new(2_500))

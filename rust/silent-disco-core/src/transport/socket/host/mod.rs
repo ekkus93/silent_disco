@@ -69,24 +69,41 @@ pub(super) struct PlaybackControls {
 }
 
 impl PlaybackControls {
-    fn advance_paused_track(&mut self, resumed: &mut StreamStart) {
-        let (Some(previous), Some(pause)) = (&self.stream_start, &self.pause) else {
+    fn advance_paused_track(&mut self, resumed: &StreamStart) {
+        let (Some(previous), Some(pause), Some(current_entry)) = (
+            &self.stream_start,
+            &self.pause,
+            resumed.current_entry_id.as_deref(),
+        ) else {
             return;
         };
-        // Compute which boundaries were audible at the instant Pause froze
-        // the OLD anchor, before installing Resume's shifted start time.
+        // The host actor's resumed current-entry ID is authoritative. A
+        // send-ahead boundary can be in the cache without having applied to
+        // that actor yet, so clock time ALONE must not retire it. Only prune
+        // through a boundary confirmed both audible at Pause and current
+        // in the host's resumed metadata.
         let elapsed_ms = pause
             .host_pause_time_ms
             .get()
             .saturating_sub(previous.host_start_time_ms.get());
         let played_samples = u128::from(elapsed_ms) * u128::from(previous.sample_rate);
+        let confirmed = self
+            .boundaries
+            .iter()
+            .filter(|boundary| {
+                boundary.entry_id == current_entry
+                    && u128::from(boundary.first_sample_index.get()) * 1_000 <= played_samples
+            })
+            .map(|boundary| boundary.first_sample_index.get())
+            .last();
+        let Some(confirmed_index) = confirmed else {
+            return;
+        };
         while self.boundaries.front().is_some_and(|boundary| {
-            u128::from(boundary.first_sample_index.get()) * 1_000 <= played_samples
+            boundary.first_sample_index.get() <= confirmed_index
         }) {
             let applied = self.boundaries.pop_front().expect("front boundary exists");
             self.last_applied_boundary_sample_index = Some(applied.first_sample_index.get());
-            resumed.current_entry_id = Some(applied.entry_id);
-            resumed.current_display_name = Some(applied.display_name);
         }
     }
 
@@ -160,7 +177,7 @@ impl PlaybackControls {
                 }
                 let mut current_start = start.clone();
                 if is_resume {
-                    self.advance_paused_track(&mut current_start);
+                    self.advance_paused_track(&current_start);
                 } else {
                     self.boundaries.clear();
                     self.last_applied_boundary_sample_index = None;
