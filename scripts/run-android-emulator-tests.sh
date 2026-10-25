@@ -16,7 +16,7 @@ adb shell am instrument -w -r \
   -e class com.ekkus.silentdisco.WorkflowScreenshotCaptureTest \
   com.ekkus.silentdisco.test/androidx.test.runner.AndroidJUnitRunner \
   | tee android-screenshot-capture.log
-grep -Eq 'OK \\(1 test\\)' android-screenshot-capture.log
+grep -Eq 'OK \(1 test\)' android-screenshot-capture.log
 
 mkdir -p android-workflow-screenshots
 adb pull \
@@ -50,7 +50,7 @@ for line in manifest[1:]:
     assert scene in expected and scene not in seen, f"unexpected/duplicate scene: {scene}"
     seen.add(scene)
     data = (root / f"{scene}.png").read_bytes()
-    assert data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"), f"not PNG: {scene}"
+    assert data.startswith(b"\x89PNG\r\n\x1a\n"), f"not PNG: {scene}"
     dimensions = struct.unpack(">II", data[16:24])
     assert dimensions == expected[scene] == (int(width), int(height)), f"wrong viewport: {scene}"
     assert hashlib.sha256(data).hexdigest() == digest, f"hash mismatch: {scene}"
