@@ -78,7 +78,8 @@ internal fun ClientWorkflowStepper(
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                 color = color,
                 textAlign = TextAlign.Center,
-                maxLines = 1,
+                // Allow labels to wrap at large system font scales instead of
+                // silently truncating the visible stage while TalkBack reads it.
             )
         }
     }
