@@ -318,13 +318,26 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     assert_tcp_controls(fourth.as_mut(), std::slice::from_ref(&play));
     assert_eq!(
         host.broadcast_audio(&packet)
+            .expect("reject old UDP presentation after reused-ID Play")
+            .report
+            .intended_peers,
+        0,
+        "the old stream's packet cannot leak to the new listener"
+    );
+    let mut fresh_packet = packet.clone();
+    let ProtocolFrame::Audio(ref mut audio) = fresh_packet else {
+        panic!("PCM fixture");
+    };
+    audio.host_presentation_time_ms = MonotonicMillis::new(2_000);
+    assert_eq!(
+        host.broadcast_audio(&fresh_packet)
             .expect("fresh UDP route")
             .report
             .successful_peers,
         1,
     );
     wait_for_frame(fourth.as_mut(), TransportChannel::Audio, |frame| {
-        frame == &packet
+        frame == &fresh_packet
     });
 
     // Reusing the stream ID must not let delayed controls from before Stop
