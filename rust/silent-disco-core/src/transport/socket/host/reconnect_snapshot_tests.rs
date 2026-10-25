@@ -307,7 +307,7 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     // Fresh Play may intentionally reuse the stream ID with a newer anchor.
     // Its TCP start and UDP payload must reach only the newly authorized route.
     resumed.host_start_time_ms = MonotonicMillis::new(2_000);
-    let play = ControlMessage::StreamStart(resumed);
+    let play = ControlMessage::StreamStart(resumed.clone());
     assert_eq!(
         host.broadcast_control(&play)
             .expect("fresh Play")
