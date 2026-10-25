@@ -214,6 +214,41 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
         &mut [returning.as_mut(), late.as_mut(), stopped_join.as_mut()],
         &replay_first,
     );
+    // Even after packet zero opens the replay generation, a delayed old
+    // producer cannot inject duplicate, skipped, or misaligned PCM. Rejected
+    // packets must not advance the replay sequence/sample watermark.
+    let mut duplicate = replay_first.clone();
+    let ProtocolFrame::Audio(ref mut duplicate_audio) = duplicate else {
+        panic!("duplicate fixture");
+    };
+    duplicate_audio.host_presentation_time_ms = MonotonicMillis::new(1_501);
+    assert_eq!(
+        host.broadcast_audio(&duplicate)
+            .expect("reject duplicate replay packet")
+            .report
+            .intended_peers,
+        0,
+    );
+    let skipped = packet(&session, 2, 1_502);
+    assert_eq!(
+        host.broadcast_audio(&skipped)
+            .expect("reject skipped replay packet")
+            .report
+            .intended_peers,
+        0,
+    );
+    let mut misaligned = packet(&session, 1, 1_501);
+    let ProtocolFrame::Audio(ref mut misaligned_audio) = misaligned else {
+        panic!("misaligned fixture");
+    };
+    misaligned_audio.first_sample_index = SampleIndex::new(100);
+    assert_eq!(
+        host.broadcast_audio(&misaligned)
+            .expect("reject replay sample gap")
+            .report
+            .intended_peers,
+        0,
+    );
     let mut fresh_join = join(&mut host, &clock, &session, "replay-queue-listener");
     received_control(fresh_join.as_mut(), &replay);
     let replay_second = packet(&session, 1, 1_501);

@@ -59,6 +59,10 @@ pub(super) struct PlaybackControls {
     // subsequent UDP. This fences future-dated packets from a retired
     // same-ID producer that were buffered beyond the replay start anchor.
     awaiting_replay_first_packet: bool,
+    // After a Stop, require contiguous packet/sample progression for the
+    // entire replay generation, not just its first packet. This rejects
+    // delayed duplicate and out-of-order UDP from a retired same-ID sender.
+    replay_next_packet: Option<(u64, u64)>,
 }
 
 impl PlaybackControls {
@@ -133,6 +137,10 @@ impl PlaybackControls {
                 if !is_resume {
                     self.boundaries.clear();
                     self.last_pause_time_ms = None;
+                    if self.last_stopped_control.is_some() {
+                        self.awaiting_replay_first_packet = true;
+                        self.replay_next_packet = None;
+                    }
                 }
                 self.stream_start = Some(start.clone());
                 self.pause = None;
@@ -204,6 +212,7 @@ impl PlaybackControls {
                 self.pause = None;
                 self.last_pause_time_ms = None;
                 self.awaiting_replay_first_packet = true;
+                self.replay_next_packet = None;
                 true
             }
             // Explicit Stop must disarm idle listener liveness even when the
@@ -219,6 +228,7 @@ impl PlaybackControls {
                     self.last_stopped_control =
                         Some((stop.session_id.clone(), stop.host_stop_time_ms.get()));
                     self.awaiting_replay_first_packet = true;
+                    self.replay_next_packet = None;
                     true
                 }
             }
@@ -256,11 +266,29 @@ impl PlaybackControls {
         if !allowed {
             return false;
         }
-        if self.awaiting_replay_first_packet {
-            if packet.sequence.get() != 0 || packet.first_sample_index.get() != 0 {
+        if self.awaiting_replay_first_packet
+            && (packet.sequence.get() != 0 || packet.first_sample_index.get() != 0)
+        {
+            return false;
+        }
+        if self.replay_next_packet.is_some_and(|(sequence, sample)| {
+            packet.sequence.get() != sequence || packet.first_sample_index.get() != sample
+        }) {
+            return false;
+        }
+        if self.awaiting_replay_first_packet || self.replay_next_packet.is_some() {
+            let Some(sequence) = packet.sequence.get().checked_add(1) else {
                 return false;
-            }
+            };
+            let Some(sample) = packet
+                .first_sample_index
+                .get()
+                .checked_add(u64::from(packet.samples_per_packet))
+            else {
+                return false;
+            };
             self.awaiting_replay_first_packet = false;
+            self.replay_next_packet = Some((sequence, sample));
         }
         true
     }
