@@ -38,29 +38,7 @@ impl HostTransportNode for SocketHostTransport {
         if self.stop.load(Ordering::Acquire) {
             return Err(shutting_down_error());
         }
-        let peer_ip = {
-            let peers = self.peers.lock().map_err(|_| {
-                TransportError::new(
-                    TransportErrorKind::WorkerPanicked,
-                    TransportChannel::Runtime,
-                    "peer registry is poisoned",
-                )
-            })?;
-            peers
-                .values()
-                .find(|peer| {
-                    peer.active.load(Ordering::Acquire)
-                        && peer.device_id().as_ref() == Some(device_id)
-                })
-                .map(|peer| peer.remote.ip())
-        }
-        .ok_or_else(|| {
-            TransportError::new(
-                TransportErrorKind::PeerNotFound,
-                TransportChannel::Control,
-                "no pending control peer matches the requested device",
-            )
-        })?;
+        let peer_ip = self.pending_peer_for_device(device_id)?.remote.ip();
         let routes = ListenerDatagramRoutes {
             synchronization: SocketAddr::new(peer_ip, sync_port),
             audio: SocketAddr::new(peer_ip, audio_port),

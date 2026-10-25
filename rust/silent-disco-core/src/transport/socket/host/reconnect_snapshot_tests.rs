@@ -635,3 +635,142 @@ fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_
     }
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn overlapping_same_identity_reconnect_replays_before_replacing_live_tcp_udp_route() {
+    let session = id_session("overlap-same-identity-reconnect");
+    let device = id_device("overlap-listener");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production socket host");
+    let factory = SocketTransportFactory;
+    let start = stream_start(&session, 1_000);
+    let ControlMessage::StreamStart(mut current) = start.clone() else {
+        panic!("StreamStart fixture");
+    };
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: current.stream_id.clone(),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "next-track".to_owned(),
+        display_name: "Next track".to_owned(),
+    });
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: current.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_200),
+    });
+    let mut old = connect_authorized(&mut host, factory, &clock, &session, "overlap-listener");
+    for control in [&start, &boundary, &pause] {
+        host.broadcast_control(control).expect("cache active playback");
+    }
+    assert_tcp_controls(
+        old.as_mut(),
+        &[start.clone(), boundary.clone(), pause.clone()],
+    );
+    let old_peer = host
+        .routes
+        .lock()
+        .expect("old routes")
+        .get(&device)
+        .expect("old authorized route")
+        .peer
+        .clone();
+
+    // The original TCP connection is still alive. The same device has
+    // opened a new socket and issued a new JoinRequest; host approval must
+    // select this pending peer rather than the already-authorized old peer.
+    let mut replacement = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session.clone(),
+                device.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("connect replacement");
+    replacement
+        .send_control(&join_request(&session, &device, "overlap-listener"))
+        .expect("replacement JoinRequest");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device, replacement.local_routes())
+        .expect("authorize overlapping reconnect");
+    wait_for_authorized(&mut host, &device);
+    assert_tcp_controls(
+        replacement.as_mut(),
+        &[start.clone(), boundary.clone(), pause.clone()],
+    );
+    let new_peer_number = host
+        .routes
+        .lock()
+        .expect("new routes")
+        .get(&device)
+        .expect("new authorized route")
+        .peer
+        .number;
+    assert_ne!(old_peer.number, new_peer_number);
+    assert!(
+        !old_peer.active.load(std::sync::atomic::Ordering::Acquire),
+        "old control socket must be retired after replacement replay"
+    );
+    assert!(
+        !super::super::host_workers::remove_route_if_current(
+            &host.routes,
+            &device,
+            old_peer.number,
+        ),
+        "delayed old reader cleanup cannot remove the new route"
+    );
+
+    current.host_start_time_ms = MonotonicMillis::new(1_300);
+    let resume = ControlMessage::StreamStart(current.clone());
+    assert_eq!(
+        host.broadcast_control(&resume)
+            .expect("resume to replacement only")
+            .report
+            .successful_peers,
+        1
+    );
+    assert_tcp_controls(replacement.as_mut(), std::slice::from_ref(&resume));
+    let packet = audio_frame(&session, 0);
+    assert_eq!(
+        host.broadcast_audio(&packet)
+            .expect("audio to replacement only")
+            .report
+            .successful_peers,
+        1
+    );
+    wait_for_frame(replacement.as_mut(), TransportChannel::Audio, |frame| {
+        frame == &packet
+    });
+
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: current.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_500),
+    });
+    host.broadcast_control(&stop).expect("stop after reconnect");
+    assert_tcp_controls(replacement.as_mut(), std::slice::from_ref(&stop));
+    let mut late = connect_authorized(&mut host, factory, &clock, &session, "overlap-late");
+    let sent_at_stop = host.counters().control_frames_sent;
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_at_stop,
+        "late join after Stop has no playback replay"
+    );
+    current.host_start_time_ms = MonotonicMillis::new(2_000);
+    let replay = ControlMessage::StreamStart(current);
+    host.broadcast_control(&replay).expect("fresh Play");
+    assert_tcp_controls(replacement.as_mut(), std::slice::from_ref(&replay));
+    assert_tcp_controls(late.as_mut(), std::slice::from_ref(&replay));
+    late.shutdown().expect("late shutdown");
+    replacement.shutdown().expect("replacement shutdown");
+    old.shutdown().expect("old shutdown");
+    host.shutdown().expect("host shutdown");
+}

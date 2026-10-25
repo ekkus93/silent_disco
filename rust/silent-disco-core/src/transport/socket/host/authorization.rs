@@ -20,29 +20,10 @@ impl SocketHostTransport {
         if self.stop.load(Ordering::Acquire) {
             return Err(shutting_down_error());
         }
-        let peer = {
-            let peers = self.peers.lock().map_err(|_| {
-                TransportError::new(
-                    TransportErrorKind::WorkerPanicked,
-                    TransportChannel::Runtime,
-                    "peer registry is poisoned",
-                )
-            })?;
-            peers
-                .values()
-                .find(|peer| {
-                    peer.active.load(Ordering::Acquire)
-                        && peer.device_id().as_ref() == Some(device_id)
-                })
-                .cloned()
-        }
-        .ok_or_else(|| {
-            TransportError::new(
-                TransportErrorKind::PeerNotFound,
-                TransportChannel::Control,
-                "no pending control peer matches the requested device",
-            )
-        })?;
+        // A reconnect may arrive before the retired socket's reader exits.
+        // Select the newest *pending* connection, never the old authorized
+        // peer that still has the same device identity.
+        let peer = self.pending_peer_for_device(device_id)?;
         if routes.synchronization.ip() != peer.remote.ip() || routes.audio.ip() != peer.remote.ip()
         {
             return Err(TransportError::new(
@@ -71,35 +52,41 @@ impl SocketHostTransport {
                 "pending control peer disconnected before authorization",
             ));
         }
-        let mut route_registry = self.routes.lock().map_err(|_| {
-            TransportError::new(
-                TransportErrorKind::WorkerPanicked,
-                TransportChannel::Runtime,
-                "peer route registry is poisoned",
-            )
-        })?;
-        if route_registry.contains_key(device_id) {
+        // Replay before switching the live route. If the new socket cannot
+        // receive the authoritative snapshot, the old TCP/UDP route must
+        // remain usable instead of being replaced by a broken connection.
+        self.send_cached_playback_controls(&peer)?;
+        if !peer.active.load(Ordering::Acquire) {
             return Err(TransportError::new(
-                TransportErrorKind::InvalidConfiguration,
-                TransportChannel::Runtime,
-                "device is already authorized",
+                TransportErrorKind::PeerNotFound,
+                TransportChannel::Control,
+                "pending control peer disconnected during playback replay",
             ));
         }
-        peer.authorized.store(true, Ordering::Release);
-        route_registry.insert(
-            device_id.clone(),
-            PeerRoute {
-                peer: peer.clone(),
-                routes,
-            },
-        );
-        drop(route_registry);
-        if let Err(error) = self.send_cached_playback_controls(&peer) {
-            if let Ok(mut routes) = self.routes.lock() {
-                routes.remove(device_id);
-            }
-            peer.authorized.store(false, Ordering::Release);
-            return Err(error);
+        let previous = {
+            let mut route_registry = self.routes.lock().map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "peer route registry is poisoned",
+                )
+            })?;
+            let previous = route_registry.insert(
+                device_id.clone(),
+                PeerRoute {
+                    peer: peer.clone(),
+                    routes,
+                },
+            );
+            peer.authorized.store(true, Ordering::Release);
+            previous
+        };
+        // Explicit authorization atomically hands the identity to the new
+        // socket. Retire the old writer/reader; its delayed cleanup checks
+        // peer number and cannot remove the replacement UDP route.
+        if let Some(previous) = previous {
+            previous.peer.authorized.store(false, Ordering::Release);
+            drop(previous.peer.close());
         }
         send_event(
             &self.event_sender,
