@@ -292,3 +292,85 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
     }
     host.shutdown().expect("close host");
 }
+
+#[test]
+fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
+    let session = id_session("socket-audible-track-late-join");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production host");
+    let ControlMessage::StreamStart(mut first) = stream_start(&session, 1_000) else {
+        panic!("start fixture");
+    };
+    first.current_entry_id = Some("first".to_owned());
+    first.current_display_name = Some("First track".to_owned());
+    let start = ControlMessage::StreamStart(first.clone());
+    let second = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: first.stream_id.clone(),
+        first_sample_index: SampleIndex::new(48_000),
+        entry_id: "second".to_owned(),
+        display_name: "Second track".to_owned(),
+    });
+    let third = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: first.stream_id.clone(),
+        first_sample_index: SampleIndex::new(96_000),
+        entry_id: "third".to_owned(),
+        display_name: "Third track".to_owned(),
+    });
+    for control in [&start, &second, &third] {
+        host.broadcast_control(control).expect("cache queued controls");
+    }
+
+    // Boundary one became audible at 2,000 ms, but boundary two is
+    // still future. Replaying the original first-song title is incorrect.
+    clock.set(2_500);
+    let mut second_join = join(&mut host, &clock, &session, "audible-second");
+    let mut second_start = first.clone();
+    second_start.current_entry_id = Some("second".to_owned());
+    second_start.current_display_name = Some("Second track".to_owned());
+    received_control(second_join.as_mut(), &ControlMessage::StreamStart(second_start.clone()));
+    received_control(second_join.as_mut(), &third);
+
+    // A long Pause cannot advance the title across the next boundary.
+    clock.set(2_600);
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: first.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(2_600),
+    });
+    host.broadcast_control(&pause).expect("pause queue");
+    received_control(second_join.as_mut(), &pause);
+    clock.set(3_500);
+    let mut paused_join = join(&mut host, &clock, &session, "paused-second");
+    received_control(paused_join.as_mut(), &ControlMessage::StreamStart(second_start.clone()));
+    received_control(paused_join.as_mut(), &third);
+    received_control(paused_join.as_mut(), &pause);
+
+    // Resume moves the sample-zero anchor by the 900 ms pause. Both
+    // listeners remain on the same stream, with the third track pending.
+    first.host_start_time_ms = MonotonicMillis::new(1_900);
+    let resume = ControlMessage::StreamStart(first.clone());
+    host.broadcast_control(&resume).expect("resume timeline");
+    received_control(second_join.as_mut(), &resume);
+    received_control(paused_join.as_mut(), &resume);
+    let mut resumed_join = join(&mut host, &clock, &session, "resumed-second");
+    second_start.host_start_time_ms = MonotonicMillis::new(1_900);
+    received_control(resumed_join.as_mut(), &ControlMessage::StreamStart(second_start));
+    received_control(resumed_join.as_mut(), &third);
+
+    clock.set(4_000);
+    let mut third_join = join(&mut host, &clock, &session, "audible-third");
+    first.current_entry_id = Some("third".to_owned());
+    first.current_display_name = Some("Third track".to_owned());
+    received_control(third_join.as_mut(), &ControlMessage::StreamStart(first));
+
+    for listener in [&mut second_join, &mut paused_join, &mut resumed_join, &mut third_join] {
+        listener.shutdown().expect("close listener");
+    }
+    host.shutdown().expect("close host");
+}

@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::domain::{DeviceId, SessionId};
+use crate::domain::{DeviceId, MonotonicMillis, SessionId};
 use crate::protocol::{AudioDatagram, ControlMessage, Pause, StreamStart, TrackBoundary};
 use crate::runtime::NetworkEndpoint;
 
@@ -293,21 +293,41 @@ impl PlaybackControls {
         true
     }
 
-    pub(super) fn snapshot(&self) -> Vec<ControlMessage> {
-        let Some(start) = self.stream_start.clone() else {
+    /// A reconnecting listener needs the track audible *now*, not the track
+    /// that was current when StreamStart was originally broadcast. Host
+    /// send-ahead can queue future boundaries, so derive the position from
+    /// the presentation clock rather than the most recently sent UDP packet.
+    /// While paused, freeze at the pause deadline; Resume reanchors Start.
+    pub(super) fn snapshot_at(&self, now: MonotonicMillis) -> Vec<ControlMessage> {
+        let Some(mut start) = self.stream_start.clone() else {
             return Vec::new();
         };
+        let effective_now = self
+            .pause
+            .as_ref()
+            .map_or(now.get(), |pause| now.get().min(pause.host_pause_time_ms.get()));
+        let elapsed_ms = effective_now.saturating_sub(start.host_start_time_ms.get());
+        let elapsed_samples = u128::from(elapsed_ms) * u128::from(start.sample_rate);
+        let mut upcoming = Vec::new();
+        for boundary in &self.boundaries {
+            if u128::from(boundary.first_sample_index.get()) * 1_000 <= elapsed_samples {
+                start.current_entry_id = Some(boundary.entry_id.clone());
+                start.current_display_name = Some(boundary.display_name.clone());
+            } else {
+                upcoming.push(ControlMessage::TrackBoundary(boundary.clone()));
+            }
+        }
         let mut controls =
-            Vec::with_capacity(1 + self.boundaries.len() + usize::from(self.pause.is_some()));
+            Vec::with_capacity(1 + upcoming.len() + usize::from(self.pause.is_some()));
         controls.push(ControlMessage::StreamStart(start));
-        controls.extend(
-            self.boundaries
-                .iter()
-                .cloned()
-                .map(ControlMessage::TrackBoundary),
-        );
+        controls.extend(upcoming);
         controls.extend(self.pause.clone().map(ControlMessage::Pause));
         controls
+    }
+
+    #[cfg(test)]
+    pub(super) fn snapshot(&self) -> Vec<ControlMessage> {
+        self.snapshot_at(MonotonicMillis::new(0))
     }
 }
 

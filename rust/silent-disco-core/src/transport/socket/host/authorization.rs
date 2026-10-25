@@ -114,7 +114,7 @@ impl SocketHostTransport {
                     "playback control cache is poisoned",
                 )
             })?
-            .snapshot();
+            .snapshot_at(self.clock.now());
         for message in controls {
             let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
                 .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
