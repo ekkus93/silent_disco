@@ -948,6 +948,7 @@ dependencies = [
  "base64",
  "p256",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

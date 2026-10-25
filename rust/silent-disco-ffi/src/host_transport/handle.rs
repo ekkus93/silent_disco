@@ -76,9 +76,10 @@ impl FfiHostTransportHandle {
     }
 
     /// Binds using Android's boot-relative elapsedRealtime clock domain.
-    /// Playback controls, PCM presentation, sync replies and authorization
-    /// snapshots must all use the same host clock. The legacy constructor
-    /// remains for desktop and existing relative-clock callers.
+    /// On Android, a nonzero anchor selects the kernel CLOCK_BOOTTIME source
+    /// directly: unlike Instant, it includes device suspend and avoids bind
+    /// handoff skew. Other targets retain anchored relative time for tests.
+    /// The legacy zero-anchor constructor keeps its original relative clock.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "uniffi::export requires owned String parameters at the foreign boundary"
@@ -116,7 +117,14 @@ impl FfiHostTransportHandle {
         let clock: Arc<dyn TransportClock> = Arc::new(if host_now_elapsed_ms == 0 {
             SystemTransportClock::default()
         } else {
-            SystemTransportClock::starting_at(host_now_elapsed_ms)
+            #[cfg(target_os = "android")]
+            {
+                SystemTransportClock::android_boot_relative()
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                SystemTransportClock::starting_at(host_now_elapsed_ms)
+            }
         });
         let transport = production_transport_factory().bind_host(config, clock)?;
         Ok(Arc::new(Self {

@@ -11,6 +11,9 @@ pub trait TransportClock: Send + Sync + 'static {
 pub struct SystemTransportClock {
     origin: Instant,
     initial_millis: u64,
+    // CLOCK_BOOTTIME includes device suspend, unlike Rust Instant's CLOCK_MONOTONIC.
+    #[cfg(target_os = "android")]
+    android_boot_relative: bool,
 }
 
 impl SystemTransportClock {
@@ -22,6 +25,20 @@ impl SystemTransportClock {
         Self {
             origin: Instant::now(),
             initial_millis,
+            #[cfg(target_os = "android")]
+            android_boot_relative: false,
+        }
+    }
+
+    /// Uses Android's boot-relative monotonic clock directly, including time
+    /// spent suspended. Matches SystemClock.elapsedRealtime without bind skew.
+    #[cfg(target_os = "android")]
+    #[must_use]
+    pub fn android_boot_relative() -> Self {
+        Self {
+            origin: Instant::now(),
+            initial_millis: 0,
+            android_boot_relative: true,
         }
     }
 }
@@ -34,6 +51,17 @@ impl Default for SystemTransportClock {
 
 impl TransportClock for SystemTransportClock {
     fn now(&self) -> MonotonicMillis {
+        #[cfg(target_os = "android")]
+        if self.android_boot_relative {
+            // Safe rustix wrapper around CLOCK_BOOTTIME: no JNI thread
+            // attachment, wall-clock changes, or bind-time extrapolation.
+            let now = rustix::time::clock_gettime(rustix::time::ClockId::Boottime);
+            let seconds = u64::try_from(now.tv_sec).unwrap_or(0);
+            let nanoseconds = u64::try_from(now.tv_nsec).unwrap_or(0);
+            return MonotonicMillis::new(
+                seconds.saturating_mul(1_000).saturating_add(nanoseconds / 1_000_000),
+            );
+        }
         let elapsed = self.origin.elapsed().as_millis();
         let millis = u64::try_from(elapsed).unwrap_or(u64::MAX);
         MonotonicMillis::new(self.initial_millis.saturating_add(millis))
@@ -85,5 +113,22 @@ mod tests {
     fn anchored_clock_saturates_instead_of_wrapping_near_u64_max() {
         let clock = SystemTransportClock::starting_at(u64::MAX);
         assert_eq!(clock.now().get(), u64::MAX);
+    }
+
+    #[cfg(target_os = "android")]
+    #[test]
+    fn android_host_clock_matches_suspend_aware_kernel_boottime() {
+        use rustix::time::{ClockId, clock_gettime};
+
+        let millis = || {
+            let now = clock_gettime(ClockId::Boottime);
+            u64::try_from(now.tv_sec).unwrap_or(0) * 1_000
+                + u64::try_from(now.tv_nsec).unwrap_or(0) / 1_000_000
+        };
+        let clock = SystemTransportClock::android_boot_relative();
+        let before = millis();
+        let observed = clock.now().get();
+        let after = millis();
+        assert!(before <= observed && observed <= after);
     }
 }
