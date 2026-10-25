@@ -159,6 +159,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     let mut boundary_controls = Vec::new();
     let mut next_sample = 0_u64;
     let mut next_sequence = 0_u64;
+    let mut retired_audio = None;
     let mut boundaries = Vec::new();
     let mut finished = false;
     for _ in 0..32 {
@@ -196,6 +197,9 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                     ),
                     payload,
                 };
+                if next_sequence == 0 {
+                    retired_audio = Some(packet.clone());
+                }
                 assert_eq!(
                     host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
                         .expect("UDP delivery")
@@ -452,6 +456,18 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     );
     assert!(recv_control(replacement.as_mut().expect("returning peer").as_mut()) == replay_start);
     assert!(recv_control(after_stop.as_mut()) == replay_start);
+    // The old producer's actual first datagram has the same session and
+    // stream ID as this intentional replay. Its stale presentation anchor
+    // must be rejected before either authorized UDP route receives it.
+    let retired = ProtocolFrame::Audio(retired_audio.expect("original UDP packet"));
+    assert_eq!(
+        host.broadcast_audio(&retired)
+            .expect("fence old generation after replay")
+            .report
+            .intended_peers,
+        0,
+        "retired PCM must not contaminate either replay listener"
+    );
     let (replay_producer, replay_token) = register_render_ring(RenderRingConfig {
         capacity_frames: 4_800,
         target_fill_frames: 4_800,

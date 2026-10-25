@@ -231,6 +231,17 @@ impl PlaybackControls {
                 start.session_id == packet.session_id
                     && start.stream_id == packet.stream_id
                     && self.pause.is_none()
+                    // Stop/Play may intentionally reuse a stream ID. A
+                    // delayed UDP datagram from the retired generation must
+                    // not enter the newly authorized listener timeline.
+                    // Only apply this generation fence after a Stop; older
+                    // transport fixtures can send audio before an initial
+                    // StreamStart presentation anchor.
+                    && !self.last_stopped_control.as_ref().is_some_and(|(session, _)| {
+                        session == &packet.session_id
+                            && packet.host_presentation_time_ms.get()
+                                < start.host_start_time_ms.get()
+                    })
             }
             None => self.last_stopped_control.is_none(),
         }

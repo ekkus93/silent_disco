@@ -2,7 +2,7 @@
 //! Pause, replacement `StreamStart`, Stop, and replay to a live listener.
 use std::sync::Arc;
 
-use crate::domain::{MonotonicMillis, StreamId};
+use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, StreamId};
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop};
 use crate::transport::test_support::{
     audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
@@ -164,15 +164,31 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
         frame == &ProtocolFrame::Control(replay.clone())
     });
+    // The retired UDP producer still has the same session and stream ID.
+    // Its old presentation anchor must not bypass the Stop/replay fence.
     assert_eq!(
         host.broadcast_audio(&current_packet)
+            .expect("reject delayed old-generation UDP")
+            .report
+            .intended_peers,
+        0
+    );
+    let mut replay_packet = current_packet.clone();
+    let ProtocolFrame::Audio(ref mut replay_audio) = replay_packet else {
+        panic!("audio fixture");
+    };
+    replay_audio.sequence = PacketSequence::new(0);
+    replay_audio.first_sample_index = SampleIndex::new(0);
+    replay_audio.host_presentation_time_ms = MonotonicMillis::new(3_000);
+    assert_eq!(
+        host.broadcast_audio(&replay_packet)
             .expect("new generation audio")
             .report
             .successful_peers,
         1
     );
     wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
-        frame == &current_packet
+        frame == &replay_packet
     });
 
     listener.shutdown().expect("listener shutdown");
