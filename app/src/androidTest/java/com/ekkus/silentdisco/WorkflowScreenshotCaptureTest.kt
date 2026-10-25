@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco
 
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.HostFormState
 import com.ekkus.silentdisco.app.ConnectionProgressState
 import com.ekkus.silentdisco.app.HostQueueItem
 import com.ekkus.silentdisco.app.StorageInitializationState
@@ -28,7 +30,11 @@ import com.ekkus.silentdisco.core.model.JoinRequest
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SessionInfo
+import com.ekkus.silentdisco.core.model.SelectedAudioFile
+import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
 import com.ekkus.silentdisco.feature.host.HostDashboardScreen
+import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
+import com.ekkus.silentdisco.feature.host.HostReadyScreen
 import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
 import com.ekkus.silentdisco.feature.listener.ClientWorkflowStage
 import com.ekkus.silentdisco.feature.listener.ClientWorkflowStepper
@@ -50,6 +56,11 @@ class WorkflowScreenshotCaptureTest {
     @get:Rule val compose = createComposeRule()
 
     private enum class Scene(val basename: String, val width: Int, val height: Int, val fontScale: Float) {
+        MUSIC_EMPTY("host_music_empty", 360, 640, 1f),
+        MUSIC_FILLED("host_music_filled", 360, 640, 1f),
+        ACCESS_CODE("host_access_code", 360, 640, 1f),
+        READY("host_ready", 360, 640, 1f),
+        READY_RECOVERY("host_ready_permission_recovery", 320, 480, 1.5f),
         EMPTY_QUEUE("host_queue_empty", 360, 640, 1f),
         PLAYING_QUEUE("host_queue_playing", 360, 640, 1f),
         QUEUE_LARGE_TEXT("host_queue_large_text", 320, 480, 2f),
@@ -84,6 +95,23 @@ class WorkflowScreenshotCaptureTest {
             requestedAtMs = 0L,
         )
         val state = AppUiState(storageState = StorageInitializationState.READY)
+        val staged = listOf("Opening track", "Next track", "Final track").mapIndexed { i, name ->
+            SelectedAudioFile(
+                uri = Uri.parse("content://fixture/song-$i.wav"),
+                displayName = name,
+                mimeType = "audio/wav",
+                sizeBytes = 1_024,
+            )
+        }
+        val setup = state.copy(
+            hostForm = HostFormState(
+                sessionName = "Warehouse Silent Disco",
+                selectedAudio = staged.first(),
+                additionalAudio = staged.drop(1),
+                approvalMode = ApprovalMode.INVITE_CODE,
+                inviteCode = "4826",
+            ),
+        )
         val queued = listOf(
             HostQueueItem("current", "source-1", "Opening track", null, null),
             HostQueueItem("second", "source-2", "Next track", null, null),
@@ -99,6 +127,37 @@ class WorkflowScreenshotCaptureTest {
                             .testTag("visual-review-canvas"),
                     ) {
                         when (scene) {
+                            Scene.MUSIC_EMPTY, Scene.MUSIC_FILLED -> HostMusicSetupScreen(
+                                uiState = if (scene == Scene.MUSIC_EMPTY) state else setup,
+                                onBack = {},
+                                onSessionNameChanged = {},
+                                onChooseAudio = {},
+                                onRemoveAudio = {},
+                                onMoveAudio = { _, _ -> },
+                                onNext = {},
+                            )
+                            Scene.ACCESS_CODE -> HostAccessSetupScreen(
+                                uiState = setup,
+                                onBack = {},
+                                onApprovalModeChanged = {},
+                                onInviteCodeChanged = {},
+                                onGenerateCode = {},
+                                onNext = {},
+                            )
+                            Scene.READY, Scene.READY_RECOVERY -> HostReadyScreen(
+                                uiState = if (scene == Scene.READY_RECOVERY) {
+                                    setup.copy(
+                                        hostState = HostLifecycleState.ERROR,
+                                        lastError = "Nearby-device permission missing",
+                                    )
+                                } else {
+                                    setup
+                                },
+                                onBack = {},
+                                onStartSession = {},
+                                onOpenSettings = {},
+                                onShareSupportReport = {},
+                            )
                             Scene.EMPTY_QUEUE, Scene.PLAYING_QUEUE, Scene.QUEUE_LARGE_TEXT ->
                                 HostQueueManagementScreen(
                                 uiState = state.copy(

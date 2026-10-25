@@ -30,6 +30,11 @@ import struct
 
 root = Path("android-workflow-screenshots")
 expected = {
+    "host_music_empty": (360, 640),
+    "host_music_filled": (360, 640),
+    "host_access_code": (360, 640),
+    "host_ready": (360, 640),
+    "host_ready_permission_recovery": (320, 480),
     "host_queue_empty": (360, 640),
     "host_queue_playing": (360, 640),
     "host_queue_large_text": (320, 480),
