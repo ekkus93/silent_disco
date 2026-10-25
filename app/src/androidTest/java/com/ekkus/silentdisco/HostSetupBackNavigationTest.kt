@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsEnabled
@@ -124,7 +125,7 @@ class HostSetupBackNavigationTest {
     fun invalidFailedReadyDoesNotOfferAnInertRetryButStillExposesPermissionRepair() {
         var starts = 0
         var settings = 0
-        var state by androidx.compose.runtime.mutableStateOf(
+        val state = mutableStateOf(
             AppUiState(
                 hostState = HostLifecycleState.ERROR,
                 lastError = "Unable to create session",
@@ -133,7 +134,7 @@ class HostSetupBackNavigationTest {
         compose.setContent {
             SilentDiscoTheme {
                 HostReadyScreen(
-                    uiState = state,
+                    uiState = state.value,
                     onBack = {},
                     onStartSession = { starts++ },
                     onOpenSettings = { settings++ },
@@ -143,7 +144,7 @@ class HostSetupBackNavigationTest {
         }
         compose.onNodeWithTag("host-start-session").assertIsNotEnabled()
         compose.runOnIdle {
-            state = state.copy(lastError = "Nearby permission required")
+            state.value = state.value.copy(lastError = "Nearby permission required")
         }
         compose.onNodeWithTag("host-start-session").assertIsEnabled().performClick()
         compose.runOnIdle {
