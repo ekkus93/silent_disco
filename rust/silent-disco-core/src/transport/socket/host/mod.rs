@@ -181,11 +181,13 @@ impl PlaybackControls {
             {
                 // A delayed or conflicting retransmission must not rewind the
                 // timeline replayed to an authorized late-joining listener.
-                if self.last_applied_boundary_sample_index.is_some_and(|applied| {
-                    boundary.first_sample_index.get() <= applied
-                }) || self.boundaries.back().is_some_and(|previous| {
-                    boundary.first_sample_index.get() <= previous.first_sample_index.get()
-                }) {
+                if self
+                    .last_applied_boundary_sample_index
+                    .is_some_and(|applied| boundary.first_sample_index.get() <= applied)
+                    || self.boundaries.back().is_some_and(|previous| {
+                        boundary.first_sample_index.get() <= previous.first_sample_index.get()
+                    })
+                {
                     false
                 } else {
                     self.boundaries.push_back(boundary.clone());

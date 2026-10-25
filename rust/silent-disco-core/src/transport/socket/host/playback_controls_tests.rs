@@ -696,12 +696,14 @@ fn paused_resume_prunes_already_audible_boundaries_before_reanchoring_late_join(
     };
     audible_second.current_entry_id = Some("second".to_owned());
     audible_second.current_display_name = Some("Second song".to_owned());
-    assert!(cache.snapshot_at(MonotonicMillis::new(2_000))
-        == vec![
-            ControlMessage::StreamStart(audible_second.clone()),
-            future.clone(),
-            paused,
-        ]);
+    assert!(
+        cache.snapshot_at(MonotonicMillis::new(2_000))
+            == vec![
+                ControlMessage::StreamStart(audible_second.clone()),
+                future.clone(),
+                paused,
+            ]
+    );
 
     // The first boundary was already audible when Pause froze the old
     // timeline. Moving the Start anchor into the future must not make it
@@ -711,21 +713,25 @@ fn paused_resume_prunes_already_audible_boundaries_before_reanchoring_late_join(
     };
     resumed.host_start_time_ms = MonotonicMillis::new(60_000);
     assert!(cache.update(&ControlMessage::StreamStart(resumed)));
-    assert!(cache.snapshot_at(MonotonicMillis::new(2_500))
-        == vec![
-            ControlMessage::StreamStart(StreamStart {
-                host_start_time_ms: MonotonicMillis::new(60_000),
-                ..audible_second.clone()
-            }),
-            future.clone(),
-        ]);
+    assert!(
+        cache.snapshot_at(MonotonicMillis::new(2_500))
+            == vec![
+                ControlMessage::StreamStart(StreamStart {
+                    host_start_time_ms: MonotonicMillis::new(60_000),
+                    ..audible_second.clone()
+                }),
+                future.clone(),
+            ]
+    );
     assert!(!cache.update(&first), "retired boundary cannot return");
-    assert!(cache.snapshot_at(MonotonicMillis::new(2_500))
-        == vec![
-            ControlMessage::StreamStart(StreamStart {
-                host_start_time_ms: MonotonicMillis::new(60_000),
-                ..audible_second
-            }),
-            future,
-        ]);
+    assert!(
+        cache.snapshot_at(MonotonicMillis::new(2_500))
+            == vec![
+                ControlMessage::StreamStart(StreamStart {
+                    host_start_time_ms: MonotonicMillis::new(60_000),
+                    ..audible_second
+                }),
+                future,
+            ]
+    );
 }
