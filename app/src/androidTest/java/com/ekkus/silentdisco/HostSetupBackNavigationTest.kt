@@ -1,6 +1,8 @@
 package com.ekkus.silentdisco
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
+import androidx.test.espresso.Espresso
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -89,6 +91,7 @@ class HostSetupBackNavigationTest {
                                 )
                             }
                             composable(AppRoutes.HostReady) {
+                                BackHandler(onBack = nav::returnFromHostReadyToAccess)
                                 HostReadyScreen(
                                     uiState = state,
                                     onBack = { nav.returnFromHostReadyToAccess() },
@@ -112,6 +115,11 @@ class HostSetupBackNavigationTest {
 
         // This used to restore the Access entry's saved in-flight lock:
         // a user editing Ready could never return to Ready again.
+        compose.onNodeWithTag("host-access-next").assertIsEnabled().performClick()
+        compose.onNodeWithTag("host-ready-screen").assertExists()
+
+        // System Back previously popped into the saved, disabled Access entry.
+        Espresso.pressBack()
         compose.onNodeWithTag("host-access-next").assertIsEnabled().performClick()
         compose.onNodeWithTag("host-ready-screen").assertExists()
         compose.onNodeWithTag("host-start-session").assertIsEnabled().performClick()

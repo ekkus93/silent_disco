@@ -395,6 +395,9 @@ fun SilentDiscoApp(
             }
 
             composable(AppRoutes.HostReady) {
+                // Hardware/system Back must discard the same saved Access
+                // submission lock as the toolbar Back action.
+                BackHandler(onBack = navController::returnFromHostReadyToAccess)
                 HostReadyScreen(
                     uiState = uiState,
                     onBack = { navController.returnFromHostReadyToAccess() },
