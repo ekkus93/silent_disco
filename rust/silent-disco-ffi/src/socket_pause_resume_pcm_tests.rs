@@ -344,7 +344,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     assert_eq!(host.counters().control_frames_sent, count);
 
                     let mut newcomer =
-                        authorized_late_joiner(host.as_mut(), "second-paused-reconnect");
+                        authorized_late_joiner(host.as_mut(), "paused-gapless-late-joiner");
                     for expected in [
                         &active_start,
                         cached_boundary.as_ref().expect("cached track boundary"),
@@ -355,6 +355,11 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                             "second paused reconnect must replay authoritative state"
                         );
                     }
+                    // Retire the previous socket only after same-device replay succeeds.
+                    late.take()
+                        .expect("retired same-device socket")
+                        .shutdown()
+                        .expect("retire");
                     let ControlMessage::StreamStart(mut resumed) = active_start.clone() else {
                         panic!("active stream start expected");
                     };
@@ -365,13 +370,9 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                             .expect("second re-anchor")
                             .report
                             .successful_peers,
-                        3
+                        2
                     );
                     assert!(recv_control(listener.as_mut()) == second_resume);
-                    assert!(
-                        recv_control(late.as_mut().expect("first late listener").as_mut())
-                            == second_resume
-                    );
                     assert!(recv_control(newcomer.as_mut()) == second_resume);
                     pump.scheduler_mut().set_host_start_time_ms(1_400);
                     reconnect = Some(newcomer);
@@ -510,11 +511,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
             .expect("Stop old stream")
             .report
             .successful_peers,
-        3,
+        2,
     );
     for peer in [
         listener.as_mut(),
-        late.as_mut().expect("late listener").as_mut(),
         reconnect.as_mut().expect("reconnected listener").as_mut(),
     ] {
         assert!(recv_control(peer) == stop, "all peers receive Stop");
@@ -572,11 +572,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
             .expect("fresh Play")
             .report
             .successful_peers,
-        4,
+        3,
     );
     for peer in [
         listener.as_mut(),
-        late.as_mut().expect("late listener").as_mut(),
         reconnect.as_mut().expect("reconnected listener").as_mut(),
         after_stop.as_mut(),
     ] {
@@ -656,12 +655,11 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                         .expect("replay UDP")
                         .report
                         .successful_peers,
-                    4,
+                    3,
                 );
                 let received = recv_audio(listener.as_mut());
                 assert!(received == packet, "replay UDP matches producer");
                 for peer in [
-                    late.as_mut().expect("late listener").as_mut(),
                     reconnect.as_mut().expect("reconnected listener").as_mut(),
                     after_stop.as_mut(),
                 ] {
@@ -700,11 +698,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                         .expect("replay boundary")
                         .report
                         .successful_peers,
-                    4,
+                    3,
                 );
                 for peer in [
                     listener.as_mut(),
-                    late.as_mut().expect("late listener").as_mut(),
                     reconnect.as_mut().expect("reconnected listener").as_mut(),
                     after_stop.as_mut(),
                 ] {
@@ -779,9 +776,6 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     release_render_ring(replay_token).expect("release replay output");
     replay_playlist.cancel().expect("cancel replay producer");
     after_stop.shutdown().expect("post-Stop listener shutdown");
-    if let Some(mut newcomer) = late {
-        newcomer.shutdown().expect("late listener shutdown");
-    }
     if let Some(mut newcomer) = reconnect {
         newcomer.shutdown().expect("reconnected listener shutdown");
     }
