@@ -66,8 +66,13 @@ class WorkflowScreenshotCaptureTest {
         QUEUE_LARGE_TEXT("host_queue_large_text", 320, 480, 2f),
         LIVE_PLAYING("host_live_playing", 360, 640, 1f),
         LIVE_PAUSED("host_live_paused", 360, 640, 1f),
+        LIVE_BUFFERING("host_live_buffering", 360, 640, 1f),
+        LIVE_ERROR("host_live_playback_error", 360, 640, 1f),
+        LIVE_ENDED("host_live_queue_ended", 360, 640, 1f),
         LIVE_LANDSCAPE("host_live_landscape", 640, 360, 1f),
         PENDING_APPROVAL("host_pending_approval", 360, 640, 1f),
+        CLIENT_INVITE_CODE("client_invite_code", 360, 640, 1f),
+        CLIENT_INVITE_CODE_LARGE("client_invite_code_large_text", 320, 480, 2f),
         CLIENT_RECOVERY("client_recovery_large_text", 320, 480, 2f),
         STARTUP_RECOVERY("startup_recovery_large_text", 320, 480, 2f),
         STARTUP_FATAL("startup_fatal", 360, 640, 1f),
@@ -174,21 +179,28 @@ class WorkflowScreenshotCaptureTest {
                                 onRemoveQueueEntry = {},
                             )
                             Scene.PENDING_APPROVAL, Scene.LIVE_PLAYING, Scene.LIVE_PAUSED,
-                            Scene.LIVE_LANDSCAPE -> HostDashboardScreen(
+                            Scene.LIVE_LANDSCAPE, Scene.LIVE_BUFFERING, Scene.LIVE_ERROR,
+                            Scene.LIVE_ENDED -> HostDashboardScreen(
                                 uiState = state.copy(
                                     selectedRole = AppRole.HOST,
                                     hostState = HostLifecycleState.READY,
-                                    hostQueue = if (scene == Scene.PENDING_APPROVAL) {
+                                    hostQueue = if (scene == Scene.PENDING_APPROVAL ||
+                                        scene == Scene.LIVE_ENDED) {
                                         emptyList()
                                     } else {
                                         queued
                                     },
-                                    hostPlaybackState = if (scene == Scene.LIVE_PAUSED) {
-                                        PlaybackState.PAUSED
-                                    } else if (scene == Scene.PENDING_APPROVAL) {
-                                        PlaybackState.STOPPED
+                                    hostPlaybackState = when (scene) {
+                                        Scene.LIVE_PAUSED -> PlaybackState.PAUSED
+                                        Scene.LIVE_BUFFERING -> PlaybackState.BUFFERING
+                                        Scene.LIVE_ERROR -> PlaybackState.ERROR
+                                        Scene.PENDING_APPROVAL, Scene.LIVE_ENDED -> PlaybackState.STOPPED
+                                        else -> PlaybackState.PLAYING
+                                    },
+                                    lastError = if (scene == Scene.LIVE_ERROR) {
+                                        "Synthetic decoder failure: retry this song"
                                     } else {
-                                        PlaybackState.PLAYING
+                                        null
                                     },
                                     pendingJoinRequests = if (scene == Scene.PENDING_APPROVAL) {
                                         listOf(pending)
@@ -206,19 +218,32 @@ class WorkflowScreenshotCaptureTest {
                                 onOpenConnectionHelp = {},
                                 onAddDemoJoinRequest = {},
                             )
+                            Scene.CLIENT_INVITE_CODE, Scene.CLIENT_INVITE_CODE_LARGE,
                             Scene.CLIENT_RECOVERY -> SessionJoinScreen(
                                 uiState = state.copy(
                                     selectedRole = AppRole.LISTENER,
                                     selectedSession = session,
                                     discoveredSessions = listOf(session),
-                                    listenerState = ListenerLifecycleState.ERROR,
+                                    listenerState = if (scene == Scene.CLIENT_RECOVERY) {
+                                        ListenerLifecycleState.ERROR
+                                    } else {
+                                        ListenerLifecycleState.SESSION_SELECTED
+                                    },
                                     connectionProgress = ConnectionProgressState(
-                                        currentState = ListenerLifecycleState.ERROR,
+                                        currentState = if (scene == Scene.CLIENT_RECOVERY) {
+                                            ListenerLifecycleState.ERROR
+                                        } else {
+                                            ListenerLifecycleState.SESSION_SELECTED
+                                        },
                                         discovered = true,
-                                        requested = true,
-                                        inviteCode = "1111",
+                                        requested = scene == Scene.CLIENT_RECOVERY,
+                                        inviteCode = if (scene == Scene.CLIENT_RECOVERY) "1111" else "4826",
                                     ),
-                                    lastError = "Incorrect invite code",
+                                    lastError = if (scene == Scene.CLIENT_RECOVERY) {
+                                        "Incorrect invite code"
+                                    } else {
+                                        null
+                                    },
                                 ),
                                 onInviteCodeChanged = {},
                                 onJoin = {},
