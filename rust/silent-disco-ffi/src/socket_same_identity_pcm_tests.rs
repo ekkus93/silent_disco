@@ -130,7 +130,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("capture tap"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
     let native = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
-    let mut captured = Vec::new();
+    let captured = std::cell::RefCell::new(Vec::new());
     let mut callback = |frames: u32| {
         let mut output = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
         let mut supplied = 0;
@@ -151,7 +151,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
             output,
             "native callback and capture tap must agree"
         );
-        captured.extend(output);
+        captured.borrow_mut().extend(output);
     };
 
     let mut replacement: Option<Box<dyn ListenerTransportNode>> = None;
@@ -343,8 +343,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     assert_eq!(boundaries, [480, 960]);
     callback(382);
     callback(480);
-    drop(callback);
-    assert_eq!(captured.len(), reference.len());
+    assert_eq!(captured.borrow().len(), reference.len());
     let mut expected: Vec<f32> = reference
         .iter()
         .map(|sample| f32::from(*sample) / 32768.0)
@@ -357,7 +356,10 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
             expected[index] = f32::from(i16::try_from(faded).expect("fade sample")) / 32768.0;
         }
     }
-    assert_eq!(captured, expected, "exact PCM across takeover and boundary");
+    assert_eq!(
+        *captured.borrow(), expected,
+        "exact PCM across takeover and boundary"
+    );
     assert_eq!(pump.diagnostics().packets_emitted, 6);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
     assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 4);
