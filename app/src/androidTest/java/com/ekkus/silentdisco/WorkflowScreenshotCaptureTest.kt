@@ -42,6 +42,7 @@ import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
@@ -327,8 +328,8 @@ class WorkflowScreenshotCaptureTest {
             val repeatDigest = MessageDigest.getInstance("SHA-256")
                 .digest(encoded.toByteArray())
                 .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
-            assertThat(repeatDigest)
-                .named("repeat rendering of ${target.basename}")
+            assertWithMessage("repeat rendering of ${target.basename}")
+                .that(repeatDigest)
                 .isEqualTo(originalDigests.getValue(target))
         }
     }
