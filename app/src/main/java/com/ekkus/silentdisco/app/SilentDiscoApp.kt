@@ -397,7 +397,7 @@ fun SilentDiscoApp(
             composable(AppRoutes.HostReady) {
                 HostReadyScreen(
                     uiState = uiState,
-                    onBack = { navController.popBackStack() },
+                    onBack = { navController.returnFromHostReadyToAccess() },
                     onStartSession = viewModel::createHostSession,
                     onOpenSettings = ::openSystemSettings,
                     onShareSupportReport = ::shareSupportReport,

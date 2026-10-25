@@ -61,6 +61,8 @@ fun HostReadyScreen(
         (!inviteCodeRequired || isValidInviteCode(form.inviteCode))
     val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION || startInFlight
     val failed = uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()
+    val permissionFailure = failed &&
+        uiState.lastError.orEmpty().contains("permission", ignoreCase = true)
 
     fun requestStart() {
         if (!startInFlight && valid) {
@@ -83,12 +85,12 @@ fun HostReadyScreen(
         },
         bottomBar = {
             Button(
-                onClick = if (failed && uiState.lastError.orEmpty().contains("permission", ignoreCase = true)) {
+                onClick = if (permissionFailure) {
                     onOpenSettings
                 } else {
                     ::requestStart
                 },
-                enabled = (valid && !isStarting) || failed,
+                enabled = (valid && !isStarting) || permissionFailure,
                 modifier = Modifier.fillMaxWidth()
                     .padding(horizontal = WorkflowSpacing.large, vertical = WorkflowSpacing.medium)
                     .heightIn(min = WorkflowTouchTarget.minimum)
@@ -97,7 +99,7 @@ fun HostReadyScreen(
                 Text(
                     when {
                         isStarting -> "Starting…"
-                        failed && uiState.lastError.orEmpty().contains("permission", ignoreCase = true) -> "Open Settings"
+                        permissionFailure -> "Open Settings"
                         failed -> "Retry"
                         else -> "Start hosting"
                     },
@@ -132,7 +134,6 @@ fun HostReadyScreen(
                 SummaryCard("Invite code", form.inviteCode.ifBlank { "Required" })
             }
             if (failed) {
-                val permissionFailure = uiState.lastError.orEmpty().contains("permission", ignoreCase = true)
                 Card(modifier = Modifier.fillMaxWidth().testTag("host-start-problem")) {
                     Column(modifier = Modifier.padding(WorkflowSpacing.large), verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.small)) {
                         Text(

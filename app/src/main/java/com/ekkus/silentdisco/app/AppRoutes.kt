@@ -28,6 +28,18 @@ fun NavHostController.navigateSingleTop(route: String) {
     }
 }
 
+/**
+ * Ready -> Access starts a fresh Access destination. Reusing the prior
+ * back-stack entry preserves its saveable Next-submission lock and strands
+ * the user on a disabled Review button after they press Back.
+ */
+fun NavHostController.returnFromHostReadyToAccess() {
+    navigate(AppRoutes.HostAccessSetup) {
+        popUpTo(AppRoutes.HostAccessSetup) { inclusive = true }
+        launchSingleTop = true
+    }
+}
+
 fun NavHostController.navigateHomeAndClearWorkflow() {
     navigate(AppRoutes.Home) {
         popUpTo(graph.findStartDestination().id) {
