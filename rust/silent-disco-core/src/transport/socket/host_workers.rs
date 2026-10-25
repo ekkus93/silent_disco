@@ -271,11 +271,7 @@ fn register_peer(
                 // A replacement socket for the same device may have been
                 // authorized while this retired reader was unwinding. Never
                 // let its cleanup remove the replacement's live UDP route.
-                let _ = remove_route_if_current(
-                    &routes_for_reader,
-                    &device_id,
-                    reader_peer.number,
-                );
+                let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
             send_event(

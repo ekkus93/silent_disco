@@ -199,7 +199,10 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
             1,
         );
     }
-    assert_tcp_controls(first.as_mut(), &[start.clone(), boundary.clone(), pause.clone()]);
+    assert_tcp_controls(
+        first.as_mut(),
+        &[start.clone(), boundary.clone(), pause.clone()],
+    );
 
     // Retiring the old TCP identity must also retire its UDP route before
     // the same device can authorize a new socket. No ghost audio delivery.
@@ -211,7 +214,8 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
         .expect("first peer route")
         .peer
         .number;
-    host.disconnect_peer(&device).expect("retire first connection");
+    host.disconnect_peer(&device)
+        .expect("retire first connection");
     first.shutdown().expect("close first socket");
     let packet = audio_frame(&session, 0);
     assert_eq!(
@@ -234,7 +238,7 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
         &device,
         first_peer_number,
     ));
-    assert_eq!(
+    assert!(
         host.routes
             .lock()
             .expect("replacement route")
@@ -243,7 +247,6 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
             .peer
             .active
             .load(std::sync::atomic::Ordering::Acquire),
-        true,
     );
     resumed.host_start_time_ms = MonotonicMillis::new(1_200);
     let resume = ControlMessage::StreamStart(resumed.clone());
@@ -262,11 +265,14 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
             .successful_peers,
         1,
     );
-    wait_for_frame(second.as_mut(), TransportChannel::Audio, |frame| frame == &packet);
+    wait_for_frame(second.as_mut(), TransportChannel::Audio, |frame| {
+        frame == &packet
+    });
 
     // Reconnecting again after Resume must replay the new anchor and queue,
     // not the earlier Pause or the retired original start.
-    host.disconnect_peer(&device).expect("retire second connection");
+    host.disconnect_peer(&device)
+        .expect("retire second connection");
     second.shutdown().expect("close second socket");
     let mut third = connect_authorized(&mut host, factory, &clock, &session, "returning-listener");
     assert_tcp_controls(third.as_mut(), &[resume.clone(), boundary.clone()]);
@@ -277,7 +283,8 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     });
     host.broadcast_control(&stop).expect("stop current stream");
     assert_tcp_controls(third.as_mut(), std::slice::from_ref(&stop));
-    host.disconnect_peer(&device).expect("retire stopped connection");
+    host.disconnect_peer(&device)
+        .expect("retire stopped connection");
     third.shutdown().expect("close stopped socket");
 
     let sent_at_stop = host.counters().control_frames_sent;
@@ -288,7 +295,8 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
         "Stop clears the snapshot even for a returning device",
     );
     host.broadcast_control(&start).expect("drop delayed start");
-    host.broadcast_control(&boundary).expect("drop delayed boundary");
+    host.broadcast_control(&boundary)
+        .expect("drop delayed boundary");
     assert_eq!(host.counters().control_frames_sent, sent_at_stop);
 
     // Fresh Play may intentionally reuse the stream ID with a newer anchor.
@@ -310,7 +318,9 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
             .successful_peers,
         1,
     );
-    wait_for_frame(fourth.as_mut(), TransportChannel::Audio, |frame| frame == &packet);
+    wait_for_frame(fourth.as_mut(), TransportChannel::Audio, |frame| {
+        frame == &packet
+    });
     fourth.shutdown().expect("final listener shutdown");
     host.shutdown().expect("host shutdown");
 }
