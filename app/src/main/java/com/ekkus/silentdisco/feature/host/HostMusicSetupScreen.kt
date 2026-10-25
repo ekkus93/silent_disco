@@ -23,6 +23,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
@@ -113,7 +115,9 @@ fun HostMusicSetupScreen(
                                         modifier = Modifier.sizeIn(
                                             minWidth = WorkflowTouchTarget.minimum,
                                             minHeight = WorkflowTouchTarget.minimum,
-                                        ),
+                                        ).semantics {
+                                            contentDescription = "Move ${audio.displayName} up, song ${index + 1} of ${playlist.size}"
+                                        }.testTag("host-music-move-up-$index"),
                                     ) {
                                         Text("↑", color = MaterialTheme.colorScheme.primary)
                                     }
@@ -123,7 +127,9 @@ fun HostMusicSetupScreen(
                                         modifier = Modifier.sizeIn(
                                             minWidth = WorkflowTouchTarget.minimum,
                                             minHeight = WorkflowTouchTarget.minimum,
-                                        ),
+                                        ).semantics {
+                                            contentDescription = "Move ${audio.displayName} down, song ${index + 1} of ${playlist.size}"
+                                        }.testTag("host-music-move-down-$index"),
                                     ) {
                                         Text("↓", color = MaterialTheme.colorScheme.primary)
                                     }
@@ -132,7 +138,9 @@ fun HostMusicSetupScreen(
                                         modifier = Modifier.sizeIn(
                                             minWidth = WorkflowTouchTarget.minimum,
                                             minHeight = WorkflowTouchTarget.minimum,
-                                        ),
+                                        ).semantics {
+                                            contentDescription = "Remove ${audio.displayName}, song ${index + 1} of ${playlist.size}"
+                                        }.testTag("host-music-remove-$index"),
                                     ) {
                                         Text("×", color = MaterialTheme.colorScheme.error)
                                     }
