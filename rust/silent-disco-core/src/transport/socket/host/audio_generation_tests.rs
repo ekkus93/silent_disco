@@ -9,7 +9,8 @@ use crate::transport::test_support::{
     wait_for_control_from, wait_for_frame,
 };
 use crate::transport::{
-    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock, SocketTransportFactory, TransportChannel, TransportFactory,
+    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
+    SocketTransportFactory, TransportChannel, TransportFactory,
 };
 
 use super::SocketHostTransport;
