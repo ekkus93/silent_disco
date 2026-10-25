@@ -496,25 +496,41 @@ fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_
         host.broadcast_control(message).expect("cache timeline");
     }
 
-    let mut first = connect_authorized(&mut host, factory, &clock, &session, "returning-multitrack");
+    let mut first =
+        connect_authorized(&mut host, factory, &clock, &session, "returning-multitrack");
     assert_tcp_controls(
         first.as_mut(),
-        &[original.clone(), boundaries[0].clone(), boundaries[1].clone(), paused.clone()],
+        &[
+            original.clone(),
+            boundaries[0].clone(),
+            boundaries[1].clone(),
+            paused.clone(),
+        ],
     );
     let device = id_device("returning-multitrack");
-    host.disconnect_peer(&device).expect("disconnect paused listener");
+    host.disconnect_peer(&device)
+        .expect("disconnect paused listener");
     first.shutdown().expect("retire paused socket");
 
-    let mut second = connect_authorized(&mut host, factory, &clock, &session, "returning-multitrack");
+    let mut second =
+        connect_authorized(&mut host, factory, &clock, &session, "returning-multitrack");
     assert_tcp_controls(
         second.as_mut(),
-        &[original.clone(), boundaries[0].clone(), boundaries[1].clone(), paused.clone()],
+        &[
+            original.clone(),
+            boundaries[0].clone(),
+            boundaries[1].clone(),
+            paused.clone(),
+        ],
     );
     resumed.host_start_time_ms = MonotonicMillis::new(1_200);
     resumed.current_display_name = Some("Resumed first song".to_owned());
     let resume = ControlMessage::StreamStart(resumed.clone());
     assert_eq!(
-        host.broadcast_control(&resume).expect("resume").report.successful_peers,
+        host.broadcast_control(&resume)
+            .expect("resume")
+            .report
+            .successful_peers,
         1
     );
     assert_tcp_controls(second.as_mut(), std::slice::from_ref(&resume));
@@ -535,7 +551,10 @@ fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_
         audio.host_presentation_time_ms = MonotonicMillis::new(1_200 + sequence);
         assert_eq!(audio.first_sample_index.get(), sequence * 2);
         assert_eq!(
-            host.broadcast_audio(&packet).expect("UDP broadcast").report.successful_peers,
+            host.broadcast_audio(&packet)
+                .expect("UDP broadcast")
+                .report
+                .successful_peers,
             2
         );
         for listener in [&mut second, &mut live] {
@@ -557,7 +576,12 @@ fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_
     let mut late = connect_authorized(&mut host, factory, &clock, &session, "multitrack-late");
     assert_tcp_controls(
         late.as_mut(),
-        &[resume.clone(), boundaries[0].clone(), boundaries[1].clone(), pause_again.clone()],
+        &[
+            resume.clone(),
+            boundaries[0].clone(),
+            boundaries[1].clone(),
+            pause_again.clone(),
+        ],
     );
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
@@ -569,11 +593,27 @@ fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_
         assert_tcp_controls(listener.as_mut(), std::slice::from_ref(&stop));
     }
     let sent_at_stop = host.counters().control_frames_sent;
-    let mut stopped_join = connect_authorized(&mut host, factory, &clock, &session, "after-multitrack-stop");
+    let mut stopped_join = connect_authorized(
+        &mut host,
+        factory,
+        &clock,
+        &session,
+        "after-multitrack-stop",
+    );
     assert_eq!(host.counters().control_frames_sent, sent_at_stop);
-    for stale in [&original, &boundaries[0], &boundaries[1], &paused, &pause_again, &stop] {
+    for stale in [
+        &original,
+        &boundaries[0],
+        &boundaries[1],
+        &paused,
+        &pause_again,
+        &stop,
+    ] {
         assert_eq!(
-            host.broadcast_control(stale).expect("reject retired control").report.intended_peers,
+            host.broadcast_control(stale)
+                .expect("reject retired control")
+                .report
+                .intended_peers,
             0
         );
     }
@@ -583,7 +623,10 @@ fn real_socket_multitrack_reconnect_preserves_boundary_and_udp_timeline_through_
     resumed.host_start_time_ms = MonotonicMillis::new(1_500);
     let replay = ControlMessage::StreamStart(resumed);
     assert_eq!(
-        host.broadcast_control(&replay).expect("fresh Play").report.successful_peers,
+        host.broadcast_control(&replay)
+            .expect("fresh Play")
+            .report
+            .successful_peers,
         4
     );
     for listener in [&mut second, &mut live, &mut late, &mut stopped_join] {
