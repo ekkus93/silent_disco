@@ -18,9 +18,9 @@ use crate::runtime::NetworkEndpoint;
 use super::super::{HostTransportConfig, HostTransportNode, TransportClock, TransportEvent};
 use super::shared::CounterState;
 
-mod authorization;
 #[cfg(test)]
 mod audio_generation_tests;
+mod authorization;
 #[cfg(test)]
 mod authorization_order_tests;
 mod bind;
@@ -223,7 +223,7 @@ impl PlaybackControls {
 
     /// Audio is bound to the same authoritative generation as TCP controls.
     /// Older low-level transport callers can send fixture audio before any
-    /// StreamStart, but once playback controls are established, a paused or
+    /// `StreamStart`, but once playback controls are established, a paused or
     /// retired producer must never leak its buffered UDP frames.
     pub(super) fn permits_audio(&self, packet: &AudioDatagram) -> bool {
         match &self.stream_start {

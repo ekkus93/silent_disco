@@ -1,5 +1,5 @@
 //! Real TCP/UDP regression for producer packets racing authoritative
-//! Pause, replacement StreamStart, Stop, and replay to a live listener.
+//! Pause, replacement `StreamStart`, Stop, and replay to a live listener.
 use std::sync::Arc;
 
 use crate::domain::{MonotonicMillis, StreamId};
@@ -9,8 +9,7 @@ use crate::transport::test_support::{
     wait_for_control_from, wait_for_frame,
 };
 use crate::transport::{
-    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
-    ManualTransportClock, SocketTransportFactory, TransportChannel, TransportFactory,
+    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock, SocketTransportFactory, TransportChannel, TransportFactory,
 };
 
 use super::SocketHostTransport;
@@ -28,11 +27,7 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     let factory = SocketTransportFactory;
     let mut listener = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock,
         )
         .expect("connect listener");
@@ -53,7 +48,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     let first_packet = audio_frame(&session, 0);
     assert_eq!(
         host.broadcast_control(&original)
-            .expect("start playback").report.successful_peers,
+            .expect("start playback")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
@@ -61,7 +58,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     });
     assert_eq!(
         host.broadcast_audio(&first_packet)
-            .expect("first generation audio").report.successful_peers,
+            .expect("first generation audio")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
@@ -79,7 +78,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     });
     assert_eq!(
         host.broadcast_audio(&audio_frame(&session, 1))
-            .expect("paused producer packet").report.intended_peers,
+            .expect("paused producer packet")
+            .report
+            .intended_peers,
         0,
         "paused audio must not leave the host UDP socket"
     );
@@ -92,7 +93,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     let second_packet = audio_frame(&session, 1);
     assert_eq!(
         host.broadcast_audio(&second_packet)
-            .expect("resumed audio").report.successful_peers,
+            .expect("resumed audio")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
@@ -110,7 +113,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     });
     assert_eq!(
         host.broadcast_audio(&audio_frame(&session, 2))
-            .expect("retired stream audio").report.intended_peers,
+            .expect("retired stream audio")
+            .report
+            .intended_peers,
         0
     );
     let mut current_packet = audio_frame(&session, 2);
@@ -120,7 +125,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     pcm.stream_id = active.stream_id.clone();
     assert_eq!(
         host.broadcast_audio(&current_packet)
-            .expect("replacement audio").report.successful_peers,
+            .expect("replacement audio")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
@@ -139,7 +146,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     for frame in [&first_packet, &current_packet] {
         assert_eq!(
             host.broadcast_audio(frame)
-                .expect("reject UDP after Stop").report.intended_peers,
+                .expect("reject UDP after Stop")
+                .report
+                .intended_peers,
             0,
             "retired producer cannot deliver frames after Stop"
         );
@@ -156,7 +165,9 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     });
     assert_eq!(
         host.broadcast_audio(&current_packet)
-            .expect("new generation audio").report.successful_peers,
+            .expect("new generation audio")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
