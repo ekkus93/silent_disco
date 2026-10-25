@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco
 
+import android.os.SystemClock
 import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
@@ -36,11 +37,13 @@ class HostTransportLateJoinInstrumentedTest {
                 audioPort = ports[2],
                 sessionId = sessionId,
             )
+            // Host controls and the production socket snapshot now share
+            // Android's boot-relative elapsedRealtime clock domain.
+            val hostStartTimeMs = SystemClock.elapsedRealtime() + 60_000L
             host.broadcastStreamStart(
                 streamId = "active-stream",
-                // The production socket clock starts at bind. Leave enough time for
-                // a slow emulator to authorize the listener before the first boundary.
-                hostStartTimeMs = 60_000,
+                // Leave time for a slow emulator to authorize before the boundary.
+                hostStartTimeMs = hostStartTimeMs,
                 sampleRate = 48_000,
                 channels = 2,
                 samplesPerPacket = 240,
@@ -92,7 +95,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted }).isEqualTo(
                 FfiListenerTransportEvent.StreamStarted(
                     streamId = "active-stream",
-                    hostStartTimeMs = 60_000uL,
+                    hostStartTimeMs = hostStartTimeMs.toULong(),
                     sampleRate = 48_000u,
                     channels = 2u,
                     samplesPerPacket = 240u,
@@ -117,7 +120,7 @@ class HostTransportLateJoinInstrumentedTest {
                 channels = 2,
                 samplesPerPacket = 240,
                 firstSampleIndex = 24_000,
-                hostPresentationTimeMs = 60_500,
+                hostPresentationTimeMs = hostStartTimeMs + 500L,
                 payload = ByteArray(240 * 2 * 2),
             )
             val audio = awaitListenerEvent(listener) {
@@ -129,7 +132,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(audio.channels).isEqualTo(2u.toUShort())
             assertThat(audio.samplesPerPacket).isEqualTo(240u)
             assertThat(audio.firstSampleIndex).isEqualTo(24_000uL)
-            assertThat(audio.hostPresentationTimeMs).isEqualTo(60_500uL)
+            assertThat(audio.hostPresentationTimeMs).isEqualTo((hostStartTimeMs + 500L).toULong())
             assertThat(audio.payload.toList()).containsExactlyElementsIn(ByteArray(240 * 2 * 2).toList())
         } finally {
             syncKeepAlive?.cancelAndJoin()
@@ -148,11 +151,12 @@ class HostTransportLateJoinInstrumentedTest {
         var listener: FfiListenerTransportHandle? = null
         try {
             host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
-            // The production transport clock begins at bind. The first
-            // boundary is already audible, while the second is far enough
-            // ahead to remain pending even on a loaded hosted emulator.
+            // This stream started one second ago on the *same* boot-relative
+            // clock used by the Android host packetizer and sync responses.
+            // The first boundary is audible; the second remains in the future.
+            val hostStartTimeMs = SystemClock.elapsedRealtime() - 1_000L
             host.broadcastStreamStart(
-                "active-stream", 0, 48_000, 2, 240, "entry-first", "First song",
+                "active-stream", hostStartTimeMs, 48_000, 2, 240, "entry-first", "First song",
             )
             host.broadcastTrackBoundary("active-stream", 240, "entry-second", "Second song")
             host.broadcastTrackBoundary("active-stream", 2_400_000, "entry-third", "Third song")
@@ -181,7 +185,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
                     FfiListenerTransportEvent.StreamStarted(
-                        "active-stream", 0uL, 48_000u, 2u, 240u,
+                        "active-stream", hostStartTimeMs.toULong(), 48_000u, 2u, 240u,
                         "entry-second", "Second song",
                     ),
                 )

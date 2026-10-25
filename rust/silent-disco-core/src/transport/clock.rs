@@ -10,13 +10,25 @@ pub trait TransportClock: Send + Sync + 'static {
 #[derive(Debug)]
 pub struct SystemTransportClock {
     origin: Instant,
+    initial_millis: u64,
+}
+
+impl SystemTransportClock {
+    /// Anchors the native monotonic clock to an existing platform clock
+    /// domain. Android hosts supply elapsedRealtime at transport bind so
+    /// cached late-join playback is compared against actual host timestamps.
+    #[must_use]
+    pub fn starting_at(initial_millis: u64) -> Self {
+        Self {
+            origin: Instant::now(),
+            initial_millis,
+        }
+    }
 }
 
 impl Default for SystemTransportClock {
     fn default() -> Self {
-        Self {
-            origin: Instant::now(),
-        }
+        Self::starting_at(0)
     }
 }
 
@@ -24,7 +36,7 @@ impl TransportClock for SystemTransportClock {
     fn now(&self) -> MonotonicMillis {
         let elapsed = self.origin.elapsed().as_millis();
         let millis = u64::try_from(elapsed).unwrap_or(u64::MAX);
-        MonotonicMillis::new(millis)
+        MonotonicMillis::new(self.initial_millis.saturating_add(millis))
     }
 }
 
@@ -53,5 +65,25 @@ impl ManualTransportClock {
 impl TransportClock for ManualTransportClock {
     fn now(&self) -> MonotonicMillis {
         MonotonicMillis::new(self.now_ms.load(Ordering::SeqCst))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SystemTransportClock, TransportClock};
+
+    #[test]
+    fn anchored_clock_uses_platform_timestamp_without_resetting_to_zero() {
+        let anchor = 87_654_321_u64;
+        let clock = SystemTransportClock::starting_at(anchor);
+        assert!(clock.now().get() >= anchor);
+        assert!(clock.now().get() < anchor + 10_000);
+        assert!(SystemTransportClock::default().now().get() < 10_000);
+    }
+
+    #[test]
+    fn anchored_clock_saturates_instead_of_wrapping_near_u64_max() {
+        let clock = SystemTransportClock::starting_at(u64::MAX);
+        assert_eq!(clock.now().get(), u64::MAX);
     }
 }

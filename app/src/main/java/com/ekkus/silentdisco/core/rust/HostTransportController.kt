@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.core.rust
 
+import android.os.SystemClock
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportException
@@ -40,7 +41,10 @@ class HostTransportController(
     /** Opens the native host transport; replaced only by JVM tests that record broadcasts. */
     private val bindHandle: (String, UShort, UShort, UShort, String) -> FfiHostTransportHandle =
         { localAddress, controlPort, syncPort, audioPort, sessionId ->
-            FfiHostTransportHandle.bind(localAddress, controlPort, syncPort, audioPort, sessionId)
+            FfiHostTransportHandle.bindWithHostClock(
+                localAddress, controlPort, syncPort, audioPort, sessionId,
+                SystemClock.elapsedRealtime().toULong(),
+            )
         },
 ) : AutoCloseable {
     private val handleRef = AtomicReference<FfiHostTransportHandle?>(null)

@@ -65,6 +65,26 @@ impl FfiHostTransportHandle {
         audio_port: u16,
         session_id: String,
     ) -> Result<Arc<Self>, FfiHostTransportError> {
+        Self::bind_with_host_clock(local_address, control_port, sync_port, audio_port, session_id, 0)
+    }
+
+    /// Binds using Android's boot-relative elapsedRealtime clock domain.
+    /// Playback controls, PCM presentation, sync replies and authorization
+    /// snapshots must all use the same host clock. The legacy constructor
+    /// remains for desktop and existing relative-clock callers.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned String parameters at the foreign boundary"
+    )]
+    #[uniffi::constructor]
+    pub fn bind_with_host_clock(
+        local_address: String,
+        control_port: u16,
+        sync_port: u16,
+        audio_port: u16,
+        session_id: String,
+        host_now_elapsed_ms: u64,
+    ) -> Result<Arc<Self>, FfiHostTransportError> {
         let bind_address: IpAddr = local_address.parse().map_err(|_| {
             FfiHostTransportError::InvalidConfiguration(
                 "local bind address is malformed".to_owned(),
@@ -86,7 +106,11 @@ impl FfiHostTransportHandle {
             max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
             peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
         };
-        let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
+        let clock: Arc<dyn TransportClock> = Arc::new(if host_now_elapsed_ms == 0 {
+            SystemTransportClock::default()
+        } else {
+            SystemTransportClock::starting_at(host_now_elapsed_ms)
+        });
         let transport = production_transport_factory().bind_host(config, clock)?;
         Ok(Arc::new(Self {
             inner: Mutex::new(Some(Inner {
