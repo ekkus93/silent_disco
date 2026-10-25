@@ -65,7 +65,14 @@ impl FfiHostTransportHandle {
         audio_port: u16,
         session_id: String,
     ) -> Result<Arc<Self>, FfiHostTransportError> {
-        Self::bind_with_host_clock(local_address, control_port, sync_port, audio_port, session_id, 0)
+        Self::bind_with_host_clock(
+            local_address,
+            control_port,
+            sync_port,
+            audio_port,
+            session_id,
+            0,
+        )
     }
 
     /// Binds using Android's boot-relative elapsedRealtime clock domain.
