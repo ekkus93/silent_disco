@@ -95,7 +95,7 @@ impl PlaybackControls {
                     && u128::from(boundary.first_sample_index.get()) * 1_000 <= played_samples
             })
             .map(|boundary| boundary.first_sample_index.get())
-            .last();
+            .next_back();
         let Some(confirmed_index) = confirmed else {
             return;
         };
