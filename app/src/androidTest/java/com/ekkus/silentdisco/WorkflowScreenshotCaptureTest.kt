@@ -42,6 +42,7 @@ import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 import com.google.common.truth.Truth.assertThat
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import org.junit.Rule
@@ -287,6 +288,7 @@ class WorkflowScreenshotCaptureTest {
         directory.listFiles()?.forEach { assertThat(it.delete()).isTrue() }
         val manifest = mutableListOf("scene\twidth_px\theight_px\tsha256")
         val hashes = mutableSetOf<String>()
+        val originalDigests = mutableMapOf<Scene, String>()
         for (target in Scene.entries) {
             compose.runOnIdle { scene = target }
             compose.waitForIdle()
@@ -303,9 +305,31 @@ class WorkflowScreenshotCaptureTest {
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
                 .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
             assertThat(hashes.add(digest)).isTrue()
+            originalDigests[target] = digest
             manifest += "${target.basename}\t${bitmap.width}\t${bitmap.height}\t$digest"
         }
         File(directory, "manifest.tsv").writeText(manifest.joinToString("\n") + "\n")
         assertThat(directory.listFiles()?.size).isEqualTo(Scene.entries.size + 1)
+
+        // A single screenshot pass can hide retained Compose state or a
+        // transition that has not settled. Revisit every state in reverse
+        // order, without resetting the composition, and require identical
+        // rendered PNG bytes. The approved pixel-golden review is separate.
+        for (target in Scene.entries.reversed()) {
+            compose.runOnIdle { scene = target }
+            compose.waitForIdle()
+            val bitmap = compose.onNodeWithTag("visual-review-canvas")
+                .captureToImage().asAndroidBitmap()
+            assertThat(bitmap.width).isEqualTo(target.width)
+            assertThat(bitmap.height).isEqualTo(target.height)
+            val encoded = ByteArrayOutputStream()
+            assertThat(bitmap.compress(Bitmap.CompressFormat.PNG, 100, encoded)).isTrue()
+            val repeatDigest = MessageDigest.getInstance("SHA-256")
+                .digest(encoded.toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+            assertThat(repeatDigest)
+                .named("repeat rendering of ${target.basename}")
+                .isEqualTo(originalDigests.getValue(target))
+        }
     }
 }
