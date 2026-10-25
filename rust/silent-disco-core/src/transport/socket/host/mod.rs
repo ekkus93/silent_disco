@@ -12,13 +12,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::domain::{DeviceId, SessionId};
-use crate::protocol::{ControlMessage, Pause, StreamStart, TrackBoundary};
+use crate::protocol::{AudioDatagram, ControlMessage, Pause, StreamStart, TrackBoundary};
 use crate::runtime::NetworkEndpoint;
 
 use super::super::{HostTransportConfig, HostTransportNode, TransportClock, TransportEvent};
 use super::shared::CounterState;
 
 mod authorization;
+#[cfg(test)]
+mod audio_generation_tests;
 #[cfg(test)]
 mod authorization_order_tests;
 mod bind;
@@ -216,6 +218,21 @@ impl PlaybackControls {
             | ControlMessage::Pause(_)
             | ControlMessage::Stop(_) => false,
             _ => true,
+        }
+    }
+
+    /// Audio is bound to the same authoritative generation as TCP controls.
+    /// Older low-level transport callers can send fixture audio before any
+    /// StreamStart, but once playback controls are established, a paused or
+    /// retired producer must never leak its buffered UDP frames.
+    pub(super) fn permits_audio(&self, packet: &AudioDatagram) -> bool {
+        match &self.stream_start {
+            Some(start) => {
+                start.session_id == packet.session_id
+                    && start.stream_id == packet.stream_id
+                    && self.pause.is_none()
+            }
+            None => self.last_stopped_control.is_none(),
         }
     }
 

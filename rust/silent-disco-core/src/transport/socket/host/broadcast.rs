@@ -34,6 +34,32 @@ impl SocketHostTransport {
                 "outbound datagram belongs to a different session",
             ));
         }
+        // A Stop, Pause or replacement StreamStart and an audio broadcast
+        // must have a single observable order. Hold the same guard as TCP
+        // control broadcasts and late-join authorization through UDP send.
+        let _playback_guard = if channel == TransportChannel::Audio {
+            Some(self.control_delivery.lock().map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "playback delivery ordering lock is poisoned",
+                )
+            })?)
+        } else {
+            None
+        };
+        if let ProtocolFrame::Audio(packet) = frame {
+            let allowed = self.playback_controls.lock().map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "playback control cache is poisoned",
+                )
+            })?.permits_audio(packet);
+            if !allowed {
+                return TransportDelivery::new(0, 0, 0, 0);
+            }
+        }
         let bytes =
             encode_frame(frame).map_err(|error| TransportError::protocol(channel, &error))?;
         let routes = self.authorized_routes()?;
