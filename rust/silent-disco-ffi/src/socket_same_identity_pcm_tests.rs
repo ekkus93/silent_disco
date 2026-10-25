@@ -258,12 +258,11 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 }
                 boundaries.push(first_sample_index);
                 boundary_controls.push(boundary);
+                let pause_anchor = if first_sample_index == 480 { 1_010 } else { 1_220 };
                 let pause = ControlMessage::Pause(Pause {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
-                    host_pause_time_ms: MonotonicMillis::new(
-                        if first_sample_index == 480 { 1_010 } else { 1_220 },
-                    ),
+                    host_pause_time_ms: MonotonicMillis::new(pause_anchor),
                 });
                 assert_eq!(
                     host.broadcast_control(&pause)
@@ -298,7 +297,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                     assert!(recv_control(returning.as_mut()) == *cached);
                 }
                 assert!(recv_control(returning.as_mut()) == pause);
-                if let Some(old) = replacement.take() {
+                if let Some(mut old) = replacement.take() {
                     old.shutdown().expect("retire previous replacement");
                 } else {
                     first.shutdown().expect("retire original socket");
@@ -307,9 +306,8 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 let ControlMessage::StreamStart(mut resumed) = active_start.clone() else {
                     panic!("start fixture");
                 };
-                resumed.host_start_time_ms = MonotonicMillis::new(
-                    if first_sample_index == 480 { 1_200 } else { 1_400 },
-                );
+                let resume_anchor = if first_sample_index == 480 { 1_200 } else { 1_400 };
+                resumed.host_start_time_ms = MonotonicMillis::new(resume_anchor);
                 let resume = ControlMessage::StreamStart(resumed);
                 assert_eq!(
                     host.broadcast_control(&resume)
@@ -319,9 +317,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                     1
                 );
                 assert!(recv_control(returning.as_mut()) == resume);
-                pump.scheduler_mut().set_host_start_time_ms(
-                    if first_sample_index == 480 { 1_200 } else { 1_400 },
-                );
+                pump.scheduler_mut().set_host_start_time_ms(resume_anchor);
                 active_start = resume;
                 replacement = Some(returning);
             }
