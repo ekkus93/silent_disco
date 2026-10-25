@@ -506,7 +506,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         host_stop_time_ms: MonotonicMillis::new(1_420),
     });
     assert_eq!(
-        host.broadcast_control(&stop).expect("Stop old stream").report.successful_peers,
+        host.broadcast_control(&stop)
+            .expect("Stop old stream")
+            .report
+            .successful_peers,
         3,
     );
     for peer in [
@@ -565,7 +568,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         current_display_name: fresh.current_display_name,
     });
     assert_eq!(
-        host.broadcast_control(&play).expect("fresh Play").report.successful_peers,
+        host.broadcast_control(&play)
+            .expect("fresh Play")
+            .report
+            .successful_peers,
         4,
     );
     for peer in [
@@ -591,7 +597,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         target_fill_frames: 4_800,
     })
     .expect("fresh native ring");
-    assert_ne!(replay_token, token, "Stop/Play must retire the prior native token");
+    assert_ne!(
+        replay_token, token,
+        "Stop/Play must retire the prior native token"
+    );
     let mut replay_pump = PlaybackPump::new(
         PlaybackScheduler::new(replay_config, 0.0).expect("replay scheduler"),
         replay_producer,
@@ -605,14 +614,16 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
     .expect("fresh listener pump");
     replay_pump.apply_sync_offset(0.0);
     let replay_tap = Arc::new(CallbackCaptureTap::new(4_800).expect("replay tap"));
-    attach_callback_capture(replay_token, Arc::clone(&replay_tap))
-        .expect("attach replay tap");
+    attach_callback_capture(replay_token, Arc::clone(&replay_tap)).expect("attach replay tap");
     let mut replay_sequence = 0;
     let mut replay_sample = 0;
     let mut replay_boundaries = Vec::new();
     let mut replay_finished = false;
     for _ in 0..32 {
-        match replay_playlist.next_frame(5_000).expect("replay producer frame") {
+        match replay_playlist
+            .next_frame(5_000)
+            .expect("replay producer frame")
+        {
             Some(FfiPlaylistFrame::Audio {
                 sequence,
                 sample_rate,
@@ -639,7 +650,9 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 };
                 assert_eq!(
                     host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
-                        .expect("replay UDP").report.successful_peers,
+                        .expect("replay UDP")
+                        .report
+                        .successful_peers,
                     4,
                 );
                 let received = recv_audio(listener.as_mut());
@@ -651,7 +664,8 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                 ] {
                     assert!(recv_audio(peer) == packet, "all peers receive replay PCM");
                 }
-                replay_pump.scheduler_mut()
+                replay_pump
+                    .scheduler_mut()
                     .submit_packet(received)
                     .expect("schedule fresh PCM");
                 for _ in 0..64 {
@@ -679,8 +693,10 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
                     display_name,
                 });
                 assert_eq!(
-                    host.broadcast_control(&boundary).expect("replay boundary")
-                        .report.successful_peers,
+                    host.broadcast_control(&boundary)
+                        .expect("replay boundary")
+                        .report
+                        .successful_peers,
                     4,
                 );
                 for peer in [
@@ -739,10 +755,16 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
             "replay must not insert silence",
         );
         assert_eq!(supplied, frames);
-        assert_eq!(replay_tap.drain(usize::try_from(frames).expect("frames")), output);
+        assert_eq!(
+            replay_tap.drain(usize::try_from(frames).expect("frames")),
+            output
+        );
         replay_capture.extend(output);
     }
-    assert_eq!(replay_capture, expected, "replay PCM must exactly match both source decodes");
+    assert_eq!(
+        replay_capture, expected,
+        "replay PCM must exactly match both source decodes"
+    );
     assert_eq!(replay_pump.diagnostics().packets_emitted, 4);
     let replay_native =
         usize::try_from(replay_token).expect("replay token") as *const core::ffi::c_void;
