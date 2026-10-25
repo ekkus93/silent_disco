@@ -662,3 +662,70 @@ fn idle_stop_fences_delayed_play_across_stream_ids_without_blocking_fresh_play()
     );
     assert!(cache.snapshot() == vec![play]);
 }
+
+#[test]
+fn paused_resume_prunes_already_audible_boundaries_before_reanchoring_late_join() {
+    let session = SessionId::new("pause-audible-track-session").expect("session");
+    let stream = StreamId::new("pause-audible-track-stream").expect("stream");
+    let start = stream_start(&session, &stream);
+    let first = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(240),
+        entry_id: "second".to_owned(),
+        display_name: "Second song".to_owned(),
+    });
+    let future = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(2_400_000),
+        entry_id: "third".to_owned(),
+        display_name: "Third song".to_owned(),
+    });
+    let paused = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_900),
+    });
+    let mut cache = PlaybackControls::default();
+    for control in [&start, &first, &future, &paused] {
+        assert!(cache.update(control));
+    }
+    let ControlMessage::StreamStart(mut audible_second) = start.clone() else {
+        panic!("start fixture");
+    };
+    audible_second.current_entry_id = Some("second".to_owned());
+    audible_second.current_display_name = Some("Second song".to_owned());
+    assert!(cache.snapshot_at(MonotonicMillis::new(2_000))
+        == vec![
+            ControlMessage::StreamStart(audible_second.clone()),
+            future.clone(),
+            paused,
+        ]);
+
+    // The first boundary was already audible when Pause froze the old
+    // timeline. Moving the Start anchor into the future must not make it
+    // upcoming again for a listener admitted after Resume.
+    let ControlMessage::StreamStart(mut resumed) = start else {
+        panic!("start fixture");
+    };
+    resumed.host_start_time_ms = MonotonicMillis::new(60_000);
+    assert!(cache.update(&ControlMessage::StreamStart(resumed)));
+    assert!(cache.snapshot_at(MonotonicMillis::new(2_500))
+        == vec![
+            ControlMessage::StreamStart(StreamStart {
+                host_start_time_ms: MonotonicMillis::new(60_000),
+                ..audible_second.clone()
+            }),
+            future.clone(),
+        ]);
+    assert!(!cache.update(&first), "retired boundary cannot return");
+    assert!(cache.snapshot_at(MonotonicMillis::new(2_500))
+        == vec![
+            ControlMessage::StreamStart(StreamStart {
+                host_start_time_ms: MonotonicMillis::new(60_000),
+                ..audible_second
+            }),
+            future,
+        ]);
+}

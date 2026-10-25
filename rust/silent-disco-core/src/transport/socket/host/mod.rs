@@ -63,9 +63,33 @@ pub(super) struct PlaybackControls {
     // entire replay generation, not just its first packet. This rejects
     // delayed duplicate and out-of-order UDP from a retired same-ID sender.
     replay_next_packet: Option<(u64, u64)>,
+    // Once a paused stream resumes with a new anchor, previously audible
+    // boundaries must not be replayed or reintroduced by late retransmits.
+    last_applied_boundary_sample_index: Option<u64>,
 }
 
 impl PlaybackControls {
+    fn advance_paused_track(&mut self, resumed: &mut StreamStart) {
+        let (Some(previous), Some(pause)) = (&self.stream_start, &self.pause) else {
+            return;
+        };
+        // Compute which boundaries were audible at the instant Pause froze
+        // the OLD anchor, before installing Resume's shifted start time.
+        let elapsed_ms = pause
+            .host_pause_time_ms
+            .get()
+            .saturating_sub(previous.host_start_time_ms.get());
+        let played_samples = u128::from(elapsed_ms) * u128::from(previous.sample_rate);
+        while self.boundaries.front().is_some_and(|boundary| {
+            u128::from(boundary.first_sample_index.get()) * 1_000 <= played_samples
+        }) {
+            let applied = self.boundaries.pop_front().expect("front boundary exists");
+            self.last_applied_boundary_sample_index = Some(applied.first_sample_index.get());
+            resumed.current_entry_id = Some(applied.entry_id);
+            resumed.current_display_name = Some(applied.display_name);
+        }
+    }
+
     fn retired_control(&self, session: &SessionId, control_time_ms: u64) -> bool {
         self.last_stopped_control
             .as_ref()
@@ -134,15 +158,19 @@ impl PlaybackControls {
                 {
                     return false;
                 }
-                if !is_resume {
+                let mut current_start = start.clone();
+                if is_resume {
+                    self.advance_paused_track(&mut current_start);
+                } else {
                     self.boundaries.clear();
+                    self.last_applied_boundary_sample_index = None;
                     self.last_pause_time_ms = None;
                     if self.last_stopped_control.is_some() {
                         self.awaiting_replay_first_packet = true;
                         self.replay_next_packet = None;
                     }
                 }
-                self.stream_start = Some(start.clone());
+                self.stream_start = Some(current_start);
                 self.pause = None;
                 true
             }
@@ -153,7 +181,9 @@ impl PlaybackControls {
             {
                 // A delayed or conflicting retransmission must not rewind the
                 // timeline replayed to an authorized late-joining listener.
-                if self.boundaries.back().is_some_and(|previous| {
+                if self.last_applied_boundary_sample_index.is_some_and(|applied| {
+                    boundary.first_sample_index.get() <= applied
+                }) || self.boundaries.back().is_some_and(|previous| {
                     boundary.first_sample_index.get() <= previous.first_sample_index.get()
                 }) {
                     false
@@ -209,6 +239,7 @@ impl PlaybackControls {
                 self.last_stopped_control =
                     Some((retired.session_id, stop.host_stop_time_ms.get()));
                 self.boundaries.clear();
+                self.last_applied_boundary_sample_index = None;
                 self.pause = None;
                 self.last_pause_time_ms = None;
                 self.awaiting_replay_first_packet = true;
