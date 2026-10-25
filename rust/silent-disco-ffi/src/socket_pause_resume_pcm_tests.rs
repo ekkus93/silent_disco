@@ -740,7 +740,7 @@ fn paused_boundary_reconnect_preserves_canonical_pcm_and_native_output_token() {
         "old callback must stop after replay begins",
     );
     assert_eq!(retired_supplied, 0);
-    assert_eq!(retired_output, [0.0, 0.0]);
+    assert!(retired_output.iter().all(|sample| sample.to_bits() == 0));
 
     let mut replay_capture = Vec::new();
     for frames in callback_chunks {
