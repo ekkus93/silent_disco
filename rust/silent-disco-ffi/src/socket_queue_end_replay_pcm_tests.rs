@@ -28,8 +28,7 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
     let second = root.join("second.wav");
     let third = root.join("third.wav");
     for (path, value) in [(&first, 3_000), (&second, 7_000), (&third, 9_000)] {
-        fs::write(path, source_wav_format(value, 48_000, 2, 480))
-            .expect("canonical WAV");
+        fs::write(path, source_wav_format(value, 48_000, 2, 480)).expect("canonical WAV");
     }
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("queue-refill-stream").expect("stream");
@@ -88,7 +87,8 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         entry_id: "obsolete-next".to_owned(),
         display_name: "obsolete-next".to_owned(),
     });
-    host.broadcast_control(&stale).expect("ignore retired boundary");
+    host.broadcast_control(&stale)
+        .expect("ignore retired boundary");
     assert_eq!(host.counters().control_frames_sent, sent_after_end);
 
     // Adding songs after natural end must not auto-start. Explicit Play
@@ -98,7 +98,10 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         session.to_string(),
         stream.to_string(),
         2_000,
-        vec![source("refill-second", &second), source("refill-third", &third)],
+        vec![
+            source("refill-second", &second),
+            source("refill-third", &third),
+        ],
     )
     .expect("explicit refill Play");
     let replayed = playback_generation(
