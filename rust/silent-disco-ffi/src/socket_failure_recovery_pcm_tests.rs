@@ -425,12 +425,9 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
     let second = root.join("second.wav");
     let repaired = root.join("repaired.wav");
     let unavailable = root.join("unavailable.wav");
-    fs::write(&first, source_wav_format(3_000, 48_000, 2, 480))
-        .expect("first source");
-    fs::write(&second, source_wav_format(6_000, 44_100, 1, 441))
-        .expect("mixed-rate successor");
-    fs::write(&repaired, source_wav_format(9_000, 48_000, 2, 480))
-        .expect("repaired third source");
+    fs::write(&first, source_wav_format(3_000, 48_000, 2, 480)).expect("first source");
+    fs::write(&second, source_wav_format(6_000, 44_100, 1, 441)).expect("mixed-rate successor");
+    fs::write(&repaired, source_wav_format(9_000, 48_000, 2, 480)).expect("repaired third source");
 
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("failure-after-boundary-stream").expect("stream");
@@ -558,7 +555,10 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
         &[241, 337, 382, 480],
     );
     assert_ne!(recovered.output_token, before.output_token);
-    assert!(recovered.failure.is_none(), "repaired queue reaches natural end");
+    assert!(
+        recovered.failure.is_none(),
+        "repaired queue reaches natural end"
+    );
     assert_eq!(recovered.packets, 6, "fresh sequence starts at zero");
     assert_eq!(recovered.boundaries, [480, 960]);
     assert_eq!(
