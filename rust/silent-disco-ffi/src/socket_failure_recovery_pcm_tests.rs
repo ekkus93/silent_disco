@@ -50,6 +50,7 @@ struct CallbackPass {
 /// One production playback generation, with optional second authorized socket.
 /// The native output token stays unchanged across every packet and boundary.
 #[expect(
+    clippy::too_many_arguments,
     clippy::too_many_lines,
     reason = "one real-socket / production scheduler / callback playback generation"
 )]
@@ -282,13 +283,20 @@ fn expected_pcm(samples: &[i16], ramp: usize) -> Vec<f32> {
                 } else {
                     i32::from(value)
                 };
-                std::iter::repeat_n(f32::from(adjusted as i16) / 32768.0, 2)
+                std::iter::repeat_n(
+                    f32::from(i16::try_from(adjusted).expect("fixture sample")) / 32768.0,
+                    2,
+                )
             })
         })
         .collect()
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one integrated failure/Stop/retry network and callback lifecycle"
+)]
 fn missing_prefetched_source_stops_after_valid_callback_pcm_then_replays_gaplessly() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
