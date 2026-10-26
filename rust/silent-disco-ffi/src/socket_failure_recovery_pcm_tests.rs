@@ -21,7 +21,8 @@ use silent_disco_core::domain::{
     MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
 use silent_disco_core::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart, TrackBoundary,
+    AudioCodec, AudioDatagram, ControlMessage, Pause, ProtocolFrame, Stop, StreamStart,
+    TrackBoundary,
 };
 use silent_disco_core::transport::{HostTransportNode, ListenerTransportNode};
 use std::fs;
@@ -63,6 +64,7 @@ fn playback_generation(
     stream: &StreamId,
     start_ms: u64,
     chunks: &[u32],
+    pause_at_boundary: bool,
 ) -> CallbackPass {
     let metadata = playlist.stream_start();
     let start = ControlMessage::StreamStart(StreamStart {
@@ -127,6 +129,8 @@ fn playback_generation(
     let mut boundaries = Vec::new();
     let mut failure = None;
     let mut completed = false;
+    let mut paused_boundary = false;
+    let mut presentation_shift_ms = 0_u64;
     for _ in 0..64 {
         match playlist.next_frame(5_000) {
             Ok(Some(FfiPlaylistFrame::Audio {
@@ -150,7 +154,9 @@ fn playback_generation(
                     channels,
                     samples_per_packet,
                     first_sample_index: SampleIndex::new(first_sample_index),
-                    host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+                    host_presentation_time_ms: MonotonicMillis::new(
+                        host_presentation_time_ms + presentation_shift_ms,
+                    ),
                     payload,
                 };
                 assert_eq!(
@@ -170,7 +176,7 @@ fn playback_generation(
                     .expect("schedule PCM");
                 for _ in 0..64 {
                     if !matches!(
-                        pump.tick(host_presentation_time_ms),
+                        pump.tick(host_presentation_time_ms + presentation_shift_ms),
                         PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
                     ) {
                         break;
@@ -205,6 +211,65 @@ fn playback_generation(
                     assert!(recv_control(peer) == control);
                 }
                 boundaries.push(first_sample_index);
+                if pause_at_boundary {
+                    assert!(!paused_boundary, "one intentional pause at the first boundary");
+                    // A producer may have decoded successor PCM, but the paused
+                    // host must not leak it over UDP or advance the output token.
+                    let pause = ControlMessage::Pause(Pause {
+                        session_id: session.clone(),
+                        stream_id: stream.clone(),
+                        host_pause_time_ms: MonotonicMillis::new(start_ms + 10),
+                    });
+                    assert_eq!(
+                        host.broadcast_control(&pause).expect("Pause TCP").report.successful_peers,
+                        peer_count
+                    );
+                    assert!(recv_control(listener) == pause);
+                    if let Some(peer) = second.as_deref_mut() {
+                        assert!(recv_control(peer) == pause);
+                    }
+                    let suppressed = AudioDatagram {
+                        session_id: session.clone(),
+                        stream_id: stream.clone(),
+                        sequence: PacketSequence::new(packets),
+                        codec: AudioCodec::PcmS16Le,
+                        sample_rate: 48_000,
+                        channels: 2,
+                        samples_per_packet: 240,
+                        first_sample_index: SampleIndex::new(sample),
+                        host_presentation_time_ms: MonotonicMillis::new(start_ms + 10),
+                        payload: vec![0; 240 * 2 * 2],
+                    };
+                    assert_eq!(
+                        host.broadcast_audio(&ProtocolFrame::Audio(suppressed))
+                            .expect("paused UDP is suppressed")
+                            .report
+                            .intended_peers,
+                        0
+                    );
+                    let count = host.counters().control_frames_sent;
+                    host.broadcast_control(&start).expect("ignore stale pre-pause start");
+                    assert_eq!(host.counters().control_frames_sent, count);
+                    let ControlMessage::StreamStart(mut reanchored) = start.clone() else {
+                        panic!("initial stream start");
+                    };
+                    reanchored.host_start_time_ms = MonotonicMillis::new(start_ms + 200);
+                    let resume = ControlMessage::StreamStart(reanchored);
+                    assert_eq!(
+                        host.broadcast_control(&resume)
+                            .expect("Resume TCP")
+                            .report
+                            .successful_peers,
+                        peer_count
+                    );
+                    assert!(recv_control(listener) == resume);
+                    if let Some(peer) = second.as_deref_mut() {
+                        assert!(recv_control(peer) == resume);
+                    }
+                    pump.scheduler_mut().set_host_start_time_ms(start_ms + 200);
+                    presentation_shift_ms = 200;
+                    paused_boundary = true;
+                }
             }
             Ok(Some(FfiPlaylistFrame::End)) => {
                 completed = true;
@@ -218,6 +283,7 @@ fn playback_generation(
         }
     }
     assert!(completed || failure.is_some(), "producer did not terminate");
+    assert_eq!(paused_boundary, pause_at_boundary, "expected pause/boundary coverage");
     assert_eq!(
         chunks.iter().copied().map(u64::from).sum::<u64>(),
         sample,
@@ -331,6 +397,7 @@ fn missing_prefetched_source_stops_after_valid_callback_pcm_then_replays_gapless
         &stream,
         1_000,
         &[241, 239],
+        false,
     );
     assert_eq!(before.packets, 2, "deliver entire valid track");
 
@@ -391,6 +458,7 @@ fn missing_prefetched_source_stops_after_valid_callback_pcm_then_replays_gapless
         &stream,
         2_000,
         &[241, 337, 382],
+        false,
     );
     assert_ne!(recovered.output_token, before.output_token);
     assert!(recovered.failure.is_none(), "retry must finish cleanly");
@@ -456,6 +524,7 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
         &stream,
         1_000,
         &[241, 337, 382],
+        true,
     );
     assert_eq!(before.packets, 4, "two complete 480-frame sources");
     assert_eq!(before.boundaries, [480], "only the audible boundary");
@@ -473,12 +542,12 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
     );
 
     // The host waits for the final valid sample (960 / 48 kHz = 20 ms),
-    // then retires the failed stream. A post-Stop listener must not
+    // plus the 200 ms Pause/Resume shift, then retires the failed stream. A post-Stop listener must not
     // receive the old start or the already-audible second-track boundary.
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
         stream_id: stream.clone(),
-        host_stop_time_ms: MonotonicMillis::new(1_020),
+        host_stop_time_ms: MonotonicMillis::new(1_220),
     });
     assert_eq!(
         host.broadcast_control(&stop)
@@ -518,7 +587,7 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
         channels: 2,
         samples_per_packet: 240,
         first_sample_index: SampleIndex::new(960),
-        host_presentation_time_ms: MonotonicMillis::new(1_021),
+        host_presentation_time_ms: MonotonicMillis::new(1_221),
         payload: vec![0; 240 * 2 * 2],
     };
     assert_eq!(
@@ -553,6 +622,7 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
         &stream,
         2_000,
         &[241, 337, 382, 480],
+        false,
     );
     assert_ne!(recovered.output_token, before.output_token);
     assert!(
