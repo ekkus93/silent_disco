@@ -235,11 +235,9 @@ pub(super) fn playback_generation(
                     assert!(recv_control(peer) == control);
                 }
                 boundaries.push(first_sample_index);
-                if pause_at_boundary {
-                    assert!(
-                        !paused_boundary,
-                        "one intentional pause at the first boundary"
-                    );
+                if pause_at_boundary && !paused_boundary {
+                    // Pause only at the first boundary. Subsequent boundaries
+                    // must remain contiguous after Resume in a longer queue.
                     // A producer may have decoded successor PCM, but the paused
                     // host must not leak it over UDP or advance the output token.
                     let pause = ControlMessage::Pause(Pause {
