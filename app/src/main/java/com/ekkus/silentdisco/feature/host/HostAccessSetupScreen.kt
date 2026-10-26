@@ -1,6 +1,6 @@
 package com.ekkus.silentdisco.feature.host
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -143,10 +143,10 @@ fun HostAccessSetupScreen(
                                 append(option.title)
                                 append(". ")
                                 append(option.detail)
-                                if (selected) append(" Selected.")
                             }
                         }
-                        .clickable(
+                        .selectable(
+                            selected = selected,
                             role = Role.RadioButton,
                             onClick = { onApprovalModeChanged(option.mode) },
                         )
@@ -158,7 +158,10 @@ fun HostAccessSetupScreen(
                         horizontalArrangement = Arrangement.spacedBy(WorkflowSpacing.medium),
                     ) {
                         RadioButton(selected = selected, onClick = null)
-                        Column(verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.xSmall)) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.xSmall),
+                        ) {
                             Text(option.title, style = MaterialTheme.typography.titleMedium)
                             Text(
                                 option.detail,
