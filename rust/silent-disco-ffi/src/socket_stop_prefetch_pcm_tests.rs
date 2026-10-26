@@ -1,5 +1,7 @@
 //! Production real-socket Stop at a prefetched track boundary, followed by
 //! same-stream-ID replay through the scheduler and native PCM callback.
+//! Replay reorders the queue, repeats a staged source under a distinct entry ID,
+//! and takes over the stopped listener's identity on a fresh TCP/UDP socket.
 use crate::audio_abi::registry_test_guard;
 use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
@@ -19,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
     clippy::too_many_lines,
     reason = "socket Stop, cached replay and callback PCM"
 )]
-fn stop_at_prefetched_boundary_fences_successor_and_replays_gaplessly() {
+fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -103,33 +105,54 @@ fn stop_at_prefetched_boundary_fences_successor_and_replays_gaplessly() {
         "stopped replay cache cannot resurrect a prefetched successor"
     );
 
-    let replay =
-        FfiHostPlaylistStreamer::open(session.to_string(), stream.to_string(), 2_000, sources)
-            .expect("explicit replay with same stream ID");
+    // After Stop, a second TCP/UDP socket takes over the original device ID
+    // while the retired reader is still alive. The new route must not inherit
+    // a prefetched boundary, but must receive every frame of the new Play.
+    let mut replacement = authorized_late_joiner(host.as_mut(), "pcm-regression-listener");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        control_count,
+        "same-device reconnect after Stop cannot resurrect cached controls"
+    );
+    listener.shutdown().expect("retire old same-identity TCP socket");
+
+    // The host is allowed to edit its stopped queue: reorder both entries and
+    // append the first source again with a new entry ID. A repeated path must
+    // be decoded as a separate track without leaking the retired prefetch.
+    let mut replay_sources = vec![sources[1].clone(), sources[0].clone()];
+    let mut repeated = sources[0].clone();
+    repeated.entry_id = "first-again".to_owned();
+    replay_sources.push(repeated);
+    assert_eq!(replay_sources[1].staged_path, replay_sources[2].staged_path);
+    assert_ne!(replay_sources[1].entry_id, replay_sources[2].entry_id);
+    let replay = FfiHostPlaylistStreamer::open(
+        session.to_string(), stream.to_string(), 2_000, replay_sources,
+    )
+    .expect("explicit reordered replay with same stream ID");
     let recovered = playback_generation(
         host.as_mut(),
-        listener.as_mut(),
+        replacement.as_mut(),
         Some(late.as_mut()),
         &replay,
         &session,
         &stream,
         2_000,
-        &[241, 337, 382],
+        &[241, 337, 382, 480],
         false,
         false,
     );
     assert_ne!(recovered.output_token, stopped.output_token);
     assert!(recovered.failure.is_none());
-    assert_eq!(recovered.packets, 4, "fresh sequence");
-    assert_eq!(recovered.boundaries, [480]);
+    assert_eq!(recovered.packets, 6, "fresh contiguous packet sequence");
+    assert_eq!(recovered.boundaries, [480, 960]);
     assert_eq!(
         recovered.pcm,
-        expected_pcm(&[3_000, 7_000], recovered.startup_ramp_frames),
-        "both sockets feed exact gapless native callback PCM"
+        expected_pcm(&[7_000, 3_000, 3_000], recovered.startup_ramp_frames),
+        "both sockets feed exact reordered/repeated gapless native callback PCM"
     );
     replay.cancel().expect("release replay");
     late.shutdown().expect("late listener shutdown");
-    listener.shutdown().expect("listener shutdown");
+    replacement.shutdown().expect("replacement listener shutdown");
     host.shutdown().expect("host shutdown");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
