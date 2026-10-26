@@ -155,10 +155,7 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         session.to_string(),
         stream.to_string(),
         3_000,
-        vec![
-            source("again-first", &first),
-            source("again-third", &third),
-        ],
+        vec![source("again-first", &first), source("again-third", &third)],
     )
     .expect("second explicit refill Play");
     let third_pass = playback_generation(
