@@ -241,7 +241,7 @@ class HostTransportLateJoinInstrumentedTest {
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
                 "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
                 "inviteCodeRequired":false,"expiresAtMs":null}
-            """.trimIndent().replace("\\n", "")
+            """.trimIndent().replace("\n", "")
             listener = FfiListenerTransportHandle.connect(
                 endpoint, System.currentTimeMillis().toULong(),
                 "android-past-all-boundaries-listener", "127.0.0.1",
