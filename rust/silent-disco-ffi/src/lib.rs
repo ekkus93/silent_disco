@@ -33,6 +33,8 @@ mod socket_failure_recovery_pcm_tests;
 mod socket_pause_resume_pcm_tests;
 #[cfg(test)]
 mod socket_same_identity_pcm_tests;
+#[cfg(test)]
+mod socket_stop_prefetch_pcm_tests;
 mod sync;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
