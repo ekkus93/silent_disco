@@ -212,7 +212,10 @@ fn playback_generation(
                 }
                 boundaries.push(first_sample_index);
                 if pause_at_boundary {
-                    assert!(!paused_boundary, "one intentional pause at the first boundary");
+                    assert!(
+                        !paused_boundary,
+                        "one intentional pause at the first boundary"
+                    );
                     // A producer may have decoded successor PCM, but the paused
                     // host must not leak it over UDP or advance the output token.
                     let pause = ControlMessage::Pause(Pause {
@@ -221,7 +224,10 @@ fn playback_generation(
                         host_pause_time_ms: MonotonicMillis::new(start_ms + 10),
                     });
                     assert_eq!(
-                        host.broadcast_control(&pause).expect("Pause TCP").report.successful_peers,
+                        host.broadcast_control(&pause)
+                            .expect("Pause TCP")
+                            .report
+                            .successful_peers,
                         peer_count
                     );
                     assert!(recv_control(listener) == pause);
@@ -248,7 +254,8 @@ fn playback_generation(
                         0
                     );
                     let count = host.counters().control_frames_sent;
-                    host.broadcast_control(&start).expect("ignore stale pre-pause start");
+                    host.broadcast_control(&start)
+                        .expect("ignore stale pre-pause start");
                     assert_eq!(host.counters().control_frames_sent, count);
                     let ControlMessage::StreamStart(mut reanchored) = start.clone() else {
                         panic!("initial stream start");
@@ -283,7 +290,10 @@ fn playback_generation(
         }
     }
     assert!(completed || failure.is_some(), "producer did not terminate");
-    assert_eq!(paused_boundary, pause_at_boundary, "expected pause/boundary coverage");
+    assert_eq!(
+        paused_boundary, pause_at_boundary,
+        "expected pause/boundary coverage"
+    );
     assert_eq!(
         chunks.iter().copied().map(u64::from).sum::<u64>(),
         sample,
