@@ -276,6 +276,31 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.Paused })
                 .isEqualTo(FfiListenerTransportEvent.Paused("active-stream", pauseMs.toULong()))
 
+            // Disconnect the *same* admitted device while paused, then
+            // reconnect through a new TCP/UDP route. The replay must restore
+            // the audible second track, pending third boundary, and Pause in
+            // order; neither the first track nor an obsolete boundary may
+            // leak into the new socket's presentation state.
+            syncKeepAlives.first().cancelAndJoin()
+            host.disconnectPeer("paused-listener", "Synthetic reconnect")
+            paused.shutdown()
+            val returning = join("paused-listener")
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", startMs.toULong(), 48_000u, 2u, 240u,
+                        "second", "Second track",
+                    ),
+                )
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.TrackBoundary })
+                .isEqualTo(
+                    FfiListenerTransportEvent.TrackBoundary(
+                        "active-stream", 2_400_000uL, "third", "Third track",
+                    ),
+                )
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.Paused })
+                .isEqualTo(FfiListenerTransportEvent.Paused("active-stream", pauseMs.toULong()))
+
             // Resume shifts the host timeline without reintroducing the
             // already-audible first boundary. A new socket must see the
             // current second track, future third boundary and no old Pause.
@@ -283,7 +308,7 @@ class HostTransportLateJoinInstrumentedTest {
             host.broadcastStreamStart(
                 "active-stream", resumedAnchor, 48_000, 2, 240, "second", "Second track",
             )
-            assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.StreamStarted })
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
                     FfiListenerTransportEvent.StreamStarted(
                         "active-stream", resumedAnchor.toULong(), 48_000u, 2u, 240u,
