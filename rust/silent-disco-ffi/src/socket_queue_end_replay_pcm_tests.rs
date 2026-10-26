@@ -148,6 +148,21 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         .expect("ignore stale boundary after second queue end");
     assert_eq!(host.counters().control_frames_sent, after_second_end);
 
+    // The previous late joiner disconnects after the paused generation ends.
+    // A new TCP/UDP listener admitted during the second idle period must not
+    // inherit the old StreamStart, Pause, or any of its track boundaries.
+    late.shutdown().expect("retire first late joiner");
+    let mut after_second_end_listener =
+        authorized_late_joiner(host.as_mut(), "queue-refill-after-second-end");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        after_second_end,
+        "post-refill late join must not replay the retired paused generation"
+    );
+    host.broadcast_control(&stale)
+        .expect("ignore retired boundary after second late join");
+    assert_eq!(host.counters().control_frames_sent, after_second_end);
+
     // Refill a second time, reusing a previously completed staged source.
     // The same two real sockets must receive a fresh generation starting at
     // sample zero; the native callback must render both tracks exactly once.
@@ -161,7 +176,7 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
     let third_pass = playback_generation(
         host.as_mut(),
         listener.as_mut(),
-        Some(late.as_mut()),
+        Some(after_second_end_listener.as_mut()),
         &third_play,
         &session,
         &stream,
@@ -181,7 +196,9 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         "second refill must restart at sample zero with one ramp and no stale PCM"
     );
     third_play.cancel().expect("release second refill producer");
-    late.shutdown().expect("late listener shutdown");
+    after_second_end_listener
+        .shutdown()
+        .expect("post-refill listener shutdown");
     listener.shutdown().expect("original listener shutdown");
     host.shutdown().expect("host shutdown");
     fs::remove_dir_all(root).expect("remove fixture directory");
