@@ -112,7 +112,7 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         &stream,
         2_000,
         &[241, 337, 382],
-        false,
+        true, // Pause/Resume at the first refill boundary, without reopening output.
         false,
     );
     assert!(replayed.failure.is_none());
@@ -125,6 +125,65 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         "new Play must not insert old PCM, a boundary gap or another ramp"
     );
     refill.cancel().expect("release refill producer");
+
+    // The refilled queue also ends naturally after a Pause/Resume-shifted
+    // boundary. Neither existing socket may retain its old paused state or
+    // cached successor when the host stays ready for another explicit Play.
+    let second_end = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(2_220),
+    });
+    assert_eq!(
+        host.broadcast_control(&second_end)
+            .expect("second natural queue end")
+            .report
+            .successful_peers,
+        2
+    );
+    assert!(recv_control(listener.as_mut()) == second_end);
+    assert!(recv_control(late.as_mut()) == second_end);
+    let after_second_end = host.counters().control_frames_sent;
+    host.broadcast_control(&stale)
+        .expect("ignore stale boundary after second queue end");
+    assert_eq!(host.counters().control_frames_sent, after_second_end);
+
+    // Refill a second time, reusing a previously completed staged source.
+    // The same two real sockets must receive a fresh generation starting at
+    // sample zero; the native callback must render both tracks exactly once.
+    let third_play = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        stream.to_string(),
+        3_000,
+        vec![
+            source("again-first", &first),
+            source("again-third", &third),
+        ],
+    )
+    .expect("second explicit refill Play");
+    let third_pass = playback_generation(
+        host.as_mut(),
+        listener.as_mut(),
+        Some(late.as_mut()),
+        &third_play,
+        &session,
+        &stream,
+        3_000,
+        &[241, 337, 382],
+        false,
+        false,
+    );
+    assert!(third_pass.failure.is_none());
+    assert_ne!(third_pass.output_token, replayed.output_token);
+    assert_ne!(third_pass.output_token, finished.output_token);
+    assert_eq!(third_pass.packets, 4);
+    assert_eq!(third_pass.boundaries, [480]);
+    assert_eq!(
+        third_pass.pcm,
+        expected_pcm(&[3_000, 9_000], third_pass.startup_ramp_frames),
+        "second refill must restart at sample zero with one ramp and no stale PCM"
+    );
+    third_play.cancel().expect("release second refill producer");
     late.shutdown().expect("late listener shutdown");
     listener.shutdown().expect("original listener shutdown");
     host.shutdown().expect("host shutdown");
