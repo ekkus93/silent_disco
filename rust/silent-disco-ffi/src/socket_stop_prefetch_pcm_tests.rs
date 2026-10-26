@@ -143,7 +143,7 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
         &stream,
         100_000,
         &[241, 337, 382, 480],
-        false,
+        true, // Pause/Resume across the first replay boundary on both live sockets.
         false,
     );
     assert_ne!(recovered.output_token, stopped.output_token);
@@ -177,6 +177,19 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
         sent_before_stale_start,
         "retired StreamStart must not reach any active listener"
     );
+    // A delayed Resume from the retired generation must not unpause or
+    // re-anchor the newer replay after its own Pause/Resume transition.
+    let ControlMessage::StreamStart(mut retired_resume) = retired_start else {
+        panic!("retired StreamStart");
+    };
+    retired_resume.host_start_time_ms = MonotonicMillis::new(1_200);
+    host.broadcast_control(&ControlMessage::StreamStart(retired_resume))
+        .expect("ignore retired-generation Resume");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_before_stale_start,
+        "retired Resume must not reach either live socket"
+    );
     let mut post_replay_joiner = authorized_late_joiner(host.as_mut(), "post-replay-joiner");
     let ControlMessage::StreamStart(replayed_start) = recv_control(post_replay_joiner.as_mut())
     else {
@@ -184,7 +197,8 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
     };
     assert_eq!(
         replayed_start.host_start_time_ms,
-        MonotonicMillis::new(100_000)
+        MonotonicMillis::new(100_200),
+        "the late joiner must receive the Pause/Resume-reanchored replay, not its original start"
     );
     assert_eq!(replayed_start.current_entry_id.as_deref(), Some("second"));
     for (index, entry_id) in [(480, "first"), (960, "first-again")] {
