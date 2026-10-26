@@ -5,7 +5,9 @@ use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation, source};
 use crate::socket_pause_resume_pcm_tests::authorized_late_joiner;
-use silent_disco_core::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
+use silent_disco_core::domain::{
+    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
 use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, TrackBoundary,
 };
@@ -13,7 +15,10 @@ use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-#[expect(clippy::too_many_lines, reason = "socket Stop, cached replay and callback PCM")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "socket Stop, cached replay and callback PCM"
+)]
 fn stop_at_prefetched_boundary_fences_successor_and_replays_gaplessly() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
@@ -51,7 +56,10 @@ fn stop_at_prefetched_boundary_fences_successor_and_replays_gaplessly() {
     );
     assert!(stopped.failure.is_none());
     assert_eq!(stopped.packets, 2);
-    assert!(stopped.boundaries.is_empty(), "unheard boundary must not broadcast");
+    assert!(
+        stopped.boundaries.is_empty(),
+        "unheard boundary must not broadcast"
+    );
     assert_eq!(
         stopped.pcm,
         expected_pcm(&[3_000], stopped.startup_ramp_frames),
@@ -66,7 +74,8 @@ fn stop_at_prefetched_boundary_fences_successor_and_replays_gaplessly() {
         entry_id: "second".to_owned(),
         display_name: "second".to_owned(),
     });
-    host.broadcast_control(&stale_boundary).expect("stale boundary");
+    host.broadcast_control(&stale_boundary)
+        .expect("stale boundary");
     assert_eq!(host.counters().control_frames_sent, control_count);
     let stale_audio = AudioDatagram {
         session_id: session.clone(),
@@ -94,13 +103,9 @@ fn stop_at_prefetched_boundary_fences_successor_and_replays_gaplessly() {
         "stopped replay cache cannot resurrect a prefetched successor"
     );
 
-    let replay = FfiHostPlaylistStreamer::open(
-        session.to_string(),
-        stream.to_string(),
-        2_000,
-        sources,
-    )
-    .expect("explicit replay with same stream ID");
+    let replay =
+        FfiHostPlaylistStreamer::open(session.to_string(), stream.to_string(), 2_000, sources)
+            .expect("explicit replay with same stream ID");
     let recovered = playback_generation(
         host.as_mut(),
         listener.as_mut(),

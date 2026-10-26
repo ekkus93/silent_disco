@@ -199,9 +199,7 @@ pub(super) fn playback_generation(
                     let stop = ControlMessage::Stop(Stop {
                         session_id: session.clone(),
                         stream_id: stream.clone(),
-                        host_stop_time_ms: MonotonicMillis::new(
-                            start_ms + sample * 1_000 / 48_000,
-                        ),
+                        host_stop_time_ms: MonotonicMillis::new(start_ms + sample * 1_000 / 48_000),
                     });
                     assert_eq!(
                         host.broadcast_control(&stop)
@@ -315,7 +313,10 @@ pub(super) fn playback_generation(
             }
         }
     }
-    assert!(completed || failure.is_some() || stopped, "producer did not terminate");
+    assert!(
+        completed || failure.is_some() || stopped,
+        "producer did not terminate"
+    );
     assert_eq!(
         paused_boundary, pause_at_boundary,
         "expected pause/boundary coverage"
