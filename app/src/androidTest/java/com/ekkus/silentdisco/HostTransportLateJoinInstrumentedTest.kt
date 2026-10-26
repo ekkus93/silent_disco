@@ -342,12 +342,18 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(audio.hostPresentationTimeMs).isEqualTo(resumedAnchor.toULong())
             assertThat(audio.payload.toList())
                 .containsExactlyElementsIn(ByteArray(240 * 2 * 2) { 0x2a.toByte() }.toList())
-            
+            val returningAudio = awaitListenerEvent(returning) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            assertThat(returningAudio).isEqualTo(audio)
+
             // Stop retires the paused/resumed generation even though its
             // presentation anchor is in the future. A new Play deliberately
             // reuses the stream ID, but must not replay the retired track,
             // upcoming boundary or Pause to a newly authorized socket.
             host.broadcastStop("active-stream", SystemClock.elapsedRealtime())
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.Stopped })
+                .isInstanceOf(FfiListenerTransportEvent.Stopped::class.java)
             val replayAnchor = resumedAnchor + 60_000L
             host.broadcastStreamStart(
                 "active-stream", replayAnchor, 48_000, 2, 240,
@@ -357,6 +363,19 @@ class HostTransportLateJoinInstrumentedTest {
                 "active-stream", 240, "replay-second", "Replay second track",
             )
             val replay = join("replay-listener")
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", replayAnchor.toULong(), 48_000u, 2u, 240u,
+                        "replay-first", "Replay first track",
+                    ),
+                )
+            assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.TrackBoundary })
+                .isEqualTo(
+                    FfiListenerTransportEvent.TrackBoundary(
+                        "active-stream", 240uL, "replay-second", "Replay second track",
+                    ),
+                )
             assertThat(awaitListenerEvent(replay) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
                     FfiListenerTransportEvent.StreamStarted(
@@ -389,6 +408,10 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(replayAudio.hostPresentationTimeMs).isEqualTo(replayAnchor.toULong())
             assertThat(replayAudio.payload.toList())
                 .containsExactlyElementsIn(ByteArray(240 * 2 * 2) { 0x35.toByte() }.toList())
+            val returningReplayAudio = awaitListenerEvent(returning) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            assertThat(returningReplayAudio).isEqualTo(replayAudio)
         } finally {
             syncKeepAlives.forEach { it.cancelAndJoin() }
             listeners.forEach { runCatching { it.shutdown() } }
