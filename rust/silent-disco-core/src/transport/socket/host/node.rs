@@ -82,7 +82,9 @@ impl HostTransportNode for SocketHostTransport {
         device_id: &DeviceId,
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError> {
-        if !matches!(message, ControlMessage::Disconnect(_)) || message.session_id() != &self.session_id {
+        if !matches!(message, ControlMessage::Disconnect(_))
+            || message.session_id() != &self.session_id
+        {
             return Err(TransportError::new(
                 TransportErrorKind::Unauthorized,
                 TransportChannel::Control,
@@ -118,7 +120,10 @@ impl HostTransportNode for SocketHostTransport {
                 "peer route registry is poisoned",
             )
         })?;
-        if routes.get(device_id).is_some_and(|route| route.peer.number == peer.number) {
+        if routes
+            .get(device_id)
+            .is_some_and(|route| route.peer.number == peer.number)
+        {
             routes.remove(device_id);
         }
         peer.close()?;

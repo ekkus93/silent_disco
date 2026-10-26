@@ -196,7 +196,9 @@ impl FfiHostTransportHandle {
                     if error.kind
                         == silent_disco_core::transport::TransportErrorKind::PeerNotFound =>
                 {
-                    inner.transport.send_pending_control(&listener_id, &message)?
+                    inner
+                        .transport
+                        .send_pending_control(&listener_id, &message)?
                 }
                 Err(error) => return Err(error.into()),
             };
