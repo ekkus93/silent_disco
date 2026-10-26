@@ -114,7 +114,9 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
         control_count,
         "same-device reconnect after Stop cannot resurrect cached controls"
     );
-    listener.shutdown().expect("retire old same-identity TCP socket");
+    listener
+        .shutdown()
+        .expect("retire old same-identity TCP socket");
 
     // The host is allowed to edit its stopped queue: reorder both entries and
     // append the first source again with a new entry ID. A repeated path must
@@ -126,7 +128,10 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
     assert_eq!(replay_sources[1].staged_path, replay_sources[2].staged_path);
     assert_ne!(replay_sources[1].entry_id, replay_sources[2].entry_id);
     let replay = FfiHostPlaylistStreamer::open(
-        session.to_string(), stream.to_string(), 2_000, replay_sources,
+        session.to_string(),
+        stream.to_string(),
+        2_000,
+        replay_sources,
     )
     .expect("explicit reordered replay with same stream ID");
     let recovered = playback_generation(
@@ -152,7 +157,9 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
     );
     replay.cancel().expect("release replay");
     late.shutdown().expect("late listener shutdown");
-    replacement.shutdown().expect("replacement listener shutdown");
+    replacement
+        .shutdown()
+        .expect("replacement listener shutdown");
     host.shutdown().expect("host shutdown");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
