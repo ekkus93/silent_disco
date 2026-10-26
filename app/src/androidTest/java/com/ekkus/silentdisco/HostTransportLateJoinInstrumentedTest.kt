@@ -451,13 +451,20 @@ class HostTransportLateJoinInstrumentedTest {
             host.broadcastStop("active-stream", SystemClock.elapsedRealtime())
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.Stopped })
                 .isInstanceOf(FfiListenerTransportEvent.Stopped::class.java)
-            val replayAnchor = resumedAnchor + 60_000L
+            // Emulator stalls can outlast the previous anchor's 60-second
+            // margin. Keep this new generation safely in the future when
+            // replaying the cached current track, and place its boundary far
+            // enough away that a slow join cannot make it audible first.
+            val replayAnchor = maxOf(
+                resumedAnchor + 60_000L,
+                SystemClock.elapsedRealtime() + 600_000L,
+            )
             host.broadcastStreamStart(
                 "active-stream", replayAnchor, 48_000, 2, 240,
                 "replay-first", "Replay first track",
             )
             host.broadcastTrackBoundary(
-                "active-stream", 240, "replay-second", "Replay second track",
+                "active-stream", 24_000_000, "replay-second", "Replay second track",
             )
             val replay = join("replay-listener")
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.StreamStarted })
@@ -470,7 +477,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.TrackBoundary })
                 .isEqualTo(
                     FfiListenerTransportEvent.TrackBoundary(
-                        "active-stream", 240uL, "replay-second", "Replay second track",
+                        "active-stream", 24_000_000uL, "replay-second", "Replay second track",
                     ),
                 )
             assertThat(awaitListenerEvent(replay) { it is FfiListenerTransportEvent.StreamStarted })
@@ -483,7 +490,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(replay) { it is FfiListenerTransportEvent.TrackBoundary })
                 .isEqualTo(
                     FfiListenerTransportEvent.TrackBoundary(
-                        "active-stream", 240uL, "replay-second", "Replay second track",
+                        "active-stream", 24_000_000uL, "replay-second", "Replay second track",
                     ),
                 )
 
