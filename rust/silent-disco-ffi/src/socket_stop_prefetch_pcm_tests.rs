@@ -6,12 +6,12 @@ use crate::audio_abi::registry_test_guard;
 use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation, source};
-use crate::socket_pause_resume_pcm_tests::authorized_late_joiner;
+use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_control};
 use silent_disco_core::domain::{
     MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
 use silent_disco_core::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, TrackBoundary,
+    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, StreamStart, TrackBoundary,
 };
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -130,7 +130,7 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
     let replay = FfiHostPlaylistStreamer::open(
         session.to_string(),
         stream.to_string(),
-        2_000,
+        100_000,
         replay_sources,
     )
     .expect("explicit reordered replay with same stream ID");
@@ -141,7 +141,7 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
         &replay,
         &session,
         &stream,
-        2_000,
+        100_000,
         &[241, 337, 382, 480],
         false,
         false,
@@ -155,6 +155,44 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
         expected_pcm(&[7_000, 3_000, 3_000], recovered.startup_ramp_frames),
         "both sockets feed exact reordered/repeated gapless native callback PCM"
     );
+    // A delayed control packet from the retired generation must not replace
+    // the fresh stream's cached start/boundaries, even when both Plays reuse
+    // the same stream ID. A third real socket checks the authoritative replay
+    // snapshot after the stale control was rejected.
+    let sent_before_stale_start = host.counters().control_frames_sent;
+    let retired_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(1_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        current_entry_id: Some("first".to_owned()),
+        current_display_name: Some("first".to_owned()),
+    });
+    host.broadcast_control(&retired_start)
+        .expect("ignore retired-generation StreamStart");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        sent_before_stale_start,
+        "retired StreamStart must not reach any active listener"
+    );
+    let mut post_replay_joiner = authorized_late_joiner(host.as_mut(), "post-replay-joiner");
+    let ControlMessage::StreamStart(replayed_start) = recv_control(post_replay_joiner.as_mut())
+    else {
+        panic!("late join must receive the fresh generation's StreamStart");
+    };
+    assert_eq!(replayed_start.host_start_time_ms, MonotonicMillis::new(100_000));
+    assert_eq!(replayed_start.current_entry_id.as_deref(), Some("second"));
+    for (index, entry_id) in [(480, "first"), (960, "first-again")] {
+        let ControlMessage::TrackBoundary(boundary) = recv_control(post_replay_joiner.as_mut())
+        else {
+            panic!("late join must receive both fresh-generation boundaries");
+        };
+        assert_eq!(boundary.first_sample_index, SampleIndex::new(index));
+        assert_eq!(boundary.entry_id, entry_id);
+    }
+    post_replay_joiner.shutdown().expect("late replay joiner shutdown");
     replay.cancel().expect("release replay");
     late.shutdown().expect("late listener shutdown");
     replacement
