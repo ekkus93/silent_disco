@@ -1,7 +1,12 @@
 package com.ekkus.silentdisco
 
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -54,5 +59,52 @@ class WorkflowConfigurationStateTest {
         composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
         composeRule.onNodeWithTag("host-access-next").performClick()
         composeRule.runOnIdle { assertThat(nextCalls).isEqualTo(1) }
+    }
+
+    @Test
+    fun hostAccessFailedSubmissionAfterRestoreShowsErrorAndAllowsSingleRetry() {
+        var nextCalls = 0
+        var state by mutableStateOf(
+            AppUiState(
+                hostForm = HostFormState(
+                    selectedAudio = SelectedAudioFile(
+                        uri = Uri.parse("content://test/retry.wav"),
+                        displayName = "retry.wav",
+                        mimeType = "audio/wav",
+                        sizeBytes = 1_024,
+                    ),
+                ),
+            ),
+        )
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent {
+            SilentDiscoTheme {
+                HostAccessSetupScreen(
+                    uiState = state,
+                    onBack = {},
+                    onApprovalModeChanged = {},
+                    onInviteCodeChanged = {},
+                    onGenerateCode = {},
+                    onNext = { nextCalls += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("host-access-next").performClick()
+        composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(nextCalls).isEqualTo(1) }
+
+        // The ViewModel may reject an asynchronous session start without
+        // leaving IDLE. The saved in-flight latch must then clear so the
+        // visible, fixed-position action can be retried deliberately.
+        composeRule.runOnIdle { state = state.copy(lastError = "Unable to start session") }
+        composeRule.onNodeWithTag("host-access-error")
+            .assertTextContains("Unable to start session")
+        composeRule.onNodeWithTag("host-access-next").assertIsEnabled()
+        composeRule.onNodeWithTag("host-access-next").performClick()
+        composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(nextCalls).isEqualTo(2) }
     }
 }

@@ -33,9 +33,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.ui.theme.WorkflowSpacing
 import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
@@ -82,6 +85,7 @@ fun HostAccessSetupScreen(
 
     LaunchedEffect(uiState.hostState, uiState.lastError) {
         if (
+            uiState.lastError != null ||
             uiState.hostState == HostLifecycleState.ERROR ||
             uiState.hostState !in setOf(
                 HostLifecycleState.IDLE,
@@ -220,6 +224,22 @@ fun HostAccessSetupScreen(
                 )
             }
 
+        }
+        // A failed asynchronous Next action must remain visible beside its
+        // retry control, including after Compose saved-state restoration.
+        uiState.lastError?.let { error ->
+            Text(
+                text = error,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = WorkflowSpacing.large)
+                    .semantics { liveRegion = LiveRegionMode.Assertive }
+                    .testTag("host-access-error"),
+            )
         }
         Button(
             onClick = ::requestNext,
