@@ -31,6 +31,18 @@ pub trait HostTransportNode: Send {
         audio_port: u16,
     ) -> Result<(), TransportError>;
     fn disconnect_peer(&self, device_id: &DeviceId) -> Result<(), TransportError>;
+    /// Delivers an explicit Disconnect to an admitted peer and retires its
+    /// audio/sync route. Production sockets override this to serialize the
+    /// targeted send and route removal with reconnect authorization.
+    fn send_disconnect(
+        &self,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        let delivery = self.send_control(device_id, message)?;
+        self.disconnect_peer(device_id)?;
+        Ok(delivery)
+    }
     /// Sends one control message to an identified TCP peer before datagram authorization.
     ///
     /// This is intentionally narrower than `send_control`: it supports the pre-approval

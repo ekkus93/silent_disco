@@ -175,14 +175,9 @@ impl FfiHostTransportHandle {
         })
     }
 
-    /// Sends an explicit disconnect to one identified listener.
-    ///
-    /// Does not additionally force-close the TCP connection: this peer was
-    /// never authorized (control-plane only, see the type doc comment), so
-    /// the lower-level `disconnect_peer` operates on a different, authorized-
-    /// peer registry and can't find it. The listener closes its own end on
-    /// receiving this message; the host's accept loop detects that closure
-    /// and reports it as an ordinary `PeerDisconnected` event.
+    /// Sends an explicit disconnect to an admitted listener and atomically
+    /// retires its audio route. Pending (not-yet-authorized) peers still
+    /// receive the rejection through their control-only TCP connection.
     pub fn disconnect_peer(
         &self,
         listener_id: String,
@@ -195,9 +190,16 @@ impl FfiHostTransportHandle {
                 listener_id: listener_id.clone(),
                 reason,
             });
-            let delivery = inner
-                .transport
-                .send_pending_control(&listener_id, &message)?;
+            let delivery = match inner.transport.send_disconnect(&listener_id, &message) {
+                Ok(delivery) => delivery,
+                Err(error)
+                    if error.kind
+                        == silent_disco_core::transport::TransportErrorKind::PeerNotFound =>
+                {
+                    inner.transport.send_pending_control(&listener_id, &message)?
+                }
+                Err(error) => return Err(error.into()),
+            };
             Ok(delivery_from(delivery))
         })
     }

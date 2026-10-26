@@ -134,6 +134,20 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(audio.firstSampleIndex).isEqualTo(24_000uL)
             assertThat(audio.hostPresentationTimeMs).isEqualTo((hostStartTimeMs + 500L).toULong())
             assertThat(audio.payload.toList()).containsExactlyElementsIn(ByteArray(240 * 2 * 2).toList())
+
+            // Production host removal must reach an already-admitted peer,
+            // then retire its UDP route rather than treating it as pending.
+            syncKeepAlive?.cancelAndJoin()
+            syncKeepAlive = null
+            val kicked = host.disconnectPeer(join.deviceId, "Host removed listener")
+            assertThat(kicked?.successfulPeers).isEqualTo(1u)
+            assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.HostDisconnected })
+                .isEqualTo(FfiListenerTransportEvent.HostDisconnected("Host removed listener"))
+            val afterKick = host.broadcastAudio(
+                "active-stream", 101, 48_000, 2, 240, 24_240,
+                hostStartTimeMs + 505L, ByteArray(240 * 2 * 2),
+            )
+            assertThat(afterKick?.successfulPeers).isEqualTo(0u)
         } finally {
             syncKeepAlive?.cancelAndJoin()
             listener?.shutdown()

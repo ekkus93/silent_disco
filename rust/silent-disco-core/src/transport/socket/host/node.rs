@@ -77,6 +77,54 @@ impl HostTransportNode for SocketHostTransport {
         route.peer.close()
     }
 
+    fn send_disconnect(
+        &self,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        if !matches!(message, ControlMessage::Disconnect(_)) || message.session_id() != &self.session_id {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "targeted disconnect must belong to this session",
+            ));
+        }
+        // Keep the TCP Disconnect and UDP route retirement in the same
+        // critical section as cached replay, broadcasts and authorization.
+        // A concurrent same-identity reconnect cannot inherit the old kick.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
+        let peer = self.peer_for_device(device_id)?;
+        let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
+            .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
+        let result = peer.sender.send(bytes);
+        self.record_peer_result(&peer, &result);
+        let written = match result {
+            Ok(written) => written,
+            Err(error) => {
+                self.counters.delivery_failure();
+                return Err(error);
+            }
+        };
+        let mut routes = self.routes.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "peer route registry is poisoned",
+            )
+        })?;
+        if routes.get(device_id).is_some_and(|route| route.peer.number == peer.number) {
+            routes.remove(device_id);
+        }
+        peer.close()?;
+        TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
+    }
+
     fn send_pending_control(
         &self,
         device_id: &DeviceId,
