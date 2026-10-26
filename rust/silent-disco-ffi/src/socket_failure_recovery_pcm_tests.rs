@@ -407,3 +407,168 @@ fn missing_prefetched_source_stops_after_valid_callback_pcm_then_replays_gapless
     host.shutdown().expect("close host");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "integrated two-boundary failure, socket Stop, late join and native retry"
+)]
+fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tracks() {
+    let _guard = registry_test_guard();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-socket-late-successor-failure-{unique}"));
+    fs::create_dir_all(&root).expect("fixture directory");
+    let first = root.join("first.wav");
+    let second = root.join("second.wav");
+    let repaired = root.join("repaired.wav");
+    let unavailable = root.join("unavailable.wav");
+    fs::write(&first, source_wav_format(3_000, 48_000, 2, 480))
+        .expect("first source");
+    fs::write(&second, source_wav_format(6_000, 44_100, 1, 441))
+        .expect("mixed-rate successor");
+    fs::write(&repaired, source_wav_format(9_000, 48_000, 2, 480))
+        .expect("repaired third source");
+
+    let session = SessionId::new("end-to-end-session").expect("session");
+    let stream = StreamId::new("failure-after-boundary-stream").expect("stream");
+    let (mut host, mut listener) = authorized_pcm_socket_pair();
+    let failing = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        stream.to_string(),
+        1_000,
+        vec![
+            source("first", &first),
+            source("second", &second),
+            source("missing-third", &unavailable),
+        ],
+    )
+    .expect("lazy third source is not opened before playback");
+
+    // The second track is fully audible before the third decoder fails.
+    // Failure must not erase its committed boundary or inject any PCM for
+    // the missing track into the same native output generation.
+    let before = playback_generation(
+        host.as_mut(),
+        listener.as_mut(),
+        None,
+        &failing,
+        &session,
+        &stream,
+        1_000,
+        &[241, 337, 382],
+    );
+    assert_eq!(before.packets, 4, "two complete 480-frame sources");
+    assert_eq!(before.boundaries, [480], "only the audible boundary");
+    assert!(
+        before
+            .failure
+            .as_deref()
+            .is_some_and(|error| error.contains("missing-third")),
+        "failed third source must be identified"
+    );
+    assert_eq!(
+        before.pcm,
+        expected_pcm(&[3_000, 6_000], before.startup_ramp_frames),
+        "mixed-rate second track must reach the callback without a gap"
+    );
+
+    // The host waits for the final valid sample (960 / 48 kHz = 20 ms),
+    // then retires the failed stream. A post-Stop listener must not
+    // receive the old start or the already-audible second-track boundary.
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_020),
+    });
+    assert_eq!(
+        host.broadcast_control(&stop)
+            .expect("Stop after last valid audio")
+            .report
+            .successful_peers,
+        1
+    );
+    assert_eq!(recv_control(listener.as_mut()), stop);
+    let control_count = host.counters().control_frames_sent;
+    let mut late = authorized_late_joiner(host.as_mut(), "late-after-second-track-failure");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        control_count,
+        "failed generation must not be replayed to late join"
+    );
+    let stale_boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "second".to_owned(),
+        display_name: "second".to_owned(),
+    });
+    host.broadcast_control(&stale_boundary)
+        .expect("retired boundary is safely ignored");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        control_count,
+        "late boundary cannot resurrect the stopped stream"
+    );
+    let stale_audio = AudioDatagram {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        sequence: PacketSequence::new(4),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        first_sample_index: SampleIndex::new(960),
+        host_presentation_time_ms: MonotonicMillis::new(1_021),
+        payload: vec![0; 240 * 2 * 2],
+    };
+    assert_eq!(
+        host.broadcast_audio(&ProtocolFrame::Audio(stale_audio))
+            .expect("retired producer audio is ignored")
+            .report
+            .intended_peers,
+        0
+    );
+    failing.cancel().expect("release failed producer");
+
+    // Repair and explicitly Play again, reusing the same stream ID with a
+    // newer anchor. Both sockets must receive the complete new generation,
+    // including two boundaries and all 1,440 native callback frames.
+    let retry = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        stream.to_string(),
+        2_000,
+        vec![
+            source("first", &first),
+            source("second", &second),
+            source("repaired-third", &repaired),
+        ],
+    )
+    .expect("retry repaired queue");
+    let recovered = playback_generation(
+        host.as_mut(),
+        listener.as_mut(),
+        Some(late.as_mut()),
+        &retry,
+        &session,
+        &stream,
+        2_000,
+        &[241, 337, 382, 480],
+    );
+    assert_ne!(recovered.output_token, before.output_token);
+    assert!(recovered.failure.is_none(), "repaired queue reaches natural end");
+    assert_eq!(recovered.packets, 6, "fresh sequence starts at zero");
+    assert_eq!(recovered.boundaries, [480, 960]);
+    assert_eq!(
+        recovered.pcm,
+        expected_pcm(&[3_000, 6_000, 9_000], recovered.startup_ramp_frames),
+        "retry must contain no old PCM, silence, or extra transition fade"
+    );
+    retry.cancel().expect("release retry producer");
+    late.shutdown().expect("late listener shutdown");
+    listener.shutdown().expect("original listener shutdown");
+    host.shutdown().expect("host shutdown");
+    fs::remove_dir_all(root).expect("remove fixture directory");
+}
