@@ -487,7 +487,7 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
             .successful_peers,
         1
     );
-    assert_eq!(recv_control(listener.as_mut()), stop);
+    assert!(recv_control(listener.as_mut()) == stop);
     let control_count = host.counters().control_frames_sent;
     let mut late = authorized_late_joiner(host.as_mut(), "late-after-second-track-failure");
     assert_eq!(
