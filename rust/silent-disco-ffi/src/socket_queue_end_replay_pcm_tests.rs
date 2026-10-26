@@ -7,7 +7,6 @@ use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation
 use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_control};
 use silent_disco_core::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
 use silent_disco_core::protocol::{ControlMessage, Stop, TrackBoundary};
-use silent_disco_core::transport::{HostTransportNode, ListenerTransportNode};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
