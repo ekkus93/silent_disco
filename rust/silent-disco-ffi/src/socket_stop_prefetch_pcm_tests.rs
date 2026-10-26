@@ -182,7 +182,10 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
     else {
         panic!("late join must receive the fresh generation's StreamStart");
     };
-    assert_eq!(replayed_start.host_start_time_ms, MonotonicMillis::new(100_000));
+    assert_eq!(
+        replayed_start.host_start_time_ms,
+        MonotonicMillis::new(100_000)
+    );
     assert_eq!(replayed_start.current_entry_id.as_deref(), Some("second"));
     for (index, entry_id) in [(480, "first"), (960, "first-again")] {
         let ControlMessage::TrackBoundary(boundary) = recv_control(post_replay_joiner.as_mut())
@@ -192,7 +195,9 @@ fn stop_at_prefetched_boundary_then_same_identity_reconnect_reorders_replay_pcm(
         assert_eq!(boundary.first_sample_index, SampleIndex::new(index));
         assert_eq!(boundary.entry_id, entry_id);
     }
-    post_replay_joiner.shutdown().expect("late replay joiner shutdown");
+    post_replay_joiner
+        .shutdown()
+        .expect("late replay joiner shutdown");
     replay.cancel().expect("release replay");
     late.shutdown().expect("late listener shutdown");
     replacement
