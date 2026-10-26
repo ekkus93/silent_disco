@@ -173,7 +173,10 @@ class HostTransportLateJoinInstrumentedTest {
                 "active-stream", hostStartTimeMs, 48_000, 2, 240, "entry-first", "First song",
             )
             host.broadcastTrackBoundary("active-stream", 240, "entry-second", "Second song")
-            host.broadcastTrackBoundary("active-stream", 2_400_000, "entry-third", "Third song")
+            // A 50-second deadline can elapse during emulator CPU stalls or
+            // instrumentation pauses. Keep the upcoming boundary ten minutes
+            // away while the 5 ms first boundary is already audible.
+            host.broadcastTrackBoundary("active-stream", 24_000_000, "entry-third", "Third song")
             delay(50L)
 
             val endpoint = """
@@ -208,9 +211,79 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.TrackBoundary })
                 .isEqualTo(
                     FfiListenerTransportEvent.TrackBoundary(
-                        "active-stream", 2_400_000uL, "entry-third", "Third song",
+                        "active-stream", 24_000_000uL, "entry-third", "Third song",
                     ),
                 )
+        } finally {
+            listener?.shutdown()
+            host.close()
+        }
+    }
+
+    @Test
+    fun joiningAfterBothBoundariesReplaysLastAudibleTrackWithoutStaleBoundaries() = runBlocking<Unit> {
+        val sockets = List(3) { ServerSocket(0) }
+        val ports = sockets.map(ServerSocket::getLocalPort)
+        sockets.forEach(ServerSocket::close)
+        val sessionId = "android-completed-boundaries-${System.nanoTime()}"
+        val host = HostTransportController()
+        var listener: FfiListenerTransportHandle? = null
+        try {
+            host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
+            // Both boundaries are in the past, independently of emulator speed.
+            val startMs = SystemClock.elapsedRealtime() - 1_000L
+            host.broadcastStreamStart(
+                "active-stream", startMs, 48_000, 2, 240, "first", "First track",
+            )
+            host.broadcastTrackBoundary("active-stream", 240, "second", "Second track")
+            host.broadcastTrackBoundary("active-stream", 480, "third", "Third track")
+            val endpoint = """
+                {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "inviteCodeRequired":false,"expiresAtMs":null}
+            """.trimIndent().replace("\\n", "")
+            listener = FfiListenerTransportHandle.connect(
+                endpoint, System.currentTimeMillis().toULong(),
+                "android-past-all-boundaries-listener", "127.0.0.1",
+            )
+            listener.sendJoinRequest("Late Listener", null)
+            val join = withTimeout(5_000) {
+                host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
+            } as FfiHostTransportEvent.JoinRequestReceived
+            host.sendJoinApproval(join.deviceId, false)
+            assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
+                .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
+            host.authorizeListener(join.deviceId, join.syncPort, join.audioPort)
+            assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted })
+                .isEqualTo(
+                    FfiListenerTransportEvent.StreamStarted(
+                        "active-stream", startMs.toULong(), 48_000u, 2u, 240u,
+                        "third", "Third track",
+                    ),
+                )
+            host.broadcastAudio(
+                "active-stream", 2, 48_000, 2, 240, 480,
+                startMs + 10L, ByteArray(240 * 2 * 2) { 0x3a.toByte() },
+            )
+            // A stale boundary replayed before audio is an error, even if a
+            // later audio packet happens to carry the correct sample index.
+            val activeListener = requireNotNull(listener)
+            val audio = withTimeout(5_000) {
+                while (true) {
+                    when (val event = activeListener.pollEvent(500uL)) {
+                        is FfiListenerTransportEvent.TrackBoundary ->
+                            error("Already-audible boundary was replayed: $event")
+                        is FfiListenerTransportEvent.AudioReceived -> return@withTimeout event
+                        else -> Unit
+                    }
+                }
+                error("Timed out waiting for third-track audio")
+            }
+            assertThat(audio.sequence).isEqualTo(2uL)
+            assertThat(audio.firstSampleIndex).isEqualTo(480uL)
+            assertThat(audio.hostPresentationTimeMs).isEqualTo((startMs + 10L).toULong())
+            assertThat(audio.payload.toList())
+                .containsExactlyElementsIn(ByteArray(240 * 2 * 2) { 0x3a.toByte() }.toList())
         } finally {
             listener?.shutdown()
             host.close()
@@ -234,7 +307,7 @@ class HostTransportLateJoinInstrumentedTest {
                 "active-stream", startMs, 48_000, 2, 240, "first", "First track",
             )
             host.broadcastTrackBoundary("active-stream", 240, "second", "Second track")
-            host.broadcastTrackBoundary("active-stream", 2_400_000, "third", "Third track")
+            host.broadcastTrackBoundary("active-stream", 24_000_000, "third", "Third track")
             host.broadcastPause("active-stream", pauseMs)
 
             val endpoint = """
@@ -284,7 +357,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.TrackBoundary })
                 .isEqualTo(
                     FfiListenerTransportEvent.TrackBoundary(
-                        "active-stream", 2_400_000uL, "third", "Third track",
+                        "active-stream", 24_000_000uL, "third", "Third track",
                     ),
                 )
             assertThat(awaitListenerEvent(paused) { it is FfiListenerTransportEvent.Paused })
@@ -319,7 +392,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.TrackBoundary })
                 .isEqualTo(
                     FfiListenerTransportEvent.TrackBoundary(
-                        "active-stream", 2_400_000uL, "third", "Third track",
+                        "active-stream", 24_000_000uL, "third", "Third track",
                     ),
                 )
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.Paused })
@@ -350,7 +423,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(resumed) { it is FfiListenerTransportEvent.TrackBoundary })
                 .isEqualTo(
                     FfiListenerTransportEvent.TrackBoundary(
-                        "active-stream", 2_400_000uL, "third", "Third track",
+                        "active-stream", 24_000_000uL, "third", "Third track",
                     ),
                 )
             // A real UDP packet proves that the transport's paused gate
