@@ -369,7 +369,7 @@ class HostTransportLateJoinInstrumentedTest {
             val returningAudio = awaitListenerEvent(returning) {
                 it is FfiListenerTransportEvent.AudioReceived
             } as FfiListenerTransportEvent.AudioReceived
-            assertThat(returningAudio).isEqualTo(audio)
+            assertAudioEventsEqual(returningAudio, audio)
 
             // Stop retires the paused/resumed generation even though its
             // presentation anchor is in the future. A new Play deliberately
@@ -435,7 +435,7 @@ class HostTransportLateJoinInstrumentedTest {
             val returningReplayAudio = awaitListenerEvent(returning) {
                 it is FfiListenerTransportEvent.AudioReceived
             } as FfiListenerTransportEvent.AudioReceived
-            assertThat(returningReplayAudio).isEqualTo(replayAudio)
+            assertAudioEventsEqual(returningReplayAudio, replayAudio)
         } finally {
             syncKeepAlives.forEach { it.cancelAndJoin() }
             listeners.forEach { runCatching { it.shutdown() } }
@@ -453,4 +453,21 @@ private suspend fun awaitListenerEvent(
         if (event != null && matches(event)) return@withTimeout event
     }
     error("timed out waiting for listener event")
+}
+
+private fun assertAudioEventsEqual(
+    actual: FfiListenerTransportEvent.AudioReceived,
+    expected: FfiListenerTransportEvent.AudioReceived,
+) {
+    // UniFFI-generated AudioReceived stores its payload as ByteArray.
+    // Kotlin ByteArray.equals is referential, even when the PCM is identical
+    // on two independently received UDP sockets.
+    assertThat(actual.streamId).isEqualTo(expected.streamId)
+    assertThat(actual.sequence).isEqualTo(expected.sequence)
+    assertThat(actual.sampleRate).isEqualTo(expected.sampleRate)
+    assertThat(actual.channels).isEqualTo(expected.channels)
+    assertThat(actual.samplesPerPacket).isEqualTo(expected.samplesPerPacket)
+    assertThat(actual.firstSampleIndex).isEqualTo(expected.firstSampleIndex)
+    assertThat(actual.hostPresentationTimeMs).isEqualTo(expected.hostPresentationTimeMs)
+    assertThat(actual.payload.toList()).containsExactlyElementsIn(expected.payload.toList()).inOrder()
 }
