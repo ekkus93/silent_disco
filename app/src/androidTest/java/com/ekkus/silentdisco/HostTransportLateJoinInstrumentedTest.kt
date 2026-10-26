@@ -282,8 +282,18 @@ class HostTransportLateJoinInstrumentedTest {
             // order; neither the first track nor an obsolete boundary may
             // leak into the new socket's presentation state.
             syncKeepAlives.first().cancelAndJoin()
-            host.disconnectPeer("paused-listener", "Synthetic reconnect")
+            // An admitted listener is no longer a pending control peer, so
+            // host.disconnectPeer (the pre-authorization rejection path) is
+            // invalid here. Close the actual client socket and wait for the
+            // production host reader to retire its old identity before the
+            // same device reconnects on a new TCP/UDP route.
             paused.shutdown()
+            withTimeout(5_000) {
+                host.events.first {
+                    it is FfiHostTransportEvent.PeerDisconnected &&
+                        it.listenerId == "paused-listener"
+                }
+            }
             val returning = join("paused-listener")
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
