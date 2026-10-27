@@ -308,6 +308,38 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     attach_callback_capture(late_token, Arc::clone(&late_tap)).expect("attach late tap");
     let mut late_delivered = Vec::new();
     for expected_sequence in 505..510 {
+        if expected_sequence == 508 {
+            // A second listener can itself reconnect with the same device ID
+            // after the first three live packets. The host must transfer its
+            // authenticated route without losing the original listener, and
+            // the late joiner's scheduler/native output must not be reopened.
+            clock.set(3_540);
+            let mut replacement =
+                authorized_late_joiner(host.as_mut(), "successor-late-joiner");
+            let ControlMessage::StreamStart(replayed) = recv_control(replacement.as_mut()) else {
+                panic!("late listener reconnect must replay the current third track");
+            };
+            assert_eq!(replayed.host_start_time_ms.get(), 1_000);
+            assert_eq!(
+                replayed.current_entry_id.as_deref(),
+                Some("late-successor")
+            );
+            assert_eq!(
+                replayed.current_display_name.as_deref(),
+                Some("late-successor")
+            );
+            late_successor
+                .shutdown()
+                .expect("retire first late-join TCP/UDP route");
+            late_successor = replacement;
+            assert_eq!(
+                silent_disco_audio_callback_count(
+                    (usize::try_from(late_token).expect("late token") as *const core::ffi::c_void)
+                ),
+                0,
+                "socket replacement must not touch the late listener's native output"
+            );
+        }
         let Some(FfiPlaylistFrame::Audio {
             sequence,
             sample_rate,
