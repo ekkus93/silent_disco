@@ -31,7 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
@@ -92,6 +94,38 @@ fun SessionJoinScreen(
             },
         )
         ClientWorkflowStepper(stage = ClientWorkflowStage.CONNECT)
+        // The six-step progress timeline can exceed a compact viewport.
+        // Pin the current authoritative stage or recovery problem above the
+        // independently pinned actions, without requiring a scroll.
+        val visibleProblem = problem.takeUnless { editingInviteCode }
+        val activeStatus = when {
+            visibleProblem != null -> visibleProblem.title
+            requestStarted && uiState.listenerState != ListenerLifecycleState.PLAYING ->
+                joinProgressLabel(uiState.joinUiStep())
+            else -> null
+        }
+        if (activeStatus != null) {
+            Text(
+                text = activeStatus,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .semantics {
+                        liveRegion = if (visibleProblem != null) {
+                            LiveRegionMode.Assertive
+                        } else {
+                            LiveRegionMode.Polite
+                        }
+                    }
+                    .testTag("session-join-active-status"),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (visibleProblem != null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+            )
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -210,16 +244,21 @@ fun SessionJoinScreen(
     }
 }
 
+private val joinProgressSteps = listOf(
+    JoinUiStep.FINDING_HOST to "Finding the host",
+    JoinUiStep.CONNECTING to "Connecting",
+    JoinUiStep.REQUESTING_ACCESS to "Requesting access",
+    JoinUiStep.WAITING_FOR_APPROVAL to "Waiting for host approval",
+    JoinUiStep.WAITING_FOR_PLAYBACK to "Waiting for the host to start playback",
+    JoinUiStep.SYNCING_AUDIO to "Getting audio in sync",
+)
+
+private fun joinProgressLabel(step: JoinUiStep): String =
+    joinProgressSteps.firstOrNull { it.first == step }?.second ?: "Playback is ready"
+
 @Composable
 private fun JoinProgressCard(activeStep: JoinUiStep) {
-    val steps = listOf(
-        JoinUiStep.FINDING_HOST to "Finding the host",
-        JoinUiStep.CONNECTING to "Connecting",
-        JoinUiStep.REQUESTING_ACCESS to "Requesting access",
-        JoinUiStep.WAITING_FOR_APPROVAL to "Waiting for host approval",
-        JoinUiStep.WAITING_FOR_PLAYBACK to "Waiting for the host to start playback",
-        JoinUiStep.SYNCING_AUDIO to "Getting audio in sync",
-    )
+    val steps = joinProgressSteps
     val activeIndex = when (activeStep) {
         JoinUiStep.COMPLETE -> steps.lastIndex + 1
         else -> steps.indexOfFirst { it.first == activeStep }.coerceAtLeast(0)
