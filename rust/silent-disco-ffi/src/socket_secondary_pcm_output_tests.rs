@@ -118,7 +118,10 @@ impl SecondaryPcmOutput {
             u64::try_from(chunks.len()).expect("callback count")
         );
         assert_eq!(silent_disco_audio_underrun_count(native.cast_const()), 0);
-        assert_eq!(silent_disco_audio_silence_filled_frames(native.cast_const()), 0);
+        assert_eq!(
+            silent_disco_audio_silence_filled_frames(native.cast_const()),
+            0
+        );
         assert_eq!(
             self.tap.counters(),
             (

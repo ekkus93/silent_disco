@@ -89,11 +89,15 @@ pub(super) fn playback_generation(
     );
     assert!(recv_control(listener) == start);
     let mut second = second;
-    let mut second_output = second.is_some().then(|| {
-        SecondaryPcmOutput::new(session, stream, start_ms, metadata.samples_per_packet)
-    });
+    let mut second_output = second
+        .is_some()
+        .then(|| SecondaryPcmOutput::new(session, stream, start_ms, metadata.samples_per_packet));
     if let Some(output) = &second_output {
-        assert_ne!(output.token(), output_token, "listeners must own distinct native outputs");
+        assert_ne!(
+            output.token(),
+            output_token,
+            "listeners must own distinct native outputs"
+        );
     }
     if let Some(peer) = second.as_deref_mut() {
         assert!(recv_control(peer) == start);
@@ -183,7 +187,10 @@ pub(super) fn playback_generation(
                     second_output
                         .as_mut()
                         .expect("second socket owns a native playback runtime")
-                        .submit(second_packet, host_presentation_time_ms + presentation_shift_ms);
+                        .submit(
+                            second_packet,
+                            host_presentation_time_ms + presentation_shift_ms,
+                        );
                 }
                 pump.scheduler_mut()
                     .submit_packet(received)
