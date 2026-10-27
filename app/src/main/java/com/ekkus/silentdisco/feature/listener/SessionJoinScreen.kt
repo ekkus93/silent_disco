@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.feature.listener
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,7 +50,7 @@ import com.ekkus.silentdisco.app.joinUiStep
 import com.ekkus.silentdisco.app.label
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SessionJoinScreen(
     uiState: AppUiState,
