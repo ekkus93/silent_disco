@@ -36,6 +36,8 @@ mod socket_queue_end_replay_pcm_tests;
 #[cfg(test)]
 mod socket_same_identity_pcm_tests;
 #[cfg(test)]
+mod socket_secondary_pcm_output_tests;
+#[cfg(test)]
 mod socket_stop_prefetch_pcm_tests;
 mod sync;
 

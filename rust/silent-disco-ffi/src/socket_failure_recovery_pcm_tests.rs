@@ -13,6 +13,7 @@ use crate::callback_capture::CallbackCaptureTap;
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame, FfiPlaylistSource};
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_audio, recv_control};
+use crate::socket_secondary_pcm_output_tests::SecondaryPcmOutput;
 use silent_disco_core::audio::{
     PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
     SchedulerConfig,
@@ -88,6 +89,12 @@ pub(super) fn playback_generation(
     );
     assert!(recv_control(listener) == start);
     let mut second = second;
+    let mut second_output = second.is_some().then(|| {
+        SecondaryPcmOutput::new(session, stream, start_ms, metadata.samples_per_packet)
+    });
+    if let Some(output) = &second_output {
+        assert_ne!(output.token(), output_token, "listeners must own distinct native outputs");
+    }
     if let Some(peer) = second.as_deref_mut() {
         assert!(recv_control(peer) == start);
     }
@@ -171,7 +178,12 @@ pub(super) fn playback_generation(
                 let received = recv_audio(listener);
                 assert_eq!(received, packet, "socket PCM metadata/payload exact");
                 if let Some(peer) = second.as_deref_mut() {
-                    assert_eq!(recv_audio(peer), packet, "second listener PCM exact");
+                    let second_packet = recv_audio(peer);
+                    assert_eq!(second_packet, packet, "second listener PCM exact");
+                    second_output
+                        .as_mut()
+                        .expect("second socket owns a native playback runtime")
+                        .submit(second_packet, host_presentation_time_ms + presentation_shift_ms);
                 }
                 pump.scheduler_mut()
                     .submit_packet(received)
@@ -296,6 +308,9 @@ pub(super) fn playback_generation(
                         assert!(recv_control(peer) == resume);
                     }
                     pump.scheduler_mut().set_host_start_time_ms(start_ms + 200);
+                    if let Some(output) = second_output.as_mut() {
+                        output.reanchor(start_ms + 200);
+                    }
                     presentation_shift_ms = 200;
                     paused_boundary = true;
                 }
@@ -360,6 +375,9 @@ pub(super) fn playback_generation(
         0
     );
     assert_eq!(tap.counters(), (sample, 0, chunks.len() as u64));
+    if let Some(output) = second_output {
+        output.assert_and_release(chunks, &pcm, packets);
+    }
     detach_callback_capture(output_token);
     release_render_ring(output_token).expect("release output");
     CallbackPass {
