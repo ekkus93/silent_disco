@@ -5,8 +5,12 @@ use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation, source};
 use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_control};
-use silent_disco_core::domain::{MonotonicMillis, SampleIndex, SessionId, StreamId};
-use silent_disco_core::protocol::{ControlMessage, Stop, TrackBoundary};
+use silent_disco_core::domain::{
+    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
+use silent_disco_core::protocol::{
+    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart, TrackBoundary,
+};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -147,6 +151,44 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
     host.broadcast_control(&stale)
         .expect("ignore stale boundary after second queue end");
     assert_eq!(host.counters().control_frames_sent, after_second_end);
+    let retired_metadata = refill.stream_start();
+    let retired_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(2_000),
+        sample_rate: retired_metadata.sample_rate,
+        channels: retired_metadata.channels,
+        samples_per_packet: retired_metadata.samples_per_packet,
+        current_entry_id: retired_metadata.current_entry_id,
+        current_display_name: retired_metadata.current_display_name,
+    });
+    assert_eq!(
+        host.broadcast_control(&retired_start)
+            .expect("ignore delayed paused-generation Start")
+            .report
+            .intended_peers,
+        0,
+        "Stop must fence a delayed Start even before a new Play"
+    );
+    let retired_audio = AudioDatagram {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        sequence: PacketSequence::new(2),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        first_sample_index: SampleIndex::new(480),
+        host_presentation_time_ms: MonotonicMillis::new(2_010),
+        payload: vec![0; 960],
+    };
+    assert_eq!(
+        host.broadcast_audio(&ProtocolFrame::Audio(retired_audio.clone()))
+            .expect("suppress retired paused-generation UDP")
+            .report
+            .intended_peers,
+        0
+    );
 
     // The previous late joiner disconnects after the paused generation ends.
     // A new TCP/UDP listener admitted during the second idle period must not
@@ -195,6 +237,42 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
         expected_pcm(&[3_000, 9_000], third_pass.startup_ramp_frames),
         "second refill must restart at sample zero with one ramp and no stale PCM"
     );
+    assert_eq!(
+        host.broadcast_control(&retired_start)
+            .expect("reject delayed Start after third Play")
+            .report
+            .intended_peers,
+        0
+    );
+    assert_eq!(
+        host.broadcast_audio(&ProtocolFrame::Audio(retired_audio))
+            .expect("reject retired UDP after third Play")
+            .report
+            .intended_peers,
+        0
+    );
+    let third_metadata = third_play.stream_start();
+    let current_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(3_000),
+        sample_rate: third_metadata.sample_rate,
+        channels: third_metadata.channels,
+        samples_per_packet: third_metadata.samples_per_packet,
+        current_entry_id: third_metadata.current_entry_id,
+        current_display_name: third_metadata.current_display_name,
+    });
+    let current_boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "again-third".to_owned(),
+        display_name: "again-third".to_owned(),
+    });
+    let mut current_late = authorized_late_joiner(host.as_mut(), "queue-refill-third-late");
+    assert!(recv_control(current_late.as_mut()) == current_start);
+    assert!(recv_control(current_late.as_mut()) == current_boundary);
+    current_late.shutdown().expect("retire third-generation late joiner");
     third_play.cancel().expect("release second refill producer");
     after_second_end_listener
         .shutdown()
