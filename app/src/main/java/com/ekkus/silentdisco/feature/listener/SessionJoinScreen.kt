@@ -66,7 +66,10 @@ fun SessionJoinScreen(
 ) {
     val session = uiState.selectedSession
     val problem = uiState.derivedPersistentProblem()
-    var editingInviteCode by rememberSaveable { mutableStateOf(false) }
+    // Editing a rejected code belongs to one host session. Reusing the join
+    // route for a different discovered session must not expose its request
+    // action as a retry or restore focus to the old session's code field.
+    var editingInviteCode by rememberSaveable(session?.id) { mutableStateOf(false) }
     val inviteCodeBringIntoView = remember { BringIntoViewRequester() }
     val inviteCodeFocus = remember { FocusRequester() }
     LaunchedEffect(editingInviteCode) {

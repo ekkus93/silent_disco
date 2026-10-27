@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -103,6 +104,71 @@ class SessionJoinPinnedStatusTest {
         status.assertIsDisplayed().assertTextContains("Getting audio in sync")
         cancel.assertIsDisplayed().performClick()
         compose.runOnIdle { assertThat(cancelled).isEqualTo(1) }
+    }
+
+
+    @Test
+    fun switchingHostSessionDoesNotCarryStaleInviteCodeRecoveryAcrossSavedState() {
+        var state by mutableStateOf(
+            AppUiState(
+                selectedSession = session,
+                listenerState = ListenerLifecycleState.ERROR,
+                connectionProgress = ConnectionProgressState(inviteCode = "1111"),
+                lastError = "Incorrect invite code",
+            ),
+        )
+        var requested = 0
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, 1.5f)) {
+                SilentDiscoTheme {
+                    Box(Modifier.size(320.dp, 480.dp)) {
+                        SessionJoinScreen(
+                            uiState = state,
+                            onInviteCodeChanged = {},
+                            onJoin = { requested++ },
+                            onCancel = {},
+                            onRetry = {},
+                            onReturnToSessions = {},
+                            onOpenSettings = {},
+                            onShareSupportReport = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        // Enter an in-progress recovery for the original host; this flag is
+        // saved by Compose and must not leak to a different selected session.
+        compose.onNodeWithTag("session-problem-primary").performClick()
+        compose.onNodeWithTag("session-join-code").assertIsDisplayed().assertIsFocused()
+        compose.onNodeWithTag("session-request-join").assertTextEquals("Request again")
+
+        compose.runOnIdle {
+            state = state.copy(
+                selectedSession = SessionInfo(
+                    id = "different-host-session",
+                    name = "Another Disco",
+                    hostDeviceName = "Another host",
+                    approvalMode = ApprovalMode.MANUAL,
+                    inviteCodeRequired = false,
+                ),
+                listenerState = ListenerLifecycleState.SESSION_SELECTED,
+                connectionProgress = ConnectionProgressState(),
+                lastError = null,
+            )
+        }
+        compose.onNodeWithTag("session-request-join")
+            .assertIsDisplayed()
+            .assertTextEquals("Request to join")
+        assertThat(compose.onAllNodesWithTag("session-join-code").fetchSemanticsNodes())
+            .isEmpty()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("session-request-join")
+            .assertIsDisplayed()
+            .assertTextEquals("Request to join")
+            .performClick()
+        compose.runOnIdle { assertThat(requested).isEqualTo(1) }
     }
 
     @Test
