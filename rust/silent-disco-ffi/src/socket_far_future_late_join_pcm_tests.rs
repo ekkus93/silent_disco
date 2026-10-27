@@ -260,7 +260,10 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             .successful_peers,
         1
     );
-    assert!(recv_control(listener.as_mut()) == successor, "live boundary delivered");
+    assert!(
+        recv_control(listener.as_mut()) == successor,
+        "live boundary delivered"
+    );
     clock.set(3_525);
     let mut late_successor = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
     let ControlMessage::StreamStart(successor_start) = recv_control(late_successor.as_mut()) else {
@@ -323,7 +326,11 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             submitted.expect("reordered live packets must recover without loss");
         }
     }
-    for now in (3_500..=3_555).step_by(5) {
+    // Stop advancing the scheduler at the last known audio deadline (3545).
+    // The host's explicit End is consumed below; ticking at 3550/3555 after
+    // EOF would ask the still-live scheduler to invent missing packets 510/511,
+    // counting two artificial skips even though every source packet arrived.
+    for now in (3_500..=3_545).step_by(5) {
         for _ in 0..64 {
             if !matches!(
                 pump.tick(now),
@@ -337,16 +344,6 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         playlist.next_frame(5_000).expect("natural queue end"),
         Some(FfiPlaylistFrame::End)
     ));
-    for now in [3_550, 3_555] {
-        for _ in 0..64 {
-            if !matches!(
-                pump.tick(now),
-                PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
-            ) {
-                break;
-            }
-        }
-    }
     assert_eq!(pump.diagnostics().packets_emitted, 10);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
     assert_eq!(
