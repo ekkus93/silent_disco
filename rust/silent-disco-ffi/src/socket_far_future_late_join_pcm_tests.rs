@@ -492,7 +492,10 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     let ControlMessage::StreamStart(paused_start) = recv_control(paused_reconnect.as_mut()) else {
         panic!("paused reconnect must replay current-track StreamStart");
     };
-    assert_eq!(paused_start.current_entry_id.as_deref(), Some("late-successor"));
+    assert_eq!(
+        paused_start.current_entry_id.as_deref(),
+        Some("late-successor")
+    );
     assert_eq!(paused_start.host_start_time_ms.get(), 1_000);
     assert!(recv_control(paused_reconnect.as_mut()) == paused);
     late_successor
@@ -501,7 +504,10 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     late_successor = paused_reconnect;
     let primary_native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
     assert_eq!(silent_disco_audio_callback_count(primary_native), 0);
-    assert_eq!(silent_disco_audio_callback_count(late_native.cast_const()), 0);
+    assert_eq!(
+        silent_disco_audio_callback_count(late_native.cast_const()),
+        0
+    );
 
     // Resume re-anchors the same stream after a 200ms pause. Both real
     // sockets receive the authoritative current title; the existing native
