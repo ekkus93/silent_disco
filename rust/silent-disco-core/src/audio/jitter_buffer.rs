@@ -280,7 +280,7 @@ impl JitterBuffer {
                 self.far_future_candidates.clear();
             }
             self.far_future_candidates.insert(sequence, datagram);
-            if self.far_future_candidates.len() < FAR_FUTURE_RESYNC_PACKETS as usize {
+            if self.far_future_candidates.len() < usize::try_from(FAR_FUTURE_RESYNC_PACKETS).expect("small bound") {
                 return Err(JitterBufferRejection::new(
                     JitterBufferRejectionKind::ReorderWindowExceeded,
                     "far-future stream position awaits corroborating packets",
@@ -294,7 +294,7 @@ impl JitterBuffer {
             self.statistics.resynchronisations += 1;
             self.statistics.skipped += u64::try_from(self.packets.len()).unwrap_or(u64::MAX);
             self.packets = recovered;
-            self.statistics.accepted += FAR_FUTURE_RESYNC_PACKETS as u64;
+            self.statistics.accepted += u64::from(FAR_FUTURE_RESYNC_PACKETS);
             return Ok(());
         }
         if let Some(earliest) = self.packets.values().next() {
