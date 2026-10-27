@@ -289,6 +289,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     })
     .expect("independent late-join native output");
     assert_ne!(late_token, token);
+    let late_native = usize::try_from(late_token).expect("late token") as *mut core::ffi::c_void;
     let mut late_config =
         SchedulerConfig::new(session.clone(), stream.clone(), 48_000, 1_000, 240, 2);
     late_config.startup_buffer_target_ms = 0;
@@ -333,9 +334,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
                 .expect("retire first late-join TCP/UDP route");
             late_successor = replacement;
             assert_eq!(
-                silent_disco_audio_callback_count(
-                    (usize::try_from(late_token).expect("late token") as *const core::ffi::c_void)
-                ),
+                silent_disco_audio_callback_count(late_native.cast_const()),
                 0,
                 "socket replacement must not touch the late listener's native output"
             );
@@ -499,7 +498,6 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     );
     assert_eq!(tap.counters(), (2_400, 0, 8));
 
-    let late_native = usize::try_from(late_token).expect("late token") as *mut core::ffi::c_void;
     let mut late_actual = Vec::new();
     for frames in [241_u32, 337, 382, 240] {
         let mut output = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
