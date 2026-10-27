@@ -9,9 +9,9 @@ use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation, source};
 use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_control};
-use silent_disco_core::protocol::{ControlMessage, Stop, StreamStart, TrackBoundary};
 use silent_disco_core::domain::{MonotonicMillis, SampleIndex};
 use silent_disco_core::domain::{SessionId, StreamId};
+use silent_disco_core::protocol::{ControlMessage, Stop, StreamStart, TrackBoundary};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -122,7 +122,6 @@ fn removing_prefetched_successor_before_commit_renders_only_retargeted_live_queu
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -140,14 +139,10 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
     let removed = root.join("removed.wav");
     let replacement = root.join("replacement.wav");
     let last = root.join("last.wav");
-    fs::write(&current, source_wav_format(3_000, 48_000, 2, 40 * 240))
-        .expect("current source");
-    fs::write(&removed, source_wav_format(11_000, 48_000, 2, 480))
-        .expect("removed source");
-    fs::write(&replacement, source_wav_format(7_000, 44_100, 1, 441))
-        .expect("replacement source");
-    fs::write(&last, source_wav_format(9_000, 48_000, 2, 480))
-        .expect("final source");
+    fs::write(&current, source_wav_format(3_000, 48_000, 2, 40 * 240)).expect("current source");
+    fs::write(&removed, source_wav_format(11_000, 48_000, 2, 480)).expect("removed source");
+    fs::write(&replacement, source_wav_format(7_000, 44_100, 1, 441)).expect("replacement source");
+    fs::write(&last, source_wav_format(9_000, 48_000, 2, 480)).expect("final source");
 
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("edit-stop-replay").expect("stream");
@@ -167,7 +162,10 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
     .expect("production edit playlist");
     let metadata = edited.stream_start();
     edited
-        .replace_upcoming(vec![source("replacement", &replacement), source("last", &last)])
+        .replace_upcoming(vec![
+            source("replacement", &replacement),
+            source("last", &last),
+        ])
         .expect("remove prefetched successor before boundary reservation");
     let first = playback_generation(
         host.as_mut(),
@@ -213,8 +211,7 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
     assert!(recv_control(primary.as_mut()) == stop);
     assert!(recv_control(secondary.as_mut()) == stop);
     let stopped_controls = host.counters().control_frames_sent;
-    let mut replacement_socket =
-        authorized_late_joiner(host.as_mut(), "edited-second-listener");
+    let mut replacement_socket = authorized_late_joiner(host.as_mut(), "edited-second-listener");
     assert_eq!(
         host.counters().control_frames_sent,
         stopped_controls,
@@ -252,7 +249,10 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
         session.to_string(),
         stream.to_string(),
         3_000,
-        vec![source("replay-last", &last), source("replay-replacement", &replacement)],
+        vec![
+            source("replay-last", &last),
+            source("replay-replacement", &replacement),
+        ],
     )
     .expect("replay reversed accepted sources");
     let second = playback_generation(
@@ -269,7 +269,11 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
     );
     assert!(second.failure.is_none());
     assert_eq!(second.packets, 4, "replay sequence resets to packet zero");
-    assert_eq!(second.boundaries, [480], "new generation starts at sample zero");
+    assert_eq!(
+        second.boundaries,
+        [480],
+        "new generation starts at sample zero"
+    );
     assert_ne!(second.output_token, first.output_token);
     assert_eq!(
         second.pcm,
@@ -277,7 +281,9 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
         "both independent listener outputs must replay exact reversed PCM"
     );
     replay.cancel().expect("release replay producer");
-    replacement_socket.shutdown().expect("replacement socket shutdown");
+    replacement_socket
+        .shutdown()
+        .expect("replacement socket shutdown");
     primary.shutdown().expect("primary shutdown");
     host.shutdown().expect("host shutdown");
     fs::remove_dir_all(root).expect("fixture cleanup");
