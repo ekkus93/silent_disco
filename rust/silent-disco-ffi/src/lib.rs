@@ -32,6 +32,8 @@ mod socket_failure_recovery_pcm_tests;
 #[cfg(test)]
 mod socket_far_future_late_join_pcm_tests;
 #[cfg(test)]
+mod socket_live_edit_pcm_tests;
+#[cfg(test)]
 mod socket_pause_resume_pcm_tests;
 #[cfg(test)]
 mod socket_queue_end_replay_pcm_tests;

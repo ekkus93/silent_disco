@@ -109,9 +109,12 @@ pub(super) fn playback_generation(
         u64::from(config.sample_rate) * u64::from(config.concealment_ramp_ms) / 1_000,
     )
     .expect("ramp");
+    // Large edit-before-boundary acceptance runs a full 40-packet current
+    // track plus two successors without draining the native callback early.
+    // Keep the entire valid generation in this test-only render ring.
     let (producer, output_token) = register_render_ring(RenderRingConfig {
-        capacity_frames: 4_800,
-        target_fill_frames: 4_800,
+        capacity_frames: 16_384,
+        target_fill_frames: 16_384,
     })
     .expect("native output");
     if let Some(output) = &second_output {
@@ -128,12 +131,12 @@ pub(super) fn playback_generation(
             volume: 1.0,
             write_lead_ms: 0,
             max_prefill_ms: 0,
-            target_depth_frames: 4_800,
+            target_depth_frames: 16_384,
         },
     )
     .expect("listener pump");
     pump.apply_sync_offset(0.0);
-    let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("capture"));
+    let tap = Arc::new(CallbackCaptureTap::new(16_384).expect("capture"));
     attach_callback_capture(output_token, Arc::clone(&tap)).expect("attach tap");
 
     let mut packets = 0_u64;
