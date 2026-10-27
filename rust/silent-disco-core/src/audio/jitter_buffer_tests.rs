@@ -293,19 +293,29 @@ fn far_future_late_join_recovers_every_corroborating_pcm_packet_without_a_gap() 
     config.max_reorder_window = 8;
     let mut buffer = JitterBuffer::new(config).expect("valid jitter buffer");
     for sequence in 0..4 {
-        buffer.accept(packet(sequence, sequence * 20)).expect("stale head");
+        buffer
+            .accept(packet(sequence, sequence * 20))
+            .expect("stale head");
     }
     for sequence in [500, 502] {
         assert_eq!(
-            buffer.accept(packet(sequence, sequence * 20))
-                .expect_err("provisional candidate").kind,
+            buffer
+                .accept(packet(sequence, sequence * 20))
+                .expect_err("provisional candidate")
+                .kind,
             JitterBufferRejectionKind::ReorderWindowExceeded
         );
     }
     assert_eq!(buffer.len(), 4, "unconfirmed packets cannot erase old PCM");
-    buffer.accept(packet(501, 10_020)).expect("third distinct packet confirms live position");
+    buffer
+        .accept(packet(501, 10_020))
+        .expect("third distinct packet confirms live position");
     assert_eq!(buffer.next_expected_sequence(), 500);
-    assert_eq!(buffer.len(), 3, "stale head replaced with all live candidates");
+    assert_eq!(
+        buffer.len(),
+        3,
+        "stale head replaced with all live candidates"
+    );
     for sequence in 500..503 {
         let received = buffer.pop_in_order().expect("no artificial resync gap");
         assert_eq!(received.sequence.get(), sequence);
@@ -330,9 +340,18 @@ fn far_future_outliers_and_duplicates_cannot_reanchor_a_live_listener() {
     assert_eq!(buffer.next_expected_sequence(), 0);
     assert_eq!(buffer.statistics().resynchronisations, 0);
     assert!(buffer.is_empty());
-    buffer.accept(packet(9_002, 9_002 * 20)).expect("three fresh consecutive packets");
+    buffer
+        .accept(packet(9_002, 9_002 * 20))
+        .expect("three fresh consecutive packets");
     for sequence in 9_000..9_003 {
-        assert_eq!(buffer.pop_in_order().expect("retained live packet").sequence.get(), sequence);
+        assert_eq!(
+            buffer
+                .pop_in_order()
+                .expect("retained live packet")
+                .sequence
+                .get(),
+            sequence
+        );
     }
     assert_eq!(buffer.statistics().resynchronisations, 1);
 }

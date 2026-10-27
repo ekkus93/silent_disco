@@ -283,12 +283,15 @@ fn far_future_late_join_scheduler_renders_all_three_bootstrap_packets_without_co
     let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
     for sequence in [500, 502] {
         assert_eq!(
-            scheduler.submit_packet(datagram(sequence, 8_000))
-                .expect_err("provisional live packet").kind,
+            scheduler
+                .submit_packet(datagram(sequence, 8_000))
+                .expect_err("provisional live packet")
+                .kind,
             JitterBufferRejectionKind::ReorderWindowExceeded,
         );
     }
-    scheduler.submit_packet(datagram(501, 8_000))
+    scheduler
+        .submit_packet(datagram(501, 8_000))
         .expect("third live packet atomically restores the first two");
     for sequence in 500..503 {
         let now = HOST_START_MS + sequence * u64::from(PACKET_DURATION_MS);

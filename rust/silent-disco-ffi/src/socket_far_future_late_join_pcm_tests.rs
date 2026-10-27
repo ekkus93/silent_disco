@@ -62,7 +62,10 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         session.to_string(),
         stream.to_string(),
         1_000,
-        vec![source("long-first", &first), source("late-current", &second)],
+        vec![
+            source("long-first", &first),
+            source("late-current", &second),
+        ],
     )
     .expect("production decoded playlist");
     let metadata = playlist.stream_start();
@@ -77,20 +80,32 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         current_display_name: metadata.current_display_name,
     });
     assert_eq!(
-        host.broadcast_control(&start).expect("cache start").report.intended_peers,
+        host.broadcast_control(&start)
+            .expect("cache start")
+            .report
+            .intended_peers,
         0
     );
     let mut sequence = 0_u64;
     let mut boundary_seen = false;
     for _ in 0..510 {
         match playlist.next_frame(5_000).expect("production packetizer") {
-            Some(FfiPlaylistFrame::Audio { sequence: packet, first_sample_index, .. }) => {
+            Some(FfiPlaylistFrame::Audio {
+                sequence: packet,
+                first_sample_index,
+                ..
+            }) => {
                 assert!(!boundary_seen, "the live second track is handled below");
                 assert_eq!(packet, sequence);
                 assert_eq!(first_sample_index, sequence * 240);
                 sequence += 1;
             }
-            Some(FfiPlaylistFrame::TrackBoundary { first_sample_index, entry_id, display_name, .. }) => {
+            Some(FfiPlaylistFrame::TrackBoundary {
+                first_sample_index,
+                entry_id,
+                display_name,
+                ..
+            }) => {
                 assert_eq!(sequence, 500);
                 assert_eq!(first_sample_index, 120_000);
                 assert_eq!(entry_id, "late-current");
@@ -101,7 +116,8 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
                     entry_id,
                     display_name,
                 });
-                host.broadcast_control(&boundary).expect("cache audible boundary");
+                host.broadcast_control(&boundary)
+                    .expect("cache audible boundary");
                 boundary_seen = true;
                 break;
             }
@@ -115,17 +131,22 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     };
     assert_eq!(replayed.host_start_time_ms.get(), 1_000);
     assert_eq!(replayed.current_entry_id.as_deref(), Some("late-current"));
-    assert_eq!(replayed.current_display_name.as_deref(), Some("late-current"));
+    assert_eq!(
+        replayed.current_display_name.as_deref(),
+        Some("late-current")
+    );
 
     let mut config = SchedulerConfig::new(session.clone(), stream.clone(), 48_000, 1_000, 240, 2);
     config.startup_buffer_target_ms = 0;
     let ramp = usize::try_from(
         u64::from(config.sample_rate) * u64::from(config.concealment_ramp_ms) / 1_000,
-    ).expect("ramp");
+    )
+    .expect("ramp");
     let (producer, token) = register_render_ring(RenderRingConfig {
         capacity_frames: 4_800,
         target_fill_frames: 4_800,
-    }).expect("one native output");
+    })
+    .expect("one native output");
     let mut pump = PlaybackPump::new(
         PlaybackScheduler::new(config, 0.0).expect("listener scheduler"),
         producer,
@@ -135,15 +156,23 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             max_prefill_ms: 0,
             target_depth_frames: 4_800,
         },
-    ).expect("listener pump");
+    )
+    .expect("listener pump");
     pump.apply_sync_offset(0.0);
     let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("callback tap"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
     for expected_sequence in 500..505 {
         let Some(FfiPlaylistFrame::Audio {
-            sequence, sample_rate, channels, samples_per_packet,
-            first_sample_index, host_presentation_time_ms, payload, ..
-        }) = playlist.next_frame(5_000).expect("live packet") else {
+            sequence,
+            sample_rate,
+            channels,
+            samples_per_packet,
+            first_sample_index,
+            host_presentation_time_ms,
+            payload,
+            ..
+        }) = playlist.next_frame(5_000).expect("live packet")
+        else {
             panic!("expected second-track PCM");
         };
         assert_eq!(sequence, expected_sequence);
@@ -162,7 +191,9 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         };
         assert_eq!(
             host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
-                .expect("live UDP").report.successful_peers,
+                .expect("live UDP")
+                .report
+                .successful_peers,
             1
         );
         let received = recv_audio(listener.as_mut());
@@ -179,7 +210,10 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         if expected_sequence >= 502 {
             let now = 3_500 + (expected_sequence - 502) * 5;
             for _ in 0..64 {
-                if !matches!(pump.tick(now), PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }) {
+                if !matches!(
+                    pump.tick(now),
+                    PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+                ) {
                     break;
                 }
             }
@@ -191,14 +225,20 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     ));
     for now in [3_515, 3_520] {
         for _ in 0..64 {
-            if !matches!(pump.tick(now), PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }) {
+            if !matches!(
+                pump.tick(now),
+                PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+            ) {
                 break;
             }
         }
     }
     assert_eq!(pump.diagnostics().packets_emitted, 5);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
-    assert_eq!(pump.scheduler_mut().jitter_statistics().resynchronisations, 1);
+    assert_eq!(
+        pump.scheduler_mut().jitter_statistics().resynchronisations,
+        1
+    );
     assert_eq!(pump.scheduler_mut().jitter_statistics().skipped, 0);
 
     let native = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
@@ -208,7 +248,11 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         let mut supplied = 0_u32;
         assert_eq!(
             silent_disco_audio_read_interleaved_f32(
-                native, output.as_mut_ptr(), frames, 2, &raw mut supplied,
+                native,
+                output.as_mut_ptr(),
+                frames,
+                2,
+                &raw mut supplied,
             ),
             0,
             "no native callback underrun on the live edge"
@@ -220,17 +264,27 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     let expected: Vec<f32> = (0..1_200_usize)
         .flat_map(|frame| {
             let sample = if frame < ramp {
-                2_048_i32 * i32::try_from(frame).expect("frame") / i32::try_from(ramp).expect("ramp")
+                2_048_i32 * i32::try_from(frame).expect("frame")
+                    / i32::try_from(ramp).expect("ramp")
             } else {
                 2_048_i32
             };
-            std::iter::repeat_n(f32::from(i16::try_from(sample).expect("sample")) / 32768.0, 2)
+            std::iter::repeat_n(
+                f32::from(i16::try_from(sample).expect("sample")) / 32768.0,
+                2,
+            )
         })
         .collect();
-    assert_eq!(actual, expected, "exact second-track PCM, only one startup ramp");
+    assert_eq!(
+        actual, expected,
+        "exact second-track PCM, only one startup ramp"
+    );
     assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 4);
     assert_eq!(silent_disco_audio_underrun_count(native.cast_const()), 0);
-    assert_eq!(silent_disco_audio_silence_filled_frames(native.cast_const()), 0);
+    assert_eq!(
+        silent_disco_audio_silence_filled_frames(native.cast_const()),
+        0
+    );
     assert_eq!(tap.counters(), (1_200, 0, 4));
     detach_callback_capture(token);
     release_render_ring(token).expect("retire one output");
