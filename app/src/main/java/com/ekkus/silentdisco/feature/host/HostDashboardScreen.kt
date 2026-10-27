@@ -454,8 +454,16 @@ private fun ConnectedListenerCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(listener.displayName, style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { menuOpen = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "Listener actions")
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier
+                        .size(WorkflowTouchTarget.minimum)
+                        .testTag("host-listener-actions-${listener.deviceId}"),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "Actions for ${listener.displayName}",
+                    )
                 }
                 DropdownMenu(
                     expanded = menuOpen,
