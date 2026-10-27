@@ -69,9 +69,12 @@ class HostTransportSessionRebindInstrumentedTest {
             val newEndpoint = bindSession("replacement-session-${System.nanoTime()}")
             join(newEndpoint, "new-current")
 
-            // first() without a device predicate is deliberate: an obsolete
-            // queued event would otherwise be skipped and hide the defect.
-            val delivered = withTimeout(10_000) { host.events.first() }
+            // The native handshake also reports PeerAccepted. Ignore only
+            // non-join handshakes: NEVER filter by device ID, because doing
+            // so would hide queued old-session JoinRequestReceived events.
+            val delivered = withTimeout(10_000) {
+                host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
+            }
             assertThat(delivered).isInstanceOf(FfiHostTransportEvent.JoinRequestReceived::class.java)
             assertThat((delivered as FfiHostTransportEvent.JoinRequestReceived).deviceId)
                 .isEqualTo("new-current")
