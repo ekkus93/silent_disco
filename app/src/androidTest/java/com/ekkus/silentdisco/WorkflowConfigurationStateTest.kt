@@ -22,9 +22,11 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.app.HostFormState
+import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
+import com.ekkus.silentdisco.feature.host.HostReadyScreen
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
@@ -172,5 +174,57 @@ class WorkflowConfigurationStateTest {
         composeRule.onNodeWithTag("host-access-next").performClick()
         composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
         composeRule.runOnIdle { assertThat(nextCalls).isEqualTo(2) }
+    }
+
+    @Test
+    fun hostReadyAsyncFailureAfterRestoreShowsRetryWithoutDuplicateStart() {
+        var startCalls = 0
+        var state by mutableStateOf(
+            AppUiState(
+                hostForm = HostFormState(
+                    sessionName = "Warehouse Silent Disco",
+                    selectedAudio = SelectedAudioFile(
+                        uri = Uri.parse("content://test/ready-retry.wav"),
+                        displayName = "ready-retry.wav",
+                        mimeType = "audio/wav",
+                        sizeBytes = 1_024,
+                    ),
+                ),
+            ),
+        )
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent {
+            SilentDiscoTheme {
+                HostReadyScreen(
+                    uiState = state,
+                    onBack = {},
+                    onStartSession = { startCalls += 1 },
+                    onOpenSettings = {},
+                    onShareSupportReport = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("host-start-session").assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("host-start-session").assertIsNotEnabled()
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithTag("host-start-session").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(startCalls).isEqualTo(1) }
+
+        // An asynchronous transport/start failure can leave the actor IDLE,
+        // rather than ERROR. A saved in-flight latch must not strand the
+        // primary action or hide the failure after the ViewModel reports it.
+        composeRule.runOnIdle {
+            state = state.copy(
+                hostState = HostLifecycleState.IDLE,
+                lastError = "Unable to start the session",
+            )
+        }
+        composeRule.onNodeWithTag("host-start-session")
+            .assertTextContains("Retry")
+            .assertIsEnabled()
+            .performClick()
+        composeRule.onNodeWithTag("host-start-session").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(startCalls).isEqualTo(2) }
     }
 }

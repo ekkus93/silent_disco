@@ -48,6 +48,7 @@ fun HostReadyScreen(
     var startInFlight by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(uiState.hostState, uiState.lastError) {
         if (
+            uiState.lastError != null ||
             uiState.hostState == HostLifecycleState.ERROR ||
             uiState.hostState !in setOf(HostLifecycleState.IDLE, HostLifecycleState.CREATING_SESSION)
         ) {
@@ -60,7 +61,8 @@ fun HostReadyScreen(
     val valid = form.sessionName.isNotBlank() && files.isNotEmpty() &&
         (!inviteCodeRequired || isValidInviteCode(form.inviteCode))
     val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION || startInFlight
-    val failed = uiState.hostState == HostLifecycleState.ERROR && !uiState.lastError.isNullOrBlank()
+    val failed = !uiState.lastError.isNullOrBlank() &&
+        uiState.hostState in setOf(HostLifecycleState.IDLE, HostLifecycleState.ERROR)
     val permissionFailure = failed &&
         uiState.lastError.orEmpty().contains("permission", ignoreCase = true)
 
