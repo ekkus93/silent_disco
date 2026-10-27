@@ -315,16 +315,12 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             // authenticated route without losing the original listener, and
             // the late joiner's scheduler/native output must not be reopened.
             clock.set(3_540);
-            let mut replacement =
-                authorized_late_joiner(host.as_mut(), "successor-late-joiner");
+            let mut replacement = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
             let ControlMessage::StreamStart(replayed) = recv_control(replacement.as_mut()) else {
                 panic!("late listener reconnect must replay the current third track");
             };
             assert_eq!(replayed.host_start_time_ms.get(), 1_000);
-            assert_eq!(
-                replayed.current_entry_id.as_deref(),
-                Some("late-successor")
-            );
+            assert_eq!(replayed.current_entry_id.as_deref(), Some("late-successor"));
             assert_eq!(
                 replayed.current_display_name.as_deref(),
                 Some("late-successor")
