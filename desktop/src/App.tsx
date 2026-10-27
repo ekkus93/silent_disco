@@ -138,8 +138,7 @@ export function App() {
   const keyboardTabNavigationRef = useRef(false);
   const previousViewRef = useRef<DesktopView>(activeView);
   const visibleDestinations = DESTINATIONS.filter(
-    (destination) =>
-      destination.id !== "lab" || (labModeAvailable === true && LabScreen !== null),
+    (destination) => destination.id !== "lab" || (labModeAvailable === true && LabScreen !== null),
   );
 
   useEffect(() => {
