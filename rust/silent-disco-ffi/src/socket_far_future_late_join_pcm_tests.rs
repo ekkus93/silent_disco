@@ -198,8 +198,8 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     }
     assert_eq!(pump.diagnostics().packets_emitted, 5);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
-    assert_eq!(pump.scheduler().jitter_statistics().resynchronisations, 1);
-    assert_eq!(pump.scheduler().jitter_statistics().skipped, 0);
+    assert_eq!(pump.scheduler_mut().jitter_statistics().resynchronisations, 1);
+    assert_eq!(pump.scheduler_mut().jitter_statistics().skipped, 0);
 
     let native = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
     let mut actual = Vec::new();
