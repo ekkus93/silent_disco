@@ -161,7 +161,27 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     pump.apply_sync_offset(0.0);
     let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("callback tap"));
     attach_callback_capture(token, Arc::clone(&tap)).expect("attach tap");
+    // The host emits monotonically increasing UDP packets. Retain the real
+    // socket deliveries so the scheduler can also exercise network-style
+    // reordering without bypassing the production host's sequence fence.
+    let mut delivered = Vec::new();
     for expected_sequence in 500..505 {
+        if expected_sequence == 503 {
+            // Replace the authorized TCP/UDP route with the SAME device ID
+            // after the three bootstrap packets, without reopening the
+            // scheduler, native ring, or callback capture.
+            let mut replacement =
+                authorized_late_joiner(host.as_mut(), "far-future-callback-listener");
+            let ControlMessage::StreamStart(reconnected) =
+                recv_control(replacement.as_mut())
+            else {
+                panic!("replacement route must replay current-track identity");
+            };
+            assert_eq!(reconnected.current_entry_id.as_deref(), Some("late-current"));
+            assert_eq!(reconnected.host_start_time_ms.get(), 1_000);
+            listener.shutdown().expect("retire previous same-device socket");
+            listener = replacement;
+        }
         let Some(FfiPlaylistFrame::Audio {
             sequence,
             sample_rate,
@@ -198,24 +218,28 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         );
         let received = recv_audio(listener.as_mut());
         assert_eq!(received, packet, "real socket must preserve exact live PCM");
-        let submitted = pump.scheduler_mut().submit_packet(received);
-        if expected_sequence < 502 {
+        delivered.push(received);
+    }
+    assert_eq!(delivered.len(), 5);
+    // Deliver the socket-received packets to the production jitter buffer
+    // in a deliberately reordered sequence, including a missing packet at
+    // the far-future bootstrap and another gap after same-ID reconnect.
+    // The two provisional candidates must be retained, not concealed.
+    for index in [0_usize, 2, 1, 4, 3] {
+        let submitted = pump.scheduler_mut().submit_packet(delivered[index].clone());
+        if index == 0 || index == 2 {
             assert!(submitted.is_err(), "two candidates require corroboration");
         } else {
-            submitted.expect("live-edge packets must recover in sequence");
+            submitted.expect("reordered live packets must recover without loss");
         }
-        // All three corroborating packets arrive while the first slot is
-        // still reachable; subsequent ticks follow the live presentation
-        // clock. No synthetic gap or stale first-track PCM is permitted.
-        if expected_sequence >= 502 {
-            let now = 3_500 + (expected_sequence - 502) * 5;
-            for _ in 0..64 {
-                if !matches!(
-                    pump.tick(now),
-                    PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
-                ) {
-                    break;
-                }
+    }
+    for now in [3_500, 3_505, 3_510, 3_515, 3_520] {
+        for _ in 0..64 {
+            if !matches!(
+                pump.tick(now),
+                PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+            ) {
+                break;
             }
         }
     }
