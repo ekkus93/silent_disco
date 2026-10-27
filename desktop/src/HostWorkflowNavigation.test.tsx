@@ -210,9 +210,6 @@ describe("desktop host workflow navigation", () => {
 
     expect(await tabSequence(user)).toEqual([
       'tab "Host control"',
-      'tab "Diagnostics"',
-      'tab "Storage"',
-      'tab "Settings"',
       'textbox "Session name"',
       'button "Add songs"',
       'button "Next: Access"',

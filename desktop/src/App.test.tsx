@@ -458,7 +458,7 @@ describe("App", () => {
     expect(screen.getByRole("tabpanel")).not.toHaveFocus();
 
     // Pointer activation retains the existing panel-focus handoff.
-    fireEvent.click(screen.getByRole("tab", { name: "Diagnostics" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     await waitFor(() => expect(screen.getByRole("tabpanel")).toHaveFocus());
   });
 
