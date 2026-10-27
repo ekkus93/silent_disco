@@ -21,7 +21,8 @@ use silent_disco_core::domain::{
     MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
 use silent_disco_core::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart, TrackBoundary,
+    AudioCodec, AudioDatagram, ControlMessage, Pause, ProtocolFrame, Stop, StreamStart,
+    TrackBoundary,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, ManualTransportClock, SocketTransportFactory, TransportFactory,
@@ -448,6 +449,83 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     );
     assert_eq!(pump.scheduler_mut().jitter_statistics().skipped, 0);
 
+    // Pause *after* the producer has reached natural EOF but before either
+    // native callback drains the already-buffered two-track PCM. A late
+    // same-device reconnect must see the current third track and Pause,
+    // never the first track or a completed predecessor boundary. The host
+    // cannot leak a speculative next UDP packet while paused.
+    clock.set(3_550);
+    let paused = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_pause_time_ms: MonotonicMillis::new(3_550),
+    });
+    assert_eq!(
+        host.broadcast_control(&paused)
+            .expect("pause before native drain")
+            .report
+            .successful_peers,
+        2
+    );
+    assert!(recv_control(listener.as_mut()) == paused);
+    assert!(recv_control(late_successor.as_mut()) == paused);
+    let speculative = AudioDatagram {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        sequence: PacketSequence::new(510),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        first_sample_index: SampleIndex::new(122_400),
+        host_presentation_time_ms: MonotonicMillis::new(3_550),
+        payload: vec![0x45; 240 * 2 * 2],
+    };
+    assert_eq!(
+        host.broadcast_audio(&ProtocolFrame::Audio(speculative))
+            .expect("paused host must suppress speculative UDP")
+            .report
+            .intended_peers,
+        0
+    );
+    let mut paused_reconnect = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
+    let ControlMessage::StreamStart(paused_start) = recv_control(paused_reconnect.as_mut()) else {
+        panic!("paused reconnect must replay current-track StreamStart");
+    };
+    assert_eq!(paused_start.current_entry_id.as_deref(), Some("late-successor"));
+    assert_eq!(paused_start.host_start_time_ms.get(), 1_000);
+    assert!(recv_control(paused_reconnect.as_mut()) == paused);
+    late_successor
+        .shutdown()
+        .expect("retire pre-pause late-listener socket");
+    late_successor = paused_reconnect;
+    let primary_native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    assert_eq!(silent_disco_audio_callback_count(primary_native), 0);
+    assert_eq!(silent_disco_audio_callback_count(late_native.cast_const()), 0);
+
+    // Resume re-anchors the same stream after a 200ms pause. Both real
+    // sockets receive the authoritative current title; the existing native
+    // rings are drained below without allocating/reopening either output.
+    let resumed = ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(1_200),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        current_entry_id: Some("late-successor".to_owned()),
+        current_display_name: Some("late-successor".to_owned()),
+    });
+    assert_eq!(
+        host.broadcast_control(&resumed)
+            .expect("resume paused third track")
+            .report
+            .successful_peers,
+        2
+    );
+    assert!(recv_control(listener.as_mut()) == resumed);
+    assert!(recv_control(late_successor.as_mut()) == resumed);
+
     let native = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
     let mut actual = Vec::new();
     for frames in [241_u32, 337, 382, 240, 241, 337, 382, 240] {
@@ -565,7 +643,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
         stream_id: stream.clone(),
-        host_stop_time_ms: MonotonicMillis::new(3_550),
+        host_stop_time_ms: MonotonicMillis::new(3_750),
     });
     assert_eq!(
         host.broadcast_control(&stop)
@@ -577,7 +655,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     assert!(recv_control(listener.as_mut()) == stop);
     assert!(recv_control(late_successor.as_mut()) == stop);
     let controls_after_stop = host.counters().control_frames_sent;
-    clock.set(3_551);
+    clock.set(3_751);
     let replacement = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
     assert_eq!(
         host.counters().control_frames_sent,
