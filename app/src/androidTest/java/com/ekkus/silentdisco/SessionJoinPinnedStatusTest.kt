@@ -17,6 +17,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
@@ -144,10 +146,23 @@ class SessionJoinPinnedStatusTest {
         compose.onNodeWithTag("session-problem-primary").assertIsDisplayed().performClick()
         assertThat(compose.onAllNodesWithTag("session-join-active-status").fetchSemanticsNodes())
             .isEmpty()
-        compose.onNodeWithTag("session-join-code").assertIsDisplayed()
+        // Only the active status and actions are pinned. The editable field
+        // intentionally lives in the independently scrolling content area;
+        // compact large-text layouts must allow scrolling it into view.
+        compose.onNodeWithTag("session-join-code")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performTextReplacement("4826")
+        compose.runOnIdle {
+            assertThat(state.connectionProgress.inviteCode).isEqualTo("4826")
+        }
         restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("session-join-code").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("session-request-join").assertIsDisplayed().performClick()
-        compose.runOnIdle { assertThat(retries).isEqualTo(1) }
+        compose.runOnIdle {
+            assertThat(retries).isEqualTo(1)
+            assertThat(state.connectionProgress.inviteCode).isEqualTo("4826")
+        }
         status.assertIsDisplayed().assertTextContains("The invite code was not accepted")
     }
 }
