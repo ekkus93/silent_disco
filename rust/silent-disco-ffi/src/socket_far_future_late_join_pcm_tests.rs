@@ -284,8 +284,8 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     // to identical source PCM and presentation timestamps without concealing
     // any bootstrap packets or reopening the original listener output.
     let (late_producer, late_token) = register_render_ring(RenderRingConfig {
-        capacity_frames: 2_400,
-        target_fill_frames: 2_400,
+        capacity_frames: 4_800,
+        target_fill_frames: 4_800,
     })
     .expect("independent late-join native output");
     assert_ne!(late_token, token);
@@ -299,12 +299,12 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             volume: 1.0,
             write_lead_ms: 0,
             max_prefill_ms: 0,
-            target_depth_frames: 2_400,
+            target_depth_frames: 4_800,
         },
     )
     .expect("late listener pump");
     late_pump.apply_sync_offset(0.0);
-    let late_tap = Arc::new(CallbackCaptureTap::new(2_400).expect("late callback tap"));
+    let late_tap = Arc::new(CallbackCaptureTap::new(4_800).expect("late callback tap"));
     attach_callback_capture(late_token, Arc::clone(&late_tap)).expect("attach late tap");
     let mut late_delivered = Vec::new();
     for expected_sequence in 505..510 {
