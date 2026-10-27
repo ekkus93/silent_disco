@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -49,9 +51,16 @@ class HostTransportController(
 ) : AutoCloseable {
     private val handleRef = AtomicReference<FfiHostTransportHandle?>(null)
     private var eventLoop: Job? = null
-    private val eventChannel = Channel<FfiHostTransportEvent>(Channel.UNLIMITED)
+    // The channel survives session rebinds. Tag queued events with their
+    // original handle so a slow collector cannot consume previous-session
+    // admission or disconnect events after a new host is bound.
+    private val eventChannel = Channel<Pair<FfiHostTransportHandle, FfiHostTransportEvent>>(
+        Channel.UNLIMITED,
+    )
 
     val events: Flow<FfiHostTransportEvent> = eventChannel.receiveAsFlow()
+        .filter { (handle, _) -> handleRef.get() === handle }
+        .map { (_, event) -> event }
 
     suspend fun bind(
         scope: CoroutineScope,
@@ -215,7 +224,7 @@ class HostTransportController(
                         )
                     ) {
                         eventChannel.trySend(
-                            FfiHostTransportEvent.PeerDisconnected(
+                            handle to FfiHostTransportEvent.PeerDisconnected(
                                 listenerId = null,
                                 message = error.message,
                             ),
@@ -233,7 +242,7 @@ class HostTransportController(
                     break
                 }
                 if (event != null) {
-                    eventChannel.trySend(event)
+                    eventChannel.trySend(handle to event)
                 }
             }
         }
