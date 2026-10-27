@@ -280,8 +280,7 @@ impl JitterBuffer {
                 self.far_future_candidates.clear();
             }
             self.far_future_candidates.insert(sequence, datagram);
-            if self.far_future_candidates.len() < FAR_FUTURE_RESYNC_PACKETS
-            {
+            if self.far_future_candidates.len() < FAR_FUTURE_RESYNC_PACKETS {
                 return Err(JitterBufferRejection::new(
                     JitterBufferRejectionKind::ReorderWindowExceeded,
                     "far-future stream position awaits corroborating packets",
