@@ -26,7 +26,7 @@ impl SecondaryPcmOutput {
         session: &SessionId,
         stream: &StreamId,
         start_ms: u64,
-        samples_per_packet: u16,
+        samples_per_packet: u32,
     ) -> Self {
         let mut config = SchedulerConfig::new(
             session.clone(),
@@ -121,7 +121,11 @@ impl SecondaryPcmOutput {
         assert_eq!(silent_disco_audio_silence_filled_frames(native.cast_const()), 0);
         assert_eq!(
             self.tap.counters(),
-            (u64::try_from(expected.len() / 2).expect("frame count"), 0, chunks.len() as u64)
+            (
+                u64::try_from(expected.len() / 2).expect("frame count"),
+                0,
+                chunks.len() as u64,
+            )
         );
         detach_callback_capture(self.token);
         release_render_ring(self.token).expect("release second listener native output");
