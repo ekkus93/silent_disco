@@ -431,7 +431,7 @@ describe("App", () => {
     );
   });
 
-  it("keeps keyboard focus on the selected destination with arrow, Home, and End keys", async () => {
+  it("supports arrow, Home and End navigation with roving focus", async () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
     renderApp();
     await screen.findByRole("heading", { name: "Create a silent disco" });
