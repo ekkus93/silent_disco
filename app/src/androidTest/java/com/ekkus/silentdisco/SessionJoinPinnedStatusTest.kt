@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -149,12 +150,13 @@ class SessionJoinPinnedStatusTest {
         // automatically, even at 320x480 dp with enlarged system text.
         compose.onNodeWithTag("session-join-code")
             .assertIsDisplayed()
+            .assertIsFocused()
             .performTextReplacement("4826")
         compose.runOnIdle {
             assertThat(state.connectionProgress.inviteCode).isEqualTo("4826")
         }
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("session-join-code").assertIsDisplayed()
+        compose.onNodeWithTag("session-join-code").assertIsDisplayed().assertIsFocused()
         compose.onNodeWithTag("session-request-join").assertIsDisplayed().performClick()
         compose.runOnIdle {
             assertThat(retries).isEqualTo(1)

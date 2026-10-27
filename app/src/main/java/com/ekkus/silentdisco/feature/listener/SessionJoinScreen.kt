@@ -35,6 +35,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -66,8 +68,12 @@ fun SessionJoinScreen(
     val problem = uiState.derivedPersistentProblem()
     var editingInviteCode by rememberSaveable { mutableStateOf(false) }
     val inviteCodeBringIntoView = remember { BringIntoViewRequester() }
+    val inviteCodeFocus = remember { FocusRequester() }
     LaunchedEffect(editingInviteCode) {
-        if (editingInviteCode) inviteCodeBringIntoView.bringIntoView()
+        if (editingInviteCode && session?.inviteCodeRequired == true) {
+            inviteCodeFocus.requestFocus()
+            inviteCodeBringIntoView.bringIntoView()
+        }
     }
     val requestStarted = !editingInviteCode && uiState.listenerState !in setOf(
         ListenerLifecycleState.IDLE,
@@ -168,6 +174,7 @@ fun SessionJoinScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .bringIntoViewRequester(inviteCodeBringIntoView)
+                            .focusRequester(inviteCodeFocus)
                             .testTag("session-join-code"),
                         label = { Text("Invite code") },
                         supportingText = if (editingInviteCode) {
