@@ -17,6 +17,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -242,6 +243,81 @@ class HostDashboardInteractionAccessibilityTest {
         compose.runOnIdle {
             assertThat(decisions.last()).isEqualTo("request-two" to JoinApprovalAction.REJECT)
             assertThat(decisions).hasSize(3)
+        }
+    }
+
+    @Test
+    fun unacknowledgedApprovalTimesOutAfterRestoreAndUnlocksOtherRequest() {
+        val requestedAt = SystemClock.elapsedRealtime() + 3_600_000L
+        val first = JoinRequest(
+            "timeout-first", "session", "phone-one", "First phone", null, requestedAt,
+        )
+        val second = JoinRequest(
+            "timeout-second", "session", "phone-two", "Second phone", null, requestedAt,
+        )
+        val decisions = mutableListOf<Pair<String, JoinApprovalAction>>()
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, 1.5f)) {
+                SilentDiscoTheme {
+                    Box(Modifier.size(320.dp, 480.dp)) {
+                        HostDashboardScreen(
+                            uiState = AppUiState(
+                                hostState = HostLifecycleState.READY,
+                                pendingJoinRequests = listOf(first, second),
+                            ),
+                            initialTab = HostDashboardTab.REQUESTS,
+                            approvalConfirmationTimeoutMs = 3_000L,
+                            onBackRequest = {},
+                            onInvite = {},
+                            onApproval = { request, action ->
+                                decisions += request.requestId to action
+                            },
+                            onRemoveListener = {},
+                            onPlayPause = {},
+                            onStop = {},
+                            onEndSessionRequest = {},
+                            onOpenConnectionHelp = {},
+                            onAddDemoJoinRequest = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val list = compose.onNodeWithTag("host-dashboard-list")
+        list.performScrollToNode(hasContentDescription("Approve First phone once"))
+        compose.onNodeWithContentDescription("Approve First phone once")
+            .assertIsEnabled().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        list.performScrollToNode(hasContentDescription("Approve First phone once"))
+        compose.onNodeWithContentDescription("Approve First phone once").assertIsNotEnabled()
+        list.performScrollToNode(hasContentDescription("Reject Second phone"))
+        compose.onNodeWithContentDescription("Reject Second phone").assertIsNotEnabled()
+        compose.runOnIdle {
+            assertThat(decisions).containsExactly(
+                "timeout-first" to JoinApprovalAction.APPROVE_ONCE,
+            )
+        }
+
+        // No actor error or request-list change arrives. The saved monotonic
+        // deadline must release the latch without redispatching the first
+        // decision, even though the composable was restored in-flight.
+        list.performScrollToNode(hasContentDescription("Approve First phone once"))
+        compose.waitUntil(8_000L) {
+            compose.onAllNodesWithTag("approval-timeout-timeout-first")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("approval-timeout-timeout-first").assertExists()
+        compose.onNodeWithContentDescription("Approve First phone once").assertIsEnabled()
+        list.performScrollToNode(hasContentDescription("Reject Second phone"))
+        compose.onNodeWithContentDescription("Reject Second phone")
+            .assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertThat(decisions).containsExactly(
+                "timeout-first" to JoinApprovalAction.APPROVE_ONCE,
+                "timeout-second" to JoinApprovalAction.REJECT,
+            ).inOrder()
         }
     }
 }

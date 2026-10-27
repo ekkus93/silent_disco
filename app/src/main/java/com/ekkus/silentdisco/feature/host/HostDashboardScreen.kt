@@ -67,6 +67,8 @@ import com.ekkus.silentdisco.core.model.SyncQualityBadge
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 
+private const val APPROVAL_CONFIRMATION_TIMEOUT_MS = 15_000L
+
 enum class HostDashboardTab(val title: String) {
     REQUESTS("Requests"),
     CONNECTED("Connected"),
@@ -89,17 +91,27 @@ fun HostDashboardScreen(
     onAddSongs: () -> Unit = {},
     onManageQueue: () -> Unit = {},
     initialTab: HostDashboardTab = HostDashboardTab.REQUESTS,
+    approvalConfirmationTimeoutMs: Long = APPROVAL_CONFIRMATION_TIMEOUT_MS,
 ) {
     var selectedTabIndex by rememberSaveable(initialTab) { mutableIntStateOf(initialTab.ordinal) }
     var overflowOpen by remember { mutableStateOf(false) }
     var approvalInFlightRequestId by rememberSaveable { mutableStateOf<String?>(null) }
     var approvalInFlightAction by rememberSaveable { mutableStateOf<JoinApprovalAction?>(null) }
     var approvalBaselineSignature by rememberSaveable { mutableStateOf("") }
+    // Preserve the deadline origin across rotation and process-state restoration:
+    // a missing network/actor acknowledgement must not lock every request forever.
+    var approvalStartedAtMs by rememberSaveable { mutableLongStateOf(0L) }
+    var approvalTimedOutRequestId by rememberSaveable { mutableStateOf<String?>(null) }
     val health = uiState.hostSessionHealthSummary()
     val troubledListeners = uiState.approvedListeners.filter(::listenerNeedsAttention)
     val currentProblemSignature = "${uiState.lastMessage.orEmpty()}|${uiState.lastError.orEmpty()}"
 
     LaunchedEffect(uiState.pendingJoinRequests, uiState.approvedListeners, currentProblemSignature) {
+        if (approvalTimedOutRequestId != null &&
+            uiState.pendingJoinRequests.none { it.requestId == approvalTimedOutRequestId }
+        ) {
+            approvalTimedOutRequestId = null
+        }
         val inFlight = approvalInFlightRequestId ?: return@LaunchedEffect
         val requestCompleted = uiState.pendingJoinRequests.none { it.requestId == inFlight }
         val operationReportedFailure = uiState.lastError?.isNotBlank() == true &&
@@ -108,6 +120,31 @@ fun HostDashboardScreen(
             approvalInFlightRequestId = null
             approvalInFlightAction = null
             approvalBaselineSignature = ""
+            approvalStartedAtMs = 0L
+            approvalTimedOutRequestId = null
+        }
+    }
+
+    DisposableEffect(approvalInFlightRequestId, approvalStartedAtMs, approvalConfirmationTimeoutMs) {
+        val requestId = approvalInFlightRequestId
+        if (requestId == null) {
+            onDispose {}
+        } else {
+            val startedAt = approvalStartedAtMs
+            val handler = Handler(Looper.getMainLooper())
+            val elapsed = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+            val remaining = (approvalConfirmationTimeoutMs - elapsed).coerceAtLeast(0L)
+            val timeout = Runnable {
+                if (approvalInFlightRequestId == requestId && approvalStartedAtMs == startedAt) {
+                    approvalInFlightRequestId = null
+                    approvalInFlightAction = null
+                    approvalBaselineSignature = ""
+                    approvalStartedAtMs = 0L
+                    approvalTimedOutRequestId = requestId
+                }
+            }
+            handler.postDelayed(timeout, remaining)
+            onDispose { handler.removeCallbacks(timeout) }
         }
     }
 
@@ -116,6 +153,8 @@ fun HostDashboardScreen(
         approvalInFlightRequestId = request.requestId
         approvalInFlightAction = action
         approvalBaselineSignature = currentProblemSignature
+        approvalStartedAtMs = SystemClock.elapsedRealtime()
+        approvalTimedOutRequestId = null
         onApproval(request, action)
     }
 
@@ -328,6 +367,7 @@ fun HostDashboardScreen(
                                 inFlightAction = approvalInFlightAction.takeIf {
                                     approvalInFlightRequestId == request.requestId
                                 },
+                                timedOut = approvalTimedOutRequestId == request.requestId,
                                 onApproval = ::submitApproval,
                             )
                         }
@@ -368,6 +408,7 @@ private fun ListenerRequestCard(
     request: JoinRequest,
     approvalLocked: Boolean,
     inFlightAction: JoinApprovalAction?,
+    timedOut: Boolean,
     onApproval: (JoinRequest, JoinApprovalAction) -> Unit,
 ) {
     var elapsedSeconds by remember(request.requestId) {
@@ -402,6 +443,13 @@ private fun ListenerRequestCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (timedOut) {
+                Text(
+                    "Approval confirmation timed out. Try again.",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("approval-timeout-${request.requestId}"),
+                )
+            }
             if (inFlightAction != null) {
                 Row(
                     modifier = Modifier
