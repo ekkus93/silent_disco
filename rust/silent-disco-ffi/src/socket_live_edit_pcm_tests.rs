@@ -13,10 +13,6 @@ use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one production-path edit, pause and exact native callback acceptance"
-)]
 fn removing_prefetched_successor_before_commit_renders_only_retargeted_live_queue() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
@@ -34,12 +30,10 @@ fn removing_prefetched_successor_before_commit_renders_only_retargeted_live_queu
     // authoritative upcoming-list update is submitted below.
     fs::write(&current, source_wav_format(3_000, 48_000, 2, 40 * 240))
         .expect("long current source");
-    fs::write(&removed, source_wav_format(11_000, 48_000, 2, 480))
-        .expect("removed successor");
+    fs::write(&removed, source_wav_format(11_000, 48_000, 2, 480)).expect("removed successor");
     fs::write(&replacement, source_wav_format(7_000, 44_100, 1, 441))
         .expect("mixed-rate replacement");
-    fs::write(&final_track, source_wav_format(9_000, 48_000, 2, 480))
-        .expect("last source");
+    fs::write(&final_track, source_wav_format(9_000, 48_000, 2, 480)).expect("last source");
 
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("live-edit-stream").expect("stream");
@@ -84,7 +78,10 @@ fn removing_prefetched_successor_before_commit_renders_only_retargeted_live_queu
         true,
         false,
     );
-    assert!(pass.failure.is_none(), "retargeted producer must finish cleanly");
+    assert!(
+        pass.failure.is_none(),
+        "retargeted producer must finish cleanly"
+    );
     assert_eq!(pass.packets, 44, "no old or duplicated packet");
     assert_eq!(
         pass.boundaries,
