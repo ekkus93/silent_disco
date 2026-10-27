@@ -28,7 +28,7 @@ class HostTransportSessionRebindInstrumentedTest {
     fun sequentialHostsDiscardBufferedOldSessionJoinEvents() = runBlocking<Unit> {
         val host = HostTransportController()
         val listeners = mutableListOf<FfiListenerTransportHandle>()
-        var heartbeat: Job? = null
+        val heartbeats = mutableListOf<Job>()
         try {
             suspend fun bindSession(sessionId: String): String {
                 val reserved = List(3) { ServerSocket(0) }
@@ -58,6 +58,19 @@ class HostTransportSessionRebindInstrumentedTest {
                 )
                 listeners += listener
                 listener.sendJoinRequest(device, null)
+            }
+
+            fun keepAlive(listener: FfiListenerTransportHandle) {
+                heartbeats += launch(Dispatchers.IO) {
+                    var correlation = 1uL
+                    while (isActive) {
+                        listener.sendSyncRequest(
+                            correlation++,
+                            (System.nanoTime() / 1_000_000L).toULong(),
+                        )
+                        delay(2_000)
+                    }
+                }
             }
 
             val oldEndpoint = bindSession("retired-session-${System.nanoTime()}")
@@ -94,7 +107,10 @@ class HostTransportSessionRebindInstrumentedTest {
                 "new-current-entry", "New session song",
             )
             host.broadcastTrackBoundary("new-stream", 480, "new-next-entry", "New next song")
-            join(newEndpoint, "new-current")
+            // Reuse the *retired session's device ID* while its old TCP
+            // socket is still open. Session rebind must not confuse the two
+            // identities or let the old reader retire the replacement route.
+            join(newEndpoint, "old-first")
 
             // The native handshake also reports PeerAccepted. Ignore only
             // non-join handshakes: NEVER filter by device ID, because doing
@@ -104,7 +120,7 @@ class HostTransportSessionRebindInstrumentedTest {
             }
             assertThat(delivered).isInstanceOf(FfiHostTransportEvent.JoinRequestReceived::class.java)
             assertThat((delivered as FfiHostTransportEvent.JoinRequestReceived).deviceId)
-                .isEqualTo("new-current")
+                .isEqualTo("old-first")
 
             val newListener = listeners.last()
             assertThat(host.sendJoinApproval(delivered.deviceId, false)?.successfulPeers)
@@ -113,16 +129,7 @@ class HostTransportSessionRebindInstrumentedTest {
                 it is FfiListenerTransportEvent.JoinApproved
             }).isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
             host.authorizeListener(delivered.deviceId, delivered.syncPort, delivered.audioPort)
-            heartbeat = launch(Dispatchers.IO) {
-                var correlation = 1uL
-                while (isActive) {
-                    newListener.sendSyncRequest(
-                        correlation++,
-                        (System.nanoTime() / 1_000_000L).toULong(),
-                    )
-                    delay(2_000)
-                }
-            }
+            keepAlive(newListener)
 
             val started = awaitReboundListenerEvent(newListener) {
                 it is FfiListenerTransportEvent.StreamStarted
@@ -191,10 +198,65 @@ class HostTransportSessionRebindInstrumentedTest {
             assertThat(resumedAudio.payload.toList())
                 .containsExactlyElementsIn(resumedPayload.toList()).inOrder()
 
+            // A second real TCP/UDP client joins *after* the replacement
+            // session resumed. Its replay must contain only the resumed
+            // title, current anchor, and pending boundary, never the
+            // retired session's paused song or the replacement's old Pause.
+            join(newEndpoint, "new-late")
+            val lateRequest = withTimeout(10_000) {
+                host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
+            } as FfiHostTransportEvent.JoinRequestReceived
+            assertThat(lateRequest.deviceId).isEqualTo("new-late")
+            val lateListener = listeners.last()
+            assertThat(host.sendJoinApproval(lateRequest.deviceId, false)?.successfulPeers)
+                .isEqualTo(1u)
+            assertThat(awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.JoinApproved
+            }).isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
+            host.authorizeListener(lateRequest.deviceId, lateRequest.syncPort, lateRequest.audioPort)
+            keepAlive(lateListener)
+            val lateStart = awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.StreamStarted
+            } as FfiListenerTransportEvent.StreamStarted
+            assertThat(lateStart.streamId).isEqualTo("new-stream")
+            assertThat(lateStart.hostStartTimeMs).isEqualTo(resumedAt.toULong())
+            assertThat(lateStart.currentEntryId).isEqualTo("new-current-entry")
+            assertThat(lateStart.currentDisplayName).isEqualTo("Resumed session song")
+            val lateBoundary = awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.TrackBoundary
+            } as FfiListenerTransportEvent.TrackBoundary
+            assertThat(lateBoundary.streamId).isEqualTo("new-stream")
+            assertThat(lateBoundary.firstSampleIndex).isEqualTo(480uL)
+            assertThat(lateBoundary.entryId).isEqualTo("new-next-entry")
+
+            // Both authorized sockets must receive identical UDP frames
+            // after the late join, without reopening or rebinding the host.
+            val sharedPayload = ByteArray(240 * 2 * 2) { 0x4b.toByte() }
+            assertThat(host.broadcastAudio(
+                "new-stream", 2, 48_000, 2, 240, 480, resumedAt + 10L, sharedPayload,
+            )?.successfulPeers).isEqualTo(2u)
+            val originalShared = awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            val lateShared = awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            for (packet in listOf(originalShared, lateShared)) {
+                assertThat(packet.streamId).isEqualTo("new-stream")
+                assertThat(packet.sequence).isEqualTo(2uL)
+                assertThat(packet.firstSampleIndex).isEqualTo(480uL)
+                assertThat(packet.hostPresentationTimeMs).isEqualTo((resumedAt + 10L).toULong())
+                assertThat(packet.payload.toList())
+                    .containsExactlyElementsIn(sharedPayload.toList()).inOrder()
+            }
+
             assertThat(host.broadcastStop(
                 "new-stream", SystemClock.elapsedRealtime(),
             )?.successfulPeers).isEqualTo(1u)
             assertThat(awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.Stopped
+            }).isInstanceOf(FfiListenerTransportEvent.Stopped::class.java)
+            assertThat(awaitReboundListenerEvent(lateListener) {
                 it is FfiListenerTransportEvent.Stopped
             }).isInstanceOf(FfiListenerTransportEvent.Stopped::class.java)
             // A new Play may reuse the stream ID, but the old title,
@@ -205,6 +267,12 @@ class HostTransportSessionRebindInstrumentedTest {
                 "replay-entry", "Replayed session song",
             )
             host.broadcastTrackBoundary("new-stream", 480, "replay-next", "Replay next song")
+            val lateReplayStart = awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.StreamStarted
+            } as FfiListenerTransportEvent.StreamStarted
+            assertThat(lateReplayStart.hostStartTimeMs).isEqualTo(replayAt.toULong())
+            assertThat(lateReplayStart.currentEntryId).isEqualTo("replay-entry")
+            assertThat(lateReplayStart.currentDisplayName).isEqualTo("Replayed session song")
             val replayStart = awaitReboundListenerEvent(newListener) {
                 it is FfiListenerTransportEvent.StreamStarted
             } as FfiListenerTransportEvent.StreamStarted
@@ -216,10 +284,15 @@ class HostTransportSessionRebindInstrumentedTest {
             } as FfiListenerTransportEvent.TrackBoundary
             assertThat(replayBoundary.entryId).isEqualTo("replay-next")
             assertThat(replayBoundary.firstSampleIndex).isEqualTo(480uL)
+            val lateReplayBoundary = awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.TrackBoundary
+            } as FfiListenerTransportEvent.TrackBoundary
+            assertThat(lateReplayBoundary.entryId).isEqualTo("replay-next")
+            assertThat(lateReplayBoundary.firstSampleIndex).isEqualTo(480uL)
             val replayPayload = ByteArray(240 * 2 * 2) { 0x57.toByte() }
             assertThat(host.broadcastAudio(
                 "new-stream", 0, 48_000, 2, 240, 0, replayAt, replayPayload,
-            )?.successfulPeers).isEqualTo(1u)
+            )?.successfulPeers).isEqualTo(2u)
             val replayAudio = awaitReboundListenerEvent(newListener) {
                 it is FfiListenerTransportEvent.AudioReceived
             } as FfiListenerTransportEvent.AudioReceived
@@ -228,8 +301,16 @@ class HostTransportSessionRebindInstrumentedTest {
             assertThat(replayAudio.hostPresentationTimeMs).isEqualTo(replayAt.toULong())
             assertThat(replayAudio.payload.toList())
                 .containsExactlyElementsIn(replayPayload.toList()).inOrder()
+            val lateReplayAudio = awaitReboundListenerEvent(lateListener) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            assertThat(lateReplayAudio.sequence).isEqualTo(0uL)
+            assertThat(lateReplayAudio.firstSampleIndex).isEqualTo(0uL)
+            assertThat(lateReplayAudio.hostPresentationTimeMs).isEqualTo(replayAt.toULong())
+            assertThat(lateReplayAudio.payload.toList())
+                .containsExactlyElementsIn(replayPayload.toList()).inOrder()
         } finally {
-            heartbeat?.cancelAndJoin()
+            heartbeats.forEach { it.cancelAndJoin() }
             listeners.forEach { runCatching { it.shutdown() } }
             host.close()
         }
