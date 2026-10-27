@@ -285,7 +285,8 @@ export function App() {
                       nextIndex = (index + 1) % visibleDestinations.length;
                       break;
                     case "ArrowLeft":
-                      nextIndex = (index + visibleDestinations.length - 1) % visibleDestinations.length;
+                      nextIndex =
+                        (index + visibleDestinations.length - 1) % visibleDestinations.length;
                       break;
                     case "Home":
                       nextIndex = 0;
