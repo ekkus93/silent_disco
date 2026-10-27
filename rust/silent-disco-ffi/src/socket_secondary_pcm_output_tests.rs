@@ -21,6 +21,11 @@ pub(super) struct SecondaryPcmOutput {
     tap: Arc<CallbackCaptureTap>,
 }
 
+// A production-path test can enqueue a full 40-packet current track before
+// invoking callbacks. Both independent listener rings must hold that entire
+// deterministic generation, not silently cap the second output at 100 ms.
+const TEST_OUTPUT_FRAMES: usize = 16_384;
+
 impl SecondaryPcmOutput {
     pub(super) fn new(
         session: &SessionId,
@@ -38,8 +43,8 @@ impl SecondaryPcmOutput {
         );
         config.startup_buffer_target_ms = 0;
         let (producer, token) = register_render_ring(RenderRingConfig {
-            capacity_frames: 4_800,
-            target_fill_frames: 4_800,
+            capacity_frames: TEST_OUTPUT_FRAMES,
+            target_fill_frames: TEST_OUTPUT_FRAMES,
         })
         .expect("second listener native output");
         let mut pump = PlaybackPump::new(
@@ -49,12 +54,12 @@ impl SecondaryPcmOutput {
                 volume: 1.0,
                 write_lead_ms: 0,
                 max_prefill_ms: 0,
-                target_depth_frames: 4_800,
+                target_depth_frames: TEST_OUTPUT_FRAMES,
             },
         )
         .expect("second listener pump");
         pump.apply_sync_offset(0.0);
-        let tap = Arc::new(CallbackCaptureTap::new(4_800).expect("second capture"));
+        let tap = Arc::new(CallbackCaptureTap::new(TEST_OUTPUT_FRAMES).expect("second capture"));
         attach_callback_capture(token, Arc::clone(&tap)).expect("attach second capture");
         Self { pump, token, tap }
     }
