@@ -166,12 +166,12 @@ pub struct JitterBuffer {
     packets: BTreeMap<u64, AudioDatagram>,
     next_expected_sequence: u64,
     statistics: JitterBufferStatistics,
-    /// Consecutive far-future arrivals with nothing accepted in between.
-    far_future_run: u32,
-    /// Lowest sequence seen during the current far-future run; adopting the
-    /// lowest keeps an outlier from dragging the stream further than the
-    /// real stream position.
-    lowest_far_future: Option<u64>,
+    /// Two corroborating far-future packets are retained until a third
+    /// consecutive sequence proves the stream advanced. Without retaining
+    /// them, resync adopted their lowest sequence but had already discarded
+    /// its PCM, manufacturing a gap at late-join startup. Never hold more
+    /// than two unconfirmed packets (three only during atomic promotion).
+    far_future_candidates: BTreeMap<u64, AudioDatagram>,
 }
 
 impl JitterBuffer {
@@ -210,8 +210,7 @@ impl JitterBuffer {
             packets: BTreeMap::new(),
             next_expected_sequence: first_sequence,
             statistics: JitterBufferStatistics::default(),
-            far_future_run: 0,
-            lowest_far_future: None,
+            far_future_candidates: BTreeMap::new(),
         })
     }
 
@@ -259,45 +258,44 @@ impl JitterBuffer {
             ));
         }
         if sequence - self.next_expected_sequence > u64::from(self.config.max_reorder_window) {
-            // A packet this far ahead is not a reordering problem: the stream
-            // has moved on without us, because the listener was starved past
-            // the window or joined a stream already in progress. Rejecting it
-            // is unrecoverable — nothing else advances the expected sequence,
-            // so every later packet is rejected too and the stream is silent
-            // until teardown. Adopt the new position instead, and let the
-            // caller re-accumulate its startup buffer from there.
+            // A listener joining mid-stream may first see a sequence well
+            // beyond the reorder window. Three DISTINCT consecutive packets
+            // corroborate a live position; one stray/outlier cannot reset
+            // playback. Retain the first two PCM packets while waiting, so
+            // the resync does not synthesize a gap at the new starting point.
             self.statistics.reorder_window_rejections += 1;
-            self.far_future_run = self.far_future_run.saturating_add(1);
-            self.lowest_far_future = Some(
-                self.lowest_far_future
-                    .map_or(sequence, |lowest| lowest.min(sequence)),
-            );
-            // One stray sequence proves nothing and must not be able to move
-            // the stream — a single corrupt or hostile packet would otherwise
-            // strand playback forever. A genuinely advanced stream corroborates
-            // itself within a few packets.
-            let corroborated = self.far_future_run >= FAR_FUTURE_RESYNC_PACKETS;
-            if !corroborated {
+            if self.far_future_candidates.contains_key(&sequence) {
                 return Err(JitterBufferRejection::new(
                     JitterBufferRejectionKind::ReorderWindowExceeded,
-                    "packet sequence is too far ahead of the next-expected sequence to reorder",
+                    "duplicate far-future sequence cannot corroborate resync",
                 ));
             }
-            // Whatever is still buffered is stale by definition: a corroborated
-            // run of arrivals more than a reorder window *ahead* of the
-            // expected sequence means everything held is more than a window
-            // *behind* the live stream, so none of it can play at its own
-            // presentation time. Requiring an empty buffer here instead left a
-            // handful of unreachable packets able to wedge the stream forever:
-            // measured on a device, 15 stale packets held the scheduler in
-            // Buffering below its startup target while all 7,728 later arrivals
-            // were rejected, and playback never began.
+            let min = self.far_future_candidates.keys().next().copied();
+            let max = self.far_future_candidates.keys().next_back().copied();
+            if min.is_some_and(|first| sequence.saturating_sub(first) > 2)
+                || max.is_some_and(|last| last.saturating_sub(sequence) > 2)
+            {
+                // The old candidates were an isolated outlier or a different
+                // outage. Do not let them shift a new stream's start position.
+                self.far_future_candidates.clear();
+            }
+            self.far_future_candidates.insert(sequence, datagram);
+            if self.far_future_candidates.len() < FAR_FUTURE_RESYNC_PACKETS as usize {
+                return Err(JitterBufferRejection::new(
+                    JitterBufferRejectionKind::ReorderWindowExceeded,
+                    "far-future stream position awaits corroborating packets",
+                ));
+            }
+            // A three-element set spanning at most two sequences is exactly
+            // contiguous. Promote all three atomically; the first two had
+            // returned a provisional rejection but their PCM was retained.
+            let recovered = std::mem::take(&mut self.far_future_candidates);
+            self.next_expected_sequence = *recovered.keys().next().expect("three candidates");
             self.statistics.resynchronisations += 1;
             self.statistics.skipped += u64::try_from(self.packets.len()).unwrap_or(u64::MAX);
-            self.packets.clear();
-            self.next_expected_sequence = self.lowest_far_future.unwrap_or(sequence);
-            self.far_future_run = 0;
-            self.lowest_far_future = None;
+            self.packets = recovered;
+            self.statistics.accepted += FAR_FUTURE_RESYNC_PACKETS as u64;
+            return Ok(());
         }
         if let Some(earliest) = self.packets.values().next() {
             let earliest_time_ms = earliest.host_presentation_time_ms.get();
@@ -312,8 +310,7 @@ impl JitterBuffer {
             }
         }
 
-        self.far_future_run = 0;
-        self.lowest_far_future = None;
+        self.far_future_candidates.clear();
         self.packets.insert(sequence, datagram);
         self.statistics.accepted += 1;
         Ok(())

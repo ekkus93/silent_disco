@@ -286,3 +286,53 @@ fn rejects_configuration_with_an_oversized_buffered_duration() {
         JitterBufferConfigErrorKind::BufferedDurationOutOfRange
     );
 }
+
+#[test]
+fn far_future_late_join_recovers_every_corroborating_pcm_packet_without_a_gap() {
+    let mut config = JitterBufferConfig::new(session(), stream());
+    config.max_reorder_window = 8;
+    let mut buffer = JitterBuffer::new(config).expect("valid jitter buffer");
+    for sequence in 0..4 {
+        buffer.accept(packet(sequence, sequence * 20)).expect("stale head");
+    }
+    for sequence in [500, 502] {
+        assert_eq!(
+            buffer.accept(packet(sequence, sequence * 20))
+                .expect_err("provisional candidate").kind,
+            JitterBufferRejectionKind::ReorderWindowExceeded
+        );
+    }
+    assert_eq!(buffer.len(), 4, "unconfirmed packets cannot erase old PCM");
+    buffer.accept(packet(501, 10_020)).expect("third distinct packet confirms live position");
+    assert_eq!(buffer.next_expected_sequence(), 500);
+    assert_eq!(buffer.len(), 3, "stale head replaced with all live candidates");
+    for sequence in 500..503 {
+        let received = buffer.pop_in_order().expect("no artificial resync gap");
+        assert_eq!(received.sequence.get(), sequence);
+        assert_eq!(received.first_sample_index.get(), sequence * 960);
+        assert_eq!(received.host_presentation_time_ms.get(), sequence * 20);
+    }
+    assert_eq!(buffer.statistics().resynchronisations, 1);
+    assert_eq!(buffer.statistics().emitted, 3);
+    assert_eq!(buffer.statistics().accepted, 7);
+    assert_eq!(buffer.statistics().skipped, 4);
+    assert_eq!(buffer.missing_sequence_count(), 0);
+}
+
+#[test]
+fn far_future_outliers_and_duplicates_cannot_reanchor_a_live_listener() {
+    let mut config = JitterBufferConfig::new(session(), stream());
+    config.max_reorder_window = 8;
+    let mut buffer = JitterBuffer::new(config).expect("valid jitter buffer");
+    for sequence in [1_000, 1_000, 1_001, 9_000, 9_001] {
+        assert!(buffer.accept(packet(sequence, sequence * 20)).is_err());
+    }
+    assert_eq!(buffer.next_expected_sequence(), 0);
+    assert_eq!(buffer.statistics().resynchronisations, 0);
+    assert!(buffer.is_empty());
+    buffer.accept(packet(9_002, 9_002 * 20)).expect("three fresh consecutive packets");
+    for sequence in 9_000..9_003 {
+        assert_eq!(buffer.pop_in_order().expect("retained live packet").sequence.get(), sequence);
+    }
+    assert_eq!(buffer.statistics().resynchronisations, 1);
+}

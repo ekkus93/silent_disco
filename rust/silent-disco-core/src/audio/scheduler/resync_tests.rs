@@ -274,3 +274,28 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
         "listeners drifted {skew_ms}ms apart on the same sequence; they must agree within one packet"
     );
 }
+
+#[test]
+fn far_future_late_join_scheduler_renders_all_three_bootstrap_packets_without_concealment() {
+    let mut cfg = config();
+    cfg.startup_buffer_target_ms = 0;
+    cfg.max_reorder_window = 8;
+    let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
+    for sequence in [500, 502] {
+        assert_eq!(
+            scheduler.submit_packet(datagram(sequence, 8_000))
+                .expect_err("provisional live packet").kind,
+            JitterBufferRejectionKind::ReorderWindowExceeded,
+        );
+    }
+    scheduler.submit_packet(datagram(501, 8_000))
+        .expect("third live packet atomically restores the first two");
+    for sequence in 500..503 {
+        let now = HOST_START_MS + sequence * u64::from(PACKET_DURATION_MS);
+        let frame = frame_at(scheduler.poll(now));
+        assert_eq!(frame.sequence, sequence);
+        assert!(!frame.concealed, "bootstrap must not invent missing PCM");
+    }
+    assert_eq!(scheduler.jitter_statistics().resynchronisations, 1);
+    assert_eq!(scheduler.jitter_statistics().skipped, 0);
+}
