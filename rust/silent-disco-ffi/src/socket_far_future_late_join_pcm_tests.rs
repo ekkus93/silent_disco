@@ -59,7 +59,10 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     let stream = StreamId::new("live-edge-late-join").expect("stream");
     let clock = Arc::new(ManualTransportClock::new(3_500));
     let mut host = SocketTransportFactory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("production TCP/UDP host");
     let playlist = FfiHostPlaylistStreamer::open(
         session.to_string(),
@@ -237,7 +240,8 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         entry_id,
         display_name,
         ..
-    }) = playlist.next_frame(5_000).expect("second live boundary") else {
+    }) = playlist.next_frame(5_000).expect("second live boundary")
+    else {
         panic!("expected successor boundary after packet 504");
     };
     assert_eq!(first_sample_index, 121_200);
@@ -256,7 +260,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             .successful_peers,
         1
     );
-    assert_eq!(recv_control(listener.as_mut()), successor);
+    assert!(recv_control(listener.as_mut()) == successor, "live boundary delivered");
     clock.set(3_525);
     let mut late_successor = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
     let ControlMessage::StreamStart(successor_start) = recv_control(late_successor.as_mut()) else {
@@ -277,7 +281,8 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             host_presentation_time_ms,
             payload,
             ..
-        }) = playlist.next_frame(5_000).expect("third-track packet") else {
+        }) = playlist.next_frame(5_000).expect("third-track packet")
+        else {
             panic!("expected third-track PCM");
         };
         assert_eq!(sequence, expected_sequence);
@@ -374,8 +379,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         .flat_map(|frame| {
             let level = if frame < 1_200 { 2_048_i32 } else { 3_072_i32 };
             let sample = if frame < ramp {
-                level * i32::try_from(frame).expect("frame")
-                    / i32::try_from(ramp).expect("ramp")
+                level * i32::try_from(frame).expect("frame") / i32::try_from(ramp).expect("ramp")
             } else {
                 level
             };
