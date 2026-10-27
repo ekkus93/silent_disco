@@ -274,6 +274,44 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         Some("late-successor")
     );
     assert_eq!(successor_start.host_start_time_ms.get(), 1_000);
+    // The third-track joiner must receive both authoritative sample-indexed
+    // boundaries, even though it has no history of either prior source.
+    for (sample, entry) in [(120_000_u64, "late-current"), (121_200, "late-successor")] {
+        let ControlMessage::TrackBoundary(cached) = recv_control(late_successor.as_mut()) else {
+            panic!("late joiner must replay both decoded track boundaries");
+        };
+        assert_eq!(cached.first_sample_index.get(), sample);
+        assert_eq!(cached.entry_id, entry);
+    }
+
+    // Independently render the same third-track UDP delivery on a new native
+    // output while the reconnected first listener retains its original ring.
+    // The newcomer applies its own one-time startup ramp, but must converge
+    // to identical source PCM and presentation timestamps without concealing
+    // any bootstrap packets or reopening the original listener output.
+    let (late_producer, late_token) = register_render_ring(RenderRingConfig {
+        capacity_frames: 2_400,
+        target_fill_frames: 2_400,
+    })
+    .expect("independent late-join native output");
+    assert_ne!(late_token, token);
+    let mut late_config = SchedulerConfig::new(session.clone(), stream.clone(), 48_000, 1_000, 240, 2);
+    late_config.startup_buffer_target_ms = 0;
+    let mut late_pump = PlaybackPump::new(
+        PlaybackScheduler::new(late_config, 0.0).expect("late listener scheduler"),
+        late_producer,
+        PlaybackPumpConfig {
+            volume: 1.0,
+            write_lead_ms: 0,
+            max_prefill_ms: 0,
+            target_depth_frames: 2_400,
+        },
+    )
+    .expect("late listener pump");
+    late_pump.apply_sync_offset(0.0);
+    let late_tap = Arc::new(CallbackCaptureTap::new(2_400).expect("late callback tap"));
+    attach_callback_capture(late_token, Arc::clone(&late_tap)).expect("attach late tap");
+    let mut late_delivered = Vec::new();
     for expected_sequence in 505..510 {
         let Some(FfiPlaylistFrame::Audio {
             sequence,
@@ -310,10 +348,43 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             2
         );
         assert_eq!(recv_audio(listener.as_mut()), packet);
-        assert_eq!(recv_audio(late_successor.as_mut()), packet);
+        let late_packet = recv_audio(late_successor.as_mut());
+        assert_eq!(late_packet, packet);
+        late_delivered.push(late_packet);
         delivered.push(packet);
     }
     assert_eq!(delivered.len(), 10);
+    assert_eq!(late_delivered.len(), 5);
+    // Reordering at each scheduler handoff is deliberate; both UDP sockets
+    // delivered the producer's exact packets in sequence. A join at sequence
+    // 505 must not fabricate missing packets 0..504 or a third-track gap.
+    for index in [0_usize, 2, 1, 4, 3] {
+        let submitted = late_pump
+            .scheduler_mut()
+            .submit_packet(late_delivered[index].clone());
+        if index == 0 || index == 2 {
+            assert!(submitted.is_err(), "late bootstrap needs corroboration");
+        } else {
+            submitted.expect("late listener accepts reordered live packets");
+        }
+    }
+    for now in (3_525..=3_545).step_by(5) {
+        for _ in 0..64 {
+            if !matches!(
+                late_pump.tick(now),
+                PumpTick::Queued { .. } | PumpTick::FlushedPending { .. }
+            ) {
+                break;
+            }
+        }
+    }
+    assert_eq!(late_pump.diagnostics().packets_emitted, 5);
+    assert_eq!(late_pump.diagnostics().concealed_packets, 0);
+    assert_eq!(
+        late_pump.scheduler_mut().jitter_statistics().resynchronisations,
+        1
+    );
+    assert_eq!(late_pump.scheduler_mut().jitter_statistics().skipped, 0);
     // Deliver the socket-received packets to the production jitter buffer
     // in a deliberately reordered sequence, including a missing packet at
     // the far-future bootstrap and another gap after same-ID reconnect.
@@ -397,8 +468,61 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         0
     );
     assert_eq!(tap.counters(), (2_400, 0, 8));
+
+    let late_native = usize::try_from(late_token).expect("late token") as *mut core::ffi::c_void;
+    let mut late_actual = Vec::new();
+    for frames in [241_u32, 337, 382, 240] {
+        let mut output = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
+        let mut supplied = 0_u32;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                late_native,
+                output.as_mut_ptr(),
+                frames,
+                2,
+                &raw mut supplied,
+            ),
+            0,
+            "late joiner must render without callback underrun"
+        );
+        assert_eq!(supplied, frames);
+        assert_eq!(late_tap.drain(usize::try_from(frames).expect("frames")), output);
+        late_actual.extend(output);
+    }
+    let late_expected: Vec<f32> = (0..1_200_usize)
+        .flat_map(|frame| {
+            let sample = if frame < ramp {
+                3_072 * i32::try_from(frame).expect("frame") / i32::try_from(ramp).expect("ramp")
+            } else {
+                3_072
+            };
+            std::iter::repeat_n(
+                f32::from(i16::try_from(sample).expect("sample")) / 32768.0,
+                2,
+            )
+        })
+        .collect();
+    assert_eq!(
+        late_actual, late_expected,
+        "new listener renders exactly the third-track source with only its startup ramp"
+    );
+    assert_eq!(
+        late_actual[ramp * 2..],
+        actual[(1_200 + ramp) * 2..],
+        "both independent native outputs align after the late joiner's initial ramp"
+    );
+    assert_eq!(silent_disco_audio_callback_count(late_native.cast_const()), 4);
+    assert_eq!(silent_disco_audio_underrun_count(late_native.cast_const()), 0);
+    assert_eq!(
+        silent_disco_audio_silence_filled_frames(late_native.cast_const()),
+        0
+    );
+    assert_eq!(late_tap.counters(), (1_200, 0, 4));
+    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 8);
+    detach_callback_capture(late_token);
+    release_render_ring(late_token).expect("retire late-join output");
     detach_callback_capture(token);
-    release_render_ring(token).expect("retire one output");
+    release_render_ring(token).expect("retire original output");
     playlist.cancel().expect("release producer");
     late_successor.shutdown().expect("late successor shutdown");
     listener.shutdown().expect("listener shutdown");
