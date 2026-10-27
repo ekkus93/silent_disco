@@ -279,7 +279,7 @@ fn two_listeners_locking_sync_at_different_moments_play_the_same_audio_together(
 fn far_future_late_join_scheduler_renders_all_three_bootstrap_packets_without_concealment() {
     let mut cfg = config();
     cfg.startup_buffer_target_ms = 0;
-    cfg.max_reorder_window = 8;
+    cfg.max_reorder_window = 16;
     let mut scheduler = PlaybackScheduler::new(cfg, 0.0).expect("valid scheduler");
     for sequence in [500, 502] {
         assert_eq!(

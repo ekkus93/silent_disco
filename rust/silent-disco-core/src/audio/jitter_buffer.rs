@@ -17,7 +17,7 @@ pub const MAX_BUFFERED_DURATION_LIMIT_MS: u64 = 60_000;
 /// Consecutive far-future arrivals required before the buffer accepts that
 /// the stream has moved beyond its reorder window and adopts the new
 /// position. One stray sequence must never be able to strand playback.
-const FAR_FUTURE_RESYNC_PACKETS: u32 = 3;
+const FAR_FUTURE_RESYNC_PACKETS: usize = 3;
 
 /// Fixed identity and bounds for one jitter buffer instance, covering exactly
 /// one host stream.
@@ -280,8 +280,7 @@ impl JitterBuffer {
                 self.far_future_candidates.clear();
             }
             self.far_future_candidates.insert(sequence, datagram);
-            if self.far_future_candidates.len()
-                < usize::try_from(FAR_FUTURE_RESYNC_PACKETS).expect("small bound")
+            if self.far_future_candidates.len() < FAR_FUTURE_RESYNC_PACKETS
             {
                 return Err(JitterBufferRejection::new(
                     JitterBufferRejectionKind::ReorderWindowExceeded,
@@ -292,11 +291,11 @@ impl JitterBuffer {
             // contiguous. Promote all three atomically; the first two had
             // returned a provisional rejection but their PCM was retained.
             let recovered = std::mem::take(&mut self.far_future_candidates);
-            self.next_expected_sequence = *recovered.keys().next().expect("three candidates");
+            self.next_expected_sequence = recovered.keys().next().copied().unwrap_or(sequence);
             self.statistics.resynchronisations += 1;
             self.statistics.skipped += u64::try_from(self.packets.len()).unwrap_or(u64::MAX);
             self.packets = recovered;
-            self.statistics.accepted += u64::from(FAR_FUTURE_RESYNC_PACKETS);
+            self.statistics.accepted += 3;
             return Ok(());
         }
         if let Some(earliest) = self.packets.values().next() {
