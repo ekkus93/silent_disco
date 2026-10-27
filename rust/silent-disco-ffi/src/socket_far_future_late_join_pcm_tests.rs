@@ -45,6 +45,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     fs::create_dir_all(&root).expect("fixture directory");
     let first = root.join("long-first.wav");
     let second = root.join("late-current.wav");
+    let third = root.join("late-successor.wav");
     // 500 * 240 samples at 48 kHz is 2,500ms. A new listener joining at
     // that boundary has no packet-zero history and is well past the 1,280ms
     // reorder window. Its first audible source must be the second track.
@@ -52,11 +53,13 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         .expect("stage long first track");
     fs::write(&second, source_wav_format(2_048, 48_000, 2, 5 * 240))
         .expect("stage live second track");
+    fs::write(&third, source_wav_format(3_072, 48_000, 2, 5 * 240))
+        .expect("stage late successor track");
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("live-edge-late-join").expect("stream");
     let clock = Arc::new(ManualTransportClock::new(3_500));
     let mut host = SocketTransportFactory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock)
+        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
         .expect("production TCP/UDP host");
     let playlist = FfiHostPlaylistStreamer::open(
         session.to_string(),
@@ -65,6 +68,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         vec![
             source("long-first", &first),
             source("late-current", &second),
+            source("late-successor", &third),
         ],
     )
     .expect("production decoded playlist");
@@ -225,11 +229,88 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         delivered.push(received);
     }
     assert_eq!(delivered.len(), 5);
+    // Cross the next real decoded-source boundary while keeping the original
+    // TCP/UDP listener, scheduler and native output alive. Admit a second
+    // listener after the presentation clock has advanced into track three.
+    let Some(FfiPlaylistFrame::TrackBoundary {
+        first_sample_index,
+        entry_id,
+        display_name,
+        ..
+    }) = playlist.next_frame(5_000).expect("second live boundary") else {
+        panic!("expected successor boundary after packet 504");
+    };
+    assert_eq!(first_sample_index, 121_200);
+    assert_eq!(entry_id, "late-successor");
+    let successor = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(first_sample_index),
+        entry_id,
+        display_name,
+    });
+    assert_eq!(
+        host.broadcast_control(&successor)
+            .expect("broadcast second track boundary")
+            .report
+            .successful_peers,
+        1
+    );
+    assert_eq!(recv_control(listener.as_mut()), successor);
+    clock.set(3_525);
+    let mut late_successor = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
+    let ControlMessage::StreamStart(successor_start) = recv_control(late_successor.as_mut()) else {
+        panic!("new listener must join the third track, not the retired current track");
+    };
+    assert_eq!(
+        successor_start.current_entry_id.as_deref(),
+        Some("late-successor")
+    );
+    assert_eq!(successor_start.host_start_time_ms.get(), 1_000);
+    for expected_sequence in 505..510 {
+        let Some(FfiPlaylistFrame::Audio {
+            sequence,
+            sample_rate,
+            channels,
+            samples_per_packet,
+            first_sample_index,
+            host_presentation_time_ms,
+            payload,
+            ..
+        }) = playlist.next_frame(5_000).expect("third-track packet") else {
+            panic!("expected third-track PCM");
+        };
+        assert_eq!(sequence, expected_sequence);
+        assert_eq!(first_sample_index, expected_sequence * 240);
+        let packet = AudioDatagram {
+            session_id: session.clone(),
+            stream_id: stream.clone(),
+            sequence: PacketSequence::new(sequence),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate,
+            channels,
+            samples_per_packet,
+            first_sample_index: SampleIndex::new(first_sample_index),
+            host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+            payload,
+        };
+        assert_eq!(
+            host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
+                .expect("third-track UDP")
+                .report
+                .successful_peers,
+            2
+        );
+        assert_eq!(recv_audio(listener.as_mut()), packet);
+        assert_eq!(recv_audio(late_successor.as_mut()), packet);
+        delivered.push(packet);
+    }
+    assert_eq!(delivered.len(), 10);
     // Deliver the socket-received packets to the production jitter buffer
     // in a deliberately reordered sequence, including a missing packet at
     // the far-future bootstrap and another gap after same-ID reconnect.
     // The two provisional candidates must be retained, not concealed.
-    for index in [0_usize, 2, 1, 4, 3] {
+    for index in [0_usize, 2, 1, 4, 3, 5, 7, 6, 9, 8] {
         let submitted = pump.scheduler_mut().submit_packet(delivered[index].clone());
         if index == 0 || index == 2 {
             assert!(submitted.is_err(), "two candidates require corroboration");
@@ -237,7 +318,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             submitted.expect("reordered live packets must recover without loss");
         }
     }
-    for now in [3_500, 3_505, 3_510, 3_515, 3_520] {
+    for now in (3_500..=3_555).step_by(5) {
         for _ in 0..64 {
             if !matches!(
                 pump.tick(now),
@@ -251,7 +332,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         playlist.next_frame(5_000).expect("natural queue end"),
         Some(FfiPlaylistFrame::End)
     ));
-    for now in [3_515, 3_520] {
+    for now in [3_550, 3_555] {
         for _ in 0..64 {
             if !matches!(
                 pump.tick(now),
@@ -261,7 +342,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             }
         }
     }
-    assert_eq!(pump.diagnostics().packets_emitted, 5);
+    assert_eq!(pump.diagnostics().packets_emitted, 10);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
     assert_eq!(
         pump.scheduler_mut().jitter_statistics().resynchronisations,
@@ -271,7 +352,7 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
 
     let native = usize::try_from(token).expect("token") as *mut core::ffi::c_void;
     let mut actual = Vec::new();
-    for frames in [241_u32, 337, 382, 240] {
+    for frames in [241_u32, 337, 382, 240, 241, 337, 382, 240] {
         let mut output = vec![f32::NAN; usize::try_from(frames).expect("frames") * 2];
         let mut supplied = 0_u32;
         assert_eq!(
@@ -289,13 +370,14 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         assert_eq!(tap.drain(usize::try_from(frames).expect("frames")), output);
         actual.extend(output);
     }
-    let expected: Vec<f32> = (0..1_200_usize)
+    let expected: Vec<f32> = (0..2_400_usize)
         .flat_map(|frame| {
+            let level = if frame < 1_200 { 2_048_i32 } else { 3_072_i32 };
             let sample = if frame < ramp {
-                2_048_i32 * i32::try_from(frame).expect("frame")
+                level * i32::try_from(frame).expect("frame")
                     / i32::try_from(ramp).expect("ramp")
             } else {
-                2_048_i32
+                level
             };
             std::iter::repeat_n(
                 f32::from(i16::try_from(sample).expect("sample")) / 32768.0,
@@ -305,18 +387,19 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
         .collect();
     assert_eq!(
         actual, expected,
-        "exact second-track PCM, only one startup ramp"
+        "exact second and third track PCM, one startup ramp and no boundary gap"
     );
-    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 4);
+    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 8);
     assert_eq!(silent_disco_audio_underrun_count(native.cast_const()), 0);
     assert_eq!(
         silent_disco_audio_silence_filled_frames(native.cast_const()),
         0
     );
-    assert_eq!(tap.counters(), (1_200, 0, 4));
+    assert_eq!(tap.counters(), (2_400, 0, 8));
     detach_callback_capture(token);
     release_render_ring(token).expect("retire one output");
     playlist.cancel().expect("release producer");
+    late_successor.shutdown().expect("late successor shutdown");
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
     fs::remove_dir_all(root).expect("fixture cleanup");
