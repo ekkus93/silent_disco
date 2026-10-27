@@ -431,6 +431,51 @@ describe("App", () => {
     );
   });
 
+  it("keeps keyboard focus on the selected destination with arrow, Home, and End keys", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+
+    const host = screen.getByRole("tab", { name: "Host control" });
+    const settings = screen.getByRole("tab", { name: "Settings" });
+    expect(host).toHaveAttribute("tabindex", "0");
+    expect(settings).toHaveAttribute("tabindex", "-1");
+    host.focus();
+    fireEvent.keyDown(host, { key: "ArrowLeft" });
+    await waitFor(() => expect(settings).toHaveFocus());
+    expect(settings).toHaveAttribute("aria-selected", "true");
+    expect(settings).toHaveAttribute("tabindex", "0");
+    expect(host).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.keyDown(settings, { key: "Home" });
+    await waitFor(() => expect(host).toHaveFocus());
+    expect(host).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(host, { key: "End" });
+    await waitFor(() => expect(settings).toHaveFocus());
+    fireEvent.keyDown(settings, { key: "ArrowRight" });
+    await waitFor(() => expect(host).toHaveFocus());
+    expect(screen.getByRole("tabpanel")).not.toHaveFocus();
+
+    // Pointer activation retains the existing panel-focus handoff.
+    fireEvent.click(screen.getByRole("tab", { name: "Diagnostics" }));
+    await waitFor(() => expect(screen.getByRole("tabpanel")).toHaveFocus());
+  });
+
+  it("includes the backend-gated Lab destination in keyboard traversal", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(true);
+    renderApp();
+    const lab = await screen.findByRole("tab", { name: "Lab Mode" });
+    const host = screen.getByRole("tab", { name: "Host control" });
+    host.focus();
+    fireEvent.keyDown(host, { key: "End" });
+    await waitFor(() => expect(lab).toHaveFocus());
+    expect(lab).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(lab, { key: "ArrowRight" });
+    await waitFor(() => expect(host).toHaveFocus());
+  });
+
   // Block 49.4: the previous render gated this screen on `ready`, contradicting
   // its own code comment -- it was unavailable in exactly the state it was
   // written for.

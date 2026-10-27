@@ -135,7 +135,12 @@ export function App() {
   const [labModeAvailable, setLabModeAvailable] = useState<boolean | null>(null);
   const [connection, setConnection] = useState<ShellConnectionState | null>(null);
   const destinationRef = useRef<HTMLDivElement | null>(null);
+  const keyboardTabNavigationRef = useRef(false);
   const previousViewRef = useRef<DesktopView>(activeView);
+  const visibleDestinations = DESTINATIONS.filter(
+    (destination) =>
+      destination.id !== "lab" || (labModeAvailable === true && LabScreen !== null),
+  );
 
   useEffect(() => {
     const profileId = readProfileIdPreference();
@@ -187,7 +192,12 @@ export function App() {
   useEffect(() => {
     if (previousViewRef.current === activeView) return;
     previousViewRef.current = activeView;
-    destinationRef.current?.focus();
+    if (keyboardTabNavigationRef.current) {
+      keyboardTabNavigationRef.current = false;
+      document.getElementById(`destination-tab-${activeView}`)?.focus();
+    } else {
+      destinationRef.current?.focus();
+    }
   }, [activeView]);
 
   // Starting or ending a session swaps Host Setup for the live session screen
@@ -255,10 +265,7 @@ export function App() {
           aria-label="Destinations"
           className="desktop-app-destinations mt-5 flex flex-wrap gap-2"
         >
-          {DESTINATIONS.filter(
-            (destination) =>
-              destination.id !== "lab" || (labModeAvailable === true && LabScreen !== null),
-          ).map((destination) => {
+          {visibleDestinations.map((destination) => {
             const selected = activeView === destination.id;
             return (
               <button
@@ -268,7 +275,34 @@ export function App() {
                 id={`destination-tab-${destination.id}`}
                 aria-selected={selected}
                 aria-controls="active-destination"
+                tabIndex={selected ? 0 : -1}
                 onClick={() => dispatch(uiActions.activeViewChanged(destination.id))}
+                onKeyDown={(event) => {
+                  const index = visibleDestinations.findIndex(({ id }) => id === destination.id);
+                  let nextIndex: number;
+                  switch (event.key) {
+                    case "ArrowRight":
+                      nextIndex = (index + 1) % visibleDestinations.length;
+                      break;
+                    case "ArrowLeft":
+                      nextIndex = (index + visibleDestinations.length - 1) % visibleDestinations.length;
+                      break;
+                    case "Home":
+                      nextIndex = 0;
+                      break;
+                    case "End":
+                      nextIndex = visibleDestinations.length - 1;
+                      break;
+                    default:
+                      return;
+                  }
+                  event.preventDefault();
+                  const next = visibleDestinations[nextIndex];
+                  if (next && next.id !== activeView) {
+                    keyboardTabNavigationRef.current = true;
+                    dispatch(uiActions.activeViewChanged(next.id));
+                  }
+                }}
                 className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
                   selected
                     ? "border-cyan-300/70 bg-cyan-500/10 text-cyan-100"
