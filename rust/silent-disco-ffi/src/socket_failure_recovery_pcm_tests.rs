@@ -92,13 +92,6 @@ pub(super) fn playback_generation(
     let mut second_output = second
         .is_some()
         .then(|| SecondaryPcmOutput::new(session, stream, start_ms, metadata.samples_per_packet));
-    if let Some(output) = &second_output {
-        assert_ne!(
-            output.token(),
-            output_token,
-            "listeners must own distinct native outputs"
-        );
-    }
     if let Some(peer) = second.as_deref_mut() {
         assert!(recv_control(peer) == start);
     }
@@ -121,6 +114,13 @@ pub(super) fn playback_generation(
         target_fill_frames: 4_800,
     })
     .expect("native output");
+    if let Some(output) = &second_output {
+        assert_ne!(
+            output.token(),
+            output_token,
+            "listeners must own distinct native outputs"
+        );
+    }
     let mut pump = PlaybackPump::new(
         PlaybackScheduler::new(config, 0.0).expect("scheduler"),
         producer,
