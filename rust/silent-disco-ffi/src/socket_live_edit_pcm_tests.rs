@@ -188,7 +188,7 @@ fn edited_live_queue_stops_and_replays_reordered_sources_to_two_native_outputs()
         assert!(
             first.pcm[begin * 2..end * 2]
                 .iter()
-                .all(|sample| *sample == expected),
+                .all(|sample| sample.to_bits() == expected.to_bits()),
             "edited successors must render exact source PCM without a second ramp"
         );
     }
