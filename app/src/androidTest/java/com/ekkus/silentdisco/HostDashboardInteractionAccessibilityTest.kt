@@ -13,10 +13,12 @@ import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -102,6 +104,58 @@ class HostDashboardInteractionAccessibilityTest {
         compose.runOnIdle {
             assertThat(removed).containsExactly("listener-one", "listener-two").inOrder()
         }
+    }
+
+    @Test
+    fun twoPendingApprovalsHaveDistinctSpokenTargetsAndDispatchOnlySelectedRequest() {
+        val now = SystemClock.elapsedRealtime() + 3_600_000L
+        val requests = listOf(
+            JoinRequest("first-request", "session", "first-device", "First phone", null, now),
+            JoinRequest("second-request", "session", "second-device", "Second phone", null, now),
+        )
+        val decisions = mutableListOf<Pair<String, JoinApprovalAction>>()
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, 1.5f)) {
+                SilentDiscoTheme {
+                    Box(Modifier.size(320.dp, 480.dp)) {
+                        HostDashboardScreen(
+                            uiState = AppUiState(
+                                hostState = HostLifecycleState.READY,
+                                pendingJoinRequests = requests,
+                            ),
+                            onBackRequest = {},
+                            onInvite = {},
+                            onApproval = { request, action ->
+                                decisions += request.requestId to action
+                            },
+                            onRemoveListener = {},
+                            onPlayPause = {},
+                            onStop = {},
+                            onEndSessionRequest = {},
+                            onOpenConnectionHelp = {},
+                            onAddDemoJoinRequest = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val list = compose.onNodeWithTag("host-dashboard-list")
+        list.performScrollToNode(hasContentDescription("Approve Second phone once"))
+        compose.onNodeWithContentDescription("Approve Second phone once")
+            .assertIsEnabled()
+            .performClick()
+        compose.runOnIdle {
+            assertThat(decisions).containsExactly(
+                "second-request" to JoinApprovalAction.APPROVE_ONCE,
+            )
+        }
+        // An in-flight approval locks both cards, not just the one clicked;
+        // the other listener cannot be inadvertently approved or rejected.
+        list.performScrollToNode(hasContentDescription("Reject First phone"))
+        compose.onNodeWithContentDescription("Reject First phone").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Approve First phone once").assertIsNotEnabled()
+        compose.runOnIdle { assertThat(decisions).hasSize(1) }
     }
 
     @Test

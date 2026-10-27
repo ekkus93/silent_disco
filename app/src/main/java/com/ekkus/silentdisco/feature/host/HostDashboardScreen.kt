@@ -47,6 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.app.AppUiState
@@ -415,21 +417,27 @@ private fun ListenerRequestCard(
             Button(
                 onClick = { onApproval(request, JoinApprovalAction.APPROVE_ONCE) },
                 enabled = !approvalLocked,
-                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
+                modifier = Modifier.fillMaxWidth()
+                    .heightIn(min = WorkflowTouchTarget.minimum)
+                    .semantics { contentDescription = "Approve ${request.listenerName} once" },
             ) {
                 Text("Approve once")
             }
             Button(
                 onClick = { onApproval(request, JoinApprovalAction.ALWAYS_ALLOW) },
                 enabled = !approvalLocked,
-                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
+                modifier = Modifier.fillMaxWidth()
+                    .heightIn(min = WorkflowTouchTarget.minimum)
+                    .semantics { contentDescription = "Always allow ${request.listenerName}" },
             ) {
                 Text("Always allow")
             }
             TextButton(
                 onClick = { onApproval(request, JoinApprovalAction.REJECT) },
                 enabled = !approvalLocked,
-                modifier = Modifier.fillMaxWidth().heightIn(min = WorkflowTouchTarget.minimum),
+                modifier = Modifier.fillMaxWidth()
+                    .heightIn(min = WorkflowTouchTarget.minimum)
+                    .semantics { contentDescription = "Reject ${request.listenerName}" },
             ) {
                 Text("Reject", color = MaterialTheme.colorScheme.error)
             }
