@@ -252,7 +252,7 @@ class HostTransportSessionRebindInstrumentedTest {
 
             assertThat(host.broadcastStop(
                 "new-stream", SystemClock.elapsedRealtime(),
-            )?.successfulPeers).isEqualTo(1u)
+            )?.successfulPeers).isEqualTo(2u)
             assertThat(awaitReboundListenerEvent(newListener) {
                 it is FfiListenerTransportEvent.Stopped
             }).isInstanceOf(FfiListenerTransportEvent.Stopped::class.java)
