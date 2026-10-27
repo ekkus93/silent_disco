@@ -293,6 +293,7 @@ jobs:
           path: |
             android-instrumentation-tests.log
             android-screenshot-capture.log
+            android-screenshot-capture-repeat.log
             android-workflow-screenshots/
             app/build/outputs/androidTest-results/connected/
             app/build/reports/androidTests/connected/
