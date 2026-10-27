@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -24,8 +26,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,6 +64,10 @@ fun SessionJoinScreen(
     val session = uiState.selectedSession
     val problem = uiState.derivedPersistentProblem()
     var editingInviteCode by rememberSaveable { mutableStateOf(false) }
+    val inviteCodeBringIntoView = remember { BringIntoViewRequester() }
+    LaunchedEffect(editingInviteCode) {
+        if (editingInviteCode) inviteCodeBringIntoView.bringIntoView()
+    }
     val requestStarted = !editingInviteCode && uiState.listenerState !in setOf(
         ListenerLifecycleState.IDLE,
         ListenerLifecycleState.SCANNING,
@@ -158,6 +166,7 @@ fun SessionJoinScreen(
                         onValueChange = onInviteCodeChanged,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .bringIntoViewRequester(inviteCodeBringIntoView)
                             .testTag("session-join-code"),
                         label = { Text("Invite code") },
                         supportingText = if (editingInviteCode) {
