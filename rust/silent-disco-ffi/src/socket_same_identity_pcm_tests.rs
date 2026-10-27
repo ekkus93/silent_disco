@@ -205,15 +205,13 @@ fn same_identity_reconnect_during_play_and_pause_preserves_native_output_and_pcm
                     // TCP/UDP route. A same-identity reconnect while PLAYING
                     // must not pause, reset the sample clock or reopen output.
                     callback(120);
-                    let mut live = authorized_late_joiner(
-                        host.as_mut(),
-                        "pcm-regression-listener",
-                    );
+                    let mut live =
+                        authorized_late_joiner(host.as_mut(), "pcm-regression-listener");
                     assert!(recv_control(live.as_mut()) == active_start);
                     assert_eq!(
                         silent_disco_audio_callback_count(native.cast_const()),
                         1,
-                        "reconnect while playing preserves the native output",
+                        "reconnect while playing preserves the native output"
                     );
                     first.shutdown().expect("retire playing original socket");
                     replacement = Some(live);
