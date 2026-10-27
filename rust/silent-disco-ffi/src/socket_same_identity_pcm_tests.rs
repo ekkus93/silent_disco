@@ -32,7 +32,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
     clippy::too_many_lines,
     reason = "one real-socket route takeover, source decode, scheduler and native callback proof"
 )]
-fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_pcm() {
+fn same_identity_reconnect_during_play_and_pause_preserves_native_output_and_pcm() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -178,10 +178,10 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 assert_eq!(first_sample_index, next_sample, "no PCM gap/overlap");
                 let shift = if first_sample_index >= 960 {
                     400
-                } else if replacement.is_some() {
-                    200
-                } else {
+                } else if boundaries.is_empty() {
                     0
+                } else {
+                    200
                 };
                 let packet = AudioDatagram {
                     session_id: session.clone(),
@@ -199,6 +199,24 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 };
                 if next_sequence == 0 {
                     retired_audio = Some(packet.clone());
+                }
+                if next_sequence == 1 {
+                    // Render part of the first track before replacing the live
+                    // TCP/UDP route. A same-identity reconnect while PLAYING
+                    // must not pause, reset the sample clock or reopen output.
+                    callback(120);
+                    let mut live = authorized_late_joiner(
+                        host.as_mut(),
+                        "pcm-regression-listener",
+                    );
+                    assert!(recv_control(live.as_mut()) == active_start);
+                    assert_eq!(
+                        silent_disco_audio_callback_count(native.cast_const()),
+                        1,
+                        "reconnect while playing preserves the native output",
+                    );
+                    first.shutdown().expect("retire playing original socket");
+                    replacement = Some(live);
                 }
                 assert_eq!(
                     host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
@@ -292,8 +310,8 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
                 callback(if first_sample_index == 480 { 241 } else { 337 });
                 assert_eq!(
                     silent_disco_audio_callback_count(native.cast_const()),
-                    u64::try_from(boundaries.len()).expect("bounded callbacks"),
-                    "Pause and route replacement must not reopen the output"
+                    u64::try_from(boundaries.len()).expect("bounded callbacks") + 1,
+                    "playing and paused route replacement must not reopen the output"
                 );
 
                 // Reconnect using the SAME identity while the previous TCP
@@ -345,7 +363,7 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     assert_eq!(next_sequence, 6);
     assert_eq!(next_sample, 1_440);
     assert_eq!(boundaries, [480, 960]);
-    callback(382);
+    callback(262);
     callback(480);
     assert_eq!(captured.borrow().len(), reference.len());
     let mut expected: Vec<f32> = reference
@@ -367,13 +385,13 @@ fn same_identity_reconnect_at_paused_boundary_keeps_one_native_output_and_exact_
     );
     assert_eq!(pump.diagnostics().packets_emitted, 6);
     assert_eq!(pump.diagnostics().concealed_packets, 0);
-    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 4);
+    assert_eq!(silent_disco_audio_callback_count(native.cast_const()), 5);
     assert_eq!(silent_disco_audio_underrun_count(native.cast_const()), 0);
     assert_eq!(
         silent_disco_audio_silence_filled_frames(native.cast_const()),
         0
     );
-    assert_eq!(tap.counters(), (1_440, 0, 4));
+    assert_eq!(tap.counters(), (1_440, 0, 5));
     detach_callback_capture(token);
     release_render_ring(token).expect("release one native output");
     playlist.cancel().expect("cancel producer");
