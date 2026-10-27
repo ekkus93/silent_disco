@@ -7,6 +7,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
 import com.google.common.truth.Truth.assertThat
 import java.net.ServerSocket
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -39,7 +40,7 @@ class HostTransportLateJoinInstrumentedTest {
             )
             // Host controls and the production socket snapshot now share
             // Android's boot-relative elapsedRealtime clock domain.
-            val hostStartTimeMs = SystemClock.elapsedRealtime() + 60_000L
+            val hostStartTimeMs = SystemClock.elapsedRealtime() + 600_000L
             host.broadcastStreamStart(
                 streamId = "active-stream",
                 // Leave time for a slow emulator to authorize before the boundary.
@@ -81,16 +82,7 @@ class HostTransportLateJoinInstrumentedTest {
             // seconds; a slow emulator can exceed that window during assertions.
             // Keep the real transport alive rather than weakening its liveness gate.
             val activeListener = requireNotNull(listener)
-            syncKeepAlive = launch(Dispatchers.IO) {
-                var correlationId = 1uL
-                while (isActive) {
-                    activeListener.sendSyncRequest(
-                        correlationId++,
-                        (System.nanoTime() / 1_000_000L).toULong(),
-                    )
-                    delay(2_000L)
-                }
-            }
+            syncKeepAlive = startSyncHeartbeat(activeListener)
 
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted }).isEqualTo(
                 FfiListenerTransportEvent.StreamStarted(
@@ -163,6 +155,7 @@ class HostTransportLateJoinInstrumentedTest {
         val sessionId = "android-past-boundary-${System.nanoTime()}"
         val host = HostTransportController()
         var listener: FfiListenerTransportHandle? = null
+        var syncKeepAlive: Job? = null
         try {
             host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
             // This stream started one second ago on the *same* boot-relative
@@ -198,6 +191,8 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
                 .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
             host.authorizeListener(join.deviceId, join.syncPort, join.audioPort)
+            // Exercise production sync liveness across slow emulator scheduling.
+            syncKeepAlive = startSyncHeartbeat(requireNotNull(listener))
 
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
@@ -215,6 +210,7 @@ class HostTransportLateJoinInstrumentedTest {
                     ),
                 )
         } finally {
+            syncKeepAlive?.cancelAndJoin()
             listener?.shutdown()
             host.close()
         }
@@ -228,6 +224,7 @@ class HostTransportLateJoinInstrumentedTest {
         val sessionId = "android-completed-boundaries-${System.nanoTime()}"
         val host = HostTransportController()
         var listener: FfiListenerTransportHandle? = null
+        var syncKeepAlive: Job? = null
         try {
             host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
             // Both boundaries are in the past, independently of emulator speed.
@@ -254,6 +251,8 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
                 .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
             host.authorizeListener(join.deviceId, join.syncPort, join.audioPort)
+            // Exercise production sync liveness across slow emulator scheduling.
+            syncKeepAlive = startSyncHeartbeat(requireNotNull(listener))
             assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
                     FfiListenerTransportEvent.StreamStarted(
@@ -285,6 +284,7 @@ class HostTransportLateJoinInstrumentedTest {
             assertThat(audio.payload.toList())
                 .containsExactlyElementsIn(ByteArray(240 * 2 * 2) { 0x3a.toByte() }.toList())
         } finally {
+            syncKeepAlive?.cancelAndJoin()
             listener?.shutdown()
             host.close()
         }
@@ -333,16 +333,7 @@ class HostTransportLateJoinInstrumentedTest {
                 // multi-stage emulator regression can exceed that interval;
                 // exercise the production sync heartbeat instead of keeping
                 // an otherwise disconnected listener alive artificially.
-                syncKeepAlives += launch(Dispatchers.IO) {
-                    var correlationId = 1uL
-                    while (isActive) {
-                        listener.sendSyncRequest(
-                            correlationId++,
-                            (System.nanoTime() / 1_000_000L).toULong(),
-                        )
-                        delay(2_000L)
-                    }
-                }
+                syncKeepAlives += startSyncHeartbeat(listener)
                 return listener
             }
 
@@ -523,6 +514,18 @@ class HostTransportLateJoinInstrumentedTest {
         }
     }
 }
+
+private fun CoroutineScope.startSyncHeartbeat(listener: FfiListenerTransportHandle): Job =
+    launch(Dispatchers.IO) {
+        var correlationId = 1uL
+        while (isActive) {
+            listener.sendSyncRequest(
+                correlationId++,
+                (System.nanoTime() / 1_000_000L).toULong(),
+            )
+            delay(2_000L)
+        }
+    }
 
 private suspend fun awaitListenerEvent(
     listener: FfiListenerTransportHandle,
