@@ -172,14 +172,18 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
             // scheduler, native ring, or callback capture.
             let mut replacement =
                 authorized_late_joiner(host.as_mut(), "far-future-callback-listener");
-            let ControlMessage::StreamStart(reconnected) =
-                recv_control(replacement.as_mut())
+            let ControlMessage::StreamStart(reconnected) = recv_control(replacement.as_mut())
             else {
                 panic!("replacement route must replay current-track identity");
             };
-            assert_eq!(reconnected.current_entry_id.as_deref(), Some("late-current"));
+            assert_eq!(
+                reconnected.current_entry_id.as_deref(),
+                Some("late-current")
+            );
             assert_eq!(reconnected.host_start_time_ms.get(), 1_000);
-            listener.shutdown().expect("retire previous same-device socket");
+            listener
+                .shutdown()
+                .expect("retire previous same-device socket");
             listener = replacement;
         }
         let Some(FfiPlaylistFrame::Audio {
