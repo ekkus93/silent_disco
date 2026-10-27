@@ -80,8 +80,7 @@ fun SilentDiscoApp(
     val context = LocalContext.current
     val discoveryLifecycleController = remember(context) { DiscoveryLifecycleController(context) }
 
-    var pendingPermissionContext by remember { mutableStateOf<PermissionRequestContext?>(null) }
-    var pendingPermissionContinuation by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val permissionRequest = rememberPermissionRequestState()
     var showEndSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showLeaveSessionConfirmation by rememberSaveable { mutableStateOf(false) }
     var showInviteDialog by rememberSaveable { mutableStateOf(false) }
@@ -132,15 +131,11 @@ fun SilentDiscoApp(
         results.forEach { (permission, granted) ->
             viewModel.updatePermission(permission, granted)
         }
-        val requestedContext = pendingPermissionContext
-        val granted = requestedContext?.requiredPermissions()?.all { permission ->
+        val granted = permissionRequest.pendingAction?.context?.requiredPermissions()?.all { permission ->
             results[permission.androidPermission] == true ||
                 uiState.permissions.firstOrNull { it.permission == permission }?.granted == true
         } == true
-        val continuation = pendingPermissionContinuation
-        pendingPermissionContext = null
-        pendingPermissionContinuation = null
-        if (granted) continuation?.invoke()
+        permissionRequest.complete(granted)
     }
 
     // The system document picker may return after an Activity recreation.
@@ -187,15 +182,41 @@ fun SilentDiscoApp(
         }
     }
 
-    fun requestPermissionThen(
-        requestContext: PermissionRequestContext,
-        continuation: () -> Unit,
-    ) {
-        if (uiState.hasPermissions(requestContext)) {
-            continuation()
+    // ActivityResult callbacks can arrive after recreation; restore an
+    // explicit destination rather than keeping an obsolete Compose lambda.
+    fun continueAfterPermission(action: PermissionAction) {
+        when (action) {
+            PermissionAction.HOST_SETUP ->
+                navController.navigateSingleTop(AppRoutes.HostMusicSetup)
+            PermissionAction.LISTENER_DISCOVERY ->
+                navController.navigateSingleTop(AppRoutes.NearbySessions)
+            PermissionAction.QR_LISTENER_DISCOVERY -> {
+                navController.navigateSingleTop(AppRoutes.NearbySessions)
+                viewModel.scanForSessions()
+            }
+            PermissionAction.DIRECT_QR_CONNECT ->
+                navController.navigateSingleTop(AppRoutes.ManualConnect)
+            PermissionAction.LISTENER_PERMISSION_ONLY -> Unit
+            PermissionAction.PICK_SETUP_AUDIO, PermissionAction.PICK_LIVE_AUDIO -> {
+                audioPickerDestination.value = if (action == PermissionAction.PICK_SETUP_AUDIO) {
+                    AudioPickerDestination.SETUP
+                } else {
+                    AudioPickerDestination.LIVE_QUEUE
+                }
+                audioPickerLauncher.launch(arrayOf("audio/*"))
+            }
+        }
+    }
+
+    LaunchedEffect(permissionRequest.grantedAction) {
+        permissionRequest.consumeGranted()?.let { continueAfterPermission(it) }
+    }
+
+    fun requestPermissionThen(action: PermissionAction) {
+        if (uiState.hasPermissions(action.context)) {
+            continueAfterPermission(action)
         } else {
-            pendingPermissionContext = requestContext
-            pendingPermissionContinuation = continuation
+            permissionRequest.request(action)
         }
     }
 
@@ -205,10 +226,7 @@ fun SilentDiscoApp(
         pendingQrJoin = true
         qrJoinScanObserved = false
         viewModel.selectRole(AppRole.LISTENER)
-        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
-            navController.navigateSingleTop(AppRoutes.NearbySessions)
-            viewModel.scanForSessions()
-        }
+        requestPermissionThen(PermissionAction.QR_LISTENER_DISCOVERY)
         workflowViewModel.showTransientMessage("Looking for ${invitation.sessionName} nearby…")
     }
 
@@ -225,9 +243,7 @@ fun SilentDiscoApp(
         p2ViewModel.dismissValidatedInvitation()
         viewModel.selectRole(AppRole.LISTENER)
         viewModel.prefillManualEndpointFromInvitation(invitation)
-        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
-            navController.navigateSingleTop(AppRoutes.ManualConnect)
-        }
+        requestPermissionThen(PermissionAction.DIRECT_QR_CONNECT)
     }
 
     LaunchedEffect(uiState) {
@@ -340,15 +356,11 @@ fun SilentDiscoApp(
                     uiState = uiState,
                     onHostClick = {
                         viewModel.selectRole(AppRole.HOST)
-                        requestPermissionThen(PermissionRequestContext.HOST_NEARBY) {
-                            navController.navigateSingleTop(AppRoutes.HostMusicSetup)
-                        }
+                        requestPermissionThen(PermissionAction.HOST_SETUP)
                     },
                     onJoinClick = {
                         viewModel.selectRole(AppRole.LISTENER)
-                        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
-                            navController.navigateSingleTop(AppRoutes.NearbySessions)
-                        }
+                        requestPermissionThen(PermissionAction.LISTENER_DISCOVERY)
                     },
                     onSettingsClick = { navController.navigateSingleTop(AppRoutes.Settings) },
                     onRetryStorage = viewModel::retryDomainPersistence,
@@ -358,9 +370,7 @@ fun SilentDiscoApp(
                         {
                             p2ViewModel.requestRecentSessionCheck(recent)
                             viewModel.selectRole(AppRole.LISTENER)
-                            requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {
-                                navController.navigateSingleTop(AppRoutes.NearbySessions)
-                            }
+                            requestPermissionThen(PermissionAction.LISTENER_DISCOVERY)
                         }
                     },
                 )
@@ -372,10 +382,7 @@ fun SilentDiscoApp(
                     onBack = { navController.popBackStack() },
                     onSessionNameChanged = { viewModel.updateHostForm(sessionName = it) },
                     onChooseAudio = {
-                        requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
-                            audioPickerDestination.value = AudioPickerDestination.SETUP
-                            audioPickerLauncher.launch(arrayOf("audio/*"))
-                        }
+                        requestPermissionThen(PermissionAction.PICK_SETUP_AUDIO)
                     },
                     onRemoveAudio = viewModel::removeSetupAudio,
                     onMoveAudio = viewModel::moveSetupAudio,
@@ -433,10 +440,7 @@ fun SilentDiscoApp(
                     },
                     onAddDemoJoinRequest = viewModel::addDemoJoinRequest,
                     onAddSongs = {
-                        requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
-                            audioPickerDestination.value = AudioPickerDestination.LIVE_QUEUE
-                            audioPickerLauncher.launch(arrayOf("audio/*"))
-                        }
+                        requestPermissionThen(PermissionAction.PICK_LIVE_AUDIO)
                     },
                     onManageQueue = { navController.navigateSingleTop(AppRoutes.HostQueueManagement) },
                 )
@@ -447,10 +451,7 @@ fun SilentDiscoApp(
                     uiState = uiState,
                     onBack = { navController.popBackStack() },
                     onAddSongs = {
-                        requestPermissionThen(PermissionRequestContext.AUDIO_FILE) {
-                            audioPickerDestination.value = AudioPickerDestination.LIVE_QUEUE
-                            audioPickerLauncher.launch(arrayOf("audio/*"))
-                        }
+                        requestPermissionThen(PermissionAction.PICK_LIVE_AUDIO)
                     },
                     onReorderQueue = viewModel::reorderLiveQueue,
                     onRemoveQueueEntry = viewModel::removeLiveQueueEntry,
@@ -475,7 +476,7 @@ fun SilentDiscoApp(
                         navController.popBackStack()
                     },
                     onRequestPermission = {
-                        requestPermissionThen(PermissionRequestContext.LISTENER_NEARBY) {}
+                        requestPermissionThen(PermissionAction.LISTENER_PERMISSION_ONLY)
                     },
                     onRefresh = viewModel::scanForSessions,
                     onSelectSession = { session ->
@@ -609,27 +610,21 @@ fun SilentDiscoApp(
         }
     }
 
-    pendingPermissionContext?.let { requestContext ->
+    permissionRequest.pendingAction?.takeUnless { permissionRequest.requestLaunched }?.let { action ->
+        val requestContext = action.context
         AlertDialog(
-            onDismissRequest = {
-                pendingPermissionContext = null
-                pendingPermissionContinuation = null
-            },
+            onDismissRequest = permissionRequest::dismiss,
             title = { Text(requestContext.title) },
             text = { Text(requestContext.explanation) },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        pendingPermissionContext = null
-                        pendingPermissionContinuation = null
-                    },
-                ) {
+                TextButton(onClick = permissionRequest::dismiss) {
                     Text("Not now")
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        permissionRequest.markLaunched()
                         permissionLauncher.launch(requestContext.androidPermissions())
                     },
                 ) {
