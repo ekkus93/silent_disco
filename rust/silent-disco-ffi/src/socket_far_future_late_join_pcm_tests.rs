@@ -11,7 +11,7 @@ use crate::audio_abi::{
 use crate::callback_capture::CallbackCaptureTap;
 use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame};
 use crate::playlist_pcm_capture_tests::source_wav_format;
-use crate::socket_failure_recovery_pcm_tests::source;
+use crate::socket_failure_recovery_pcm_tests::{playback_generation, source};
 use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_audio, recv_control};
 use silent_disco_core::audio::{
     PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
@@ -21,7 +21,7 @@ use silent_disco_core::domain::{
     MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
 use silent_disco_core::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, StreamStart, TrackBoundary,
+    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, Stop, StreamStart, TrackBoundary,
 };
 use silent_disco_core::transport::{
     HostTransportConfig, ManualTransportClock, SocketTransportFactory, TransportFactory,
@@ -557,6 +557,98 @@ fn late_join_after_reorder_window_renders_all_live_pcm_without_bootstrap_conceal
     detach_callback_capture(token);
     release_render_ring(token).expect("retire original output");
     playlist.cancel().expect("release producer");
+
+    // After both real sockets have received the natural end, Stop retires
+    // the far-future sequence watermark and its third-track cache. Reconnect
+    // the second listener while stopped: neither an old track nor Pause may
+    // be replayed. The same session/stream ID is deliberately reused by Play.
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(3_550),
+    });
+    assert_eq!(
+        host.broadcast_control(&stop)
+            .expect("Stop at natural queue tail")
+            .report
+            .successful_peers,
+        2
+    );
+    assert!(recv_control(listener.as_mut()) == stop);
+    assert!(recv_control(late_successor.as_mut()) == stop);
+    let controls_after_stop = host.counters().control_frames_sent;
+    clock.set(3_551);
+    let replacement = authorized_late_joiner(host.as_mut(), "successor-late-joiner");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        controls_after_stop,
+        "stopped same-device reconnect must not resurrect a completed track"
+    );
+    late_successor
+        .shutdown()
+        .expect("retire stopped late listener route");
+    late_successor = replacement;
+    host.broadcast_control(&start)
+        .expect("ignore delayed original StreamStart");
+    host.broadcast_control(&successor)
+        .expect("ignore retired third-track boundary");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        controls_after_stop,
+        "retired controls must not reach either socket after Stop"
+    );
+
+    // Explicit Play after a far-future late join must reset the packet and
+    // sample timelines. Reverse the two short sources, keep both authorized
+    // sockets, and render each through a new independent native callback.
+    // The prior 500+ packets must never be mistaken for a missing prefix.
+    let replay = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        stream.to_string(),
+        5_000,
+        vec![
+            source("replay-third", &third),
+            source("replay-second", &second),
+        ],
+    )
+    .expect("explicit same-stream replay after natural end");
+    let replayed = playback_generation(
+        host.as_mut(),
+        listener.as_mut(),
+        Some(late_successor.as_mut()),
+        &replay,
+        &session,
+        &stream,
+        5_000,
+        &[241, 337, 382, 240, 241, 337, 382, 240],
+        false,
+        false,
+    );
+    assert!(replayed.failure.is_none());
+    assert_eq!(replayed.packets, 10, "fresh sequence must restart at zero");
+    assert_eq!(replayed.boundaries, [1_200]);
+    assert_ne!(replayed.output_token, token);
+    assert_ne!(replayed.output_token, late_token);
+    let replay_expected: Vec<f32> = (0..2_400_usize)
+        .flat_map(|frame| {
+            let level = if frame < 1_200 { 3_072_i32 } else { 2_048_i32 };
+            let sample = if frame < replayed.startup_ramp_frames {
+                level * i32::try_from(frame).expect("frame")
+                    / i32::try_from(replayed.startup_ramp_frames).expect("ramp")
+            } else {
+                level
+            };
+            std::iter::repeat_n(
+                f32::from(i16::try_from(sample).expect("sample")) / 32768.0,
+                2,
+            )
+        })
+        .collect();
+    assert_eq!(
+        replayed.pcm, replay_expected,
+        "both real sockets must replay the reversed sources with exact callback PCM"
+    );
+    replay.cancel().expect("release replay producer");
     late_successor.shutdown().expect("late successor shutdown");
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
