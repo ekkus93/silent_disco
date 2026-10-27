@@ -197,8 +197,6 @@ class HostTransportController(
     }
 
     override fun close() {
-        eventLoop?.cancel()
-        eventLoop = null
         closeExistingHandle()
     }
 
@@ -209,12 +207,29 @@ class HostTransportController(
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiHostTransportException) {
-                    eventChannel.trySend(
-                        FfiHostTransportEvent.PeerDisconnected(
-                            listenerId = null,
-                            message = error.message,
-                        ),
+                    // A poll unblocked by Stop/rebind is teardown fallout, not
+                    // a failure in the newly bound host session.
+                    if (shouldForwardPolledHostEvent(
+                            loopActive = isActive,
+                            handleIsCurrent = handleRef.get() === handle,
+                        )
+                    ) {
+                        eventChannel.trySend(
+                            FfiHostTransportEvent.PeerDisconnected(
+                                listenerId = null,
+                                message = error.message,
+                            ),
+                        )
+                    }
+                    break
+                }
+                // Native poll can return after the old session is retired.
+                // Never leak its join/disconnect events into a new session.
+                if (!shouldForwardPolledHostEvent(
+                        loopActive = isActive,
+                        handleIsCurrent = handleRef.get() === handle,
                     )
+                ) {
                     break
                 }
                 if (event != null) {
@@ -228,9 +243,19 @@ class HostTransportController(
         withContext(callDispatcher) { handleRef.get()?.let(action) }
 
     private fun closeExistingHandle() {
+        // Retire the poller before closing the native handle so a delayed
+        // event cannot be forwarded while the next session is binding.
+        eventLoop?.cancel()
+        eventLoop = null
         handleRef.getAndSet(null)?.let { handle ->
             runCatching { handle.shutdown() }
             handle.close()
         }
     }
 }
+
+/** The host event channel survives sequential sessions; retired polls must not. */
+internal fun shouldForwardPolledHostEvent(
+    loopActive: Boolean,
+    handleIsCurrent: Boolean,
+): Boolean = loopActive && handleIsCurrent
