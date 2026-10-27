@@ -61,6 +61,16 @@ class HostTransportSessionRebindInstrumentedTest {
             }
 
             val oldEndpoint = bindSession("retired-session-${System.nanoTime()}")
+            // A rebind must discard the old session's *paused playback cache*
+            // as well as the queued join events. The replacement can reuse
+            // packet sequence zero without inheriting the previous boundary.
+            val oldStart = SystemClock.elapsedRealtime() + 120_000L
+            host.broadcastStreamStart(
+                "old-stream", oldStart, 48_000, 2, 240,
+                "old-entry", "Retired session song",
+            )
+            host.broadcastTrackBoundary("old-stream", 480, "old-next", "Retired next song")
+            host.broadcastPause("old-stream", oldStart + 100L)
             join(oldEndpoint, "old-first")
             // Observe the first event to establish that the native TCP poller
             // is actually running before leaving later events queued.
@@ -144,6 +154,80 @@ class HostTransportSessionRebindInstrumentedTest {
             assertThat(audio.firstSampleIndex).isEqualTo(0uL)
             assertThat(audio.hostPresentationTimeMs).isEqualTo(newStart.toULong())
             assertThat(audio.payload.toList()).containsExactlyElementsIn(payload.toList()).inOrder()
+
+            // Pause, Resume and Stop/replay on the *replacement* socket must
+            // use only its generation. This exercises the production control
+            // cache and authenticated UDP gate after the old poller exits.
+            val pauseAt = newStart + 20L
+            assertThat(host.broadcastPause("new-stream", pauseAt)?.successfulPeers).isEqualTo(1u)
+            assertThat(awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.Paused
+            }).isEqualTo(FfiListenerTransportEvent.Paused("new-stream", pauseAt.toULong()))
+            assertThat(host.broadcastAudio(
+                "new-stream", 1, 48_000, 2, 240, 240, newStart + 5L,
+                ByteArray(240 * 2 * 2) { 0x46.toByte() },
+            )?.successfulPeers).isEqualTo(0u)
+
+            val resumedAt = newStart + 2_000L
+            assertThat(host.broadcastStreamStart(
+                "new-stream", resumedAt, 48_000, 2, 240,
+                "new-current-entry", "Resumed session song",
+            )?.successfulPeers).isEqualTo(1u)
+            val resumed = awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.StreamStarted
+            } as FfiListenerTransportEvent.StreamStarted
+            assertThat(resumed.streamId).isEqualTo("new-stream")
+            assertThat(resumed.hostStartTimeMs).isEqualTo(resumedAt.toULong())
+            assertThat(resumed.currentDisplayName).isEqualTo("Resumed session song")
+            val resumedPayload = ByteArray(240 * 2 * 2) { 0x46.toByte() }
+            assertThat(host.broadcastAudio(
+                "new-stream", 1, 48_000, 2, 240, 240, resumedAt + 5L, resumedPayload,
+            )?.successfulPeers).isEqualTo(1u)
+            val resumedAudio = awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            assertThat(resumedAudio.sequence).isEqualTo(1uL)
+            assertThat(resumedAudio.firstSampleIndex).isEqualTo(240uL)
+            assertThat(resumedAudio.payload.toList())
+                .containsExactlyElementsIn(resumedPayload.toList()).inOrder()
+
+            assertThat(host.broadcastStop(
+                "new-stream", SystemClock.elapsedRealtime(),
+            )?.successfulPeers).isEqualTo(1u)
+            assertThat(awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.Stopped
+            }).isInstanceOf(FfiListenerTransportEvent.Stopped::class.java)
+            // A new Play may reuse the stream ID, but the old title,
+            // paused state, and pending boundary must never be resurrected.
+            val replayAt = maxOf(resumedAt + 60_000L, SystemClock.elapsedRealtime() + 600_000L)
+            host.broadcastStreamStart(
+                "new-stream", replayAt, 48_000, 2, 240,
+                "replay-entry", "Replayed session song",
+            )
+            host.broadcastTrackBoundary("new-stream", 480, "replay-next", "Replay next song")
+            val replayStart = awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.StreamStarted
+            } as FfiListenerTransportEvent.StreamStarted
+            assertThat(replayStart.hostStartTimeMs).isEqualTo(replayAt.toULong())
+            assertThat(replayStart.currentEntryId).isEqualTo("replay-entry")
+            assertThat(replayStart.currentDisplayName).isEqualTo("Replayed session song")
+            val replayBoundary = awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.TrackBoundary
+            } as FfiListenerTransportEvent.TrackBoundary
+            assertThat(replayBoundary.entryId).isEqualTo("replay-next")
+            assertThat(replayBoundary.firstSampleIndex).isEqualTo(480uL)
+            val replayPayload = ByteArray(240 * 2 * 2) { 0x57.toByte() }
+            assertThat(host.broadcastAudio(
+                "new-stream", 0, 48_000, 2, 240, 0, replayAt, replayPayload,
+            )?.successfulPeers).isEqualTo(1u)
+            val replayAudio = awaitReboundListenerEvent(newListener) {
+                it is FfiListenerTransportEvent.AudioReceived
+            } as FfiListenerTransportEvent.AudioReceived
+            assertThat(replayAudio.sequence).isEqualTo(0uL)
+            assertThat(replayAudio.firstSampleIndex).isEqualTo(0uL)
+            assertThat(replayAudio.hostPresentationTimeMs).isEqualTo(replayAt.toULong())
+            assertThat(replayAudio.payload.toList())
+                .containsExactlyElementsIn(replayPayload.toList()).inOrder()
         } finally {
             heartbeat?.cancelAndJoin()
             listeners.forEach { runCatching { it.shutdown() } }
