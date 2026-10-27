@@ -272,7 +272,9 @@ fn natural_queue_end_requires_new_play_and_restarts_callback_pcm_without_stale_c
     let mut current_late = authorized_late_joiner(host.as_mut(), "queue-refill-third-late");
     assert!(recv_control(current_late.as_mut()) == current_start);
     assert!(recv_control(current_late.as_mut()) == current_boundary);
-    current_late.shutdown().expect("retire third-generation late joiner");
+    current_late
+        .shutdown()
+        .expect("retire third-generation late joiner");
     third_play.cancel().expect("release second refill producer");
     after_second_end_listener
         .shutdown()
