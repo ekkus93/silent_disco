@@ -184,22 +184,6 @@ describe("HostSetupScreen", () => {
     expect(screen.getByRole("button", { name: "Start hosting" })).toBeInTheDocument();
   });
 
-  it("discloses plaintext transport in access and review, even for trusted-device mode", () => {
-    renderScreen();
-    expect(screen.queryByRole("note", { name: "Local network security limitation" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
-    const warning = screen.getByRole("note", { name: "Local network security limitation" });
-    expect(warning).toHaveTextContent("does not encrypt or authenticate live session traffic");
-    expect(warning).toHaveTextContent("signed QR or approved-device");
-    fireEvent.change(screen.getByLabelText("Listener approval"), {
-      target: { value: "trusted_devices" },
-    });
-    expect(screen.getByRole("note", { name: "Local network security limitation" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Review session" }));
-    expect(screen.getByRole("heading", { name: "Ready to host" })).toBeInTheDocument();
-    expect(screen.getByRole("note", { name: "Local network security limitation" })).toBeVisible();
-  });
-
   it("shows invite-code controls only for invite-code approval", () => {
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));

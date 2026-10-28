@@ -261,6 +261,29 @@ describe("App", () => {
     expect(ensureDesktopBridgeMock).toHaveBeenCalledWith("main");
   });
 
+  it("discloses plaintext LAN risk across setup, live hosting and destination changes", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    renderApp();
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    const warning = screen.getByRole("note", { name: "Local network security limitation" });
+    expect(warning).toHaveTextContent("does not encrypt or authenticate live session traffic");
+    expect(warning).toHaveTextContent("signed QR or approved-device");
+
+    act(() => {
+      notificationListener?.({
+        kind: "snapshot",
+        details: { ...snapshot, revision: "5", hostLifecycle: "waiting_for_listeners" },
+      });
+    });
+    await screen.findByRole("heading", { name: "Oakland Night" });
+    expect(screen.getByRole("note", { name: "Local network security limitation" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.queryByRole("note", { name: "Local network security limitation" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Host control" }));
+    expect(screen.getByRole("note", { name: "Local network security limitation" })).toBeVisible();
+  });
+
   it("opens the profile ID saved for this startup", async () => {
     window.localStorage.setItem("silent-disco.profile-id", "oakland-night");
     ensureDesktopBridgeMock.mockResolvedValue(connection);

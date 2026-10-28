@@ -294,23 +294,6 @@ export function HostSetupScreen() {
         ))}
       </nav>
 
-      {setupStage !== "music" ? (
-        <aside
-          role="note"
-          aria-label="Local network security limitation"
-          data-testid="legacy-lan-security-warning"
-          className="rounded-sd-card border border-sd-error bg-sd-error-container p-4 text-sd-on-error-container"
-        >
-          <h3 className="font-semibold">Local network connection is not secured</h3>
-          <p className="mt-2 text-sm">
-            This version does not encrypt or authenticate live session traffic. Others on the same
-            Wi-Fi may read or alter invite codes, controls, and audio. A signed QR or
-            approved-device name does not protect the connection. Only use a private network you
-            trust.
-          </p>
-        </aside>
-      ) : null}
-
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <form
           ref={formRef}
