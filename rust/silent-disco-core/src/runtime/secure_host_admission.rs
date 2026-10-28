@@ -14,9 +14,26 @@ use super::{HostDraft, JoinRequestDisposition, JoinRequestSummary, classify_join
 /// A request whose trust classification was derived from a verified key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedJoinAdmission {
-    pub verified_key: VerifiedListenerKey,
-    pub request: JoinRequestSummary,
-    pub disposition: JoinRequestDisposition,
+    verified_key: VerifiedListenerKey,
+    request: JoinRequestSummary,
+    disposition: JoinRequestDisposition,
+}
+
+impl VerifiedJoinAdmission {
+    #[must_use]
+    pub const fn verified_key(&self) -> VerifiedListenerKey {
+        self.verified_key
+    }
+
+    #[must_use]
+    pub const fn request(&self) -> &JoinRequestSummary {
+        &self.request
+    }
+
+    #[must_use]
+    pub const fn disposition(&self) -> JoinRequestDisposition {
+        self.disposition
+    }
 }
 
 /// Failure is terminal for this challenge and must be reported to the peer.
@@ -137,15 +154,15 @@ mod tests {
             &registry,
         )
         .expect("valid proof");
-        assert_eq!(unknown.request.trust_state, TrustState::SessionOnly);
+        assert_eq!(unknown.request().trust_state, TrustState::SessionOnly);
         assert_eq!(
-            unknown.disposition,
+            unknown.disposition(),
             JoinRequestDisposition::AutoReject {
                 reason: JoinRejectionReason::DeviceNotApproved,
             }
         );
         registry
-            .enroll(unknown.verified_key, "Kitchen")
+            .enroll(unknown.verified_key(), "Kitchen")
             .expect("enroll");
         let persisted = registry.to_json().expect("persist");
         let registry = HostVerifiedTrust::from_json(&host, &persisted).expect("restart");
@@ -160,9 +177,9 @@ mod tests {
             &registry,
         )
         .expect("verified trusted");
-        assert_eq!(trusted.request.trust_state, TrustState::Trusted);
+        assert_eq!(trusted.request().trust_state, TrustState::Trusted);
         assert_eq!(
-            trusted.disposition,
+            trusted.disposition(),
             JoinRequestDisposition::AutoApprove {
                 trusted_for_future: true,
             }
@@ -258,10 +275,10 @@ mod tests {
             )
             .expect("verified");
             assert_eq!(
-                admitted.disposition,
+                admitted.disposition(),
                 JoinRequestDisposition::PendingManualDecision
             );
-            assert_eq!(admitted.request.trust_state, TrustState::SessionOnly);
+            assert_eq!(admitted.request().trust_state, TrustState::SessionOnly);
         }
     }
 }
