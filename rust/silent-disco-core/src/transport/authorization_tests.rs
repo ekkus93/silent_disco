@@ -159,6 +159,10 @@ fn bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success() 
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end real-socket pressure, refusal, recovery and Stop scenario"
+)]
 fn real_socket_multi_peer_pressure_refuses_busy_joins_then_recovers_control_delivery() {
     let session_id = id_session("multi-peer-pressure-session");
     let factory = SocketTransportFactory;
