@@ -9,11 +9,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,13 +49,13 @@ class HostTransportController(
     // The channel survives session rebinds. Tag queued events with their
     // original handle so a slow collector cannot consume previous-session
     // admission or disconnect events after a new host is bound.
-    private val eventChannel = Channel<Pair<FfiHostTransportHandle, FfiHostTransportEvent>>(
-        Channel.UNLIMITED,
+    private val eventQueue = BoundedTransportEventQueue<FfiHostTransportHandle, FfiHostTransportEvent>(
+        currentHandle = handleGate::currentHandle,
     )
 
-    val events: Flow<FfiHostTransportEvent> = eventChannel.receiveAsFlow()
-        .filter { (handle, _) -> handleGate.currentHandle() === handle }
-        .map { (_, event) -> event }
+    val events: Flow<FfiHostTransportEvent> = eventQueue.events
+    /** Best-effort diagnostic events dropped while the UI collector was slow. */
+    val droppedDiagnosticEvents: Long get() = eventQueue.droppedBestEffort
 
     suspend fun bind(
         scope: CoroutineScope,
@@ -225,8 +221,9 @@ class HostTransportController(
                             handleIsCurrent = handleGate.currentHandle() === handle,
                         )
                     ) {
-                        eventChannel.trySend(
-                            handle to FfiHostTransportEvent.PeerDisconnected(
+                        eventQueue.emit(
+                            handle,
+                            FfiHostTransportEvent.PeerDisconnected(
                                 listenerId = null,
                                 message = error.message,
                             ),
@@ -244,7 +241,16 @@ class HostTransportController(
                     break
                 }
                 if (event != null) {
-                    eventChannel.trySend(handle to event)
+                    when (event) {
+                        is FfiHostTransportEvent.PeerAccepted,
+                        is FfiHostTransportEvent.Heartbeat,
+                        is FfiHostTransportEvent.ResyncNotice,
+                        is FfiHostTransportEvent.Rejected,
+                        -> eventQueue.tryEmit(handle, event)
+                        // Join, disconnect and synchronization requests must not
+                        // disappear when the Android collector is temporarily slow.
+                        else -> eventQueue.emit(handle, event)
+                    }
                 }
             }
         }

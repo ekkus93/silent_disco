@@ -8,11 +8,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -59,13 +55,13 @@ class ListenerTransportController : ListenerTransport {
     private val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
     private var eventLoop: Job? = null
     // A delayed collector must never see an approval/Stop from a retired socket.
-    private val eventChannel = Channel<Pair<FfiListenerTransportHandle, FfiListenerTransportEvent>>(
-        Channel.UNLIMITED,
+    private val eventQueue = BoundedTransportEventQueue<FfiListenerTransportHandle, FfiListenerTransportEvent>(
+        currentHandle = handleGate::currentHandle,
     )
 
-    override val events: Flow<FfiListenerTransportEvent> = eventChannel.receiveAsFlow()
-        .filter { (handle, _) -> handleGate.currentHandle() === handle }
-        .map { (_, event) -> event }
+    override val events: Flow<FfiListenerTransportEvent> = eventQueue.events
+    /** Best-effort PCM notifications dropped when a slow collector exhausted capacity. */
+    val droppedAudioEvents: Long get() = eventQueue.droppedBestEffort
 
     override suspend fun connect(
         scope: CoroutineScope,
@@ -126,7 +122,7 @@ class ListenerTransportController : ListenerTransport {
 
     override fun close() {
         handleGate.close { retireHandle(it, reason = null) }
-        eventChannel.close()
+        eventQueue.close()
     }
 
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
@@ -145,8 +141,9 @@ class ListenerTransportController : ListenerTransport {
                             handleIsCurrent = handleGate.currentHandle() === handle,
                         )
                     ) {
-                        eventChannel.trySend(
-                            handle to FfiListenerTransportEvent.ConnectionClosed(
+                        eventQueue.emit(
+                            handle,
+                            FfiListenerTransportEvent.ConnectionClosed(
                                 message = polledConnectionClosedMessage(error),
                             ),
                         )
@@ -161,7 +158,15 @@ class ListenerTransportController : ListenerTransport {
                     break
                 }
                 if (event != null) {
-                    eventChannel.trySend(handle to event)
+                    if (event is FfiListenerTransportEvent.AudioReceived) {
+                        // PCM is lossy by design; never let it displace Stop,
+                        // Pause, approval, boundary or disconnect notifications.
+                        eventQueue.tryEmit(handle, event)
+                    } else {
+                        // Backpressure is on the IO poll coroutine, not the
+                        // native render callback or the decoder.
+                        eventQueue.emit(handle, event)
+                    }
                 }
             }
         }
