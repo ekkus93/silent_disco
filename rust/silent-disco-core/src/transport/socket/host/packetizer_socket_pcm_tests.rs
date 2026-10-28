@@ -89,10 +89,16 @@ fn two_tracks_crossing_packet_boundary_preserve_exact_pcm_and_late_join_cache() 
     // Track A ends halfway through packet #1. Track B must fill the carry
     // without silence, duplicated samples or a second StreamStart.
     let first_pcm: Vec<i16> = (0..360)
-        .flat_map(|i| [i as i16 - 200, 200 - i as i16])
+        .flat_map(|i| {
+            let sample = i16::try_from(i).expect("fixture index fits i16");
+            [sample - 200, 200 - sample]
+        })
         .collect();
     let second_pcm: Vec<i16> = (0..360)
-        .flat_map(|i| [i as i16 + 1_000, -1_000 - i as i16])
+        .flat_map(|i| {
+            let sample = i16::try_from(i).expect("fixture index fits i16");
+            [sample + 1_000, -1_000 - sample]
+        })
         .collect();
     let first_outcome = packetizer
         .push_contiguous_chunk(DecodedPcmChunk {

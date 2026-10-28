@@ -474,7 +474,7 @@ mod promotion_identity_tests {
 
     #[test]
     fn promoted_history_rejects_requeuing_a_track_that_already_played() {
-        let updates = Arc::new(Mutex::new(PlaylistUpdateState {
+        let shared_state = Arc::new(Mutex::new(PlaylistUpdateState {
             current_entry_id: "first".to_owned(),
             retired_entry_ids: HashSet::new(),
             reservation_shadow_entry_id: None,
@@ -482,11 +482,11 @@ mod promotion_identity_tests {
             terminal: false,
         }));
         assert!(
-            promote_current_entry_if_unmodified(&updates, "second", false)
+            promote_current_entry_if_unmodified(&shared_state, "second", false)
                 .expect("promote next track")
         );
         let updater = super::super::StreamingPlaylistUpdater {
-            pending: Arc::clone(&updates),
+            pending: Arc::clone(&shared_state),
         };
         let error = updater
             .replace_upcoming(vec![factory("first")])
