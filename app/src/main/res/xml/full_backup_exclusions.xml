@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 26-30: do not restore old Keystore-bound trust/device records. -->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>

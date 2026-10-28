@@ -40,7 +40,9 @@
 
     <application
         android:name=".app.SilentDiscoApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/full_backup_exclusions"
+        android:dataExtractionRules="@xml/data_extraction_exclusions"
         android:icon="@android:drawable/ic_media_play"
         android:label="@string/app_name"
         android:roundIcon="@android:drawable/ic_media_play"
