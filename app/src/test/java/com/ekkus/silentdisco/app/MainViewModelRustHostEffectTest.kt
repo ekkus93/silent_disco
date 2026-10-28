@@ -279,7 +279,7 @@ class MainViewModelRustHostEffectTest {
     )
 
     @Test
-    fun deliverJoinApprovalWithNoBoundTransportReportsZeroPeersDelivered() = runTest(dispatcher) {
+    fun deliverJoinApprovalWithoutRouteReportsExplicitFailureAndNeverConnects() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustHostCore()
         advanceUntilIdle()
@@ -290,10 +290,11 @@ class MainViewModelRustHostEffectTest {
         awaitRealDispatchHop { harness.hostCoreController.transportDeliveryCompletedCalls.isNotEmpty() }
 
         assertThat(harness.hostCoreController.transportDeliveryCompletedCalls).containsExactly(
-            "op-approve" to FfiDeliveryReport(intendedPeers = 0u, successfulPeers = 0u, failedPeers = 0u),
+            "op-approve" to FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u),
         )
-        // Zero peers actually reached means the join never really connected --
-        // submitListenerConnected must not fire on an undelivered approval.
+        // Approval without the listener's UDP route is an explicit failed
+        // delivery (not a zero-peer no-op). It must never report a
+        // connected listener or authorize an unknown native peer.
         assertThat(harness.hostCoreController.submitListenerConnectedCalls).isEmpty()
     }
 
