@@ -58,6 +58,11 @@ impl VerifiedListenerKey {
     ///
     /// Never use a peer-claimed device ID for admission, UDP authorization,
     /// reconnect ownership or playback control after successful v4 proof.
+    ///
+    /// # Panics
+    /// Only if the domain's `DeviceId` validator rejects the fixed `v4-`
+    /// prefix followed by 64 lowercase hexadecimal bytes, despite satisfying
+    /// its documented validation rules.
     #[must_use]
     pub fn canonical_device_id(&self) -> DeviceId {
         use std::fmt::Write;
