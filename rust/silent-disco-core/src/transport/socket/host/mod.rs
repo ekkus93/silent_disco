@@ -23,6 +23,8 @@ mod audio_generation_tests;
 mod authorization;
 #[cfg(test)]
 mod authorization_order_tests;
+#[cfg(test)]
+mod duplicate_join_tests;
 mod bind;
 mod broadcast;
 mod lookup;

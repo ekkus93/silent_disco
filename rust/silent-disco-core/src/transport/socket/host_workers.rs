@@ -150,6 +150,7 @@ fn register_peer(
         remote,
         identity: Mutex::new(None),
         authorized: AtomicBool::new(false),
+        join_forwarded: AtomicBool::new(false),
         active: AtomicBool::new(true),
         consecutive_failures: AtomicU32::new(0),
         sender: ControlSender::new(write_sender, config.operation_timeout, counters.clone()),
@@ -233,7 +234,17 @@ fn register_peer(
                                     frame,
                                     received_at,
                                 };
-                                if let Some(listener_id) = pending_join {
+                                if pending_join.is_some()
+                                    && reader_peer.join_forwarded.swap(true, Ordering::AcqRel)
+                                {
+                                    // One accepted join per TCP connection. A
+                                    // retransmitted JoinRequest must not create
+                                    // another host-actor approval or enrollment.
+                                    // A rejected first delivery closes this
+                                    // connection; a fresh TCP generation may
+                                    // submit a new request.
+                                    true
+                                } else if let Some(listener_id) = pending_join {
                                     forward_join_or_refuse(
                                         &event_for_reader,
                                         &counters_for_reader,
