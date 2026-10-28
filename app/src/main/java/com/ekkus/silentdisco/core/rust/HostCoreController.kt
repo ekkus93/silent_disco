@@ -282,11 +282,13 @@ class UniFfiHostCoreController(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         val handle = handleRef.getAndSet(null)
-        if (handle != null) {
-            runCatching { handle.shutdown() }
-            handle.close()
+        try {
+            retireNativeHandle(handle, shutdown = { it.shutdown() }, close = { it.close() })
+        } finally {
+            // A failed native shutdown must not strand an observer waiting on
+            // the bounded bridge or leave its collector open after close.
+            notificationQueue.close()
         }
-        notificationQueue.close()
     }
 
     private suspend fun submitRevisionCommand(

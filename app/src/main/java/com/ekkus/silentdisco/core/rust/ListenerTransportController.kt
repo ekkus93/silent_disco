@@ -121,8 +121,12 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override fun close() {
-        handleGate.close { retireHandle(it, reason = null) }
-        eventQueue.close()
+        try {
+            handleGate.close { retireHandle(it, reason = null) }
+        } finally {
+            // Close the collector even if native shutdown or release fails.
+            eventQueue.close()
+        }
     }
 
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {

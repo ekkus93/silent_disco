@@ -101,4 +101,23 @@ class BoundedTransportEventQueueTest {
         assertThat(queue.droppedBestEffort).isEqualTo(0)
         queue.close()
     }
+
+    @Test
+    fun closingQueueUnblocksPendingAuthoritativeEventAndPreservesAlreadyQueuedJoin() = runTest {
+        val handle = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 1)
+        queue.emit(handle, "join")
+        val waiting = backgroundScope.async {
+            runCatching { queue.emit(handle, "stop") }.exceptionOrNull()
+        }
+        runCurrent()
+        assertThat(waiting.isCompleted).isFalse()
+        queue.close()
+        runCurrent()
+        assertThat(waiting.await()).isNotNull()
+        val received = backgroundScope.async { queue.events.toList() }
+        runCurrent()
+        assertThat(received.await()).containsExactly("join")
+        assertThat(queue.droppedBestEffort).isEqualTo(0)
+    }
 }

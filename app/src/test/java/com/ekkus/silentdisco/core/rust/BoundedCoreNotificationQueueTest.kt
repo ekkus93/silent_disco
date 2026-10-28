@@ -55,4 +55,22 @@ class BoundedCoreNotificationQueueTest {
             queue.close()
         }
     }
+
+    @Test
+    fun closingQueueReleasesBlockedCriticalProducerWithoutSilentLoss() {
+        val queue = BoundedCoreNotificationQueue<String>(capacity = 1, criticalTimeoutMs = 2_000)
+        queue.publishCritical("join")
+        val started = java.util.concurrent.CountDownLatch(1)
+        val producer = CompletableFuture.supplyAsync {
+            started.countDown()
+            runCatching { queue.publishCritical("stop") }.exceptionOrNull()
+        }
+        assertThat(started.await(1, TimeUnit.SECONDS)).isTrue()
+        Thread.sleep(40)
+        assertThat(producer.isDone).isFalse()
+        queue.close()
+        val failure = producer.get(2, TimeUnit.SECONDS)
+        assertThat(failure).isNotNull()
+        assertThat(queue.criticalTimeouts).isEqualTo(0)
+    }
 }
