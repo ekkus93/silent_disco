@@ -8,10 +8,12 @@ use crate::host_control::{
 use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation, source};
-use crate::socket_pause_resume_pcm_tests::authorized_late_joiner;
+use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_control};
 use silent_disco_core::domain::{
-    AppRole, ApprovalMode, HostLifecycle, PlaybackState, SessionId, StreamId,
+    AppRole, ApprovalMode, HostLifecycle, MonotonicMillis, PlaybackState, SampleIndex, SessionId,
+    StreamId,
 };
+use silent_disco_core::protocol::{ControlMessage, Stop, TrackBoundary};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourceDescriptor, AudioSourcePatch, CoreActorHandle, CoreCommand,
     CoreCommandRequest, CoreSnapshot, HostDraftPatch, InviteCodePatch, QueueEntry,
@@ -285,7 +287,7 @@ fn actor_approved_remove_append_reorder_reaches_both_native_outputs_without_stal
         CoreCommand::ReorderHostQueue {
             expected_queue_revision: protected.host_queue.revision(),
             ordered_entry_ids: vec![
-                current_id,
+                current_id.clone(),
                 "replacement-entry".to_owned(),
                 "tail-entry".to_owned(),
             ],
@@ -310,7 +312,127 @@ fn actor_approved_remove_append_reorder_reaches_both_native_outputs_without_stal
         "tail-entry"
     );
 
-    producer.cancel().expect("release streamer");
+    producer.cancel().expect("release original streamer");
+    // The original producer had already reserved both successors. Stop
+    // must retire those reservations, without deleting the host's queue.
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Stopped))
+        .expect("stop actor stream");
+    let stopped = snapshot_when(&actor, |s| s.playback_state == PlaybackState::Stopped);
+    assert!(stopped.host_queue_next_boundary.is_none());
+    assert_eq!(stopped.host_queue.current().unwrap().entry_id, current_id);
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_300),
+    });
+    assert_eq!(
+        host.broadcast_control(&stop)
+            .expect("stop both real sockets")
+            .report
+            .successful_peers,
+        2
+    );
+    assert_eq!(recv_control(primary.as_mut()), stop);
+    assert_eq!(recv_control(secondary.as_mut()), stop);
+    let controls_after_stop = host.counters().control_frames_sent;
+    host.broadcast_control(&ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(9_600),
+        entry_id: "tail-entry".to_owned(),
+        display_name: "tail-entry".to_owned(),
+    }))
+    .expect("late old-generation boundary");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        controls_after_stop,
+        "a retired boundary must not reach either listener"
+    );
+
+    // Stop unlocks the formerly reserved successor. The same typed actor
+    // reorder that failed during playback now succeeds, and the fresh
+    // producer must reserve the new order before emitting either successor.
+    submit(
+        &actor,
+        CoreCommand::ReorderHostQueue {
+            expected_queue_revision: stopped.host_queue.revision(),
+            ordered_entry_ids: vec![
+                current_id.clone(),
+                "replacement-entry".to_owned(),
+                "tail-entry".to_owned(),
+            ],
+        },
+    );
+    let replay_order = snapshot_when(&actor, |s| {
+        s.host_queue.upcoming()[0].entry_id == "replacement-entry"
+            && s.host_queue.upcoming()[1].entry_id == "tail-entry"
+    });
+    assert!(replay_order.host_queue_next_boundary.is_none());
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+        .expect("buffer replay");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Buffering);
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+        .expect("play new generation");
+    snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
+    let replay_stream = StreamId::new("actor-socket-edit-replay").expect("replay stream");
+    actor
+        .submit_audio_event(AudioEvent::PositionAdvanced {
+            stream_id: replay_stream.clone(),
+            position_ms: 0,
+        })
+        .expect("bind replay stream");
+    let rebound = actor.current_snapshot().expect("replay actor snapshot");
+    assert_eq!(rebound.playback_state, PlaybackState::Playing);
+    assert!(rebound.host_queue_next_boundary.is_none());
+
+    let replay = FfiHostPlaylistStreamer::open_authoritative(
+        session.to_string(),
+        replay_stream.to_string(),
+        100_000,
+        vec![
+            source(&current_id, &current),
+            source("replacement-entry", &replacement),
+            source("tail-entry", &tail),
+        ],
+        Arc::clone(&ffi),
+    )
+    .expect("new authoritative producer");
+    let replayed = playback_generation(
+        host.as_mut(),
+        primary.as_mut(),
+        Some(secondary.as_mut()),
+        &replay,
+        &session,
+        &replay_stream,
+        100_000,
+        &[241, 337, 382, 4_800, 4_800],
+        true,
+        false,
+    );
+    assert!(replayed.failure.is_none());
+    assert_ne!(
+        replayed.output_token, rendered.output_token,
+        "a new Play must create a distinct native output generation"
+    );
+    assert_eq!(replayed.packets, 44);
+    assert_eq!(replayed.boundaries, [9_600, 10_080]);
+    let mut replay_levels = vec![3_000_i16; 20];
+    replay_levels.extend([7_000, 9_000]);
+    assert_eq!(
+        replayed.pcm,
+        expected_pcm(&replay_levels, replayed.startup_ramp_frames),
+        "both socket-to-callback outputs must follow the approved post-Stop reorder"
+    );
+    let new_reservation = snapshot_when(&actor, |s| s.host_queue_next_boundary.is_some());
+    assert_eq!(
+        new_reservation.host_queue_next_boundary.unwrap().entry_id,
+        "replacement-entry",
+        "the new producer must reserve only the new actor-authorized successor"
+    );
+    replay.cancel().expect("release replay streamer");
     secondary.shutdown().expect("secondary shutdown");
     primary.shutdown().expect("primary shutdown");
     host.shutdown().expect("host shutdown");
