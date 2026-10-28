@@ -250,4 +250,70 @@ class HostNativeHandleGateTest {
         assertThat(gate.currentHandle()).isNull()
         assertThat(gate.withExpected(handle) { "stale" }).isNull()
     }
+
+    @Test
+    fun repeatedBlockedApprovalAndRebindNeverAuthorizeRetiredGeneration() {
+        val gate = HostNativeHandleGate<Any>()
+        val handles = (0..128).map { Any() }
+        val retired = mutableListOf<Any>()
+        val pool = Executors.newFixedThreadPool(2)
+        gate.replace(retire = {}, open = { handles.first() }, start = {})
+        try {
+            repeat(128) { index ->
+                val old = handles[index]
+                val next = handles[index + 1]
+                val delivering = CountDownLatch(1)
+                val releaseDelivery = CountDownLatch(1)
+                val rebindStarted = CountDownLatch(1)
+                val approval = pool.submit<HostJoinAuthorizationResult<String>?> {
+                    gate.deliverAndAuthorize(
+                        expected = old,
+                        deliver = { handle ->
+                            assertThat(handle).isSameInstanceAs(old)
+                            delivering.countDown()
+                            check(releaseDelivery.await(5, TimeUnit.SECONDS))
+                            assertThat(retired).doesNotContain(old)
+                            "delivered"
+                        },
+                        wasDelivered = { it == "delivered" },
+                        authorize = { assertThat(it).isSameInstanceAs(old) },
+                        disconnect = { error("successful admission must not disconnect") },
+                    )
+                }
+                try {
+                    assertThat(delivering.await(5, TimeUnit.SECONDS)).isTrue()
+                    val rebind = pool.submit {
+                        rebindStarted.countDown()
+                        gate.replace(
+                            retire = { if (it != null) retired.add(it) },
+                            open = { next },
+                            start = { assertThat(it).isSameInstanceAs(next) },
+                        )
+                    }
+                    assertThat(rebindStarted.await(5, TimeUnit.SECONDS)).isTrue()
+                    assertThat(retired).doesNotContain(old)
+                    releaseDelivery.countDown()
+                    assertThat(approval.get(5, TimeUnit.SECONDS)?.authorized).isTrue()
+                    rebind.get(5, TimeUnit.SECONDS)
+                    assertThat(gate.currentHandle()).isSameInstanceAs(next)
+                    assertThat(gate.deliverAndAuthorize(
+                        expected = old,
+                        deliver = { error("stale approval crossed generation") },
+                        wasDelivered = { true },
+                        authorize = { error("stale UDP route crossed generation") },
+                        disconnect = {},
+                    )).isNull()
+                    assertThat(retired).hasSize(index + 1)
+                } finally {
+                    releaseDelivery.countDown()
+                }
+            }
+            gate.close { if (it != null) retired.add(it) }
+            gate.close { if (it != null) retired.add(it) }
+            assertThat(retired).containsExactlyElementsIn(handles).inOrder()
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
 }
