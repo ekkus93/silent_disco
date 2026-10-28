@@ -9,7 +9,9 @@ use crate::host_playlist::FfiHostPlaylistStreamer;
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, playback_generation, source};
 use crate::socket_pause_resume_pcm_tests::authorized_late_joiner;
-use silent_disco_core::domain::{AppRole, ApprovalMode, HostLifecycle, PlaybackState, SessionId, StreamId};
+use silent_disco_core::domain::{
+    AppRole, ApprovalMode, HostLifecycle, PlaybackState, SessionId, StreamId,
+};
 use silent_disco_core::runtime::{
     AudioEvent, AudioSourceDescriptor, AudioSourcePatch, CoreActorHandle, CoreCommand,
     CoreCommandRequest, CoreSnapshot, HostDraftPatch, InviteCodePatch, QueueEntry,
@@ -26,10 +28,7 @@ impl FfiCoreObserver for Observer {
     }
 }
 
-fn snapshot_when(
-    actor: &CoreActorHandle,
-    matches: impl Fn(&CoreSnapshot) -> bool,
-) -> CoreSnapshot {
+fn snapshot_when(actor: &CoreActorHandle, matches: impl Fn(&CoreSnapshot) -> bool) -> CoreSnapshot {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let snapshot = actor.current_snapshot().expect("actor snapshot");
@@ -43,7 +42,8 @@ fn snapshot_when(
 
 fn submit(actor: &CoreActorHandle, command: CoreCommand) {
     let revision = actor.current_snapshot().expect("revision").revision;
-    actor.submit_command(CoreCommandRequest::new(revision, command).expect("command"))
+    actor
+        .submit_command(CoreCommandRequest::new(revision, command).expect("command"))
         .expect("submit");
 }
 
@@ -61,67 +61,93 @@ fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track(
     let descriptor = |id: &str, bytes| {
         AudioSourceDescriptor::new(id, id, Some(bytes), None).expect("source descriptor")
     };
-    submit(&actor, CoreCommand::SelectRole { role: AppRole::Host });
+    submit(
+        &actor,
+        CoreCommand::SelectRole {
+            role: AppRole::Host,
+        },
+    );
     snapshot_when(&actor, |s| s.selected_role == Some(AppRole::Host));
-    submit(&actor, CoreCommand::UpdateHostDraft(HostDraftPatch {
-        session_name: Some("Socket actor edit proof".to_owned()),
-        approval_mode: Some(ApprovalMode::Manual),
-        invite_code: InviteCodePatch::Unchanged,
-        audio_source: AudioSourcePatch::Set(descriptor("current-source", 38_400)),
-        remember_approved_devices: Some(false),
-    }));
+    submit(
+        &actor,
+        CoreCommand::UpdateHostDraft(HostDraftPatch {
+            session_name: Some("Socket actor edit proof".to_owned()),
+            approval_mode: Some(ApprovalMode::Manual),
+            invite_code: InviteCodePatch::Unchanged,
+            audio_source: AudioSourcePatch::Set(descriptor("current-source", 38_400)),
+            remember_approved_devices: Some(false),
+        }),
+    );
     snapshot_when(&actor, |s| s.host_draft.audio_source.is_some());
     submit(&actor, CoreCommand::CreateHostSession);
     let operation_id = loop {
         if let FfiCoreNotification::PlatformEffect {
             effect: FfiPlatformEffect::StartAdvertising { operation_id, .. },
-        } = rx.recv_timeout(Duration::from_secs(5)).expect("advertising effect") {
+        } = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("advertising effect")
+        {
             break operation_id;
         }
     };
     ffi.platform_operation_succeeded(operation_id, FfiPlatformCompletion::AdvertisingStarted)
         .expect("advertising confirmed");
-    let ready = snapshot_when(&actor, |s| matches!(
-        s.host_lifecycle, HostLifecycle::Ready | HostLifecycle::WaitingForListeners
-    ));
-    let current_id = ready.host_queue.current().expect("current").entry_id.clone();
-    submit(&actor, CoreCommand::AppendHostQueue {
-        expected_queue_revision: ready.host_queue.revision(),
-        entries: vec![
-            QueueEntry::new("stale-entry", descriptor("stale-source", 1_920))
-                .expect("stale queue entry"),
-            QueueEntry::new("replacement-entry", descriptor("replacement-source", 1_920))
-                .expect("replacement queue entry"),
-        ],
+    let ready = snapshot_when(&actor, |s| {
+        matches!(
+            s.host_lifecycle,
+            HostLifecycle::Ready | HostLifecycle::WaitingForListeners
+        )
     });
+    let current_id = ready
+        .host_queue
+        .current()
+        .expect("current")
+        .entry_id
+        .clone();
+    submit(
+        &actor,
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: ready.host_queue.revision(),
+            entries: vec![
+                QueueEntry::new("stale-entry", descriptor("stale-source", 1_920))
+                    .expect("stale queue entry"),
+                QueueEntry::new("replacement-entry", descriptor("replacement-source", 1_920))
+                    .expect("replacement queue entry"),
+            ],
+        },
+    );
     snapshot_when(&actor, |s| s.host_queue.entries().len() == 3);
-    actor.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Buffering))
         .expect("buffer");
     snapshot_when(&actor, |s| s.playback_state == PlaybackState::Buffering);
-    actor.submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
+    actor
+        .submit_audio_event(AudioEvent::PlaybackStateChanged(PlaybackState::Playing))
         .expect("play");
     snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
     let stream = StreamId::new("actor-socket-edit-stream").expect("stream");
-    actor.submit_audio_event(AudioEvent::PositionAdvanced {
-        stream_id: stream.clone(), position_ms: 0,
-    }).expect("associate stream");
+    actor
+        .submit_audio_event(AudioEvent::PositionAdvanced {
+            stream_id: stream.clone(),
+            position_ms: 0,
+        })
+        .expect("associate stream");
     snapshot_when(&actor, |s| s.playback_state == PlaybackState::Playing);
 
-    let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
     let root = std::env::temp_dir().join(format!("sd-actor-socket-{unique}"));
     fs::create_dir_all(&root).expect("fixture directory");
     let current = root.join("current.wav");
     let stale = root.join("stale.wav");
     let replacement = root.join("replacement.wav");
     let tail = root.join("tail.wav");
-    fs::write(&current, source_wav_format(3_000, 48_000, 2, 9_600))
-        .expect("40-packet current");
-    fs::write(&stale, source_wav_format(11_000, 48_000, 2, 480))
-        .expect("stale source");
-    fs::write(&replacement, source_wav_format(7_000, 44_100, 1, 441))
-        .expect("mixed-rate source");
-    fs::write(&tail, source_wav_format(9_000, 48_000, 2, 480))
-        .expect("tail source");
+    fs::write(&current, source_wav_format(3_000, 48_000, 2, 9_600)).expect("40-packet current");
+    fs::write(&stale, source_wav_format(11_000, 48_000, 2, 480)).expect("stale source");
+    fs::write(&replacement, source_wav_format(7_000, 44_100, 1, 441)).expect("mixed-rate source");
+    fs::write(&tail, source_wav_format(9_000, 48_000, 2, 480)).expect("tail source");
 
     let session = SessionId::new("end-to-end-session").expect("session");
     let (mut host, mut primary) = authorized_pcm_socket_pair();
@@ -129,49 +155,67 @@ fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track(
     // With 40 packets of current PCM and a 32-frame producer queue, no
     // reservation can be reached before the following typed actor edit.
     let producer = FfiHostPlaylistStreamer::open_authoritative(
-        session.to_string(), stream.to_string(), 1_000,
+        session.to_string(),
+        stream.to_string(),
+        1_000,
         vec![
             source(&current_id, &current),
             source("stale-entry", &stale),
             source("replacement-entry", &replacement),
         ],
         Arc::clone(&ffi),
-    ).expect("production reserved streamer");
+    )
+    .expect("production reserved streamer");
     let before = actor.current_snapshot().expect("pre-edit state");
     assert!(before.host_queue_next_boundary.is_none());
-    submit(&actor, CoreCommand::RemoveHostQueueEntry {
-        expected_queue_revision: before.host_queue.revision(),
-        entry_id: "stale-entry".to_owned(),
-    });
+    submit(
+        &actor,
+        CoreCommand::RemoveHostQueueEntry {
+            expected_queue_revision: before.host_queue.revision(),
+            entry_id: "stale-entry".to_owned(),
+        },
+    );
     let removed = snapshot_when(&actor, |s| {
         s.host_queue.entries().len() == 2
             && s.host_queue.upcoming()[0].entry_id == "replacement-entry"
     });
-    producer.replace_upcoming(vec![source("replacement-entry", &replacement)])
+    producer
+        .replace_upcoming(vec![source("replacement-entry", &replacement)])
         .expect("apply approved removal to producer");
-    submit(&actor, CoreCommand::AppendHostQueue {
-        expected_queue_revision: removed.host_queue.revision(),
-        entries: vec![
-            QueueEntry::new("tail-entry", descriptor("tail-source", 1_920))
-                .expect("tail queue entry"),
-        ],
-    });
+    submit(
+        &actor,
+        CoreCommand::AppendHostQueue {
+            expected_queue_revision: removed.host_queue.revision(),
+            entries: vec![
+                QueueEntry::new("tail-entry", descriptor("tail-source", 1_920))
+                    .expect("tail queue entry"),
+            ],
+        },
+    );
     let appended = snapshot_when(&actor, |s| {
-        s.host_queue.entries().len() == 3
-            && s.host_queue.upcoming()[1].entry_id == "tail-entry"
+        s.host_queue.entries().len() == 3 && s.host_queue.upcoming()[1].entry_id == "tail-entry"
     });
     assert!(appended.host_queue_next_boundary.is_none());
-    producer.replace_upcoming(vec![
-        source("replacement-entry", &replacement),
-        source("tail-entry", &tail),
-    ]).expect("apply approved append to producer");
+    producer
+        .replace_upcoming(vec![
+            source("replacement-entry", &replacement),
+            source("tail-entry", &tail),
+        ])
+        .expect("apply approved append to producer");
 
     // The same two native playback outputs span edited boundaries and a
     // Pause/Resume; the deleted source must appear in neither PCM stream.
     let rendered = playback_generation(
-        host.as_mut(), primary.as_mut(), Some(secondary.as_mut()),
-        &producer, &session, &stream, 1_000,
-        &[241, 337, 382, 4_800, 4_800], true, false,
+        host.as_mut(),
+        primary.as_mut(),
+        Some(secondary.as_mut()),
+        &producer,
+        &session,
+        &stream,
+        1_000,
+        &[241, 337, 382, 4_800, 4_800],
+        true,
+        false,
     );
     assert!(rendered.failure.is_none());
     assert_eq!(rendered.packets, 44);
@@ -192,20 +236,31 @@ fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track(
         "replacement-entry"
     );
     assert_eq!(reserved.host_queue.upcoming()[1].entry_id, "tail-entry");
-    submit(&actor, CoreCommand::RemoveHostQueueEntry {
-        expected_queue_revision: reserved.host_queue.revision(),
-        entry_id: "replacement-entry".to_owned(),
-    });
+    submit(
+        &actor,
+        CoreCommand::RemoveHostQueueEntry {
+            expected_queue_revision: reserved.host_queue.revision(),
+            entry_id: "replacement-entry".to_owned(),
+        },
+    );
     let rejected = loop {
-        if let FfiCoreNotification::Error { error } =
-            rx.recv_timeout(Duration::from_secs(5)).expect("reservation rejection") {
+        if let FfiCoreNotification::Error { error } = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reservation rejection")
+        {
             break error;
         }
     };
     assert!(!rejected.message.is_empty());
     let protected = actor.current_snapshot().expect("reservation preserved");
-    assert_eq!(protected.host_queue.revision(), reserved.host_queue.revision());
-    assert_eq!(protected.host_queue.upcoming()[0].entry_id, "replacement-entry");
+    assert_eq!(
+        protected.host_queue.revision(),
+        reserved.host_queue.revision()
+    );
+    assert_eq!(
+        protected.host_queue.upcoming()[0].entry_id,
+        "replacement-entry"
+    );
 
     producer.cancel().expect("release streamer");
     secondary.shutdown().expect("secondary shutdown");
