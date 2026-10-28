@@ -44,11 +44,7 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
     let factory = SocketTransportFactory;
     let mut first = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock.clone(),
         )
         .expect("first TCP generation");
@@ -74,11 +70,7 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
     // duplicates must not suppress a legitimate reconnect request.
     let mut replacement = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock,
         )
         .expect("replacement TCP generation");
@@ -91,7 +83,9 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
     host.authorize_peer(&device, replacement.local_routes())
         .expect("authorize replacement");
     wait_for_authorized(&mut host, &device);
-    replacement.send_control(&join).expect("reconnected duplicate");
+    replacement
+        .send_control(&join)
+        .expect("reconnected duplicate");
     assert_no_repeated_join(&mut host);
 
     first.shutdown().expect("close retired TCP");
