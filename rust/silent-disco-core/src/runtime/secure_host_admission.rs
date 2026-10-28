@@ -9,9 +9,7 @@ use crate::transport::secure_identity::{
 };
 use crate::transport::secure_trust::{HostVerifiedTrust, VerifiedTrustDisposition};
 
-use super::{
-    HostDraft, JoinRequestDisposition, JoinRequestSummary, classify_join_request,
-};
+use super::{HostDraft, JoinRequestDisposition, JoinRequestSummary, classify_join_request};
 
 /// A request whose trust classification was derived from a verified key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,9 +70,7 @@ mod tests {
     use crate::runtime::{
         HostDraft, JoinRejectionReason, JoinRequestDisposition, JoinRequestSummary,
     };
-    use crate::transport::secure_identity::{
-        ListenerProofError, PendingListenerProof,
-    };
+    use crate::transport::secure_identity::{ListenerProofError, PendingListenerProof};
     use crate::transport::secure_trust::HostVerifiedTrust;
     use p256::{
         ecdsa::{Signature, SigningKey, signature::Signer},
@@ -103,11 +99,7 @@ mod tests {
         .expect("challenge")
     }
 
-    fn signature(
-        proof: &PendingListenerProof,
-        signing: &SigningKey,
-        listener: &[u8],
-    ) -> Vec<u8> {
+    fn signature(proof: &PendingListenerProof, signing: &SigningKey, listener: &[u8]) -> Vec<u8> {
         let transcript = proof.signing_transcript(listener).expect("transcript");
         let signed: Signature = signing.sign(&transcript);
         signed.to_der().as_bytes().to_vec()
@@ -137,8 +129,12 @@ mod tests {
         let mut first = challenge(&host, 1);
         let signed = signature(&first, &signing, &listener);
         let unknown = verify_and_classify_join(
-            &draft, &request(TrustState::Trusted), &mut first,
-            &listener, &signed, &registry,
+            &draft,
+            &request(TrustState::Trusted),
+            &mut first,
+            &listener,
+            &signed,
+            &registry,
         )
         .expect("valid proof");
         assert_eq!(unknown.request.trust_state, TrustState::SessionOnly);
@@ -148,14 +144,20 @@ mod tests {
                 reason: JoinRejectionReason::DeviceNotApproved,
             }
         );
-        registry.enroll(unknown.verified_key, "Kitchen").expect("enroll");
+        registry
+            .enroll(unknown.verified_key, "Kitchen")
+            .expect("enroll");
         let persisted = registry.to_json().expect("persist");
         let registry = HostVerifiedTrust::from_json(&host, &persisted).expect("restart");
         let mut second = challenge(&host, 2);
         let signed = signature(&second, &signing, &listener);
         let trusted = verify_and_classify_join(
-            &draft, &request(TrustState::SessionOnly), &mut second,
-            &listener, &signed, &registry,
+            &draft,
+            &request(TrustState::SessionOnly),
+            &mut second,
+            &listener,
+            &signed,
+            &registry,
         )
         .expect("verified trusted");
         assert_eq!(trusted.request.trust_state, TrustState::Trusted);
@@ -193,8 +195,12 @@ mod tests {
             let signed = signature(&proof, &signing, &listener);
             assert_eq!(
                 verify_and_classify_join(
-                    &draft, &request(TrustState::Trusted), &mut proof,
-                    &listener, &signed, &registry,
+                    &draft,
+                    &request(TrustState::Trusted),
+                    &mut proof,
+                    &listener,
+                    &signed,
+                    &registry,
                 ),
                 Err(VerifiedJoinError::RevokedListener)
             );
@@ -204,17 +210,29 @@ mod tests {
         let draft = HostDraft::default();
         assert_eq!(
             verify_and_classify_join(
-                &draft, &request(TrustState::Trusted), &mut proof,
-                &impostor, &signed, &registry,
+                &draft,
+                &request(TrustState::Trusted),
+                &mut proof,
+                &impostor,
+                &signed,
+                &registry,
             ),
-            Err(VerifiedJoinError::Proof(ListenerProofError::SignatureMismatch))
+            Err(VerifiedJoinError::Proof(
+                ListenerProofError::SignatureMismatch
+            ))
         );
         assert_eq!(
             verify_and_classify_join(
-                &draft, &request(TrustState::Trusted), &mut proof,
-                &listener, &signed, &registry,
+                &draft,
+                &request(TrustState::Trusted),
+                &mut proof,
+                &listener,
+                &signed,
+                &registry,
             ),
-            Err(VerifiedJoinError::Proof(ListenerProofError::AlreadyConsumed))
+            Err(VerifiedJoinError::Proof(
+                ListenerProofError::AlreadyConsumed
+            ))
         );
     }
 
@@ -231,8 +249,12 @@ mod tests {
             let mut proof = challenge(&host, 4);
             let signed = signature(&proof, &signing, &listener);
             let admitted = verify_and_classify_join(
-                &draft, &request(TrustState::Trusted), &mut proof,
-                &listener, &signed, &registry,
+                &draft,
+                &request(TrustState::Trusted),
+                &mut proof,
+                &listener,
+                &signed,
+                &registry,
             )
             .expect("verified");
             assert_eq!(

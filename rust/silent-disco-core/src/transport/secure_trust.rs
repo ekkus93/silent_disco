@@ -461,7 +461,9 @@ mod tests {
         let mut store = HostVerifiedTrust::new(&host).expect("host registry");
         let mut other_store = HostVerifiedTrust::new(&other_host).expect("other registry");
         store.enroll(own, "Kitchen").expect("enroll");
-        other_store.enroll(foreign, "Kitchen").expect("enroll other");
+        other_store
+            .enroll(foreign, "Kitchen")
+            .expect("enroll other");
         assert_eq!(
             store.disposition(&foreign),
             VerifiedTrustDisposition::Unknown
