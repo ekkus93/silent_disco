@@ -160,7 +160,8 @@ fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reco
     assert_eq!(host.counters().delivery_failures, 2);
     for (listener, device) in listeners.iter().zip(&devices).skip(1) {
         assert!(
-            host.authorize_peer(device, listener.local_routes()).is_err(),
+            host.authorize_peer(device, listener.local_routes())
+                .is_err(),
             "timed-out TCP peer must not retain an authorizable route"
         );
     }
