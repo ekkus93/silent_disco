@@ -420,7 +420,6 @@ fn refresh_pending_playlist_update(
             upcoming.pop_front();
         } else {
             if let Some((_, Ok(stale))) = next.take() {
-
                 let _ = stale.cancel_and_join();
             }
             *next = open_next_track(upcoming);
@@ -503,6 +502,7 @@ mod promotion_identity_tests {
     fn accepted_append_wins_before_final_eof_seal() {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
+            retired_entry_ids: HashSet::new(),
             reservation_shadow_entry_id: None,
             pending: Some(vec![factory("appended")]),
             terminal: false,
@@ -520,6 +520,7 @@ mod promotion_identity_tests {
     fn final_eof_seal_rejects_late_edits_before_worker_exit() {
         let state = Arc::new(Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
+            retired_entry_ids: HashSet::new(),
             reservation_shadow_entry_id: None,
             pending: None,
             terminal: false,
@@ -544,6 +545,7 @@ mod promotion_identity_tests {
         for _ in 0..32 {
             let state = Arc::new(Mutex::new(PlaylistUpdateState {
                 current_entry_id: "one".to_owned(),
+                retired_entry_ids: HashSet::new(),
                 reservation_shadow_entry_id: None,
                 pending: None,
                 terminal: false,
@@ -588,6 +590,7 @@ mod promotion_identity_tests {
     fn reserved_shadow_retargets_later_entries_without_permitting_duplicates() {
         let state = Arc::new(Mutex::new(PlaylistUpdateState {
             current_entry_id: "reserved".to_owned(),
+            retired_entry_ids: HashSet::new(),
             reservation_shadow_entry_id: Some("reserved".to_owned()),
             pending: None,
             terminal: false,
@@ -628,6 +631,7 @@ mod promotion_identity_tests {
     fn accepted_retarget_wins_before_promotion() {
         let state = Mutex::new(PlaylistUpdateState {
             current_entry_id: "one".to_owned(),
+            retired_entry_ids: HashSet::new(),
             reservation_shadow_entry_id: None,
             pending: Some(vec![factory("replacement"), factory("three")]),
             terminal: false,
@@ -661,6 +665,7 @@ mod promotion_identity_tests {
         for _ in 0..32 {
             let state = Arc::new(Mutex::new(PlaylistUpdateState {
                 current_entry_id: "current".to_owned(),
+                retired_entry_ids: HashSet::new(),
                 reservation_shadow_entry_id: None,
                 pending: None,
                 terminal: false,

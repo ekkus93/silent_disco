@@ -403,7 +403,6 @@ impl StreamingPacketizeHandle {
     ///
     /// Returns [`TryRecvError::Empty`] when no packet is ready, or
     /// `Disconnected` after worker exit and queue drain.
-
     pub fn try_recv(&self) -> Result<ProtocolFrame, TryRecvError> {
         let frame = self.receiver.try_recv()?;
         self.statistics
