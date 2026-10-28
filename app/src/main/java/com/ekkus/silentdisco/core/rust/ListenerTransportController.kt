@@ -5,12 +5,13 @@ import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -55,11 +56,16 @@ interface ListenerTransport : AutoCloseable {
  * events as a [Flow].
  */
 class ListenerTransportController : ListenerTransport {
-    private val handleRef = AtomicReference<FfiListenerTransportHandle?>(null)
+    private val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
     private var eventLoop: Job? = null
-    private val eventChannel = Channel<FfiListenerTransportEvent>(Channel.UNLIMITED)
+    // A delayed collector must never see an approval/Stop from a retired socket.
+    private val eventChannel = Channel<Pair<FfiListenerTransportHandle, FfiListenerTransportEvent>>(
+        Channel.UNLIMITED,
+    )
 
     override val events: Flow<FfiListenerTransportEvent> = eventChannel.receiveAsFlow()
+        .filter { (handle, _) -> handleGate.currentHandle() === handle }
+        .map { (_, event) -> event }
 
     override suspend fun connect(
         scope: CoroutineScope,
@@ -68,10 +74,15 @@ class ListenerTransportController : ListenerTransport {
         localAddress: String,
     ) {
         withContext(Dispatchers.IO) {
-            closeExistingHandle(reason = null)
-            val handle = FfiListenerTransportHandle.connect(rawEndpoint, nowMs(), localDeviceId, localAddress)
-            handleRef.set(handle)
-            startEventLoop(scope, handle)
+            handleGate.replace(
+                retire = { retireHandle(it, reason = null) },
+                open = {
+                    FfiListenerTransportHandle.connect(
+                        rawEndpoint, nowMs(), localDeviceId, localAddress,
+                    )
+                },
+                start = { startEventLoop(scope, it) },
+            )
         }
     }
 
@@ -93,35 +104,35 @@ class ListenerTransportController : ListenerTransport {
         roundTripMs: Double,
         driftPpm: Double,
     ) {
-        handleRef.get()?.sendSynchronizationReport(confidence, offsetMs, roundTripMs, driftPpm)
+        handleGate.withCurrent {
+            it.sendSynchronizationReport(confidence, offsetMs, roundTripMs, driftPpm)
+        }
     }
 
     override fun attachPlayback(playback: FfiListenerPlaybackHandle) {
-        val handle = handleRef.get() ?: error("listener transport is not connected")
-        handle.attachPlayback(playback)
+        handleGate.withCurrent { it.attachPlayback(playback) }
+            ?: error("listener transport is not connected")
     }
 
     override fun detachPlayback() {
-        handleRef.get()?.detachPlayback()
+        handleGate.withCurrent { it.detachPlayback() }
     }
 
     override suspend fun disconnect(reason: String) {
         withContext(Dispatchers.IO) {
-            closeExistingHandle(reason)
+            handleGate.close { retireHandle(it, reason) }
         }
     }
 
     override fun close() {
-        eventLoop?.cancel()
-        eventLoop = null
-        closeExistingHandle(reason = null)
+        handleGate.close { retireHandle(it, reason = null) }
         eventChannel.close()
     }
 
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
         eventLoop?.cancel()
         eventLoop = scope.launch(Dispatchers.IO) {
-            while (isActive && handleRef.get() === handle) {
+            while (isActive && handleGate.currentHandle() === handle) {
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiListenerTransportException) {
@@ -131,11 +142,11 @@ class ListenerTransportController : ListenerTransport {
                     // That is cleanup fallout, not a second transport failure.
                     if (shouldForwardPolledListenerEvent(
                             loopActive = isActive,
-                            handleIsCurrent = handleRef.get() === handle,
+                            handleIsCurrent = handleGate.currentHandle() === handle,
                         )
                     ) {
                         eventChannel.trySend(
-                            FfiListenerTransportEvent.ConnectionClosed(
+                            handle to FfiListenerTransportEvent.ConnectionClosed(
                                 message = polledConnectionClosedMessage(error),
                             ),
                         )
@@ -144,29 +155,33 @@ class ListenerTransportController : ListenerTransport {
                 }
                 if (!shouldForwardPolledListenerEvent(
                         loopActive = isActive,
-                        handleIsCurrent = handleRef.get() === handle,
+                        handleIsCurrent = handleGate.currentHandle() === handle,
                     )
                 ) {
                     break
                 }
                 if (event != null) {
-                    eventChannel.trySend(event)
+                    eventChannel.trySend(handle to event)
                 }
             }
         }
     }
 
-    private suspend fun <T> withHandle(action: (FfiListenerTransportHandle) -> T): T? =
-        withContext(Dispatchers.IO) { handleRef.get()?.let(action) }
+    private suspend fun <T> withHandle(action: (FfiListenerTransportHandle) -> T): T? {
+        // Capture the session before dispatch: an operation queued behind
+        // disconnect/rebind must not execute on a replacement native handle.
+        val expected = handleGate.currentHandle() ?: return null
+        return withContext(Dispatchers.IO) { handleGate.withExpected(expected, action) }
+    }
 
     /**
      * Always attempts every native cleanup operation and rethrows the first
      * failure after attaching later cleanup failures as suppressed exceptions.
      */
-    private fun closeExistingHandle(reason: String?) {
+    private fun retireHandle(handle: FfiListenerTransportHandle?, reason: String?) {
         eventLoop?.cancel()
         eventLoop = null
-        val handle = handleRef.getAndSet(null) ?: return
+        handle ?: return
         var firstFailure: Throwable? = null
 
         fun recordFailure(error: Throwable) {

@@ -3,12 +3,12 @@ package com.ekkus.silentdisco.core.rust
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Serializes native host commands against shutdown and session replacement.
+ * Serializes native transport commands against shutdown and session replacement.
  *
  * A native send can block until its TCP writer reports delivery. Merely loading
  * an [AtomicReference] before that call does not keep the handle alive: another
  * coroutine can close it, or bind a replacement session, during the send.
- * The short-lived session owner uses this gate for *all* sends and lifecycle
+ * Both Android host and listener use this gate for *all* sends and lifecycle
  * mutations. The blocking event poll deliberately stays outside the gate:
  * shutdown must be able to interrupt that poll.
  */
@@ -50,3 +50,6 @@ internal class HostNativeHandleGate<T : Any> {
         retire(current.getAndSet(null))
     }
 }
+
+/** Reuse the same lifetime and generation guarantee for listener FFI handles. */
+internal typealias ListenerNativeHandleGate<T> = HostNativeHandleGate<T>
