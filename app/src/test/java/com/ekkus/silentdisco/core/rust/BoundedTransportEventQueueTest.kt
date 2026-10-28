@@ -46,6 +46,30 @@ class BoundedTransportEventQueueTest {
     }
 
     @Test
+    fun highRateAudioReservesSixOfEightSlotsForAuthoritativeControls() = runTest {
+        val handle = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 8)
+        repeat(1000) { queue.tryEmit(handle, "audio-$it") }
+        assertThat(queue.droppedBestEffort).isEqualTo(998)
+        val controls = listOf("join-a", "join-b", "approval", "pause", "stop", "disconnect")
+        for (control in controls) queue.emit(handle, control)
+
+        // Only after all six reserved slots are occupied may a further
+        // authoritative event wait. A stopped collector never lets a burst
+        // of lossy PCM monopolize the whole native-to-UI bridge.
+        val waiting = backgroundScope.async { queue.emit(handle, "terminal-error") }
+        runCurrent()
+        assertThat(waiting.isCompleted).isFalse()
+        val received = backgroundScope.async { queue.events.take(9).toList() }
+        runCurrent()
+        assertThat(received.await())
+            .containsExactly("audio-0", "audio-1", *controls.toTypedArray(), "terminal-error")
+            .inOrder()
+        assertThat(waiting.isCompleted).isTrue()
+        queue.close()
+    }
+
+    @Test
     fun retiredSessionEventsNeverAppearAfterRebind() = runTest {
         val old = Any()
         val replacement = Any()
@@ -58,6 +82,23 @@ class BoundedTransportEventQueueTest {
         val received = backgroundScope.async { queue.events.first() }
         runCurrent()
         assertThat(received.await()).isEqualTo("new-stop")
+        queue.close()
+    }
+
+    @Test
+    fun retiredBestEffortEventsReleaseQuotaBeforeNewSessionAudio() = runTest {
+        val old = Any()
+        val replacement = Any()
+        var current = old
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 4)
+        queue.tryEmit(old, "old-audio")
+        current = replacement
+        val draining = backgroundScope.async { queue.events.first() }
+        runCurrent()
+        queue.tryEmit(replacement, "new-audio")
+        runCurrent()
+        assertThat(draining.await()).isEqualTo("new-audio")
+        assertThat(queue.droppedBestEffort).isEqualTo(0)
         queue.close()
     }
 }
