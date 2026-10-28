@@ -7,8 +7,8 @@ use crate::domain::{DeliverySeverity, MonotonicMillis};
 use crate::protocol::{ControlMessage, Heartbeat, Hello, PROTOCOL_MAGIC, ProtocolFrame};
 
 use super::test_support::{
-    id_device, id_session, join_request, wait_for_control_from, wait_for_frame, wait_for_rejection,
-    wait_until,
+    id_device, id_session, join_request, stream_start, stream_stop, wait_for_control_from,
+    wait_for_frame, wait_for_rejection, wait_for_host_event, wait_until,
 };
 use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
@@ -156,6 +156,138 @@ fn bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success() 
     listener.shutdown().expect("listener should stop");
     host.shutdown()
         .expect("host should stop under queue pressure");
+}
+
+#[test]
+fn real_socket_multi_peer_pressure_refuses_busy_joins_then_recovers_control_delivery() {
+    let session_id = id_session("multi-peer-pressure-session");
+    let factory = SocketTransportFactory;
+    let clock = Arc::new(SystemTransportClock::default());
+    let mut config = HostTransportConfig::loopback(session_id.clone());
+    config.event_queue_capacity = 2;
+    let mut host = factory
+        .bind_host(config, clock.clone())
+        .expect("host binds with two-event capacity");
+    let endpoint = host.endpoint();
+    let first_id = id_device("pressure-first");
+    let second_id = id_device("pressure-second");
+    let mut first = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(), first_id.clone(), endpoint,
+            ),
+            clock.clone(),
+        )
+        .expect("first listener connects");
+    let mut second = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(), second_id.clone(), endpoint,
+            ),
+            clock.clone(),
+        )
+        .expect("second listener connects");
+
+    // The two PeerAccepted notifications occupy both slots before either
+    // client sends a join. Both joins must get explicit wire-level refusals,
+    // never a phantom pending approval in the host actor.
+    wait_until(Duration::from_secs(2), || {
+        host.counters().accepted_control_connections >= 2
+    });
+    first
+        .send_control(&join_request(&session_id, &first_id, "First"))
+        .expect("first join writes");
+    second
+        .send_control(&join_request(&session_id, &second_id, "Second"))
+        .expect("second join writes");
+    for listener in [&mut first, &mut second] {
+        let rejected = wait_for_frame(listener, TransportChannel::Control, |frame| {
+            matches!(
+                frame,
+                ProtocolFrame::Control(ControlMessage::JoinRejection(_))
+            )
+        });
+        assert!(
+            matches!(
+                rejected,
+                TransportEvent::FrameReceived {
+                    frame: ProtocolFrame::Control(ControlMessage::JoinRejection(value)),
+                    ..
+                } if value.reason.contains("Host busy")
+            ),
+            "every saturated join must be explicitly refused"
+        );
+    }
+    wait_until(Duration::from_secs(2), || {
+        host.counters().closed_control_connections >= 2
+    });
+    assert!(host.counters().delivery_failures >= 2);
+    while let Ok(event) = host.recv_event(Duration::from_millis(100)) {
+        assert!(
+            !matches!(
+                event,
+                TransportEvent::FrameReceived {
+                    frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+                    ..
+                }
+            ),
+            "a refused join must never appear later in the host actor"
+        );
+    }
+    first.shutdown().expect("first listener shutdown");
+    second.shutdown().expect("second listener shutdown");
+
+    // Once the consumer drains the queue, a fresh real TCP peer can join
+    // and receive authoritative playback controls despite later telemetry
+    // saturation. Congestion must not permanently poison admission.
+    let recovered_id = id_device("pressure-recovered");
+    let mut recovered = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(), recovered_id.clone(), endpoint,
+            ),
+            clock,
+        )
+        .expect("recovered listener connects");
+    drop(wait_for_host_event(&mut *host, |event| {
+        matches!(event, TransportEvent::PeerAccepted { .. })
+    }));
+    recovered
+        .send_control(&join_request(&session_id, &recovered_id, "Recovered"))
+        .expect("recovered join writes");
+    wait_for_control_from(&mut *host, &recovered_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&recovered_id, recovered.local_routes())
+        .expect("recovered peer authorizes");
+    drop(wait_for_host_event(&mut *host, |event| {
+        matches!(event, TransportEvent::PeerAuthorized { .. })
+    }));
+
+    for index in 0..64 {
+        recovered
+            .send_control(&ControlMessage::Heartbeat(Heartbeat {
+                session_id: session_id.clone(),
+                listener_id: recovered_id.clone(),
+                sent_at_elapsed_ms: MonotonicMillis::new(index),
+            }))
+            .expect("heartbeat writes under pressure");
+    }
+    wait_until(Duration::from_secs(2), || {
+        host.counters().queue_overflows >= 3
+    });
+    host.broadcast_control(&stream_start(&session_id, 1_000))
+        .expect("start reaches authorized peer despite telemetry pressure");
+    drop(wait_for_frame(&mut *recovered, TransportChannel::Control, |frame| {
+        matches!(frame, ProtocolFrame::Control(ControlMessage::StreamStart(_)))
+    }));
+    host.broadcast_control(&stream_stop(&session_id, 2_000))
+        .expect("Stop reaches authorized peer despite telemetry pressure");
+    drop(wait_for_frame(&mut *recovered, TransportChannel::Control, |frame| {
+        matches!(frame, ProtocolFrame::Control(ControlMessage::Stop(_)))
+    }));
+    recovered.shutdown().expect("recovered listener shutdown");
+    host.shutdown().expect("host shutdown after pressure recovery");
 }
 
 fn invalid_version_header() -> [u8; 16] {
