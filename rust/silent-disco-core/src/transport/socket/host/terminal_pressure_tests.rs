@@ -178,7 +178,8 @@ fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reco
         )
     });
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("first accepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("first accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -195,7 +196,8 @@ fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reco
     }
     for (listener, device) in listeners.iter_mut().zip(&devices) {
         assert!(
-            host.authorize_peer(device, listener.local_routes()).is_err(),
+            host.authorize_peer(device, listener.local_routes())
+                .is_err(),
             "refused peer must not have a live route"
         );
         drop(listener.shutdown());
