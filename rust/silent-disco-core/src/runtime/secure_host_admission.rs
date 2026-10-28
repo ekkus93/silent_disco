@@ -69,6 +69,10 @@ pub fn verify_and_classify_join(
         VerifiedTrustDisposition::Revoked => return Err(VerifiedJoinError::RevokedListener),
     };
     let mut verified_request = request.clone();
+    // A signed listener must not seize an existing listener's routing slot by
+    // claiming its legacy device ID. All v4 actor/transport ownership uses the
+    // proven key's stable principal, including reconnect and authorization.
+    verified_request.device_id = verified_key.canonical_device_id();
     verified_request.trust_state = state;
     let disposition = classify_join_request(draft, &verified_request);
     Ok(VerifiedJoinAdmission {
@@ -155,6 +159,8 @@ mod tests {
         )
         .expect("valid proof");
         assert_eq!(unknown.request().trust_state, TrustState::SessionOnly);
+        assert_eq!(unknown.request().device_id, unknown.verified_key().canonical_device_id());
+        assert_ne!(unknown.request().device_id, request(TrustState::Trusted).device_id);
         assert_eq!(
             unknown.disposition(),
             JoinRequestDisposition::AutoReject {
@@ -178,6 +184,7 @@ mod tests {
         )
         .expect("verified trusted");
         assert_eq!(trusted.request().trust_state, TrustState::Trusted);
+        assert_eq!(trusted.request().device_id, unknown.request().device_id);
         assert_eq!(
             trusted.disposition(),
             JoinRequestDisposition::AutoApprove {
@@ -253,6 +260,46 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn forged_claimed_device_id_cannot_collide_with_another_verified_listener() {
+        let (_, host) = key(3);
+        let (first_signing, first_der) = key(5);
+        let (second_signing, second_der) = key(6);
+        let registry = HostVerifiedTrust::new(&host).expect("registry");
+        let draft = HostDraft::default();
+        let claimed = request(TrustState::Trusted);
+
+        let mut first_proof = challenge(&host, 1);
+        let first_signature = signature(&first_proof, &first_signing, &first_der);
+        let first = verify_and_classify_join(
+            &draft, &claimed, &mut first_proof, &first_der, &first_signature, &registry,
+        )
+        .expect("first verified join");
+
+        // Same claimed ID, different signing key: distinct actor/UDP principals.
+        let mut second_proof = challenge(&host, 2);
+        let second_signature = signature(&second_proof, &second_signing, &second_der);
+        let second = verify_and_classify_join(
+            &draft, &claimed, &mut second_proof, &second_der, &second_signature, &registry,
+        )
+        .expect("second verified join");
+        assert_ne!(first.request().device_id, second.request().device_id);
+        assert_ne!(first.verified_key(), second.verified_key());
+        assert_ne!(first.request().device_id, claimed.device_id);
+
+        // Same signing key, different self-reported ID: stable reconnect owner.
+        let mut renamed = request(TrustState::SessionOnly);
+        renamed.device_id = DeviceId::new("forged-other-id").expect("claimed ID");
+        let mut reconnect_proof = challenge(&host, 3);
+        let reconnect_signature = signature(&reconnect_proof, &first_signing, &first_der);
+        let reconnect = verify_and_classify_join(
+            &draft, &renamed, &mut reconnect_proof, &first_der, &reconnect_signature, &registry,
+        )
+        .expect("reconnect verified");
+        assert_eq!(first.request().device_id, reconnect.request().device_id);
+        assert_eq!(first.verified_key(), reconnect.verified_key());
+    }
     #[test]
     fn manual_and_invite_policy_still_require_explicit_approval() {
         let (_, host) = key(3);

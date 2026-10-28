@@ -10,7 +10,7 @@ use p256::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::domain::SessionId;
+use crate::domain::{DeviceId, SessionId};
 
 const PROOF_DOMAIN: &[u8] = b"silent-disco-v4-listener-proof\0";
 
@@ -52,6 +52,21 @@ impl VerifiedListenerKey {
     #[must_use]
     pub const fn host_fingerprint(&self) -> &[u8; 32] {
         &self.host_fingerprint
+    }
+
+    /// Stable v4 routing principal, derived only from the verified public key.
+    ///
+    /// Never use a peer-claimed device ID for admission, UDP authorization,
+    /// reconnect ownership or playback control after successful v4 proof.
+    #[must_use]
+    pub fn canonical_device_id(&self) -> DeviceId {
+        use std::fmt::Write;
+        let mut value = String::with_capacity(3 + self.fingerprint.len() * 2);
+        value.push_str("v4-");
+        for byte in self.fingerprint {
+            write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        DeviceId::new(value).expect("fixed-length hexadecimal device ID is valid")
     }
 }
 
