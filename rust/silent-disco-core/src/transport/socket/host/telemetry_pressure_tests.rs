@@ -7,8 +7,7 @@ use crate::domain::MonotonicMillis;
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, SyncRequest};
 use crate::transport::test_support::{
     audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from,
-    wait_for_frame, wait_until,
+    wait_for_control_from, wait_for_frame, wait_until,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
@@ -213,7 +212,8 @@ fn tcp_accept_survives_saturated_udp_telemetry_and_delivers_pcm() {
         )
         .expect("first listener");
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("first accepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("first accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     first
@@ -235,7 +235,9 @@ fn tcp_accept_survives_saturated_udp_telemetry_and_delivers_pcm() {
             })
             .expect("UDP telemetry");
     }
-    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    wait_until(Duration::from_secs(5), || {
+        host.counters().queue_overflows > 0
+    });
     let second_id = id_device("pressure-accept-second");
     let mut second = SocketTransportFactory
         .connect_listener(
@@ -279,7 +281,10 @@ fn tcp_accept_survives_saturated_udp_telemetry_and_delivers_pcm() {
     let start = stream_start(&session, 1_000);
     let pcm = audio_frame(&session, 0);
     assert_eq!(
-        host.broadcast_control(&start).expect("start").report.successful_peers,
+        host.broadcast_control(&start)
+            .expect("start")
+            .report
+            .successful_peers,
         2
     );
     for listener in [first.as_mut(), second.as_mut()] {
@@ -288,7 +293,10 @@ fn tcp_accept_survives_saturated_udp_telemetry_and_delivers_pcm() {
         });
     }
     assert_eq!(
-        host.broadcast_audio(&pcm).expect("PCM").report.successful_peers,
+        host.broadcast_audio(&pcm)
+            .expect("PCM")
+            .report
+            .successful_peers,
         2
     );
     for listener in [first.as_mut(), second.as_mut()] {
@@ -316,7 +324,8 @@ fn stalled_actor_refuses_tcp_peer_without_ghost_route_or_harming_live_peer() {
         )
         .expect("first listener");
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("first accepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("first accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     first
@@ -338,7 +347,9 @@ fn stalled_actor_refuses_tcp_peer_without_ghost_route_or_harming_live_peer() {
             })
             .expect("fill actor queue");
     }
-    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    wait_until(Duration::from_secs(5), || {
+        host.counters().queue_overflows > 0
+    });
     let second_id = id_device("timeout-accept-second");
     let mut refused = SocketTransportFactory
         .connect_listener(
