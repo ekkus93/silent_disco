@@ -2,9 +2,9 @@ mod actor_runtime;
 mod effects;
 mod host_admission;
 mod playlist;
-mod secure_host_admission;
 #[path = "records_runtime.rs"]
 mod records;
+mod secure_host_admission;
 #[allow(
     clippy::struct_excessive_bools,
     reason = "CapabilitySnapshot is an explicit cross-platform availability record"
