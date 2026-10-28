@@ -295,7 +295,7 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
 
 /// Real TCP control delivery must not lose a Stop behind a stalled listener
 /// collector. A one-slot native event queue is intentionally saturated by
-/// the StreamStart; TCP backpressure must preserve Pause/Stop in wire order.
+/// the `StreamStart`; TCP backpressure must preserve Pause/Stop in wire order.
 #[test]
 fn real_socket_stalled_listener_retains_authoritative_start_pause_stop() {
     let session = id_session("socket-backpressure-playback-control");
