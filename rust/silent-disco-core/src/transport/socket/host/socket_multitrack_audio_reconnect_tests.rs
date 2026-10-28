@@ -483,11 +483,8 @@ fn real_socket_multi_peer_pressure_stop_reconnect_and_fresh_pcm() {
     )
     .expect("bind production socket host");
     let slow_device = id_device("slow-control-collector");
-    let mut slow_config = ListenerTransportConfig::loopback(
-        session.clone(),
-        slow_device.clone(),
-        host.endpoint(),
-    );
+    let mut slow_config =
+        ListenerTransportConfig::loopback(session.clone(), slow_device.clone(), host.endpoint());
     slow_config.event_queue_capacity = 1;
     let mut slow = SocketTransportFactory
         .connect_listener(slow_config, clock.clone())
@@ -553,7 +550,10 @@ fn real_socket_multi_peer_pressure_stop_reconnect_and_fresh_pcm() {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(saturated, "one-slot slow peer must experience real TCP backpressure");
+    assert!(
+        saturated,
+        "one-slot slow peer must experience real TCP backpressure"
+    );
     for control in &controls {
         received_control(fast.as_mut(), control);
     }
