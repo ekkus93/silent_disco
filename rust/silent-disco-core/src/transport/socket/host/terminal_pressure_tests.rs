@@ -191,7 +191,6 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
                 assert!(!disconnected.contains(&device), "duplicate disconnect");
                 disconnected.push(device);
             }
-            TransportEvent::PeerAccepted { .. } => {}
             TransportEvent::FrameReceived {
                 frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
                 ..
