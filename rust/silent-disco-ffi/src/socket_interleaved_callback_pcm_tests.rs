@@ -373,7 +373,10 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     assert!(ended, "three-track playlist must terminate");
     assert_eq!(packets, 6, "fresh continuous 5-ms packet sequence");
     assert_eq!(boundaries, [480, 960]);
-    assert!(second_paused, "both boundary pauses and resumes must execute");
+    assert!(
+        second_paused,
+        "both boundary pauses and resumes must execute"
+    );
     captured.extend(read_callback(token, 382, &tap));
     captured.extend(read_callback(token, 480, &tap));
     assert_eq!(
