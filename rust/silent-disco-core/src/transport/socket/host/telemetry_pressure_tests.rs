@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use crate::domain::MonotonicMillis;
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, SyncRequest};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from, wait_for_frame, wait_until,
+    id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
+    wait_for_frame, wait_until,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
