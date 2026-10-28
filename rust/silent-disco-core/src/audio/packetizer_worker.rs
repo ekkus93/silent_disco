@@ -1,5 +1,4 @@
 use core::fmt;
-use std::collections::HashSet;
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel};
@@ -31,9 +30,8 @@ const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
 /// cannot race validation of a new live replacement.
 struct PlaylistUpdateState {
     current_entry_id: String,
-    // A worker can promote a track before an edit reaches this lock. Never
-    // reintroduce a previously played entry ID as an upcoming track.
-    retired_entry_ids: HashSet<String>,
+    // Never requeue a previously played entry after promotion.
+    retired_entry_ids: std::collections::HashSet<String>,
     // The actor may still project a producer-reserved boundary as upcoming.
     reservation_shadow_entry_id: Option<String>,
     pending: Option<Vec<StreamingPlaylistTrackFactory>>,
