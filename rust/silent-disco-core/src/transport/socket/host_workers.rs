@@ -2,13 +2,16 @@
 use std::collections::HashMap;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{SyncSender, sync_channel};
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crate::domain::{DeviceId, SessionId};
-use crate::protocol::{ControlMessage, MAX_AUDIO_DATAGRAM_BYTES, ProtocolDecoder, ProtocolFrame};
+use crate::protocol::{
+    ControlMessage, JoinRejection, MAX_AUDIO_DATAGRAM_BYTES, ProtocolDecoder, ProtocolFrame,
+    encode_frame,
+};
 
 use super::super::{
     HostTransportConfig, TransportChannel, TransportClock, TransportError, TransportErrorKind,
@@ -212,17 +215,52 @@ fn register_peer(
                             Ok(()) => {
                                 let received_at = clock_for_reader.now();
                                 reader_peer.mark_inbound_activity(received_at);
-                                send_event(
-                                    &event_for_reader,
-                                    &counters_for_reader,
-                                    TransportEvent::FrameReceived {
-                                        channel: TransportChannel::Control,
-                                        peer: reader_peer.transport_peer(),
-                                        frame,
-                                        received_at,
-                                    },
-                                );
-                                true
+                                // A join accepted by the TCP reader must
+                                // reach the host actor, or receive an explicit
+                                // busy rejection. Dropping it from a full
+                                // event queue would leave the listener waiting
+                                // indefinitely for an approval.
+                                let pending_join = match &frame {
+                                    ProtocolFrame::Control(ControlMessage::JoinRequest(request)) => {
+                                        Some(request.device.device_id.clone())
+                                    }
+                                    _ => None,
+                                };
+                                let event = TransportEvent::FrameReceived {
+                                    channel: TransportChannel::Control,
+                                    peer: reader_peer.transport_peer(),
+                                    frame,
+                                    received_at,
+                                };
+                                if let Some(listener_id) = pending_join {
+                                    match event_for_reader.try_send(event) {
+                                        Ok(()) => true,
+                                        Err(TrySendError::Full(_)) => {
+                                            counters_for_reader.queue_overflow();
+                                            counters_for_reader.delivery_failure();
+                                            // The control writer is a bounded
+                                            // non-realtime worker. Finish the
+                                            // busy reply before closing this
+                                            // connection; never claim that the
+                                            // actor has received this join.
+                                            let refusal = ProtocolFrame::Control(
+                                                ControlMessage::JoinRejection(JoinRejection {
+                                                    session_id: session_id.clone(),
+                                                    listener_id,
+                                                    reason: "Host busy: join queue full; reconnect and retry".to_owned(),
+                                                }),
+                                            );
+                                            if let Ok(bytes) = encode_frame(&refusal) {
+                                                drop(reader_peer.sender.send(bytes));
+                                            }
+                                            false
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => false,
+                                    }
+                                } else {
+                                    send_event(&event_for_reader, &counters_for_reader, event);
+                                    true
+                                }
                             }
                             Err(error) => {
                                 classify_rejection(&counters_for_reader, &error);
