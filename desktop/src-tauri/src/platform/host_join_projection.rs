@@ -76,8 +76,12 @@ impl PendingJoinProjection {
         .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
         sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary))
             .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
+        // A reconnect may be pending while the previous authorized socket
+        // remains live. Do not transfer ownership until approval consumes
+        // the replacement's pending ports.
         self.current_peers
-            .insert(device_id.clone(), control_address);
+            .entry(device_id.clone())
+            .or_insert(control_address);
         self.requests.insert(
             device_id.clone(),
             PendingJoinPorts {
@@ -107,11 +111,19 @@ impl PendingJoinProjection {
         device_id: &DeviceId,
         control_address: SocketAddr,
     ) -> bool {
+        // A failed replacement join may disconnect while the old authorized
+        // socket is still live. Retire only the matching pending request.
+        if self
+            .requests
+            .get(device_id)
+            .is_some_and(|pending| pending.control_address == control_address)
+        {
+            self.requests.remove(device_id);
+        }
         if self.current_peers.get(device_id) != Some(&control_address) {
             return false;
         }
         self.current_peers.remove(device_id);
-        self.requests.remove(device_id);
         true
     }
 
@@ -121,18 +133,22 @@ impl PendingJoinProjection {
     /// through this projection (e.g. test scaffolding), in which case
     /// authorization is simply skipped rather than treated as an error.
     pub(super) fn take_ports(&mut self, device_id: &DeviceId) -> Option<(u16, u16)> {
-        self.requests
-            .remove(device_id)
-            .map(|ports| (ports.sync_port, ports.audio_port))
+        self.requests.remove(device_id).map(|ports| {
+            self.current_peers
+                .insert(device_id.clone(), ports.control_address);
+            (ports.sync_port, ports.audio_port)
+        })
     }
 
     pub(super) fn take_pending_listener(
         &mut self,
         device_id: &DeviceId,
     ) -> Option<(u16, u16, String)> {
-        self.requests
-            .remove(device_id)
-            .map(|pending| (pending.sync_port, pending.audio_port, pending.display_name))
+        self.requests.remove(device_id).map(|pending| {
+            self.current_peers
+                .insert(device_id.clone(), pending.control_address);
+            (pending.sync_port, pending.audio_port, pending.display_name)
+        })
     }
 }
 
@@ -166,6 +182,54 @@ mod generation_tests {
         assert!(!projection.remove_if_current(&device, old));
         assert!(projection.remove_if_current(&device, new));
         assert!(!projection.current_peers.contains_key(&device));
+    }
+
+    #[test]
+    fn failed_replacement_join_cannot_disconnect_still_authorized_old_socket() {
+        let device = DeviceId::new("same-id-reconnect").expect("device");
+        let old: SocketAddr = "127.0.0.1:43201".parse().expect("old");
+        let replacement: SocketAddr = "127.0.0.1:43202".parse().expect("replacement");
+        let mut projection = PendingJoinProjection::new();
+        projection.current_peers.insert(device.clone(), old);
+        projection.requests.insert(
+            device.clone(),
+            PendingJoinPorts {
+                control_address: replacement,
+                sync_port: 43004,
+                audio_port: 43005,
+                display_name: "Replacement".to_owned(),
+            },
+        );
+        // Rejected replacement disconnects: remove only its pending ports.
+        assert!(!projection.remove_if_current(&device, replacement));
+        assert_eq!(projection.current_peers.get(&device), Some(&old));
+        assert_eq!(projection.take_ports(&device), None);
+        assert!(projection.remove_if_current(&device, old));
+    }
+
+    #[test]
+    fn approved_replacement_ignores_retired_old_socket_disconnect() {
+        let device = DeviceId::new("approved-reconnect").expect("device");
+        let old: SocketAddr = "127.0.0.1:43203".parse().expect("old");
+        let replacement: SocketAddr = "127.0.0.1:43204".parse().expect("replacement");
+        let mut projection = PendingJoinProjection::new();
+        projection.current_peers.insert(device.clone(), old);
+        projection.requests.insert(
+            device.clone(),
+            PendingJoinPorts {
+                control_address: replacement,
+                sync_port: 43006,
+                audio_port: 43007,
+                display_name: "Approved replacement".to_owned(),
+            },
+        );
+        assert_eq!(
+            projection.take_pending_listener(&device),
+            Some((43006, 43007, "Approved replacement".to_owned()))
+        );
+        assert!(!projection.remove_if_current(&device, old));
+        assert_eq!(projection.current_peers.get(&device), Some(&replacement));
+        assert!(projection.remove_if_current(&device, replacement));
     }
 
     #[test]
