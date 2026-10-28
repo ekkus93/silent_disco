@@ -113,7 +113,9 @@ impl HostVerifiedTrust {
         for record in snapshot.listeners {
             if record.fingerprint == [0; 32]
                 || !valid_display_name(&record.display_name)
-                || listeners.insert(record.fingerprint, record.clone()).is_some()
+                || listeners
+                    .insert(record.fingerprint, record)
+                    .is_some()
             {
                 return Err(HostTrustError::InvalidSnapshot);
             }
@@ -201,9 +203,7 @@ impl HostVerifiedTrust {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        HostTrustError, HostVerifiedTrust, TrustSnapshot, VerifiedTrustDisposition,
-    };
+    use super::{HostTrustError, HostVerifiedTrust, TrustSnapshot, VerifiedTrustDisposition};
     use crate::domain::SessionId;
     use crate::transport::secure_identity::{PendingListenerProof, VerifiedListenerKey};
     use p256::{
@@ -246,16 +246,30 @@ mod tests {
         let listener = verified(&host, &signing, &listener);
         let other = verified(&host, &other_signing, &other);
         let mut store = HostVerifiedTrust::new(&host).expect("registry");
-        assert_eq!(store.disposition(&listener), VerifiedTrustDisposition::Unknown);
+        assert_eq!(
+            store.disposition(&listener),
+            VerifiedTrustDisposition::Unknown
+        );
         assert_eq!(store.disposition(&other), VerifiedTrustDisposition::Unknown);
-        store.enroll(listener, "Living room").expect("host enrollment");
-        assert_eq!(store.disposition(&listener), VerifiedTrustDisposition::Trusted);
+        store
+            .enroll(listener, "Living room")
+            .expect("host enrollment");
+        assert_eq!(
+            store.disposition(&listener),
+            VerifiedTrustDisposition::Trusted
+        );
         assert_eq!(store.disposition(&other), VerifiedTrustDisposition::Unknown);
         let persisted = store.to_json().expect("snapshot");
         assert!(!persisted.contains("private"));
         let restored = HostVerifiedTrust::from_json(&host, &persisted).expect("restart");
-        assert_eq!(restored.disposition(&listener), VerifiedTrustDisposition::Trusted);
-        assert_eq!(restored.disposition(&other), VerifiedTrustDisposition::Unknown);
+        assert_eq!(
+            restored.disposition(&listener),
+            VerifiedTrustDisposition::Trusted
+        );
+        assert_eq!(
+            restored.disposition(&other),
+            VerifiedTrustDisposition::Unknown
+        );
     }
 
     #[test]
@@ -267,12 +281,23 @@ mod tests {
         assert!(!store.revoke(&verified));
         store.enroll(verified, "Speaker").expect("enroll");
         assert!(store.revoke(&verified));
-        assert_eq!(store.disposition(&verified), VerifiedTrustDisposition::Revoked);
+        assert_eq!(
+            store.disposition(&verified),
+            VerifiedTrustDisposition::Revoked
+        );
         let json = store.to_json().expect("snapshot");
         let mut restored = HostVerifiedTrust::from_json(&host, &json).expect("reload");
-        assert_eq!(restored.disposition(&verified), VerifiedTrustDisposition::Revoked);
-        restored.enroll(verified, "Speaker").expect("explicit re-enroll");
-        assert_eq!(restored.disposition(&verified), VerifiedTrustDisposition::Trusted);
+        assert_eq!(
+            restored.disposition(&verified),
+            VerifiedTrustDisposition::Revoked
+        );
+        restored
+            .enroll(verified, "Speaker")
+            .expect("explicit re-enroll");
+        assert_eq!(
+            restored.disposition(&verified),
+            VerifiedTrustDisposition::Trusted
+        );
     }
 
     #[test]
