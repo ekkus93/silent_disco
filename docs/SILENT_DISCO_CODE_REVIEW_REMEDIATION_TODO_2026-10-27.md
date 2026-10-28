@@ -3,6 +3,7 @@
 **Date:** 2026-10-27 (Pacific)
 **Status:** Open — prioritize security and correctness; software-only execution
 **Specification:** [Code Review Remediation Spec](SILENT_DISCO_CODE_REVIEW_REMEDIATION_SPEC_2026-10-27.md)
+**Current progress handoff:** [Remediation handoff (2026-10-28)](SILENT_DISCO_CODE_REVIEW_REMEDIATION_HANDOFF_2026-10-28.md)
 **Existing acceptance:** [Gapless Queue and Workflow Redesign TODO](SILENT_DISCO_GAPLESS_QUEUE_AND_WORKFLOW_REDESIGN_TODO_2026-10-15.md)
 **Reviewed baseline:** 5c187acafc9df0ae07816b814ddae38e1c4a2a54
 **Branch policy:** direct master, Ralph Bridge exclusively, exact-head CAS commits, no per-task branches/PRs
@@ -19,7 +20,7 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 
 ## 1. F2 — Transport security and threat model (P0; prerequisite for durable trust)
 
-- [ ] Write an explicit LAN threat model and transport security ADR: unauthenticated legacy-v3 limitations, host identity/bootstrap UX, listener proof, protocol-v4 or equivalent versioning, crypto library selection and rollback rules.
+- [x] Write an explicit LAN threat model and transport security ADR: unauthenticated legacy-v3 limitations, host identity/bootstrap UX, listener proof, protocol-v4 or equivalent versioning, crypto library selection and rollback rules.
 - [ ] Specify authenticated enrollment and stored host/listener public-key identity; design reuse of existing signed QR/key material only if handshake-bound. Define manual-address host fingerprint confirmation.
 - [ ] Implement verified encrypted host↔listener control transport using a mature TLS 1.3 or established secure transport stack; enforce host identity and verified peer identity without trusting self-declared device IDs.
 - [ ] Protect UDP PCM with vetted AEAD or authenticated secure datagrams; per-direction/per-purpose/per-session keys, unique nonces, replay windows, key rollover/retirement, clock-sync/control authentication and secure teardown.
@@ -67,7 +68,7 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 ## 6. F6 — Android backup/restore and identity data (P2)
 
 - [ ] Inventory prefs/databases/identity stores/staged files/cache and decide which data may migrate; explicitly document Android 12+ and legacy device backup policy.
-- [ ] Implement dataExtractionRules/fullBackupContent exclusions or disable backup intentionally; exclude Keystore-bound trust/identity, tickets, diagnostics, transient session metadata and sensitive audio staging.
+- [x] Implement dataExtractionRules/fullBackupContent exclusions or disable backup intentionally; exclude Keystore-bound trust/identity, tickets, diagnostics, transient session metadata and sensitive audio staging.
 - [ ] Implement safe restore detection for missing/replaced nonexportable keys; invalidate or revalidate dependent trust records and display clear re-enrollment UX without auto-trusting.
 - [ ] Add Android manifest-merge and JVM/instrumented restore simulation tests for key mismatch, upgrade, corrupt record, revocation and restore to a new device identity. Do not claim cloud/physical restore proof from a simulation.
 
