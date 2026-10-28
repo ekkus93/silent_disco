@@ -5,7 +5,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +48,7 @@ class HostTransportController(
             )
         },
 ) : AutoCloseable {
-    private val handleRef = AtomicReference<FfiHostTransportHandle?>(null)
+    private val handleGate = HostNativeHandleGate<FfiHostTransportHandle>()
     private var eventLoop: Job? = null
     // The channel survives session rebinds. Tag queued events with their
     // original handle so a slow collector cannot consume previous-session
@@ -59,7 +58,7 @@ class HostTransportController(
     )
 
     val events: Flow<FfiHostTransportEvent> = eventChannel.receiveAsFlow()
-        .filter { (handle, _) -> handleRef.get() === handle }
+        .filter { (handle, _) -> handleGate.currentHandle() === handle }
         .map { (_, event) -> event }
 
     suspend fun bind(
@@ -71,16 +70,19 @@ class HostTransportController(
         sessionId: String,
     ) {
         withContext(callDispatcher) {
-            closeExistingHandle()
-            val handle = bindHandle(
-                localAddress,
-                controlPort.toUShort(),
-                syncPort.toUShort(),
-                audioPort.toUShort(),
-                sessionId,
+            handleGate.replace(
+                retire = ::retireHandle,
+                open = {
+                    bindHandle(
+                        localAddress,
+                        controlPort.toUShort(),
+                        syncPort.toUShort(),
+                        audioPort.toUShort(),
+                        sessionId,
+                    )
+                },
+                start = { handle -> startEventLoop(scope, handle) },
             )
-            handleRef.set(handle)
-            startEventLoop(scope, handle)
         }
     }
 
@@ -212,7 +214,7 @@ class HostTransportController(
     private fun startEventLoop(scope: CoroutineScope, handle: FfiHostTransportHandle) {
         eventLoop?.cancel()
         eventLoop = scope.launch(Dispatchers.IO) {
-            while (isActive && handleRef.get() === handle) {
+            while (isActive && handleGate.currentHandle() === handle) {
                 val event = try {
                     handle.pollEvent(POLL_TIMEOUT_MS)
                 } catch (error: FfiHostTransportException) {
@@ -220,7 +222,7 @@ class HostTransportController(
                     // a failure in the newly bound host session.
                     if (shouldForwardPolledHostEvent(
                             loopActive = isActive,
-                            handleIsCurrent = handleRef.get() === handle,
+                            handleIsCurrent = handleGate.currentHandle() === handle,
                         )
                     ) {
                         eventChannel.trySend(
@@ -236,7 +238,7 @@ class HostTransportController(
                 // Never leak its join/disconnect events into a new session.
                 if (!shouldForwardPolledHostEvent(
                         loopActive = isActive,
-                        handleIsCurrent = handleRef.get() === handle,
+                        handleIsCurrent = handleGate.currentHandle() === handle,
                     )
                 ) {
                     break
@@ -249,16 +251,20 @@ class HostTransportController(
     }
 
     private suspend fun <T> withHandle(action: (FfiHostTransportHandle) -> T): T? =
-        withContext(callDispatcher) { handleRef.get()?.let(action) }
+        withContext(callDispatcher) { handleGate.withCurrent(action) }
 
     private fun closeExistingHandle() {
+        handleGate.close(::retireHandle)
+    }
+
+    private fun retireHandle(handle: FfiHostTransportHandle?) {
         // Retire the poller before closing the native handle so a delayed
         // event cannot be forwarded while the next session is binding.
         eventLoop?.cancel()
         eventLoop = null
-        handleRef.getAndSet(null)?.let { handle ->
-            runCatching { handle.shutdown() }
-            handle.close()
+        handle?.let {
+            runCatching { it.shutdown() }
+            it.close()
         }
     }
 }
