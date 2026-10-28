@@ -195,7 +195,9 @@ export function HostSetupScreen() {
   };
 
   const continueSetup = async () => {
-    if (pending || unverifiedTrust) return;
+    // The Music step must still let an old profile reach Access to repair
+    // its unsupported trust settings; only leaving Access is blocked.
+    if (pending || (setupStage === "access" && unverifiedTrust)) return;
     if (dirty && !(await submitDraft())) return;
     setSetupStage((stage) => (stage === "music" ? "access" : "ready"));
   };
