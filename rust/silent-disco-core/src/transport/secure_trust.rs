@@ -413,7 +413,10 @@ mod tests {
         let snapshot = store.to_json().expect("snapshot");
         let mut restored = HostVerifiedTrust::from_json(&host, &snapshot).expect("restart");
         assert!(restored.stored_listeners()[0].revoked);
-        assert_eq!(restored.disposition(&first), VerifiedTrustDisposition::Revoked);
+        assert_eq!(
+            restored.disposition(&first),
+            VerifiedTrustDisposition::Revoked
+        );
         assert!(restored.revoke_stored(first_id));
         restored.enroll(other, "Office").expect("enroll other");
         let other_id = restored
@@ -423,9 +426,14 @@ mod tests {
             .expect("second enrollment")
             .id;
         let mut unrelated = HostVerifiedTrust::new(&host).expect("unrelated registry");
-        unrelated.enroll(first, "Kitchen").expect("unrelated enrollment");
+        unrelated
+            .enroll(first, "Kitchen")
+            .expect("unrelated enrollment");
         assert!(!unrelated.revoke_stored(other_id));
-        assert_eq!(unrelated.disposition(&first), VerifiedTrustDisposition::Trusted);
+        assert_eq!(
+            unrelated.disposition(&first),
+            VerifiedTrustDisposition::Trusted
+        );
         assert_eq!(unrelated.len(), 1);
     }
 
