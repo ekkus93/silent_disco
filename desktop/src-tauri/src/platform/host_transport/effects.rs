@@ -93,13 +93,14 @@ fn process_effect(
 
     if report.successful_peers > 0
         && let Some((listener_id, trusted_for_future)) = approved_listener
-        && let Some((sync_port, audio_port, display_name)) =
+        && let Some((sync_port, audio_port, display_name, control_address)) =
             processor.take_pending_listener(&listener_id)
     {
         if let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port) {
             set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
             return Ok(());
         }
+        processor.mark_authorized_listener(listener_id.clone(), control_address);
         let listener = HostTransportEventProcessor::connected_listener(
             listener_id,
             display_name,

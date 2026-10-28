@@ -61,8 +61,16 @@ impl HostTransportEventProcessor {
     pub(crate) fn take_pending_listener(
         &mut self,
         device_id: &silent_disco_core::domain::DeviceId,
-    ) -> Option<(u16, u16, String)> {
+    ) -> Option<(u16, u16, String, std::net::SocketAddr)> {
         self.pending.take_pending_listener(device_id)
+    }
+
+    pub(crate) fn mark_authorized_listener(
+        &mut self,
+        device_id: silent_disco_core::domain::DeviceId,
+        control_address: std::net::SocketAddr,
+    ) {
+        self.pending.mark_authorized(device_id, control_address);
     }
 
     pub(crate) fn connected_listener(

@@ -133,22 +133,31 @@ impl PendingJoinProjection {
     /// through this projection (e.g. test scaffolding), in which case
     /// authorization is simply skipped rather than treated as an error.
     pub(super) fn take_ports(&mut self, device_id: &DeviceId) -> Option<(u16, u16)> {
-        self.requests.remove(device_id).map(|ports| {
-            self.current_peers
-                .insert(device_id.clone(), ports.control_address);
-            (ports.sync_port, ports.audio_port)
-        })
+        self.requests
+            .remove(device_id)
+            .map(|ports| (ports.sync_port, ports.audio_port))
     }
 
     pub(super) fn take_pending_listener(
         &mut self,
         device_id: &DeviceId,
-    ) -> Option<(u16, u16, String)> {
+    ) -> Option<(u16, u16, String, SocketAddr)> {
         self.requests.remove(device_id).map(|pending| {
-            self.current_peers
-                .insert(device_id.clone(), pending.control_address);
-            (pending.sync_port, pending.audio_port, pending.display_name)
+            (
+                pending.sync_port,
+                pending.audio_port,
+                pending.display_name,
+                pending.control_address,
+            )
         })
+    }
+
+    /// Transfer ownership only after the native transport has actually
+    /// authorized the replacement. Sending an approval frame is insufficient:
+    /// UDP route authorization can still fail, and rejection must never
+    /// displace a working previous connection.
+    pub(super) fn mark_authorized(&mut self, device_id: DeviceId, control_address: SocketAddr) {
+        self.current_peers.insert(device_id, control_address);
     }
 }
 
@@ -225,8 +234,11 @@ mod generation_tests {
         );
         assert_eq!(
             projection.take_pending_listener(&device),
-            Some((43006, 43007, "Approved replacement".to_owned()))
+            Some((43006, 43007, "Approved replacement".to_owned(), replacement))
         );
+        // The old socket remains current until native authorization succeeds.
+        assert_eq!(projection.current_peers.get(&device), Some(&old));
+        projection.mark_authorized(device.clone(), replacement);
         assert!(!projection.remove_if_current(&device, old));
         assert_eq!(projection.current_peers.get(&device), Some(&replacement));
         assert!(projection.remove_if_current(&device, replacement));
