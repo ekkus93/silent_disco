@@ -145,12 +145,12 @@ fn bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success() 
     // The only queued host event before admission was PeerAccepted. No
     // JoinRequest may leak into the actor after the refusal was delivered.
     for _ in 0..4 {
-        match host.recv_event(Duration::from_millis(30)) {
-            Ok(TransportEvent::FrameReceived {
-                frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
-                ..
-            }) => panic!("refused join was also delivered to the host actor"),
-            Ok(_) | Err(_) => {}
+        if let Ok(TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+            ..
+        }) = host.recv_event(Duration::from_millis(30))
+        {
+            panic!("refused join was also delivered to the host actor");
         }
     }
     listener.shutdown().expect("listener should stop");
