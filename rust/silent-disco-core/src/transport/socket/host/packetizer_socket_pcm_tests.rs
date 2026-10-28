@@ -6,8 +6,7 @@ use crate::audio::{AudioFormat, AudioSampleFormat, DecodedPcmChunk, Packetizer};
 use crate::domain::{MonotonicMillis, SampleIndex, StreamId};
 use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
-    wait_for_frame,
+    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from, wait_for_frame,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -166,7 +165,10 @@ fn two_tracks_crossing_packet_boundary_preserve_exact_pcm_and_late_join_cache() 
         };
         assert_eq!(packet.sequence.get(), sequence as u64);
         assert_eq!(packet.first_sample_index.get(), sequence as u64 * 240);
-        assert_eq!(packet.host_presentation_time_ms.get(), 1_000 + sequence as u64 * 5);
+        assert_eq!(
+            packet.host_presentation_time_ms.get(),
+            1_000 + sequence as u64 * 5
+        );
         assert_eq!(packet.samples_per_packet, 240);
         assert_eq!(packet.payload.len(), 240 * 2 * 2);
         decoded.extend(
