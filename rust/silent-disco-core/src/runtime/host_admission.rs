@@ -251,7 +251,10 @@ mod tests {
             classify_join_request(&invite, &request),
             JoinRequestDisposition::PendingManualDecision
         );
-        assert_eq!(JoinRejectionReason::DeviceNotApproved.stable_name(), "device_not_approved");
+        assert_eq!(
+            JoinRejectionReason::DeviceNotApproved.stable_name(),
+            "device_not_approved"
+        );
     }
 
     #[test]

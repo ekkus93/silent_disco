@@ -245,7 +245,12 @@ fn rejection_snapshot_correlates_the_delivery_to_its_operation() {
 #[test]
 fn trusted_policy_rejects_unapproved_listener_without_manual_fallback() {
     let (runtime, handle, receiver) = start_host(ApprovalMode::TrustedDevices, false);
-    let request = join_request("request-not-approved", "unknown-device", TrustState::SessionOnly, true);
+    let request = join_request(
+        "request-not-approved",
+        "unknown-device",
+        TrustState::SessionOnly,
+        true,
+    );
     handle
         .submit_transport_event(TransportEvent::JoinRequested(request))
         .expect("submit untrusted join request");
