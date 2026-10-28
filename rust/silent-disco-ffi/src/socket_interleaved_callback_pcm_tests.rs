@@ -138,7 +138,10 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     let mut captured = Vec::new();
     let mut packets = 0_u64;
     let mut boundaries = Vec::new();
-    let mut resumed = false;
+    let mut presentation_shift_ms = 0_u64;
+    let mut first_boundary = None;
+    let mut first_resume = None;
+    let mut second_paused = false;
     let mut ended = false;
     for _ in 0..24 {
         match playlist
@@ -157,7 +160,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
             }) => {
                 assert_eq!(sequence, packets);
                 assert_eq!(first_sample_index, packets * 240);
-                let now = host_presentation_time_ms + if resumed { 200 } else { 0 };
+                let now = host_presentation_time_ms + presentation_shift_ms;
                 let packet = AudioDatagram {
                     session_id: session.clone(),
                     stream_id: stream.clone(),
@@ -222,6 +225,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                 }
                 boundaries.push(first_sample_index);
                 if first_sample_index == 480 {
+                    first_boundary = Some(boundary.clone());
                     // The native callback is actively draining the ring
                     // before Pause. Keep its 239-frame tail across a
                     // same-identity TCP/UDP replacement and Resume.
@@ -263,13 +267,100 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     assert!(recv_control(extra.as_mut()) == resume);
                     pump.scheduler_mut().set_host_start_time_ms(1_200);
                     newcomer = Some(extra);
-                    resumed = true;
+                    first_resume = Some(resume);
+                    presentation_shift_ms = 200;
                     let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
                     assert_eq!(silent_disco_audio_callback_count(native), 1);
                 } else {
                     // Callback 2 crosses the first source boundary with
                     // 239 old frames and 98 new frames; no second ramp.
                     captured.extend(read_callback(token, 337, &tap));
+                    if first_sample_index == 960 {
+                        // A second Pause at the next track boundary must keep
+                        // the SAME native output and its unconsumed PCM tail.
+                        // Reconnect the original identity again while the
+                        // first late joiner remains connected.
+                        let pause = ControlMessage::Pause(Pause {
+                            session_id: session.clone(),
+                            stream_id: stream.clone(),
+                            host_pause_time_ms: MonotonicMillis::new(1_220),
+                        });
+                        assert_eq!(
+                            host.broadcast_control(&pause)
+                                .expect("second Pause TCP")
+                                .report
+                                .successful_peers,
+                            2
+                        );
+                        assert!(recv_control(listener.as_mut()) == pause);
+                        assert!(
+                            recv_control(newcomer.as_deref_mut().expect("first late joiner"))
+                                == pause
+                        );
+                        let suppressed = AudioDatagram {
+                            session_id: session.clone(),
+                            stream_id: stream.clone(),
+                            sequence: PacketSequence::new(packets),
+                            codec: AudioCodec::PcmS16Le,
+                            sample_rate: 48_000,
+                            channels: 2,
+                            samples_per_packet: 240,
+                            first_sample_index: SampleIndex::new(packets * 240),
+                            host_presentation_time_ms: MonotonicMillis::new(1_220),
+                            payload: vec![0; 240 * 2 * 2],
+                        };
+                        assert_eq!(
+                            host.broadcast_audio(&ProtocolFrame::Audio(suppressed))
+                                .expect("second Pause suppresses UDP")
+                                .report
+                                .intended_peers,
+                            0
+                        );
+                        let mut replacement =
+                            authorized_late_joiner(host.as_mut(), "pcm-regression-listener");
+                        for expected in [
+                            first_resume.as_ref().expect("first Resume"),
+                            first_boundary.as_ref().expect("first boundary"),
+                            &boundary,
+                            &pause,
+                        ] {
+                            assert!(
+                                recv_control(replacement.as_mut()) == *expected,
+                                "second paused reconnect must replay the full control history"
+                            );
+                        }
+                        listener.shutdown().expect("retire second TCP generation");
+                        listener = replacement;
+                        let ControlMessage::StreamStart(mut reanchored) =
+                            first_resume.as_ref().expect("first Resume").clone()
+                        else {
+                            panic!("first reanchored start");
+                        };
+                        reanchored.host_start_time_ms = MonotonicMillis::new(1_400);
+                        let resume = ControlMessage::StreamStart(reanchored);
+                        assert_eq!(
+                            host.broadcast_control(&resume)
+                                .expect("second Resume TCP")
+                                .report
+                                .successful_peers,
+                            2
+                        );
+                        assert!(recv_control(listener.as_mut()) == resume);
+                        assert!(
+                            recv_control(newcomer.as_deref_mut().expect("first late joiner"))
+                                == resume
+                        );
+                        pump.scheduler_mut().set_host_start_time_ms(1_400);
+                        presentation_shift_ms = 400;
+                        second_paused = true;
+                        let native =
+                            usize::try_from(token).expect("token") as *const core::ffi::c_void;
+                        assert_eq!(
+                            silent_disco_audio_callback_count(native),
+                            2,
+                            "two pauses and reconnects must not reopen native output"
+                        );
+                    }
                 }
             }
             Some(FfiPlaylistFrame::End) => {
@@ -282,6 +373,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     assert!(ended, "three-track playlist must terminate");
     assert_eq!(packets, 6, "fresh continuous 5-ms packet sequence");
     assert_eq!(boundaries, [480, 960]);
+    assert!(second_paused, "both boundary pauses and resumes must execute");
     captured.extend(read_callback(token, 382, &tap));
     captured.extend(read_callback(token, 480, &tap));
     assert_eq!(
