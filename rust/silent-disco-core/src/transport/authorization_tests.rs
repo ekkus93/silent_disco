@@ -7,8 +7,8 @@ use crate::domain::{DeliverySeverity, MonotonicMillis};
 use crate::protocol::{ControlMessage, Heartbeat, Hello, PROTOCOL_MAGIC, ProtocolFrame};
 
 use super::test_support::{
-    id_device, id_session, join_request, wait_for_control_from, wait_for_frame,
-    wait_for_rejection, wait_until,
+    id_device, id_session, join_request, wait_for_control_from, wait_for_frame, wait_for_rejection,
+    wait_until,
 };
 use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
@@ -126,7 +126,10 @@ fn bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success() 
     // must be answered on the wire. The listener must never wait forever
     // for a manual approval that the host actor cannot possibly receive.
     let rejection = wait_for_frame(&mut *listener, TransportChannel::Control, |frame| {
-        matches!(frame, ProtocolFrame::Control(ControlMessage::JoinRejection(_)))
+        matches!(
+            frame,
+            ProtocolFrame::Control(ControlMessage::JoinRejection(_))
+        )
     });
     match rejection {
         TransportEvent::FrameReceived {
