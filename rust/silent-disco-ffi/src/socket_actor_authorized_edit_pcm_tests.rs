@@ -279,10 +279,7 @@ fn actor_approved_remove_append_reorder_reaches_both_native_outputs_without_stal
         protected.host_queue.revision(),
         reserved.host_queue.revision()
     );
-    assert_eq!(
-        protected.host_queue.upcoming()[0].entry_id,
-        "tail-entry"
-    );
+    assert_eq!(protected.host_queue.upcoming()[0].entry_id, "tail-entry");
     submit(
         &actor,
         CoreCommand::ReorderHostQueue {
@@ -304,8 +301,14 @@ fn actor_approved_remove_append_reorder_reaches_both_native_outputs_without_stal
     };
     assert!(!reorder_rejected.message.is_empty());
     let still_reserved = actor.current_snapshot().expect("reserved order retained");
-    assert_eq!(still_reserved.host_queue.revision(), protected.host_queue.revision());
-    assert_eq!(still_reserved.host_queue.upcoming()[0].entry_id, "tail-entry");
+    assert_eq!(
+        still_reserved.host_queue.revision(),
+        protected.host_queue.revision()
+    );
+    assert_eq!(
+        still_reserved.host_queue.upcoming()[0].entry_id,
+        "tail-entry"
+    );
 
     producer.cancel().expect("release streamer");
     secondary.shutdown().expect("secondary shutdown");
