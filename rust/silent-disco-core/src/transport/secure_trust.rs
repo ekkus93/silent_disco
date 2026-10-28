@@ -113,9 +113,7 @@ impl HostVerifiedTrust {
         for record in snapshot.listeners {
             if record.fingerprint == [0; 32]
                 || !valid_display_name(&record.display_name)
-                || listeners
-                    .insert(record.fingerprint, record)
-                    .is_some()
+                || listeners.insert(record.fingerprint, record).is_some()
             {
                 return Err(HostTrustError::InvalidSnapshot);
             }
