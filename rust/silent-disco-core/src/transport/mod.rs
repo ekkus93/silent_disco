@@ -2,6 +2,7 @@ mod boundary;
 mod clock;
 mod manual_endpoint;
 mod socket;
+pub mod secure_identity;
 mod types;
 mod virtual_fault;
 mod virtual_reconnect;
