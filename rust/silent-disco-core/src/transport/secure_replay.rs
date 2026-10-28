@@ -171,11 +171,10 @@ impl SecureDatagramReplay {
     /// Rejects unknown/retired generations, duplicate or stale sequences.
     pub fn commit_verified(&mut self, key: ReplayKey, sequence: u64) -> Result<(), ReplayError> {
         self.check_candidate(key, sequence)?;
-        self.channels
-            .get_mut(&(key.peer_fingerprint, key.purpose))
-            .expect("validated active replay channel")
-            .window
-            .commit(sequence)
+        let Some(channel) = self.channels.get_mut(&(key.peer_fingerprint, key.purpose)) else {
+            return Err(ReplayError::UnknownKey);
+        };
+        channel.window.commit(sequence)
     }
 
     /// Retires the exact traffic generation. Older generations remain fenced.
@@ -220,14 +219,27 @@ mod tests {
         replay.activate(peer).expect("activate");
         replay.commit_verified(peer, 200).expect("first packet");
         replay.commit_verified(peer, 198).expect("reordered packet");
-        assert_eq!(replay.commit_verified(peer, 198), Err(ReplayError::Duplicate));
-        assert_eq!(replay.commit_verified(peer, 200), Err(ReplayError::Duplicate));
+        assert_eq!(
+            replay.commit_verified(peer, 198),
+            Err(ReplayError::Duplicate)
+        );
+        assert_eq!(
+            replay.commit_verified(peer, 200),
+            Err(ReplayError::Duplicate)
+        );
         replay.commit_verified(peer, 327).expect("last in window");
         assert_eq!(replay.commit_verified(peer, 199), Err(ReplayError::TooOld));
-        replay.commit_verified(peer, 326).expect("new reordered packet");
-        replay.commit_verified(peer, 455).expect("large forward jump");
+        replay
+            .commit_verified(peer, 326)
+            .expect("new reordered packet");
+        replay
+            .commit_verified(peer, 455)
+            .expect("large forward jump");
         assert_eq!(replay.commit_verified(peer, 327), Err(ReplayError::TooOld));
-        assert_eq!(replay.commit_verified(peer, 455), Err(ReplayError::Duplicate));
+        assert_eq!(
+            replay.commit_verified(peer, 455),
+            Err(ReplayError::Duplicate)
+        );
     }
 
     #[test]
@@ -235,7 +247,9 @@ mod tests {
         let peer = key(2, 3, DatagramPurpose::Synchronization);
         let mut replay = SecureDatagramReplay::new();
         replay.activate(peer).expect("activate");
-        replay.commit_verified(peer, 1).expect("authenticated first");
+        replay
+            .commit_verified(peer, 1)
+            .expect("authenticated first");
         assert_eq!(replay.check_candidate(peer, 1_000), Ok(()));
         // Simulated bad AEAD tag: do NOT commit the candidate.
         replay.commit_verified(peer, 0).expect("valid older packet");
@@ -255,7 +269,10 @@ mod tests {
         }
         assert!(replay.retire(audio));
         assert!(!replay.retire(audio));
-        assert_eq!(replay.commit_verified(audio, 8), Err(ReplayError::RetiredKey));
+        assert_eq!(
+            replay.commit_verified(audio, 8),
+            Err(ReplayError::RetiredKey)
+        );
         assert_eq!(replay.activate(audio), Err(ReplayError::WrongGeneration));
         assert_eq!(
             replay.activate(key(3, 4, DatagramPurpose::Audio)),
@@ -264,10 +281,15 @@ mod tests {
         let rotated = key(3, 6, DatagramPurpose::Audio);
         replay.activate(rotated).expect("fresh traffic key");
         replay.commit_verified(rotated, 0).expect("fresh counter");
-        assert_eq!(replay.commit_verified(audio, 9), Err(ReplayError::WrongGeneration));
+        assert_eq!(
+            replay.commit_verified(audio, 9),
+            Err(ReplayError::WrongGeneration)
+        );
         assert_eq!(replay.commit_verified(sync, 7), Err(ReplayError::Duplicate));
         replay.commit_verified(sync, 8).expect("sync unaffected");
-        replay.commit_verified(other, 8).expect("other peer unaffected");
+        replay
+            .commit_verified(other, 8)
+            .expect("other peer unaffected");
     }
 
     #[test]
@@ -275,12 +297,21 @@ mod tests {
         let peer = key(5, 1, DatagramPurpose::Audio);
         let mut replay = SecureDatagramReplay::new();
         replay.activate(peer).expect("activate");
-        replay.commit_verified(peer, u64::MAX - 1).expect("penultimate");
-        replay.commit_verified(peer, u64::MAX).expect("final counter");
+        replay
+            .commit_verified(peer, u64::MAX - 1)
+            .expect("penultimate");
+        replay
+            .commit_verified(peer, u64::MAX)
+            .expect("final counter");
         assert_eq!(replay.commit_verified(peer, 0), Err(ReplayError::TooOld));
-        assert_eq!(replay.commit_verified(peer, u64::MAX), Err(ReplayError::Duplicate));
+        assert_eq!(
+            replay.commit_verified(peer, u64::MAX),
+            Err(ReplayError::Duplicate)
+        );
         replay.retire(peer);
-        replay.activate(key(5, 2, DatagramPurpose::Audio)).expect("rekey");
+        replay
+            .activate(key(5, 2, DatagramPurpose::Audio))
+            .expect("rekey");
     }
 
     #[test]
