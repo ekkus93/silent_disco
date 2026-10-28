@@ -296,10 +296,7 @@ class HostTransportController(
         // event cannot be forwarded while the next session is binding.
         eventLoop?.cancel()
         eventLoop = null
-        handle?.let {
-            runCatching { it.shutdown() }
-            it.close()
-        }
+        retireNativeHandle(handle, shutdown = { it.shutdown() }, close = { it.close() })
     }
 }
 

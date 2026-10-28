@@ -195,4 +195,59 @@ class HostNativeHandleGateTest {
         assertThat(calls).containsExactly("approval")
         gate.close {}
     }
+
+    @Test
+    fun failedShutdownStillClosesNativeHandleAndPreservesBothFailures() {
+        val handle = Any()
+        val shutdownError = IllegalStateException("shutdown worker failed")
+        val closeError = IllegalArgumentException("close failed")
+        val calls = mutableListOf<String>()
+        val result = runCatching {
+            retireNativeHandle(
+                handle,
+                shutdown = { calls.add("shutdown"); throw shutdownError },
+                close = { calls.add("close"); throw closeError },
+            )
+        }
+        assertThat(calls).containsExactly("shutdown", "close").inOrder()
+        assertThat(result.exceptionOrNull()).isSameInstanceAs(shutdownError)
+        assertThat(shutdownError.suppressed).asList().containsExactly(closeError)
+    }
+
+    @Test
+    fun nativeRetirementHandlesNullAndIndependentCloseFailure() {
+        val calls = mutableListOf<String>()
+        retireNativeHandle<Any>(null, shutdown = { calls.add("shutdown") }, close = { calls.add("close") })
+        assertThat(calls).isEmpty()
+        val closeError = IllegalStateException("close failed")
+        val result = runCatching {
+            retireNativeHandle(Any(), shutdown = { calls.add("shutdown") }, close = {
+                calls.add("close")
+                throw closeError
+            })
+        }
+        assertThat(calls).containsExactly("shutdown", "close").inOrder()
+        assertThat(result.exceptionOrNull()).isSameInstanceAs(closeError)
+    }
+
+    @Test
+    fun pollerStartFailurePreservesOriginalErrorEvenWhenCleanupFails() {
+        val gate = HostNativeHandleGate<Any>()
+        val handle = Any()
+        val startError = IllegalStateException("poller failed")
+        val cleanupError = IllegalArgumentException("cleanup failed")
+        val calls = mutableListOf<String>()
+        val result = runCatching {
+            gate.replace(
+                retire = { if (it != null) { calls.add("retire"); throw cleanupError } },
+                open = { handle },
+                start = { calls.add("start"); throw startError },
+            )
+        }
+        assertThat(calls).containsExactly("start", "retire").inOrder()
+        assertThat(result.exceptionOrNull()).isSameInstanceAs(startError)
+        assertThat(startError.suppressed).asList().containsExactly(cleanupError)
+        assertThat(gate.currentHandle()).isNull()
+        assertThat(gate.withExpected(handle) { "stale" }).isNull()
+    }
 }

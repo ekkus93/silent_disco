@@ -41,7 +41,11 @@ internal class HostNativeHandleGate<T : Any> {
             start(next)
         } catch (error: Throwable) {
             current.set(null)
-            retire(next)
+            try {
+                retire(next)
+            } catch (cleanup: Throwable) {
+                if (cleanup !== error) error.addSuppressed(cleanup)
+            }
             throw error
         }
     }
@@ -87,6 +91,37 @@ internal fun <H : Any, D : Any> HostNativeHandleGate<H>.deliverAndAuthorize(
             )
         }
     }
+}
+
+
+/**
+ * A failed shutdown must never skip the native close, and a close failure
+ * must not hide the original shutdown failure. This is the host-side mirror
+ * of the listener's explicit all-steps teardown contract.
+ */
+internal fun <H : Any> retireNativeHandle(
+    handle: H?,
+    shutdown: (H) -> Unit,
+    close: (H) -> Unit,
+) {
+    if (handle == null) return
+    var failure: Throwable? = null
+    try {
+        shutdown(handle)
+    } catch (error: Throwable) {
+        failure = error
+    }
+    try {
+        close(handle)
+    } catch (error: Throwable) {
+        val first = failure
+        if (first == null) {
+            failure = error
+        } else if (first !== error) {
+            first.addSuppressed(error)
+        }
+    }
+    failure?.let { throw it }
 }
 
 /** Reuse the same lifetime and generation guarantee for listener FFI handles. */
