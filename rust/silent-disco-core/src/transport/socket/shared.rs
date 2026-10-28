@@ -560,9 +560,9 @@ mod implicit_shutdown_tests {
 #[cfg(test)]
 mod terminal_event_pressure_tests {
     use super::{CounterState, send_authoritative_event};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::sync_channel;
-    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
