@@ -128,6 +128,133 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
     runtime.shutdown().expect("runtime shutdown");
 }
 
+
+#[test]
+fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
+    let factory = production_transport_factory();
+    let session_id = SessionId::new("reconnect-projection-session").expect("session");
+    let host_id = DeviceId::new("reconnect-projection-host").expect("host");
+    let listener_id = DeviceId::new("reconnect-projection-listener").expect("listener");
+    let advertisement = advertisement(&session_id, &host_id);
+    let clock = Arc::new(SystemTransportClock::default());
+    let node = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            clock.clone(),
+        )
+        .expect("bind host");
+    let endpoint = node.endpoint();
+    let (sender, receiver) = mpsc::channel();
+    let sink = Arc::new(RecordingSink {
+        snapshot: Mutex::new(CoreSnapshot::default()),
+        sender,
+    });
+    let runtime =
+        DesktopHostTransportRuntime::start(node, advertisement, sink, clock).expect("runtime");
+
+    let mut first = connect_listener(&factory, &session_id, &listener_id, endpoint.clone());
+    send_join(&*first, &session_id, &listener_id);
+    wait_for_control(&mut *first, |message| {
+        matches!(message, ControlMessage::Hello(_))
+    });
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("first join event"),
+        CoreTransportEvent::JoinRequested(_)
+    ));
+    runtime
+        .dispatch(
+            TransportEffect::new(
+                OperationId::new("reconnect-approval-first").expect("operation"),
+                TransportEffectRequest::DeliverJoinApproval {
+                    request_id: RequestId::new("reconnect-request-first").expect("request"),
+                    session_id: session_id.clone(),
+                    listener_id: listener_id.clone(),
+                    trusted_for_future: false,
+                },
+            )
+            .expect("effect"),
+        )
+        .expect("approve first");
+    wait_for_control(&mut *first, |message| {
+        matches!(message, ControlMessage::JoinApproval(_))
+    });
+    assert!(matches!(
+        wait_for_delivery(&receiver),
+        CoreTransportEvent::DeliveryCompleted { report, .. } if report.successful_peers == 1
+    ));
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("first connected"),
+        CoreTransportEvent::ListenerConnected(listener) if listener.device_id == listener_id
+    ));
+
+    let mut replacement = connect_listener(&factory, &session_id, &listener_id, endpoint);
+    send_join(&*replacement, &session_id, &listener_id);
+    wait_for_control(&mut *replacement, |message| {
+        matches!(message, ControlMessage::Hello(_))
+    });
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("replacement join event"),
+        CoreTransportEvent::JoinRequested(_)
+    ));
+    runtime
+        .dispatch(
+            TransportEffect::new(
+                OperationId::new("reconnect-approval-second").expect("operation"),
+                TransportEffectRequest::DeliverJoinApproval {
+                    request_id: RequestId::new("reconnect-request-second").expect("request"),
+                    session_id,
+                    listener_id: listener_id.clone(),
+                    trusted_for_future: false,
+                },
+            )
+            .expect("effect"),
+        )
+        .expect("approve replacement");
+    wait_for_control(&mut *replacement, |message| {
+        matches!(message, ControlMessage::JoinApproval(_))
+    });
+    assert!(matches!(
+        wait_for_delivery(&receiver),
+        CoreTransportEvent::DeliveryCompleted { report, .. } if report.successful_peers == 1
+    ));
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("replacement connected"),
+        CoreTransportEvent::ListenerConnected(listener) if listener.device_id == listener_id
+    ));
+
+    // Native route replacement closes the original TCP peer. Its delayed
+    // disconnect cannot evict the replacement's actor state. Allow the
+    // worker to process the retired reader's terminal event.
+    drop(first.shutdown());
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while let Ok(event) = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        assert!(
+            !matches!(
+                event,
+                CoreTransportEvent::ListenerDisconnected { device_id, .. }
+                    if device_id == listener_id
+            ),
+            "retired socket disconnected the active replacement"
+        );
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    replacement.shutdown().expect("replacement shutdown");
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "missing replacement disconnect");
+        let event = receiver.recv_timeout(remaining).expect("terminal event");
+        if let CoreTransportEvent::ListenerDisconnected { device_id, .. } = event {
+            assert_eq!(device_id, listener_id);
+            break;
+        }
+    }
+    runtime.shutdown().expect("runtime shutdown");
+}
+
 #[test]
 fn missing_pending_peer_reports_failed_delivery_without_stopping_worker() {
     let factory = production_transport_factory();
