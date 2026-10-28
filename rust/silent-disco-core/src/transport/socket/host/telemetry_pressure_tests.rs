@@ -22,15 +22,12 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut host_config = HostTransportConfig::loopback(session.clone());
     host_config.event_queue_capacity = 2;
-    let mut host = SocketHostTransport::bind(host_config, clock.clone())
-        .expect("bind real host sockets");
+    let mut host =
+        SocketHostTransport::bind(host_config, clock.clone()).expect("bind real host sockets");
     let first_id = id_device("pressure-playback-first");
     let second_id = id_device("pressure-playback-second");
-    let mut first_config = ListenerTransportConfig::loopback(
-        session.clone(),
-        first_id.clone(),
-        host.endpoint(),
-    );
+    let mut first_config =
+        ListenerTransportConfig::loopback(session.clone(), first_id.clone(), host.endpoint());
     first_config.event_queue_capacity = 1;
     let mut first = SocketTransportFactory
         .connect_listener(first_config, clock.clone())
@@ -42,11 +39,7 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     ));
     let mut second = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                second_id.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), second_id.clone(), host.endpoint()),
             clock.clone(),
         )
         .expect("second real listener");
@@ -56,10 +49,7 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
         TransportEvent::PeerAccepted { .. }
     ));
 
-    for (listener, device) in [
-        (first.as_mut(), &first_id),
-        (second.as_mut(), &second_id),
-    ] {
+    for (listener, device) in [(first.as_mut(), &first_id), (second.as_mut(), &second_id)] {
         listener
             .send_control(&join_request(&session, device, "Pressure playback"))
             .expect("join");
@@ -84,8 +74,7 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
             .expect("send real UDP sync telemetry");
     }
     wait_until(Duration::from_secs(5), || {
-        host.counters().sync_datagrams_received > 10
-            && host.counters().queue_overflows > 0
+        host.counters().sync_datagrams_received > 10 && host.counters().queue_overflows > 0
     });
     let start = stream_start(&session, 1_000);
     let ControlMessage::StreamStart(ref started) = start else {
@@ -131,8 +120,9 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "missing first peer disconnect");
-        if let TransportEvent::PeerDisconnected { peer, .. } =
-            host.recv_event(remaining).expect("drain pressured actor queue")
+        if let TransportEvent::PeerDisconnected { peer, .. } = host
+            .recv_event(remaining)
+            .expect("drain pressured actor queue")
         {
             if peer.device_id.as_ref() == Some(&first_id) {
                 break;
@@ -152,11 +142,7 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     }
     let mut replacement = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                first_id.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), first_id.clone(), host.endpoint()),
             clock,
         )
         .expect("reconnect after Stop");
