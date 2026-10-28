@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{ControlMessage, Hello, ProtocolFrame};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from, wait_for_frame,
-    wait_until,
+    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
+    wait_for_frame, wait_until,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
@@ -180,7 +180,10 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
     let deadline = Instant::now() + Duration::from_secs(5);
     while disconnected.len() < devices.len() {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "missing terminal event under pressure");
+        assert!(
+            !remaining.is_zero(),
+            "missing terminal event under pressure"
+        );
         match host.recv_event(remaining).expect("bounded event delivery") {
             TransportEvent::PeerDisconnected { peer, .. } => {
                 let device = peer.device_id.expect("identified refused peer");
@@ -198,7 +201,8 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
     }
     for (listener, device) in listeners.iter_mut().zip(&devices) {
         assert!(
-            host.authorize_peer(device, listener.local_routes()).is_err(),
+            host.authorize_peer(device, listener.local_routes())
+                .is_err(),
             "a refused peer must not have a live route"
         );
         listener.shutdown().expect("shutdown refused listener");
@@ -211,11 +215,7 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
     let device = &devices[0];
     let mut retry = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock,
         )
         .expect("reconnect listener");
