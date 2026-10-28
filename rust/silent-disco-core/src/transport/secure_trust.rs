@@ -35,6 +35,28 @@ pub enum VerifiedTrustDisposition {
     Revoked,
 }
 
+/// Opaque identity for a listener already present in this host's trust registry.
+/// Returned by `stored_listeners`; not derived from a peer-claimed device ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredListenerId {
+    fingerprint: [u8; 32],
+}
+
+impl StoredListenerId {
+    #[must_use]
+    pub const fn fingerprint(&self) -> &[u8; 32] {
+        &self.fingerprint
+    }
+}
+
+/// Host-owned, non-secret metadata for enrollment and offline revocation UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredListenerSummary {
+    pub id: StoredListenerId,
+    pub display_name: String,
+    pub revoked: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredListener {
@@ -175,6 +197,34 @@ impl HostVerifiedTrust {
             },
         );
         Ok(())
+    }
+
+    /// Lists stored enrollments, including revoked ones, for explicit host UI.
+    /// The opaque ID comes from this registry, never from an incoming join.
+    #[must_use]
+    pub fn stored_listeners(&self) -> Vec<StoredListenerSummary> {
+        self.listeners
+            .values()
+            .map(|record| StoredListenerSummary {
+                id: StoredListenerId {
+                    fingerprint: record.fingerprint,
+                },
+                display_name: record.display_name.clone(),
+                revoked: record.revoked,
+            })
+            .collect()
+    }
+
+    /// Revokes an enrolled listener while it is offline, without requiring a
+    /// fresh possession proof from the listener being removed. Unknown IDs
+    /// cannot create records or affect any other enrollment.
+    pub fn revoke_stored(&mut self, id: StoredListenerId) -> bool {
+        if let Some(record) = self.listeners.get_mut(&id.fingerprint) {
+            record.revoked = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// Revocation survives serialization and blocks subsequent verified joins.
@@ -340,6 +390,43 @@ mod tests {
             .unwrap_err(),
             HostTrustError::InvalidSnapshot
         );
+    }
+
+    #[test]
+    fn offline_revocation_is_host_owned_persistent_and_does_not_trust_claimed_ids() {
+        let (_, host) = key(3);
+        let (first_key, first_der) = key(5);
+        let (other_key, other_der) = key(6);
+        let first = verified(&host, &first_key, &first_der);
+        let other = verified(&host, &other_key, &other_der);
+        let mut store = HostVerifiedTrust::new(&host).expect("registry");
+        store.enroll(first, "Kitchen").expect("enroll first");
+        let first_id = store.stored_listeners()[0].id;
+        assert_eq!(first_id.fingerprint(), first.fingerprint());
+        assert_eq!(store.stored_listeners()[0].display_name, "Kitchen");
+        assert!(!store.stored_listeners()[0].revoked);
+        assert!(store.revoke_stored(first_id));
+        assert!(store.stored_listeners()[0].revoked);
+        assert_eq!(store.disposition(&first), VerifiedTrustDisposition::Revoked);
+        assert_eq!(store.disposition(&other), VerifiedTrustDisposition::Unknown);
+
+        let snapshot = store.to_json().expect("snapshot");
+        let mut restored = HostVerifiedTrust::from_json(&host, &snapshot).expect("restart");
+        assert!(restored.stored_listeners()[0].revoked);
+        assert_eq!(restored.disposition(&first), VerifiedTrustDisposition::Revoked);
+        assert!(restored.revoke_stored(first_id));
+        restored.enroll(other, "Office").expect("enroll other");
+        let other_id = restored
+            .stored_listeners()
+            .into_iter()
+            .find(|record| record.id.fingerprint() == other.fingerprint())
+            .expect("second enrollment")
+            .id;
+        let mut unrelated = HostVerifiedTrust::new(&host).expect("unrelated registry");
+        unrelated.enroll(first, "Kitchen").expect("unrelated enrollment");
+        assert!(!unrelated.revoke_stored(other_id));
+        assert_eq!(unrelated.disposition(&first), VerifiedTrustDisposition::Trusted);
+        assert_eq!(unrelated.len(), 1);
     }
 
     #[test]
