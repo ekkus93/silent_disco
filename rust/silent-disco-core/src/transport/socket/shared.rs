@@ -154,6 +154,46 @@ pub(super) fn send_event(
     }
 }
 
+/// Deliver an authoritative TCP control event without letting UDP telemetry
+/// saturation silently consume Start/Pause/Stop or a track boundary.
+///
+/// Only the per-connection TCP reader may call this: while its bounded
+/// application event queue is full it stops reading TCP, allowing kernel
+/// backpressure. It never runs on a UDP receiver or native audio callback.
+/// Shutdown interrupts the wait, so a stopped collector cannot deadlock a
+/// native transport teardown.
+pub(super) fn send_authoritative_event<T>(
+    sender: &SyncSender<T>,
+    stop: &AtomicBool,
+    counters: &CounterState,
+    mut event: T,
+) -> bool {
+    let mut congested = false;
+    loop {
+        if stop.load(Ordering::Acquire) {
+            if congested {
+                counters.delivery_failure();
+            }
+            return false;
+        }
+        match sender.try_send(event) {
+            Ok(()) => return true,
+            Err(TrySendError::Full(pending)) => {
+                if !congested {
+                    counters.queue_overflow();
+                    congested = true;
+                }
+                event = pending;
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                counters.delivery_failure();
+                return false;
+            }
+        }
+    }
+}
+
 pub(super) struct ControlWrite {
     pub bytes: Vec<u8>,
     pub result: SyncSender<Result<usize, TransportError>>,

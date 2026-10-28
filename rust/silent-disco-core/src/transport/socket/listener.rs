@@ -23,7 +23,8 @@ use super::super::{
 };
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection,
-    fail_loud_on_implicit_shutdown, join_workers, read_control_loop, recv_event, send_event,
+    fail_loud_on_implicit_shutdown, join_workers, read_control_loop, recv_event,
+    send_authoritative_event, send_event,
     shutdown_stream, spawn_control_writer,
 };
 
@@ -333,8 +334,9 @@ fn spawn_control_reader(
                         counters.frame_received(bytes);
                         match validate_listener_inbound(&config.device_id, &frame) {
                             Ok(()) => {
-                                send_event(
+                                send_authoritative_event(
                                     &event_sender,
+                                    &stop,
                                     &counters,
                                     TransportEvent::FrameReceived {
                                         channel: TransportChannel::Control,
@@ -342,8 +344,7 @@ fn spawn_control_reader(
                                         frame,
                                         received_at: clock.now(),
                                     },
-                                );
-                                true
+                                )
                             }
                             Err(error) => {
                                 classify_rejection(&counters, &error);

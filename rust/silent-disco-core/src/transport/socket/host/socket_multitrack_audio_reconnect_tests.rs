@@ -293,6 +293,81 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
     host.shutdown().expect("close host");
 }
 
+/// Real TCP control delivery must not lose a Stop behind a stalled listener
+/// collector. A one-slot native event queue is intentionally saturated by
+/// the StreamStart; TCP backpressure must preserve Pause/Stop in wire order.
+#[test]
+fn real_socket_stalled_listener_retains_authoritative_start_pause_stop() {
+    let session = id_session("socket-backpressure-playback-control");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind host socket");
+    let device = id_device("backpressured-listener");
+    let mut config =
+        ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint());
+    config.event_queue_capacity = 1;
+    let mut listener = SocketTransportFactory
+        .connect_listener(config, clock)
+        .expect("connect listener");
+    listener
+        .send_control(&join_request(&session, &device, "backpressured-listener"))
+        .expect("join listener");
+    wait_for_control_from(&mut host, &device, |control| {
+        matches!(control, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device, listener.local_routes())
+        .expect("authorize listener routes");
+    wait_for_authorized(&mut host, &device);
+
+    let start = stream_start(&session, 1_000);
+    let ControlMessage::StreamStart(ref started) = start else {
+        panic!("start fixture");
+    };
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: started.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_250),
+    });
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: started.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_500),
+    });
+    for event in [&start, &pause, &stop] {
+        assert_eq!(
+            host.broadcast_control(event)
+                .expect("broadcast real TCP control")
+                .report
+                .successful_peers,
+            1,
+        );
+    }
+    // The app intentionally does not collect while the TCP reader attempts
+    // the second event. Observe actual congestion, not a synthetic channel.
+    let mut observed_pressure = false;
+    for _ in 0..100 {
+        if listener.counters().queue_overflows > 0 {
+            observed_pressure = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(observed_pressure, "one-slot real TCP event queue must saturate");
+    for event in [&start, &pause, &stop] {
+        received_control(listener.as_mut(), event);
+    }
+    assert_eq!(
+        listener.counters().delivery_failures,
+        0,
+        "TCP control backpressure must not lose Stop",
+    );
+    listener.shutdown().expect("close listener after drained Stop");
+    host.shutdown().expect("close host");
+}
+
 #[test]
 fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
     let session = id_session("socket-audible-track-late-join");

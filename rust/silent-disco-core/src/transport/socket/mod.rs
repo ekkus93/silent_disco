@@ -1,5 +1,7 @@
 mod host;
 mod host_workers;
+#[cfg(test)]
+mod authoritative_delivery_tests;
 mod listener;
 // Block 44 implicit-shutdown tests intentionally sit beside the shared shutdown policy.
 #[cfg_attr(test, allow(clippy::items_after_test_module))]

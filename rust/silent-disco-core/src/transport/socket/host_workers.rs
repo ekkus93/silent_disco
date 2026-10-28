@@ -20,7 +20,7 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    send_event, shutdown_stream, spawn_control_writer,
+    send_authoritative_event, send_event, shutdown_stream, spawn_control_writer,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -254,8 +254,12 @@ fn register_peer(
                                         },
                                     )
                                 } else {
-                                    send_event(&event_for_reader, &counters_for_reader, event);
-                                    true
+                                    send_authoritative_event(
+                                        &event_for_reader,
+                                        &reader_peer.stop,
+                                        &counters_for_reader,
+                                        event,
+                                    )
                                 }
                             }
                             Err(error) => {
