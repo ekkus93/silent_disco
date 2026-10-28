@@ -200,7 +200,7 @@ fn real_socket_multi_peer_pressure_refuses_busy_joins_then_recovers_control_deli
     second
         .send_control(&join_request(&session_id, &second_id, "Second"))
         .expect("second join writes");
-    for listener in [&mut first, &mut second] {
+    for listener in [&mut *first, &mut *second] {
         let rejected = wait_for_frame(listener, TransportChannel::Control, |frame| {
             matches!(
                 frame,
