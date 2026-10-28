@@ -355,7 +355,6 @@ pub(super) fn remove_route_if_current(
     }
 }
 
-
 /**
  * Preserve the host actor's bounded event queue without silently accepting
  * an admission request the actor will never see. Only join requests use this
