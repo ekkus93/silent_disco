@@ -250,8 +250,13 @@ class HostTransportController(
         }
     }
 
-    private suspend fun <T> withHandle(action: (FfiHostTransportHandle) -> T): T? =
-        withContext(callDispatcher) { handleGate.withCurrent(action) }
+    private suspend fun <T> withHandle(action: (FfiHostTransportHandle) -> T): T? {
+        // Capture the session at invocation, before the dispatcher can delay
+        // this operation behind a concurrent Stop/rebind. Never deliver an
+        // old session's Pause/approval/audio command to its replacement.
+        val expected = handleGate.currentHandle() ?: return null
+        return withContext(callDispatcher) { handleGate.withExpected(expected, action) }
+    }
 
     private fun closeExistingHandle() {
         handleGate.close(::retireHandle)

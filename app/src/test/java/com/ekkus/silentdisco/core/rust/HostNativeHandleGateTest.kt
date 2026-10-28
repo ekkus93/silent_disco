@@ -77,6 +77,11 @@ class HostNativeHandleGateTest {
             rebind.get(5, TimeUnit.SECONDS)
             assertThat(disposed).containsExactly(old)
             assertThat(gate.withCurrent { it }).isSameInstanceAs(replacement)
+            var staleCommandRan = false
+            assertThat(gate.withExpected(old) { staleCommandRan = true }).isNull()
+            assertThat(staleCommandRan).isFalse()
+            assertThat(gate.withExpected(replacement) { "current session" })
+                .isEqualTo("current session")
             gate.close { if (it != null) disposed.add(it) }
             assertThat(disposed).containsExactly(old, replacement).inOrder()
         } finally {

@@ -23,6 +23,11 @@ internal class HostNativeHandleGate<T : Any> {
         current.get()?.let(action)
     }
 
+    /** A queued command cannot silently migrate to a newly bound session. */
+    fun <R> withExpected(expected: T, action: (T) -> R): R? = synchronized(monitor) {
+        current.get()?.takeIf { it === expected }?.let(action)
+    }
+
     /** The retire, open and poller-start sequence is one indivisible transition. */
     fun replace(
         retire: (T?) -> Unit,
