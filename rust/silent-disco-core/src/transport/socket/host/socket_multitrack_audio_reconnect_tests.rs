@@ -355,7 +355,10 @@ fn real_socket_stalled_listener_retains_authoritative_start_pause_stop() {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(observed_pressure, "one-slot real TCP event queue must saturate");
+    assert!(
+        observed_pressure,
+        "one-slot real TCP event queue must saturate"
+    );
     for event in [&start, &pause, &stop] {
         received_control(listener.as_mut(), event);
     }
@@ -364,7 +367,9 @@ fn real_socket_stalled_listener_retains_authoritative_start_pause_stop() {
         0,
         "TCP control backpressure must not lose Stop",
     );
-    listener.shutdown().expect("close listener after drained Stop");
+    listener
+        .shutdown()
+        .expect("close listener after drained Stop");
     host.shutdown().expect("close host");
 }
 

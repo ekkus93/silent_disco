@@ -24,8 +24,7 @@ use super::super::{
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection,
     fail_loud_on_implicit_shutdown, join_workers, read_control_loop, recv_event,
-    send_authoritative_event, send_event,
-    shutdown_stream, spawn_control_writer,
+    send_authoritative_event, send_event, shutdown_stream, spawn_control_writer,
 };
 
 pub struct SocketListenerTransport {
@@ -333,19 +332,17 @@ fn spawn_control_reader(
                     ReadControlOutcome::Frame(frame, bytes) => {
                         counters.frame_received(bytes);
                         match validate_listener_inbound(&config.device_id, &frame) {
-                            Ok(()) => {
-                                send_authoritative_event(
-                                    &event_sender,
-                                    &stop,
-                                    &counters,
-                                    TransportEvent::FrameReceived {
-                                        channel: TransportChannel::Control,
-                                        peer: host_peer.clone(),
-                                        frame,
-                                        received_at: clock.now(),
-                                    },
-                                )
-                            }
+                            Ok(()) => send_authoritative_event(
+                                &event_sender,
+                                &stop,
+                                &counters,
+                                TransportEvent::FrameReceived {
+                                    channel: TransportChannel::Control,
+                                    peer: host_peer.clone(),
+                                    frame,
+                                    received_at: clock.now(),
+                                },
+                            ),
                             Err(error) => {
                                 classify_rejection(&counters, &error);
                                 send_event(
