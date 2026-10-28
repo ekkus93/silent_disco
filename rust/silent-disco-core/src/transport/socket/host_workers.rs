@@ -233,30 +233,26 @@ fn register_peer(
                                     received_at,
                                 };
                                 if let Some(listener_id) = pending_join {
-                                    match event_for_reader.try_send(event) {
-                                        Ok(()) => true,
-                                        Err(TrySendError::Full(_)) => {
-                                            counters_for_reader.queue_overflow();
-                                            counters_for_reader.delivery_failure();
-                                            // The control writer is a bounded
-                                            // non-realtime worker. Finish the
-                                            // busy reply before closing this
-                                            // connection; never claim that the
-                                            // actor has received this join.
+                                    forward_join_or_refuse(
+                                        &event_for_reader,
+                                        &counters_for_reader,
+                                        event,
+                                        || {
+                                            // Bounded native writer; a completed
+                                            // reply precedes socket teardown.
                                             let refusal = ProtocolFrame::Control(
                                                 ControlMessage::JoinRejection(JoinRejection {
                                                     session_id: session_id.clone(),
                                                     listener_id,
-                                                    reason: "Host busy: join queue full; reconnect and retry".to_owned(),
+                                                    reason: "Host busy: join queue full; reconnect and retry"
+                                                        .to_owned(),
                                                 }),
                                             );
                                             if let Ok(bytes) = encode_frame(&refusal) {
                                                 drop(reader_peer.sender.send(bytes));
                                             }
-                                            false
-                                        }
-                                        Err(TrySendError::Disconnected(_)) => false,
-                                    }
+                                        },
+                                    )
                                 } else {
                                     send_event(&event_for_reader, &counters_for_reader, event);
                                     true
@@ -356,6 +352,65 @@ pub(super) fn remove_route_if_current(
         true
     } else {
         false
+    }
+}
+
+
+/**
+ * Preserve the host actor's bounded event queue without silently accepting
+ * an admission request the actor will never see. Only join requests use this
+ * path; other control/telemetry events retain their existing classification.
+ * The refusal callback runs on the TCP worker, never the audio callback.
+ */
+fn forward_join_or_refuse<T>(
+    sender: &SyncSender<T>,
+    counters: &CounterState,
+    event: T,
+    refuse: impl FnOnce(),
+) -> bool {
+    match sender.try_send(event) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            counters.queue_overflow();
+            counters.delivery_failure();
+            refuse();
+            false
+        }
+        Err(TrySendError::Disconnected(_)) => false,
+    }
+}
+
+#[cfg(test)]
+mod admission_pressure_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn saturated_join_queue_is_refused_without_silent_acceptance() {
+        let (sender, receiver) = sync_channel(1);
+        let counters = CounterState::default();
+        sender.send(1_u8).expect("fill queue");
+        let refused = AtomicBool::new(false);
+        assert!(!forward_join_or_refuse(&sender, &counters, 2_u8, || {
+            refused.store(true, Ordering::Release);
+        }));
+        assert!(refused.load(Ordering::Acquire));
+        assert_eq!(receiver.try_recv().expect("original event"), 1);
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(counters.snapshot().queue_overflows, 1);
+        assert_eq!(counters.snapshot().delivery_failures, 1);
+    }
+
+    #[test]
+    fn open_join_queue_delivers_once_without_refusing() {
+        let (sender, receiver) = sync_channel(1);
+        let counters = CounterState::default();
+        assert!(forward_join_or_refuse(&sender, &counters, 17_u8, || {
+            panic!("join was delivered, must not send busy response");
+        }));
+        assert_eq!(receiver.try_recv().expect("delivered join"), 17);
+        assert_eq!(counters.snapshot().queue_overflows, 0);
+        assert_eq!(counters.snapshot().delivery_failures, 0);
     }
 }
 
