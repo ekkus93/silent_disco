@@ -90,7 +90,7 @@ class HostTransportController(
      * Capturing the generation before dispatch prevents a delayed approval
      * from being applied to a new host after Stop/rebind.
      */
-    suspend fun approveAndAuthorizeListener(
+    internal suspend fun approveAndAuthorizeListener(
         listenerId: String,
         trustedForFuture: Boolean,
         syncPort: UShort,
