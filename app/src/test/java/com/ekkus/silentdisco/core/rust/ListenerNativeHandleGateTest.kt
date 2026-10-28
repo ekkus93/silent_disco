@@ -125,7 +125,8 @@ class ListenerNativeHandleGateTest {
                     release.countDown()
                     send.get(5, TimeUnit.SECONDS)
                     reconnect.get(5, TimeUnit.SECONDS)
-                    assertThat(gate.withExpected(old) { error("retired send") }).isNull()
+                    val staleSend: String? = gate.withExpected(old) { error("retired send") }
+                    assertThat(staleSend).isNull()
                     assertThat(shouldForwardPolledListenerEvent(
                         loopActive = true,
                         handleIsCurrent = gate.currentHandle() === old,
