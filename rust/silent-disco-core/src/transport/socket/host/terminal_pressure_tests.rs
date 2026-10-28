@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{ControlMessage, Hello, ProtocolFrame};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, wait_for_control_from, wait_for_frame,
+    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from, wait_for_frame,
+    wait_until,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
@@ -118,4 +119,120 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         TransportEvent::PeerDisconnected { .. }
     ));
     listener.shutdown().expect("listener shutdown");
+}
+
+#[test]
+fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
+    let session = id_session("multi-peer-pressure");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind host");
+    let devices = [
+        id_device("pressure-a"),
+        id_device("pressure-b"),
+        id_device("pressure-c"),
+    ];
+    let mut listeners: Vec<_> = devices
+        .iter()
+        .map(|device| {
+            SocketTransportFactory
+                .connect_listener(
+                    ListenerTransportConfig::loopback(
+                        session.clone(),
+                        device.clone(),
+                        host.endpoint(),
+                    ),
+                    clock.clone(),
+                )
+                .expect("connect listener")
+        })
+        .collect();
+
+    // Every TCP connection is accepted before any JoinRequest. With one
+    // application event slot and no collector, the first PeerAccepted fills
+    // the queue and the other accepts are telemetry-only. No join can fit.
+    wait_until(Duration::from_secs(5), || {
+        host.counters().accepted_control_connections == devices.len() as u64
+    });
+    for (listener, device) in listeners.iter_mut().zip(&devices) {
+        listener
+            .send_control(&join_request(&session, device, "Busy listener"))
+            .expect("send join");
+    }
+    for (listener, device) in listeners.iter_mut().zip(&devices) {
+        wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
+            matches!(
+                frame,
+                ProtocolFrame::Control(ControlMessage::JoinRejection(rejection))
+                    if rejection.listener_id == *device && rejection.reason.contains("busy")
+            )
+        });
+    }
+
+    // The TCP readers must send the explicit busy reply and retire their
+    // routes. Their disconnect events are authoritative and remain queued
+    // until the host drains capacity, rather than being silently discarded.
+    wait_until(Duration::from_secs(5), || {
+        host.counters().closed_control_connections == devices.len() as u64
+    });
+    let mut disconnected = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while disconnected.len() < devices.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "missing terminal event under pressure");
+        match host.recv_event(remaining).expect("bounded event delivery") {
+            TransportEvent::PeerDisconnected { peer, .. } => {
+                let device = peer.device_id.expect("identified refused peer");
+                assert!(devices.contains(&device), "unexpected disconnected peer");
+                assert!(!disconnected.contains(&device), "duplicate disconnect");
+                disconnected.push(device);
+            }
+            TransportEvent::PeerAccepted { .. } => {}
+            TransportEvent::FrameReceived {
+                frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+                ..
+            } => panic!("a refused join reached the admission actor"),
+            _ => {}
+        }
+    }
+    for (listener, device) in listeners.iter_mut().zip(&devices) {
+        assert!(
+            host.authorize_peer(device, listener.local_routes()).is_err(),
+            "a refused peer must not have a live route"
+        );
+        listener.shutdown().expect("shutdown refused listener");
+    }
+    assert!(host.counters().queue_overflows >= devices.len() as u64);
+    assert!(host.counters().delivery_failures >= devices.len() as u64);
+
+    // Draining pressure permits a fresh connection for the same claimed ID.
+    // The old refused socket cannot authorize it or leave a ghost listener.
+    let device = &devices[0];
+    let mut retry = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session.clone(),
+                device.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("reconnect listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5))
+            .expect("new peer accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    retry
+        .send_control(&join_request(&session, device, "Retried listener"))
+        .expect("send retry");
+    wait_for_control_from(&mut host, device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(device, retry.local_routes())
+        .expect("authorize fresh connection");
+    wait_for_authorized(&mut host, device);
+    retry.shutdown().expect("shutdown retried listener");
+    host.shutdown().expect("shutdown host");
 }
