@@ -187,12 +187,11 @@ describe("HostSetupScreen", () => {
   it("disables unverified approved-only admission and remembered identities on plaintext v3", () => {
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
-    expect(
-      screen.getByRole("option", { name: /Approved devices only/ }),
-    ).toBeDisabled();
+    expect(screen.getByRole("option", { name: /Approved devices only/ })).toBeDisabled();
     expect(screen.getByLabelText("Remember approved devices")).toBeDisabled();
-    expect(screen.getByText(/Approved-device auto-admission requires verified identities/))
-      .toBeInTheDocument();
+    expect(
+      screen.getByText(/Approved-device auto-admission requires verified identities/),
+    ).toBeInTheDocument();
   });
 
   it("blocks restored unverified trust until the host explicitly chooses safe settings", async () => {

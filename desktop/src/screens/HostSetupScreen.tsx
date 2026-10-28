@@ -407,8 +407,8 @@ export function HostSetupScreen() {
                   className="mt-1 block text-sm text-violet-100/65"
                   id="remember-approved-devices-help"
                 >
-                  Unavailable until encrypted transport verifies device identity. If an old
-                  profile enabled this, uncheck it before continuing.
+                  Unavailable until encrypted transport verifies device identity. If an old profile
+                  enabled this, uncheck it before continuing.
                 </span>
               </span>
             </label>
