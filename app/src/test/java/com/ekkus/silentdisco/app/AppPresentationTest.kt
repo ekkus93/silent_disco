@@ -152,6 +152,23 @@ class AppPresentationTest {
     }
 
     @Test
+    fun trustedOnlyJoinRejectionIsNotMisrepresentedAsRetryableManualApproval() {
+        val state = AppUiState(
+            storageState = StorageInitializationState.READY,
+            listenerState = ListenerLifecycleState.ERROR,
+            lastError = "host rejected join request: device_not_approved",
+        )
+
+        val problem = state.derivedPersistentProblem()
+
+        assertThat(problem?.kind).isEqualTo(UserProblemKind.JOIN_REJECTED)
+        assertThat(problem?.title).isEqualTo("This device is not approved")
+        assertThat(problem?.detail).contains("manual approval")
+        assertThat(problem?.primaryAction).isEqualTo(UserProblemAction.RETURN_TO_SESSIONS)
+        assertThat(problem?.secondaryAction).isNull()
+    }
+
+    @Test
     fun permissionFailureRoutesToSettings() {
         val state = AppUiState(
             storageState = StorageInitializationState.READY,

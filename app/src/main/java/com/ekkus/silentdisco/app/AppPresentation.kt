@@ -297,6 +297,15 @@ private fun AppUiState.listenerErrorProblem(): UserFacingProblem {
             technicalDetail = lastError,
         )
 
+        "device_not_approved" in errorText -> UserFacingProblem(
+            id = "device-not-approved",
+            kind = UserProblemKind.JOIN_REJECTED,
+            title = "This device is not approved",
+            detail = "This host only accepts previously approved devices. Ask the host to use manual approval or invite-code access.",
+            primaryAction = UserProblemAction.RETURN_TO_SESSIONS,
+            technicalDetail = lastError,
+        )
+
         "reject" in errorText || "did not approve" in errorText -> UserFacingProblem(
             id = "join-rejected",
             kind = UserProblemKind.JOIN_REJECTED,
