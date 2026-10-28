@@ -40,6 +40,7 @@ pub enum VerifiedTrustDisposition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoredListenerId {
     fingerprint: [u8; 32],
+    host_fingerprint: [u8; 32],
 }
 
 impl StoredListenerId {
@@ -163,6 +164,9 @@ impl HostVerifiedTrust {
     /// Classifies a *verified* listener key, never a claimed device identifier.
     #[must_use]
     pub fn disposition(&self, key: &VerifiedListenerKey) -> VerifiedTrustDisposition {
+        if key.host_fingerprint() != &self.host_fingerprint {
+            return VerifiedTrustDisposition::Unknown;
+        }
         match self.listeners.get(key.fingerprint()) {
             Some(record) if record.revoked => VerifiedTrustDisposition::Revoked,
             Some(_) => VerifiedTrustDisposition::Trusted,
@@ -180,6 +184,9 @@ impl HostVerifiedTrust {
         key: VerifiedListenerKey,
         display_name: &str,
     ) -> Result<(), HostTrustError> {
+        if key.host_fingerprint() != &self.host_fingerprint {
+            return Err(HostTrustError::WrongHostIdentity);
+        }
         if !valid_display_name(display_name) {
             return Err(HostTrustError::InvalidDisplayName);
         }
@@ -208,6 +215,7 @@ impl HostVerifiedTrust {
             .map(|record| StoredListenerSummary {
                 id: StoredListenerId {
                     fingerprint: record.fingerprint,
+                    host_fingerprint: self.host_fingerprint,
                 },
                 display_name: record.display_name.clone(),
                 revoked: record.revoked,
@@ -219,6 +227,9 @@ impl HostVerifiedTrust {
     /// fresh possession proof from the listener being removed. Unknown IDs
     /// cannot create records or affect any other enrollment.
     pub fn revoke_stored(&mut self, id: StoredListenerId) -> bool {
+        if id.host_fingerprint != self.host_fingerprint {
+            return false;
+        }
         if let Some(record) = self.listeners.get_mut(&id.fingerprint) {
             record.revoked = true;
             true
@@ -230,6 +241,9 @@ impl HostVerifiedTrust {
     /// Revocation survives serialization and blocks subsequent verified joins.
     /// Unknown identities are not implicitly inserted as revoked records.
     pub fn revoke(&mut self, key: &VerifiedListenerKey) -> bool {
+        if key.host_fingerprint() != &self.host_fingerprint {
+            return false;
+        }
         if let Some(record) = self.listeners.get_mut(key.fingerprint()) {
             record.revoked = true;
             true
@@ -435,6 +449,31 @@ mod tests {
             VerifiedTrustDisposition::Trusted
         );
         assert_eq!(unrelated.len(), 1);
+    }
+
+    #[test]
+    fn proofs_and_offline_revocation_handles_cannot_cross_host_boundaries() {
+        let (_, host) = key(3);
+        let (_, other_host) = key(9);
+        let (signing, listener) = key(5);
+        let own = verified(&host, &signing, &listener);
+        let foreign = verified(&other_host, &signing, &listener);
+        let mut store = HostVerifiedTrust::new(&host).expect("host registry");
+        let mut other_store = HostVerifiedTrust::new(&other_host).expect("other registry");
+        store.enroll(own, "Kitchen").expect("enroll");
+        other_store.enroll(foreign, "Kitchen").expect("enroll other");
+        assert_eq!(
+            store.disposition(&foreign),
+            VerifiedTrustDisposition::Unknown
+        );
+        assert_eq!(
+            store.enroll(foreign, "Spoofed"),
+            Err(HostTrustError::WrongHostIdentity)
+        );
+        assert!(!store.revoke(&foreign));
+        assert!(!store.revoke_stored(other_store.stored_listeners()[0].id));
+        assert_eq!(store.disposition(&own), VerifiedTrustDisposition::Trusted);
+        assert_eq!(store.stored_listeners()[0].display_name, "Kitchen");
     }
 
     #[test]

@@ -39,12 +39,19 @@ pub struct PendingListenerProof {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VerifiedListenerKey {
     fingerprint: [u8; 32],
+    host_fingerprint: [u8; 32],
 }
 
 impl VerifiedListenerKey {
     #[must_use]
     pub const fn fingerprint(&self) -> &[u8; 32] {
         &self.fingerprint
+    }
+
+    /// Host identity whose authenticated TLS-bound challenge was answered.
+    #[must_use]
+    pub const fn host_fingerprint(&self) -> &[u8; 32] {
+        &self.host_fingerprint
     }
 }
 
@@ -132,6 +139,7 @@ impl PendingListenerProof {
             .map_err(|_| ListenerProofError::SignatureMismatch)?;
         Ok(VerifiedListenerKey {
             fingerprint: fingerprint(listener_public_key_der),
+            host_fingerprint: self.host_fingerprint,
         })
     }
 }

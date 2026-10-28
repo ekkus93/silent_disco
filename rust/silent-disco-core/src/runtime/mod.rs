@@ -2,6 +2,7 @@ mod actor_runtime;
 mod effects;
 mod host_admission;
 mod playlist;
+mod secure_host_admission;
 #[path = "records_runtime.rs"]
 mod records;
 #[allow(
@@ -23,6 +24,9 @@ pub use host_admission::{
     JoinRequestDisposition, TrustPersistenceOutcome, TrustPersistenceRequest,
     approval_after_persistence, classify_delivery, classify_join_request, prepare_approval,
     prepare_explicit_approval,
+};
+pub use secure_host_admission::{
+    VerifiedJoinAdmission, VerifiedJoinError, verify_and_classify_join,
 };
 pub use playlist::{
     HostQueue, HostQueueError, MAX_HOST_QUEUE_ENTRIES, MAX_QUEUE_ENTRY_ID_BYTES, QueueEntry,
