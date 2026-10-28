@@ -120,13 +120,13 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "missing first peer disconnect");
-        if let TransportEvent::PeerDisconnected { peer, .. } = host
-            .recv_event(remaining)
-            .expect("drain pressured actor queue")
-        {
-            if peer.device_id.as_ref() == Some(&first_id) {
-                break;
-            }
+        if matches!(
+            host.recv_event(remaining)
+                .expect("drain pressured actor queue"),
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&first_id)
+        ) {
+            break;
         }
     }
 
@@ -155,12 +155,11 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "missing replacement accept");
-        if let TransportEvent::PeerAccepted { peer, .. } =
-            host.recv_event(remaining).expect("drain accepted event")
-        {
-            if peer.control_address.port() != 0 {
-                break;
-            }
+        if matches!(
+            host.recv_event(remaining).expect("drain accepted event"),
+            TransportEvent::PeerAccepted { peer, .. } if peer.control_address.port() != 0
+        ) {
+            break;
         }
     }
     replacement

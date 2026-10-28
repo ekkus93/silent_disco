@@ -122,11 +122,12 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
 }
 
 #[test]
-fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
+fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reconnect() {
     let session = id_session("multi-peer-pressure");
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut config = HostTransportConfig::loopback(session.clone());
     config.event_queue_capacity = 1;
+    config.operation_timeout = Duration::from_millis(150);
     let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind host");
     let devices = [
         id_device("pressure-a"),
@@ -149,68 +150,61 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
         })
         .collect();
 
-    // Every TCP connection is accepted before any JoinRequest. With one
-    // application event slot and no collector, the first PeerAccepted fills
-    // the queue and the other accepts are telemetry-only. No join can fit.
+    // The first accept fills the only actor event slot. With no collector,
+    // later TCP accepts must close after a finite deadline, not silently
+    // continue as unobservable peers or emit ghost authorization events.
     wait_until(Duration::from_secs(5), || {
         host.counters().accepted_control_connections == devices.len() as u64
+            && host.counters().closed_control_connections >= 2
     });
-    for (listener, device) in listeners.iter_mut().zip(&devices) {
-        listener
-            .send_control(&join_request(&session, device, "Busy listener"))
-            .expect("send join");
-    }
-    for (listener, device) in listeners.iter_mut().zip(&devices) {
-        wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
-            matches!(
-                frame,
-                ProtocolFrame::Control(ControlMessage::JoinRejection(rejection))
-                    if rejection.listener_id == *device && rejection.reason.contains("busy")
-            )
-        });
+    assert_eq!(host.counters().delivery_failures, 2);
+    for (listener, device) in listeners.iter().zip(&devices).skip(1) {
+        assert!(
+            host.authorize_peer(device, listener.local_routes()).is_err(),
+            "timed-out TCP peer must not retain an authorizable route"
+        );
     }
 
-    // The TCP readers must send the explicit busy reply and retire their
-    // routes. Their disconnect events are authoritative and remain queued
-    // until the host drains capacity, rather than being silently discarded.
-    wait_until(Duration::from_secs(5), || {
-        host.counters().closed_control_connections == devices.len() as u64
+    // The first reader was started after its PeerAccepted reached the queue.
+    // Its JoinRequest cannot fit and receives an explicit busy response.
+    listeners[0]
+        .send_control(&join_request(&session, &devices[0], "Busy listener"))
+        .expect("first join");
+    wait_for_frame(listeners[0].as_mut(), TransportChannel::Control, |frame| {
+        matches!(
+            frame,
+            ProtocolFrame::Control(ControlMessage::JoinRejection(rejection))
+                if rejection.listener_id == devices[0] && rejection.reason.contains("busy")
+        )
     });
-    let mut disconnected = Vec::new();
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("first accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
     let deadline = Instant::now() + Duration::from_secs(5);
-    while disconnected.len() < devices.len() {
+    loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(
-            !remaining.is_zero(),
-            "missing terminal event under pressure"
-        );
-        match host.recv_event(remaining).expect("bounded event delivery") {
-            TransportEvent::PeerDisconnected { peer, .. } => {
-                let device = peer.device_id.expect("identified refused peer");
-                assert!(devices.contains(&device), "unexpected disconnected peer");
-                assert!(!disconnected.contains(&device), "duplicate disconnect");
-                disconnected.push(device);
-            }
-            TransportEvent::FrameReceived {
-                frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
-                ..
-            } => panic!("a refused join reached the admission actor"),
-            _ => {}
+        assert!(!remaining.is_zero(), "first terminal event lost");
+        if matches!(
+            host.recv_event(remaining).expect("terminal event"),
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&devices[0])
+        ) {
+            break;
         }
     }
     for (listener, device) in listeners.iter_mut().zip(&devices) {
         assert!(
-            host.authorize_peer(device, listener.local_routes())
-                .is_err(),
-            "a refused peer must not have a live route"
+            host.authorize_peer(device, listener.local_routes()).is_err(),
+            "refused peer must not have a live route"
         );
-        listener.shutdown().expect("shutdown refused listener");
+        drop(listener.shutdown());
     }
     assert!(host.counters().queue_overflows >= devices.len() as u64);
     assert!(host.counters().delivery_failures >= devices.len() as u64);
 
-    // Draining pressure permits a fresh connection for the same claimed ID.
-    // The old refused socket cannot authorize it or leave a ghost listener.
+    // Draining the actor queue permits a fresh TCP generation for the same
+    // claimed ID. Its authorization is independent of every refused socket.
     let device = &devices[0];
     let mut retry = SocketTransportFactory
         .connect_listener(
@@ -235,7 +229,6 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
     retry.shutdown().expect("shutdown retried listener");
     host.shutdown().expect("shutdown host");
 }
-
 #[test]
 fn saturated_host_event_queue_rolls_back_real_socket_authorization() {
     let session = id_session("host-admission-event-backpressure");
