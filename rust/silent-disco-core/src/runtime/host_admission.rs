@@ -5,6 +5,7 @@ use crate::domain::{ApprovalMode, DeviceId, RequestId, TrustState};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinRejectionReason {
     IncorrectInviteCode,
+    DeviceNotApproved,
     HostRejected,
     HostUnavailable,
 }
@@ -14,6 +15,7 @@ impl JoinRejectionReason {
     pub const fn stable_name(self) -> &'static str {
         match self {
             Self::IncorrectInviteCode => "incorrect_invite_code",
+            Self::DeviceNotApproved => "device_not_approved",
             Self::HostRejected => "host_rejected",
             Self::HostUnavailable => "host_unavailable",
         }
@@ -87,11 +89,19 @@ pub const fn classify_join_request(
         };
     }
 
-    if matches!(draft.approval_mode, ApprovalMode::TrustedDevices)
-        && matches!(request.trust_state, TrustState::Trusted)
-    {
-        return JoinRequestDisposition::AutoApprove {
-            trusted_for_future: true,
+    if matches!(draft.approval_mode, ApprovalMode::TrustedDevices) {
+        // No manual-approval fallback is allowed in "Approved devices only".
+        // Only host-verified Trusted inputs may reach the auto-approval path.
+        // Platform transports must never assign Trusted from a peer-claimed
+        // device ID: cryptographic identity proof is a separate security gate.
+        return if matches!(request.trust_state, TrustState::Trusted) {
+            JoinRequestDisposition::AutoApprove {
+                trusted_for_future: true,
+            }
+        } else {
+            JoinRequestDisposition::AutoReject {
+                reason: JoinRejectionReason::DeviceNotApproved,
+            }
         };
     }
 
@@ -215,8 +225,33 @@ mod tests {
         );
         assert_eq!(
             classify_join_request(&draft, &request(TrustState::SessionOnly, true)),
+            JoinRequestDisposition::AutoReject {
+                reason: JoinRejectionReason::DeviceNotApproved,
+            }
+        );
+    }
+
+    #[test]
+    fn manual_and_valid_invite_modes_still_require_explicit_approval() {
+        let request = request(TrustState::SessionOnly, true);
+        let manual = HostDraft {
+            approval_mode: ApprovalMode::Manual,
+            ..HostDraft::default()
+        };
+        let invite = HostDraft {
+            approval_mode: ApprovalMode::InviteCode,
+            invite_code: Some("valid".to_owned()),
+            ..HostDraft::default()
+        };
+        assert_eq!(
+            classify_join_request(&manual, &request),
             JoinRequestDisposition::PendingManualDecision
         );
+        assert_eq!(
+            classify_join_request(&invite, &request),
+            JoinRequestDisposition::PendingManualDecision
+        );
+        assert_eq!(JoinRejectionReason::DeviceNotApproved.stable_name(), "device_not_approved");
     }
 
     #[test]

@@ -160,7 +160,9 @@ fn admission_policy_rejects_bad_invites_and_auto_approves_only_trusted_devices()
     );
     assert_eq!(
         classify_join_request(&trusted_draft, &join_request(TrustState::SessionOnly, true)),
-        JoinRequestDisposition::PendingManualDecision
+        JoinRequestDisposition::AutoReject {
+            reason: JoinRejectionReason::DeviceNotApproved,
+        }
     );
 }
 

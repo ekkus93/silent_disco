@@ -243,6 +243,34 @@ fn rejection_snapshot_correlates_the_delivery_to_its_operation() {
 }
 
 #[test]
+fn trusted_policy_rejects_unapproved_listener_without_manual_fallback() {
+    let (runtime, handle, receiver) = start_host(ApprovalMode::TrustedDevices, false);
+    let request = join_request("request-not-approved", "unknown-device", TrustState::SessionOnly, true);
+    handle
+        .submit_transport_event(TransportEvent::JoinRequested(request))
+        .expect("submit untrusted join request");
+    let awaiting_delivery = next_snapshot(&receiver, 5);
+    assert_eq!(awaiting_delivery.pending_join_requests.len(), 1);
+    assert!(awaiting_delivery.listeners.is_empty());
+    let rejection = next_transport_effect(&receiver);
+    assert!(matches!(
+        rejection.request,
+        TransportEffectRequest::DeliverJoinRejection { ref reason_code, .. }
+            if reason_code == "device_not_approved"
+    ));
+    handle
+        .submit_transport_event(TransportEvent::DeliveryCompleted {
+            operation_id: rejection.operation_id,
+            report: DeliveryReport::new(1, 1, 0).expect("rejection reaches listener"),
+        })
+        .expect("confirm rejection");
+    let rejected = next_snapshot(&receiver, awaiting_delivery.revision.get() + 1);
+    assert!(rejected.pending_join_requests.is_empty());
+    assert!(rejected.listeners.is_empty());
+    runtime.shutdown().expect("shutdown host actor");
+}
+
+#[test]
 fn trusted_policy_auto_approves_but_waits_for_delivery() {
     let (runtime, handle, receiver) = start_host(ApprovalMode::TrustedDevices, false);
     let request = join_request("request-3", "listener-3", TrustState::Trusted, true);
