@@ -28,11 +28,11 @@ mod listener_transport;
 #[cfg(test)]
 mod playlist_pcm_capture_tests;
 #[cfg(test)]
+mod socket_actor_authorized_edit_pcm_tests;
+#[cfg(test)]
 mod socket_failure_recovery_pcm_tests;
 #[cfg(test)]
 mod socket_far_future_late_join_pcm_tests;
-#[cfg(test)]
-mod socket_actor_authorized_edit_pcm_tests;
 #[cfg(test)]
 mod socket_live_edit_pcm_tests;
 #[cfg(test)]
