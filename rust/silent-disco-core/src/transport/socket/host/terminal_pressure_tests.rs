@@ -235,3 +235,67 @@ fn multi_peer_join_pressure_refuses_each_request_and_allows_clean_reconnect() {
     retry.shutdown().expect("shutdown retried listener");
     host.shutdown().expect("shutdown host");
 }
+
+#[test]
+fn saturated_host_event_queue_rolls_back_real_socket_authorization() {
+    let session = id_session("host-admission-event-backpressure");
+    let device = id_device("candidate-with-full-actor-queue");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    config.operation_timeout = Duration::from_millis(75);
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind host");
+    let mut candidate = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock.clone(),
+        )
+        .expect("candidate TCP connection");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("candidate accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    candidate
+        .send_control(&join_request(&session, &device, "Candidate"))
+        .expect("join request");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    // A second real TCP connection fills the host's one-slot actor queue
+    // while the first listener waits for its authorization decision.
+    let spectator = id_device("congesting-connection");
+    let mut congesting = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session, spectator, host.endpoint()),
+            clock,
+        )
+        .expect("congesting TCP connection");
+    wait_until(Duration::from_secs(5), || {
+        host.counters().accepted_control_connections == 2
+    });
+    let started = Instant::now();
+    let error = host
+        .authorize_peer(&device, candidate.local_routes())
+        .expect_err("unobserved authorization must be rolled back");
+    assert_eq!(error.kind, crate::transport::TransportErrorKind::QueueFull);
+    assert!(started.elapsed() < Duration::from_secs(2), "finite admission wait");
+    assert!(
+        !host.routes.lock().expect("route registry").contains_key(&device),
+        "failed authorization cannot retain a datagram route"
+    );
+    assert!(host.counters().queue_overflows > 0);
+    assert!(host.counters().delivery_failures > 0);
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("congesting accept"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("candidate disconnect"),
+        TransportEvent::PeerDisconnected { peer, .. }
+            if peer.device_id.as_ref() == Some(&device)
+    ));
+    candidate.shutdown().expect("candidate cleanup");
+    congesting.shutdown().expect("congesting cleanup");
+    host.shutdown().expect("host cleanup");
+}

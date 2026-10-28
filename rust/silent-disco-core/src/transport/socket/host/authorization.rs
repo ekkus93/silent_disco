@@ -7,7 +7,7 @@ use super::super::super::{
     ListenerDatagramRoutes, TransportChannel, TransportError, TransportErrorKind, TransportEvent,
 };
 use super::super::host_workers::shutting_down_error;
-use super::super::shared::send_event;
+use super::super::shared::send_authoritative_event_bounded;
 use super::SocketHostTransport;
 use super::peer::PeerRoute;
 
@@ -81,22 +81,62 @@ impl SocketHostTransport {
             peer.authorized.store(true, Ordering::Release);
             previous
         };
-        // Explicit authorization atomically hands the identity to the new
-        // socket. Retire the old writer/reader; its delayed cleanup checks
-        // peer number and cannot remove the replacement UDP route.
-        if let Some(previous) = previous {
-            previous.peer.authorized.store(false, Ordering::Release);
-            drop(previous.peer.close());
-        }
-        send_event(
+        // PeerAuthorized is authoritative actor state, not telemetry. A full
+        // event queue must not silently admit a listener whose approval the
+        // host application never observes. Bound the wait to the configured
+        // operation timeout and undo the provisional route on failure.
+        let published = send_authoritative_event_bounded(
             &self.event_sender,
+            &self.stop,
             &self.counters,
             TransportEvent::PeerAuthorized {
                 peer: peer.transport_peer(),
                 routes,
                 received_at: self.clock.now(),
             },
+            self.config.operation_timeout,
         );
+        if !published {
+            peer.authorized.store(false, Ordering::Release);
+            let mut registry = self.routes.lock().map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "peer route registry is poisoned during admission rollback",
+                )
+            })?;
+            // Do not displace a concurrently replaced route. The delivery
+            // ordering gate is held, but a retired reader can still remove
+            // its own route asynchronously.
+            if registry
+                .get(device_id)
+                .is_some_and(|route| route.peer.number == peer.number)
+            {
+                if let Some(old) = previous {
+                    if old.peer.active.load(Ordering::Acquire) {
+                        registry.insert(device_id.clone(), old);
+                    } else {
+                        registry.remove(device_id);
+                    }
+                } else {
+                    registry.remove(device_id);
+                }
+            }
+            drop(registry);
+            drop(peer.close());
+            return Err(TransportError::new(
+                TransportErrorKind::QueueFull,
+                TransportChannel::Runtime,
+                "host admission event could not be delivered; listener authorization rolled back",
+            ));
+        }
+        // Only retire the old connection after the replacement's actor
+        // notification has been accepted. A saturated collector must not
+        // destroy a working route when replacement admission fails.
+        if let Some(previous) = previous {
+            previous.peer.authorized.store(false, Ordering::Release);
+            drop(previous.peer.close());
+        }
         Ok(())
     }
 

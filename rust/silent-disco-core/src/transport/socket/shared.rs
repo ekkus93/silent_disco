@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::protocol::{
     DecodePolicy, FRAME_HEADER_BYTES, MAX_CONTROL_PAYLOAD_BYTES, ProtocolDecoder, ProtocolFrame,
@@ -161,13 +161,36 @@ pub(super) fn send_event(
 /// application event queue is full it stops reading TCP, allowing kernel
 /// backpressure. It never runs on a UDP receiver or native audio callback.
 /// Shutdown interrupts the wait, so a stopped collector cannot deadlock a
-/// native transport teardown.
-pub(super) fn send_authoritative_event<T>(
+/// native transportpub(super) fn send_authoritative_event<T>(
+    sender: &SyncSender<T>,
+    stop: &AtomicBool,
+    counters: &CounterState,
+    event: T,
+) -> bool {
+    send_authoritative_event_until(sender, stop, counters, event, None)
+}
+
+/// Admission completion must not wait forever behind a stopped application
+/// collector. A timeout is an explicit failed authorization; callers must
+/// revoke the provisional route before returning an error.
+pub(super) fn send_authoritative_event_bounded<T>(
+    sender: &SyncSender<T>,
+    stop: &AtomicBool,
+    counters: &CounterState,
+    event: T,
+    timeout: Duration,
+) -> bool {
+    send_authoritative_event_until(sender, stop, counters, event, Some(timeout))
+}
+
+fn send_authoritative_event_until<T>(
     sender: &SyncSender<T>,
     stop: &AtomicBool,
     counters: &CounterState,
     mut event: T,
+    timeout: Option<Duration>,
 ) -> bool {
+    let started = Instant::now();
     let mut congested = false;
     loop {
         if stop.load(Ordering::Acquire) {
@@ -183,6 +206,10 @@ pub(super) fn send_authoritative_event<T>(
                     counters.queue_overflow();
                     congested = true;
                 }
+                if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+                    counters.delivery_failure();
+                    return false;
+                }
                 event = pending;
                 thread::sleep(Duration::from_millis(2));
             }
@@ -191,6 +218,9 @@ pub(super) fn send_authoritative_event<T>(
                 return false;
             }
         }
+    }
+}
+ }
     }
 }
 
