@@ -330,6 +330,11 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     let mut first = SocketTransportFactory
         .connect_listener(first_config, clock.clone())
         .expect("first real listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5))
+            .expect("first peer accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
     let mut second = SocketTransportFactory
         .connect_listener(
             ListenerTransportConfig::loopback(
@@ -340,6 +345,11 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
             clock.clone(),
         )
         .expect("second real listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5))
+            .expect("second peer accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
 
     for (listener, device) in [
         (first.as_mut(), &first_id),
@@ -425,6 +435,16 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
         }
     }
 
+    // Clear any residual lossy UDP telemetry before the new TCP accept.
+    // Otherwise its best-effort PeerAccepted notification could be dropped
+    // behind the intentionally tiny actor queue and refuse the new join.
+    loop {
+        match host.recv_event(Duration::from_millis(25)) {
+            Ok(_) => {}
+            Err(error) if error.kind == crate::transport::TransportErrorKind::Timeout => break,
+            Err(error) => panic!("unexpected actor drain failure: {error}"),
+        }
+    }
     let mut replacement = SocketTransportFactory
         .connect_listener(
             ListenerTransportConfig::loopback(
