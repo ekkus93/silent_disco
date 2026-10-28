@@ -5,7 +5,7 @@ use super::host_pending_handshake::send_pending_hello;
 use super::network_error::DesktopNetworkError;
 use silent_disco_core::domain::{TransportState, TrustState};
 use silent_disco_core::error::CoreError;
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, SyncResponse};
+use silent_disco_core::protocol::{ControlMessage, JoinRejection, ProtocolFrame, SyncResponse};
 use silent_disco_core::runtime::{
     AudioEvent, CoreActorHandle, CoreSnapshot, ListenerSummary, SessionAdvertisement,
     SynchronizationSummary, TransportEvent as CoreTransportEvent,
@@ -94,11 +94,37 @@ impl HostTransportEventProcessor {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::JoinRequest(request)),
                 received_at,
-                ..
+                peer,
             } => {
-                let device_id =
-                    self.pending
-                        .register(&request, received_at, advertisement, sink)?;
+                // A second unverified TCP socket claiming the same device ID
+                // must not replace an in-flight approval's UDP ports. Refuse
+                // it explicitly rather than leaving the listener spinning.
+                if self.pending.pending_from_another_peer(
+                    &request.device.device_id,
+                    peer.control_address,
+                ) {
+                    let rejection = ControlMessage::JoinRejection(JoinRejection {
+                        session_id: advertisement.session_id.clone(),
+                        listener_id: request.device.device_id.clone(),
+                        reason: "Another connection with this listener ID is awaiting approval"
+                            .to_owned(),
+                    });
+                    let delivery_error = node
+                        .send_pending_control(&request.device.device_id, &rejection)
+                        .err()
+                        .map(|error| format!("; rejection delivery failed: {error}"))
+                        .unwrap_or_default();
+                    return Ok(Some(format!(
+                        "Duplicate pending listener identity rejected{delivery_error}"
+                    )));
+                }
+                let device_id = self.pending.register(
+                    &request,
+                    peer.control_address,
+                    received_at,
+                    advertisement,
+                    sink,
+                )?;
                 Ok(send_pending_hello(node, &device_id, advertisement))
             }
             RuntimeTransportEvent::FrameReceived {
@@ -156,7 +182,11 @@ impl HostTransportEventProcessor {
                 let Some(device_id) = peer.device_id else {
                     return Ok(error.map(|error| error.to_string()));
                 };
-                self.pending.remove(&device_id);
+                if !self.pending.remove_if_current(&device_id, peer.control_address) {
+                    // Old TCP teardown after a same-ID reconnect is not a
+                    // disconnect of the currently projected listener.
+                    return Ok(None);
+                }
                 let visible = error.as_ref().map(ToString::to_string);
                 let error =
                     error.map(|error| DesktopNetworkError::transport(&error).core_error(None));
