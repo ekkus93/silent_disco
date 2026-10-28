@@ -85,6 +85,29 @@ class HostTransportController(
     suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? =
         withHandle { it.sendJoinApproval(listenerId, trustedForFuture) }
 
+    /**
+     * Complete approval and datagram-route authorization under one handle gate.
+     * Capturing the generation before dispatch prevents a delayed approval
+     * from being applied to a new host after Stop/rebind.
+     */
+    suspend fun approveAndAuthorizeListener(
+        listenerId: String,
+        trustedForFuture: Boolean,
+        syncPort: UShort,
+        audioPort: UShort,
+    ): HostJoinAuthorizationResult<FfiHostTransportDelivery>? {
+        val expected = handleGate.currentHandle() ?: return null
+        return withContext(callDispatcher) {
+            handleGate.deliverAndAuthorize(
+                expected = expected,
+                deliver = { it.sendJoinApproval(listenerId, trustedForFuture) },
+                wasDelivered = { it.successfulPeers > 0u },
+                authorize = { it.authorizeListener(listenerId, syncPort, audioPort) },
+                disconnect = { it.disconnectPeer(listenerId, "Listener route authorization failed") },
+            )
+        }
+    }
+
     suspend fun sendJoinRejection(listenerId: String, reason: String): FfiHostTransportDelivery? =
         withHandle { it.sendJoinRejection(listenerId, reason) }
 

@@ -519,35 +519,35 @@ private suspend fun MainViewModel.executeRustTransportEffect(
     controller: HostCoreController,
     effect: FfiTransportEffect,
 ) {
-    val delivery = when (effect) {
-        is FfiTransportEffect.DeliverJoinApproval ->
-            hostTransportController.sendJoinApproval(effect.listenerId, effect.trustedForFuture)
-        is FfiTransportEffect.DeliverJoinRejection -> {
-            pendingListenerDatagramPorts.remove(effect.listenerId)
-            hostTransportController.sendJoinRejection(effect.listenerId, effect.reasonCode)
+    if (effect is FfiTransportEffect.DeliverJoinApproval) {
+        // Do not send a successful approval without the UDP ports needed to
+        // authorize the SAME peer/session. Approval and route authorization
+        // must not straddle a host close/rebind suspend boundary.
+        val ports = pendingListenerDatagramPorts.remove(effect.listenerId)
+        val outcome = ports?.let { (syncPort, audioPort) ->
+            hostTransportController.approveAndAuthorizeListener(
+                effect.listenerId, effect.trustedForFuture, syncPort, audioPort,
+            )
         }
-        is FfiTransportEffect.DisconnectListener -> {
-            pendingListenerDatagramPorts.remove(effect.listenerId)
-            hostTransportController.disconnectPeer(effect.listenerId, effect.reasonCode)
+        val authorized = outcome?.authorized == true
+        controller.transportDeliveryCompleted(
+            effect.operationId,
+            if (authorized) {
+                outcome.delivery.toFfiDeliveryReport()
+            } else {
+                FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u)
+            },
+        )
+        if (!authorized) {
+            val reason = when {
+                ports == null -> "Listener route ports missing; approval refused"
+                outcome == null -> "Host session replaced before listener approval"
+                outcome.failure != null -> outcome.failure
+                else -> "Listener approval was not delivered"
+            }
+            reportRustHostCommandFailure("authorize listener", IllegalStateException(reason))
+            return
         }
-    }
-    controller.transportDeliveryCompleted(
-        operationId = when (effect) {
-            is FfiTransportEffect.DeliverJoinApproval -> effect.operationId
-            is FfiTransportEffect.DeliverJoinRejection -> effect.operationId
-            is FfiTransportEffect.DisconnectListener -> effect.operationId
-        },
-        report = delivery.toFfiDeliveryReport(),
-    )
-    if (effect is FfiTransportEffect.DeliverJoinApproval && (delivery?.successfulPeers ?: 0u) > 0u) {
-        val authorized = pendingListenerDatagramPorts.remove(effect.listenerId)?.let { (syncPort, audioPort) ->
-            runCatching {
-                hostTransportController.authorizeListener(effect.listenerId, syncPort, audioPort)
-            }.onFailure { error ->
-                reportRustHostCommandFailure("authorize listener datagram routes", error)
-            }.isSuccess
-        } ?: false
-        if (!authorized) return
         val displayName = _uiState.value.pendingJoinRequests
             .firstOrNull { it.listenerId == effect.listenerId }
             ?.listenerName
@@ -567,7 +567,28 @@ private suspend fun MainViewModel.executeRustTransportEffect(
                 lastError = null,
             ),
         )
+        return
     }
+
+    val delivery = when (effect) {
+        is FfiTransportEffect.DeliverJoinRejection -> {
+            pendingListenerDatagramPorts.remove(effect.listenerId)
+            hostTransportController.sendJoinRejection(effect.listenerId, effect.reasonCode)
+        }
+        is FfiTransportEffect.DisconnectListener -> {
+            pendingListenerDatagramPorts.remove(effect.listenerId)
+            hostTransportController.disconnectPeer(effect.listenerId, effect.reasonCode)
+        }
+        is FfiTransportEffect.DeliverJoinApproval -> error("handled above")
+    }
+    controller.transportDeliveryCompleted(
+        operationId = when (effect) {
+            is FfiTransportEffect.DeliverJoinRejection -> effect.operationId
+            is FfiTransportEffect.DisconnectListener -> effect.operationId
+            is FfiTransportEffect.DeliverJoinApproval -> error("handled above")
+        },
+        report = delivery.toFfiDeliveryReport(),
+    )
 }
 
 /** A missing delivery (transport not yet bound) reports as zero peers reached. */

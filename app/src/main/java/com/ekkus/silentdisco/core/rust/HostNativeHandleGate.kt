@@ -51,5 +51,43 @@ internal class HostNativeHandleGate<T : Any> {
     }
 }
 
+/**
+ * Approval delivery and UDP-route authorization are one operation on the SAME
+ * native generation. A suspend between these calls used to allow an old
+ * approval to authorize a newly rebound host handle.
+ *
+ * A failed authorization is never reported as admission success. Attempt to
+ * retire the peer on the same handle before releasing the generation gate.
+ */
+internal data class HostJoinAuthorizationResult<D>(
+    val delivery: D,
+    val authorized: Boolean,
+    val failure: String? = null,
+)
+
+internal fun <H : Any, D : Any> HostNativeHandleGate<H>.deliverAndAuthorize(
+    expected: H,
+    deliver: (H) -> D,
+    wasDelivered: (D) -> Boolean,
+    authorize: (H) -> Unit,
+    disconnect: (H) -> Unit,
+): HostJoinAuthorizationResult<D>? = withExpected(expected) { handle ->
+    val delivery = deliver(handle)
+    if (!wasDelivered(delivery)) {
+        HostJoinAuthorizationResult(delivery, authorized = false)
+    } else {
+        try {
+            authorize(handle)
+            HostJoinAuthorizationResult(delivery, authorized = true)
+        } catch (error: Exception) {
+            runCatching { disconnect(handle) }
+            HostJoinAuthorizationResult(
+                delivery, authorized = false,
+                failure = error.message ?: "Listener route authorization failed",
+            )
+        }
+    }
+}
+
 /** Reuse the same lifetime and generation guarantee for listener FFI handles. */
 internal typealias ListenerNativeHandleGate<T> = HostNativeHandleGate<T>

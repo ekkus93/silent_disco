@@ -111,4 +111,88 @@ class HostNativeHandleGateTest {
         assertThat(disposed).containsExactly(old, orphan).inOrder()
         assertThat(gate.currentHandle()).isNull()
     }
+
+    @Test
+    fun approvalAndRouteAuthorizationStayOnOriginalHandleAcrossConcurrentRebind() {
+        val gate = HostNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val retired = mutableListOf<Any>()
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            gate.replace(retire = {}, open = { old }, start = {})
+            val approval = pool.submit<HostJoinAuthorizationResult<String>?> {
+                gate.deliverAndAuthorize(
+                    expected = old,
+                    deliver = {
+                        assertThat(it).isSameInstanceAs(old)
+                        started.countDown()
+                        check(release.await(5, TimeUnit.SECONDS))
+                        "approved"
+                    },
+                    wasDelivered = { it == "approved" },
+                    authorize = { assertThat(it).isSameInstanceAs(old) },
+                    disconnect = { error("successful approval must not disconnect") },
+                )
+            }
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue()
+            val rebind = pool.submit {
+                gate.replace(
+                    retire = { if (it != null) retired.add(it) },
+                    open = { replacement },
+                    start = {},
+                )
+            }
+            release.countDown()
+            assertThat(approval.get(5, TimeUnit.SECONDS)?.authorized).isTrue()
+            rebind.get(5, TimeUnit.SECONDS)
+            assertThat(retired).containsExactly(old)
+            assertThat(gate.deliverAndAuthorize(
+                expected = old,
+                deliver = { error("stale approval must not be sent") },
+                wasDelivered = { true },
+                authorize = { error("stale authorization must not run") },
+                disconnect = {},
+            )).isNull()
+            assertThat(gate.currentHandle()).isSameInstanceAs(replacement)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun failedRouteAuthorizationRetiresPeerAndNeverReportsAdmissionSuccess() {
+        val gate = HostNativeHandleGate<Any>()
+        val handle = Any()
+        val calls = mutableListOf<String>()
+        gate.replace(retire = {}, open = { handle }, start = {})
+        val result = gate.deliverAndAuthorize(
+            expected = handle,
+            deliver = { calls.add("approval"); "delivered" },
+            wasDelivered = { true },
+            authorize = {
+                calls.add("authorize")
+                error("UDP route rejected")
+            },
+            disconnect = { calls.add("disconnect") },
+        )
+        assertThat(result?.authorized).isFalse()
+        assertThat(result?.failure).contains("UDP route rejected")
+        assertThat(calls).containsExactly("approval", "authorize", "disconnect").inOrder()
+
+        calls.clear()
+        val undelivered = gate.deliverAndAuthorize(
+            expected = handle,
+            deliver = { calls.add("approval"); "failed" },
+            wasDelivered = { false },
+            authorize = { calls.add("authorize") },
+            disconnect = { calls.add("disconnect") },
+        )
+        assertThat(undelivered?.authorized).isFalse()
+        assertThat(calls).containsExactly("approval")
+        gate.close {}
+    }
 }
