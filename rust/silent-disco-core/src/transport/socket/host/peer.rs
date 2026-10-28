@@ -13,7 +13,7 @@ pub(in crate::transport::socket) struct PeerState {
     pub(in crate::transport::socket) remote: SocketAddr,
     pub(in crate::transport::socket) identity: Mutex<Option<DeviceId>>,
     pub(in crate::transport::socket) authorized: AtomicBool,
-    /// A TCP connection may forward at most one JoinRequest to the host actor.
+    /// A TCP connection may forward at most one `JoinRequest` to the host actor.
     /// A new connection has a fresh flag; this is not durable identity proof.
     pub(in crate::transport::socket) join_forwarded: AtomicBool,
     pub(in crate::transport::socket) active: AtomicBool,
