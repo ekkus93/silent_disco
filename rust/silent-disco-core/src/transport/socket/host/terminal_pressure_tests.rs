@@ -252,7 +252,8 @@ fn saturated_host_event_queue_rolls_back_real_socket_authorization() {
         )
         .expect("candidate TCP connection");
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("candidate accepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("candidate accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     candidate
@@ -279,19 +280,28 @@ fn saturated_host_event_queue_rolls_back_real_socket_authorization() {
         .authorize_peer(&device, candidate.local_routes())
         .expect_err("unobserved authorization must be rolled back");
     assert_eq!(error.kind, crate::transport::TransportErrorKind::QueueFull);
-    assert!(started.elapsed() < Duration::from_secs(2), "finite admission wait");
     assert!(
-        !host.routes.lock().expect("route registry").contains_key(&device),
+        started.elapsed() < Duration::from_secs(2),
+        "finite admission wait"
+    );
+    assert!(
+        !host
+            .routes
+            .lock()
+            .expect("route registry")
+            .contains_key(&device),
         "failed authorization cannot retain a datagram route"
     );
     assert!(host.counters().queue_overflows > 0);
     assert!(host.counters().delivery_failures > 0);
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("congesting accept"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("congesting accept"),
         TransportEvent::PeerAccepted { .. }
     ));
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("candidate disconnect"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("candidate disconnect"),
         TransportEvent::PeerDisconnected { peer, .. }
             if peer.device_id.as_ref() == Some(&device)
     ));
