@@ -128,7 +128,6 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
     runtime.shutdown().expect("runtime shutdown");
 }
 
-
 #[test]
 fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     let factory = production_transport_factory();
@@ -158,7 +157,9 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
         matches!(message, ControlMessage::Hello(_))
     });
     assert!(matches!(
-        receiver.recv_timeout(TEST_TIMEOUT).expect("first join event"),
+        receiver
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("first join event"),
         CoreTransportEvent::JoinRequested(_)
     ));
     runtime
@@ -193,7 +194,9 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
         matches!(message, ControlMessage::Hello(_))
     });
     assert!(matches!(
-        receiver.recv_timeout(TEST_TIMEOUT).expect("replacement join event"),
+        receiver
+            .recv_timeout(TEST_TIMEOUT)
+            .expect("replacement join event"),
         CoreTransportEvent::JoinRequested(_)
     ));
     runtime
@@ -227,7 +230,8 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     // worker to process the retired reader's terminal event.
     drop(first.shutdown());
     let deadline = Instant::now() + Duration::from_millis(500);
-    while let Ok(event) = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+    while let Ok(event) = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    {
         assert!(
             !matches!(
                 event,
