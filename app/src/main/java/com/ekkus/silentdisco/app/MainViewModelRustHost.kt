@@ -533,7 +533,7 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         controller.transportDeliveryCompleted(
             effect.operationId,
             if (authorized) {
-                outcome.delivery.toFfiDeliveryReport()
+                outcome?.delivery.toFfiDeliveryReport()
             } else {
                 FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u)
             },
