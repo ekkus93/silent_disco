@@ -161,7 +161,8 @@ pub(super) fn send_event(
 /// application event queue is full it stops reading TCP, allowing kernel
 /// backpressure. It never runs on a UDP receiver or native audio callback.
 /// Shutdown interrupts the wait, so a stopped collector cannot deadlock a
-/// native transportpub(super) fn send_authoritative_event<T>(
+/// native transport teardown.
+pub(super) fn send_authoritative_event<T>(
     sender: &SyncSender<T>,
     stop: &AtomicBool,
     counters: &CounterState,
@@ -218,9 +219,6 @@ fn send_authoritative_event_until<T>(
                 return false;
             }
         }
-    }
-}
- }
     }
 }
 
