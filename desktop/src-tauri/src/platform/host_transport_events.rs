@@ -111,19 +111,10 @@ impl HostTransportEventProcessor {
                     .pending
                     .pending_from_another_peer(&request.device.device_id, peer.control_address)
                 {
-                    let rejection = ControlMessage::JoinRejection(JoinRejection {
-                        session_id: advertisement.session_id.clone(),
-                        listener_id: request.device.device_id.clone(),
-                        reason: "Another connection with this listener ID is awaiting approval"
-                            .to_owned(),
-                    });
-                    let delivery_error = node
-                        .send_pending_control(&request.device.device_id, &rejection)
-                        .err()
-                        .map(|error| format!("; rejection delivery failed: {error}"))
-                        .unwrap_or_default();
-                    return Ok(Some(format!(
-                        "Duplicate pending listener identity rejected{delivery_error}"
+                    return Ok(Some(Self::duplicate_pending_warning(
+                        node,
+                        advertisement,
+                        &request.device.device_id,
                     )));
                 }
                 let device_id = self.pending.register(
@@ -213,6 +204,26 @@ impl HostTransportEventProcessor {
             | RuntimeTransportEvent::PeerAuthorized { .. }
             | RuntimeTransportEvent::FrameReceived { .. } => Ok(None),
         }
+    }
+
+    /// Keep the rejection visible even when sending the refusal fails.
+    /// The unverified duplicate never replaces an existing pending route.
+    fn duplicate_pending_warning(
+        node: &dyn HostTransportNode,
+        advertisement: &SessionAdvertisement,
+        device_id: &silent_disco_core::domain::DeviceId,
+    ) -> String {
+        let rejection = ControlMessage::JoinRejection(JoinRejection {
+            session_id: advertisement.session_id.clone(),
+            listener_id: device_id.clone(),
+            reason: "Another connection with this listener ID is awaiting approval".to_owned(),
+        });
+        let delivery_error = node
+            .send_pending_control(device_id, &rejection)
+            .err()
+            .map(|error| format!("; rejection delivery failed: {error}"))
+            .unwrap_or_default();
+        format!("Duplicate pending listener identity rejected{delivery_error}")
     }
 
     /// Runs the exact production host event projection for Lab Mode while

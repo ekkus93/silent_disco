@@ -129,6 +129,7 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Full real-socket reconnect lifecycle is one acceptance scenario.
 fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     let factory = production_transport_factory();
     let session_id = SessionId::new("reconnect-projection-session").expect("session");
@@ -151,7 +152,7 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     let runtime =
         DesktopHostTransportRuntime::start(node, advertisement, sink, clock).expect("runtime");
 
-    let mut first = connect_listener(&factory, &session_id, &listener_id, endpoint.clone());
+    let mut first = connect_listener(&factory, &session_id, &listener_id, endpoint);
     send_join(&*first, &session_id, &listener_id);
     wait_for_control(&mut *first, |message| {
         matches!(message, ControlMessage::Hello(_))
