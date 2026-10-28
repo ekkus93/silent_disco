@@ -99,10 +99,10 @@ impl HostTransportEventProcessor {
                 // A second unverified TCP socket claiming the same device ID
                 // must not replace an in-flight approval's UDP ports. Refuse
                 // it explicitly rather than leaving the listener spinning.
-                if self.pending.pending_from_another_peer(
-                    &request.device.device_id,
-                    peer.control_address,
-                ) {
+                if self
+                    .pending
+                    .pending_from_another_peer(&request.device.device_id, peer.control_address)
+                {
                     let rejection = ControlMessage::JoinRejection(JoinRejection {
                         session_id: advertisement.session_id.clone(),
                         listener_id: request.device.device_id.clone(),
@@ -182,7 +182,10 @@ impl HostTransportEventProcessor {
                 let Some(device_id) = peer.device_id else {
                     return Ok(error.map(|error| error.to_string()));
                 };
-                if !self.pending.remove_if_current(&device_id, peer.control_address) {
+                if !self
+                    .pending
+                    .remove_if_current(&device_id, peer.control_address)
+                {
                     // Old TCP teardown after a same-ID reconnect is not a
                     // disconnect of the currently projected listener.
                     return Ok(None);

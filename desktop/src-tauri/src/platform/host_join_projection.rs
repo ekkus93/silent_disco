@@ -76,7 +76,8 @@ impl PendingJoinProjection {
         .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
         sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary))
             .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
-        self.current_peers.insert(device_id.clone(), control_address);
+        self.current_peers
+            .insert(device_id.clone(), control_address);
         self.requests.insert(
             device_id.clone(),
             PendingJoinPorts {
@@ -182,10 +183,10 @@ mod generation_tests {
                 display_name: "Pending".to_owned(),
             },
         );
-        assert!(!projection.remove_if_current(
-            &device,
-            "127.0.0.1:43104".parse().expect("other address"),
-        ));
+        assert!(
+            !projection
+                .remove_if_current(&device, "127.0.0.1:43104".parse().expect("other address"),)
+        );
         assert!(projection.remove_if_current(&device, current));
         assert_eq!(projection.take_ports(&device), None);
     }
