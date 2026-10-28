@@ -88,10 +88,51 @@ class WorkflowConfigurationStateTest {
         composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
         composeRule.onNodeWithTag("host-access-trusted_devices_placeholder")
             .performScrollTo()
+            .assertIsNotEnabled()
+            .assertIsNotSelected()
+        composeRule.onNodeWithTag("host-access-manual")
+            .performScrollTo()
             .performClick()
-        composeRule.onNodeWithTag("host-access-trusted_devices_placeholder").assertIsSelected()
+        composeRule.onNodeWithTag("host-access-manual").assertIsSelected()
         composeRule.onNodeWithTag("host-access-next").assertIsEnabled()
         composeRule.runOnIdle { assertThat(selections).isEqualTo(2) }
+    }
+
+    @Test
+    fun restoredApprovedOnlyDraftCannotStartOnUnauthenticatedLan() {
+        var state by mutableStateOf(
+            AppUiState(
+                hostForm = HostFormState(
+                    approvalMode = ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER,
+                    selectedAudio = SelectedAudioFile(
+                        uri = Uri.parse("content://test/unverified-trust.wav"),
+                        displayName = "unverified-trust.wav",
+                        mimeType = "audio/wav",
+                        sizeBytes = 1_024,
+                    ),
+                ),
+            ),
+        )
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent {
+            SilentDiscoTheme {
+                HostAccessSetupScreen(
+                    uiState = state,
+                    onBack = {},
+                    onApprovalModeChanged = { mode ->
+                        state = state.copy(hostForm = state.hostForm.copy(approvalMode = mode))
+                    },
+                    onInviteCodeChanged = {},
+                    onGenerateCode = {},
+                    onNext = { error("Unverified trust must not submit") },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
+        composeRule.onNodeWithTag("host-access-manual").performScrollTo().performClick()
+        composeRule.onNodeWithTag("host-access-next").assertIsEnabled()
     }
 
     @Test
@@ -176,6 +217,34 @@ class WorkflowConfigurationStateTest {
         composeRule.onNodeWithTag("host-access-next").performClick()
         composeRule.onNodeWithTag("host-access-next").assertIsNotEnabled()
         composeRule.runOnIdle { assertThat(nextCalls).isEqualTo(2) }
+    }
+
+    @Test
+    fun hostReadyRejectsRestoredUnverifiedTrustMode() {
+        val state = AppUiState(
+            hostForm = HostFormState(
+                approvalMode = ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER,
+                selectedAudio = SelectedAudioFile(
+                    uri = Uri.parse("content://test/ready-unverified.wav"),
+                    displayName = "ready-unverified.wav",
+                    mimeType = "audio/wav",
+                    sizeBytes = 1_024,
+                ),
+            ),
+        )
+        composeRule.setContent {
+            SilentDiscoTheme {
+                HostReadyScreen(
+                    uiState = state,
+                    onBack = {},
+                    onStartSession = { error("Unverified trust must not start") },
+                    onOpenSettings = {},
+                    onShareSupportReport = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag("host-ready-unverified-trust").performScrollTo().assertExists()
+        composeRule.onNodeWithTag("host-start-session").assertIsNotEnabled()
     }
 
     @Test

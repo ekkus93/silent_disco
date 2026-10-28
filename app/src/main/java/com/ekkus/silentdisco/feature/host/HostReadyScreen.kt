@@ -60,7 +60,12 @@ fun HostReadyScreen(
     val form = uiState.hostForm
     val files = listOfNotNull(form.selectedAudio) + form.additionalAudio
     val inviteCodeRequired = form.approvalMode == com.ekkus.silentdisco.core.model.ApprovalMode.INVITE_CODE
+    // Legacy v3 does not verify device identities. A restored draft must
+    // never silently start an unusable "approved devices only" session.
+    val verifiedTrustUnavailable =
+        form.approvalMode == com.ekkus.silentdisco.core.model.ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER
     val valid = form.sessionName.isNotBlank() && files.isNotEmpty() &&
+        !verifiedTrustUnavailable &&
         (!inviteCodeRequired || isValidInviteCode(form.inviteCode))
     val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION || startInFlight
     val failed = !uiState.lastError.isNullOrBlank() &&
@@ -135,6 +140,13 @@ fun HostReadyScreen(
                 }
             }
             SummaryCard("Access", form.approvalMode.label())
+            if (verifiedTrustUnavailable) {
+                Text(
+                    "Approved devices only is unavailable on plaintext LAN transport. Go back and choose manual approval or an invite code.",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("host-ready-unverified-trust"),
+                )
+            }
             if (inviteCodeRequired) {
                 SummaryCard("Invite code", form.inviteCode.ifBlank { "Required" })
             }

@@ -69,7 +69,7 @@ private val accessOptions = listOf(
     AccessOption(
         ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER,
         "Approved devices only",
-        "Devices you previously marked as always allowed can join.",
+        "Unavailable until listeners can prove their identity over a secure connection.",
     ),
 )
 
@@ -105,8 +105,10 @@ fun HostAccessSetupScreen(
     }
     val inviteCodeRequired = uiState.hostForm.approvalMode == ApprovalMode.INVITE_CODE
     val inviteCodeValid = !inviteCodeRequired || isValidInviteCode(uiState.hostForm.inviteCode)
+    val legacyTrustUnavailable =
+        uiState.hostForm.approvalMode == ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER
     val invalid = uiState.hostForm.sessionName.isBlank() ||
-        uiState.hostForm.selectedAudio == null || !inviteCodeValid
+        uiState.hostForm.selectedAudio == null || !inviteCodeValid || legacyTrustUnavailable
     val isStarting = uiState.hostState == HostLifecycleState.CREATING_SESSION || startSubmissionInFlight
 
     Column(
@@ -139,6 +141,7 @@ fun HostAccessSetupScreen(
 
             accessOptions.forEach { option ->
                 val selected = uiState.hostForm.approvalMode == option.mode
+                val available = option.mode != ApprovalMode.TRUSTED_DEVICES_PLACEHOLDER
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -151,6 +154,7 @@ fun HostAccessSetupScreen(
                         }
                         .selectable(
                             selected = selected,
+                            enabled = available,
                             role = Role.RadioButton,
                             onClick = { onApprovalModeChanged(option.mode) },
                         )
@@ -161,7 +165,7 @@ fun HostAccessSetupScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(WorkflowSpacing.medium),
                     ) {
-                        RadioButton(selected = selected, onClick = null)
+                        RadioButton(selected = selected, onClick = null, enabled = available)
                         Column(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.xSmall),
@@ -225,7 +229,11 @@ fun HostAccessSetupScreen(
 
             if (invalid) {
                 Text(
-                    text = "Complete the required session details before continuing.",
+                    text = if (legacyTrustUnavailable) {
+                        "Approved devices only cannot start on this plaintext connection. Choose manual approval or an invite code."
+                    } else {
+                        "Complete the required session details before continuing."
+                    },
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )

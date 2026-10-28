@@ -184,6 +184,45 @@ describe("HostSetupScreen", () => {
     expect(screen.getByRole("button", { name: "Start hosting" })).toBeInTheDocument();
   });
 
+  it("disables unverified approved-only admission and remembered identities on plaintext v3", () => {
+    renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
+    expect(
+      screen.getByRole("option", { name: /Approved devices only/ }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Remember approved devices")).toBeDisabled();
+    expect(screen.getByText(/Approved-device auto-admission requires verified identities/))
+      .toBeInTheDocument();
+  });
+
+  it("blocks restored unverified trust until the host explicitly chooses safe settings", async () => {
+    const old = snapshot();
+    renderScreen(
+      snapshot({
+        hostDraft: {
+          ...old.hostDraft,
+          approvalMode: "trusted_devices",
+          rememberApprovedDevices: true,
+        },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("unverified device trust");
+    expect(screen.getByRole("button", { name: "Review session" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Listener approval"), {
+      target: { value: "manual" },
+    });
+    fireEvent.click(screen.getByLabelText("Remember approved devices"));
+    expect(screen.getByLabelText("Remember approved devices")).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review session" }));
+    await waitFor(() =>
+      expect(updateHostDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ approvalMode: "manual", rememberApprovedDevices: false }),
+      ),
+    );
+  });
+
   it("shows invite-code controls only for invite-code approval", () => {
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
