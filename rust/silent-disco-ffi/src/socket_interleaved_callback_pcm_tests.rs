@@ -106,7 +106,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
             .successful_peers,
         1
     );
-    assert_eq!(recv_control(listener.as_mut()), start);
+    assert!(recv_control(listener.as_mut()) == start);
 
     let mut config = SchedulerConfig::new(session.clone(), stream.clone(), 48_000, 1_000, 240, 2);
     config.startup_buffer_target_ms = 0;
@@ -216,9 +216,9 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                         .successful_peers,
                     if newcomer.is_some() { 2 } else { 1 }
                 );
-                assert_eq!(recv_control(listener.as_mut()), boundary);
+                assert!(recv_control(listener.as_mut()) == boundary);
                 if let Some(peer) = newcomer.as_deref_mut() {
-                    assert_eq!(recv_control(peer), boundary);
+                    assert!(recv_control(peer) == boundary);
                 }
                 boundaries.push(first_sample_index);
                 if first_sample_index == 480 {
@@ -232,13 +232,12 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                         host_pause_time_ms: MonotonicMillis::new(1_010),
                     });
                     host.broadcast_control(&pause).expect("Pause TCP");
-                    assert_eq!(recv_control(listener.as_mut()), pause);
+                    assert!(recv_control(listener.as_mut()) == pause);
                     let mut replacement =
                         authorized_late_joiner(host.as_mut(), "pcm-regression-listener");
                     for expected in [&start, &boundary, &pause] {
-                        assert_eq!(
-                            recv_control(replacement.as_mut()),
-                            *expected,
+                        assert!(
+                            recv_control(replacement.as_mut()) == *expected,
                             "reconnect during Pause must replay authoritative controls"
                         );
                     }
@@ -246,7 +245,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     listener = replacement;
                     let mut extra = authorized_late_joiner(host.as_mut(), "interleaved-pause-late");
                     for expected in [&start, &boundary, &pause] {
-                        assert_eq!(recv_control(extra.as_mut()), *expected);
+                        assert!(recv_control(extra.as_mut()) == *expected);
                     }
                     let ControlMessage::StreamStart(mut reanchored) = start.clone() else {
                         panic!("initial start");
@@ -260,8 +259,8 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                             .successful_peers,
                         2
                     );
-                    assert_eq!(recv_control(listener.as_mut()), resume);
-                    assert_eq!(recv_control(extra.as_mut()), resume);
+                    assert!(recv_control(listener.as_mut()) == resume);
+                    assert!(recv_control(extra.as_mut()) == resume);
                     pump.scheduler_mut().set_host_start_time_ms(1_200);
                     newcomer = Some(extra);
                     resumed = true;
@@ -310,11 +309,8 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
             .successful_peers,
         2
     );
-    assert_eq!(recv_control(listener.as_mut()), stop);
-    assert_eq!(
-        recv_control(newcomer.as_deref_mut().expect("late listener")),
-        stop
-    );
+    assert!(recv_control(listener.as_mut()) == stop);
+    assert!(recv_control(newcomer.as_deref_mut().expect("late listener")) == stop);
     let stopped_controls = host.counters().control_frames_sent;
     let mut stopped_joiner = authorized_late_joiner(host.as_mut(), "interleaved-stopped-late");
     assert_eq!(
