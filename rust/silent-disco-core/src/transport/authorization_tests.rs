@@ -8,7 +8,7 @@ use crate::protocol::{ControlMessage, Heartbeat, Hello, PROTOCOL_MAGIC, Protocol
 
 use super::test_support::{
     id_device, id_session, join_request, stream_start, stream_stop, wait_for_control_from,
-    wait_for_frame, wait_for_rejection, wait_for_host_event, wait_until,
+    wait_for_frame, wait_for_host_event, wait_for_rejection, wait_until,
 };
 use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
@@ -173,17 +173,13 @@ fn real_socket_multi_peer_pressure_refuses_busy_joins_then_recovers_control_deli
     let second_id = id_device("pressure-second");
     let mut first = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session_id.clone(), first_id.clone(), endpoint,
-            ),
+            ListenerTransportConfig::loopback(session_id.clone(), first_id.clone(), endpoint),
             clock.clone(),
         )
         .expect("first listener connects");
     let mut second = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session_id.clone(), second_id.clone(), endpoint,
-            ),
+            ListenerTransportConfig::loopback(session_id.clone(), second_id.clone(), endpoint),
             clock.clone(),
         )
         .expect("second listener connects");
@@ -243,9 +239,7 @@ fn real_socket_multi_peer_pressure_refuses_busy_joins_then_recovers_control_deli
     let recovered_id = id_device("pressure-recovered");
     let mut recovered = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session_id.clone(), recovered_id.clone(), endpoint,
-            ),
+            ListenerTransportConfig::loopback(session_id.clone(), recovered_id.clone(), endpoint),
             clock,
         )
         .expect("recovered listener connects");
@@ -278,16 +272,26 @@ fn real_socket_multi_peer_pressure_refuses_busy_joins_then_recovers_control_deli
     });
     host.broadcast_control(&stream_start(&session_id, 1_000))
         .expect("start reaches authorized peer despite telemetry pressure");
-    drop(wait_for_frame(&mut *recovered, TransportChannel::Control, |frame| {
-        matches!(frame, ProtocolFrame::Control(ControlMessage::StreamStart(_)))
-    }));
+    drop(wait_for_frame(
+        &mut *recovered,
+        TransportChannel::Control,
+        |frame| {
+            matches!(
+                frame,
+                ProtocolFrame::Control(ControlMessage::StreamStart(_))
+            )
+        },
+    ));
     host.broadcast_control(&stream_stop(&session_id, 2_000))
         .expect("Stop reaches authorized peer despite telemetry pressure");
-    drop(wait_for_frame(&mut *recovered, TransportChannel::Control, |frame| {
-        matches!(frame, ProtocolFrame::Control(ControlMessage::Stop(_)))
-    }));
+    drop(wait_for_frame(
+        &mut *recovered,
+        TransportChannel::Control,
+        |frame| matches!(frame, ProtocolFrame::Control(ControlMessage::Stop(_))),
+    ));
     recovered.shutdown().expect("recovered listener shutdown");
-    host.shutdown().expect("host shutdown after pressure recovery");
+    host.shutdown()
+        .expect("host shutdown after pressure recovery");
 }
 
 fn invalid_version_header() -> [u8; 16] {
