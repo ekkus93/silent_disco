@@ -82,6 +82,26 @@ pub(super) fn validate_playlist_entries(
     Ok(())
 }
 
+/// Reject reusing an entry that was current before a concurrent promotion.
+/// Checking only the *current* ID races a fast producer and lets a stale
+/// queue edit reintroduce a track that already played.
+pub(super) fn validate_playlist_update(
+    state: &PlaylistUpdateState,
+    upcoming: &[StreamingPlaylistTrackFactory],
+) -> Result<(), PacketizerWorkerError> {
+    validate_playlist_entries(Some(&state.current_entry_id), upcoming)?;
+    if upcoming
+        .iter()
+        .any(|entry| state.retired_entry_ids.contains(&entry.entry_id))
+    {
+        return Err(PacketizerWorkerError::new(
+            PacketizerWorkerErrorKind::Packetize,
+            "playlist contains duplicate entry IDs from already played tracks",
+        ));
+    }
+    Ok(())
+}
+
 /// The shared terminal result for either natural queue-end path.
 fn playlist_completed_summary(statistics: &SharedStatistics) -> PacketizerSummary {
     PacketizerSummary {
@@ -251,7 +271,7 @@ fn apply_playlist_update(
     })?;
     if let Some(replacement) = state.pending.take() {
         // Promotion may have happened since the caller submitted this edit.
-        super::validate_playlist_entries(Some(&state.current_entry_id), &replacement)?;
+        super::validate_playlist_update(&state, &replacement)?;
         *upcoming = replacement.into();
     }
     Ok(())
@@ -272,8 +292,10 @@ fn promote_current_entry_if_unmodified(
     if state.pending.is_some() {
         return Ok(false);
     }
-    state.current_entry_id.clear();
-    state.current_entry_id.push_str(entry_id);
+    if state.current_entry_id != entry_id {
+        let previous = std::mem::replace(&mut state.current_entry_id, entry_id.to_owned());
+        state.retired_entry_ids.insert(previous);
+    }
     state.reservation_shadow_entry_id = reserved.then(|| entry_id.to_owned());
     Ok(true)
 }
@@ -398,6 +420,7 @@ fn refresh_pending_playlist_update(
             upcoming.pop_front();
         } else {
             if let Some((_, Ok(stale))) = next.take() {
+
                 let _ = stale.cancel_and_join();
             }
             *next = open_next_track(upcoming);
@@ -448,6 +471,32 @@ mod promotion_identity_tests {
         assert!(same_staged_identity("next", "Track", &same));
         assert!(!same_staged_identity("next", "Track", &changed));
         assert!(!same_staged_identity("next", "Renamed track", &same));
+    }
+
+    #[test]
+    fn promoted_history_rejects_requeuing_a_track_that_already_played() {
+        let updates = Arc::new(Mutex::new(PlaylistUpdateState {
+            current_entry_id: "first".to_owned(),
+            retired_entry_ids: HashSet::new(),
+            reservation_shadow_entry_id: None,
+            pending: None,
+            terminal: false,
+        }));
+        assert!(
+            promote_current_entry_if_unmodified(&updates, "second", false)
+                .expect("promote next track")
+        );
+        let updater = super::super::StreamingPlaylistUpdater {
+            pending: Arc::clone(&updates),
+        };
+        let error = updater
+            .replace_upcoming(vec![factory("first")])
+            .expect_err("retired entry identity cannot be requeued");
+        assert_eq!(error.kind, PacketizerWorkerErrorKind::Packetize);
+        assert!(error.message.contains("duplicate entry IDs"));
+        updater
+            .replace_upcoming(vec![factory("third")])
+            .expect("a fresh entry remains editable");
     }
 
     #[test]

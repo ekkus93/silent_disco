@@ -1,4 +1,5 @@
 use core::fmt;
+use std::collections::HashSet;
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel};
@@ -20,7 +21,8 @@ use crate::protocol::{ControlMessage, ProtocolFrame, TrackBoundary};
 pub type BoundaryReserver =
     Arc<dyn Fn(&TrackBoundary, Arc<AtomicBool>) -> Result<(), PacketizerWorkerError> + Send + Sync>;
 use playlist_worker::{
-    run_playlist_packetizer_worker, validate_playlist_entries, validate_track_identity,
+    run_playlist_packetizer_worker, validate_playlist_entries, validate_playlist_update,
+    validate_track_identity,
 };
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -29,6 +31,9 @@ const BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(2);
 /// cannot race validation of a new live replacement.
 struct PlaylistUpdateState {
     current_entry_id: String,
+    // A worker can promote a track before an edit reaches this lock. Never
+    // reintroduce a previously played entry ID as an upcoming track.
+    retired_entry_ids: HashSet<String>,
     // The actor may still project a producer-reserved boundary as upcoming.
     reservation_shadow_entry_id: Option<String>,
     pending: Option<Vec<StreamingPlaylistTrackFactory>>,
@@ -198,7 +203,7 @@ impl StreamingPlaylistUpdater {
         {
             upcoming.remove(0);
         }
-        validate_playlist_entries(Some(&state.current_entry_id), &upcoming)?;
+        validate_playlist_update(&state, &upcoming)?;
         state.pending = Some(upcoming);
         Ok(())
     }
@@ -398,6 +403,7 @@ impl StreamingPacketizeHandle {
     ///
     /// Returns [`TryRecvError::Empty`] when no packet is ready, or
     /// `Disconnected` after worker exit and queue drain.
+
     pub fn try_recv(&self) -> Result<ProtocolFrame, TryRecvError> {
         let frame = self.receiver.try_recv()?;
         self.statistics
