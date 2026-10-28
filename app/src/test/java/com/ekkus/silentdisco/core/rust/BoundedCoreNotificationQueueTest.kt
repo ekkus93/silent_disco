@@ -72,5 +72,6 @@ class BoundedCoreNotificationQueueTest {
         val failure = producer.get(2, TimeUnit.SECONDS)
         assertThat(failure).isNotNull()
         assertThat(queue.criticalTimeouts).isEqualTo(0)
+        assertThat(runBlocking { queue.events.toList() }).containsExactly("join")
     }
 }

@@ -2,9 +2,11 @@ package com.ekkus.silentdisco.core.rust
 
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.selects.select
 
 private data class TransportQueueEntry<H : Any, E : Any>(
     val handle: H,
@@ -36,6 +38,7 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
     }
 
     private val channel = Channel<TransportQueueEntry<Handle, Event>>(capacity)
+    private val closed = CompletableDeferred<Unit>()
     private val bestEffortLimit = if (capacity == 1) 0 else (capacity / 4).coerceIn(1, capacity - 1)
     private val queuedBestEffort = AtomicInteger()
     private val dropped = AtomicLong()
@@ -67,11 +70,17 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
 
     /** Required control/terminal event: wait for bounded consumer capacity. */
     suspend fun emit(handle: Handle, event: Event) {
-        channel.send(TransportQueueEntry(handle, event, bestEffort = false))
+        select<Unit> {
+            channel.onSend(TransportQueueEntry(handle, event, bestEffort = false)) { }
+            closed.onAwait { error("Native transport event queue closed") }
+        }
     }
 
     override fun close() {
+        // Keep queued authoritative events drainable, but never strand a
+        // producer waiting for capacity after the native handle is retired.
         channel.close()
+        closed.complete(Unit)
     }
 
     private companion object {

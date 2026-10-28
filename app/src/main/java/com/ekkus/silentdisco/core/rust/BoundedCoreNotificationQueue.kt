@@ -1,10 +1,12 @@
 package com.ekkus.silentdisco.core.rust
 
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -24,6 +26,7 @@ internal class BoundedCoreNotificationQueue<Event : Any>(
     }
 
     private val channel = Channel<Event>(capacity)
+    private val closed = CompletableDeferred<Unit>()
     private val dropped = AtomicLong()
     private val timedOut = AtomicLong()
 
@@ -39,8 +42,10 @@ internal class BoundedCoreNotificationQueue<Event : Any>(
         if (channel.trySend(event).isSuccess) return
         val delivered = runBlocking {
             withTimeoutOrNull(criticalTimeoutMs) {
-                channel.send(event)
-                true
+                select<Boolean> {
+                    channel.onSend(event) { true }
+                    closed.onAwait { error("Rust host critical notification queue closed") }
+                }
             }
         } == true
         if (!delivered) {
@@ -50,7 +55,10 @@ internal class BoundedCoreNotificationQueue<Event : Any>(
     }
 
     override fun close() {
+        // Channel.close() alone does not release senders suspended behind a
+        // full buffer. Wake them without discarding already-queued controls.
         channel.close()
+        closed.complete(Unit)
     }
 
     private companion object {
