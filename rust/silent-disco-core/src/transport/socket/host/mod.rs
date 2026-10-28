@@ -36,6 +36,8 @@ mod socket_multitrack_audio_reconnect_tests;
 mod terminal_pressure_tests;
 
 #[cfg(test)]
+mod packetizer_socket_pcm_tests;
+#[cfg(test)]
 mod playback_controls_format_tests;
 #[cfg(test)]
 mod playback_controls_tests;
