@@ -18,13 +18,11 @@ import com.ekkus.silentdisco.core.uniffi.FfiTransportState
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -94,27 +92,24 @@ class UniFfiHostCoreController(
     private val handleRef = AtomicReference<FfiCoreHandle?>(null)
     private val commandMutex = Mutex()
     private val _snapshots = MutableStateFlow<FfiCoreSnapshot?>(null)
-    private val notificationChannel = Channel<FfiCoreNotification>(Channel.UNLIMITED)
+    private val notificationQueue = BoundedCoreNotificationQueue<FfiCoreNotification>()
 
     private val observer = object : FfiCoreObserver {
         override fun onNotification(notification: FfiCoreNotification) {
+            if (closed.get()) return
             when (notification) {
                 is FfiCoreNotification.Snapshot -> _snapshots.value = notification.snapshot
-                else -> {
-                    val delivered = notificationChannel.trySend(notification).isSuccess
-                    if (!delivered && !closed.get()) {
-                        System.err.println(
-                            "SilentDisco: Rust host notification could not be queued: " +
-                                notification::class.java.simpleName,
-                        )
-                    }
-                }
+                is FfiCoreNotification.Diagnostic -> notificationQueue.publishBestEffort(notification)
+                // Platform/transport/storage effects and errors are authoritative.
+                // A saturated bridge must backpressure the Rust actor for a bounded
+                // interval or fail explicitly, never silently lose an operation.
+                else -> notificationQueue.publishCritical(notification)
             }
         }
     }
 
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
-    override val notifications: Flow<FfiCoreNotification> = notificationChannel.receiveAsFlow()
+    override val notifications: Flow<FfiCoreNotification> = notificationQueue.events
     override val boundariesReservedByProducer: Boolean = true
 
     override fun openHostPlaylist(
@@ -291,7 +286,7 @@ class UniFfiHostCoreController(
             runCatching { handle.shutdown() }
             handle.close()
         }
-        notificationChannel.close()
+        notificationQueue.close()
     }
 
     private suspend fun submitRevisionCommand(
