@@ -44,7 +44,8 @@ fn full_host_queue_refuses_join_and_still_reports_peer_disconnect() {
     });
 
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("accepted event"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("accepted event"),
         TransportEvent::PeerAccepted { .. }
     ));
     assert!(matches!(
@@ -53,7 +54,8 @@ fn full_host_queue_refuses_join_and_still_reports_peer_disconnect() {
             if peer.device_id.as_ref() == Some(&device)
     ));
     assert!(
-        host.authorize_peer(&device, listener.local_routes()).is_err(),
+        host.authorize_peer(&device, listener.local_routes())
+            .is_err(),
         "refused listener must never acquire a route"
     );
     assert!(host.counters().queue_overflows >= 1);
@@ -71,11 +73,8 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         clock.clone(),
     )
     .expect("bind host");
-    let mut config = ListenerTransportConfig::loopback(
-        session.clone(),
-        device.clone(),
-        host.endpoint(),
-    );
+    let mut config =
+        ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint());
     config.event_queue_capacity = 1;
     let mut listener = SocketTransportFactory
         .connect_listener(config, clock)
@@ -104,7 +103,9 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
     host.shutdown().expect("close host TCP socket");
 
     assert!(matches!(
-        listener.recv_event(Duration::from_secs(5)).expect("Hello event"),
+        listener
+            .recv_event(Duration::from_secs(5))
+            .expect("Hello event"),
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame: ProtocolFrame::Control(ControlMessage::Hello(_)),
@@ -112,7 +113,9 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         }
     ));
     assert!(matches!(
-        listener.recv_event(Duration::from_secs(5)).expect("disconnect event"),
+        listener
+            .recv_event(Duration::from_secs(5))
+            .expect("disconnect event"),
         TransportEvent::PeerDisconnected { .. }
     ));
     listener.shutdown().expect("listener shutdown");
