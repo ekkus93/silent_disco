@@ -3,6 +3,7 @@
 **Repository:** `ekkus93/silent_disco`  
 **Branch:** `master`; all GitHub, source commits, and CI through Ralph Bridge only.  
 **Verified source baseline:** `809de98e0fab8febd255bf7e46786097383b6321` (complete CI observed on 2026-10-28).  
+**Granular implementation audit:** [Implementation Progress Audit (2026-10-28)](SILENT_DISCO_IMPLEMENTATION_PROGRESS_AUDIT_2026-10-28.md) — original gapless 58/72, separate component evidence scorecard; do not confuse broad signoff with code progress.  
 **Active checklist:** [Code Review Remediation TODO](SILENT_DISCO_CODE_REVIEW_REMEDIATION_TODO_2026-10-27.md)  
 **Specification:** [Code Review Remediation Spec](SILENT_DISCO_CODE_REVIEW_REMEDIATION_SPEC_2026-10-27.md)  
 **Security plan:** [Transport security ADR](SILENT_DISCO_TRANSPORT_SECURITY_ADR_2026-10-28.md)  
