@@ -469,3 +469,139 @@ fn real_socket_late_join_replays_audible_track_and_only_future_boundaries() {
     }
     host.shutdown().expect("close host");
 }
+/// Two real TCP readers with different consumption rates must both receive
+/// authoritative queue controls in order. A saturated one-slot listener
+/// cannot hide Stop, and its replacement route cannot inherit retired PCM.
+/// This exercises the legacy loopback socket path, not encrypted transport.
+#[test]
+fn real_socket_multi_peer_pressure_stop_reconnect_and_fresh_pcm() {
+    let session = id_session("socket-multi-peer-pressure-stop");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production socket host");
+    let slow_device = id_device("slow-control-collector");
+    let mut slow_config = ListenerTransportConfig::loopback(
+        session.clone(),
+        slow_device.clone(),
+        host.endpoint(),
+    );
+    slow_config.event_queue_capacity = 1;
+    let mut slow = SocketTransportFactory
+        .connect_listener(slow_config, clock.clone())
+        .expect("connect one-slot TCP collector");
+    slow.send_control(&join_request(&session, &slow_device, "Slow collector"))
+        .expect("request admission");
+    wait_for_control_from(&mut host, &slow_device, |control| {
+        matches!(control, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&slow_device, slow.local_routes())
+        .expect("authorize slow collector");
+    wait_for_authorized(&mut host, &slow_device);
+    let mut fast = join(&mut host, &clock, &session, "fast-control-collector");
+
+    let ControlMessage::StreamStart(mut current) = stream_start(&session, 1_000) else {
+        panic!("stream fixture");
+    };
+    current.samples_per_packet = 2;
+    let start = ControlMessage::StreamStart(current.clone());
+    let boundaries: Vec<_> = [(4, "second"), (8, "third")]
+        .into_iter()
+        .map(|(sample, name)| {
+            ControlMessage::TrackBoundary(TrackBoundary {
+                session_id: session.clone(),
+                stream_id: current.stream_id.clone(),
+                first_sample_index: SampleIndex::new(sample),
+                entry_id: name.to_owned(),
+                display_name: name.to_owned(),
+            })
+        })
+        .collect();
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: current.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_200),
+    });
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: current.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_400),
+    });
+    // Do not poll the slow listener until after every broadcast: its reader
+    // must encounter genuine bounded-queue pressure while the fast peer is
+    // still able to receive the entire ordered control sequence.
+    let controls: Vec<_> = std::iter::once(&start)
+        .chain(boundaries.iter())
+        .chain([&pause, &stop])
+        .collect();
+    for control in &controls {
+        assert_eq!(
+            host.broadcast_control(control)
+                .expect("broadcast authoritative TCP control")
+                .report
+                .successful_peers,
+            2,
+        );
+    }
+    let mut saturated = false;
+    for _ in 0..100 {
+        if slow.counters().queue_overflows > 0 {
+            saturated = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(saturated, "one-slot slow peer must experience real TCP backpressure");
+    for control in &controls {
+        received_control(fast.as_mut(), control);
+    }
+    for control in &controls {
+        received_control(slow.as_mut(), control);
+    }
+    assert_eq!(
+        slow.counters().delivery_failures,
+        0,
+        "a saturated collector must not silently lose Stop",
+    );
+    assert_eq!(
+        host.broadcast_audio(&packet(&session, 0, 1_401))
+            .expect("retired UDP is suppressed")
+            .report
+            .intended_peers,
+        0,
+    );
+
+    // Retire the backpressured TCP/UDP route before replay. A new connection
+    // with the same claimed device ID must not receive the stopped stream.
+    host.disconnect_peer(&slow_device)
+        .expect("retire old authorized route");
+    slow.shutdown().expect("close slow collector");
+    let mut returning = join(&mut host, &clock, &session, "slow-control-collector");
+    let mut late = join(&mut host, &clock, &session, "late-after-stop");
+    current.host_start_time_ms = MonotonicMillis::new(1_500);
+    let replay = ControlMessage::StreamStart(current);
+    assert_eq!(
+        host.broadcast_control(&replay)
+            .expect("restart queue on same stream ID")
+            .report
+            .successful_peers,
+        3,
+    );
+    for listener in [&mut fast, &mut returning, &mut late] {
+        received_control(listener.as_mut(), &replay);
+    }
+    for sequence in 0..3 {
+        let frame = packet(&session, sequence, 1_500 + sequence);
+        deliver_audio(
+            &host,
+            &mut [fast.as_mut(), returning.as_mut(), late.as_mut()],
+            &frame,
+        );
+    }
+    for listener in [&mut fast, &mut returning, &mut late] {
+        listener.shutdown().expect("close listener");
+    }
+    host.shutdown().expect("close host");
+}
