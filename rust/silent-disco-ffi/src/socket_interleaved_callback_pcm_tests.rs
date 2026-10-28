@@ -69,12 +69,10 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     let first = root.join("first.wav");
     let second = root.join("second.wav");
     let third = root.join("third.wav");
-    fs::write(&first, source_wav_format(3_000, 48_000, 2, 480))
-        .expect("first canonical source");
+    fs::write(&first, source_wav_format(3_000, 48_000, 2, 480)).expect("first canonical source");
     fs::write(&second, source_wav_format(7_000, 44_100, 1, 441))
         .expect("mixed-rate mono successor");
-    fs::write(&third, source_wav_format(9_000, 48_000, 2, 480))
-        .expect("final canonical source");
+    fs::write(&third, source_wav_format(9_000, 48_000, 2, 480)).expect("final canonical source");
 
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("interleaved-native-callback").expect("stream");
@@ -143,7 +141,10 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     let mut resumed = false;
     let mut ended = false;
     for _ in 0..24 {
-        match playlist.next_frame(5_000).expect("decoded production frame") {
+        match playlist
+            .next_frame(5_000)
+            .expect("decoded production frame")
+        {
             Some(FfiPlaylistFrame::Audio {
                 sequence,
                 sample_rate,
@@ -243,8 +244,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     }
                     listener.shutdown().expect("retire previous socket");
                     listener = replacement;
-                    let mut extra =
-                        authorized_late_joiner(host.as_mut(), "interleaved-pause-late");
+                    let mut extra = authorized_late_joiner(host.as_mut(), "interleaved-pause-late");
                     for expected in [&start, &boundary, &pause] {
                         assert_eq!(recv_control(extra.as_mut()), *expected);
                     }
@@ -311,7 +311,10 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
         2
     );
     assert_eq!(recv_control(listener.as_mut()), stop);
-    assert_eq!(recv_control(newcomer.as_deref_mut().expect("late listener")), stop);
+    assert_eq!(
+        recv_control(newcomer.as_deref_mut().expect("late listener")),
+        stop
+    );
     let stopped_controls = host.counters().control_frames_sent;
     let mut stopped_joiner = authorized_late_joiner(host.as_mut(), "interleaved-stopped-late");
     assert_eq!(
@@ -323,7 +326,11 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     detach_callback_capture(token);
     release_render_ring(token).expect("release original native output");
     playlist.cancel().expect("release producer");
-    newcomer.take().expect("late listener").shutdown().expect("close late");
+    newcomer
+        .take()
+        .expect("late listener")
+        .shutdown()
+        .expect("close late");
     listener.shutdown().expect("close original listener");
     host.shutdown().expect("close host");
     fs::remove_dir_all(root).expect("cleanup fixtures");
