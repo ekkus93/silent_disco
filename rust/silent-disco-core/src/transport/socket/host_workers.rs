@@ -379,40 +379,6 @@ fn forward_join_or_refuse<T>(
     }
 }
 
-#[cfg(test)]
-mod admission_pressure_tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    #[test]
-    fn saturated_join_queue_is_refused_without_silent_acceptance() {
-        let (sender, receiver) = sync_channel(1);
-        let counters = CounterState::default();
-        sender.send(1_u8).expect("fill queue");
-        let refused = AtomicBool::new(false);
-        assert!(!forward_join_or_refuse(&sender, &counters, 2_u8, || {
-            refused.store(true, Ordering::Release);
-        }));
-        assert!(refused.load(Ordering::Acquire));
-        assert_eq!(receiver.try_recv().expect("original event"), 1);
-        assert!(receiver.try_recv().is_err());
-        assert_eq!(counters.snapshot().queue_overflows, 1);
-        assert_eq!(counters.snapshot().delivery_failures, 1);
-    }
-
-    #[test]
-    fn open_join_queue_delivers_once_without_refusing() {
-        let (sender, receiver) = sync_channel(1);
-        let counters = CounterState::default();
-        assert!(forward_join_or_refuse(&sender, &counters, 17_u8, || {
-            panic!("join was delivered, must not send busy response");
-        }));
-        assert_eq!(receiver.try_recv().expect("delivered join"), 17);
-        assert_eq!(counters.snapshot().queue_overflows, 0);
-        assert_eq!(counters.snapshot().delivery_failures, 0);
-    }
-}
-
 fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), TransportError> {
     let ProtocolFrame::Control(message) = frame else {
         return Err(TransportError::new(
@@ -685,4 +651,38 @@ pub(super) fn shutting_down_error() -> TransportError {
 
 const fn session_id_address() -> std::net::IpAddr {
     std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+}
+
+#[cfg(test)]
+mod admission_pressure_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn saturated_join_queue_is_refused_without_silent_acceptance() {
+        let (sender, receiver) = sync_channel(1);
+        let counters = CounterState::default();
+        sender.send(1_u8).expect("fill queue");
+        let refused = AtomicBool::new(false);
+        assert!(!forward_join_or_refuse(&sender, &counters, 2_u8, || {
+            refused.store(true, Ordering::Release);
+        }));
+        assert!(refused.load(Ordering::Acquire));
+        assert_eq!(receiver.try_recv().expect("original event"), 1);
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(counters.snapshot().queue_overflows, 1);
+        assert_eq!(counters.snapshot().delivery_failures, 1);
+    }
+
+    #[test]
+    fn open_join_queue_delivers_once_without_refusing() {
+        let (sender, receiver) = sync_channel(1);
+        let counters = CounterState::default();
+        assert!(forward_join_or_refuse(&sender, &counters, 17_u8, || {
+            panic!("join was delivered, must not send busy response");
+        }));
+        assert_eq!(receiver.try_recv().expect("delivered join"), 17);
+        assert_eq!(counters.snapshot().queue_overflows, 0);
+        assert_eq!(counters.snapshot().delivery_failures, 0);
+    }
 }
