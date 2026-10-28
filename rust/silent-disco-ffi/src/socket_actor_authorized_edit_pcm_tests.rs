@@ -333,8 +333,8 @@ fn actor_approved_remove_append_reorder_reaches_both_native_outputs_without_stal
             .successful_peers,
         2
     );
-    assert_eq!(recv_control(primary.as_mut()), stop);
-    assert_eq!(recv_control(secondary.as_mut()), stop);
+    assert!(recv_control(primary.as_mut()) == stop);
+    assert!(recv_control(secondary.as_mut()) == stop);
     let controls_after_stop = host.counters().control_frames_sent;
     host.broadcast_control(&ControlMessage::TrackBoundary(TrackBoundary {
         session_id: session.clone(),
