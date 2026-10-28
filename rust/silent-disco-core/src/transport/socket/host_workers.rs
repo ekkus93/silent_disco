@@ -20,7 +20,8 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    send_authoritative_event, send_event, shutdown_stream, spawn_control_writer,
+    send_authoritative_event, send_authoritative_event_bounded, send_event, shutdown_stream,
+    spawn_control_writer,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -173,14 +174,32 @@ fn register_peer(
         })?
         .insert(number, peer.clone());
     counters.accepted();
-    send_event(
+    // The actor must observe a new TCP peer before it can process its join.
+    // UDP telemetry can saturate this queue; do not silently drop acceptance.
+    // Only the accept worker waits, never the decoder or audio callback.
+    if !send_authoritative_event_bounded(
         event_sender,
+        global_stop,
         counters,
         TransportEvent::PeerAccepted {
             peer: peer.transport_peer(),
             received_at: clock.now(),
         },
-    );
+        config.operation_timeout,
+    ) {
+        // No reader/writer has started. Close the unobservable socket and
+        // remove its provisional registry entry after the bounded deadline.
+        drop(peer.close());
+        if let Ok(mut registry) = peers.lock() {
+            registry.remove(&number);
+        }
+        counters.closed();
+        return Err(TransportError::new(
+            TransportErrorKind::QueueFull,
+            TransportChannel::Control,
+            "host event queue could not accept the new peer; connection refused",
+        ));
+    }
 
     let writer = spawn_control_writer(
         writer_stream,

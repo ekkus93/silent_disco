@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use crate::domain::MonotonicMillis;
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, SyncRequest};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
+    audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
+    wait_for_control_from,
     wait_for_frame, wait_until,
 };
 use crate::transport::{
@@ -195,4 +196,179 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     replacement.shutdown().expect("close replacement");
     second.shutdown().expect("close second listener");
     host.shutdown().expect("close host");
+}
+
+#[test]
+fn tcp_accept_survives_saturated_udp_telemetry_and_delivers_pcm() {
+    let session = id_session("accept-pressure-playback");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("host");
+    let first_id = id_device("pressure-accept-first");
+    let mut first = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), first_id.clone(), host.endpoint()),
+            clock.clone(),
+        )
+        .expect("first listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("first accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    first
+        .send_control(&join_request(&session, &first_id, "First"))
+        .expect("join");
+    wait_for_control_from(&mut host, &first_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&first_id, first.local_routes())
+        .expect("authorize first");
+    wait_for_authorized(&mut host, &first_id);
+
+    for correlation_id in 0..300 {
+        first
+            .send_sync_request(&SyncRequest {
+                session_id: session.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(correlation_id),
+            })
+            .expect("UDP telemetry");
+    }
+    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    let second_id = id_device("pressure-accept-second");
+    let mut second = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), second_id.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("second listener");
+    wait_until(Duration::from_secs(5), || {
+        host.counters().accepted_control_connections >= 2
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "PeerAccepted lost under UDP pressure");
+        if matches!(
+            host.recv_event(remaining).expect("drain telemetry"),
+            TransportEvent::PeerAccepted { .. }
+        ) {
+            break;
+        }
+    }
+    // Clear residual lossy telemetry before the join, which has a separate
+    // explicit busy/refusal policy when its actor queue is saturated.
+    loop {
+        match host.recv_event(Duration::from_millis(25)) {
+            Ok(_) => {}
+            Err(error) if error.kind == crate::transport::TransportErrorKind::Timeout => break,
+            Err(error) => panic!("unexpected event drain error: {error}"),
+        }
+    }
+    second
+        .send_control(&join_request(&session, &second_id, "Second"))
+        .expect("second join");
+    wait_for_control_from(&mut host, &second_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&second_id, second.local_routes())
+        .expect("authorize second");
+    wait_for_authorized(&mut host, &second_id);
+
+    let start = stream_start(&session, 1_000);
+    let pcm = audio_frame(&session, 0);
+    assert_eq!(
+        host.broadcast_control(&start).expect("start").report.successful_peers,
+        2
+    );
+    for listener in [first.as_mut(), second.as_mut()] {
+        wait_for_frame(listener, TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(start.clone())
+        });
+    }
+    assert_eq!(
+        host.broadcast_audio(&pcm).expect("PCM").report.successful_peers,
+        2
+    );
+    for listener in [first.as_mut(), second.as_mut()] {
+        wait_for_frame(listener, TransportChannel::Audio, |frame| frame == &pcm);
+    }
+    assert_eq!(host.counters().delivery_failures, 0);
+    first.shutdown().expect("first shutdown");
+    second.shutdown().expect("second shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn stalled_actor_refuses_tcp_peer_without_ghost_route_or_harming_live_peer() {
+    let session = id_session("accept-pressure-timeout");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    config.operation_timeout = Duration::from_millis(150);
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("host");
+    let first_id = id_device("timeout-accept-first");
+    let mut first = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), first_id.clone(), host.endpoint()),
+            clock.clone(),
+        )
+        .expect("first listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("first accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    first
+        .send_control(&join_request(&session, &first_id, "First"))
+        .expect("join");
+    wait_for_control_from(&mut host, &first_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&first_id, first.local_routes())
+        .expect("authorize first");
+    wait_for_authorized(&mut host, &first_id);
+
+    for correlation_id in 0..300 {
+        first
+            .send_sync_request(&SyncRequest {
+                session_id: session.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(correlation_id),
+            })
+            .expect("fill actor queue");
+    }
+    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    let second_id = id_device("timeout-accept-second");
+    let mut refused = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), second_id.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("second TCP connect");
+    wait_until(Duration::from_secs(5), || {
+        host.counters().accepted_control_connections >= 2
+            && host.counters().closed_control_connections >= 1
+            && host.counters().delivery_failures >= 1
+    });
+    assert_eq!(
+        host.authorize_peer(&second_id, refused.local_routes())
+            .expect_err("unobservable socket cannot be authorized")
+            .kind,
+        crate::transport::TransportErrorKind::PeerNotFound
+    );
+    let start = stream_start(&session, 1_000);
+    assert_eq!(
+        host.broadcast_control(&start)
+            .expect("live peer remains authorized")
+            .report
+            .successful_peers,
+        1
+    );
+    wait_for_frame(first.as_mut(), TransportChannel::Control, |frame| {
+        frame == &ProtocolFrame::Control(start.clone())
+    });
+    drop(refused.shutdown());
+    first.shutdown().expect("first shutdown");
+    host.shutdown().expect("host shutdown");
 }
