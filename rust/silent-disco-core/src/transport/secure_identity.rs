@@ -200,24 +200,44 @@ mod tests {
         let variants = [
             PendingListenerProof::new(
                 SessionId::new("other-session").expect("session"),
-                7, &host, [11; 32], [19; 32],
-            ).expect("session variant"),
+                7,
+                &host,
+                [11; 32],
+                [19; 32],
+            )
+            .expect("session variant"),
             PendingListenerProof::new(
                 SessionId::new("session-1").expect("session"),
-                8, &host, [11; 32], [19; 32],
-            ).expect("generation variant"),
+                8,
+                &host,
+                [11; 32],
+                [19; 32],
+            )
+            .expect("generation variant"),
             PendingListenerProof::new(
                 SessionId::new("session-1").expect("session"),
-                7, &forged_host, [11; 32], [19; 32],
-            ).expect("host variant"),
+                7,
+                &forged_host,
+                [11; 32],
+                [19; 32],
+            )
+            .expect("host variant"),
             PendingListenerProof::new(
                 SessionId::new("session-1").expect("session"),
-                7, &host, [12; 32], [19; 32],
-            ).expect("nonce variant"),
+                7,
+                &host,
+                [12; 32],
+                [19; 32],
+            )
+            .expect("nonce variant"),
             PendingListenerProof::new(
                 SessionId::new("session-1").expect("session"),
-                7, &host, [11; 32], [20; 32],
-            ).expect("exporter variant"),
+                7,
+                &host,
+                [11; 32],
+                [20; 32],
+            )
+            .expect("exporter variant"),
         ];
         for mut variant in variants {
             assert_eq!(
@@ -253,15 +273,23 @@ mod tests {
         assert_eq!(
             PendingListenerProof::new(
                 SessionId::new("session-1").expect("session"),
-                0, &host, [11; 32], [19; 32],
-            ).unwrap_err(),
+                0,
+                &host,
+                [11; 32],
+                [19; 32],
+            )
+            .unwrap_err(),
             ListenerProofError::InvalidChallenge
         );
         assert_eq!(
             PendingListenerProof::new(
                 SessionId::new("session-1").expect("session"),
-                7, &host, [11; 32], [0; 32],
-            ).unwrap_err(),
+                7,
+                &host,
+                [11; 32],
+                [0; 32],
+            )
+            .unwrap_err(),
             ListenerProofError::InvalidChallenge
         );
     }
