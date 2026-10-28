@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -21,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -110,6 +112,7 @@ fun HostAccessSetupScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .testTag("host-access-screen"),
     ) {
         TopAppBar(
@@ -132,6 +135,7 @@ fun HostAccessSetupScreen(
                 text = "Who can join this session?",
                 style = MaterialTheme.typography.headlineSmall,
             )
+            LegacyLanSecurityWarning()
 
             accessOptions.forEach { option ->
                 val selected = uiState.hostForm.approvalMode == option.mode

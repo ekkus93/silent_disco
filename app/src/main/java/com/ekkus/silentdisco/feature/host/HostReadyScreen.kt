@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -19,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,7 +76,7 @@ fun HostReadyScreen(
     }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize().testTag("host-ready-screen"),
+        modifier = Modifier.fillMaxSize().imePadding().testTag("host-ready-screen"),
         topBar = {
             TopAppBar(
                 title = { Text("Ready to host") },
@@ -115,6 +117,7 @@ fun HostReadyScreen(
             verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.large),
         ) {
             Text("Check your session details before you start.", style = MaterialTheme.typography.bodyLarge)
+            LegacyLanSecurityWarning()
             SummaryCard("Session", form.sessionName.ifBlank { "Add a session name" })
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(

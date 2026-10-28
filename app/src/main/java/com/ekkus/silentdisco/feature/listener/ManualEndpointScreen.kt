@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -53,6 +55,7 @@ fun ManualEndpointScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .testTag("manual-endpoint-screen"),
     ) {
         TopAppBar(
@@ -74,6 +77,7 @@ fun ManualEndpointScreen(
                 "Paste the connection payload copied from the desktop host.",
                 style = MaterialTheme.typography.bodyLarge,
             )
+            LegacyLanSecurityWarning()
             OutlinedTextField(
                 value = form.rawInput,
                 onValueChange = onInputChanged,

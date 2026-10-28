@@ -76,6 +76,8 @@ class WorkflowConfigurationStateTest {
             }
         }
 
+        composeRule.onNodeWithTag("legacy-lan-security-warning").performScrollTo()
+        composeRule.onNodeWithTag("legacy-lan-security-warning").assertExists()
         composeRule.onNodeWithTag("host-access-manual").assertIsSelected()
         composeRule.onNodeWithTag("host-access-invite_code")
             .performScrollTo()
@@ -205,6 +207,7 @@ class WorkflowConfigurationStateTest {
             }
         }
 
+        composeRule.onNodeWithTag("legacy-lan-security-warning").performScrollTo().assertExists()
         composeRule.onNodeWithTag("host-start-session").assertIsEnabled().performClick()
         composeRule.onNodeWithTag("host-start-session").assertIsNotEnabled()
         restoration.emulateSavedInstanceStateRestore()

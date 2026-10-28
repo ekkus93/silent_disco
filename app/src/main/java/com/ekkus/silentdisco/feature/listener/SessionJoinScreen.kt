@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -24,6 +25,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -101,6 +103,7 @@ fun SessionJoinScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .testTag("session-join-screen"),
     ) {
         TopAppBar(
@@ -160,6 +163,7 @@ fun SessionJoinScreen(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            LegacyLanSecurityWarning()
 
             if (!requestStarted) {
                 Text(

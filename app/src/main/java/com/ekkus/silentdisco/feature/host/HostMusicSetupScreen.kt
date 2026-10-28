@@ -3,6 +3,7 @@ package com.ekkus.silentdisco.feature.host
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
@@ -48,6 +49,7 @@ fun HostMusicSetupScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .testTag("host-music-screen"),
     ) {
         TopAppBar(
