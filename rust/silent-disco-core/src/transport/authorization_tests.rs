@@ -139,7 +139,7 @@ fn bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success() 
             assert_eq!(value.listener_id, device_id);
             assert!(value.reason.contains("Host busy"));
         }
-        other => panic!("expected explicit busy rejection, got {other:?}"),
+        _ => panic!("expected explicit busy rejection"),
     }
 
     // The only queued host event before admission was PeerAccepted. No
