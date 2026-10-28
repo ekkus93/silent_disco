@@ -4,14 +4,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::domain::{DeliverySeverity, MonotonicMillis};
-use crate::protocol::{ControlMessage, Heartbeat, Hello, PROTOCOL_MAGIC};
+use crate::protocol::{ControlMessage, Heartbeat, Hello, PROTOCOL_MAGIC, ProtocolFrame};
 
 use super::test_support::{
-    id_device, id_session, join_request, wait_for_control_from, wait_for_rejection, wait_until,
+    id_device, id_session, join_request, wait_for_control_from, wait_for_frame,
+    wait_for_rejection, wait_until,
 };
 use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
-    TransportErrorKind, TransportFactory,
+    TransportChannel, TransportErrorKind, TransportEvent, TransportFactory,
 };
 
 #[test]
@@ -119,6 +120,36 @@ fn bounded_event_queue_reports_pressure_and_zero_peer_delivery_is_not_success() 
         host.counters().queue_overflows > 0
     });
     assert!(host.counters().queue_overflows > 0);
+    assert!(host.counters().delivery_failures > 0);
+
+    // Real TCP loopback proof: a join rejected by the full host event queue
+    // must be answered on the wire. The listener must never wait forever
+    // for a manual approval that the host actor cannot possibly receive.
+    let rejection = wait_for_frame(&mut *listener, TransportChannel::Control, |frame| {
+        matches!(frame, ProtocolFrame::Control(ControlMessage::JoinRejection(_)))
+    });
+    match rejection {
+        TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Control(ControlMessage::JoinRejection(value)),
+            ..
+        } => {
+            assert_eq!(value.listener_id, device_id);
+            assert!(value.reason.contains("Host busy"));
+        }
+        other => panic!("expected explicit busy rejection, got {other:?}"),
+    }
+
+    // The only queued host event before admission was PeerAccepted. No
+    // JoinRequest may leak into the actor after the refusal was delivered.
+    for _ in 0..4 {
+        match host.recv_event(Duration::from_millis(30)) {
+            Ok(TransportEvent::FrameReceived {
+                frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+                ..
+            }) => panic!("refused join was also delivered to the host actor"),
+            Ok(_) | Err(_) => {}
+        }
+    }
     listener.shutdown().expect("listener should stop");
     host.shutdown()
         .expect("host should stop under queue pressure");
