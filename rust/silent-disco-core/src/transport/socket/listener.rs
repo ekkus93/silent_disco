@@ -377,9 +377,12 @@ fn spawn_control_reader(
                     }
                 },
             );
-            stop.store(true, Ordering::Release);
-            send_event(
+            // Deliver the terminal event even if a full UDP event queue
+            // temporarily prevents the UI from polling. The owner can still
+            // interrupt this wait via shutdown(), which sets stop.
+            send_authoritative_event(
                 &event_sender,
+                &stop,
                 &counters,
                 TransportEvent::PeerDisconnected {
                     peer: host_peer,
@@ -387,6 +390,7 @@ fn spawn_control_reader(
                     received_at: clock.now(),
                 },
             );
+            stop.store(true, Ordering::Release);
         })
         .map_err(|error| {
             TransportError::io(

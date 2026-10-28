@@ -199,6 +199,7 @@ fn register_peer(
     let clock_for_reader = clock.clone();
     let reader_peer = peer.clone();
     let io_timeout = config.io_timeout;
+    let shutdown_for_reader = global_stop.clone();
     let reader = thread::Builder::new()
         .name(format!("silent-disco-control-reader-{number}"))
         .spawn(move || {
@@ -312,8 +313,13 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            send_event(
+            // A disconnect is authoritative: losing it under UDP telemetry
+            // pressure leaves a ghost listener in the host UI/actor. Wait for
+            // bounded queue capacity unless the entire host is shutting down.
+            // The per-peer stop flag is already set during reader cleanup.
+            send_authoritative_event(
                 &event_for_reader,
+                &shutdown_for_reader,
                 &counters_for_reader,
                 TransportEvent::PeerDisconnected {
                     peer: reader_peer.transport_peer(),

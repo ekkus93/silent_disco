@@ -557,6 +557,57 @@ mod implicit_shutdown_tests {
     }
 }
 
+#[cfg(test)]
+mod terminal_event_pressure_tests {
+    use super::{CounterState, send_authoritative_event};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::sync_channel;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn saturated_event_queue_delivers_terminal_after_existing_event() {
+        let (sender, receiver) = sync_channel(1);
+        sender.send(1_u8).expect("fill bounded queue");
+        let stop = Arc::new(AtomicBool::new(false));
+        let counters = Arc::new(CounterState::default());
+        let producer = {
+            let stop = stop.clone();
+            let counters = counters.clone();
+            thread::spawn(move || send_authoritative_event(&sender, &stop, &counters, 2_u8))
+        };
+
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), 1);
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), 2);
+        assert!(producer.join().expect("terminal sender"));
+        assert_eq!(counters.snapshot().delivery_failures, 0);
+    }
+
+    #[test]
+    fn shutdown_interrupts_terminal_wait_without_displacing_queued_event() {
+        let (sender, receiver) = sync_channel(1);
+        sender.send(1_u8).expect("fill bounded queue");
+        let stop = Arc::new(AtomicBool::new(false));
+        let counters = Arc::new(CounterState::default());
+        let (started_sender, started_receiver) = sync_channel(0);
+        let producer = {
+            let stop = stop.clone();
+            let counters = counters.clone();
+            thread::spawn(move || {
+                started_sender.send(()).expect("signal started");
+                send_authoritative_event(&sender, &stop, &counters, 2_u8)
+            })
+        };
+
+        started_receiver.recv().expect("producer started");
+        stop.store(true, Ordering::Release);
+        assert!(!producer.join().expect("sender exits after shutdown"));
+        assert_eq!(receiver.try_recv().expect("existing event retained"), 1);
+        assert!(receiver.try_recv().is_err());
+    }
+}
+
 pub(super) fn recv_event(
     receiver: &Receiver<TransportEvent>,
     timeout: Duration,
