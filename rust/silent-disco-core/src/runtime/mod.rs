@@ -25,9 +25,6 @@ pub use host_admission::{
     approval_after_persistence, classify_delivery, classify_join_request, prepare_approval,
     prepare_explicit_approval,
 };
-pub use secure_host_admission::{
-    VerifiedJoinAdmission, VerifiedJoinError, verify_and_classify_join,
-};
 pub use playlist::{
     HostQueue, HostQueueError, MAX_HOST_QUEUE_ENTRIES, MAX_QUEUE_ENTRY_ID_BYTES, QueueEntry,
 };
@@ -40,6 +37,9 @@ pub use records::{
     PermissionCapability, PlatformEffect, PlatformEffectRequest, PlatformEvent,
     PlatformOperationCompletion, RecoverableAction, RuntimeContractError, StorageCompletion,
     StorageEvent, TransportEvent, current_protocol_version,
+};
+pub use secure_host_admission::{
+    VerifiedJoinAdmission, VerifiedJoinError, verify_and_classify_join,
 };
 pub use types::{
     AudioSourceDescriptor, AudioSourcePatch, CapabilitySnapshot, CoreDiagnostic, DeliveryReport,
