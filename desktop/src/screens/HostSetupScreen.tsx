@@ -304,8 +304,9 @@ export function HostSetupScreen() {
           <h3 className="font-semibold">Local network connection is not secured</h3>
           <p className="mt-2 text-sm">
             This version does not encrypt or authenticate live session traffic. Others on the same
-            Wi-Fi may read or alter invite codes, controls, and audio. A signed QR or approved-device
-            name does not protect the connection. Only use a private network you trust.
+            Wi-Fi may read or alter invite codes, controls, and audio. A signed QR or
+            approved-device name does not protect the connection. Only use a private network you
+            trust.
           </p>
         </aside>
       ) : null}
