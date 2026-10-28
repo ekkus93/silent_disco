@@ -52,7 +52,7 @@ fn submit(actor: &CoreActorHandle, command: CoreCommand) {
     clippy::too_many_lines,
     reason = "actor mutation, reserved producer, two socket listeners and callback PCM"
 )]
-fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track() {
+fn actor_approved_remove_append_reorder_reaches_both_native_outputs_without_stale_track() {
     let _guard = registry_test_guard();
     let (tx, rx) = mpsc::channel();
     let ffi = FfiCoreHandle::open("actor-socket-edit".to_owned(), Arc::new(Observer(tx)))
@@ -196,12 +196,31 @@ fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track(
         s.host_queue.entries().len() == 3 && s.host_queue.upcoming()[1].entry_id == "tail-entry"
     });
     assert!(appended.host_queue_next_boundary.is_none());
+    // A second typed edit reorders both upcoming sources while the producer
+    // is still backpressured by the 40-packet current track. The two native
+    // listeners must render the actor's final order, not the old prefetch.
+    submit(
+        &actor,
+        CoreCommand::ReorderHostQueue {
+            expected_queue_revision: appended.host_queue.revision(),
+            ordered_entry_ids: vec![
+                current_id.clone(),
+                "tail-entry".to_owned(),
+                "replacement-entry".to_owned(),
+            ],
+        },
+    );
+    let reordered = snapshot_when(&actor, |s| {
+        s.host_queue.upcoming()[0].entry_id == "tail-entry"
+            && s.host_queue.upcoming()[1].entry_id == "replacement-entry"
+    });
+    assert!(reordered.host_queue_next_boundary.is_none());
     producer
         .replace_upcoming(vec![
-            source("replacement-entry", &replacement),
             source("tail-entry", &tail),
+            source("replacement-entry", &replacement),
         ])
-        .expect("apply approved append to producer");
+        .expect("apply approved reorder to producer");
 
     // The same two native playback outputs span edited boundaries and a
     // Pause/Resume; the deleted source must appear in neither PCM stream.
@@ -221,26 +240,29 @@ fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track(
     assert_eq!(rendered.packets, 44);
     assert_eq!(rendered.boundaries, [9_600, 10_080]);
     let mut levels = vec![3_000_i16; 20];
-    levels.extend([7_000, 9_000]);
+    levels.extend([9_000, 7_000]);
     assert_eq!(
         rendered.pcm,
         expected_pcm(&levels, rendered.startup_ramp_frames),
         "TCP/UDP-to-callback PCM must reflect actor queue edits exactly"
     );
 
-    // The producer has already reserved the replacement inside Rust's
-    // serialized actor. A later queue command cannot remove its PCM.
+    // The producer has already reserved the reordered successor inside
+    // Rust's serialized actor. Later removal or reorder cannot replace it.
     let reserved = snapshot_when(&actor, |s| s.host_queue_next_boundary.is_some());
     assert_eq!(
         reserved.host_queue_next_boundary.as_ref().unwrap().entry_id,
+        "tail-entry"
+    );
+    assert_eq!(
+        reserved.host_queue.upcoming()[1].entry_id,
         "replacement-entry"
     );
-    assert_eq!(reserved.host_queue.upcoming()[1].entry_id, "tail-entry");
     submit(
         &actor,
         CoreCommand::RemoveHostQueueEntry {
             expected_queue_revision: reserved.host_queue.revision(),
-            entry_id: "replacement-entry".to_owned(),
+            entry_id: "tail-entry".to_owned(),
         },
     );
     let rejected = loop {
@@ -259,8 +281,31 @@ fn actor_approved_remove_append_reaches_both_native_outputs_without_stale_track(
     );
     assert_eq!(
         protected.host_queue.upcoming()[0].entry_id,
-        "replacement-entry"
+        "tail-entry"
     );
+    submit(
+        &actor,
+        CoreCommand::ReorderHostQueue {
+            expected_queue_revision: protected.host_queue.revision(),
+            ordered_entry_ids: vec![
+                current_id,
+                "replacement-entry".to_owned(),
+                "tail-entry".to_owned(),
+            ],
+        },
+    );
+    let reorder_rejected = loop {
+        if let FfiCoreNotification::Error { error } = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reserved reorder rejection")
+        {
+            break error;
+        }
+    };
+    assert!(!reorder_rejected.message.is_empty());
+    let still_reserved = actor.current_snapshot().expect("reserved order retained");
+    assert_eq!(still_reserved.host_queue.revision(), protected.host_queue.revision());
+    assert_eq!(still_reserved.host_queue.upcoming()[0].entry_id, "tail-entry");
 
     producer.cancel().expect("release streamer");
     secondary.shutdown().expect("secondary shutdown");
