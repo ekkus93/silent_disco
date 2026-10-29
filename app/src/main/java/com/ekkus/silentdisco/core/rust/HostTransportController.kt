@@ -16,6 +16,10 @@ import kotlinx.coroutines.withContext
 
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 
+/** Legacy v3 has no handshake-verified listener key; a claimed ID is never durable trust. */
+internal const val LEGACY_V3_DURABLE_TRUST_ERROR =
+    "Legacy v3 transport cannot remember a listener without verified cryptographic identity"
+
 /**
  * Android-facing wrapper around the shared Rust host transport for one
  * hosted session at a time. Owns no domain policy: it only binds the real
@@ -86,8 +90,10 @@ class HostTransportController(
         }
     }
 
-    suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? =
-        withHandle { it.sendJoinApproval(listenerId, trustedForFuture) }
+    suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? {
+        check(!trustedForFuture) { LEGACY_V3_DURABLE_TRUST_ERROR }
+        return withHandle { it.sendJoinApproval(listenerId, trustedForFuture = false) }
+    }
 
     /**
      * Complete approval and datagram-route authorization under one handle gate.
@@ -100,6 +106,9 @@ class HostTransportController(
         syncPort: UShort,
         audioPort: UShort,
     ): HostJoinAuthorizationResult<FfiHostTransportDelivery>? {
+        // A manually approved plaintext-v3 listener may join this session, but
+        // must never be promoted to durable trust using a self-claimed ID.
+        check(!trustedForFuture) { LEGACY_V3_DURABLE_TRUST_ERROR }
         val expected = handleGate.currentHandle() ?: return null
         return withContext(callDispatcher) {
             handleGate.deliverAndAuthorize(

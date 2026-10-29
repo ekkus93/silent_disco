@@ -614,15 +614,17 @@ private suspend fun MainViewModel.executeRustStorageEffect(
                 true,
             )
         }
-        is FfiStorageEffect.PersistTrustedDevice -> runCatching {
-            domainStore.trustDevice(effect.deviceId, effect.displayName)
-        }.onSuccess {
-            controller.trustedDeviceUpdated(effect.operationId, effect.deviceId)
-        }.onFailure { error ->
+        is FfiStorageEffect.PersistTrustedDevice -> {
+            // The current Android production socket is plaintext v3. No
+            // handshake proves possession of a listener key, so persisting
+            // a claimed device ID would silently elevate a spoofable peer.
+            // Fail the Rust actor's storage effect rather than acknowledging
+            // an unverified trust record. Secure v4 must replace this guard
+            // with verified, host-scoped public-key persistence.
             controller.storageOperationFailed(
                 effect.operationId,
-                error.message ?: "Failed to persist trusted device",
-                true,
+                com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR,
+                false,
             )
         }
     }
