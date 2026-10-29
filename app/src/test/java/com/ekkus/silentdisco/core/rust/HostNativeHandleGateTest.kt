@@ -94,7 +94,7 @@ class HostNativeHandleGateTest {
                         },
                         awaitPoll = { gate.awaitPollQuiescence(it, timeoutMillis = 20) },
                         deferClose = { handle, close ->
-                            gate.deferCloseUntilPollDrained(handle, close, failures::add)
+                            gate.deferCloseUntilPollDrained(handle, close) { failures.add(it) }
                         },
                     )
                 }
