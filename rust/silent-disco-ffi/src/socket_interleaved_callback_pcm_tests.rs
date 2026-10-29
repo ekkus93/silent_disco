@@ -309,7 +309,13 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     // sequence and sample index as the next legitimate packet.
                     // Neither the live socket nor the native callback may see it.
                     reject_stale_udp_after_resume(
-                        host.as_ref(), &session, &stream, packets, 1_010, token, &tap,
+                        host.as_ref(),
+                        &session,
+                        &stream,
+                        packets,
+                        1_010,
+                        token,
+                        &tap,
                     );
                     presentation_shift_ms = 200;
                     let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
@@ -395,7 +401,13 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                         );
                         pump.scheduler_mut().set_host_start_time_ms(1_400);
                         reject_stale_udp_after_resume(
-                            host.as_ref(), &session, &stream, packets, 1_220, token, &tap,
+                            host.as_ref(),
+                            &session,
+                            &stream,
+                            packets,
+                            1_220,
+                            token,
+                            &tap,
                         );
                         presentation_shift_ms = 400;
                         second_paused = true;
