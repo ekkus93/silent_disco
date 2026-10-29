@@ -1,7 +1,7 @@
 use super::conversions::network_endpoint;
 use super::types::{
     FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
-    FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
+    FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary, FfiApprovalMode,
     FfiPlatformCompletion, FfiPlaybackState, FfiQueueEntry, FfiSessionAdvertisement,
     FfiTransportState, FfiTuningPatch, FfiTuningSettings,
 };
@@ -77,6 +77,7 @@ impl FfiCoreHandle {
         draft: FfiHostDraft,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
         self.ensure_open()?;
+        reject_legacy_durable_host_draft(draft.approval_mode, draft.remember_approved_devices)?;
         let current = self.handle.current_snapshot()?;
         if FfiTuningSettings::from(current.tuning) != draft.tuning {
             return Err(FfiBridgeError::Core(
@@ -180,6 +181,11 @@ impl FfiCoreHandle {
         &self,
         expected_revision: u64,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        self.ensure_open()?;
+        let draft = self.handle.current_snapshot()?.host_draft;
+        if draft.approval_mode == ApprovalMode::TrustedDevices || draft.remember_approved_devices {
+            return Err(legacy_v3_trust_error());
+        }
         self.submit_command(expected_revision, CoreCommand::CreateHostSession)
     }
 
@@ -189,6 +195,9 @@ impl FfiCoreHandle {
         request_id: String,
         remember_for_future: bool,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
+        if remember_for_future {
+            return Err(legacy_v3_trust_error());
+        }
         self.submit_command(
             expected_revision,
             CoreCommand::ApproveJoin {
@@ -367,6 +376,9 @@ impl FfiCoreHandle {
 
     pub fn submit_join_approved(&self, trusted_for_future: bool) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
+        if trusted_for_future {
+            return Err(legacy_v3_trust_error());
+        }
         self.handle
             .submit_transport_event(TransportEvent::JoinApproved { trusted_for_future })?;
         Ok(())
@@ -381,6 +393,7 @@ impl FfiCoreHandle {
 
     pub fn submit_join_request(&self, request: FfiJoinRequestInput) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
+        let trust_state = legacy_v3_unverified_trust(request.trust_state)?;
         let snapshot = self.handle.current_snapshot()?;
         let invite_code_valid = match snapshot.host_draft.approval_mode {
             ApprovalMode::InviteCode => {
@@ -392,7 +405,7 @@ impl FfiCoreHandle {
             request_id_from_string(request.request_id)?,
             device_id_from_string(request.device_id)?,
             request.display_name,
-            TrustState::try_from(request.trust_state)?,
+            trust_state,
             invite_code_valid,
             MonotonicMillis::new(request.received_at_ms),
         )
@@ -407,10 +420,11 @@ impl FfiCoreHandle {
         listener: FfiListenerSummary,
     ) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
+        let trust_state = legacy_v3_unverified_trust(listener.trust_state)?;
         let mut summary = ListenerSummary::new(
             device_id_from_string(listener.device_id)?,
             listener.display_name,
-            TrustState::try_from(listener.trust_state)?,
+            trust_state,
             TransportState::from(listener.transport_state),
         )
         .map_err(|error| FfiBridgeError::Core(error.to_string()))?;
@@ -654,6 +668,36 @@ impl Drop for FfiCoreHandle {
             eprintln!("silent-disco UniFFI emergency shutdown failed: {error}");
         }
     }
+}
+
+// This UniFFI bridge currently receives legacy-v3 plaintext socket facts.
+// A caller-supplied trust enum is NOT proof of public-key possession. The
+// future v4 bridge must use VerifiedJoinAdmission, not bypass these guards.
+fn legacy_v3_trust_error() -> FfiBridgeError {
+    FfiBridgeError::Core(
+        "Legacy v3 transport cannot assert durable trust without verified cryptographic identity"
+            .to_owned(),
+    )
+}
+
+fn reject_legacy_durable_host_draft(
+    mode: FfiApprovalMode,
+    remember_approved_devices: bool,
+) -> Result<(), FfiBridgeError> {
+    if mode == FfiApprovalMode::TrustedDevices || remember_approved_devices {
+        return Err(legacy_v3_trust_error());
+    }
+    Ok(())
+}
+
+fn legacy_v3_unverified_trust(
+    input: super::types::FfiTrustState,
+) -> Result<TrustState, FfiBridgeError> {
+    let state = TrustState::try_from(input)?;
+    if matches!(state, TrustState::Trusted | TrustState::Revoked) {
+        return Err(legacy_v3_trust_error());
+    }
+    Ok(state)
 }
 
 fn request_id_from_string(value: String) -> Result<RequestId, FfiBridgeError> {

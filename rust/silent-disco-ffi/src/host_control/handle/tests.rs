@@ -139,3 +139,90 @@ mod concurrency_tests {
         }
     }
 }
+
+
+mod legacy_v3_trust_boundary_tests {
+    use super::*;
+    use crate::host_control::types::{
+        FfiCoreNotification, FfiTrustState, FfiTransportState,
+    };
+
+    struct NoopObserver;
+
+    impl FfiCoreObserver for NoopObserver {
+        fn on_notification(&self, _: FfiCoreNotification) -> Result<(), FfiBridgeError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn plaintext_ffi_rejects_claimed_trust_before_any_actor_admission() {
+        let handle = FfiCoreHandle::open("legacy-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+        for state in [FfiTrustState::Trusted, FfiTrustState::Revoked] {
+            let request = FfiJoinRequestInput {
+                request_id: "join-1".to_owned(),
+                device_id: "claimed-listener".to_owned(),
+                display_name: "Claimed listener".to_owned(),
+                trust_state: state,
+                invite_code: None,
+                received_at_ms: 1,
+            };
+            assert!(matches!(
+                handle.submit_join_request(request),
+                Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+            ));
+            let listener = FfiListenerSummary {
+                device_id: "claimed-listener".to_owned(),
+                display_name: "Claimed listener".to_owned(),
+                trust_state: state,
+                transport_state: FfiTransportState::Connected,
+                synchronization: None,
+                last_contact_ms: None,
+                last_error: None,
+            };
+            assert!(matches!(
+                handle.submit_listener_connected(listener),
+                Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+            ));
+        }
+        assert_eq!(
+            legacy_v3_unverified_trust(FfiTrustState::Unknown).expect("unverified"),
+            TrustState::Unknown
+        );
+        assert_eq!(
+            legacy_v3_unverified_trust(FfiTrustState::SessionOnly).expect("manual session"),
+            TrustState::SessionOnly
+        );
+        handle.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn plaintext_ffi_rejects_durable_approval_and_unsupported_host_drafts() {
+        let handle = FfiCoreHandle::open("legacy-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+        assert!(matches!(
+            handle.submit_join_approved(true),
+            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+        ));
+        assert!(matches!(
+            handle.approve_join(0, "join-1".to_owned(), true),
+            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+        ));
+        let mut draft = handle.current_snapshot().expect("snapshot").host_draft;
+        draft.approval_mode = FfiApprovalMode::TrustedDevices;
+        assert!(matches!(
+            handle.update_host_draft(0, draft.clone()),
+            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+        ));
+        draft.approval_mode = FfiApprovalMode::Manual;
+        draft.remember_approved_devices = true;
+        assert!(matches!(
+            handle.update_host_draft(0, draft),
+            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+        ));
+        assert!(reject_legacy_durable_host_draft(FfiApprovalMode::Manual, false).is_ok());
+        assert!(reject_legacy_durable_host_draft(FfiApprovalMode::InviteCode, false).is_ok());
+        handle.shutdown().expect("shutdown");
+    }
+}
