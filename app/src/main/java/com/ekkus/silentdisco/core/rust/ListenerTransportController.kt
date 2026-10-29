@@ -223,6 +223,11 @@ class ListenerTransportController : ListenerTransport {
             shutdown = { it.shutdown() },
             awaitPoll = { handleGate.awaitPollQuiescence(it) },
             close = { it.close() },
+            deferClose = { retired, close ->
+                handleGate.deferCloseUntilPollDrained(retired, close) {
+                    android.util.Log.e("SilentDiscoListener", "Deferred native close failed", it)
+                }
+            },
         )
     }
 
@@ -245,6 +250,7 @@ internal fun <H : Any> retireListenerNativeHandle(
     shutdown: (H) -> Unit,
     awaitPoll: (H) -> Unit,
     close: (H) -> Unit,
+    deferClose: ((H, () -> Unit) -> Unit)? = null,
 ) {
     if (handle == null) return
     var leaveFailure: Throwable? = null
@@ -256,7 +262,10 @@ internal fun <H : Any> retireListenerNativeHandle(
         }
     }
     try {
-        retireNativeHandle(handle, shutdown = shutdown, close = close, awaitPoll = awaitPoll)
+        retireNativeHandle(
+            handle, shutdown = shutdown, close = close, awaitPoll = awaitPoll,
+            deferClose = deferClose,
+        )
     } catch (cleanup: Throwable) {
         val first = leaveFailure
         if (first != null) {

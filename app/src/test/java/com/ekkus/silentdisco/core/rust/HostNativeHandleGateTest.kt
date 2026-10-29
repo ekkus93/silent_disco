@@ -8,6 +8,110 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Test
 
 class HostNativeHandleGateTest {
+
+    @Test
+    fun timedOutNativePollIsQuarantinedUntilItExitsAcrossRebind() {
+        val gate = HostNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        val enteredPoll = CountDownLatch(1)
+        val releasePoll = CountDownLatch(1)
+        val closed = mutableListOf<Any>()
+        val deferredErrors = mutableListOf<Throwable>()
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            gate.replace(retire = {}, open = { old }, start = {})
+            val polling = pool.submit {
+                gate.withExpectedPoll(old) {
+                    enteredPoll.countDown()
+                    check(releasePoll.await(5, TimeUnit.SECONDS))
+                }
+            }
+            assertThat(enteredPoll.await(5, TimeUnit.SECONDS)).isTrue()
+            val failedRetirement = runCatching {
+                gate.close { retired ->
+                    retireNativeHandle(
+                        retired,
+                        shutdown = {},
+                        close = { closed.add(it) },
+                        awaitPoll = { gate.awaitPollQuiescence(it, timeoutMillis = 20) },
+                        deferClose = { handle, close ->
+                            gate.deferCloseUntilPollDrained(handle, close) {
+                                deferredErrors.add(it)
+                            }
+                        },
+                    )
+                }
+            }
+            assertThat(failedRetirement.exceptionOrNull())
+                .hasMessageThat().contains("poll did not exit")
+            assertThat(closed).isEmpty()
+            // A replacement can bind without accidentally freeing the old
+            // handle or routing a late old-generation poll into the new one.
+            gate.replace(retire = {}, open = { replacement }, start = {})
+            assertThat(gate.withExpected(old) { error("stale command") }).isNull()
+            assertThat(gate.currentHandle()).isSameInstanceAs(replacement)
+            releasePoll.countDown()
+            polling.get(5, TimeUnit.SECONDS)
+            assertThat(closed).containsExactly(old)
+            assertThat(deferredErrors).isEmpty()
+            gate.close { if (it != null) closed.add(it) }
+            assertThat(closed).containsExactly(old, replacement).inOrder()
+        } finally {
+            releasePoll.countDown()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun deferredCloseReportsFailureAndNeverReleasesHandleTwice() {
+        val gate = HostNativeHandleGate<Any>()
+        val old = Any()
+        val enteredPoll = CountDownLatch(2)
+        val releasePoll = CountDownLatch(1)
+        val closeCalls = AtomicInteger()
+        val failures = mutableListOf<Throwable>()
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            gate.replace(retire = {}, open = { old }, start = {})
+            val polls = (1..2).map {
+                pool.submit {
+                    gate.withExpectedPoll(old) {
+                        enteredPoll.countDown()
+                        check(releasePoll.await(5, TimeUnit.SECONDS))
+                    }
+                }
+            }
+            assertThat(enteredPoll.await(5, TimeUnit.SECONDS)).isTrue()
+            val failure = runCatching {
+                gate.close { retired ->
+                    retireNativeHandle(
+                        retired,
+                        shutdown = {},
+                        close = {
+                            closeCalls.incrementAndGet()
+                            throw IllegalStateException("deferred close failed")
+                        },
+                        awaitPoll = { gate.awaitPollQuiescence(it, timeoutMillis = 20) },
+                        deferClose = { handle, close ->
+                            gate.deferCloseUntilPollDrained(handle, close, failures::add)
+                        },
+                    )
+                }
+            }
+            assertThat(failure.isFailure).isTrue()
+            assertThat(closeCalls.get()).isEqualTo(0)
+            releasePoll.countDown()
+            polls.forEach { it.get(5, TimeUnit.SECONDS) }
+            assertThat(closeCalls.get()).isEqualTo(1)
+            assertThat(failures).hasSize(1)
+            assertThat(failures.single()).hasMessageThat().contains("deferred close failed")
+        } finally {
+            releasePoll.countDown()
+            pool.shutdownNow()
+        }
+    }
+
     @Test
     fun closeWaitsForInFlightNativeSendBeforeDisposingHandle() {
         val gate = HostNativeHandleGate<Any>()

@@ -322,6 +322,11 @@ class HostTransportController(
             shutdown = { it.shutdown() },
             close = { it.close() },
             awaitPoll = { handleGate.awaitPollQuiescence(it) },
+            deferClose = { retired, close ->
+                handleGate.deferCloseUntilPollDrained(retired, close) {
+                    android.util.Log.e("SilentDiscoHost", "Deferred native close failed", it)
+                }
+            },
         )
     }
 }

@@ -24,6 +24,10 @@ internal class HostNativeHandleGate<T : Any> {
     private val pollLock = ReentrantLock()
     private val pollsDrained = pollLock.newCondition()
     private val activePolls = IdentityHashMap<T, Int>()
+    // A poll may ignore shutdown beyond the bounded drain deadline. Keep the
+    // retired native handle strongly reachable and release it only when its
+    // final poll lease exits. Never free a handle still used by native code.
+    private val deferredCloses = IdentityHashMap<T, () -> Unit>()
 
     /** For poller identity checks only; never use this to invoke native commands. */
     fun currentHandle(): T? = current.get()
@@ -53,16 +57,50 @@ internal class HostNativeHandleGate<T : Any> {
         try {
             return action(expected)
         } finally {
-            pollLock.withLock {
+            val deferredClose = pollLock.withLock {
                 val remaining = (activePolls[expected] ?: error("Native poll lease missing")) - 1
                 if (remaining == 0) {
                     activePolls.remove(expected)
                     pollsDrained.signalAll()
+                    deferredCloses.remove(expected)
                 } else {
                     activePolls[expected] = remaining
+                    null
                 }
             }
+            // Closing under pollLock would deadlock if native cleanup reenters
+            // the gate. The registered callback handles and reports failures.
+            deferredClose?.invoke()
         }
+    }
+
+    /**
+     * Quarantine a retired handle after bounded poll-drain failure. The final
+     * poll lease owns its close; if the poll finished just before registration,
+     * close immediately. The failure callback must not throw.
+     */
+    fun deferCloseUntilPollDrained(
+        retired: T,
+        close: () -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ) {
+        val finish = {
+            try {
+                close()
+            } catch (error: Throwable) {
+                onFailure(error)
+            }
+        }
+        val closeNow = pollLock.withLock {
+            if (activePolls.containsKey(retired)) {
+                check(!deferredCloses.containsKey(retired)) { "Retired handle already quarantined" }
+                deferredCloses[retired] = finish
+                false
+            } else {
+                true
+            }
+        }
+        if (closeNow) finish()
     }
 
     /**
@@ -160,6 +198,7 @@ internal fun <H : Any> retireNativeHandle(
     shutdown: (H) -> Unit,
     close: (H) -> Unit,
     awaitPoll: (H) -> Unit = {},
+    deferClose: ((H, () -> Unit) -> Unit)? = null,
 ) {
     if (handle == null) return
     var failure: Throwable? = null
@@ -174,6 +213,13 @@ internal fun <H : Any> retireNativeHandle(
     try {
         awaitPoll(handle)
     } catch (error: Throwable) {
+        // The native poll may still be accessing this handle. Do not close
+        // synchronously, but arrange eventual close when its last lease exits.
+        try {
+            deferClose?.invoke(handle) { close(handle) }
+        } catch (cleanup: Throwable) {
+            if (cleanup !== error) error.addSuppressed(cleanup)
+        }
         val first = failure
         if (first != null && first !== error) first.addSuppressed(error)
         throw first ?: error
