@@ -192,7 +192,6 @@ fn register_peer(
         .insert(number, peer.clone());
     counters.accepted();
     // The actor must observe a new TCP peer before it can process its join.
-    // UDP telemetry can saturate this queue; do not silently drop acceptance.
     // Only the accept worker waits, never the decoder or audio callback.
     if !send_authoritative_event_bounded(
         event_sender,
