@@ -73,6 +73,66 @@ fn fragmented_control_and_coalesced_stop_remain_ordered() {
 }
 
 #[test]
+fn application_backpressure_does_not_expire_next_partial_frame() {
+    let (mut client, server) = loopback();
+    let session = SessionId::new("framing-session").expect("session");
+    let hello = encode_frame(&ProtocolFrame::Control(ControlMessage::Hello(Hello {
+        session_id: session.clone(),
+        session_name: "session".to_owned(),
+        host_name: "host".to_owned(),
+        approval_required: true,
+    })))
+    .expect("encode hello");
+    let stop = encode_frame(&ProtocolFrame::Control(ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: StreamId::new("framing-stream").expect("stream"),
+        host_stop_time_ms: MonotonicMillis::new(100),
+    })))
+    .expect("encode stop");
+    let mut first = hello;
+    first.extend_from_slice(&stop[..2]);
+    client.write_all(&first).expect("complete first, partial second");
+    let (entered_sender, entered_receiver) = sync_channel(0);
+    let worker = thread::spawn(move || {
+        let mut received = Vec::new();
+        read_control_loop(
+            server,
+            &AtomicBool::new(false),
+            Duration::from_millis(10),
+            Duration::from_millis(80),
+            &session,
+            None,
+            |outcome| {
+                match outcome {
+                    ReadControlOutcome::Frame(
+                        ProtocolFrame::Control(ControlMessage::Hello(_)),
+                        _,
+                    ) => {
+                        entered_sender.send(()).expect("signal callback");
+                        thread::sleep(Duration::from_millis(120));
+                        received.push("hello");
+                    }
+                    ReadControlOutcome::Frame(
+                        ProtocolFrame::Control(ControlMessage::Stop(_)),
+                        _,
+                    ) => received.push("stop"),
+                    ReadControlOutcome::Closed => received.push("closed"),
+                    _ => received.push("unexpected"),
+                }
+                true
+            },
+        );
+        received
+    });
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first frame delivered");
+    client.write_all(&stop[2..]).expect("finish second frame");
+    client.shutdown(Shutdown::Write).expect("finish writes");
+    assert_eq!(worker.join().expect("reader"), ["hello", "stop", "closed"]);
+}
+
+#[test]
 fn joined_peer_cannot_trickle_partial_next_frame_indefinitely() {
     let (mut client, server) = loopback();
     let session = SessionId::new("framing-session").expect("session");

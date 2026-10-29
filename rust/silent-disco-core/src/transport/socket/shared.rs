@@ -493,9 +493,6 @@ pub(super) fn read_control_loop<F>(
                         break;
                     }
                     let frame_bytes: Vec<u8> = buffer.drain(..total).collect();
-                    // Remaining bytes belong to the next frame. Its deadline
-                    // begins when that frame first becomes the active frame.
-                    frame_started = (!buffer.is_empty()).then(Instant::now);
                     let result = decoder.decode(
                         &frame_bytes,
                         DecodePolicy {
@@ -508,6 +505,9 @@ pub(super) fn read_control_loop<F>(
                             if !on_outcome(ReadControlOutcome::Frame(frame, total)) {
                                 return;
                             }
+                            // Actor backpressure handling the prior frame must not
+                            // consume the next frame's network assembly deadline.
+                            frame_started = (!buffer.is_empty()).then(Instant::now);
                         }
                         Err(error) => {
                             let _ = on_outcome(ReadControlOutcome::Rejected(
