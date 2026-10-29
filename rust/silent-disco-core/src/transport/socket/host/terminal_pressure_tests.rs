@@ -361,12 +361,11 @@ fn real_socket_heartbeat_flood_does_not_hide_authoritative_disconnect() {
                 break;
             }
             TransportEvent::FrameReceived {
-                frame: ProtocolFrame::Control(
-                    ControlMessage::Heartbeat(_) | ControlMessage::Disconnect(_)
-                ),
+                frame:
+                    ProtocolFrame::Control(ControlMessage::Heartbeat(_) | ControlMessage::Disconnect(_)),
                 ..
             } => {}
-            event => panic!("unexpected host event under telemetry pressure: {event:?}"),
+            _ => panic!("unexpected host event under telemetry pressure"),
         }
     }
     assert!(
