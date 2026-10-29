@@ -249,6 +249,16 @@ fn register_peer(
                                     }
                                     _ => None,
                                 };
+                                // Heartbeats and synchronization reports are telemetry.
+                                // Never stall the TCP reader behind a stopped collector:
+                                // doing so can trap a later authoritative Disconnect.
+                                let lossy_telemetry = matches!(
+                                    &frame,
+                                    ProtocolFrame::Control(
+                                        ControlMessage::Heartbeat(_)
+                                            | ControlMessage::SynchronizationReport(_)
+                                    )
+                                );
                                 let event = TransportEvent::FrameReceived {
                                     channel: TransportChannel::Control,
                                     peer: reader_peer.transport_peer(),
@@ -286,6 +296,11 @@ fn register_peer(
                                             }
                                         },
                                     )
+                                } else if lossy_telemetry {
+                                    // Drop only best-effort telemetry when the bounded
+                                    // actor queue is full; critical controls stay ordered.
+                                    send_event(&event_for_reader, &counters_for_reader, event);
+                                    true
                                 } else {
                                     send_authoritative_event(
                                         &event_for_reader,

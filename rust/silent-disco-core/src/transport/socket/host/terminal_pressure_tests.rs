@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{ControlMessage, Hello, ProtocolFrame};
+use crate::domain::MonotonicMillis;
+use crate::protocol::{ControlMessage, Heartbeat, Hello, ProtocolFrame};
 use crate::transport::test_support::{
     id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
     wait_for_frame, wait_until,
@@ -305,4 +306,72 @@ fn saturated_host_event_queue_rolls_back_real_socket_authorization() {
     candidate.shutdown().expect("candidate cleanup");
     congesting.shutdown().expect("congesting cleanup");
     host.shutdown().expect("host cleanup");
+}
+
+#[test]
+fn real_socket_heartbeat_flood_does_not_hide_authoritative_disconnect() {
+    let session = id_session("heartbeat-terminal-priority");
+    let device = id_device("heartbeat-flood-listener");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind host");
+    let mut listener = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("connect listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    listener
+        .send_control(&join_request(&session, &device, "Telemetry flood"))
+        .expect("send join");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device, listener.local_routes())
+        .expect("authorize listener");
+    wait_for_authorized(&mut host, &device);
+
+    // Saturate the single actor event slot with real TCP heartbeats while
+    // the host actor collector is stopped. They may be dropped, but the TCP
+    // reader must continue to EOF and deliver its authoritative terminal.
+    for index in 0..64 {
+        listener
+            .send_control(&ControlMessage::Heartbeat(Heartbeat {
+                session_id: session.clone(),
+                listener_id: device.clone(),
+                sent_at_elapsed_ms: MonotonicMillis::new(index),
+            }))
+            .expect("heartbeat TCP write");
+    }
+    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    listener.shutdown().expect("close listener TCP connection");
+
+    let mut disconnected = false;
+    for _ in 0..4 {
+        match host.recv_event(Duration::from_secs(5)).expect("terminal progress") {
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&device) =>
+            {
+                disconnected = true;
+                break;
+            }
+            TransportEvent::FrameReceived {
+                frame: ProtocolFrame::Control(
+                    ControlMessage::Heartbeat(_) | ControlMessage::Disconnect(_)
+                ),
+                ..
+            } => {}
+            event => panic!("unexpected host event under telemetry pressure: {event:?}"),
+        }
+    }
+    assert!(
+        disconnected,
+        "telemetry must not consume the queue indefinitely ahead of disconnect"
+    );
+    host.shutdown().expect("shutdown host");
 }
