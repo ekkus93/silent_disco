@@ -46,6 +46,8 @@ mod terminal_slot_budget_tests;
 #[cfg(test)]
 mod packetizer_socket_pcm_tests;
 #[cfg(test)]
+mod paused_midqueue_socket_pcm_tests;
+#[cfg(test)]
 mod playback_controls_format_tests;
 #[cfg(test)]
 mod playback_controls_tests;
