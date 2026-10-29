@@ -49,7 +49,8 @@ class HostNativeHandleGateTest {
             // A replacement can bind without accidentally freeing the old
             // handle or routing a late old-generation poll into the new one.
             gate.replace(retire = {}, open = { replacement }, start = {})
-            assertThat(gate.withExpected(old) { error("stale command") }).isNull()
+            val staleCommand: String? = gate.withExpected(old) { error("stale command") }
+            assertThat(staleCommand).isNull()
             assertThat(gate.currentHandle()).isSameInstanceAs(replacement)
             releasePoll.countDown()
             polling.get(5, TimeUnit.SECONDS)
