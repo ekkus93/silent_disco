@@ -101,6 +101,24 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         assert!(Instant::now() < deadline, "listener never received Hello");
         thread::sleep(Duration::from_millis(2));
     }
+    // Keep the collector stopped while the host floods real TCP heartbeats.
+    // Hello occupies the one-slot queue; telemetry must not block the reader
+    // or delay a subsequent authoritative terminal event.
+    for index in 0..16 {
+        host.send_pending_control(
+            &device,
+            &ControlMessage::Heartbeat(Heartbeat {
+                session_id: session.clone(),
+                listener_id: device.clone(),
+                sent_at_elapsed_ms: MonotonicMillis::new(index),
+            }),
+        )
+        .expect("send host heartbeat");
+    }
+    wait_until(Duration::from_secs(5), || {
+        listener.counters().control_frames_received >= 17
+    });
+    assert!(listener.counters().queue_overflows > 0);
     host.shutdown().expect("close host TCP socket");
 
     assert!(matches!(

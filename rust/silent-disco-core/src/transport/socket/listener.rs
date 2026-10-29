@@ -333,17 +333,33 @@ fn spawn_control_reader(
                     ReadControlOutcome::Frame(frame, bytes) => {
                         counters.frame_received(bytes);
                         match validate_listener_inbound(&config.device_id, &frame) {
-                            Ok(()) => send_authoritative_event(
-                                &event_sender,
-                                &stop,
-                                &counters,
-                                TransportEvent::FrameReceived {
+                            Ok(()) => {
+                                // Host heartbeats are telemetry, not playback commands.
+                                // A stopped actor collector must not trap the TCP
+                                // reader behind a full queue and hide a later Stop
+                                // or terminal disconnect.
+                                let lossy_heartbeat = matches!(
+                                    &frame,
+                                    ProtocolFrame::Control(ControlMessage::Heartbeat(_))
+                                );
+                                let event = TransportEvent::FrameReceived {
                                     channel: TransportChannel::Control,
                                     peer: host_peer.clone(),
                                     frame,
                                     received_at: clock.now(),
-                                },
-                            ),
+                                };
+                                if lossy_heartbeat {
+                                    send_event(&event_sender, &counters, event);
+                                    true
+                                } else {
+                                    send_authoritative_event(
+                                        &event_sender,
+                                        &stop,
+                                        &counters,
+                                        event,
+                                    )
+                                }
+                            },
                             Err(error) => {
                                 // A diagnostic Rejected event is lossy under
                                 // queue pressure. Preserve the reason in the
