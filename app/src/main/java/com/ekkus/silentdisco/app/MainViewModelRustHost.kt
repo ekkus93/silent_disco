@@ -521,10 +521,8 @@ private suspend fun MainViewModel.executeRustTransportEffect(
 ) {
     if (effect is FfiTransportEffect.DeliverJoinApproval) {
         if (effect.trustedForFuture) {
-            // This legacy-v3 connection has no verified listener public key.
-            // Complete the actor operation with an explicit failed delivery,
-            // rather than leaving its approval pending after the native
-            // transport rejects a requested durable-trust promotion.
+            // Legacy v3 has no verified key: report a failed delivery to the actor,
+            // not a pending approval or a silently trusted claimed device ID.
             pendingListenerDatagramPorts.remove(effect.listenerId)
             controller.transportDeliveryCompleted(
                 effect.operationId,
