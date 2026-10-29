@@ -352,14 +352,9 @@ fn spawn_control_reader(
                                     send_event(&event_sender, &counters, event);
                                     true
                                 } else {
-                                    send_authoritative_event(
-                                        &event_sender,
-                                        &stop,
-                                        &counters,
-                                        event,
-                                    )
+                                    send_authoritative_event(&event_sender, &stop, &counters, event)
                                 }
-                            },
+                            }
                             Err(error) => {
                                 // A diagnostic Rejected event is lossy under
                                 // queue pressure. Preserve the reason in the
