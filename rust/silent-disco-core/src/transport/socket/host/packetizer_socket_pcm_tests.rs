@@ -456,7 +456,10 @@ fn real_socket_midqueue_join_tracks_audible_boundary_and_stop_replay_pcm() {
         assert_eq!(outcome.frames.len(), 1);
         let frame = outcome.frames.into_iter().next().expect("PCM packet");
         assert_eq!(
-            host.broadcast_audio(&frame).expect("send PCM").report.successful_peers,
+            host.broadcast_audio(&frame)
+                .expect("send PCM")
+                .report
+                .successful_peers,
             1
         );
         expect_wire_frame(first.as_mut(), &frame);
@@ -516,9 +519,10 @@ fn real_socket_midqueue_join_tracks_audible_boundary_and_stop_replay_pcm() {
             1_000 + sequence as u64 * 5
         );
         decoded.extend(
-            packet.payload.chunks_exact(2).map(|bytes| {
-                i16::from_le_bytes([bytes[0], bytes[1]])
-            }),
+            packet
+                .payload
+                .chunks_exact(2)
+                .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]])),
         );
     }
     assert_eq!(decoded, tracks.into_iter().flatten().collect::<Vec<_>>());
@@ -550,7 +554,11 @@ fn real_socket_midqueue_join_tracks_audible_boundary_and_stop_replay_pcm() {
     );
     let mut after_stop = join_listener(&mut host, &clock, "midqueue-after-stop");
     assert!(
-        host.playback_controls.lock().expect("cache").snapshot().is_empty(),
+        host.playback_controls
+            .lock()
+            .expect("cache")
+            .snapshot()
+            .is_empty(),
         "Stop must clear every cached boundary and current title"
     );
 
@@ -573,7 +581,12 @@ fn real_socket_midqueue_join_tracks_audible_boundary_and_stop_replay_pcm() {
             .successful_peers,
         4
     );
-    for listener in [&mut first, &mut midqueue, &mut after_boundary, &mut after_stop] {
+    for listener in [
+        &mut first,
+        &mut midqueue,
+        &mut after_boundary,
+        &mut after_stop,
+    ] {
         expect_wire_frame(listener.as_mut(), &replay_start);
     }
     let replay_samples: Vec<i16> = (0_i16..240).flat_map(|value| [value, -value]).collect();
@@ -587,10 +600,18 @@ fn real_socket_midqueue_join_tracks_audible_boundary_and_stop_replay_pcm() {
         .expect("replay PCM");
     let fresh = outcome.frames.first().expect("fresh packet");
     assert_eq!(
-        host.broadcast_audio(fresh).expect("fresh UDP").report.successful_peers,
+        host.broadcast_audio(fresh)
+            .expect("fresh UDP")
+            .report
+            .successful_peers,
         4
     );
-    for listener in [&mut first, &mut midqueue, &mut after_boundary, &mut after_stop] {
+    for listener in [
+        &mut first,
+        &mut midqueue,
+        &mut after_boundary,
+        &mut after_stop,
+    ] {
         expect_wire_frame(listener.as_mut(), fresh);
         listener.shutdown().expect("shutdown listener");
     }
