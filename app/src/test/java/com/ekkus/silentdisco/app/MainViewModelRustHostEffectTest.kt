@@ -398,7 +398,7 @@ class MainViewModelRustHostEffectTest {
     }
 
     @Test
-    fun persistTrustedDeviceSuccessReportsTrustedDeviceUpdated() = runTest(dispatcher) {
+    fun persistTrustedDeviceRejectsUnverifiedIdentityWithoutTouchingStorage() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustHostCore()
         advanceUntilIdle()
@@ -414,17 +414,21 @@ class MainViewModelRustHostEffectTest {
         )
         advanceUntilIdle()
 
-        assertThat(harness.domainStore.trustDeviceCalls).hasSize(1)
-        val (deviceId, displayName, _) = harness.domainStore.trustDeviceCalls.single()
-        assertThat(deviceId).isEqualTo("listener-1")
-        assertThat(displayName).isEqualTo("Alex's phone")
-        assertThat(harness.hostCoreController.trustedDeviceUpdatedCalls).containsExactly(
-            "op-trust" to "listener-1",
+        // A plaintext-v3 claimed ID is not a verified public-key identity.
+        // The actor must see a terminal failure, never a durable-trust success.
+        assertThat(harness.domainStore.trustDeviceCalls).isEmpty()
+        assertThat(harness.hostCoreController.trustedDeviceUpdatedCalls).isEmpty()
+        assertThat(harness.hostCoreController.storageOperationFailedCalls).containsExactly(
+            RecordedFailure(
+                "op-trust",
+                com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR,
+                false,
+            ),
         )
     }
 
     @Test
-    fun persistTrustedDeviceFailureReportsStorageOperationFailedNotASwallowedException() = runTest(dispatcher) {
+    fun persistTrustedDeviceDoesNotAccessFailingLegacyStore() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.domainStore.trustDeviceFailure = RuntimeException("db locked")
         harness.viewModel.ensureRustHostCore()
@@ -434,16 +438,53 @@ class MainViewModelRustHostEffectTest {
             FfiCoreNotification.StorageEffect(
                 FfiStorageEffect.PersistTrustedDevice(
                     operationId = "op-trust-fail",
-                    deviceId = "listener-1",
-                    displayName = "Alex's phone",
+                    deviceId = "spoofed-listener",
+                    displayName = "Unknown device",
                 ),
             ),
         )
         advanceUntilIdle()
 
+        // A storage exception must not mask the security refusal: the
+        // unverified request is rejected before any legacy DB access.
+        assertThat(harness.domainStore.trustDeviceCalls).isEmpty()
         assertThat(harness.hostCoreController.storageOperationFailedCalls).containsExactly(
-            RecordedFailure("op-trust-fail", "db locked", true),
+            RecordedFailure(
+                "op-trust-fail",
+                com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR,
+                false,
+            ),
         )
         assertThat(harness.hostCoreController.trustedDeviceUpdatedCalls).isEmpty()
+    }
+
+    @Test
+    fun trustedForFutureJoinApprovalIsExplicitlyRefusedOnLegacyTransport() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustHostCore()
+        advanceUntilIdle()
+
+        harness.hostCoreController.emit(
+            FfiCoreNotification.TransportEffect(
+                FfiTransportEffect.DeliverJoinApproval(
+                    operationId = "op-unverified-approval",
+                    requestId = "req-1",
+                    sessionId = "session-1",
+                    listenerId = "spoofed-listener",
+                    trustedForFuture = true,
+                ),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertThat(harness.hostCoreController.transportDeliveryCompletedCalls).containsExactly(
+            "op-unverified-approval" to FfiDeliveryReport(
+                intendedPeers = 1u,
+                successfulPeers = 0u,
+                failedPeers = 1u,
+            ),
+        )
+        assertThat(harness.hostCoreController.submitListenerConnectedCalls).isEmpty()
+        assertThat(harness.domainStore.trustDeviceCalls).isEmpty()
     }
 }
