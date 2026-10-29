@@ -20,8 +20,8 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event, shutdown_stream,
-    spawn_control_writer,
+    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event,
+    shutdown_stream, spawn_control_writer,
 };
 
 #[allow(clippy::too_many_arguments)]

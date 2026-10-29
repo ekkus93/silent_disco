@@ -537,11 +537,7 @@ fn repeated_real_tcp_reconnects_reap_finished_workers_without_losing_terminals()
     for generation in 0..128 {
         let mut listener = SocketTransportFactory
             .connect_listener(
-                ListenerTransportConfig::loopback(
-                    session.clone(),
-                    device.clone(),
-                    host.endpoint(),
-                ),
+                ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
                 clock.clone(),
             )
             .expect("connect generation");
