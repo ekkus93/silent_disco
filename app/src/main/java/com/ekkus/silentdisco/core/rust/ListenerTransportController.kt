@@ -160,7 +160,7 @@ class ListenerTransportController : ListenerTransport {
         eventLoop = scope.launch(Dispatchers.IO) {
             while (isActive && handleGate.currentHandle() === handle) {
                 val event = try {
-                    handle.pollEvent(POLL_TIMEOUT_MS)
+                    handleGate.withExpectedPoll(handle) { it.pollEvent(POLL_TIMEOUT_MS) }
                 } catch (error: FfiListenerTransportException) {
                     // A host's explicit Disconnect is handled by the consumer,
                     // which closes this handle. The blocking poll can then
@@ -241,6 +241,14 @@ class ListenerTransportController : ListenerTransport {
             handle.shutdown()
         } catch (error: FfiListenerTransportException) {
             recordFailure(error)
+        }
+        // The cancelled poller may still be executing a blocking native
+        // call. Never free its UniFFI handle until that call has returned.
+        try {
+            handleGate.awaitPollQuiescence(handle)
+        } catch (error: Throwable) {
+            recordFailure(error)
+            firstFailure?.let { throw it }
         }
         try {
             handle.close()

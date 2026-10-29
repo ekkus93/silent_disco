@@ -248,7 +248,7 @@ class HostTransportController(
         eventLoop = scope.launch(Dispatchers.IO) {
             while (isActive && handleGate.currentHandle() === handle) {
                 val event = try {
-                    handle.pollEvent(POLL_TIMEOUT_MS)
+                    handleGate.withExpectedPoll(handle) { it.pollEvent(POLL_TIMEOUT_MS) }
                 } catch (error: FfiHostTransportException) {
                     // A poll unblocked by Stop/rebind is teardown fallout, not
                     // a failure in the newly bound host session.
@@ -315,7 +315,12 @@ class HostTransportController(
         // event cannot be forwarded while the next session is binding.
         eventLoop?.cancel()
         eventLoop = null
-        retireNativeHandle(handle, shutdown = { it.shutdown() }, close = { it.close() })
+        retireNativeHandle(
+            handle,
+            shutdown = { it.shutdown() },
+            close = { it.close() },
+            awaitPoll = { handleGate.awaitPollQuiescence(it) },
+        )
     }
 }
 

@@ -316,4 +316,89 @@ class HostNativeHandleGateTest {
         }
     }
 
+
+    @Test
+    fun nativePollLeaseAllowsShutdownButPreventsCloseUntilPollReturnsAcross128Rebinds() {
+        val gate = HostNativeHandleGate<Any>()
+        val handles = (0..128).map { Any() }
+        val closed = mutableListOf<Any>()
+        val pool = Executors.newFixedThreadPool(2)
+        gate.replace(retire = {}, open = { handles.first() }, start = {})
+        try {
+            repeat(128) { index ->
+                val old = handles[index]
+                val next = handles[index + 1]
+                val polling = CountDownLatch(1)
+                val releasePoll = CountDownLatch(1)
+                val shutdownStarted = CountDownLatch(1)
+                val poll = pool.submit {
+                    gate.withExpectedPoll(old) {
+                        polling.countDown()
+                        check(releasePoll.await(5, TimeUnit.SECONDS))
+                        assertThat(closed).doesNotContain(old)
+                    }
+                }
+                try {
+                    assertThat(polling.await(5, TimeUnit.SECONDS)).isTrue()
+                    // A blocked poll cannot monopolize the command gate.
+                    assertThat(gate.withExpected(old) { "send" }).isEqualTo("send")
+                    val rebind = pool.submit {
+                        gate.replace(
+                            retire = { handle ->
+                                retireNativeHandle(
+                                    handle,
+                                    shutdown = { shutdownStarted.countDown() },
+                                    close = { closed.add(it) },
+                                    awaitPoll = { gate.awaitPollQuiescence(it) },
+                                )
+                            },
+                            open = { next },
+                            start = {},
+                        )
+                    }
+                    assertThat(shutdownStarted.await(5, TimeUnit.SECONDS)).isTrue()
+                    assertThat(closed).doesNotContain(old)
+                    assertThat(gate.withExpectedPoll(old) { error("stale poll") }).isNull()
+                    releasePoll.countDown()
+                    poll.get(5, TimeUnit.SECONDS)
+                    rebind.get(5, TimeUnit.SECONDS)
+                    assertThat(closed).contains(old)
+                    assertThat(gate.currentHandle()).isSameInstanceAs(next)
+                } finally {
+                    releasePoll.countDown()
+                }
+            }
+            gate.close { handle ->
+                retireNativeHandle(
+                    handle,
+                    shutdown = {},
+                    close = { closed.add(it) },
+                    awaitPoll = { gate.awaitPollQuiescence(it) },
+                )
+            }
+            assertThat(closed).containsExactlyElementsIn(handles).inOrder()
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun failedPollJoinNeverClosesPossiblyInUseNativeHandle() {
+        val handle = Any()
+        val shutdownFailure = IllegalStateException("shutdown failed")
+        val joinFailure = IllegalStateException("poll interrupted")
+        var closed = false
+        val outcome = runCatching {
+            retireNativeHandle(
+                handle,
+                shutdown = { throw shutdownFailure },
+                close = { closed = true },
+                awaitPoll = { throw joinFailure },
+            )
+        }
+        assertThat(outcome.exceptionOrNull()).isSameInstanceAs(shutdownFailure)
+        assertThat(shutdownFailure.suppressed).asList().containsExactly(joinFailure)
+        assertThat(closed).isFalse()
+    }
+
 }

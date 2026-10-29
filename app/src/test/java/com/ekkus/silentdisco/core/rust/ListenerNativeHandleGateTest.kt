@@ -145,4 +145,58 @@ class ListenerNativeHandleGateTest {
         }
     }
 
+
+    @Test
+    fun listenerPollLeasePreventsCloseAndRejectsStaleEventsAcrossReconnect() {
+        val gate = ListenerNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val shutdown = CountDownLatch(1)
+        val disposed = AtomicInteger()
+        val pool = Executors.newFixedThreadPool(2)
+        gate.replace(retire = {}, open = { old }, start = {})
+        try {
+            val poll = pool.submit {
+                gate.withExpectedPoll(old) {
+                    started.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                    assertThat(disposed.get()).isEqualTo(0)
+                }
+            }
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue()
+            val reconnect = pool.submit {
+                gate.replace(
+                    retire = { handle ->
+                        retireNativeHandle(
+                            handle,
+                            shutdown = { shutdown.countDown() },
+                            close = { disposed.incrementAndGet() },
+                            awaitPoll = { gate.awaitPollQuiescence(it) },
+                        )
+                    },
+                    open = { replacement },
+                    start = {},
+                )
+            }
+            assertThat(shutdown.await(5, TimeUnit.SECONDS)).isTrue()
+            assertThat(disposed.get()).isEqualTo(0)
+            assertThat(gate.withExpectedPoll(old) { error("stale poll") }).isNull()
+            release.countDown()
+            poll.get(5, TimeUnit.SECONDS)
+            reconnect.get(5, TimeUnit.SECONDS)
+            assertThat(disposed.get()).isEqualTo(1)
+            assertThat(gate.currentHandle()).isSameInstanceAs(replacement)
+            assertThat(gate.withExpectedPoll(replacement) { "live" }).isEqualTo("live")
+            assertThat(shouldForwardPolledListenerEvent(
+                loopActive = true,
+                handleIsCurrent = gate.currentHandle() === old,
+            )).isFalse()
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
+
 }

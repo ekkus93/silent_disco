@@ -1,6 +1,9 @@
 package com.ekkus.silentdisco.core.rust
 
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Serializes native transport commands against shutdown and session replacement.
@@ -15,6 +18,11 @@ import java.util.concurrent.atomic.AtomicReference
 internal class HostNativeHandleGate<T : Any> {
     private val monitor = Any()
     private val current = AtomicReference<T?>(null)
+    // Polls must run without the command lock so shutdown can interrupt them.
+    // Their native handles nevertheless remain live until every poll returns.
+    private val pollLock = ReentrantLock()
+    private val pollsDrained = pollLock.newCondition()
+    private val activePolls = IdentityHashMap<T, Int>()
 
     /** For poller identity checks only; never use this to invoke native commands. */
     fun currentHandle(): T? = current.get()
@@ -26,6 +34,41 @@ internal class HostNativeHandleGate<T : Any> {
     /** A queued command cannot silently migrate to a newly bound session. */
     fun <R> withExpected(expected: T, action: (T) -> R): R? = synchronized(monitor) {
         current.get()?.takeIf { it === expected }?.let(action)
+    }
+
+    /**
+     * Acquire a native poll lease only for the exact current generation.
+     * Unlike a command, the blocking poll runs OUTSIDE the command monitor:
+     * shutdown must remain able to interrupt it. Retirement first clears
+     * [current], then shuts down the socket and awaits these leases before
+     * releasing the UniFFI handle. Identity comparison prevents an old poll
+     * from being counted against a newly rebound session.
+     */
+    fun <R> withExpectedPoll(expected: T, action: (T) -> R): R? {
+        pollLock.withLock {
+            if (current.get() !== expected) return null
+            activePolls[expected] = (activePolls[expected] ?: 0) + 1
+        }
+        try {
+            return action(expected)
+        } finally {
+            pollLock.withLock {
+                val remaining = (activePolls[expected] ?: error("Native poll lease missing")) - 1
+                if (remaining == 0) {
+                    activePolls.remove(expected)
+                    pollsDrained.signalAll()
+                } else {
+                    activePolls[expected] = remaining
+                }
+            }
+        }
+    }
+
+    /** Call after native shutdown but before native close; never on an audio callback. */
+    fun awaitPollQuiescence(retired: T) {
+        pollLock.withLock {
+            while (activePolls.containsKey(retired)) pollsDrained.await()
+        }
     }
 
     /** The retire, open and poller-start sequence is one indivisible transition. */
@@ -103,6 +146,7 @@ internal fun <H : Any> retireNativeHandle(
     handle: H?,
     shutdown: (H) -> Unit,
     close: (H) -> Unit,
+    awaitPoll: (H) -> Unit = {},
 ) {
     if (handle == null) return
     var failure: Throwable? = null
@@ -110,6 +154,16 @@ internal fun <H : Any> retireNativeHandle(
         shutdown(handle)
     } catch (error: Throwable) {
         failure = error
+    }
+    // Shutdown is allowed to race a blocking poll; close is not. If a poll
+    // cannot be joined, fail visibly and retain the native object rather
+    // than releasing memory still accessed by a native worker.
+    try {
+        awaitPoll(handle)
+    } catch (error: Throwable) {
+        val first = failure
+        if (first != null && first !== error) first.addSuppressed(error)
+        throw first ?: error
     }
     try {
         close(handle)
