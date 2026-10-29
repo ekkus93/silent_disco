@@ -150,6 +150,40 @@ class BoundedTransportEventQueueTest {
     }
 
     @Test
+    fun lateRetiredPcmCannotConsumeFreshSessionCriticalCapacityWithoutCollector() = runTest {
+        val retired = Any()
+        val replacement = Any()
+        var current = retired
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 4)
+        queue.tryEmit(retired, "old-audio-before-rebind")
+        current = replacement
+        queue.discardRetiredEvents()
+
+        // Simulate the old poller resuming after the generation check it made
+        // before rebind. A thousand stale events must not reserve any slot or
+        // consume the new session's best-effort quota while the UI is stopped.
+        repeat(1_000) { queue.tryEmit(retired, "late-old-audio-$it") }
+        assertThat(queue.droppedBestEffort).isEqualTo(0)
+        val pending = backgroundScope.async {
+            repeat(4) { queue.emit(replacement, "critical-$it") }
+        }
+        runCurrent()
+        assertThat(pending.isCompleted).isTrue()
+        assertThat(queue.droppedBestEffort).isEqualTo(0)
+
+        val received = backgroundScope.async { queue.events.take(4).toList() }
+        runCurrent()
+        assertThat(received.await())
+            .containsExactly("critical-0", "critical-1", "critical-2", "critical-3")
+            .inOrder()
+        queue.tryEmit(replacement, "fresh-audio")
+        val fresh = backgroundScope.async { queue.events.first() }
+        runCurrent()
+        assertThat(fresh.await()).isEqualTo("fresh-audio")
+        queue.close()
+    }
+
+    @Test
     fun closingQueueUnblocksPendingAuthoritativeEventAndPreservesAlreadyQueuedJoin() = runTest {
         val handle = Any()
         val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 1)

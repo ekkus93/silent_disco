@@ -42,6 +42,10 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
     private val bestEffortLimit = if (capacity == 1) 0 else (capacity / 4).coerceIn(1, capacity - 1)
     private val queuedBestEffort = AtomicInteger()
     private val dropped = AtomicLong()
+    // Serializes lossy enqueues with rebind cleanup. A retired poller that
+    // passed its outer generation check just before replacement must not
+    // enqueue stale PCM *after* the replacement drains the old queue.
+    private val enqueueGate = Any()
 
     // Decrement before emitting downstream, even when the generation is stale
     // or the collector is cancelled while processing a delivered event.
@@ -65,7 +69,7 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
      * job must not yet be started. This drains queued items, not an event
      * already handed to a collector; that consumer still checks the handle.
      */
-    fun discardRetiredEvents() {
+    fun discardRetiredEvents() = synchronized(enqueueGate) {
         while (true) {
             val retired = channel.tryReceive().getOrNull() ?: break
             if (retired.bestEffort) queuedBestEffort.decrementAndGet()
@@ -73,12 +77,16 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
     }
 
     /** Only use for explicitly lossy telemetry or PCM. */
-    fun tryEmit(handle: Handle, event: Event) {
+    fun tryEmit(handle: Handle, event: Event) = synchronized(enqueueGate) {
+        // A cancelled poll coroutine can finish an already-read native event
+        // after the new handle has been installed. Do not charge its bytes or
+        // diagnostic quota to the replacement session.
+        if (currentHandle() !== handle) return@synchronized
         val pending = queuedBestEffort.incrementAndGet()
         if (pending > bestEffortLimit) {
             queuedBestEffort.decrementAndGet()
             dropped.incrementAndGet()
-            return
+            return@synchronized
         }
         if (channel.trySend(TransportQueueEntry(handle, event, bestEffort = true)).isFailure) {
             queuedBestEffort.decrementAndGet()
