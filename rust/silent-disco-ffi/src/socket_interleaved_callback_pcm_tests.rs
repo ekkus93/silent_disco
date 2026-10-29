@@ -24,7 +24,7 @@ use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, Pause, ProtocolFrame, Stop, StreamStart,
     TrackBoundary,
 };
-use silent_disco_core::transport::ListenerTransportNode;
+use silent_disco_core::transport::{HostTransportNode, ListenerTransportNode};
 use std::fs;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,6 +51,43 @@ fn read_callback(token: u64, frames: u32, tap: &CallbackCaptureTap) -> Vec<f32> 
         "nonblocking capture must agree with actual callback return"
     );
     output
+}
+
+/// A delayed producer packet can race the same-stream Resume TCP control.
+/// Reject it before UDP delivery or sequence-watermark mutation; the next
+/// legitimate packet intentionally reuses this sequence and sample index.
+fn reject_stale_udp_after_resume(
+    host: &dyn HostTransportNode,
+    session: &SessionId,
+    stream: &StreamId,
+    sequence: u64,
+    old_presentation_ms: u64,
+    token: u64,
+    tap: &CallbackCaptureTap,
+) {
+    let stale = ProtocolFrame::Audio(AudioDatagram {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        sequence: PacketSequence::new(sequence),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        first_sample_index: SampleIndex::new(sequence * 240),
+        host_presentation_time_ms: MonotonicMillis::new(old_presentation_ms),
+        payload: vec![0; 240 * 2 * 2],
+    });
+    let sent_before = host.counters().audio_datagrams_sent;
+    let tap_before = tap.counters();
+    let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
+    let callbacks_before = silent_disco_audio_callback_count(native);
+    let result = host
+        .broadcast_audio(&stale)
+        .expect("late old-anchor PCM must be rejected without transport failure");
+    assert_eq!(result.report.intended_peers, 0);
+    assert_eq!(host.counters().audio_datagrams_sent, sent_before);
+    assert_eq!(silent_disco_audio_callback_count(native), callbacks_before);
+    assert_eq!(tap.counters(), tap_before);
 }
 
 #[test]
@@ -268,6 +305,12 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     pump.scheduler_mut().set_host_start_time_ms(1_200);
                     newcomer = Some(extra);
                     first_resume = Some(resume);
+                    // This delayed old-anchor packet has the SAME stream ID,
+                    // sequence and sample index as the next legitimate packet.
+                    // Neither the live socket nor the native callback may see it.
+                    reject_stale_udp_after_resume(
+                        host.as_ref(), &session, &stream, packets, 1_010, token, &tap,
+                    );
                     presentation_shift_ms = 200;
                     let native = usize::try_from(token).expect("token") as *const core::ffi::c_void;
                     assert_eq!(silent_disco_audio_callback_count(native), 1);
@@ -351,6 +394,9 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                                 == resume
                         );
                         pump.scheduler_mut().set_host_start_time_ms(1_400);
+                        reject_stale_udp_after_resume(
+                            host.as_ref(), &session, &stream, packets, 1_220, token, &tap,
+                        );
                         presentation_shift_ms = 400;
                         second_paused = true;
                         let native =
