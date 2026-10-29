@@ -10,11 +10,9 @@ import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 
 /** Android-facing command and event port for the authoritative Rust listener actor. */
 interface ListenerCoreController : AutoCloseable {
@@ -50,27 +48,31 @@ class UniFfiListenerCoreController(
     private val closed = AtomicBoolean(false)
     private val handleRef = AtomicReference<FfiCoreHandle?>(null)
     private val _snapshots = MutableStateFlow<FfiCoreSnapshot?>(null)
-    private val notificationChannel = Channel<FfiCoreNotification>(Channel.UNLIMITED)
+    // Listener effects are just as authoritative as host effects. A stalled UI
+    // must not accumulate unbounded Rust notifications or silently lose Stop.
+    private val notificationMailbox = ListenerCoreNotificationMailbox<FfiCoreNotification>(
+        onSnapshot = { notification ->
+            if (notification is FfiCoreNotification.Snapshot) {
+                _snapshots.value = notification.snapshot
+                true
+            } else {
+                false
+            }
+        },
+        isDiagnostic = { it is FfiCoreNotification.Diagnostic },
+    )
 
     private val observer = object : FfiCoreObserver {
         override fun onNotification(notification: FfiCoreNotification) {
-            when (notification) {
-                is FfiCoreNotification.Snapshot -> _snapshots.value = notification.snapshot
-                else -> {
-                    val delivered = notificationChannel.trySend(notification).isSuccess
-                    if (!delivered && !closed.get()) {
-                        System.err.println(
-                            "SilentDisco: Rust listener notification could not be queued: " +
-                                notification::class.java.simpleName,
-                        )
-                    }
-                }
-            }
+            notificationMailbox.publish(notification)
         }
     }
 
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
-    override val notifications: Flow<FfiCoreNotification> = notificationChannel.receiveAsFlow()
+    override val notifications: Flow<FfiCoreNotification> = notificationMailbox.events
+    /** Diagnostics are intentionally lossy; authoritative listener effects are not. */
+    val droppedDiagnosticNotifications: Long get() = notificationMailbox.droppedDiagnostics
+    val criticalNotificationTimeouts: Long get() = notificationMailbox.criticalTimeouts
 
     override fun startDiscovery() = withRoleSelected { handle, revision ->
         handle.startDiscovery(revision)
@@ -136,11 +138,13 @@ class UniFfiListenerCoreController(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         val handle = handleRef.getAndSet(null)
-        if (handle != null) {
-            runCatching { handle.shutdown() }
-            handle.close()
+        try {
+            retireNativeHandle(handle, shutdown = { it.shutdown() }, close = { it.close() })
+        } finally {
+            // A native teardown failure must never leave a blocked observer or
+            // UI collector waiting on a bridge that can no longer make progress.
+            notificationMailbox.close()
         }
-        notificationChannel.close()
     }
 
     private inline fun withRoleSelected(command: (FfiCoreHandle, ULong) -> Unit) {
