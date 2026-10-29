@@ -20,7 +20,7 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event,
+    reap_finished_workers, send_authoritative_event_bounded, send_event,
     shutdown_stream, spawn_control_writer,
 };
 
@@ -394,11 +394,14 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            // A disconnect is authoritative: losing it under UDP telemetry
-            // pressure leaves a ghost listener in the host UI/actor. Wait for
-            // bounded queue capacity unless the entire host is shutting down.
-            // The per-peer stop flag is already set during reader cleanup.
-            send_authoritative_event(
+            // Disconnect is authoritative, but a stopped application collector
+            // must not strand an unbounded number of finished TCP readers.
+            // Allow the actor a finite opportunity to observe the terminal
+            // event; on expiry record a delivery failure for diagnostics.
+            // The TCP socket and authorized UDP route were already retired.
+            // The per-peer stop flag is set, so only the host stop flag
+            // controls this final bounded delivery.
+            let _ = send_authoritative_event_bounded(
                 &event_for_reader,
                 &shutdown_for_reader,
                 &counters_for_reader,
@@ -407,6 +410,7 @@ fn register_peer(
                     error: terminal_error,
                     received_at: clock_for_reader.now(),
                 },
+                join_timeout,
             );
         })
         .map_err(|error| {
@@ -466,7 +470,14 @@ fn forward_join_or_refuse<T>(
             refuse();
             false
         }
-        Err(TrySendError::Disconnected(_)) => false,
+        Err(TrySendError::Disconnected(_)) => {
+            // The actor receiver is gone. Do not silently treat an accepted
+            // JoinRequest as delivered; attempt a bounded busy refusal before
+            // the TCP reader tears down this provisional peer.
+            counters.delivery_failure();
+            refuse();
+            false
+        }
     }
 }
 
@@ -762,6 +773,19 @@ mod admission_pressure_tests {
         assert_eq!(receiver.try_recv().expect("original event"), 1);
         assert!(receiver.try_recv().is_err());
         assert_eq!(counters.snapshot().queue_overflows, 1);
+        assert_eq!(counters.snapshot().delivery_failures, 1);
+    }
+
+    #[test]
+    fn disconnected_join_collector_refuses_instead_of_silent_acceptance() {
+        let (sender, receiver) = sync_channel::<u8>(1);
+        drop(receiver);
+        let counters = CounterState::default();
+        let refused = AtomicBool::new(false);
+        assert!(!forward_join_or_refuse(&sender, &counters, 2, || {
+            refused.store(true, Ordering::Release);
+        }));
+        assert!(refused.load(Ordering::Acquire));
         assert_eq!(counters.snapshot().delivery_failures, 1);
     }
 
