@@ -542,7 +542,11 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     .expect("fresh production replay source");
     let mut replay_output = SecondaryPcmOutput::new(&session, &stream, 1_600, 240);
     let mut stopped_late_output = SecondaryPcmOutput::new(&session, &stream, 1_600, 240);
-    assert_ne!(replay_output.token(), token, "replay owns a new native output");
+    assert_ne!(
+        replay_output.token(),
+        token,
+        "replay owns a new native output"
+    );
     assert_ne!(stopped_late_output.token(), token);
     assert_ne!(stopped_late_output.token(), replay_output.token());
     for sequence in 0..2_u64 {
@@ -562,8 +566,15 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
         else {
             panic!("two replay PCM packets before End");
         };
-        assert_eq!(decoded_sequence, sequence, "new Play resets packet sequence");
-        assert_eq!(first_sample_index, sequence * 240, "new Play resets sample index");
+        assert_eq!(
+            decoded_sequence, sequence,
+            "new Play resets packet sequence"
+        );
+        assert_eq!(
+            first_sample_index,
+            sequence * 240,
+            "new Play resets sample index"
+        );
         assert_eq!(host_presentation_time_ms, 1_600 + sequence * 5);
         let packet = AudioDatagram {
             session_id: session.clone(),
