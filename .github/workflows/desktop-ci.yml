@@ -236,6 +236,7 @@ jobs:
             build-essential curl dbus-x11 file libasound2-dev
             libayatana-appindicator3-dev librsvg2-dev libssl-dev
             libwebkit2gtk-4.1-dev libxdo-dev patchelf wget xauth xvfb
+            xdotool imagemagick
           )
           missing=()
           for package in "${dependencies[@]}"; do
@@ -337,6 +338,32 @@ jobs:
             exit 1
           fi
           echo "::notice::Privileged package lifecycle acceptance remains unqualified."
+
+      # Real packaged WebKit2GTK pixels, not DOM snapshots. Advisory until
+      # Xvfb geometry and capture are stable on exact-head hosted CI.
+      - name: Capture packaged Tauri WebKit window pixels
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p desktop-webview-pixels
+          mapfile -t appimages < <(find desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -type f | sort)
+          if [[ "${#appimages[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one packaged AppImage for pixel capture."
+            exit 1
+          fi
+          bash desktop/scripts/capture-tauri-webview.sh "${appimages[0]}" "$PWD/desktop-webview-pixels/host-startup.png" \
+            2>&1 | tee desktop-webview-pixels/capture.log
+
+      - name: Upload packaged Tauri WebKit pixel evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-tauri-webview-pixels
+          path: desktop-webview-pixels/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Require committed lockfiles
         shell: bash
