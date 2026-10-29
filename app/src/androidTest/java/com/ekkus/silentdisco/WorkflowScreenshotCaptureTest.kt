@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -37,6 +38,7 @@ import com.ekkus.silentdisco.feature.host.HostDashboardScreen
 import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
 import com.ekkus.silentdisco.feature.host.HostReadyScreen
 import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
+import com.ekkus.silentdisco.feature.listener.ManualEndpointScreen
 import com.ekkus.silentdisco.feature.listener.ClientWorkflowStage
 import com.ekkus.silentdisco.feature.listener.ClientWorkflowStepper
 import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
@@ -82,6 +84,8 @@ class WorkflowScreenshotCaptureTest {
         CLIENT_FIND("client_stage_find", 360, 640, 1f),
         CLIENT_CONNECT("client_stage_connect", 360, 640, 1f),
         CLIENT_LISTEN("client_stage_listen", 360, 640, 1f),
+        MANUAL_COMPACT("client_manual_compact", 320, 400, 1.8f),
+        MANUAL_LANDSCAPE("client_manual_landscape", 640, 360, 1.4f),
     }
 
     @Test
@@ -259,6 +263,14 @@ class WorkflowScreenshotCaptureTest {
                                 onOpenSettings = {},
                                 onShareSupportReport = {},
                             )
+                            Scene.MANUAL_COMPACT, Scene.MANUAL_LANDSCAPE -> ManualEndpointScreen(
+                                uiState = state,
+                                onBack = {},
+                                onInputChanged = {},
+                                onInviteCodeChanged = {},
+                                onConnect = {},
+                                onCancel = {},
+                            )
                             Scene.STARTUP_RECOVERY, Scene.STARTUP_FATAL -> StartupGateScreen(
                                 uiState = AppUiState(
                                     storageState = if (scene == Scene.STARTUP_RECOVERY) {
@@ -297,6 +309,10 @@ class WorkflowScreenshotCaptureTest {
         for (target in Scene.entries) {
             compose.runOnIdle { scene = target }
             compose.waitForIdle()
+            if (target == Scene.MANUAL_COMPACT || target == Scene.MANUAL_LANDSCAPE) {
+                compose.onNodeWithTag("manual-endpoint-connect").assertIsDisplayed()
+                compose.onNodeWithTag("manual-endpoint-cancel").assertIsDisplayed()
+            }
             val bitmap = compose.onNodeWithTag("visual-review-canvas")
                 .captureToImage().asAndroidBitmap()
             assertThat(bitmap.width).isEqualTo(target.width)

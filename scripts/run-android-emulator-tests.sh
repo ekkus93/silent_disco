@@ -66,6 +66,8 @@ expected = {
     "client_stage_find": (360, 640),
     "client_stage_connect": (360, 640),
     "client_stage_listen": (360, 640),
+    "client_manual_compact": (320, 400),
+    "client_manual_landscape": (640, 360),
 }
 def validate_pass(directory, extra_files=()):
     manifest = (directory / "manifest.tsv").read_text().splitlines()
