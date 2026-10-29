@@ -529,7 +529,7 @@ pub(super) fn shutdown_stream(stream: &Mutex<TcpStream>) -> Result<(), Transport
 
 /// Reap completed per-peer reader/writer threads while the host remains live.
 /// A busy venue can reconnect thousands of times; retaining every finished
-/// JoinHandle until final shutdown would otherwise grow the worker registry
+/// `JoinHandle` until final shutdown would otherwise grow the worker registry
 /// for the entire session. Never join a still-running worker or hold the
 /// registry mutex while joining, and propagate panics to the host owner.
 pub(super) fn reap_finished_workers(
