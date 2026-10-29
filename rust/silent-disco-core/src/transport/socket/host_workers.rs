@@ -302,12 +302,25 @@ fn register_peer(
                                     send_event(&event_for_reader, &counters_for_reader, event);
                                     true
                                 } else {
-                                    send_authoritative_event(
+                                    // A permanently stopped host actor must not strand
+                                    // this TCP peer forever behind a full event queue.
+                                    // Refuse the control by closing its connection;
+                                    // the authoritative terminal event reports why.
+                                    let delivered = send_authoritative_event_bounded(
                                         &event_for_reader,
                                         &reader_peer.stop,
                                         &counters_for_reader,
                                         event,
-                                    )
+                                        join_timeout,
+                                    );
+                                    if !delivered {
+                                        terminal_error = Some(TransportError::new(
+                                            TransportErrorKind::QueueFull,
+                                            TransportChannel::Control,
+                                            "host control event delivery timed out; peer disconnected",
+                                        ));
+                                    }
+                                    delivered
                                 }
                             }
                             Err(error) => {

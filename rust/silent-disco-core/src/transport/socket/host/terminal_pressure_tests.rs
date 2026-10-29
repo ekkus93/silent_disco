@@ -414,3 +414,108 @@ fn real_socket_heartbeat_flood_does_not_hide_authoritative_disconnect() {
     );
     host.shutdown().expect("shutdown host");
 }
+
+
+#[test]
+fn stalled_host_actor_expires_critical_control_and_allows_clean_reconnect() {
+    use crate::protocol::Disconnect;
+    use crate::transport::TransportErrorKind;
+
+    let session = id_session("critical-event-stalled-actor-reconnect");
+    let device = id_device("stalled-actor-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    config.operation_timeout = Duration::from_millis(200);
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind host");
+    let mut listener = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock.clone(),
+        )
+        .expect("connect listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    listener
+        .send_control(&join_request(&session, &device, "Stalled actor"))
+        .expect("join");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device, listener.local_routes())
+        .expect("authorize");
+    wait_for_authorized(&mut host, &device);
+
+    // A harmless heartbeat fills the only actor slot; the later Disconnect
+    // is authoritative and must not trap the TCP worker indefinitely.
+    listener
+        .send_control(&ControlMessage::Heartbeat(Heartbeat {
+            session_id: session.clone(),
+            listener_id: device.clone(),
+            sent_at_elapsed_ms: MonotonicMillis::new(10),
+        }))
+        .expect("send heartbeat");
+    wait_until(Duration::from_secs(5), || {
+        host.counters().control_frames_received >= 2
+    });
+    listener
+        .send_control(&ControlMessage::Disconnect(Disconnect {
+            session_id: session.clone(),
+            listener_id: device.clone(),
+            reason: "Leaving".to_owned(),
+        }))
+        .expect("send authoritative disconnect");
+    wait_until(Duration::from_secs(5), || {
+        host.counters().closed_control_connections >= 1
+            && host.counters().delivery_failures > 0
+    });
+    assert!(
+        !host.routes.lock().expect("routes").contains_key(&device),
+        "timed-out critical event must retire the peer's UDP authorization"
+    );
+
+    // The occupied slot precedes the terminal. On resumed consumption, the
+    // host observes an explicit congestion failure rather than a ghost peer.
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("queued heartbeat"),
+        TransportEvent::FrameReceived {
+            frame: ProtocolFrame::Control(ControlMessage::Heartbeat(_)),
+            ..
+        }
+    ));
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("terminal congestion"),
+        TransportEvent::PeerDisconnected {
+            peer,
+            error: Some(error),
+            ..
+        } if peer.device_id.as_ref() == Some(&device)
+            && error.kind == TransportErrorKind::QueueFull
+    ));
+    listener.shutdown().expect("old listener shutdown");
+
+    // The backpressured, retired peer must not block a fresh generation.
+    let mut retry = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("reconnect listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("fresh accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    retry
+        .send_control(&join_request(&session, &device, "Retried"))
+        .expect("retry join");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&device, retry.local_routes())
+        .expect("authorize new generation");
+    wait_for_authorized(&mut host, &device);
+    retry.shutdown().expect("retry shutdown");
+    host.shutdown().expect("host shutdown");
+}
