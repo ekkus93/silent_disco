@@ -43,10 +43,7 @@ fn join(
     listener
 }
 
-fn expect_ordered_controls(
-    listener: &mut dyn ListenerTransportNode,
-    controls: &[ControlMessage],
-) {
+fn expect_ordered_controls(listener: &mut dyn ListenerTransportNode, controls: &[ControlMessage]) {
     for expected in controls {
         let event = listener
             .recv_event(Duration::from_secs(5))
@@ -122,8 +119,7 @@ fn multi_peer_telemetry_pressure_preserves_boundary_pause_stop_and_fresh_replay(
         .expect("send real TCP telemetry");
     }
     wait_until(Duration::from_secs(5), || {
-        slow.counters().control_frames_received >= 33
-            && slow.counters().queue_overflows > 0
+        slow.counters().control_frames_received >= 33 && slow.counters().queue_overflows > 0
     });
 
     for control in [&boundary, &pause, &stop] {

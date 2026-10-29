@@ -28,6 +28,8 @@ mod broadcast;
 #[cfg(test)]
 mod duplicate_join_tests;
 mod lookup;
+#[cfg(test)]
+mod multi_peer_control_pressure_tests;
 mod node;
 mod peer;
 #[cfg(test)]
@@ -38,8 +40,6 @@ mod socket_multitrack_audio_reconnect_tests;
 mod telemetry_pressure_tests;
 #[cfg(test)]
 mod terminal_pressure_tests;
-#[cfg(test)]
-mod multi_peer_control_pressure_tests;
 
 #[cfg(test)]
 mod packetizer_socket_pcm_tests;
