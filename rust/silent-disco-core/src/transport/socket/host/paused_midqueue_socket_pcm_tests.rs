@@ -126,7 +126,10 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
     assert_eq!(packetizer.next_contiguous_sample_index(), 720);
     for frame in packets.iter().take(2) {
         assert_eq!(
-            host.broadcast_audio(frame).expect("audio").report.successful_peers,
+            host.broadcast_audio(frame)
+                .expect("audio")
+                .report
+                .successful_peers,
             1
         );
         receive(first.as_mut(), frame);
@@ -142,7 +145,10 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
         midqueue.as_mut(),
         &ProtocolFrame::Control(ControlMessage::StreamStart(current_b.clone())),
     );
-    receive(midqueue.as_mut(), &ProtocolFrame::Control(boundaries[1].clone()));
+    receive(
+        midqueue.as_mut(),
+        &ProtocolFrame::Control(boundaries[1].clone()),
+    );
 
     let pause = ControlMessage::Pause(Pause {
         session_id: session.clone(),
@@ -231,7 +237,12 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
         host_stop_time_ms: MonotonicMillis::new(1_220),
     });
     host.broadcast_control(&stop).expect("stop");
-    for listener in [&mut first, &mut midqueue, &mut paused_join, &mut after_boundary] {
+    for listener in [
+        &mut first,
+        &mut midqueue,
+        &mut paused_join,
+        &mut after_boundary,
+    ] {
         receive(listener.as_mut(), &ProtocolFrame::Control(stop.clone()));
     }
     assert!(
