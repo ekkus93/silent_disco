@@ -64,6 +64,9 @@ class UniFfiListenerCoreController(
 
     private val observer = object : FfiCoreObserver {
         override fun onNotification(notification: FfiCoreNotification) {
+            // Teardown can synchronously invoke the Rust observer. Once close
+            // starts, no new effect may block shutdown or outlive this actor.
+            if (closed.get()) return
             notificationMailbox.publish(notification)
         }
     }
