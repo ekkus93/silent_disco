@@ -165,9 +165,15 @@ fn uniffi_handle_drives_listener_join_through_approval() {
         FfiListenerLifecycle::AwaitingApproval
     );
 
+    // Legacy plaintext transport cannot assert permanent trust from a host
+    // approval flag; a forged flag must not mutate the listener actor.
+    assert!(matches!(
+        handle.submit_join_approved(true),
+        Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+    ));
     handle
-        .submit_join_approved(true)
-        .expect("submit join approved fact");
+        .submit_join_approved(false)
+        .expect("submit session-only join approved fact");
     let approved = observer.wait_for_snapshot_revision(awaiting.revision + 1);
     assert_eq!(approved.listener_lifecycle, FfiListenerLifecycle::Approved);
     assert!(approved.last_error.is_none());
