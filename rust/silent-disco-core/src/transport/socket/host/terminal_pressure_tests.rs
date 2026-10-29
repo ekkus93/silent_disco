@@ -366,12 +366,17 @@ fn real_socket_heartbeat_flood_does_not_hide_authoritative_disconnect() {
             }))
             .expect("heartbeat TCP write");
     }
-    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    wait_until(Duration::from_secs(5), || {
+        host.counters().queue_overflows > 0
+    });
     listener.shutdown().expect("close listener TCP connection");
 
     let mut disconnected = false;
     for _ in 0..4 {
-        match host.recv_event(Duration::from_secs(5)).expect("terminal progress") {
+        match host
+            .recv_event(Duration::from_secs(5))
+            .expect("terminal progress")
+        {
             TransportEvent::PeerDisconnected { peer, .. }
                 if peer.device_id.as_ref() == Some(&device) =>
             {
