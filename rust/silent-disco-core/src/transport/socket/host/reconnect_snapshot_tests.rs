@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use crate::domain::{MonotonicMillis, SampleIndex, StreamId};
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, TrackBoundary};
 use crate::transport::test_support::{
-    audio_frame, id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from, wait_for_frame,
+    audio_frame, audio_frame_at, id_device, id_session, join_request, stream_start,
+    wait_for_authorized, wait_for_control_from, wait_for_frame,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -217,7 +217,7 @@ fn same_identity_reconnect_replaces_retired_routes_and_replays_only_current_cont
     host.disconnect_peer(&device)
         .expect("retire first connection");
     first.shutdown().expect("close first socket");
-    let packet = audio_frame(&session, 0);
+    let packet = audio_frame_at(&session, 0, 1_200);
     assert_eq!(
         host.broadcast_audio(&packet)
             .expect("no UDP route after disconnect")
@@ -760,7 +760,7 @@ fn overlapping_same_identity_reconnect_replays_before_replacing_live_tcp_udp_rou
         1
     );
     assert_tcp_controls(replacement.as_mut(), std::slice::from_ref(&resume));
-    let packet = audio_frame(&session, 0);
+    let packet = audio_frame_at(&session, 0, 1_300);
     assert_eq!(
         host.broadcast_audio(&packet)
             .expect("audio to replacement only")

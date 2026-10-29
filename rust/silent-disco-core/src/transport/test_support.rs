@@ -45,6 +45,21 @@ pub(super) fn audio_frame(session_id: &SessionId, sequence: u64) -> ProtocolFram
     })
 }
 
+/// Reanchor a synthetic PCM packet for real-socket Resume/reconnect tests.
+pub(super) fn audio_frame_at(
+    session_id: &SessionId,
+    sequence: u64,
+    presentation_time_ms: u64,
+) -> ProtocolFrame {
+    match audio_frame(session_id, sequence) {
+        ProtocolFrame::Audio(mut packet) => {
+            packet.host_presentation_time_ms = MonotonicMillis::new(presentation_time_ms);
+            ProtocolFrame::Audio(packet)
+        }
+        _ => unreachable!("audio_frame always constructs PCM"),
+    }
+}
+
 pub(super) fn wait_for_control_from(
     host: &mut dyn HostTransportNode,
     device_id: &DeviceId,
