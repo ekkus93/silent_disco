@@ -490,6 +490,20 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     assert!(recv_control(listener.as_mut()) == replay);
     assert!(recv_control(newcomer.as_deref_mut().expect("late listener")) == replay);
     assert!(recv_control(stopped_joiner.as_mut()) == replay);
+    // A late Stop from the retired generation cannot terminate the replay,
+    // even though it carries the same stream ID and listener identities.
+    let controls_before_stale_stop = host.counters().control_frames_sent;
+    assert_eq!(
+        host.broadcast_control(&stop)
+            .expect("retired Stop is ignored")
+            .report
+            .intended_peers,
+        0
+    );
+    assert_eq!(
+        host.counters().control_frames_sent,
+        controls_before_stale_stop
+    );
 
     let stale = ProtocolFrame::Audio(AudioDatagram {
         session_id: session.clone(),
@@ -535,7 +549,10 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
             3
         );
         assert_eq!(recv_audio(listener.as_mut()), packet);
-        assert_eq!(recv_audio(newcomer.as_deref_mut().expect("late listener")), packet);
+        assert_eq!(
+            recv_audio(newcomer.as_deref_mut().expect("late listener")),
+            packet
+        );
         assert_eq!(recv_audio(stopped_joiner.as_mut()), packet);
     }
     assert_eq!(host.counters().audio_datagrams_sent, sent_before_replay + 6);
