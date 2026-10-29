@@ -372,3 +372,227 @@ fn real_socket_pause_resume_stop_and_replay_preserve_multi_listener_pcm_generati
     after_stop.shutdown().expect("post-stop shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn real_socket_midqueue_join_tracks_audible_boundary_and_stop_replay_pcm() {
+    use crate::protocol::Stop;
+
+    let session = id_session("packetizer-socket-exact-pcm");
+    let stream = StreamId::new("midqueue-three-track-stream").expect("stream");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production host");
+    let mut first = join_listener(&mut host, &clock, "midqueue-first");
+    let format = AudioFormat {
+        sample_rate_hz: 48_000,
+        channels: 2,
+        sample_format: AudioSampleFormat::PcmS16Le,
+    };
+    let mut packetizer = Packetizer::new(
+        session.clone(),
+        stream.clone(),
+        format,
+        5,
+        MonotonicMillis::new(1_000),
+    )
+    .expect("three-track packetizer");
+    let ProtocolFrame::Control(ControlMessage::StreamStart(mut start)) =
+        packetizer.stream_start_message()
+    else {
+        panic!("StreamStart fixture");
+    };
+    start.current_entry_id = Some("track-a".to_owned());
+    start.current_display_name = Some("Track A".to_owned());
+    let start_frame = ProtocolFrame::Control(ControlMessage::StreamStart(start.clone()));
+    let ProtocolFrame::Control(ref start_control) = start_frame else {
+        panic!("start frame");
+    };
+    host.broadcast_control(start_control).expect("start");
+    expect_wire_frame(first.as_mut(), &start_frame);
+
+    // Both boundaries are sent ahead of audio. The first falls halfway
+    // through a PCM packet, while the second is exactly packet-aligned.
+    let boundaries: Vec<_> = [(360, "b"), (480, "c")]
+        .into_iter()
+        .map(|(sample, label)| {
+            ControlMessage::TrackBoundary(TrackBoundary {
+                session_id: session.clone(),
+                stream_id: stream.clone(),
+                first_sample_index: SampleIndex::new(sample),
+                entry_id: format!("track-{label}"),
+                display_name: format!("Track {}", label.to_ascii_uppercase()),
+            })
+        })
+        .collect();
+    for boundary in &boundaries {
+        host.broadcast_control(boundary).expect("queue boundary");
+        expect_wire_frame(first.as_mut(), &ProtocolFrame::Control(boundary.clone()));
+    }
+
+    let tracks: Vec<Vec<i16>> = [(360_usize, -100_i16), (120, 1_000), (240, 2_000)]
+        .into_iter()
+        .map(|(frames, base)| {
+            (0..frames)
+                .flat_map(|index| {
+                    let sample = base + i16::try_from(index).expect("fixture index");
+                    [sample, -sample]
+                })
+                .collect()
+        })
+        .collect();
+    let mut packets = Vec::new();
+    for samples in tracks.iter().take(2) {
+        let outcome = packetizer
+            .push_contiguous_chunk(DecodedPcmChunk {
+                format,
+                first_sample_index: SampleIndex::new(0),
+                frames: samples.clone(),
+                end_of_stream: false,
+            })
+            .expect("packetize adjacent track");
+        assert_eq!(outcome.frames.len(), 1);
+        let frame = outcome.frames.into_iter().next().expect("PCM packet");
+        assert_eq!(
+            host.broadcast_audio(&frame).expect("send PCM").report.successful_peers,
+            1
+        );
+        expect_wire_frame(first.as_mut(), &frame);
+        packets.push(frame);
+    }
+    assert_eq!(packetizer.next_contiguous_sample_index(), 480);
+
+    // At 1008 ms, sample 360 has passed but sample 480 has not. The
+    // production TCP admission snapshot must project B as current and
+    // retain only C as upcoming, rather than replaying stale A/B state.
+    clock.set(1_008);
+    let mut midqueue = join_listener(&mut host, &clock, "midqueue-second");
+    let mut current_b = start.clone();
+    current_b.current_entry_id = Some("track-b".to_owned());
+    current_b.current_display_name = Some("Track B".to_owned());
+    expect_wire_frame(
+        midqueue.as_mut(),
+        &ProtocolFrame::Control(ControlMessage::StreamStart(current_b)),
+    );
+    expect_wire_frame(
+        midqueue.as_mut(),
+        &ProtocolFrame::Control(boundaries[1].clone()),
+    );
+
+    let final_outcome = packetizer
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: tracks[2].clone(),
+            end_of_stream: true,
+        })
+        .expect("packetize final track without gap");
+    assert_eq!(final_outcome.frames.len(), 1);
+    let final_frame = final_outcome.frames.into_iter().next().expect("final PCM");
+    assert_eq!(
+        host.broadcast_audio(&final_frame)
+            .expect("broadcast to both real sockets")
+            .report
+            .successful_peers,
+        2
+    );
+    expect_wire_frame(first.as_mut(), &final_frame);
+    expect_wire_frame(midqueue.as_mut(), &final_frame);
+    packets.push(final_frame);
+    assert!(packetizer.is_finished());
+    assert_eq!(packetizer.next_contiguous_sample_index(), 720);
+
+    let mut decoded = Vec::new();
+    for (sequence, frame) in packets.iter().enumerate() {
+        let ProtocolFrame::Audio(packet) = frame else {
+            panic!("PCM datagram expected");
+        };
+        assert_eq!(packet.sequence.get(), sequence as u64);
+        assert_eq!(packet.first_sample_index.get(), sequence as u64 * 240);
+        assert_eq!(
+            packet.host_presentation_time_ms.get(),
+            1_000 + sequence as u64 * 5
+        );
+        decoded.extend(
+            packet.payload.chunks_exact(2).map(|bytes| {
+                i16::from_le_bytes([bytes[0], bytes[1]])
+            }),
+        );
+    }
+    assert_eq!(decoded, tracks.into_iter().flatten().collect::<Vec<_>>());
+
+    clock.set(1_011);
+    let mut after_boundary = join_listener(&mut host, &clock, "midqueue-third");
+    let mut current_c = start;
+    current_c.current_entry_id = Some("track-c".to_owned());
+    current_c.current_display_name = Some("Track C".to_owned());
+    expect_wire_frame(
+        after_boundary.as_mut(),
+        &ProtocolFrame::Control(ControlMessage::StreamStart(current_c)),
+    );
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: stream,
+        host_stop_time_ms: MonotonicMillis::new(1_020),
+    });
+    host.broadcast_control(&stop).expect("Stop");
+    for listener in [&mut first, &mut midqueue, &mut after_boundary] {
+        expect_wire_frame(listener.as_mut(), &ProtocolFrame::Control(stop.clone()));
+    }
+    assert_eq!(
+        host.broadcast_audio(packets.last().expect("retired PCM"))
+            .expect("suppress retired audio")
+            .report
+            .intended_peers,
+        0
+    );
+    let mut after_stop = join_listener(&mut host, &clock, "midqueue-after-stop");
+    assert!(
+        host.playback_controls.lock().expect("cache").snapshot().is_empty(),
+        "Stop must clear every cached boundary and current title"
+    );
+
+    let mut replay = Packetizer::new(
+        session,
+        StreamId::new("midqueue-replay").expect("new stream"),
+        format,
+        5,
+        MonotonicMillis::new(2_000),
+    )
+    .expect("fresh replay packetizer");
+    let replay_start = replay.stream_start_message();
+    let ProtocolFrame::Control(ref replay_control) = replay_start else {
+        panic!("replay start");
+    };
+    assert_eq!(
+        host.broadcast_control(replay_control)
+            .expect("fresh Play")
+            .report
+            .successful_peers,
+        4
+    );
+    for listener in [&mut first, &mut midqueue, &mut after_boundary, &mut after_stop] {
+        expect_wire_frame(listener.as_mut(), &replay_start);
+    }
+    let replay_samples: Vec<i16> = (0_i16..240).flat_map(|value| [value, -value]).collect();
+    let outcome = replay
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: replay_samples,
+            end_of_stream: true,
+        })
+        .expect("replay PCM");
+    let fresh = outcome.frames.first().expect("fresh packet");
+    assert_eq!(
+        host.broadcast_audio(fresh).expect("fresh UDP").report.successful_peers,
+        4
+    );
+    for listener in [&mut first, &mut midqueue, &mut after_boundary, &mut after_stop] {
+        expect_wire_frame(listener.as_mut(), fresh);
+        listener.shutdown().expect("shutdown listener");
+    }
+    host.shutdown().expect("shutdown host");
+}
