@@ -134,30 +134,38 @@ fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reco
         id_device("pressure-b"),
         id_device("pressure-c"),
     ];
-    let mut listeners: Vec<_> = devices
-        .iter()
-        .map(|device| {
-            SocketTransportFactory
-                .connect_listener(
-                    ListenerTransportConfig::loopback(
-                        session.clone(),
-                        device.clone(),
-                        host.endpoint(),
-                    ),
-                    clock.clone(),
-                )
-                .expect("connect listener")
-        })
-        .collect();
+    let mut listeners = Vec::new();
+    for (index, device) in devices.iter().enumerate() {
+        let listener = SocketTransportFactory
+            .connect_listener(
+                ListenerTransportConfig::loopback(
+                    session.clone(),
+                    device.clone(),
+                    host.endpoint(),
+                ),
+                clock.clone(),
+            )
+            .expect("connect listener");
+        if index == 0 {
+            // A legitimate join is attempted immediately. The actor queue is
+            // still occupied by PeerAccepted, so this join is visibly refused.
+            // Waiting until after the pressure timeout would now (correctly)
+            // expire an unjoined peer before it can submit any request.
+            listener
+                .send_control(&join_request(&session, device, "Busy listener"))
+                .expect("first join");
+        }
+        listeners.push(listener);
+    }
 
     // The first accept fills the only actor event slot. With no collector,
     // later TCP accepts must close after a finite deadline, not silently
     // continue as unobservable peers or emit ghost authorization events.
     wait_until(Duration::from_secs(5), || {
         host.counters().accepted_control_connections == devices.len() as u64
-            && host.counters().closed_control_connections >= 2
+            && host.counters().closed_control_connections >= devices.len() as u64
+            && host.counters().delivery_failures >= devices.len() as u64
     });
-    assert_eq!(host.counters().delivery_failures, 2);
     for (listener, device) in listeners.iter().zip(&devices).skip(1) {
         assert!(
             host.authorize_peer(device, listener.local_routes())
@@ -167,10 +175,7 @@ fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reco
     }
 
     // The first reader was started after its PeerAccepted reached the queue.
-    // Its JoinRequest cannot fit and receives an explicit busy response.
-    listeners[0]
-        .send_control(&join_request(&session, &devices[0], "Busy listener"))
-        .expect("first join");
+    // Its immediate JoinRequest cannot fit and receives an explicit busy response.
     wait_for_frame(listeners[0].as_mut(), TransportChannel::Control, |frame| {
         matches!(
             frame,

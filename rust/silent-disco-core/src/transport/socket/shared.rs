@@ -380,15 +380,15 @@ pub(super) fn read_control_loop<F>(
         // Unjoined TCP peers must not hold all host slots indefinitely. A
         // partial header or slow trickle cannot extend this absolute deadline.
         // Once the first join is forwarded, manual approval may take longer.
-        if let Some((joined, deadline)) = pending_join {
-            if !joined.load(Ordering::Acquire) && join_started.elapsed() >= deadline {
-                let _ = on_outcome(ReadControlOutcome::Rejected(TransportError::new(
-                    TransportErrorKind::Timeout,
-                    TransportChannel::Control,
-                    "TCP peer did not submit a join request before the admission deadline",
-                )));
-                break;
-            }
+        if pending_join.is_some_and(|(joined, deadline)| {
+            !joined.load(Ordering::Acquire) && join_started.elapsed() >= deadline
+        }) {
+            let _ = on_outcome(ReadControlOutcome::Rejected(TransportError::new(
+                TransportErrorKind::Timeout,
+                TransportChannel::Control,
+                "TCP peer did not submit a join request before the admission deadline",
+            )));
+            break;
         }
         match stream.read(&mut chunk) {
             Ok(0) => {
