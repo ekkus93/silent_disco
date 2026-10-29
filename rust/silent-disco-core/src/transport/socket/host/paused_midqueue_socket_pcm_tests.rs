@@ -102,7 +102,7 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
     }
 
     let mut packets = Vec::new();
-    let mut expected_pcm = Vec::new();
+    let mut expected_pcm: Vec<i16> = Vec::new();
     for (frames, base) in [(360_usize, -300_i16), (120, 1_000), (240, 2_000)] {
         let samples: Vec<i16> = (0..frames)
             .flat_map(|index| {
@@ -110,7 +110,7 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
                 [sample, -sample]
             })
             .collect();
-        expected_pcm.extend(&samples);
+        expected_pcm.extend_from_slice(&samples);
         let outcome = packetizer
             .push_contiguous_chunk(DecodedPcmChunk {
                 format,
