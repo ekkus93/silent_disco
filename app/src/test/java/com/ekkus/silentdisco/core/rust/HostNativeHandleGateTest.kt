@@ -383,6 +383,56 @@ class HostNativeHandleGateTest {
         }
     }
 
+
+    @Test
+    fun hungNativePollTimesOutWithoutFreeingHandleOrBlockingNextGeneration() {
+        val gate = HostNativeHandleGate<Any>()
+        val handle = Any()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val closed = AtomicInteger()
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            gate.replace(retire = {}, open = { handle }, start = {})
+            val poll = pool.submit {
+                gate.withExpectedPoll(handle) {
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                }
+            }
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue()
+            val started = System.nanoTime()
+            val failure = runCatching {
+                gate.close { retired ->
+                    retireNativeHandle(
+                        retired,
+                        shutdown = {},
+                        close = { closed.incrementAndGet() },
+                        awaitPoll = { gate.awaitPollQuiescence(it, timeoutMillis = 30) },
+                    )
+                }
+            }.exceptionOrNull()
+            assertThat(failure).isInstanceOf(IllegalStateException::class.java)
+            assertThat(failure?.message).contains("did not exit after shutdown")
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(1_000L)
+            assertThat(closed.get()).isEqualTo(0)
+            assertThat(gate.currentHandle()).isNull()
+            assertThat(gate.withExpectedPoll(handle) { "stale" }).isNull()
+            release.countDown()
+            poll.get(5, TimeUnit.SECONDS)
+            // A timed-out close cannot resurrect the retired handle. A later
+            // replacement is a distinct generation and remains usable.
+            val replacement = Any()
+            gate.replace(retire = {}, open = { replacement }, start = {})
+            assertThat(gate.withCurrent { it }).isSameInstanceAs(replacement)
+            gate.close { if (it != null) closed.incrementAndGet() }
+            assertThat(closed.get()).isEqualTo(1)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
+
     @Test
     fun failedPollJoinNeverClosesPossiblyInUseNativeHandle() {
         val handle = Any()

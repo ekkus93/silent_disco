@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.rust
 
 import java.util.IdentityHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -64,10 +65,22 @@ internal class HostNativeHandleGate<T : Any> {
         }
     }
 
-    /** Call after native shutdown but before native close; never on an audio callback. */
-    fun awaitPollQuiescence(retired: T) {
+    /**
+     * Call after native shutdown but before native close, never on an audio
+     * callback. Native poll normally has a 500-ms timeout; if it hangs despite
+     * shutdown, fail in bounded time WITHOUT freeing a still-in-use handle.
+     * The caller must surface the error rather than treating teardown as clean.
+     */
+    fun awaitPollQuiescence(retired: T, timeoutMillis: Long = 5_000) {
+        require(timeoutMillis > 0) { "poll drain deadline must be positive" }
         pollLock.withLock {
-            while (activePolls.containsKey(retired)) pollsDrained.await()
+            var remaining = TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+            while (activePolls.containsKey(retired)) {
+                if (remaining <= 0) {
+                    throw IllegalStateException("Native transport poll did not exit after shutdown")
+                }
+                remaining = pollsDrained.awaitNanos(remaining)
+            }
         }
     }
 
