@@ -415,7 +415,6 @@ fn real_socket_heartbeat_flood_does_not_hide_authoritative_disconnect() {
     host.shutdown().expect("shutdown host");
 }
 
-
 #[test]
 fn stalled_host_actor_expires_critical_control_and_allows_clean_reconnect() {
     use crate::protocol::Disconnect;
@@ -468,8 +467,7 @@ fn stalled_host_actor_expires_critical_control_and_allows_clean_reconnect() {
         }))
         .expect("send authoritative disconnect");
     wait_until(Duration::from_secs(5), || {
-        host.counters().closed_control_connections >= 1
-            && host.counters().delivery_failures > 0
+        host.counters().closed_control_connections >= 1 && host.counters().delivery_failures > 0
     });
     assert!(
         !host.routes.lock().expect("routes").contains_key(&device),
@@ -479,7 +477,8 @@ fn stalled_host_actor_expires_critical_control_and_allows_clean_reconnect() {
     // The occupied slot precedes the terminal. On resumed consumption, the
     // host observes an explicit congestion failure rather than a ghost peer.
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("queued heartbeat"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("queued heartbeat"),
         TransportEvent::FrameReceived {
             frame: ProtocolFrame::Control(ControlMessage::Heartbeat(_)),
             ..
@@ -504,7 +503,8 @@ fn stalled_host_actor_expires_critical_control_and_allows_clean_reconnect() {
         )
         .expect("reconnect listener");
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("fresh accepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("fresh accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     retry
