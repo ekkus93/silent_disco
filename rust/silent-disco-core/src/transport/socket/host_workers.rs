@@ -20,7 +20,7 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    reap_finished_workers, send_authoritative_event_bounded, send_event,
+    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event,
     shutdown_stream, spawn_control_writer,
 };
 
@@ -394,14 +394,11 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            // Disconnect is authoritative, but a stopped application collector
-            // must not strand an unbounded number of finished TCP readers.
-            // Allow the actor a finite opportunity to observe the terminal
-            // event; on expiry record a delivery failure for diagnostics.
-            // The TCP socket and authorized UDP route were already retired.
-            // The per-peer stop flag is set, so only the host stop flag
-            // controls this final bounded delivery.
-            let _ = send_authoritative_event_bounded(
+            // Never discard a terminal disconnect after its deadline: a
+            // resumed host actor must observe it to retire the UI/actor peer.
+            // Shutdown interrupts the wait. A bounded terminal sideband with
+            // reserved capacity is needed before this can become time-limited.
+            send_authoritative_event(
                 &event_for_reader,
                 &shutdown_for_reader,
                 &counters_for_reader,
@@ -410,7 +407,6 @@ fn register_peer(
                     error: terminal_error,
                     received_at: clock_for_reader.now(),
                 },
-                join_timeout,
             );
         })
         .map_err(|error| {

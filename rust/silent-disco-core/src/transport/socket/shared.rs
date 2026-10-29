@@ -651,7 +651,7 @@ mod implicit_shutdown_tests {
 
 #[cfg(test)]
 mod terminal_event_pressure_tests {
-    use super::{CounterState, send_authoritative_event, send_authoritative_event_bounded};
+    use super::{CounterState, send_authoritative_event};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::sync_channel;
@@ -674,25 +674,6 @@ mod terminal_event_pressure_tests {
         assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), 2);
         assert!(producer.join().expect("terminal sender"));
         assert_eq!(counters.snapshot().delivery_failures, 0);
-    }
-
-    #[test]
-    fn stalled_collector_times_out_terminal_event_without_leaking_worker() {
-        let (sender, receiver) = sync_channel(1);
-        sender.send(1_u8).expect("fill bounded queue");
-        let stop = AtomicBool::new(false);
-        let counters = CounterState::default();
-        assert!(!send_authoritative_event_bounded(
-            &sender,
-            &stop,
-            &counters,
-            2_u8,
-            Duration::from_millis(15),
-        ));
-        assert_eq!(receiver.try_recv().expect("prior event retained"), 1);
-        assert!(receiver.try_recv().is_err());
-        assert_eq!(counters.snapshot().queue_overflows, 1);
-        assert_eq!(counters.snapshot().delivery_failures, 1);
     }
 
     #[test]
