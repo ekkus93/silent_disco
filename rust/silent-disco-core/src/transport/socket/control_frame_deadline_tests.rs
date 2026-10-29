@@ -11,8 +11,8 @@ use std::time::Duration;
 
 fn loopback() -> (TcpStream, TcpStream) {
     let server = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let client = TcpStream::connect(server.local_addr().expect("address"))
-        .expect("connect loopback");
+    let client =
+        TcpStream::connect(server.local_addr().expect("address")).expect("connect loopback");
     let (accepted, _) = server.accept().expect("accept loopback");
     (client, accepted)
 }
@@ -108,7 +108,9 @@ fn joined_peer_cannot_trickle_partial_next_frame_indefinitely() {
     });
     let mut data = hello;
     data.extend_from_slice(&[b'S', b'D']);
-    client.write_all(&data).expect("valid frame then truncated header");
+    client
+        .write_all(&data)
+        .expect("valid frame then truncated header");
     let result = receiver.recv_timeout(Duration::from_secs(2));
     client.shutdown(Shutdown::Both).expect("close client");
     worker.join().expect("reader exits");
