@@ -27,7 +27,10 @@ fn timed_out_queued_control_is_not_sent_after_writer_recovers() {
     // No writer is running yet. The old send times out while still queued;
     // its bytes must never reach TCP when the writer is eventually started.
     assert_eq!(
-        short.send(b"stale".to_vec()).expect_err("caller times out").kind,
+        short
+            .send(b"stale".to_vec())
+            .expect_err("caller times out")
+            .kind,
         TransportErrorKind::Timeout
     );
     let stop = Arc::new(AtomicBool::new(false));
@@ -40,10 +43,18 @@ fn timed_out_queued_control_is_not_sent_after_writer_recovers() {
         "test-control-writer-deadline".to_owned(),
     )
     .expect("spawn production writer");
-    assert_eq!(long.send(b"fresh".to_vec()).expect("deliver fresh control"), 5);
+    assert_eq!(
+        long.send(b"fresh".to_vec()).expect("deliver fresh control"),
+        5
+    );
     let mut bytes = [0_u8; 5];
-    server.read_exact(&mut bytes).expect("read only fresh control");
-    assert_eq!(&bytes, b"fresh", "expired control must not precede new control");
+    server
+        .read_exact(&mut bytes)
+        .expect("read only fresh control");
+    assert_eq!(
+        &bytes, b"fresh",
+        "expired control must not precede new control"
+    );
     assert_eq!(counters.snapshot().control_frames_sent, 1);
     assert_eq!(counters.snapshot().delivery_failures, 1);
     stop.store(true, Ordering::Release);

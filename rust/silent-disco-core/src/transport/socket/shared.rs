@@ -329,7 +329,10 @@ pub(super) fn spawn_control_writer(
                 // A caller may already have timed out while this frame sat
                 // behind another TCP write. Never send a stale queued Start,
                 // Pause, Stop or approval after its delivery deadline.
-                if write.deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                if write
+                    .deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
                     counters.delivery_failure();
                     drop(write.result.send(Err(TransportError::new(
                         TransportErrorKind::Timeout,
