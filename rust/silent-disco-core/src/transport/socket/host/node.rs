@@ -324,6 +324,15 @@ impl HostTransportNode for SocketHostTransport {
         }
         let join_result = join_workers(&self.workers);
         self.shutdown_complete = true;
+        // A finished worker was already joined by the live accept-loop
+        // reaper. Its panic must still fail the explicit owner shutdown.
+        if self.counters.has_worker_panic() {
+            return Err(TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "a reaped transport worker panicked",
+            ));
+        }
         shutdown_error.map_or(join_result, Err)
     }
 }

@@ -39,6 +39,7 @@ pub(super) struct CounterState {
     unauthorized_frames: AtomicU64,
     queue_overflows: AtomicU64,
     delivery_failures: AtomicU64,
+    worker_panicked: AtomicBool,
 }
 
 impl CounterState {
@@ -127,6 +128,14 @@ impl CounterState {
 
     pub(super) fn delivery_failure(&self) {
         self.delivery_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn mark_worker_panicked(&self) {
+        self.worker_panicked.store(true, Ordering::Release);
+    }
+
+    pub(super) fn has_worker_panic(&self) -> bool {
+        self.worker_panicked.load(Ordering::Acquire)
     }
 
     fn add_sent(&self, bytes: usize) {
@@ -515,6 +524,45 @@ pub(super) fn shutdown_stream(stream: &Mutex<TcpStream>) -> Result<(), Transport
             "failed to shut down control stream",
             &error,
         )),
+    }
+}
+
+/// Reap completed per-peer reader/writer threads while the host remains live.
+/// A busy venue can reconnect thousands of times; retaining every finished
+/// JoinHandle until final shutdown would otherwise grow the worker registry
+/// for the entire session. Never join a still-running worker or hold the
+/// registry mutex while joining, and propagate panics to the host owner.
+pub(super) fn reap_finished_workers(
+    handles: &Mutex<Vec<thread::JoinHandle<()>>>,
+) -> Result<(), TransportError> {
+    let completed = {
+        let mut registry = handles.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "transport worker registry is poisoned",
+            )
+        })?;
+        let (completed, active): (Vec<_>, Vec<_>) = core::mem::take(&mut *registry)
+            .into_iter()
+            .partition(thread::JoinHandle::is_finished);
+        *registry = active;
+        completed
+    };
+    let mut panicked = false;
+    for handle in completed {
+        if handle.join().is_err() {
+            panicked = true;
+        }
+    }
+    if panicked {
+        Err(TransportError::new(
+            TransportErrorKind::WorkerPanicked,
+            TransportChannel::Runtime,
+            "a completed transport worker panicked",
+        ))
+    } else {
+        Ok(())
     }
 }
 

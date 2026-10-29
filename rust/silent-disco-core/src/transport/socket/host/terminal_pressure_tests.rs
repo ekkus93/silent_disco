@@ -519,3 +519,57 @@ fn stalled_host_actor_expires_critical_control_and_allows_clean_reconnect() {
     retry.shutdown().expect("retry shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn repeated_real_tcp_reconnects_reap_finished_workers_without_losing_terminals() {
+    let session = id_session("repeated-worker-reap");
+    let device = id_device("repeated-worker-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind host");
+
+    // Keep the host and its three long-lived workers alive while 128 distinct
+    // TCP generations connect and retire. No session-end cleanup is allowed
+    // to hide unbounded accumulation of finished reader/writer JoinHandles.
+    for generation in 0..128 {
+        let mut listener = SocketTransportFactory
+            .connect_listener(
+                ListenerTransportConfig::loopback(
+                    session.clone(),
+                    device.clone(),
+                    host.endpoint(),
+                ),
+                clock.clone(),
+            )
+            .expect("connect generation");
+        assert!(matches!(
+            host.recv_event(Duration::from_secs(5)).expect("accepted"),
+            TransportEvent::PeerAccepted { .. }
+        ));
+        listener
+            .send_control(&join_request(&session, &device, "Reconnecting"))
+            .expect("send join");
+        wait_for_control_from(&mut host, &device, |message| {
+            matches!(message, ControlMessage::JoinRequest(_))
+        });
+        listener.shutdown().expect("retire listener");
+        assert!(matches!(
+            host.recv_event(Duration::from_secs(5)).expect("terminal"),
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&device)
+        ));
+        wait_until(Duration::from_secs(5), || {
+            host.workers.lock().expect("worker registry").len() <= 3
+        });
+        assert!(
+            host.peers.lock().expect("peer registry").is_empty(),
+            "retired generation {generation} left a live peer"
+        );
+    }
+    assert_eq!(host.counters().closed_control_connections, 128);
+    assert!(host.workers.lock().expect("worker registry").len() <= 3);
+    host.shutdown().expect("shutdown after 128 generations");
+}

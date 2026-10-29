@@ -20,7 +20,7 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    send_authoritative_event, send_authoritative_event_bounded, send_event, shutdown_stream,
+    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event, shutdown_stream,
     spawn_control_writer,
 };
 
@@ -41,6 +41,23 @@ pub(super) fn spawn_accept_loop(
         .name("silent-disco-transport-accept".to_owned())
         .spawn(move || {
             while !stop.load(Ordering::Acquire) {
+                // Reap finished peer threads even when no new connections
+                // arrive, rather than retaining two handles per reconnect.
+                if let Err(error) = reap_finished_workers(&workers) {
+                    counters.mark_worker_panicked();
+                    stop.store(true, Ordering::Release);
+                    send_event(
+                        &event_sender,
+                        &counters,
+                        TransportEvent::Rejected {
+                            channel: TransportChannel::Runtime,
+                            source: SocketAddr::new(config.bind_address, config.control_port),
+                            error,
+                            received_at: clock.now(),
+                        },
+                    );
+                    break;
+                }
                 match listener.accept() {
                     Ok((stream, remote)) => {
                         if stop.load(Ordering::Acquire) {
