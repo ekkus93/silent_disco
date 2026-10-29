@@ -91,7 +91,9 @@ fn application_backpressure_does_not_expire_next_partial_frame() {
     .expect("encode stop");
     let mut first = hello;
     first.extend_from_slice(&stop[..2]);
-    client.write_all(&first).expect("complete first, partial second");
+    client
+        .write_all(&first)
+        .expect("complete first, partial second");
     let (entered_sender, entered_receiver) = sync_channel(0);
     let worker = thread::spawn(move || {
         let mut received = Vec::new();
