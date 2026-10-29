@@ -381,12 +381,13 @@ fn register_peer(
             reader_peer.active.store(false, Ordering::Release);
             reader_peer.stop.store(true, Ordering::Release);
             drop(shutdown_stream(&reader_peer.shutdown_stream));
-            drop(
-                peers_for_reader
-                    .lock()
-                    .ok()
-                    .and_then(|mut peers| peers.remove(&reader_peer.number)),
-            );
+            // Keep this retired peer's registry slot while its terminal
+            // event waits behind a stalled actor collector. Otherwise every
+            // disconnect frees a slot for another TCP reader that can block
+            // forever on the same full event queue: hostile reconnect churn
+            // can accumulate unbounded parked threads despite max_peers.
+            // The socket and UDP route are already closed; this reservation
+            // is only a bounded admission/worker budget.
             if let Some(device_id) = reader_peer.device_id() {
                 // A replacement socket for the same device may have been
                 // authorized while this retired reader was unwinding. Never
@@ -407,6 +408,14 @@ fn register_peer(
                     error: terminal_error,
                     received_at: clock_for_reader.now(),
                 },
+            );
+            // Release the reserved peer slot only after terminal delivery
+            // (or global shutdown). New accepts can then proceed safely.
+            drop(
+                peers_for_reader
+                    .lock()
+                    .ok()
+                    .and_then(|mut peers| peers.remove(&reader_peer.number)),
             );
         })
         .map_err(|error| {

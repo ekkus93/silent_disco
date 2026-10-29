@@ -40,6 +40,8 @@ mod socket_multitrack_audio_reconnect_tests;
 mod telemetry_pressure_tests;
 #[cfg(test)]
 mod terminal_pressure_tests;
+#[cfg(test)]
+mod terminal_slot_budget_tests;
 
 #[cfg(test)]
 mod packetizer_socket_pcm_tests;
