@@ -693,11 +693,14 @@ fn reject_legacy_durable_host_draft(
 fn legacy_v3_unverified_trust(
     input: super::types::FfiTrustState,
 ) -> Result<TrustState, FfiBridgeError> {
-    let state = TrustState::try_from(input)?;
-    if matches!(state, TrustState::Trusted | TrustState::Revoked) {
-        return Err(legacy_v3_trust_error());
+    match input {
+        super::types::FfiTrustState::Unknown | super::types::FfiTrustState::SessionOnly => {
+            Ok(TrustState::SessionOnly)
+        }
+        super::types::FfiTrustState::Trusted | super::types::FfiTrustState::Revoked => {
+            Err(legacy_v3_trust_error())
+        }
     }
-    Ok(state)
 }
 
 fn request_id_from_string(value: String) -> Result<RequestId, FfiBridgeError> {

@@ -185,7 +185,7 @@ mod legacy_v3_trust_boundary_tests {
         }
         assert_eq!(
             legacy_v3_unverified_trust(FfiTrustState::Unknown).expect("unverified"),
-            TrustState::Unknown
+            TrustState::SessionOnly
         );
         assert_eq!(
             legacy_v3_unverified_trust(FfiTrustState::SessionOnly).expect("manual session"),
