@@ -15,7 +15,6 @@ use super::{
     TransportChannel, TransportError, TransportErrorKind, TransportEvent, TransportFactory,
 };
 
-
 #[test]
 fn unjoined_idle_and_partial_header_peers_expire_and_release_host_capacity() {
     let session_id = id_session("pending-join-deadline");
@@ -25,7 +24,9 @@ fn unjoined_idle_and_partial_header_peers_expire_and_release_host_capacity() {
     config.max_peers = 1;
     config.io_timeout = Duration::from_millis(20);
     config.operation_timeout = Duration::from_millis(250);
-    let mut host = factory.bind_host(config, clock.clone()).expect("host binds");
+    let mut host = factory
+        .bind_host(config, clock.clone())
+        .expect("host binds");
     let endpoint = host.endpoint();
     let address = SocketAddr::new(endpoint.address, endpoint.control_port);
 
@@ -47,14 +48,19 @@ fn unjoined_idle_and_partial_header_peers_expire_and_release_host_capacity() {
                     timed_out = true;
                     break;
                 }
-                Ok(_) | Err(TransportError {
-                    kind: TransportErrorKind::Timeout, ..
+                Ok(_)
+                | Err(TransportError {
+                    kind: TransportErrorKind::Timeout,
+                    ..
                 }) => {}
                 Err(error) => panic!("unexpected host event error: {error}"),
             }
         }
         assert!(accepted, "host must observe the TCP peer before retirement");
-        assert!(timed_out, "unjoined peer must expire without waiting for EOF");
+        assert!(
+            timed_out,
+            "unjoined peer must expire without waiting for EOF"
+        );
         drop(raw);
     }
 
@@ -64,9 +70,7 @@ fn unjoined_idle_and_partial_header_peers_expire_and_release_host_capacity() {
     let device_id = id_device("legitimate-after-idle");
     let mut listener = factory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session_id.clone(), device_id.clone(), endpoint,
-            ),
+            ListenerTransportConfig::loopback(session_id.clone(), device_id.clone(), endpoint),
             clock,
         )
         .expect("host slot is available after idle peer retirement");
