@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,6 +38,7 @@ import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.canConnect
 import com.ekkus.silentdisco.core.model.isInProgress
 import com.ekkus.silentdisco.ui.components.PrimaryProblemCard
+import com.ekkus.silentdisco.ui.theme.WorkflowTouchTarget
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,9 +68,12 @@ fun ManualEndpointScreen(
                 }
             },
         )
+        // Inputs, warnings and status are scrollable; the primary action and
+        // Cancel remain reachable above the IME on compact/large-text screens.
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -191,21 +196,37 @@ fun ManualEndpointScreen(
                 )
             }
 
-            if (connectState == ManualConnectUiState.Idle) {
-                Button(
-                    onClick = onConnect,
-                    enabled = form.canConnect(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("manual-endpoint-connect"),
-                ) {
-                    Text("Connect")
+        }
+        // Never force a user to scroll through a long connection payload,
+        // validation error or approval status just to cancel a pending join.
+        // Once approved/streaming, the listener screen owns playback controls.
+        if (connectState !is ManualConnectUiState.Approved &&
+            connectState !is ManualConnectUiState.Streaming
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (connectState == ManualConnectUiState.Idle) {
+                    Button(
+                        onClick = onConnect,
+                        enabled = form.canConnect(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WorkflowTouchTarget.minimum)
+                            .testTag("manual-endpoint-connect"),
+                    ) {
+                        Text("Connect")
+                    }
                 }
-            }
-            if (connectState !is ManualConnectUiState.Approved && connectState !is ManualConnectUiState.Streaming) {
                 TextButton(
                     onClick = onCancel,
-                    modifier = Modifier.fillMaxWidth().testTag("manual-endpoint-cancel"),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = WorkflowTouchTarget.minimum)
+                        .testTag("manual-endpoint-cancel"),
                 ) {
                     Text(if (inProgress) "Cancel" else "Back")
                 }
