@@ -246,6 +246,7 @@ fn register_peer(
                 stream,
                 &reader_peer.stop,
                 io_timeout,
+                join_timeout,
                 &session_id,
                 Some((&reader_peer.join_forwarded, join_timeout)),
                 |outcome| match outcome {

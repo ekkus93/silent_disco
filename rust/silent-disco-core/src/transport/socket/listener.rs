@@ -327,6 +327,7 @@ fn spawn_control_reader(
                 stream,
                 &stop,
                 config.io_timeout,
+                config.operation_timeout,
                 &config.session_id,
                 None,
                 |outcome| match outcome {
