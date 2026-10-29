@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::domain::{DeliverySeverity, MonotonicMillis};
 use crate::protocol::{ControlMessage, Heartbeat, Hello, PROTOCOL_MAGIC, ProtocolFrame};
@@ -14,6 +14,75 @@ use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
     TransportChannel, TransportErrorKind, TransportEvent, TransportFactory,
 };
+
+
+#[test]
+fn unjoined_idle_and_partial_header_peers_expire_and_release_host_capacity() {
+    let session_id = id_session("pending-join-deadline");
+    let factory = SocketTransportFactory;
+    let clock = Arc::new(SystemTransportClock::default());
+    let mut config = HostTransportConfig::loopback(session_id.clone());
+    config.max_peers = 1;
+    config.io_timeout = Duration::from_millis(20);
+    config.operation_timeout = Duration::from_millis(250);
+    let mut host = factory.bind_host(config, clock.clone()).expect("host binds");
+    let endpoint = host.endpoint();
+    let address = SocketAddr::new(endpoint.address, endpoint.control_port);
+
+    for send_partial_header in [false, true] {
+        let mut raw = TcpStream::connect(address).expect("raw TCP connection");
+        if send_partial_header {
+            raw.write_all(&invalid_version_header()[..8])
+                .expect("partial header is accepted pending the rest");
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut accepted = false;
+        let mut timed_out = false;
+        while Instant::now() < deadline {
+            match host.recv_event(Duration::from_millis(100)) {
+                Ok(TransportEvent::PeerAccepted { .. }) => accepted = true,
+                Ok(TransportEvent::PeerDisconnected {
+                    error: Some(error), ..
+                }) if error.kind == TransportErrorKind::Timeout => {
+                    timed_out = true;
+                    break;
+                }
+                Ok(_) | Err(silent_disco_core::transport::TransportError {
+                    kind: TransportErrorKind::Timeout, ..
+                }) => {}
+                Err(error) => panic!("unexpected host event error: {error}"),
+            }
+        }
+        assert!(accepted, "host must observe the TCP peer before retirement");
+        assert!(timed_out, "unjoined peer must expire without waiting for EOF");
+        drop(raw);
+    }
+
+    // A valid third peer can take the sole host slot after the two idle
+    // connections expire. A completed join must not inherit the deadline:
+    // manual approval is allowed to take longer than the join timeout.
+    let device_id = id_device("legitimate-after-idle");
+    let mut listener = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(), device_id.clone(), endpoint,
+            ),
+            clock,
+        )
+        .expect("host slot is available after idle peer retirement");
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Legitimate"))
+        .expect("legitimate join sent");
+    wait_for_control_from(&mut *host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    std::thread::sleep(Duration::from_millis(400));
+    host.authorize_peer(&device_id, listener.local_routes())
+        .expect("forwarded join remains eligible after pending deadline");
+    assert!(host.counters().closed_control_connections >= 2);
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
 
 #[test]
 fn socket_runtime_rejects_unauthorized_control_and_malformed_headers() {

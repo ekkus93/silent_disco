@@ -357,11 +357,13 @@ pub(super) fn read_control_loop<F>(
     stop: &AtomicBool,
     io_timeout: Duration,
     expected_session: &crate::domain::SessionId,
+    pending_join: Option<(&AtomicBool, Duration)>,
     mut on_outcome: F,
 ) where
     F: FnMut(ReadControlOutcome) -> bool,
 {
-    if let Err(error) = stream.set_read_timeout(Some(io_timeout)) {
+    let read_timeout = pending_join.map_or(io_timeout, |(_, timeout)| io_timeout.min(timeout));
+    if let Err(error) = stream.set_read_timeout(Some(read_timeout)) {
         let _ = on_outcome(ReadControlOutcome::Rejected(TransportError::io(
             TransportErrorKind::Io,
             TransportChannel::Control,
@@ -373,7 +375,21 @@ pub(super) fn read_control_loop<F>(
     let mut decoder = ProtocolDecoder::default();
     let mut buffer = Vec::with_capacity(4_096);
     let mut chunk = [0_u8; 8_192];
+    let join_started = Instant::now();
     while !stop.load(Ordering::Acquire) {
+        // Unjoined TCP peers must not hold all host slots indefinitely. A
+        // partial header or slow trickle cannot extend this absolute deadline.
+        // Once the first join is forwarded, manual approval may take longer.
+        if let Some((joined, deadline)) = pending_join {
+            if !joined.load(Ordering::Acquire) && join_started.elapsed() >= deadline {
+                let _ = on_outcome(ReadControlOutcome::Rejected(TransportError::new(
+                    TransportErrorKind::Timeout,
+                    TransportChannel::Control,
+                    "TCP peer did not submit a join request before the admission deadline",
+                )));
+                break;
+            }
+        }
         match stream.read(&mut chunk) {
             Ok(0) => {
                 if buffer.is_empty() {

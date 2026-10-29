@@ -328,6 +328,7 @@ fn spawn_control_reader(
                 &stop,
                 config.io_timeout,
                 &config.session_id,
+                None,
                 |outcome| match outcome {
                     ReadControlOutcome::Frame(frame, bytes) => {
                         counters.frame_received(bytes);

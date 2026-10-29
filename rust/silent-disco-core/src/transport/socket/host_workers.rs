@@ -219,6 +219,7 @@ fn register_peer(
     let clock_for_reader = clock.clone();
     let reader_peer = peer.clone();
     let io_timeout = config.io_timeout;
+    let join_timeout = config.operation_timeout;
     let shutdown_for_reader = global_stop.clone();
     let reader = thread::Builder::new()
         .name(format!("silent-disco-control-reader-{number}"))
@@ -229,6 +230,7 @@ fn register_peer(
                 &reader_peer.stop,
                 io_timeout,
                 &session_id,
+                Some((&reader_peer.join_forwarded, join_timeout)),
                 |outcome| match outcome {
                     ReadControlOutcome::Frame(frame, bytes) => {
                         counters_for_reader.frame_received(bytes);
