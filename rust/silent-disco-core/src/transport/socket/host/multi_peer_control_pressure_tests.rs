@@ -195,8 +195,8 @@ fn two_peer_resync_notices_survive_real_udp_telemetry_saturation_and_stop() {
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut config = HostTransportConfig::loopback(session.clone());
     config.event_queue_capacity = 2;
-    let mut host = SocketHostTransport::bind(config, clock.clone())
-        .expect("bind production TCP/UDP host");
+    let mut host =
+        SocketHostTransport::bind(config, clock.clone()).expect("bind production TCP/UDP host");
     let mut first = join(&mut host, &clock, &session, "resync-first", 4);
     let mut second = join(&mut host, &clock, &session, "resync-second", 4);
     let first_id = id_device("resync-first");
@@ -213,11 +213,10 @@ fn two_peer_resync_notices_survive_real_udp_telemetry_saturation_and_stop() {
             })
             .expect("real UDP telemetry");
     }
-    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
-    for (listener, device) in [
-        (first.as_mut(), &first_id),
-        (second.as_mut(), &second_id),
-    ] {
+    wait_until(Duration::from_secs(5), || {
+        host.counters().queue_overflows > 0
+    });
+    for (listener, device) in [(first.as_mut(), &first_id), (second.as_mut(), &second_id)] {
         listener
             .send_control(&ControlMessage::ResyncNotice(ResyncNotice {
                 session_id: session.clone(),
