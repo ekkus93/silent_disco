@@ -12,7 +12,7 @@ use super::test_support::{
 };
 use super::{
     HostTransportConfig, ListenerTransportConfig, SocketTransportFactory, SystemTransportClock,
-    TransportChannel, TransportErrorKind, TransportEvent, TransportFactory,
+    TransportChannel, TransportError, TransportErrorKind, TransportEvent, TransportFactory,
 };
 
 
@@ -47,7 +47,7 @@ fn unjoined_idle_and_partial_header_peers_expire_and_release_host_capacity() {
                     timed_out = true;
                     break;
                 }
-                Ok(_) | Err(silent_disco_core::transport::TransportError {
+                Ok(_) | Err(TransportError {
                     kind: TransportErrorKind::Timeout, ..
                 }) => {}
                 Err(error) => panic!("unexpected host event error: {error}"),
