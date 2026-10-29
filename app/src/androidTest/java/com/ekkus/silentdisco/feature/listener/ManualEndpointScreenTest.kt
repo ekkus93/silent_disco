@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import com.ekkus.silentdisco.app.AppUiState
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.model.ManualEndpointFormState
@@ -87,7 +88,7 @@ class ManualEndpointScreenTest {
             ),
         )
 
-        composeRule.onNodeWithTag("manual-endpoint-invite-code").assertIsDisplayed()
+        composeRule.onNodeWithTag("manual-endpoint-invite-code").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("manual-endpoint-connect").assertIsNotEnabled()
     }
 
