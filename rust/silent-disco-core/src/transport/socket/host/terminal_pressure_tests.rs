@@ -88,7 +88,7 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
     });
 
     let hello = ControlMessage::Hello(Hello {
-        session_id: session,
+        session_id: session.clone(),
         session_name: "Terminal pressure".to_owned(),
         host_name: "Host".to_owned(),
         approval_required: true,
