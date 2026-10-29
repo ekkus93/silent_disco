@@ -47,8 +47,7 @@ fn terminal_backpressure_keeps_peer_budget_until_actor_drains_disconnect() {
         )
     });
     wait_until(Duration::from_secs(5), || {
-        host.counters().closed_control_connections == 1
-            && host.counters().queue_overflows > 0
+        host.counters().closed_control_connections == 1 && host.counters().queue_overflows > 0
     });
 
     // A second raw TCP connection must be visibly closed as busy, not accepted
@@ -62,7 +61,11 @@ fn terminal_backpressure_keeps_peer_budget_until_actor_drains_disconnect() {
     let mut byte = [0_u8; 1];
     match probe.read(&mut byte) {
         Ok(0) => {}
-        Err(error) if matches!(error.kind(), ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+            ) => {}
         other => panic!("busy probe must close without accepting a peer: {other:?}"),
     }
     assert_eq!(
@@ -72,7 +75,8 @@ fn terminal_backpressure_keeps_peer_budget_until_actor_drains_disconnect() {
     );
 
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("first PeerAccepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("first PeerAccepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -99,7 +103,8 @@ fn terminal_backpressure_keeps_peer_budget_until_actor_drains_disconnect() {
         )
         .expect("fresh TCP listener");
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("fresh PeerAccepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("fresh PeerAccepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     second
