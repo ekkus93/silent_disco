@@ -77,7 +77,11 @@ class HostTransportController(
                         sessionId,
                     )
                 },
-                start = { handle -> startEventLoop(scope, handle) },
+                start = { handle ->
+                    // Old-session events must not occupy the new session's bounded queue.
+                    eventQueue.discardRetiredEvents()
+                    startEventLoop(scope, handle)
+                },
             )
         }
     }
@@ -288,7 +292,13 @@ class HostTransportController(
     }
 
     private fun closeExistingHandle() {
-        handleGate.close(::retireHandle)
+        handleGate.close { handle ->
+            try {
+                retireHandle(handle)
+            } finally {
+                eventQueue.discardRetiredEvents()
+            }
+        }
     }
 
     private fun retireHandle(handle: FfiHostTransportHandle?) {

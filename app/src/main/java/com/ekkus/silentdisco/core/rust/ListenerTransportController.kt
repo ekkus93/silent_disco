@@ -77,7 +77,10 @@ class ListenerTransportController : ListenerTransport {
                         rawEndpoint, nowMs(), localDeviceId, localAddress,
                     )
                 },
-                start = { startEventLoop(scope, it) },
+                start = {
+                    eventQueue.discardRetiredEvents()
+                    startEventLoop(scope, it)
+                },
             )
         }
     }
@@ -116,13 +119,25 @@ class ListenerTransportController : ListenerTransport {
 
     override suspend fun disconnect(reason: String) {
         withContext(Dispatchers.IO) {
-            handleGate.close { retireHandle(it, reason) }
+            handleGate.close { handle ->
+                try {
+                    retireHandle(handle, reason)
+                } finally {
+                    eventQueue.discardRetiredEvents()
+                }
+            }
         }
     }
 
     override fun close() {
         try {
-            handleGate.close { retireHandle(it, reason = null) }
+            handleGate.close { handle ->
+                try {
+                    retireHandle(handle, reason = null)
+                } finally {
+                    eventQueue.discardRetiredEvents()
+                }
+            }
         } finally {
             // Close the collector even if native shutdown or release fails.
             eventQueue.close()

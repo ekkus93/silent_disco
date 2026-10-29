@@ -103,6 +103,53 @@ class BoundedTransportEventQueueTest {
     }
 
     @Test
+    fun rebindFreesOldCriticalAndAudioCapacityBeforeNewSessionEvents() = runTest {
+        val retired = Any()
+        val replacement = Any()
+        var current = retired
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 3)
+        queue.emit(retired, "old-join")
+        queue.tryEmit(retired, "old-audio")
+        queue.emit(retired, "old-disconnect")
+
+        // No collector is running. Without retirement, the replacement
+        // session would stall even though none of these events is usable.
+        current = replacement
+        queue.discardRetiredEvents()
+        queue.emit(replacement, "new-join")
+        queue.tryEmit(replacement, "new-audio")
+        queue.emit(replacement, "new-stop")
+        val received = backgroundScope.async { queue.events.take(3).toList() }
+        runCurrent()
+        assertThat(received.await())
+            .containsExactly("new-join", "new-audio", "new-stop").inOrder()
+        assertThat(queue.droppedBestEffort).isEqualTo(0)
+        queue.close()
+    }
+
+    @Test
+    fun cancellingRetiredPollerBeforeRebindDoesNotLeakItsPendingCriticalSend() = runTest {
+        val retired = Any()
+        val replacement = Any()
+        var current = retired
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 1)
+        queue.emit(retired, "old-join")
+        val oldPoll = backgroundScope.async { queue.emit(retired, "old-stop") }
+        runCurrent()
+        assertThat(oldPoll.isCompleted).isFalse()
+        oldPoll.cancel()
+        runCurrent()
+
+        current = replacement
+        queue.discardRetiredEvents()
+        queue.emit(replacement, "new-approval")
+        val received = backgroundScope.async { queue.events.first() }
+        runCurrent()
+        assertThat(received.await()).isEqualTo("new-approval")
+        queue.close()
+    }
+
+    @Test
     fun closingQueueUnblocksPendingAuthoritativeEventAndPreservesAlreadyQueuedJoin() = runTest {
         val handle = Any()
         val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 1)

@@ -54,6 +54,24 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
 
     val droppedBestEffort: Long get() = dropped.get()
 
+    /**
+     * Retire buffered events at a native session boundary, before the next
+     * poller starts. Merely tagging events by handle is insufficient: if the
+     * previous collector stalled with a full queue, the next session's join
+     * and Stop events could be backpressured behind obsolete notifications.
+     *
+     * Call only while the native handle gate serializes close/rebind. The
+     * previous poll job must already be cancelled, and the replacement poll
+     * job must not yet be started. This drains queued items, not an event
+     * already handed to a collector; that consumer still checks the handle.
+     */
+    fun discardRetiredEvents() {
+        while (true) {
+            val retired = channel.tryReceive().getOrNull() ?: break
+            if (retired.bestEffort) queuedBestEffort.decrementAndGet()
+        }
+    }
+
     /** Only use for explicitly lossy telemetry or PCM. */
     fun tryEmit(handle: Handle, event: Event) {
         val pending = queuedBestEffort.incrementAndGet()
