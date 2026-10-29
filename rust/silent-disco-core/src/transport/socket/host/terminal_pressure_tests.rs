@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::domain::MonotonicMillis;
 use crate::protocol::{ControlMessage, Heartbeat, Hello, ProtocolFrame};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
+    id_device, id_session, join_request, stream_stop, wait_for_authorized, wait_for_control_from,
     wait_for_frame, wait_until,
 };
 use crate::transport::{
@@ -119,6 +119,13 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         listener.counters().control_frames_received >= 17
     });
     assert!(listener.counters().queue_overflows > 0);
+    // Stop must retain ordering and reach the actor even when the collector
+    // is stalled and heartbeat telemetry has saturated the same queue.
+    host.send_pending_control(&device, &stream_stop(&session, 900))
+        .expect("send authoritative Stop");
+    wait_until(Duration::from_secs(5), || {
+        listener.counters().control_frames_received >= 18
+    });
     host.shutdown().expect("close host TCP socket");
 
     assert!(matches!(
@@ -128,6 +135,16 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame: ProtocolFrame::Control(ControlMessage::Hello(_)),
+            ..
+        }
+    ));
+    assert!(matches!(
+        listener
+            .recv_event(Duration::from_secs(5))
+            .expect("Stop event"),
+        TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(ControlMessage::Stop(_)),
             ..
         }
     ));
