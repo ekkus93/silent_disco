@@ -138,11 +138,7 @@ fn multi_peer_accept_pressure_refuses_unobservable_sockets_and_allows_clean_reco
     for (index, device) in devices.iter().enumerate() {
         let listener = SocketTransportFactory
             .connect_listener(
-                ListenerTransportConfig::loopback(
-                    session.clone(),
-                    device.clone(),
-                    host.endpoint(),
-                ),
+                ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
                 clock.clone(),
             )
             .expect("connect listener");
