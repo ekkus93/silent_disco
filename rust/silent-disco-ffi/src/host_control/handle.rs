@@ -1,7 +1,7 @@
 use super::conversions::network_endpoint;
 use super::types::{
-    FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
-    FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary, FfiApprovalMode,
+    FfiAppRole, FfiApprovalMode, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver,
+    FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
     FfiPlatformCompletion, FfiPlaybackState, FfiQueueEntry, FfiSessionAdvertisement,
     FfiTransportState, FfiTuningPatch, FfiTuningSettings,
 };

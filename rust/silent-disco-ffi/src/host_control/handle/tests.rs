@@ -140,12 +140,9 @@ mod concurrency_tests {
     }
 }
 
-
 mod legacy_v3_trust_boundary_tests {
     use super::*;
-    use crate::host_control::types::{
-        FfiCoreNotification, FfiTrustState, FfiTransportState,
-    };
+    use crate::host_control::types::{FfiCoreNotification, FfiTransportState, FfiTrustState};
 
     struct NoopObserver;
 
