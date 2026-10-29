@@ -99,7 +99,13 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong) {
-        withHandle { it.sendSyncRequest(correlationId, localSendElapsedMs) }
+        // Sync acquisition is a required control action, not best-effort
+        // telemetry. A Stop/rebind between invocation and IO dispatch must
+        // fail visibly rather than leave the Rust actor waiting for a reply
+        // to a request that was never sent on its original socket.
+        checkNotNull(withHandle { it.sendSyncRequest(correlationId, localSendElapsedMs) }) {
+            "Listener transport disconnected before sync request delivery"
+        }
     }
 
     override fun sendSynchronizationReport(
