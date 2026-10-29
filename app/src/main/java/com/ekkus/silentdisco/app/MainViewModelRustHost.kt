@@ -520,6 +520,22 @@ private suspend fun MainViewModel.executeRustTransportEffect(
     effect: FfiTransportEffect,
 ) {
     if (effect is FfiTransportEffect.DeliverJoinApproval) {
+        if (effect.trustedForFuture) {
+            // This legacy-v3 connection has no verified listener public key.
+            // Complete the actor operation with an explicit failed delivery,
+            // rather than leaving its approval pending after the native
+            // transport rejects a requested durable-trust promotion.
+            pendingListenerDatagramPorts.remove(effect.listenerId)
+            controller.transportDeliveryCompleted(
+                effect.operationId,
+                FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u),
+            )
+            reportRustHostCommandFailure(
+                "approve listener",
+                IllegalStateException(com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR),
+            )
+            return
+        }
         // Do not send a successful approval without the UDP ports needed to
         // authorize the SAME peer/session. Approval and route authorization
         // must not straddle a host close/rebind suspend boundary.
