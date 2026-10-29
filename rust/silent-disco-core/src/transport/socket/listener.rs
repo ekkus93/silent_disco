@@ -344,6 +344,10 @@ fn spawn_control_reader(
                                 },
                             ),
                             Err(error) => {
+                                // A diagnostic Rejected event is lossy under
+                                // queue pressure. Preserve the reason in the
+                                // authoritative terminal disconnect as well.
+                                terminal_error = Some(error.clone());
                                 classify_rejection(&counters, &error);
                                 send_event(
                                     &event_sender,

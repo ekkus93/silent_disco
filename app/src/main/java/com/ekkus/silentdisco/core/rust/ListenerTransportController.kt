@@ -86,7 +86,12 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override suspend fun sendJoinRequest(displayName: String, inviteCode: String?) {
-        withHandle { it.sendJoinRequest(displayName, inviteCode) }
+        // The core has already entered CONNECTING before this call. If Stop or
+        // a reconnect retires the handle while dispatch is pending, returning
+        // normally would leave the UI waiting forever for a join never sent.
+        checkNotNull(withHandle { it.sendJoinRequest(displayName, inviteCode) }) {
+            "Listener transport disconnected before join request delivery"
+        }
     }
 
     override suspend fun sendDisconnect(reason: String) {

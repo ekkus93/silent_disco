@@ -261,15 +261,17 @@ private fun MainViewModel.connectRustListenerEndpoint(
                 "listener.join_request_sent",
                 "Join request sent; waiting for the host decision",
             )
-        } catch (error: FfiListenerTransportException) {
-            // Establishment already completed, so this is a transport failure.
-            logger.e(
-                "listener.join_request_failed",
-                error.message ?: "join request failed",
-                error,
-            )
-            controller.transportFailed(error.message ?: "join request failed", true)
-        } catch (error: RuntimeException) {
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // NetworkEndpointReady was already reported to the actor. Do not
+            // leave a live socket or a misleading CONNECTED flag after a
+            // failed/stale join send; the actor gets an explicit retryable
+            // failure instead of an indefinite approval spinner.
+            listenerTransportConnected = false
+            runCatching { listenerTransportController.disconnect("Join request failed") }
+                .exceptionOrNull()
+                ?.let { cleanup -> if (cleanup !== error) error.addSuppressed(cleanup) }
             logger.e(
                 "listener.join_request_failed",
                 error.message ?: "join request failed",

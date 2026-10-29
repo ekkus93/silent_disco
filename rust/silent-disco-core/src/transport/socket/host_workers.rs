@@ -294,6 +294,10 @@ fn register_peer(
                                 }
                             }
                             Err(error) => {
+                                // A diagnostic Rejected event is lossy under
+                                // queue pressure. Preserve the reason in the
+                                // authoritative terminal disconnect as well.
+                                terminal_error = Some(error.clone());
                                 classify_rejection(&counters_for_reader, &error);
                                 send_event(
                                     &event_for_reader,

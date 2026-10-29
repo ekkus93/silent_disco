@@ -269,7 +269,7 @@ class HostTransportController(
                 }
                 if (event != null) {
                     when (event) {
-                        is FfiHostTransportEvent.PeerAccepted,
+                        is FfiHostTransportEvent.PeerAccepted -> eventQueue.emit(handle, event)
                         is FfiHostTransportEvent.Heartbeat,
                         is FfiHostTransportEvent.ResyncNotice,
                         is FfiHostTransportEvent.Rejected,
