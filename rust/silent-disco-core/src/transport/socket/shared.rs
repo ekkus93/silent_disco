@@ -234,6 +234,10 @@ fn send_authoritative_event_until<T>(
 pub(super) struct ControlWrite {
     pub bytes: Vec<u8>,
     pub result: SyncSender<Result<usize, TransportError>>,
+    // An acknowledged timeout must not leave an obsolete control frame in
+    // the writer's backlog to be transmitted much later. In-flight kernel
+    // writes remain ambiguous and are handled by session/generation policy.
+    pub deadline: Option<Instant>,
 }
 
 pub(super) struct ControlSender {
@@ -260,6 +264,7 @@ impl ControlSender {
         match self.sender.try_send(ControlWrite {
             bytes,
             result: result_sender,
+            deadline: Instant::now().checked_add(self.operation_timeout),
         }) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
@@ -321,6 +326,18 @@ pub(super) fn spawn_control_writer(
                     Err(RecvTimeoutError::Timeout) => continue,
                     Err(RecvTimeoutError::Disconnected) => break,
                 };
+                // A caller may already have timed out while this frame sat
+                // behind another TCP write. Never send a stale queued Start,
+                // Pause, Stop or approval after its delivery deadline.
+                if write.deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    counters.delivery_failure();
+                    drop(write.result.send(Err(TransportError::new(
+                        TransportErrorKind::Timeout,
+                        TransportChannel::Control,
+                        "queued control frame expired before TCP write",
+                    ))));
+                    continue;
+                }
                 let result = stream
                     .write_all(&write.bytes)
                     .and_then(|()| stream.flush())
