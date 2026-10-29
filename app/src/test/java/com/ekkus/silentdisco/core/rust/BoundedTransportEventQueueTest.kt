@@ -167,4 +167,21 @@ class BoundedTransportEventQueueTest {
         assertThat(received.await()).containsExactly("join")
         assertThat(queue.droppedBestEffort).isEqualTo(0)
     }
+    @Test
+    fun authoritativeResyncAndStopSurvivePureAudioFloodWithoutCollector() = runTest {
+        val handle = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 4)
+        repeat(1_000) { queue.tryEmit(handle, "audio-$it") }
+        assertThat(queue.droppedBestEffort).isEqualTo(999)
+        // Resync is a required host control event, not a lossy heartbeat.
+        queue.emit(handle, "resync-notice")
+        queue.emit(handle, "stop")
+        queue.emit(handle, "terminal-disconnect")
+        val received = backgroundScope.async { queue.events.take(4).toList() }
+        runCurrent()
+        assertThat(received.await())
+            .containsExactly("audio-0", "resync-notice", "stop", "terminal-disconnect")
+            .inOrder()
+        queue.close()
+    }
 }

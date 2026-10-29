@@ -280,9 +280,11 @@ class HostTransportController(
                     when (event) {
                         is FfiHostTransportEvent.PeerAccepted -> eventQueue.emit(handle, event)
                         is FfiHostTransportEvent.Heartbeat,
-                        is FfiHostTransportEvent.ResyncNotice,
                         is FfiHostTransportEvent.Rejected,
                         -> eventQueue.tryEmit(handle, event)
+                        // ResyncNotice is an authoritative listener recovery
+                        // request, not telemetry. It must survive saturation
+                        // alongside joins, Stop and terminal disconnects.
                         // Join, disconnect and synchronization requests must not
                         // disappear when the Android collector is temporarily slow.
                         else -> eventQueue.emit(handle, event)
