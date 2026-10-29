@@ -471,6 +471,80 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
         stopped_controls,
         "stopped late joiner must not receive cached StreamStart/Pause/boundaries"
     );
+    // A new Play may deliberately reuse the same stream ID after Stop.
+    // The retired generation's UDP tail must not enter this new timeline,
+    // while every authorized TCP peer (including the post-Stop joiner) sees
+    // the new Start and contiguous packet-zero PCM.
+    let ControlMessage::StreamStart(mut replay_start) = start.clone() else {
+        panic!("initial StreamStart");
+    };
+    replay_start.host_start_time_ms = MonotonicMillis::new(1_600);
+    let replay = ControlMessage::StreamStart(replay_start);
+    assert_eq!(
+        host.broadcast_control(&replay)
+            .expect("same-ID replay after Stop")
+            .report
+            .successful_peers,
+        3
+    );
+    assert!(recv_control(listener.as_mut()) == replay);
+    assert!(recv_control(newcomer.as_deref_mut().expect("late listener")) == replay);
+    assert!(recv_control(stopped_joiner.as_mut()) == replay);
+
+    let stale = ProtocolFrame::Audio(AudioDatagram {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        sequence: PacketSequence::new(packets),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        first_sample_index: SampleIndex::new(packets * 240),
+        host_presentation_time_ms: MonotonicMillis::new(1_410),
+        payload: vec![0; 240 * 2 * 2],
+    });
+    let sent_before_replay = host.counters().audio_datagrams_sent;
+    assert_eq!(
+        host.broadcast_audio(&stale)
+            .expect("retired UDP is ignored after Stop/replay")
+            .report
+            .intended_peers,
+        0
+    );
+    assert_eq!(host.counters().audio_datagrams_sent, sent_before_replay);
+    let callback_before_replay = silent_disco_audio_callback_count(native);
+    let capture_before_replay = tap.counters();
+    for sequence in 0..2_u64 {
+        let packet = AudioDatagram {
+            session_id: session.clone(),
+            stream_id: stream.clone(),
+            sequence: PacketSequence::new(sequence),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: 240,
+            first_sample_index: SampleIndex::new(sequence * 240),
+            host_presentation_time_ms: MonotonicMillis::new(1_600 + sequence * 5),
+            payload: vec![u8::try_from(sequence + 1).expect("test byte"); 240 * 2 * 2],
+        };
+        assert_eq!(
+            host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
+                .expect("replay PCM over UDP")
+                .report
+                .successful_peers,
+            3
+        );
+        assert_eq!(recv_audio(listener.as_mut()), packet);
+        assert_eq!(recv_audio(newcomer.as_deref_mut().expect("late listener")), packet);
+        assert_eq!(recv_audio(stopped_joiner.as_mut()), packet);
+    }
+    assert_eq!(host.counters().audio_datagrams_sent, sent_before_replay + 6);
+    assert_eq!(
+        silent_disco_audio_callback_count(native),
+        callback_before_replay,
+        "transport replay must not reopen or invoke the existing native output"
+    );
+    assert_eq!(tap.counters(), capture_before_replay);
     stopped_joiner.shutdown().expect("stop late joiner");
     detach_callback_capture(token);
     release_render_ring(token).expect("release original native output");
