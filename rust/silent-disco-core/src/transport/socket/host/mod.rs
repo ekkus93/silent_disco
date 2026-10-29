@@ -198,8 +198,7 @@ impl PlaybackControls {
                 if is_resume {
                     self.advance_paused_track(&current_start);
                     if self.stream_start.as_ref().is_some_and(|previous| {
-                        current_start.host_start_time_ms.get()
-                            > previous.host_start_time_ms.get()
+                        current_start.host_start_time_ms.get() > previous.host_start_time_ms.get()
                     }) {
                         self.resume_anchor_floor = Some(current_start.host_start_time_ms.get());
                     }
