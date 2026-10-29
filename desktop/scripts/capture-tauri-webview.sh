@@ -142,7 +142,8 @@ for label in default compact; do
   # GTK/WebKit can rasterize a blinking caret or focus outline at a few
   # pixels between otherwise identical cold starts. Permit at most 0.02% of
   # pixels to differ, while rejecting substantial layout/content changes.
-  read -r width height < <(identify -format '%w %h\\n' "$original")
+  width="${dimensions%x*}"
+  height="${dimensions#*x}"
   max_difference=$(( width * height / 5000 ))
   if (( difference > max_difference )); then
     compare "$original" "$repeated" "${output%.png}-$label-cold-start-diff.png" || true
