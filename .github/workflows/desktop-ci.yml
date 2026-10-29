@@ -339,10 +339,9 @@ jobs:
           fi
           echo "::notice::Privileged package lifecycle acceptance remains unqualified."
 
-      # Real packaged WebKit2GTK pixels, not DOM snapshots. Advisory until
-      # Xvfb geometry and capture are stable on exact-head hosted CI.
+      # Required real packaged WebKit2GTK pixel smoke at default and compact
+      # viewports. Visual parity/golden approval remains a separate review gate.
       - name: Capture packaged Tauri WebKit window pixels
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail

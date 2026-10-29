@@ -41,16 +41,43 @@ if [[ "$1" == "--inside" ]]; then
     echo "No visible Tauri window >=720x520 after 30s; last observed ${width}x${height}." >&2
     exit 1
   fi
+  # Exercise actual packaged WebKit at both normal and compact viewports.
+  # Reject blank/near-solid renders without treating them as approved goldens.
+  capture_pixels() {
+    local destination="$1"
+    local label="$2"
+    local captured_width captured_height colors
+    import -window "$window" "$destination"
+    read -r captured_width captured_height < <(identify -format "%w %h\\n" "$destination")
+    colors="$(identify -format "%k" "$destination")"
+    if (( captured_width < 720 || captured_height < 520 || colors < 64 )); then
+      echo "Blank/undersized $label WebKit capture: ${captured_width}x${captured_height}, $colors colors." >&2
+      exit 1
+    fi
+    echo "Captured $label Tauri WebKit pixels: ${captured_width}x${captured_height}, $colors colors."
+    sha256sum "$destination"
+  }
   sleep 1
-  import -window "$window" "$output"
-  read -r captured_width captured_height < <(identify -format "%w %h\n" "$output")
-  colors="$(identify -format "%k" "$output")"
-  if (( captured_width < 720 || captured_height < 520 || colors < 3 )); then
-    echo "Blank/undersized WebKit capture: ${captured_width}x${captured_height}, $colors colors." >&2
+  capture_pixels "$output" "default"
+  compact_output="${output%.png}-compact.png"
+  xdotool windowsize "$window" 760 560
+  resized=false
+  for attempt in $(seq 1 40); do
+    geometry="$(xdotool getwindowgeometry --shell "$window" 2>/dev/null || true)"
+    width="$(printf "%s\\n" "$geometry" | awk -F= '/^WIDTH=/{print $2}')"
+    height="$(printf "%s\\n" "$geometry" | awk -F= '/^HEIGHT=/{print $2}')"
+    if [[ "${width:-0}" == "760" && "${height:-0}" == "560" ]]; then
+      resized=true
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$resized" != true ]]; then
+    echo "Packaged WebKit window did not resize to 760x560; observed ${width:-0}x${height:-0}." >&2
     exit 1
   fi
-  echo "Captured actual Tauri WebKit pixels: ${captured_width}x${captured_height}, $colors colors."
-  sha256sum "$output"
+  sleep 0.5
+  capture_pixels "$compact_output" "compact"
   exit 0
 fi
 
@@ -60,7 +87,7 @@ if [[ "$#" -ne 2 ]]; then
 fi
 appimage="$(realpath "$1")"
 output="$(realpath -m "$2")"
-if [[ ! -f "$appimage" || "$output" != /* ]]; then
+if [[ ! -f "$appimage" || "$output" != /* || "$output" != *.png ]]; then
   echo "A packaged AppImage and absolute output path are required." >&2
   exit 2
 fi
