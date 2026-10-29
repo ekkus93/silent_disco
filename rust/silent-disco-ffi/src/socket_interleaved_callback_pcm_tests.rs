@@ -13,6 +13,7 @@ use crate::host_playlist::{FfiHostPlaylistStreamer, FfiPlaylistFrame};
 use crate::playlist_pcm_capture_tests::{authorized_pcm_socket_pair, source_wav_format};
 use crate::socket_failure_recovery_pcm_tests::{expected_pcm, source};
 use crate::socket_pause_resume_pcm_tests::{authorized_late_joiner, recv_audio, recv_control};
+use crate::socket_secondary_pcm_output_tests::SecondaryPcmOutput;
 use silent_disco_core::audio::{
     PlaybackPump, PlaybackPumpConfig, PlaybackScheduler, PumpTick, RenderRingConfig,
     SchedulerConfig,
@@ -528,40 +529,90 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     assert_eq!(host.counters().audio_datagrams_sent, sent_before_replay);
     let callback_before_replay = silent_disco_audio_callback_count(native);
     let capture_before_replay = tap.counters();
+    // A new Play after Stop is a distinct output generation, unlike either
+    // same-stream Resume above. Reuse the real decoded WAV rather than
+    // synthetic payload so both independent native callbacks can prove
+    // exactly the source PCM, sequence restart, and packet-zero timing.
+    let replay_playlist = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        stream.to_string(),
+        1_600,
+        vec![source("first", &first)],
+    )
+    .expect("fresh production replay source");
+    let mut replay_output = SecondaryPcmOutput::new(&session, &stream, 1_600, 240);
+    let mut stopped_late_output = SecondaryPcmOutput::new(&session, &stream, 1_600, 240);
+    assert_ne!(replay_output.token(), token, "replay owns a new native output");
+    assert_ne!(stopped_late_output.token(), token);
+    assert_ne!(stopped_late_output.token(), replay_output.token());
     for sequence in 0..2_u64 {
+        let FfiPlaylistFrame::Audio {
+            sequence: decoded_sequence,
+            sample_rate,
+            channels,
+            samples_per_packet,
+            first_sample_index,
+            host_presentation_time_ms,
+            payload,
+            ..
+        } = replay_playlist
+            .next_frame(5_000)
+            .expect("decode replay packet")
+            .expect("replay PCM")
+        else {
+            panic!("two replay PCM packets before End");
+        };
+        assert_eq!(decoded_sequence, sequence, "new Play resets packet sequence");
+        assert_eq!(first_sample_index, sequence * 240, "new Play resets sample index");
+        assert_eq!(host_presentation_time_ms, 1_600 + sequence * 5);
         let packet = AudioDatagram {
             session_id: session.clone(),
             stream_id: stream.clone(),
-            sequence: PacketSequence::new(sequence),
+            sequence: PacketSequence::new(decoded_sequence),
             codec: AudioCodec::PcmS16Le,
-            sample_rate: 48_000,
-            channels: 2,
-            samples_per_packet: 240,
-            first_sample_index: SampleIndex::new(sequence * 240),
-            host_presentation_time_ms: MonotonicMillis::new(1_600 + sequence * 5),
-            payload: vec![u8::try_from(sequence + 1).expect("test byte"); 240 * 2 * 2],
+            sample_rate,
+            channels,
+            samples_per_packet,
+            first_sample_index: SampleIndex::new(first_sample_index),
+            host_presentation_time_ms: MonotonicMillis::new(host_presentation_time_ms),
+            payload,
         };
         assert_eq!(
             host.broadcast_audio(&ProtocolFrame::Audio(packet.clone()))
-                .expect("replay PCM over UDP")
+                .expect("replay decoded PCM over UDP")
                 .report
                 .successful_peers,
             3
         );
-        assert_eq!(recv_audio(listener.as_mut()), packet);
+        let primary_packet = recv_audio(listener.as_mut());
+        assert_eq!(primary_packet, packet, "reconnected listener replay PCM");
+        replay_output.submit(primary_packet, host_presentation_time_ms);
         assert_eq!(
             recv_audio(newcomer.as_deref_mut().expect("late listener")),
-            packet
+            packet,
+            "pre-Stop late listener replay PCM"
         );
-        assert_eq!(recv_audio(stopped_joiner.as_mut()), packet);
+        let stopped_packet = recv_audio(stopped_joiner.as_mut());
+        assert_eq!(stopped_packet, packet, "post-Stop joiner replay PCM");
+        stopped_late_output.submit(stopped_packet, host_presentation_time_ms);
     }
     assert_eq!(host.counters().audio_datagrams_sent, sent_before_replay + 6);
     assert_eq!(
         silent_disco_audio_callback_count(native),
         callback_before_replay,
-        "transport replay must not reopen or invoke the existing native output"
+        "new Play must not invoke the previous native output"
     );
     assert_eq!(tap.counters(), capture_before_replay);
+    let expected_replay = expected_pcm(&[3_000], ramp);
+    replay_output.assert_and_release(&[241, 239], &expected_replay, 2);
+    stopped_late_output.assert_and_release(&[239, 241], &expected_replay, 2);
+    assert_eq!(
+        silent_disco_audio_callback_count(native),
+        callback_before_replay,
+        "two replay callbacks cannot reopen the old output"
+    );
+    assert_eq!(tap.counters(), capture_before_replay);
+    replay_playlist.cancel().expect("release replay producer");
     stopped_joiner.shutdown().expect("stop late joiner");
     detach_callback_capture(token);
     release_render_ring(token).expect("release original native output");
