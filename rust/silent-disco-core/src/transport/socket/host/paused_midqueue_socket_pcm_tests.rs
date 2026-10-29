@@ -186,6 +186,14 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
     for listener in [&mut first, &mut midqueue, &mut paused_join] {
         receive(listener.as_mut(), &ProtocolFrame::Control(resume.clone()));
     }
+    assert_eq!(
+        host.broadcast_audio(&packets[2])
+            .expect("suppress retired pre-pause audio after Resume")
+            .report
+            .intended_peers,
+        0,
+        "old-anchor PCM cannot leak to live or reconnecting listeners"
+    );
     let ProtocolFrame::Audio(ref mut final_packet) = packets[2] else {
         panic!("audio packet");
     };

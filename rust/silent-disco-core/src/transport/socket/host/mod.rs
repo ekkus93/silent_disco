@@ -77,6 +77,9 @@ pub(super) struct PlaybackControls {
     // entire replay generation, not just its first packet. This rejects
     // delayed duplicate and out-of-order UDP from a retired same-ID sender.
     replay_next_packet: Option<(u64, u64)>,
+    // A Pause/Resume keeps the stream ID and packet sequence, but moves the
+    // presentation anchor. Retired pre-pause UDP must not leak after Resume.
+    resume_anchor_floor: Option<u64>,
     // Once a paused stream resumes with a new anchor, previously audible
     // boundaries must not be replayed or reintroduced by late retransmits.
     last_applied_boundary_sample_index: Option<u64>,
@@ -194,7 +197,14 @@ impl PlaybackControls {
                 let current_start = start.clone();
                 if is_resume {
                     self.advance_paused_track(&current_start);
+                    if self.stream_start.as_ref().is_some_and(|previous| {
+                        current_start.host_start_time_ms.get()
+                            > previous.host_start_time_ms.get()
+                    }) {
+                        self.resume_anchor_floor = Some(current_start.host_start_time_ms.get());
+                    }
                 } else {
+                    self.resume_anchor_floor = None;
                     self.boundaries.clear();
                     self.last_applied_boundary_sample_index = None;
                     self.last_pause_time_ms = None;
@@ -277,6 +287,7 @@ impl PlaybackControls {
                 self.last_applied_boundary_sample_index = None;
                 self.pause = None;
                 self.last_pause_time_ms = None;
+                self.resume_anchor_floor = None;
                 self.awaiting_replay_first_packet = true;
                 self.replay_next_packet = None;
                 true
@@ -315,6 +326,11 @@ impl PlaybackControls {
                 start.session_id == packet.session_id
                     && start.stream_id == packet.stream_id
                     && self.pause.is_none()
+                    // Reanchored same-stream Resume must reject UDP emitted
+                    // against the retired pre-pause presentation timeline.
+                    && self.resume_anchor_floor.is_none_or(|anchor| {
+                        packet.host_presentation_time_ms.get() >= anchor
+                    })
                     // Stop/Play may intentionally reuse a stream ID. A
                     // delayed UDP datagram from the retired generation must
                     // not enter the newly authorized listener timeline.

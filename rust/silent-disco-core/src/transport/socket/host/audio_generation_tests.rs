@@ -91,7 +91,20 @@ fn tcp_pause_stop_and_replay_fence_producer_udp_without_losing_new_generation_au
     wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
         frame == &ProtocolFrame::Control(resume.clone())
     });
-    let second_packet = audio_frame(&session, 1);
+    let stale_pre_resume = audio_frame(&session, 1);
+    assert_eq!(
+        host.broadcast_audio(&stale_pre_resume)
+            .expect("reject old-anchor UDP after Resume")
+            .report
+            .intended_peers,
+        0,
+        "old-anchor packets must not leak across same-stream Resume"
+    );
+    let mut second_packet = stale_pre_resume;
+    let ProtocolFrame::Audio(ref mut resumed_audio) = second_packet else {
+        panic!("resumed audio fixture");
+    };
+    resumed_audio.host_presentation_time_ms = MonotonicMillis::new(1_201);
     assert_eq!(
         host.broadcast_audio(&second_packet)
             .expect("resumed audio")
