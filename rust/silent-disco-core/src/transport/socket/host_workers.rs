@@ -381,13 +381,8 @@ fn register_peer(
             reader_peer.active.store(false, Ordering::Release);
             reader_peer.stop.store(true, Ordering::Release);
             drop(shutdown_stream(&reader_peer.shutdown_stream));
-            // Keep this retired peer's registry slot while its terminal
-            // event waits behind a stalled actor collector. Otherwise every
-            // disconnect frees a slot for another TCP reader that can block
-            // forever on the same full event queue: hostile reconnect churn
-            // can accumulate unbounded parked threads despite max_peers.
-            // The socket and UDP route are already closed; this reservation
-            // is only a bounded admission/worker budget.
+            // Reserve the peer slot until terminal delivery to bound parked
+            // readers under hostile reconnect churn and a stalled actor.
             if let Some(device_id) = reader_peer.device_id() {
                 // A replacement socket for the same device may have been
                 // authorized while this retired reader was unwinding. Never
@@ -395,10 +390,7 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            // Never discard a terminal disconnect after its deadline: a
-            // resumed host actor must observe it to retire the UI/actor peer.
-            // Shutdown interrupts the wait. A bounded terminal sideband with
-            // reserved capacity is needed before this can become time-limited.
+            // Preserve terminal disconnect until delivered or shutdown.
             send_authoritative_event(
                 &event_for_reader,
                 &shutdown_for_reader,
@@ -409,8 +401,7 @@ fn register_peer(
                     received_at: clock_for_reader.now(),
                 },
             );
-            // Release the reserved peer slot only after terminal delivery
-            // (or global shutdown). New accepts can then proceed safely.
+            // Release the admission slot only after terminal delivery.
             drop(
                 peers_for_reader
                     .lock()
