@@ -358,7 +358,8 @@ class HostNativeHandleGateTest {
                     }
                     assertThat(shutdownStarted.await(5, TimeUnit.SECONDS)).isTrue()
                     assertThat(closed).doesNotContain(old)
-                    assertThat(gate.withExpectedPoll(old) { error("stale poll") }).isNull()
+                    val stalePoll: String? = gate.withExpectedPoll(old) { error("stale poll") }
+                    assertThat(stalePoll).isNull()
                     releasePoll.countDown()
                     poll.get(5, TimeUnit.SECONDS)
                     rebind.get(5, TimeUnit.SECONDS)

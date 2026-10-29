@@ -182,7 +182,8 @@ class ListenerNativeHandleGateTest {
             }
             assertThat(shutdown.await(5, TimeUnit.SECONDS)).isTrue()
             assertThat(disposed.get()).isEqualTo(0)
-            assertThat(gate.withExpectedPoll(old) { error("stale poll") }).isNull()
+            val stalePoll: String? = gate.withExpectedPoll(old) { error("stale poll") }
+            assertThat(stalePoll).isNull()
             release.countDown()
             poll.get(5, TimeUnit.SECONDS)
             reconnect.get(5, TimeUnit.SECONDS)
