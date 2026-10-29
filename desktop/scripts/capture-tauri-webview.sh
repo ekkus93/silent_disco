@@ -91,7 +91,7 @@ if [[ ! -f "$appimage" || "$output" != /* || "$output" != *.png ]]; then
   echo "A packaged AppImage and absolute output path are required." >&2
   exit 2
 fi
-for program in xvfb-run dbus-run-session xdotool import identify timeout; do
+for program in xvfb-run dbus-run-session xdotool import identify compare timeout; do
   command -v "$program" >/dev/null 2>&1 || { echo "Missing utility: $program" >&2; exit 2; }
 done
 mkdir -p "$(dirname "$output")"
@@ -132,6 +132,9 @@ for label in default compact; do
   difference="$(compare -metric AE "$original" "$repeated" null: 2>&1)"
   compare_status=$?
   set -e
+  # ImageMagick 6 reports "0"; ImageMagick 7 may report "0 (0)".
+  # The first field is the exact absolute-error pixel count in both.
+  difference="${difference%% *}"
   if [[ "$compare_status" -gt 1 || ! "$difference" =~ ^[0-9]+$ ]]; then
     echo "Could not compare cold-start $label WebKit pixels: $difference" >&2
     exit 1
