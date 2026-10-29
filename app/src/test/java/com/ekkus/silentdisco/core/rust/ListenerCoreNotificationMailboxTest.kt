@@ -87,4 +87,24 @@ class ListenerCoreNotificationMailboxTest {
         mailbox.publish("retired-generation-approval")
         mailbox.close()
     }
+    @Test
+    fun listenerCanPublishAllCriticalEffectsAfterPureDiagnosticFloodWithoutCollector() {
+        val mailbox = ListenerCoreNotificationMailbox<String>(
+            onSnapshot = { false },
+            isDiagnostic = { it.startsWith("diagnostic:") },
+            capacity = 8,
+        )
+        try {
+            repeat(1_000) { mailbox.publish("diagnostic:$it") }
+            assertThat(mailbox.droppedDiagnostics).isEqualTo(998)
+            val controls = listOf("join", "approved", "start", "pause", "stop", "connection-closed")
+            controls.forEach(mailbox::publish)
+            assertThat(mailbox.criticalTimeouts).isEqualTo(0)
+            assertThat(runBlocking { mailbox.events.take(8).toList() })
+                .containsExactly("diagnostic:0", "diagnostic:1", *controls.toTypedArray())
+                .inOrder()
+        } finally {
+            mailbox.close()
+        }
+    }
 }

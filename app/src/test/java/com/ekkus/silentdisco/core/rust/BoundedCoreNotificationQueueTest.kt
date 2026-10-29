@@ -74,4 +74,25 @@ class BoundedCoreNotificationQueueTest {
         assertThat(queue.criticalTimeouts).isEqualTo(0)
         assertThat(runBlocking { queue.events.toList() }).containsExactly("join")
     }
+    @Test
+    fun telemetryOnlyFloodReservesCriticalSlotsForJoinStopAndErrors() {
+        val queue = BoundedCoreNotificationQueue<String>(capacity = 8, criticalTimeoutMs = 2_000)
+        try {
+            repeat(1_000) { queue.publishBestEffort("diagnostic-$it") }
+            assertThat(queue.droppedDiagnostics).isEqualTo(998)
+            val controls = listOf("join", "approval", "start", "pause", "stop", "disconnect")
+            controls.forEach(queue::publishCritical)
+            val pending = CompletableFuture.runAsync { queue.publishCritical("terminal-error") }
+            Thread.sleep(40)
+            assertThat(pending.isDone).isFalse()
+            val received = runBlocking { queue.events.take(9).toList() }
+            pending.get(2, TimeUnit.SECONDS)
+            assertThat(received)
+                .containsExactly("diagnostic-0", "diagnostic-1", *controls.toTypedArray(), "terminal-error")
+                .inOrder()
+            assertThat(queue.criticalTimeouts).isEqualTo(0)
+        } finally {
+            queue.close()
+        }
+    }
 }
