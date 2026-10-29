@@ -254,7 +254,7 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
         "Stop must not replay the paused title or future boundary"
     );
     let mut after_stop = join(&mut host, &clock, "after-stop");
-    let replay = Packetizer::new(
+    let mut replay = Packetizer::new(
         session,
         StreamId::new("paused-midqueue-replay").expect("new stream"),
         format,
@@ -281,6 +281,47 @@ fn pause_at_midqueue_replays_frozen_title_then_reanchors_pcm_and_retires_on_stop
         &mut after_stop,
     ] {
         receive(listener.as_mut(), &replay_start);
+    }
+    let replay_pcm: Vec<i16> = (0_i16..240)
+        .flat_map(|sample| [sample + 3_000, -sample - 3_000])
+        .collect();
+    let outcome = replay
+        .push_contiguous_chunk(DecodedPcmChunk {
+            format,
+            first_sample_index: SampleIndex::new(0),
+            frames: replay_pcm.clone(),
+            end_of_stream: true,
+        })
+        .expect("packetize fresh replay");
+    assert_eq!(outcome.frames.len(), 1);
+    let fresh = &outcome.frames[0];
+    let ProtocolFrame::Audio(packet) = fresh else {
+        panic!("replay audio");
+    };
+    assert_eq!(packet.sequence.get(), 0);
+    assert_eq!(packet.first_sample_index.get(), 0);
+    assert_eq!(packet.host_presentation_time_ms.get(), 2_000);
+    let decoded_replay: Vec<i16> = packet
+        .payload
+        .chunks_exact(2)
+        .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+        .collect();
+    assert_eq!(decoded_replay, replay_pcm);
+    assert_eq!(
+        host.broadcast_audio(fresh)
+            .expect("fresh replay UDP")
+            .report
+            .successful_peers,
+        5
+    );
+    for listener in [
+        &mut first,
+        &mut midqueue,
+        &mut paused_join,
+        &mut after_boundary,
+        &mut after_stop,
+    ] {
+        receive(listener.as_mut(), fresh);
         listener.shutdown().expect("listener shutdown");
     }
     host.shutdown().expect("host shutdown");
