@@ -209,56 +209,63 @@ class ListenerTransportController : ListenerTransport {
         return withContext(Dispatchers.IO) { handleGate.withExpected(expected, action) }
     }
 
-    /**
-     * Always attempts every native cleanup operation and rethrows the first
-     * failure after attaching later cleanup failures as suppressed exceptions.
-     */
+    /** Retire every native stage, even when a non-UniFFI exception escapes a call. */
     private fun retireHandle(handle: FfiListenerTransportHandle?, reason: String?) {
         eventLoop?.cancel()
         eventLoop = null
-        handle ?: return
-        var firstFailure: Throwable? = null
-
-        fun recordFailure(error: Throwable) {
-            val first = firstFailure
-            if (first == null) {
-                firstFailure = error
-            } else {
-                first.addSuppressed(error)
-            }
-        }
-
-        if (reason != null) {
-            try {
-                handle.sendDisconnect(reason)
-            } catch (error: FfiListenerTransportException) {
-                if (!isPeerClosedDisconnectWriteFailure(error)) {
-                    recordFailure(error)
-                }
-            }
-        }
-        try {
-            handle.shutdown()
-        } catch (error: FfiListenerTransportException) {
-            recordFailure(error)
-        }
-        // The cancelled poller may still be executing a blocking native
-        // call. Never free its UniFFI handle until that call has returned.
-        try {
-            handleGate.awaitPollQuiescence(handle)
-        } catch (error: Throwable) {
-            recordFailure(error)
-            firstFailure?.let { throw it }
-        }
-        try {
-            handle.close()
-        } catch (error: RuntimeException) {
-            recordFailure(error)
-        }
-        firstFailure?.let { throw it }
+        retireListenerNativeHandle(
+            handle = handle,
+            reason = reason,
+            sendDisconnect = { native, leaveReason -> native.sendDisconnect(leaveReason) },
+            benignDisconnectFailure = { error ->
+                error is FfiListenerTransportException && isPeerClosedDisconnectWriteFailure(error)
+            },
+            shutdown = { it.shutdown() },
+            awaitPoll = { handleGate.awaitPollQuiescence(it) },
+            close = { it.close() },
+        )
     }
 
     private fun nowMs(): ULong = System.currentTimeMillis().toULong()
+}
+
+
+/**
+ * Listener teardown is a transaction over the ORIGINAL native generation.
+ * An unexpected exception from Leave or shutdown must not skip the remaining
+ * shutdown/poll-drain/close stages. A failed poll drain is different: retain
+ * the native handle rather than free memory that an in-flight poll may use.
+ * Only the known already-closed TCP write errors are benign.
+ */
+internal fun <H : Any> retireListenerNativeHandle(
+    handle: H?,
+    reason: String?,
+    sendDisconnect: (H, String) -> Unit,
+    benignDisconnectFailure: (Throwable) -> Boolean,
+    shutdown: (H) -> Unit,
+    awaitPoll: (H) -> Unit,
+    close: (H) -> Unit,
+) {
+    if (handle == null) return
+    var leaveFailure: Throwable? = null
+    if (reason != null) {
+        try {
+            sendDisconnect(handle, reason)
+        } catch (error: Throwable) {
+            if (!benignDisconnectFailure(error)) leaveFailure = error
+        }
+    }
+    try {
+        retireNativeHandle(handle, shutdown = shutdown, close = close, awaitPoll = awaitPoll)
+    } catch (cleanup: Throwable) {
+        val first = leaveFailure
+        if (first != null) {
+            if (first !== cleanup) first.addSuppressed(cleanup)
+            throw first
+        }
+        throw cleanup
+    }
+    leaveFailure?.let { throw it }
 }
 
 internal fun shouldForwardPolledListenerEvent(
