@@ -107,7 +107,7 @@ fn joined_peer_cannot_trickle_partial_next_frame_indefinitely() {
         );
     });
     let mut data = hello;
-    data.extend_from_slice(&[b'S', b'D']);
+    data.extend_from_slice(b"SD");
     client
         .write_all(&data)
         .expect("valid frame then truncated header");
