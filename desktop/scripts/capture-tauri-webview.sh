@@ -97,7 +97,49 @@ done
 mkdir -p "$(dirname "$output")"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/data" "$work/config" "$work/cache"
-# Fresh XDG roots prevent screenshots from exposing an owner's saved profiles.
-xvfb-run -a -s "-screen 0 1280x900x24" dbus-run-session -- \
-  bash "$0" --inside "$appimage" "$output" "$work"
+# Launch the packaged WebKit application twice in independent Xvfb, DBus
+# and XDG sessions. This tests cold-start pixel reproducibility rather than
+# merely taking two frames from one already-running webview.
+for pass in first repeat; do
+  mkdir -p "$work/$pass/data" "$work/$pass/config" "$work/$pass/cache"
+done
+for pass in first repeat; do
+  destination="$output"
+  if [[ "$pass" == repeat ]]; then
+    destination="${output%.png}-repeat.png"
+  fi
+  echo "Capturing packaged WebKit cold start: $pass"
+  xvfb-run -a -s "-screen 0 1280x900x24" dbus-run-session -- \
+    bash "$0" --inside "$appimage" "$destination" "$work/$pass"
+done
+
+# The two captures must contain identical pixels at BOTH window sizes. This
+# is a reproducibility gate, not an approved golden or cross-platform parity
+# assertion. Compare decoded pixels (not PNG metadata/compression bytes).
+for label in default compact; do
+  original="$output"
+  repeated="${output%.png}-repeat.png"
+  if [[ "$label" == compact ]]; then
+    original="${output%.png}-compact.png"
+    repeated="${output%.png}-repeat-compact.png"
+  fi
+  dimensions="$(identify -format '%wx%h' "$original")"
+  if [[ "$dimensions" != "$(identify -format '%wx%h' "$repeated")" ]]; then
+    echo "Cold-start $label WebKit viewport dimensions changed." >&2
+    exit 1
+  fi
+  set +e
+  difference="$(compare -metric AE "$original" "$repeated" null: 2>&1)"
+  compare_status=$?
+  set -e
+  if [[ "$compare_status" -gt 1 || ! "$difference" =~ ^[0-9]+$ ]]; then
+    echo "Could not compare cold-start $label WebKit pixels: $difference" >&2
+    exit 1
+  fi
+  if [[ "$difference" -ne 0 ]]; then
+    compare "$original" "$repeated" "${output%.png}-$label-cold-start-diff.png" || true
+    echo "Cold-start $label WebKit pixels differ at $difference positions; see diff artifact." >&2
+    exit 1
+  fi
+  echo "Cold-start $label packaged WebKit pixels identical at $dimensions."
+done
