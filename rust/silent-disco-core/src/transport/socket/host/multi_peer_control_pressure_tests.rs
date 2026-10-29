@@ -1,10 +1,12 @@
 //! Real TCP/UDP multi-peer playback control ordering under a stalled listener.
 //! This exercises the production socket readers/writers, not a synthetic channel.
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::domain::{MonotonicMillis, SampleIndex};
-use crate::protocol::{ControlMessage, Heartbeat, Pause, ProtocolFrame, TrackBoundary};
+use crate::protocol::{
+    ControlMessage, Heartbeat, Pause, ProtocolFrame, ResyncNotice, SyncRequest, TrackBoundary,
+};
 use crate::transport::test_support::{
     audio_frame, id_device, id_session, join_request, stream_start, stream_stop,
     wait_for_authorized, wait_for_control_from, wait_for_frame, wait_until,
@@ -185,4 +187,97 @@ fn multi_peer_telemetry_pressure_preserves_boundary_pause_stop_and_fresh_replay(
     fast.shutdown().expect("close fast listener");
     replacement.shutdown().expect("close replacement listener");
     host.shutdown().expect("close host");
+}
+
+#[test]
+fn two_peer_resync_notices_survive_real_udp_telemetry_saturation_and_stop() {
+    let session = id_session("multi-peer-resync-under-udp-pressure");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 2;
+    let mut host = SocketHostTransport::bind(config, clock.clone())
+        .expect("bind production TCP/UDP host");
+    let mut first = join(&mut host, &clock, &session, "resync-first", 4);
+    let mut second = join(&mut host, &clock, &session, "resync-second", 4);
+    let first_id = id_device("resync-first");
+    let second_id = id_device("resync-second");
+
+    // Saturate the actual host UDP receiver and its bounded actor queue.
+    // ResyncNotice is authoritative TCP control, not disposable sync telemetry.
+    for correlation_id in 0..400_u64 {
+        second
+            .send_sync_request(&SyncRequest {
+                session_id: session.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(correlation_id),
+            })
+            .expect("real UDP telemetry");
+    }
+    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    for (listener, device) in [
+        (first.as_mut(), &first_id),
+        (second.as_mut(), &second_id),
+    ] {
+        listener
+            .send_control(&ControlMessage::ResyncNotice(ResyncNotice {
+                session_id: session.clone(),
+                listener_id: device.clone(),
+                reason: "playback clock reset".to_owned(),
+            }))
+            .expect("send authoritative TCP resync");
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut first_seen = false;
+    let mut second_seen = false;
+    while !first_seen || !second_seen {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "resync lost behind UDP telemetry");
+        match host.recv_event(remaining).expect("host actor progress") {
+            TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                peer,
+                frame: ProtocolFrame::Control(ControlMessage::ResyncNotice(notice)),
+                ..
+            } => {
+                assert_eq!(notice.listener_id, peer.device_id.expect("joined identity"));
+                assert_eq!(notice.reason, "playback clock reset");
+                if notice.listener_id == first_id {
+                    assert!(!first_seen, "duplicate first resync");
+                    first_seen = true;
+                } else if notice.listener_id == second_id {
+                    assert!(!second_seen, "duplicate second resync");
+                    second_seen = true;
+                } else {
+                    panic!("unexpected resync sender");
+                }
+            }
+            TransportEvent::PeerDisconnected { .. } => {
+                panic!("telemetry pressure must not retire an authorized peer");
+            }
+            _ => {} // Only UDP telemetry is lossy.
+        }
+    }
+
+    let start = stream_start(&session, 2_000);
+    let stop = stream_stop(&session, 2_100);
+    for control in [&start, &stop] {
+        assert_eq!(
+            host.broadcast_control(control)
+                .expect("broadcast authoritative playback control")
+                .report
+                .successful_peers,
+            2
+        );
+    }
+    for listener in [&mut first, &mut second] {
+        for control in [&start, &stop] {
+            wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
+                frame == &ProtocolFrame::Control(control.clone())
+            });
+        }
+    }
+    first.shutdown().expect("first listener shutdown");
+    second.shutdown().expect("second listener shutdown");
+    host.shutdown().expect("host shutdown");
 }
