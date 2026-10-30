@@ -27,7 +27,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
-import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
@@ -112,25 +111,6 @@ private fun MainViewModel.handleHostTransportEvent(
         is FfiHostTransportEvent.ResyncNotice,
         is FfiHostTransportEvent.Rejected,
         -> Unit // diagnostic-only for this pass; resync notices are out of scope until Block 23
-    }
-}
-
-private fun MainViewModel.respondToSyncRequest(
-    event: FfiHostTransportEvent.SyncRequestReceived,
-    sourceHandle: FfiHostTransportHandle,
-) {
-    val t2HostReceiveElapsedMs = SystemClock.elapsedRealtime().toULong()
-    viewModelScope.launch(Dispatchers.IO) {
-        val t3HostSendElapsedMs = SystemClock.elapsedRealtime().toULong()
-        runCatching {
-            hostTransportController.sendSyncResponseForGeneration(
-                expected = sourceHandle,
-                correlationId = event.correlationId,
-                t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs,
-                t2HostReceiveElapsedMs = t2HostReceiveElapsedMs,
-                t3HostSendElapsedMs = t3HostSendElapsedMs,
-            )
-        }.onFailure { error -> reportRustHostCommandFailure("send sync response", error) }
     }
 }
 
