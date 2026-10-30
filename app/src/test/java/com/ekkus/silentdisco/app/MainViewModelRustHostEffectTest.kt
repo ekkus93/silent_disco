@@ -299,7 +299,7 @@ class MainViewModelRustHostEffectTest {
     }
 
     @Test
-    fun deliverJoinRejectionWithNoBoundTransportReportsZeroPeersDelivered() = runTest(dispatcher) {
+    fun deliverJoinRejectionWithNoBoundTransportReportsFailedTargetedDelivery() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustHostCore()
         advanceUntilIdle()
@@ -318,12 +318,12 @@ class MainViewModelRustHostEffectTest {
         awaitRealDispatchHop { harness.hostCoreController.transportDeliveryCompletedCalls.isNotEmpty() }
 
         assertThat(harness.hostCoreController.transportDeliveryCompletedCalls).containsExactly(
-            "op-reject" to FfiDeliveryReport(intendedPeers = 0u, successfulPeers = 0u, failedPeers = 0u),
+            "op-reject" to FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u),
         )
     }
 
     @Test
-    fun disconnectListenerWithNoBoundTransportReportsZeroPeersDelivered() = runTest(dispatcher) {
+    fun disconnectListenerWithNoBoundTransportReportsFailedTargetedDelivery() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustHostCore()
         advanceUntilIdle()
@@ -341,7 +341,7 @@ class MainViewModelRustHostEffectTest {
         awaitRealDispatchHop { harness.hostCoreController.transportDeliveryCompletedCalls.isNotEmpty() }
 
         assertThat(harness.hostCoreController.transportDeliveryCompletedCalls).containsExactly(
-            "op-disconnect" to FfiDeliveryReport(intendedPeers = 0u, successfulPeers = 0u, failedPeers = 0u),
+            "op-disconnect" to FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u),
         )
     }
 

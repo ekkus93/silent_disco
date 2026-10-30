@@ -213,8 +213,12 @@ class HostTransportController(
         t1ListenerSendElapsedMs: ULong,
         t2HostReceiveElapsedMs: ULong,
         t3HostSendElapsedMs: ULong,
-    ): FfiHostTransportDelivery? = withHandle {
+    ): FfiHostTransportDelivery = checkNotNull(withHandle {
         it.sendSyncResponse(correlationId, t1ListenerSendElapsedMs, t2HostReceiveElapsedMs, t3HostSendElapsedMs)
+    }) {
+        // Synchronization is an authoritative control request. A stale
+        // native generation must not look like a successfully sent reply.
+        "Host transport disconnected before synchronization response delivery"
     }
 
     suspend fun broadcastAudio(

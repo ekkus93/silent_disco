@@ -605,11 +605,16 @@ private suspend fun MainViewModel.executeRustTransportEffect(
     )
 }
 
-/** A missing delivery (transport not yet bound) reports as zero peers reached. */
+/**
+ * A targeted native control effect has one intended listener even if the host
+ * handle was closed before the IO dispatcher ran. Preserve that failed
+ * attempt for Rust's admission/terminal decision instead of reporting a
+ * misleading NoRecipients outcome. A real delivery retains its own counts.
+ */
 private fun FfiHostTransportDelivery?.toFfiDeliveryReport(): FfiDeliveryReport = FfiDeliveryReport(
-    intendedPeers = this?.intendedPeers ?: 0u,
+    intendedPeers = this?.intendedPeers ?: 1u,
     successfulPeers = this?.successfulPeers ?: 0u,
-    failedPeers = this?.failedPeers ?: 0u,
+    failedPeers = this?.failedPeers ?: 1u,
 )
 
 private suspend fun MainViewModel.executeRustStorageEffect(
