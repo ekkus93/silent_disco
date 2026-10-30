@@ -242,7 +242,12 @@ class ManualListenerTransportController(
                     break
                 }
                 if (!isActive || handleGate.currentHandle() !== handle) break
-                if (event != null) applyEvent(scope, handle, event)
+                if (event != null) {
+                    // Projection can open/rebind Oboe and mutate shared state.
+                    // Hold the same generation gate as Stop/rebind throughout
+                    // the complete event, not only during native poll.
+                    handleGate.withExpected(handle) { applyEvent(scope, handle, event) }
+                }
             }
         }
     }

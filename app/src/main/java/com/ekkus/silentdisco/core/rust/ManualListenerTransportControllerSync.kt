@@ -36,7 +36,7 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
     syncProbeJob?.cancel()
     syncProbeJob = scope.launch(Dispatchers.IO) {
         var correlationId = 1L
-        while (isActive) {
+        while (isActive && handleGate.currentHandle() === handle) {
             val runtime = playbackRuntime ?: break
             val sendTimeMs = runtime.nowMs()
             // Register before sending: a response that beats its own
@@ -44,6 +44,7 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
             try {
                 runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs)
             } catch (error: Throwable) {
+                if (!isActive || handleGate.currentHandle() !== handle) break
                 logger.w("manual.audio.sync_probe_failed", error.message ?: "sync probe registration failed")
                 handlePlaybackEngineFailure(error)
                 break
@@ -54,6 +55,7 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
                     true
                 }) { "Manual listener session retired before sync request" }
             } catch (error: Throwable) {
+                if (!isActive || handleGate.currentHandle() !== handle) break
                 logger.w("manual.audio.sync_send_failed", error.message ?: "sync request send failed")
                 stopPlayback()?.let(error::addSuppressed)
                 _connectState.value = ManualConnectUiState.Failed(

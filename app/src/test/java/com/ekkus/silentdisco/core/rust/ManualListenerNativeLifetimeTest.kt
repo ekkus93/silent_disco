@@ -50,6 +50,39 @@ class ManualListenerNativeLifetimeTest {
     }
 
     @Test
+    fun manualEventProjectionFinishesBeforeRebindAndNeverRunsOnRetiredGeneration() {
+        val gate = ListenerNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        gate.replace(retire = {}, open = { old }, start = {})
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val projected = AtomicInteger()
+        val projection = thread {
+            gate.withExpected(old) {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                projected.incrementAndGet()
+            }
+        }
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue()
+        val rebinding = CountDownLatch(1)
+        val rebind = thread {
+            gate.replace(retire = {}, open = { replacement }, start = {})
+            rebinding.countDown()
+        }
+        assertThat(rebinding.await(50, TimeUnit.MILLISECONDS)).isFalse()
+        release.countDown()
+        projection.join(5_000)
+        rebind.join(5_000)
+        assertThat(projected.get()).isEqualTo(1)
+        assertThat(rebinding.count).isEqualTo(0L)
+        assertThat(gate.withExpected(old) { projected.incrementAndGet() }).isNull()
+        assertThat(projected.get()).isEqualTo(1)
+        assertThat(gate.currentHandle()).isSameInstanceAs(replacement)
+    }
+
+    @Test
     fun repeatedManualRebindNeverRoutesStaleSendToReplacement() {
         val gate = ListenerNativeHandleGate<Any>()
         var previous: Any? = null
