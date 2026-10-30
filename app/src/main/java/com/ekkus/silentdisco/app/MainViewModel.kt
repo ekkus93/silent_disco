@@ -26,6 +26,7 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
+import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.rust.HostCoreController
@@ -203,7 +204,7 @@ class MainViewModel @JvmOverloads constructor(
      * `authorize_listener` needs them, but nothing else does, so they never
      * belong in Rust-owned join-request state.
      */
-    internal val pendingListenerDatagramPorts = mutableMapOf<String, Pair<UShort, UShort>>()
+    internal val pendingListenerDatagramPorts = PendingHostJoinRoutes<FfiHostTransportHandle>()
 
     init {
         cleanupOrphanedAudioReadGrants()

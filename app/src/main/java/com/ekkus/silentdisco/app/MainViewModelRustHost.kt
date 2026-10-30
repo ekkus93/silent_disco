@@ -88,11 +88,22 @@ private fun MainViewModel.handleHostTransportEvent(
 ) {
     when (event) {
         is FfiHostTransportEvent.JoinRequestReceived -> {
-            pendingListenerDatagramPorts[event.deviceId] = event.syncPort to event.audioPort
+            val requestId = newHostJoinRequestId()
+            val tracked = pendingListenerDatagramPorts.record(
+                requestId, event.deviceId, event.syncPort, event.audioPort, sourceHandle,
+            )
+            if (!tracked) {
+                // Bounded route tracking must fail closed rather than silently
+                // losing the original TCP generation and approving another one.
+                reportRustHostCommandFailure(
+                    "track listener join",
+                    IllegalStateException("Pending listener route capacity exceeded"),
+                )
+            }
             runCatching {
                 controller.submitJoinRequest(
                     FfiJoinRequestInput(
-                        requestId = newHostJoinRequestId(),
+                        requestId = requestId,
                         deviceId = event.deviceId,
                         displayName = event.displayName,
                         trustState = FfiTrustState.UNKNOWN,
@@ -100,9 +111,16 @@ private fun MainViewModel.handleHostTransportEvent(
                         receivedAtMs = SystemClock.elapsedRealtime().toULong(),
                     ),
                 )
-            }.onFailure { error -> reportRustHostCommandFailure("submit join request", error) }
+            }.onFailure { error ->
+                pendingListenerDatagramPorts.discard(requestId, event.deviceId)
+                reportRustHostCommandFailure("submit join request", error)
+            }
         }
         is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->
+            // A pending request's datagram ports are invalid as soon as its
+            // claimed device ID disconnects, even if the actor's approval
+            // effect was queued before this terminal event.
+            pendingListenerDatagramPorts.removeDevice(listenerId)
             runCatching { controller.submitListenerDisconnected(listenerId) }
                 .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }
         }
@@ -515,7 +533,7 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         if (effect.trustedForFuture) {
             // Legacy v3 has no verified key: report a failed delivery to the actor,
             // not a pending approval or a silently trusted claimed device ID.
-            pendingListenerDatagramPorts.remove(effect.listenerId)
+            pendingListenerDatagramPorts.discard(effect.requestId, effect.listenerId)
             controller.transportDeliveryCompleted(
                 effect.operationId,
                 FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u),
@@ -529,10 +547,11 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         // Do not send a successful approval without the UDP ports needed to
         // authorize the SAME peer/session. Approval and route authorization
         // must not straddle a host close/rebind suspend boundary.
-        val ports = pendingListenerDatagramPorts.remove(effect.listenerId)
-        val outcome = ports?.let { (syncPort, audioPort) ->
+        val route = pendingListenerDatagramPorts.take(effect.requestId, effect.listenerId)
+        val outcome = route?.let {
             hostTransportController.approveAndAuthorizeListener(
-                effect.listenerId, effect.trustedForFuture, syncPort, audioPort,
+                effect.listenerId, effect.trustedForFuture, it.syncPort, it.audioPort,
+                expectedGeneration = it.sourceHandle,
             )
         }
         val authorized = outcome?.authorized == true
@@ -546,7 +565,7 @@ private suspend fun MainViewModel.executeRustTransportEffect(
         )
         if (!authorized) {
             val reason = when {
-                ports == null -> "Listener route ports missing; approval refused"
+                route == null -> "Original listener join route missing or retired; approval refused"
                 outcome == null -> "Host session replaced before listener approval"
                 outcome.failure != null -> outcome.failure
                 else -> "Listener approval was not delivered"
@@ -578,11 +597,11 @@ private suspend fun MainViewModel.executeRustTransportEffect(
 
     val delivery = when (effect) {
         is FfiTransportEffect.DeliverJoinRejection -> {
-            pendingListenerDatagramPorts.remove(effect.listenerId)
+            pendingListenerDatagramPorts.discard(effect.requestId, effect.listenerId)
             hostTransportController.sendJoinRejection(effect.listenerId, effect.reasonCode)
         }
         is FfiTransportEffect.DisconnectListener -> {
-            pendingListenerDatagramPorts.remove(effect.listenerId)
+            pendingListenerDatagramPorts.removeDevice(effect.listenerId)
             hostTransportController.disconnectPeer(effect.listenerId, effect.reasonCode)
         }
         is FfiTransportEffect.DeliverJoinApproval -> error("handled above")

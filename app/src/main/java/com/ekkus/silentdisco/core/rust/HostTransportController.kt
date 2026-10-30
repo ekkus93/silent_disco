@@ -109,11 +109,12 @@ class HostTransportController(
         trustedForFuture: Boolean,
         syncPort: UShort,
         audioPort: UShort,
+        expectedGeneration: FfiHostTransportHandle? = handleGate.currentHandle(),
     ): HostJoinAuthorizationResult<FfiHostTransportDelivery>? {
         // A manually approved plaintext-v3 listener may join this session, but
         // must never be promoted to durable trust using a self-claimed ID.
         check(!trustedForFuture) { LEGACY_V3_DURABLE_TRUST_ERROR }
-        val expected = handleGate.currentHandle() ?: return null
+        val expected = expectedGeneration ?: return null
         return withContext(callDispatcher) {
             handleGate.deliverAndAuthorize(
                 expected = expected,
