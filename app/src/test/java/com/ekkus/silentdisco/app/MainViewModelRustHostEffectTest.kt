@@ -189,7 +189,9 @@ class MainViewModelRustHostEffectTest {
         harness.hostCoreController.emit(
             FfiCoreNotification.PlatformEffect(FfiPlatformEffect.StopAdvertising(operationId = "op-stop")),
         )
-        advanceUntilIdle()
+        // Native close now dispatches to real IO. Wait for its completion to
+        // resume on the virtual Main dispatcher before checking the actor ack.
+        awaitRealDispatchHop { harness.hostCoreController.platformOperationSucceededCalls.isNotEmpty() }
 
         assertThat(harness.bleService.stopCallCount).isEqualTo(1)
         assertThat(harness.wifiDirectService.stopCallCount).isEqualTo(1)

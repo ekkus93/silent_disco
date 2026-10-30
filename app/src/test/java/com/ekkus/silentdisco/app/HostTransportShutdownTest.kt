@@ -60,6 +60,10 @@ class HostTransportShutdownTest {
         val actual = runCatching {
             retireHostTransportOffMain(AutoCloseable { throw failure })
         }.exceptionOrNull()
-        assertThat(actual).isSameInstanceAs(failure)
+        // Coroutine stacktrace recovery may copy the exception when crossing
+        // Dispatchers.IO; preserve the failure type and diagnostic instead
+        // of relying on reference identity across dispatchers.
+        assertThat(actual).isInstanceOf(IllegalStateException::class.java)
+        assertThat(actual?.message).isEqualTo("native shutdown failed")
     }
 }
