@@ -101,11 +101,16 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
         assert!(Instant::now() < deadline, "listener never received Hello");
         thread::sleep(Duration::from_millis(2));
     }
+    // Complete explicit admission before any playback or session controls.
+    // Hello remains in the one-slot listener queue throughout this transition.
+    host.authorize_peer(&device, listener.local_routes())
+        .expect("authorize peer before post-admission control traffic");
+    wait_for_authorized(&mut host, &device);
     // Keep the collector stopped while the host floods real TCP heartbeats.
     // Hello occupies the one-slot queue; telemetry must not block the reader
     // or delay a subsequent authoritative terminal event.
     for index in 0..16 {
-        host.send_pending_control(
+        host.send_control(
             &device,
             &ControlMessage::Heartbeat(Heartbeat {
                 session_id: session.clone(),
@@ -121,8 +126,8 @@ fn full_listener_queue_preserves_hello_before_remote_disconnect() {
     assert!(listener.counters().queue_overflows > 0);
     // Stop must retain ordering and reach the actor even when the collector
     // is stalled and heartbeat telemetry has saturated the same queue.
-    host.send_pending_control(&device, &stream_stop(&session, 900))
-        .expect("send authoritative Stop");
+    host.send_control(&device, &stream_stop(&session, 900))
+        .expect("send authoritative Stop to authorized listener");
     wait_until(Duration::from_secs(5), || {
         listener.counters().control_frames_received >= 18
     });
