@@ -157,16 +157,13 @@ impl SocketHostTransport {
         peer: &super::peer::PeerState,
         include_terminal_stop: bool,
     ) -> Result<u64, TransportError> {
-        let controls = self
-            .playback_controls
-            .lock()
-            .map_err(|_| {
-                TransportError::new(
-                    TransportErrorKind::WorkerPanicked,
-                    TransportChannel::Runtime,
-                    "playback control cache is poisoned",
-                )
-            })?;
+        let controls = self.playback_controls.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "playback control cache is poisoned",
+            )
+        })?;
         let controls = if include_terminal_stop {
             controls.recovery_snapshot_at(self.clock.now())
         } else {
