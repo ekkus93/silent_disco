@@ -177,6 +177,81 @@ mod generation_tests {
     use std::net::SocketAddr;
 
     #[test]
+    fn pending_join_capacity_refuses_new_ids_without_displacing_existing_approvals() {
+        use super::MAX_PENDING_JOIN_REQUESTS;
+        use crate::platform::host_transport_events::TestTransportEventSink;
+        use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId};
+        use silent_disco_core::protocol::{DeviceIdentity, JoinRequest, PROTOCOL_VERSION};
+        use silent_disco_core::runtime::SessionAdvertisement;
+
+        let session = SessionId::new("desktop-pending-capacity").expect("session");
+        let advertisement = SessionAdvertisement::new(
+            session.clone(),
+            DeviceId::new("capacity-host").expect("host"),
+            "Capacity host",
+            ApprovalMode::Manual,
+            PROTOCOL_VERSION,
+            None,
+        )
+        .expect("advertisement");
+        let mut projection = PendingJoinProjection::new();
+        let sink = TestTransportEventSink;
+        let make_request = |id: &str| JoinRequest {
+            session_id: session.clone(),
+            device: DeviceIdentity {
+                device_id: DeviceId::new(id).expect("device"),
+                display_name: id.to_owned(),
+            },
+            invite_code: None,
+            sync_port: 42000,
+            audio_port: 42001,
+        };
+        for n in 0..MAX_PENDING_JOIN_REQUESTS {
+            let id = format!("pending-{n}");
+            let address = format!("127.0.0.1:{}", 40000 + n)
+                .parse()
+                .expect("socket address");
+            projection
+                .register(
+                    &make_request(&id),
+                    address,
+                    MonotonicMillis::new(1),
+                    &advertisement,
+                    &sink,
+                )
+                .expect("capacity slot");
+        }
+        assert_eq!(projection.requests.len(), MAX_PENDING_JOIN_REQUESTS);
+        let overflow = make_request("over-capacity");
+        let overflow_address = "127.0.0.1:50000".parse().expect("address");
+        assert!(
+            projection
+                .register(
+                    &overflow,
+                    overflow_address,
+                    MonotonicMillis::new(2),
+                    &advertisement,
+                    &sink,
+                )
+                .is_err(),
+            "a saturated pending table must not accept an unapprovable join"
+        );
+        assert_eq!(projection.requests.len(), MAX_PENDING_JOIN_REQUESTS);
+        let first = DeviceId::new("pending-0").expect("first");
+        assert_eq!(projection.take_ports(&first), Some((42000, 42001)));
+        projection
+            .register(
+                &overflow,
+                overflow_address,
+                MonotonicMillis::new(3),
+                &advertisement,
+                &sink,
+            )
+            .expect("released capacity admits another request");
+        assert_eq!(projection.requests.len(), MAX_PENDING_JOIN_REQUESTS);
+    }
+
+    #[test]
     fn retired_socket_cannot_remove_replacement_pending_join_or_authorized_identity() {
         let device = DeviceId::new("reconnecting-listener").expect("device");
         let old: SocketAddr = "127.0.0.1:43101".parse().expect("old address");
