@@ -45,6 +45,8 @@ mod socket_multitrack_audio_reconnect_tests;
 #[cfg(test)]
 mod targeted_sync_tests;
 #[cfg(test)]
+mod clock_reconnect_pcm_tests;
+#[cfg(test)]
 mod telemetry_pressure_tests;
 #[cfg(test)]
 mod terminal_pressure_tests;
