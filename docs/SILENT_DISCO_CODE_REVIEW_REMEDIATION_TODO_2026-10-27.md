@@ -21,7 +21,7 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 ## 1. F2 — Transport security and threat model (P0; prerequisite for durable trust)
 
 - [x] Write an explicit LAN threat model and transport security ADR: unauthenticated legacy-v3 limitations, host identity/bootstrap UX, listener proof, protocol-v4 or equivalent versioning, crypto library selection and rollback rules.
-- [ ] Specify authenticated enrollment and stored host/listener public-key identity; design reuse of existing signed QR/key material only if handshake-bound. Define manual-address host fingerprint confirmation.
+- [x] Specify authenticated enrollment and stored host/listener public-key identity; design reuse of existing signed QR/key material only if handshake-bound. Define manual-address host fingerprint confirmation. **Design evidence:** [v4 secure transport ADR](SILENT_DISCO_SECURE_TRANSPORT_ADR_2026-10-29.md), committed at `c5a89a01`; this is specification only, **not** proof of implemented crypto, enrollment or F1/F2 acceptance.
 - [ ] Implement verified encrypted host↔listener control transport using a mature TLS 1.3 or established secure transport stack; enforce host identity and verified peer identity without trusting self-declared device IDs.
 - [ ] Protect UDP PCM with vetted AEAD or authenticated secure datagrams; per-direction/per-purpose/per-session keys, unique nonces, replay windows, key rollover/retirement, clock-sync/control authentication and secure teardown.
 - [ ] Add protocol-version negotiation and explicit rejection of plaintext/downgrade and mixed incompatible peers; any legacy/lab exception is opt-in, clearly labeled and never automatic in production.
