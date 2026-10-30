@@ -104,7 +104,27 @@ if [[ "$1" == "--inside" ]]; then
   echo "Packaged WebKit keyboard navigation changed $settings_difference compact pixels."
 
   xdotool windowsize "$window" 1000 700
-  sleep 0.5
+  # WebKit's default-width Settings layout and GTK focus decoration can
+  # still be repainting after the X11 resize request returns. Wait for the
+  # requested geometry, then allow the packaged webview to finish its layout
+  # transition before taking the reproducibility snapshot. Keep the strict
+  # 0.05% cross-cold-start pixel threshold unchanged.
+  restored=false
+  for attempt in $(seq 1 40); do
+    geometry="$(xdotool getwindowgeometry --shell "$window" 2>/dev/null || true)"
+    width="$(printf "%s\\n" "$geometry" | awk -F= '/^WIDTH=/{print $2}')"
+    height="$(printf "%s\\n" "$geometry" | awk -F= '/^HEIGHT=/{print $2}')"
+    if [[ "${width:-0}" == "1000" && "${height:-0}" == "700" ]]; then
+      restored=true
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$restored" != true ]]; then
+    echo "Packaged Settings WebKit did not restore to 1000x700; observed ${width:-0}x${height:-0}." >&2
+    exit 1
+  fi
+  sleep 2
   capture_pixels "${output%.png}-settings.png" "settings default"
   exit 0
 fi
