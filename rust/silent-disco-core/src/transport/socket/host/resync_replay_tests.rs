@@ -464,10 +464,7 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
         &session,
         "reconnecting-listener",
     );
-    assert_eq!(
-        host.counters().control_frames_sent - sent_before_join,
-        3
-    );
+    assert_eq!(host.counters().control_frames_sent - sent_before_join, 3);
     for control in [&start_control, &boundary, &pause] {
         expect_controls(replacement.as_ref(), std::slice::from_ref(control));
     }
