@@ -263,27 +263,47 @@ fn socket_runtime_completes_multi_listener_join_sync_and_audio_exchange() {
         },
     );
 
-    let sync_response = ProtocolFrame::SyncResponse(SyncResponse {
+    // A clock response contains a per-listener correlation and timestamp
+    // exchange. The host must send two independently targeted responses,
+    // never leak either listener's timing metadata to the other route.
+    let sync_response_a = ProtocolFrame::SyncResponse(SyncResponse {
         session_id: session_id.clone(),
-        correlation_id: 90,
-        t1_listener_send_elapsed_ms: MonotonicMillis::new(100),
+        correlation_id: sync_request_a.correlation_id,
+        t1_listener_send_elapsed_ms: sync_request_a.t1_listener_send_elapsed_ms,
         t2_host_receive_elapsed_ms: MonotonicMillis::new(110),
         t3_host_send_elapsed_ms: MonotonicMillis::new(111),
     });
-    let sync_delivery = host
-        .broadcast_sync(&sync_response)
-        .expect("synchronization response should reach both registered routes");
-    assert_eq!(sync_delivery.report.intended_peers, 2);
-    assert_eq!(sync_delivery.report.successful_peers, 2);
+    let sync_response_b = ProtocolFrame::SyncResponse(SyncResponse {
+        session_id: session_id.clone(),
+        correlation_id: sync_request_b.correlation_id,
+        t1_listener_send_elapsed_ms: sync_request_b.t1_listener_send_elapsed_ms,
+        t2_host_receive_elapsed_ms: MonotonicMillis::new(112),
+        t3_host_send_elapsed_ms: MonotonicMillis::new(113),
+    });
+    let delivery_a = host
+        .send_sync_to_peer(&device_a, &sync_response_a)
+        .expect("first listener receives only its own sync reply");
+    assert_eq!(delivery_a.report.intended_peers, 1);
+    assert_eq!(delivery_a.report.successful_peers, 1);
     wait_for_frame(
         &mut *listener_a,
         TransportChannel::Synchronization,
-        |frame| frame == &sync_response,
+        |frame| frame == &sync_response_a,
     );
+    assert_eq!(
+        listener_b.counters().sync_datagrams_received,
+        0,
+        "first listener's sync response must not reach second listener",
+    );
+    let delivery_b = host
+        .send_sync_to_peer(&device_b, &sync_response_b)
+        .expect("second listener receives only its own sync reply");
+    assert_eq!(delivery_b.report.intended_peers, 1);
+    assert_eq!(delivery_b.report.successful_peers, 1);
     wait_for_frame(
         &mut *listener_b,
         TransportChannel::Synchronization,
-        |frame| frame == &sync_response,
+        |frame| frame == &sync_response_b,
     );
 
     let audio = audio_frame(&session_id, 7);
