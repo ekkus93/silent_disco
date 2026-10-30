@@ -4,7 +4,8 @@ use silent_disco_core::domain::{
     SampleIndex, StreamId,
 };
 use silent_disco_core::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame,
+    AudioCodec, AudioDatagram, ControlMessage, DeviceIdentity, JoinRequest, Pause, ProtocolFrame,
+    ResyncNotice, Stop, StreamStart, TrackBoundary,
 };
 use silent_disco_core::runtime::{
     AudioSourceDescriptor, AudioSourcePatch, CoreActorConfig, CoreActorRuntime, CoreCommand,
@@ -126,6 +127,79 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
     });
     assert!(disconnected.listeners.is_empty());
     runtime.shutdown().expect("desktop transport shutdown");
+    actor.shutdown().expect("actor shutdown");
+}
+
+/// The desktop production event worker must handle a listener's real TCP
+/// ResyncNotice. Previously the generic FrameReceived arm discarded it, so
+/// a connected listener could never recover a missed Pause or terminal Stop.
+#[test]
+fn desktop_host_replays_authoritative_multitrack_pause_and_stop_on_real_tcp_resync() {
+    let (actor, _handle, _notifications, advertisement, runtime, mut listener) =
+        start_host_with_approved_listener();
+    let device = DeviceId::new("desktop-broadcast-throughput-listener").expect("listener");
+    let stream = StreamId::new("desktop-recovery-multitrack").expect("stream");
+    let start = ControlMessage::StreamStart(StreamStart {
+        session_id: advertisement.session_id.clone(),
+        stream_id: stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(1_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        current_entry_id: Some("first".to_owned()),
+        current_display_name: Some("First track".to_owned()),
+    });
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: advertisement.session_id.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(480),
+        entry_id: "second".to_owned(),
+        display_name: "Second track".to_owned(),
+    });
+    let pause = ControlMessage::Pause(Pause {
+        session_id: advertisement.session_id.clone(),
+        stream_id: stream.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_100),
+    });
+    for control in [&start, &boundary, &pause] {
+        runtime
+            .broadcast_frame(ProtocolFrame::Control(control.clone()))
+            .expect("broadcast production playback control");
+        wait_for_control(listener.as_mut(), |received| received == control);
+    }
+
+    let request = ControlMessage::ResyncNotice(ResyncNotice {
+        session_id: advertisement.session_id.clone(),
+        listener_id: device.clone(),
+        reason: "missed multitrack pause".to_owned(),
+    });
+    listener
+        .send_control(&request)
+        .expect("request authoritative recovery over TCP");
+    for control in [&start, &boundary, &pause] {
+        wait_for_control(listener.as_mut(), |received| received == control);
+    }
+
+    let stop = ControlMessage::Stop(Stop {
+        session_id: advertisement.session_id.clone(),
+        stream_id: stream,
+        host_stop_time_ms: MonotonicMillis::new(1_200),
+    });
+    runtime
+        .broadcast_frame(ProtocolFrame::Control(stop.clone()))
+        .expect("stop production stream");
+    wait_for_control(listener.as_mut(), |received| received == &stop);
+    listener
+        .send_control(&ControlMessage::ResyncNotice(ResyncNotice {
+            session_id: advertisement.session_id.clone(),
+            listener_id: device,
+            reason: "missed terminal stop".to_owned(),
+        }))
+        .expect("request terminal recovery over TCP");
+    wait_for_control(listener.as_mut(), |received| received == &stop);
+
+    listener.shutdown().expect("listener shutdown");
+    runtime.shutdown().expect("desktop host shutdown");
     actor.shutdown().expect("actor shutdown");
 }
 

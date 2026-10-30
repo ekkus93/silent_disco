@@ -146,6 +146,26 @@ impl HostTransportEventProcessor {
             }
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::ResyncNotice(notice)),
+                peer,
+                ..
+            } => {
+                // The shared socket reader validates admission and the
+                // claimed identity. Preserve that invariant at this platform
+                // boundary as well: never replay another listener's state.
+                if peer.device_id.as_ref() != Some(&notice.listener_id) {
+                    return Ok(Some("Recovery request identity did not match its TCP peer".to_owned()));
+                }
+                // Replay the transport's authoritative Start/boundary/Pause
+                // snapshot (or terminal Stop) only to this admitted peer.
+                // Do not reconstruct playback state from desktop UI metadata.
+                Ok(node
+                    .replay_cached_playback_to_peer(&notice.listener_id)
+                    .err()
+                    .map(|error| DesktopNetworkError::transport(&error).to_string()))
+            }
+            RuntimeTransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::SynchronizationReport(report)),
                 ..
             } => {
