@@ -3,7 +3,7 @@
 use super::host_join_projection::PendingJoinProjection;
 use super::host_pending_handshake::send_pending_hello;
 use super::network_error::DesktopNetworkError;
-use silent_disco_core::domain::{TransportState, TrustState};
+use silent_disco_core::domain::{DeviceId, TransportState, TrustState};
 use silent_disco_core::error::CoreError;
 use silent_disco_core::protocol::{ControlMessage, JoinRejection, ProtocolFrame, SyncResponse};
 use silent_disco_core::runtime::{
@@ -149,23 +149,11 @@ impl HostTransportEventProcessor {
                 frame: ProtocolFrame::Control(ControlMessage::ResyncNotice(notice)),
                 peer,
                 ..
-            } => {
-                // The shared socket reader validates admission and the
-                // claimed identity. Preserve that invariant at this platform
-                // boundary as well: never replay another listener's state.
-                if peer.device_id.as_ref() != Some(&notice.listener_id) {
-                    return Ok(Some(
-                        "Recovery request identity did not match its TCP peer".to_owned(),
-                    ));
-                }
-                // Replay the transport's authoritative Start/boundary/Pause
-                // snapshot (or terminal Stop) only to this admitted peer.
-                // Do not reconstruct playback state from desktop UI metadata.
-                Ok(node
-                    .replay_cached_playback_to_peer(&notice.listener_id)
-                    .err()
-                    .map(|error| DesktopNetworkError::transport(&error).to_string()))
-            }
+            } => Ok(Self::replay_resync(
+                node,
+                &notice.listener_id,
+                peer.device_id.as_ref(),
+            )),
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::SynchronizationReport(report)),
@@ -226,6 +214,22 @@ impl HostTransportEventProcessor {
             | RuntimeTransportEvent::PeerAuthorized { .. }
             | RuntimeTransportEvent::FrameReceived { .. } => Ok(None),
         }
+    }
+
+    /// Replay only the host transport's authoritative controls to the
+    /// admitted requester. The shared socket reader already checks identity,
+    /// but this platform boundary must not route a forged recovery event.
+    fn replay_resync(
+        node: &dyn HostTransportNode,
+        listener_id: &DeviceId,
+        peer_id: Option<&DeviceId>,
+    ) -> Option<String> {
+        if peer_id != Some(listener_id) {
+            return Some("Recovery request identity did not match its TCP peer".to_owned());
+        }
+        node.replay_cached_playback_to_peer(listener_id)
+            .err()
+            .map(|error| DesktopNetworkError::transport(&error).to_string())
     }
 
     /// Keep the rejection visible even when sending the refusal fails.

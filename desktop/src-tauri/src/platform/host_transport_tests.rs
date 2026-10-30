@@ -131,7 +131,7 @@ fn desktop_host_manual_endpoint_accepts_control_join_and_surfaces_disconnect() {
 }
 
 /// The desktop production event worker must handle a listener's real TCP
-/// ResyncNotice. Previously the generic FrameReceived arm discarded it, so
+/// `ResyncNotice`. Previously the generic `FrameReceived` arm discarded it, so
 /// a connected listener could never recover a missed Pause or terminal Stop.
 #[test]
 fn desktop_host_replays_authoritative_multitrack_pause_and_stop_on_real_tcp_resync() {
