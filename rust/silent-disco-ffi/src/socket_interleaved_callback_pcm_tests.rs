@@ -19,16 +19,18 @@ use silent_disco_core::audio::{
     SchedulerConfig,
 };
 use silent_disco_core::domain::{
-    MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+    DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
 use silent_disco_core::protocol::{
-    AudioCodec, AudioDatagram, ControlMessage, Pause, ProtocolFrame, Stop, StreamStart,
-    TrackBoundary,
+    AudioCodec, AudioDatagram, ControlMessage, Pause, ProtocolFrame, ResyncNotice, Stop,
+    StreamStart, TrackBoundary,
 };
-use silent_disco_core::transport::{HostTransportNode, ListenerTransportNode};
+use silent_disco_core::transport::{
+    HostTransportNode, ListenerTransportNode, TransportChannel, TransportEvent,
+};
 use std::fs;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn read_callback(token: u64, frames: u32, tap: &CallbackCaptureTap) -> Vec<f32> {
     let mut output = vec![f32::NAN; frames as usize * 2];
@@ -89,6 +91,68 @@ fn reject_stale_udp_after_resume(
     assert_eq!(host.counters().audio_datagrams_sent, sent_before);
     assert_eq!(silent_disco_audio_callback_count(native), callbacks_before);
     assert_eq!(tap.counters(), tap_before);
+}
+
+/// Exercise the actual listener TCP request, host event, targeted replay and
+/// listener TCP response while a single native output remains registered.
+/// Recovery is control-only: it must not consume or duplicate callback PCM.
+fn assert_targeted_resync_preserves_callback(
+    host: &mut dyn HostTransportNode,
+    listener: &mut dyn ListenerTransportNode,
+    session: &SessionId,
+    expected: &[ControlMessage],
+    token: u64,
+    tap: &CallbackCaptureTap,
+) {
+    let device = DeviceId::new("pcm-regression-listener").expect("reconnecting identity");
+    let native = usize::try_from(token).expect("native token") as *const core::ffi::c_void;
+    let callbacks_before = silent_disco_audio_callback_count(native);
+    let captured_before = tap.counters();
+    let sent_before = host.counters().control_frames_sent;
+    listener
+        .send_control(&ControlMessage::ResyncNotice(ResyncNotice {
+            session_id: session.clone(),
+            listener_id: device.clone(),
+            reason: "missing queued-track control".to_owned(),
+        }))
+        .expect("send real TCP recovery request");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "host never received TCP recovery request");
+        if let TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            peer,
+            frame: ProtocolFrame::Control(ControlMessage::ResyncNotice(notice)),
+            ..
+        } = host.recv_event(remaining).expect("host recovery event")
+        {
+            assert!(peer.device_id.as_ref() == Some(&device));
+            assert!(notice.listener_id == device);
+            break;
+        }
+    }
+    let delivery = host
+        .replay_cached_playback_to_peer(&device)
+        .expect("replay authoritative host snapshot");
+    assert_eq!(delivery.report.successful_peers, 1);
+    assert_eq!(
+        host.counters().control_frames_sent - sent_before,
+        u64::try_from(expected.len()).expect("bounded replay"),
+        "only the requester receives recovery controls"
+    );
+    for control in expected {
+        assert!(
+            recv_control(listener) == *control,
+            "TCP recovery must preserve ordered authoritative controls"
+        );
+    }
+    assert_eq!(
+        silent_disco_audio_callback_count(native),
+        callbacks_before,
+        "resync must not reopen or invoke the native output"
+    );
+    assert_eq!(tap.counters(), captured_before, "resync cannot alter PCM capture");
 }
 
 #[test]
@@ -285,6 +349,14 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     }
                     listener.shutdown().expect("retire previous socket");
                     listener = replacement;
+                    assert_targeted_resync_preserves_callback(
+                        host.as_mut(),
+                        listener.as_mut(),
+                        &session,
+                        &[start.clone(), boundary.clone(), pause.clone()],
+                        token,
+                        &tap,
+                    );
                     let mut extra = authorized_late_joiner(host.as_mut(), "interleaved-pause-late");
                     for expected in [&start, &boundary, &pause] {
                         assert!(recv_control(extra.as_mut()) == *expected);
@@ -305,7 +377,15 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                     assert!(recv_control(extra.as_mut()) == resume);
                     pump.scheduler_mut().set_host_start_time_ms(1_200);
                     newcomer = Some(extra);
-                    first_resume = Some(resume);
+                    first_resume = Some(resume.clone());
+                    assert_targeted_resync_preserves_callback(
+                        host.as_mut(),
+                        listener.as_mut(),
+                        &session,
+                        &[resume, boundary.clone()],
+                        token,
+                        &tap,
+                    );
                     // This delayed old-anchor packet has the SAME stream ID,
                     // sequence and sample index as the next legitimate packet.
                     // Neither the live socket nor the native callback may see it.
@@ -381,6 +461,19 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                         }
                         listener.shutdown().expect("retire second TCP generation");
                         listener = replacement;
+                        assert_targeted_resync_preserves_callback(
+                            host.as_mut(),
+                            listener.as_mut(),
+                            &session,
+                            &[
+                                first_resume.as_ref().expect("first Resume").clone(),
+                                first_boundary.as_ref().expect("first boundary").clone(),
+                                boundary.clone(),
+                                pause.clone(),
+                            ],
+                            token,
+                            &tap,
+                        );
                         let ControlMessage::StreamStart(mut reanchored) =
                             first_resume.as_ref().expect("first Resume").clone()
                         else {
