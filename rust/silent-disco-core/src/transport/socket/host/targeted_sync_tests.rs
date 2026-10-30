@@ -80,7 +80,9 @@ fn real_udp_sync_replies_target_only_the_admitted_requester_and_retire_with_rout
         correlation_id: 101,
         t1_listener_send_elapsed_ms: MonotonicMillis::new(200),
     };
-    first.send_sync_request(&probe).expect("send first UDP probe");
+    first
+        .send_sync_request(&probe)
+        .expect("send first UDP probe");
     expect_probe(&mut host, &first_id, 101);
     let second_received_before = second.counters().sync_datagrams_received;
     let response = ProtocolFrame::SyncResponse(SyncResponse {
@@ -117,7 +119,10 @@ fn real_udp_sync_replies_target_only_the_admitted_requester_and_retire_with_rout
         "other listener must receive zero UDP synchronization datagrams"
     );
 
-    assert!(host.send_sync_to_peer(&id_device("not-admitted"), &response).is_err());
+    assert!(
+        host.send_sync_to_peer(&id_device("not-admitted"), &response)
+            .is_err()
+    );
     assert!(
         host.send_sync_to_peer(&first_id, &ProtocolFrame::SyncRequest(probe.clone()))
             .is_err(),
@@ -159,9 +164,11 @@ fn real_udp_sync_replies_target_only_the_admitted_requester_and_retire_with_rout
             .successful_peers,
         1
     );
-    wait_for_frame(second.as_mut(), TransportChannel::Synchronization, |frame| {
-        frame == &second_response
-    });
+    wait_for_frame(
+        second.as_mut(),
+        TransportChannel::Synchronization,
+        |frame| frame == &second_response,
+    );
     second.shutdown().expect("close second listener");
     host.shutdown().expect("close host");
 }

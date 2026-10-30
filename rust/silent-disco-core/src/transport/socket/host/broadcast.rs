@@ -52,7 +52,10 @@ impl SocketHostTransport {
                     "targeted synchronization listener is not authorized",
                 )
             })?;
-        match self.sync_socket.send_to(&bytes, route.routes.synchronization) {
+        match self
+            .sync_socket
+            .send_to(&bytes, route.routes.synchronization)
+        {
             Ok(written) if written == bytes.len() => {
                 self.counters.datagram_sent(channel, written);
                 route.peer.consecutive_failures.store(0, Ordering::Release);
@@ -69,7 +72,10 @@ impl SocketHostTransport {
                     )),
                 );
                 TransportDelivery::new_with_datagram_send_failures(
-                    1, 0, 1, 0,
+                    1,
+                    0,
+                    1,
+                    0,
                     DatagramSendFailures {
                         partial_write: 1,
                         ..DatagramSendFailures::default()
@@ -91,7 +97,10 @@ impl SocketHostTransport {
                     );
                 }
                 TransportDelivery::new_with_datagram_send_failures(
-                    1, 0, 1, 0,
+                    1,
+                    0,
+                    1,
+                    0,
                     DatagramSendFailures {
                         would_block: u32::from(timeout),
                         other_io: u32::from(!timeout),

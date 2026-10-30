@@ -136,7 +136,8 @@ impl HostTransportEventProcessor {
             } => {
                 let Some(listener_id) = peer.device_id else {
                     return Ok(Some(
-                        "Clock synchronization request has no admitted listener identity".to_owned(),
+                        "Clock synchronization request has no admitted listener identity"
+                            .to_owned(),
                     ));
                 };
                 let response = ProtocolFrame::SyncResponse(SyncResponse {

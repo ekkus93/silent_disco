@@ -7,8 +7,8 @@ use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest};
 use crate::runtime::NetworkEndpoint;
 
 use super::{
-    HostTransportConfig, ListenerDatagramRoutes, ListenerTransportConfig, TransportClock,
-    TransportChannel, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
+    HostTransportConfig, ListenerDatagramRoutes, ListenerTransportConfig, TransportChannel,
+    TransportClock, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
     TransportEvent,
 };
 
