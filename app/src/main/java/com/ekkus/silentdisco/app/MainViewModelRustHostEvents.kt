@@ -31,17 +31,7 @@ internal fun MainViewModel.handleHostTransportEvent(
                     "track listener join",
                     IllegalStateException("Pending listener route capacity exceeded"),
                 )
-                viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        hostTransportController.sendJoinRejectionForGeneration(
-                            sourceHandle, event.deviceId, "host_busy",
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        reportRustHostCommandFailure("reject saturated join", error)
-                    }
-                }
+                refuseUnprojectedHostJoin(event.deviceId, sourceHandle)
                 return
             }
             runCatching {
@@ -58,6 +48,10 @@ internal fun MainViewModel.handleHostTransportEvent(
             }.onFailure { error ->
                 pendingListenerDatagramPorts.discard(requestId, event.deviceId)
                 reportRustHostCommandFailure("submit join request", error)
+                // The TCP reader already accepted this join. If the Rust
+                // actor cannot ingest it, leaving the peer pending would
+                // strand its approval spinner indefinitely.
+                refuseUnprojectedHostJoin(event.deviceId, sourceHandle)
             }
         }
         is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->
@@ -74,5 +68,31 @@ internal fun MainViewModel.handleHostTransportEvent(
         is FfiHostTransportEvent.ResyncNotice,
         is FfiHostTransportEvent.Rejected,
         -> Unit // diagnostic-only for this pass; resync notices are out of scope until Block 23
+    }
+}
+
+/**
+ * A join that cannot enter the authoritative actor must receive a visible
+ * native refusal, not remain pending forever. Bind the send to the event's
+ * original host generation; a late IO dispatch cannot reject a replacement
+ * session. Do not treat a missing handle or zero successful peers as delivery.
+ */
+private fun MainViewModel.refuseUnprojectedHostJoin(
+    deviceId: String,
+    sourceHandle: FfiHostTransportHandle,
+) {
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            val delivery = hostTransportController.sendJoinRejectionForGeneration(
+                sourceHandle, deviceId, "host_busy",
+            )
+            check(delivery != null && delivery.successfulPeers > 0u) {
+                "Host join refusal was not delivered to the original listener"
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            reportRustHostCommandFailure("refuse unavailable join", error)
+        }
     }
 }

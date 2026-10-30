@@ -52,6 +52,7 @@ class FakeHostCoreController : HostCoreController {
     val transitionPlaybackStateCalls = mutableListOf<FfiPlaybackState>()
 
     val submitJoinRequestCalls = mutableListOf<FfiJoinRequestInput>()
+    var submitJoinRequestFailure: Throwable? = null
     val submitListenerConnectedCalls = mutableListOf<FfiListenerSummary>()
     val submitListenerDisconnectedCalls = mutableListOf<String>()
     val transportStateChangedCalls = mutableListOf<FfiTransportState>()
@@ -122,6 +123,7 @@ class FakeHostCoreController : HostCoreController {
     }
 
     override fun submitJoinRequest(request: FfiJoinRequestInput) {
+        submitJoinRequestFailure?.let { throw it }
         submitJoinRequestCalls += request
     }
 
