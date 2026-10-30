@@ -27,8 +27,6 @@ mod bind;
 mod broadcast;
 #[cfg(test)]
 mod duplicate_join_tests;
-#[cfg(test)]
-mod rejected_generation_tests;
 mod lookup;
 #[cfg(test)]
 mod multi_peer_control_pressure_tests;
@@ -36,6 +34,8 @@ mod node;
 mod peer;
 #[cfg(test)]
 mod reconnect_snapshot_tests;
+#[cfg(test)]
+mod rejected_generation_tests;
 #[cfg(test)]
 mod socket_multitrack_audio_reconnect_tests;
 #[cfg(test)]

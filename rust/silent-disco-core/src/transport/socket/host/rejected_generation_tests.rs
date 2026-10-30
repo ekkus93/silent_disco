@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::SocketHostTransport;
 use crate::protocol::{ControlMessage, JoinRejection, ProtocolFrame};
 use crate::transport::test_support::{
     audio_frame_at, id_device, id_session, join_request, stream_start, wait_for_authorized,
@@ -12,7 +13,6 @@ use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
     SocketTransportFactory, TransportChannel, TransportErrorKind, TransportFactory,
 };
-use super::SocketHostTransport;
 
 #[test]
 fn rejected_generation_cannot_be_approved_later_or_receive_replayed_pcm() {
@@ -52,7 +52,8 @@ fn rejected_generation_cannot_be_approved_later_or_receive_replayed_pcm() {
         frame == &ProtocolFrame::Control(denial.clone())
     });
     assert!(
-        host.authorize_peer(&device, rejected.local_routes()).is_err(),
+        host.authorize_peer(&device, rejected.local_routes())
+            .is_err(),
         "a delayed approval must not revive the rejected TCP generation",
     );
     assert!(
@@ -100,10 +101,10 @@ fn rejected_generation_cannot_be_approved_later_or_receive_replayed_pcm() {
     wait_for_frame(accepted.as_mut(), TransportChannel::Audio, |frame| {
         frame == &pcm
     });
-    let error = rejected
-        .recv_event(Duration::from_millis(200))
-        .expect_err("rejected socket must not receive Start or UDP PCM");
-    assert_eq!(error.kind, TransportErrorKind::Timeout);
+    match rejected.recv_event(Duration::from_millis(200)) {
+        Err(error) => assert_eq!(error.kind, TransportErrorKind::Timeout),
+        Ok(_) => panic!("rejected socket received unauthorized Start or UDP PCM"),
+    }
     assert_eq!(host.routes.lock().expect("routes").len(), 1);
 
     rejected.shutdown().expect("close rejected socket");
