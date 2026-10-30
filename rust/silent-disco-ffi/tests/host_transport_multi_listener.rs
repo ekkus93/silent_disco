@@ -373,6 +373,149 @@ fn assert_fresh_pcm(
     }
 }
 
+/// A third listener joins after playback has already started and receives
+/// the cached authoritative stream state before the next exact PCM packet.
+fn assert_late_join_recovery(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    listener_b: &FfiListenerTransportHandle,
+    endpoint: &str,
+) {
+    let late = FfiListenerTransportHandle::connect(
+        endpoint.to_owned(),
+        now_wall_clock_ms(),
+        "ffi-peer-late".to_owned(),
+        HOST_ADDRESS.to_owned(),
+    )
+    .expect("connect late listener");
+    let late_id = join_approve_and_authorize(host, &late, "Late Listener");
+    host.replay_cached_playback_to_listener(late_id.clone())
+        .expect("send cached stream to late listener");
+    assert!(matches!(
+        poll_listener_until(&late, |event| matches!(
+            event,
+            FfiListenerTransportEvent::StreamStarted { .. }
+        )),
+        FfiListenerTransportEvent::StreamStarted { stream_id, .. }
+            if stream_id == "ffi-fresh-stream"
+    ));
+
+    let pcm: Vec<u8> = (0..960_u32)
+        .map(|index| u8::try_from((index * 17) % 256).expect("byte"))
+        .collect();
+    assert_eq!(
+        host.broadcast_audio(
+            "ffi-fresh-stream".to_owned(),
+            1,
+            48_000,
+            2,
+            240,
+            240,
+            2_005,
+            pcm.clone(),
+        )
+        .expect("broadcast next exact PCM to late joiner")
+        .successful_peers,
+        3
+    );
+    for listener in [listener_a, listener_b, &late] {
+        assert_eq!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::AudioReceived { .. }
+            )),
+            FfiListenerTransportEvent::AudioReceived {
+                stream_id: "ffi-fresh-stream".to_owned(),
+                sequence: 1,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: 240,
+                first_sample_index: 240,
+                host_presentation_time_ms: 2_005,
+                payload: pcm.clone(),
+            }
+        );
+    }
+    assert_eq!(
+        host.disconnect_peer(late_id, "late listener leaving".to_owned())
+            .expect("remove late listener")
+            .successful_peers,
+        1
+    );
+    poll_listener_until(&late, |event| matches!(
+        event,
+        FfiListenerTransportEvent::HostDisconnected { .. }
+    ));
+    late.shutdown().expect("close late listener");
+}
+
+/// A replaced TCP socket with the same logical ID must receive a fresh
+/// authorization and explicit cache replay; surviving listeners remain live.
+fn assert_reconnect_and_resume_pcm(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    endpoint: &str,
+    reconnect_id: &str,
+) {
+    let replacement = FfiListenerTransportHandle::connect(
+        endpoint.to_owned(),
+        now_wall_clock_ms(),
+        reconnect_id.to_owned(),
+        HOST_ADDRESS.to_owned(),
+    )
+    .expect("reconnect previous listener");
+    let admitted = join_approve_and_authorize(host, &replacement, "Listener B Reconnected");
+    assert_eq!(admitted, reconnect_id);
+    host.replay_cached_playback_to_listener(admitted)
+        .expect("replay current stream to reconnected listener");
+    assert!(matches!(
+        poll_listener_until(&replacement, |event| matches!(
+            event,
+            FfiListenerTransportEvent::StreamStarted { .. }
+        )),
+        FfiListenerTransportEvent::StreamStarted { stream_id, .. }
+            if stream_id == "ffi-fresh-stream"
+    ));
+
+    let pcm: Vec<u8> = (0..960_u32)
+        .map(|index| u8::try_from((index * 19) % 256).expect("byte"))
+        .collect();
+    assert_eq!(
+        host.broadcast_audio(
+            "ffi-fresh-stream".to_owned(),
+            2,
+            48_000,
+            2,
+            240,
+            480,
+            2_010,
+            pcm.clone(),
+        )
+        .expect("send post-reconnect PCM")
+        .successful_peers,
+        2
+    );
+    for listener in [listener_a, &replacement] {
+        assert_eq!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::AudioReceived { .. }
+            )),
+            FfiListenerTransportEvent::AudioReceived {
+                stream_id: "ffi-fresh-stream".to_owned(),
+                sequence: 2,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: 240,
+                first_sample_index: 480,
+                host_presentation_time_ms: 2_010,
+                payload: pcm.clone(),
+            }
+        );
+    }
+    replacement.shutdown().expect("close reconnected listener");
+}
+
 #[test]
 fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
     let (control_port, sync_port, audio_port) = available_host_ports();
@@ -398,7 +541,7 @@ fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
     )
     .expect("connect first listener");
     let listener_b = FfiListenerTransportHandle::connect(
-        endpoint,
+        endpoint.clone(),
         now_wall_clock_ms(),
         "ffi-peer-b".to_owned(),
         HOST_ADDRESS.to_owned(),
@@ -412,8 +555,9 @@ fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
     assert_pause_recovery(&host, &listener_a, &listener_b, &a_id);
     assert_terminal_stop(&host, &listener_a, &listener_b);
     assert_fresh_pcm(&host, &listener_a, &listener_b);
+    assert_late_join_recovery(&host, &listener_a, &listener_b, &endpoint);
     assert_eq!(
-        host.disconnect_peer(b_id.to_owned(), "peer B leaving".to_owned())
+        host.disconnect_peer(b_id.clone(), "peer B leaving".to_owned())
             .expect("disconnect B")
             .successful_peers,
         1
@@ -425,7 +569,8 @@ fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
         )),
         FfiListenerTransportEvent::HostDisconnected { .. }
     ));
-    listener_a.shutdown().expect("close listener A");
     listener_b.shutdown().expect("close listener B");
+    assert_reconnect_and_resume_pcm(&host, &listener_a, &endpoint, &b_id);
+    listener_a.shutdown().expect("close listener A");
     host.shutdown().expect("close host");
 }
