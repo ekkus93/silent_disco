@@ -27,16 +27,18 @@ class HostTransportGenerationSyncTest {
             }.`when`(handle).pollEvent(500uL)
         }
         val opened = ArrayDeque(listOf(old, replacement))
+        var sendClock = 100uL
         val controller = HostTransportController(
             callDispatcher = Dispatchers.Unconfined,
             bindHandle = { _, _, _, _, _ -> opened.removeFirst() },
+            hostElapsedMs = { sendClock },
         )
         try {
             controller.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "old-session")
             controller.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "new-session")
             val failure = runCatching {
                 controller.sendSyncResponseForGeneration(
-                    old, 42uL, 100uL, 110uL, 120uL,
+                    old, 42uL, 100uL, 110uL,
                 )
             }.exceptionOrNull()
             assertThat(failure).isInstanceOf(IllegalStateException::class.java)
@@ -50,12 +52,15 @@ class HostTransportGenerationSyncTest {
                 failedPeers = 0u,
                 bytesSent = 24uL,
             )
-            Mockito.`when`(replacement.sendSyncResponse(43uL, 200uL, 210uL, 220uL))
+            // A reply queued earlier uses the actual send clock sampled
+            // after rebind/dispatcher delay, never the old event clock.
+            sendClock = 777uL
+            Mockito.`when`(replacement.sendSyncResponse(43uL, 200uL, 210uL, 777uL))
                 .thenReturn(delivered)
             assertThat(controller.sendSyncResponseForGeneration(
-                replacement, 43uL, 200uL, 210uL, 220uL,
+                replacement, 43uL, 200uL, 210uL,
             )).isEqualTo(delivered)
-            Mockito.verify(replacement).sendSyncResponse(43uL, 200uL, 210uL, 220uL)
+            Mockito.verify(replacement).sendSyncResponse(43uL, 200uL, 210uL, 777uL)
         } finally {
             controller.close()
         }

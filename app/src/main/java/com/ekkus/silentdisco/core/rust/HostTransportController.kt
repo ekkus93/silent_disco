@@ -47,6 +47,8 @@ class HostTransportController(
                 SystemClock.elapsedRealtime().toULong(),
             )
         },
+    /** Capture t3 at the native send, not while the reply waits for IO. */
+    private val hostElapsedMs: () -> ULong = { SystemClock.elapsedRealtime().toULong() },
 ) : AutoCloseable {
     private val handleGate = HostNativeHandleGate<FfiHostTransportHandle>()
     private var eventLoop: Job? = null
@@ -229,10 +231,12 @@ class HostTransportController(
         correlationId: ULong,
         t1ListenerSendElapsedMs: ULong,
         t2HostReceiveElapsedMs: ULong,
-        t3HostSendElapsedMs: ULong,
     ): FfiHostTransportDelivery = requireDeliveredHostSyncResponse(withContext(callDispatcher) {
         handleGate.withExpected(expected) {
-            it.sendSyncResponse(correlationId, t1ListenerSendElapsedMs, t2HostReceiveElapsedMs, t3HostSendElapsedMs)
+            // This timestamp must be sampled only AFTER dispatcher and
+            // generation-gate waits; otherwise the listener observes a
+            // fictitious early send and derives a biased clock offset.
+            it.sendSyncResponse(correlationId, t1ListenerSendElapsedMs, t2HostReceiveElapsedMs, hostElapsedMs())
         }
     })
 
