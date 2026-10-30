@@ -118,6 +118,9 @@ internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: Transpo
             )
         }
         result.onSuccess {
+            // A successful new native bind retires all route claims from the
+            // previous session; actor effects must not borrow their ports.
+            pendingListenerDatagramPorts.clear()
             controller.transportStateChanged(FfiTransportState.ADVERTISING)
             controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
             return
