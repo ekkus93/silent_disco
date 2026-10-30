@@ -9,7 +9,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +45,16 @@ class UniFfiListenerCoreController(
     private val localDeviceId: String,
 ) : ListenerCoreController {
     private val closed = AtomicBoolean(false)
-    private val handleRef = AtomicReference<FfiCoreHandle?>(null)
+    private val nativeGate = CoreNativeHandleGate(
+        open = {
+            FfiCoreHandle.open(localDeviceId, observer).also { opened ->
+                _snapshots.value = opened.currentSnapshot()
+            }
+        },
+        retire = {
+            retireNativeHandle(it, shutdown = { handle -> handle.shutdown() }, close = { handle -> handle.close() })
+        },
+    )
     private val _snapshots = MutableStateFlow<FfiCoreSnapshot?>(null)
     // Listener effects are just as authoritative as host effects. A stalled UI
     // must not accumulate unbounded Rust notifications or silently lose Stop.
@@ -140,9 +148,8 @@ class UniFfiListenerCoreController(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        val handle = handleRef.getAndSet(null)
         try {
-            retireNativeHandle(handle, shutdown = { it.shutdown() }, close = { it.close() })
+            nativeGate.close()
         } finally {
             // A native teardown failure must never leave a blocked observer or
             // UI collector waiting on a bridge that can no longer make progress.
@@ -150,29 +157,21 @@ class UniFfiListenerCoreController(
         }
     }
 
-    private inline fun withRoleSelected(command: (FfiCoreHandle, ULong) -> Unit) {
-        val handle = openHandle()
-        var snapshot = currentSnapshot(handle)
-        if (snapshot.selectedRole != FfiAppRole.LISTENER) {
-            handle.selectRole(snapshot.revision, FfiAppRole.LISTENER)
-            snapshot = handle.currentSnapshot().also { _snapshots.value = it }
-        }
-        command(handle, snapshot.revision)
-    }
-
-    private fun openHandle(): FfiCoreHandle {
-        handleRef.get()?.let { return it }
-        check(!closed.get()) { "Rust listener controller is closed" }
-        return synchronized(handleRef) {
-            handleRef.get() ?: FfiCoreHandle.open(localDeviceId, observer).also { opened ->
-                _snapshots.value = opened.currentSnapshot()
-                handleRef.set(opened)
+    private fun withRoleSelected(command: (FfiCoreHandle, ULong) -> Unit) {
+        nativeGate.withOpen { handle ->
+            var snapshot = currentSnapshot(handle)
+            if (snapshot.selectedRole != FfiAppRole.LISTENER) {
+                handle.selectRole(snapshot.revision, FfiAppRole.LISTENER)
+                snapshot = handle.currentSnapshot().also { _snapshots.value = it }
             }
+            command(handle, snapshot.revision)
         }
     }
 
-    private inline fun withOpenHandle(action: (FfiCoreHandle) -> Unit) {
-        handleRef.get()?.let(action)
+    private fun withOpenHandle(action: (FfiCoreHandle) -> Unit) {
+        // Listener discovery, approval and transport callbacks share a native
+        // lifetime lease with close. No callback may use a retired Rust actor.
+        nativeGate.withExisting(action)
     }
 
     private fun currentSnapshot(handle: FfiCoreHandle): FfiCoreSnapshot =
