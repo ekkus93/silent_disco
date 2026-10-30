@@ -24,6 +24,20 @@ class HostTransportGenerationAdmissionTest {
                 null
             }.`when`(handle).pollEvent(500uL)
         }
+        // Stub before starting the native polling coroutine. Mockito does not
+        // support concurrent stubbing and invocation on the same mock; the
+        // poller otherwise races with `when(...).thenReturn(...)` and can
+        // produce WrongTypeOfReturnValue instead of testing admission.
+        val delivered = FfiHostTransportDelivery(
+            intendedPeers = 1u,
+            successfulPeers = 1u,
+            failedPeers = 0u,
+            bytesSent = 32uL,
+        )
+        Mockito.doReturn(delivered).`when`(replacement)
+            .sendJoinApproval("reused-device-id", false)
+        Mockito.doReturn(delivered).`when`(replacement)
+            .sendJoinRejection("reused-device-id", "current-denial")
         val opened = ArrayDeque(listOf(old, replacement))
         val controller = HostTransportController(
             callDispatcher = Dispatchers.Unconfined,
@@ -39,14 +53,6 @@ class HostTransportGenerationAdmissionTest {
             Mockito.verify(old, Mockito.never()).sendJoinApproval("reused-device-id", false)
             Mockito.verify(replacement, Mockito.never()).sendJoinApproval("reused-device-id", false)
 
-            val delivered = FfiHostTransportDelivery(
-                intendedPeers = 1u,
-                successfulPeers = 1u,
-                failedPeers = 0u,
-                bytesSent = 32uL,
-            )
-            Mockito.`when`(replacement.sendJoinApproval("reused-device-id", false))
-                .thenReturn(delivered)
             val fresh = controller.approveAndAuthorizeListener(
                 "reused-device-id", false, 211u, 212u, expectedGeneration = replacement,
             )
@@ -61,8 +67,6 @@ class HostTransportGenerationAdmissionTest {
                 old, "reused-device-id", "stale-denial",
             )).isNull()
             Mockito.verify(replacement, Mockito.never()).sendJoinRejection("reused-device-id", "stale-denial")
-            Mockito.`when`(replacement.sendJoinRejection("reused-device-id", "current-denial"))
-                .thenReturn(delivered)
             assertThat(controller.sendJoinRejectionForGeneration(
                 replacement, "reused-device-id", "current-denial",
             )).isEqualTo(delivered)
@@ -75,17 +79,18 @@ class HostTransportGenerationAdmissionTest {
     fun failedNativeAuthorizationDisconnectsPeerAndCannotReportSuccess() = runTest {
         val native = Mockito.mock(FfiHostTransportHandle::class.java)
         Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)
+        // Install stubs before bind launches the concurrent native poller.
+        // Concurrent Mockito stubbing against that poller is not supported.
+        Mockito.doReturn(FfiHostTransportDelivery(1u, 1u, 0u, 32uL))
+            .`when`(native).sendJoinApproval("listener", false)
+        Mockito.doThrow(IllegalStateException("native UDP route refused"))
+            .`when`(native).authorizeListener("listener", 300u, 301u)
         val controller = HostTransportController(
             callDispatcher = Dispatchers.Unconfined,
             bindHandle = { _, _, _, _, _ -> native },
         )
         try {
             controller.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "one-session")
-            Mockito.`when`(native.sendJoinApproval("listener", false)).thenReturn(
-                FfiHostTransportDelivery(1u, 1u, 0u, 32uL),
-            )
-            Mockito.doThrow(IllegalStateException("native UDP route refused"))
-                .`when`(native).authorizeListener("listener", 300u, 301u)
             val result = controller.approveAndAuthorizeListener(
                 "listener", false, 300u, 301u, expectedGeneration = native,
             )
