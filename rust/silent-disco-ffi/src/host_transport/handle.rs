@@ -269,7 +269,7 @@ impl FfiHostTransportHandle {
     }
 
     /// Recover one admitted listener from the host's authoritative playback
-    /// cache. No caller-provided StreamStart or boundary may override the
+    /// cache. No caller-provided `StreamStart` or boundary may override the
     /// transport's current generation, and an idle host sends no replay.
     pub fn replay_cached_playback_to_listener(
         &self,
