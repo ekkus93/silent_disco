@@ -26,6 +26,8 @@ mod authorization_order_tests;
 mod bind;
 mod broadcast;
 #[cfg(test)]
+mod clock_reconnect_pcm_tests;
+#[cfg(test)]
 mod duplicate_join_tests;
 #[cfg(test)]
 mod host_only_control_injection_tests;
@@ -44,8 +46,6 @@ mod resync_replay_tests;
 mod socket_multitrack_audio_reconnect_tests;
 #[cfg(test)]
 mod targeted_sync_tests;
-#[cfg(test)]
-mod clock_reconnect_pcm_tests;
 #[cfg(test)]
 mod telemetry_pressure_tests;
 #[cfg(test)]

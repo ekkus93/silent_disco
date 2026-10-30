@@ -108,8 +108,10 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     });
     for control in [&start, &boundary] {
         assert_eq!(
-            host.broadcast_control(control).expect("broadcast control")
-                .report.successful_peers,
+            host.broadcast_control(control)
+                .expect("broadcast control")
+                .report
+                .successful_peers,
             2,
         );
         expect_control(first.as_mut(), control);
@@ -130,7 +132,9 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     expect_control(second.as_mut(), &pause);
     assert_eq!(
         host.broadcast_audio(&pcm(&session, 2, 1_052))
-            .expect("paused PCM is suppressed").report.intended_peers,
+            .expect("paused PCM is suppressed")
+            .report
+            .intended_peers,
         0,
     );
 
@@ -145,9 +149,13 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     };
     second.send_sync_request(&probe).expect("real UDP probe");
     wait_for_frame_from(
-        &mut host, TransportChannel::Synchronization, &second_id,
-        |frame| matches!(frame, ProtocolFrame::SyncRequest(request)
-            if request.correlation_id == 42),
+        &mut host,
+        TransportChannel::Synchronization,
+        &second_id,
+        |frame| {
+            matches!(frame, ProtocolFrame::SyncRequest(request)
+            if request.correlation_id == 42)
+        },
     );
     let response = ProtocolFrame::SyncResponse(SyncResponse {
         session_id: session.clone(),
@@ -158,12 +166,16 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     });
     assert_eq!(
         host.send_sync_to_peer(&second_id, &response)
-            .expect("targeted response").report.successful_peers,
+            .expect("targeted response")
+            .report
+            .successful_peers,
         1,
     );
-    wait_for_frame(second.as_mut(), TransportChannel::Synchronization, |frame| {
-        frame == &response
-    });
+    wait_for_frame(
+        second.as_mut(),
+        TransportChannel::Synchronization,
+        |frame| frame == &response,
+    );
 
     let mut returning = join(&mut host, &clock, &session, "clock-returning");
     for control in [&start, &boundary, &pause] {
@@ -182,7 +194,9 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     expect_control(second.as_mut(), &resume);
     assert_eq!(
         host.broadcast_audio(&pcm(&session, 2, 1_052))
-            .expect("reject stale pre-pause PCM").report.intended_peers,
+            .expect("reject stale pre-pause PCM")
+            .report
+            .intended_peers,
         0,
     );
     for sequence in 2..4 {
@@ -196,13 +210,17 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     expect_control(second.as_mut(), &stop);
     assert_eq!(
         host.replay_cached_playback_to_peer(&first_id)
-            .expect("targeted terminal recovery").report.successful_peers,
+            .expect("targeted terminal recovery")
+            .report
+            .successful_peers,
         1,
     );
     expect_control(returning.as_mut(), &stop);
     assert_eq!(
         host.broadcast_audio(&pcm(&session, 4, 1_301))
-            .expect("suppress stopped PCM").report.intended_peers,
+            .expect("suppress stopped PCM")
+            .report
+            .intended_peers,
         0,
     );
 
@@ -213,7 +231,9 @@ fn paused_multitrack_reconnect_targeted_clock_and_fresh_replay_preserve_exact_pc
     expect_control(second.as_mut(), &fresh);
     assert_eq!(
         host.broadcast_audio(&pcm(&session, 4, 1_504))
-            .expect("retired producer cannot skip packet zero").report.intended_peers,
+            .expect("retired producer cannot skip packet zero")
+            .report
+            .intended_peers,
         0,
     );
     for sequence in 0..2 {
