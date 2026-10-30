@@ -119,7 +119,10 @@ fn assert_targeted_resync_preserves_callback(
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "host never received TCP recovery request");
+        assert!(
+            !remaining.is_zero(),
+            "host never received TCP recovery request"
+        );
         if let TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             peer,
@@ -127,8 +130,8 @@ fn assert_targeted_resync_preserves_callback(
             ..
         } = host.recv_event(remaining).expect("host recovery event")
         {
-            assert!(peer.device_id.as_ref() == Some(&device));
-            assert!(notice.listener_id == device);
+            assert_eq!(peer.device_id.as_ref(), Some(&device));
+            assert_eq!(notice.listener_id, device);
             break;
         }
     }
@@ -152,7 +155,11 @@ fn assert_targeted_resync_preserves_callback(
         callbacks_before,
         "resync must not reopen or invoke the native output"
     );
-    assert_eq!(tap.counters(), captured_before, "resync cannot alter PCM capture");
+    assert_eq!(
+        tap.counters(),
+        captured_before,
+        "resync cannot alter PCM capture"
+    );
 }
 
 #[test]
@@ -558,6 +565,16 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     );
     assert!(recv_control(listener.as_mut()) == stop);
     assert!(recv_control(newcomer.as_deref_mut().expect("late listener")) == stop);
+    // Terminal recovery must deliver the missed Stop to the same live
+    // native output without reopening it or replaying the retired queue.
+    assert_targeted_resync_preserves_callback(
+        host.as_mut(),
+        listener.as_mut(),
+        &session,
+        std::slice::from_ref(&stop),
+        token,
+        &tap,
+    );
     let stopped_controls = host.counters().control_frames_sent;
     let mut stopped_joiner = authorized_late_joiner(host.as_mut(), "interleaved-stopped-late");
     assert_eq!(
