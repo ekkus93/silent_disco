@@ -142,6 +142,22 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound pending control message belongs to a different session",
             ));
         }
+        // A pending peer has not passed admission. Restrict this low-level
+        // send path to admission and terminal controls so a mistaken caller
+        // cannot bypass authorization and leak playback or queue metadata.
+        if !matches!(
+            message,
+            ControlMessage::Hello(_)
+                | ControlMessage::JoinApproval(_)
+                | ControlMessage::JoinRejection(_)
+                | ControlMessage::Disconnect(_)
+        ) {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "pending TCP peers may receive admission controls only",
+            ));
+        }
         // Pending Hello/approval delivery must not interleave with late-join
         // authorization replay. Acquire the ordering guard before looking up
         // the peer so a concurrent authorization cannot insert its route and

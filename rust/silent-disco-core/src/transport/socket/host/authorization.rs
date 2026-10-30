@@ -42,6 +42,18 @@ impl SocketHostTransport {
                 "control delivery ordering lock is poisoned",
             )
         })?;
+        // A competing TCP generation may claim this device ID while the
+        // selected peer waits behind a live broadcast or cached replay.
+        // Re-resolve under the delivery gate so a stale approval cannot
+        // authorize an ambiguous or different pending generation.
+        let current = self.pending_peer_for_device(device_id)?;
+        if current.number != peer.number {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "pending TCP generation changed during authorization",
+            ));
+        }
         // The peer may disconnect while authorization waits behind a cached
         // replay or live control broadcast. Do not publish a dead route or a
         // spurious PeerAuthorized event after the initial pending-peer lookup.
