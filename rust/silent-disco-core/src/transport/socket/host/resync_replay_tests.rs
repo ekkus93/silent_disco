@@ -151,6 +151,31 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
             .is_err()
     );
 
+    // New joins after Stop receive no retired control, while a later fresh
+    // Play replaces the recovery watermark rather than replaying old Stop.
+    let before_late = host.counters().control_frames_sent;
+    let mut late = join(&mut host, factory, &clock, &session, "resync-late");
+    assert_eq!(host.counters().control_frames_sent, before_late);
+    let fresh = stream_start(&session, 2_000);
+    assert_eq!(
+        host.broadcast_control(&fresh)
+            .expect("new Play after terminal recovery")
+            .report
+            .successful_peers,
+        3
+    );
+    expect_controls(first.as_ref(), std::slice::from_ref(&fresh));
+    expect_controls(second.as_ref(), std::slice::from_ref(&fresh));
+    expect_controls(late.as_ref(), std::slice::from_ref(&fresh));
+    assert_eq!(
+        host.replay_cached_playback_to_peer(&first_id)
+            .expect("fresh playback recovery")
+            .report
+            .successful_peers,
+        1
+    );
+    expect_controls(first.as_ref(), std::slice::from_ref(&fresh));
+    late.shutdown().expect("close late");
     first.shutdown().expect("close first");
     second.shutdown().expect("close second");
     host.shutdown().expect("close host");
