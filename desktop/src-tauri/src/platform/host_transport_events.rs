@@ -160,7 +160,7 @@ impl HostTransportEventProcessor {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::SynchronizationReport(report)),
                 ..
-            } => Self::forward_sync_report(report, sink)
+            } => Self::forward_sync_report(report, sink),
             RuntimeTransportEvent::PeerDisconnected { peer, error, .. } => {
                 let Some(device_id) = peer.device_id else {
                     return Ok(error.map(|error| error.to_string()));
