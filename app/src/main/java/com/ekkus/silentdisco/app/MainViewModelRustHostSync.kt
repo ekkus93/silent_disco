@@ -19,8 +19,12 @@ internal fun MainViewModel.respondToSyncRequest(
     val t2HostReceiveElapsedMs = SystemClock.elapsedRealtime().toULong()
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            hostTransportController.sendSyncResponseForGeneration(
+            val listenerId = checkNotNull(event.listenerId) {
+                "Clock synchronization request had no authorized listener identity"
+            }
+            hostTransportController.sendSyncResponseToListenerForGeneration(
                 expected = sourceHandle,
+                listenerId = listenerId,
                 correlationId = event.correlationId,
                 t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs,
                 t2HostReceiveElapsedMs = t2HostReceiveElapsedMs,

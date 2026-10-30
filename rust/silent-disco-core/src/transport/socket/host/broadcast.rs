@@ -1,5 +1,6 @@
 use std::sync::atomic::Ordering;
 
+use crate::domain::DeviceId;
 use crate::protocol::{ProtocolFrame, encode_frame};
 
 use super::super::super::{
@@ -8,6 +9,99 @@ use super::super::super::{
 use super::SocketHostTransport;
 
 impl SocketHostTransport {
+    /// Deliver a response to exactly one currently admitted UDP route.
+    /// Serialize route lookup and send with reconnect/disconnect so an old
+    /// route cannot be replaced between selection and delivery.
+    pub(super) fn send_targeted_sync(
+        &self,
+        device_id: &DeviceId,
+        frame: &ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        let channel = TransportChannel::Synchronization;
+        if !matches!(frame, ProtocolFrame::SyncResponse(_)) {
+            return Err(TransportError::new(
+                TransportErrorKind::Protocol,
+                channel,
+                "targeted synchronization requires a SyncResponse",
+            ));
+        }
+        if frame.session_id() != &self.session_id {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                channel,
+                "targeted synchronization belongs to another session",
+            ));
+        }
+        let bytes =
+            encode_frame(frame).map_err(|error| TransportError::protocol(channel, &error))?;
+        let _guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "targeted synchronization delivery lock is poisoned",
+            )
+        })?;
+        let (_, route) = self
+            .authorized_routes()?
+            .into_iter()
+            .find(|(id, _)| id == device_id)
+            .ok_or_else(|| {
+                TransportError::new(
+                    TransportErrorKind::PeerNotFound,
+                    channel,
+                    "targeted synchronization listener is not authorized",
+                )
+            })?;
+        match self.sync_socket.send_to(&bytes, route.routes.synchronization) {
+            Ok(written) if written == bytes.len() => {
+                self.counters.datagram_sent(channel, written);
+                route.peer.consecutive_failures.store(0, Ordering::Release);
+                TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
+            }
+            Ok(_) => {
+                self.counters.delivery_failure();
+                self.record_peer_result(
+                    &route.peer,
+                    &Err(TransportError::new(
+                        TransportErrorKind::Delivery,
+                        channel,
+                        "targeted sync datagram send reported a partial write",
+                    )),
+                );
+                TransportDelivery::new_with_datagram_send_failures(
+                    1, 0, 1, 0,
+                    DatagramSendFailures {
+                        partial_write: 1,
+                        ..DatagramSendFailures::default()
+                    },
+                )
+            }
+            Err(error) => {
+                self.counters.delivery_failure();
+                let timeout = is_datagram_send_timeout(&error);
+                if !timeout {
+                    self.record_peer_result(
+                        &route.peer,
+                        &Err(TransportError::io(
+                            TransportErrorKind::Delivery,
+                            channel,
+                            "failed to send targeted synchronization",
+                            &error,
+                        )),
+                    );
+                }
+                TransportDelivery::new_with_datagram_send_failures(
+                    1, 0, 1, 0,
+                    DatagramSendFailures {
+                        would_block: u32::from(timeout),
+                        other_io: u32::from(!timeout),
+                        ..DatagramSendFailures::default()
+                    },
+                )
+            }
+        }
+    }
+
     pub(super) fn broadcast_datagram(
         &self,
         channel: TransportChannel,

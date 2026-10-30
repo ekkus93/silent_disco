@@ -8,7 +8,8 @@ use crate::runtime::NetworkEndpoint;
 
 use super::{
     HostTransportConfig, ListenerDatagramRoutes, ListenerTransportConfig, TransportClock,
-    TransportCounters, TransportDelivery, TransportError, TransportEvent,
+    TransportChannel, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
+    TransportEvent,
 };
 
 pub trait HostTransportNode: Send {
@@ -76,6 +77,20 @@ pub trait HostTransportNode: Send {
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError>;
     fn broadcast_sync(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError>;
+    /// Send a clock response only to the admitted listener whose UDP route
+    /// was established by this host. Never broadcast a peer's clock probe to
+    /// other listeners. Test adapters without targeted routing fail closed.
+    fn send_sync_to_peer(
+        &self,
+        _device_id: &DeviceId,
+        _frame: &ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        Err(TransportError::new(
+            TransportErrorKind::InvalidConfiguration,
+            TransportChannel::Synchronization,
+            "targeted synchronization is unavailable on this transport",
+        ))
+    }
     fn broadcast_audio(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError>;
     fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError>;
     fn counters(&self) -> TransportCounters;

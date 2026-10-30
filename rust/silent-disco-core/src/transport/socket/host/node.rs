@@ -339,6 +339,14 @@ impl HostTransportNode for SocketHostTransport {
         self.broadcast_datagram(TransportChannel::Synchronization, frame)
     }
 
+    fn send_sync_to_peer(
+        &self,
+        device_id: &DeviceId,
+        frame: &ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.send_targeted_sync(device_id, frame)
+    }
+
     fn broadcast_audio(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError> {
         self.broadcast_datagram(TransportChannel::Audio, frame)
     }

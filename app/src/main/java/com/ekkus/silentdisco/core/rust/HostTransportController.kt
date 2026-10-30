@@ -258,6 +258,25 @@ class HostTransportController(
         }
     })
 
+    /** A response must stay on the requesting listener's authorized UDP route. */
+    internal suspend fun sendSyncResponseToListenerForGeneration(
+        expected: FfiHostTransportHandle,
+        listenerId: String,
+        correlationId: ULong,
+        t1ListenerSendElapsedMs: ULong,
+        t2HostReceiveElapsedMs: ULong,
+    ): FfiHostTransportDelivery = requireDeliveredHostSyncResponse(withContext(callDispatcher) {
+        handleGate.withExpected(expected) {
+            it.sendSyncResponseToListener(
+                listenerId,
+                correlationId,
+                t1ListenerSendElapsedMs,
+                t2HostReceiveElapsedMs,
+                hostElapsedMs(),
+            )
+        }
+    })
+
     suspend fun broadcastAudio(
         streamId: String,
         sequence: Long,

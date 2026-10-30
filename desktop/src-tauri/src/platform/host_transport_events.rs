@@ -132,8 +132,13 @@ impl HostTransportEventProcessor {
                 channel: TransportChannel::Synchronization,
                 frame: ProtocolFrame::SyncRequest(request),
                 received_at,
-                ..
+                peer,
             } => {
+                let Some(listener_id) = peer.device_id else {
+                    return Ok(Some(
+                        "Clock synchronization request has no admitted listener identity".to_owned(),
+                    ));
+                };
                 let response = ProtocolFrame::SyncResponse(SyncResponse {
                     session_id: request.session_id,
                     correlation_id: request.correlation_id,
@@ -142,7 +147,7 @@ impl HostTransportEventProcessor {
                     t3_host_send_elapsed_ms: self.clock.now(),
                 });
                 Ok(node
-                    .broadcast_sync(&response)
+                    .send_sync_to_peer(&listener_id, &response)
                     .err()
                     .map(|error| DesktopNetworkError::transport(&error).to_string()))
             }

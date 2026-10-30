@@ -385,11 +385,9 @@ impl FfiHostTransportHandle {
 
     /// Broadcasts a clock-sync response echoing one listener's probe.
     ///
-    /// The host transport currently only broadcasts sync responses to every
-    /// authorized peer (there is no targeted per-listener datagram send) --
-    /// every listener other than the one whose `correlation_id` this echoes
-    /// discards it as a correlation mismatch, so this is correct, if
-    /// wasteful with many listeners.
+    /// Retained for compatibility with legacy callers. Production host
+    /// event handlers must use `send_sync_response_to_listener` so a peer's
+    /// correlation and timestamps are never broadcast to other listeners.
     pub fn send_sync_response(
         &self,
         correlation_id: u64,
@@ -406,6 +404,31 @@ impl FfiHostTransportHandle {
                 t3_host_send_elapsed_ms: MonotonicMillis::new(t3_host_send_elapsed_ms),
             });
             let delivery = inner.transport.broadcast_sync(&frame)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
+    /// Respond to one admitted listener's clock probe on only that listener's
+    /// authorized UDP synchronization route. A missing/retired identity fails
+    /// closed; the other listeners never receive the correlation or timestamps.
+    pub fn send_sync_response_to_listener(
+        &self,
+        listener_id: String,
+        correlation_id: u64,
+        t1_listener_send_elapsed_ms: u64,
+        t2_host_receive_elapsed_ms: u64,
+        t3_host_send_elapsed_ms: u64,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let listener_id = device_id(listener_id)?;
+            let frame = ProtocolFrame::SyncResponse(SyncResponse {
+                session_id: inner.session_id.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(t1_listener_send_elapsed_ms),
+                t2_host_receive_elapsed_ms: MonotonicMillis::new(t2_host_receive_elapsed_ms),
+                t3_host_send_elapsed_ms: MonotonicMillis::new(t3_host_send_elapsed_ms),
+            });
+            let delivery = inner.transport.send_sync_to_peer(&listener_id, &frame)?;
             Ok(delivery_from(delivery))
         })
     }
