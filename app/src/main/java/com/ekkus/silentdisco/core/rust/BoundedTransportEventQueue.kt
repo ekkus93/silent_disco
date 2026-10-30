@@ -94,8 +94,14 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
         }
     }
 
-    /** Required control/terminal event: wait for bounded consumer capacity. */
+    /**
+     * Required control/terminal event: wait for bounded consumer capacity.
+     * An old native poller may finish decoding after rebind cleared its queue.
+     * Refuse that retired generation before it can occupy new-session slots.
+     * The owner cancels any already-suspended old poller during replacement.
+     */
     suspend fun emit(handle: Handle, event: Event) {
+        if (currentHandle() !== handle) return
         select<Unit> {
             channel.onSend(TransportQueueEntry(handle, event, bestEffort = false)) { }
             closed.onAwait { error("Native transport event queue closed") }

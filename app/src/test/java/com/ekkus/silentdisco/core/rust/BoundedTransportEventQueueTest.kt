@@ -218,4 +218,37 @@ class BoundedTransportEventQueueTest {
             .inOrder()
         queue.close()
     }
+
+    @Test
+    fun rapidRebindRejectsRetiredCriticalFloodWithoutStarvingFreshJoinStop() = runTest {
+        val gate = HostNativeHandleGate<Any>()
+        val queue = BoundedTransportEventQueue<Any, String>(gate::currentHandle, capacity = 4)
+        var retired: Any? = null
+        repeat(128) { generation ->
+            val fresh = Any()
+            gate.replace(
+                retire = {},
+                open = { fresh },
+                start = { queue.discardRetiredEvents() },
+            )
+            // A poller may have passed its outer generation check before
+            // close/rebind. Its late authoritative events must not occupy the
+            // replacement's bounded bridge while the UI collector is stopped.
+            retired?.let { stale ->
+                repeat(100) { queue.emit(stale, "retired-$generation-$it") }
+            }
+            queue.emit(fresh, "join-$generation")
+            queue.tryEmit(fresh, "audio-$generation")
+            queue.emit(fresh, "stop-$generation")
+            retired = fresh
+        }
+        val received = backgroundScope.async { queue.events.take(3).toList() }
+        runCurrent()
+        assertThat(received.await())
+            .containsExactly("join-127", "audio-127", "stop-127").inOrder()
+        assertThat(queue.droppedBestEffort).isEqualTo(0)
+        gate.close { queue.discardRetiredEvents() }
+        queue.close()
+    }
+
 }
