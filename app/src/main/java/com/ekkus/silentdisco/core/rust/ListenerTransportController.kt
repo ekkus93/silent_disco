@@ -5,9 +5,11 @@ import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -129,7 +131,10 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override suspend fun disconnect(reason: String) {
-        withContext(Dispatchers.IO) {
+        // A cancelled listener effect must still retire its native socket and
+        // poller. Otherwise a late approval/Stop can arrive from a connection
+        // the Rust actor already considers disconnected. Do not block Main.
+        retireListenerTransportOffMain {
             handleGate.close { handle ->
                 try {
                     retireHandle(handle, reason)
@@ -294,4 +299,17 @@ internal fun isPeerClosedDisconnectWriteFailure(error: FfiListenerTransportExcep
     if (!message.startsWith(prefix, ignoreCase = true)) return false
     val detail = message.substring(prefix.length).lowercase()
     return listOf("broken pipe", "connection reset", "connection aborted").any(detail::contains)
+}
+
+/**
+ * Complete listener socket/poller retirement even if the caller is cancelled
+ * while queued behind another IO operation. Exceptions still propagate.
+ */
+internal suspend fun retireListenerTransportOffMain(
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    retire: () -> Unit,
+) {
+    withContext(NonCancellable + dispatcher) {
+        retire()
+    }
 }
