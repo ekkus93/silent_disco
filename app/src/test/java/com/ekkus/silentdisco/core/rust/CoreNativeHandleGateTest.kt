@@ -103,4 +103,75 @@ class CoreNativeHandleGateTest {
         assertThat(runCatching { gate.withOpen { } }.isFailure).isTrue()
         gate.close()
     }
+
+    @Test
+    fun failedFirstSnapshotInitializationRetiresEveryNativeActorBeforeRetry() {
+        val opened = AtomicInteger()
+        val retired = mutableListOf<Int>()
+        val gate = CoreNativeHandleGate(
+            open = {
+                openInitializedNativeHandle(
+                    open = { opened.incrementAndGet() },
+                    initialize = { if (it <= 128) error("initial snapshot unavailable") },
+                    retire = { retired.add(it) },
+                )
+            },
+            retire = { retired.add(it) },
+        )
+        repeat(128) {
+            val failure = runCatching { gate.withOpen { it } }.exceptionOrNull()
+            assertThat(failure).isInstanceOf(IllegalStateException::class.java)
+            assertThat(failure?.message).contains("initial snapshot unavailable")
+            // Failed open must not be cached as an apparently usable handle.
+            val existing: Int? = gate.withExisting { it }
+            assertThat(existing).isNull()
+            assertThat(retired).hasSize(it + 1)
+        }
+        assertThat(gate.withOpen { it }).isEqualTo(129)
+        gate.close()
+        gate.close()
+        assertThat(opened.get()).isEqualTo(129)
+        assertThat(retired).containsExactlyElementsIn(1..129).inOrder()
+    }
+
+    @Test
+    fun initializationFailurePreservesPrimaryErrorAndNativeTeardownFailures() {
+        val primary = IllegalArgumentException("snapshot decode failed")
+        val shutdown = IllegalStateException("shutdown failed")
+        val close = IllegalStateException("close failed")
+        val calls = mutableListOf<String>()
+        val failure = runCatching {
+            openInitializedNativeHandle(
+                open = { "native-actor" },
+                initialize = { throw primary },
+                retire = {
+                    retireNativeHandle(
+                        it,
+                        shutdown = { calls.add("shutdown"); throw shutdown },
+                        close = { calls.add("close"); throw close },
+                    )
+                },
+            )
+        }.exceptionOrNull()
+        assertThat(failure).isSameInstanceAs(primary)
+        assertThat(calls).containsExactly("shutdown", "close").inOrder()
+        assertThat(primary.suppressed).asList().containsExactly(shutdown)
+        assertThat(shutdown.suppressed).asList().containsExactly(close)
+    }
+
+    @Test
+    fun nativeAllocationFailureDoesNotAttemptToRetireUnallocatedHandle() {
+        val allocated = IllegalStateException("native allocation failed")
+        val retirementCount = AtomicInteger()
+        val failure = runCatching {
+            openInitializedNativeHandle(
+                open = { throw allocated },
+                initialize = { error("cannot initialize missing actor") },
+                retire = { retirementCount.incrementAndGet() },
+            )
+        }.exceptionOrNull()
+        assertThat(failure).isSameInstanceAs(allocated)
+        assertThat(retirementCount.get()).isEqualTo(0)
+    }
+
 }

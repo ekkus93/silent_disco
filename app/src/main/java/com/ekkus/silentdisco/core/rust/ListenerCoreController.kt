@@ -47,9 +47,13 @@ class UniFfiListenerCoreController(
     private val closed = AtomicBoolean(false)
     private val nativeGate = CoreNativeHandleGate(
         open = {
-            FfiCoreHandle.open(localDeviceId, observer).also { opened ->
-                _snapshots.value = opened.currentSnapshot()
-            }
+            openInitializedNativeHandle(
+                open = { FfiCoreHandle.open(localDeviceId, observer) },
+                initialize = { _snapshots.value = it.currentSnapshot() },
+                retire = {
+                    retireNativeHandle(it, shutdown = { handle -> handle.shutdown() }, close = { handle -> handle.close() })
+                },
+            )
         },
         retire = {
             retireNativeHandle(it, shutdown = { handle -> handle.shutdown() }, close = { handle -> handle.close() })

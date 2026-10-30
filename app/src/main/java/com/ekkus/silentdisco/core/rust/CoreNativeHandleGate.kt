@@ -35,3 +35,31 @@ internal class CoreNativeHandleGate<H : Any>(
         if (handle != null) retire(handle)
     }
 }
+
+/**
+ * A native handle must be retired if its first snapshot/observer initialization
+ * fails. An exception from initialization happens *after* UniFFI allocates the
+ * native actor but before [CoreNativeHandleGate] can take ownership; without
+ * this transaction the unreachable native actor would leak across retries.
+ *
+ * Preserve the original initialization failure even when shutdown/close also
+ * fails. The gate may retry opening on a later command.
+ */
+internal fun <H : Any> openInitializedNativeHandle(
+    open: () -> H,
+    initialize: (H) -> Unit,
+    retire: (H) -> Unit,
+): H {
+    val handle = open()
+    try {
+        initialize(handle)
+        return handle
+    } catch (failure: Throwable) {
+        try {
+            retire(handle)
+        } catch (cleanup: Throwable) {
+            if (cleanup !== failure) failure.addSuppressed(cleanup)
+        }
+        throw failure
+    }
+}
