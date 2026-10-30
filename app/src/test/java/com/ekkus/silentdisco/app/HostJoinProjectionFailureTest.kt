@@ -46,7 +46,10 @@ class HostJoinProjectionFailureTest {
         Mockito.`when`(native.sendJoinRejection("listener-1", "host_busy"))
             .thenReturn(FfiHostTransportDelivery(1u, 1u, 0u, 24uL))
         val transport = HostTransportController(
-            callDispatcher = dispatcher,
+            // The refusal job runs on real IO; injecting a virtual dispatcher
+            // here can park native delivery while Mockito verification blocks
+            // the test thread that must advance virtual time.
+            callDispatcher = Dispatchers.IO,
             bindHandle = { _, _, _, _, _ -> native },
         )
         val harness = newTestMainViewModelHarness(hostTransportController = transport)
@@ -71,7 +74,10 @@ class HostJoinProjectionFailureTest {
         Mockito.`when`(native.sendJoinRejection("overflow-listener", "host_busy"))
             .thenReturn(FfiHostTransportDelivery(1u, 1u, 0u, 24uL))
         val transport = HostTransportController(
-            callDispatcher = dispatcher,
+            // The refusal job runs on real IO; injecting a virtual dispatcher
+            // here can park native delivery while Mockito verification blocks
+            // the test thread that must advance virtual time.
+            callDispatcher = Dispatchers.IO,
             bindHandle = { _, _, _, _, _ -> native },
         )
         val harness = newTestMainViewModelHarness(hostTransportController = transport)
@@ -113,7 +119,10 @@ class HostJoinProjectionFailureTest {
         Mockito.`when`(native.sendJoinRejection("listener-1", "host_busy"))
             .thenReturn(FfiHostTransportDelivery(1u, 0u, 1u, 0uL))
         val transport = HostTransportController(
-            callDispatcher = dispatcher,
+            // The refusal job runs on real IO; injecting a virtual dispatcher
+            // here can park native delivery while Mockito verification blocks
+            // the test thread that must advance virtual time.
+            callDispatcher = Dispatchers.IO,
             bindHandle = { _, _, _, _, _ -> native },
         )
         val harness = newTestMainViewModelHarness(hostTransportController = transport)
