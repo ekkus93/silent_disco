@@ -17,7 +17,7 @@ internal fun MainViewModel.respondToSyncRequest(
     sourceHandle: FfiHostTransportHandle,
 ) {
     val t2HostReceiveElapsedMs = SystemClock.elapsedRealtime().toULong()
-    viewModelScope.launch(Dispatchers.IO) {
+    val admitted = hostRecoveryDispatch.launchSync(viewModelScope, Dispatchers.IO) {
         try {
             val listenerId = checkNotNull(event.listenerId) {
                 "Clock synchronization request had no authorized listener identity"
@@ -33,6 +33,17 @@ internal fun MainViewModel.respondToSyncRequest(
             throw cancelled
         } catch (error: Exception) {
             reportRustHostCommandFailure("send sync response", error)
+        }
+    }
+    if (!admitted) {
+        // Clock probes are retriable; refuse an unbounded backlog of IO
+        // continuations and surface a sampled error rather than flooding UI.
+        val rejected = hostRecoveryDispatch.rejectedSyncRequests
+        if (rejected == 1L || rejected % 64L == 0L) {
+            reportRustHostCommandFailure(
+                "send sync response",
+                IllegalStateException("Host clock-sync delivery saturated ($rejected refusals)"),
+            )
         }
     }
 }

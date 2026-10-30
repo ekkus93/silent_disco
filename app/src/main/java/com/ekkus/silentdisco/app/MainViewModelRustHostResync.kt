@@ -17,7 +17,12 @@ internal fun MainViewModel.replayHostControlsForResync(
     event: FfiHostTransportEvent.ResyncNotice,
     sourceHandle: FfiHostTransportHandle,
 ) {
-    viewModelScope.launch(Dispatchers.IO) {
+    // Duplicate recovery notices for the same listener/session are
+    // coalesced: the in-flight native replay reads the authoritative Rust
+    // snapshot at send time, so new redundant jobs cannot pile up.
+    hostRecoveryDispatch.launchResync(
+        viewModelScope, Dispatchers.IO, sourceHandle, event.listenerId,
+    ) {
         try {
             // A retired host generation returns null. A stopped host replays
             // its terminal Stop to an admitted listener, never a retired

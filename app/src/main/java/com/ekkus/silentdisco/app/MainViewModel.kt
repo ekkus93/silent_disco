@@ -205,6 +205,7 @@ class MainViewModel @JvmOverloads constructor(
      * belong in Rust-owned join-request state.
      */
     internal val pendingListenerDatagramPorts = PendingHostJoinRoutes<FfiHostTransportHandle>()
+    internal val hostRecoveryDispatch = HostRecoveryDispatch()
 
     init {
         cleanupOrphanedAudioReadGrants()
