@@ -355,9 +355,10 @@ class HostStreamFailureStopTest {
         val clock = { testScheduler.currentTime }
         val transport = RecordingHostTransportHandle(clock)
         val harness = newTestMainViewModelHarness(
-            hostTransportController = HostTransportController(callDispatcher = dispatcher) { _, _, _, _, _ ->
-                transport
-            },
+            hostTransportController = HostTransportController(
+                callDispatcher = dispatcher,
+                bindHandle = { _, _, _, _, _ -> transport },
+            ),
             hostElapsedRealtimeMs = clock,
             hostStreamDispatcher = dispatcher,
         )
