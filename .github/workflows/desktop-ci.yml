@@ -339,9 +339,9 @@ jobs:
           fi
           echo "::notice::Privileged package lifecycle acceptance remains unqualified."
 
-      # Required real packaged WebKit2GTK pixel smoke at default and compact
-      # viewports. Visual parity/golden approval remains a separate review gate.
-      - name: Capture packaged Tauri WebKit window pixels
+      # Required packaged WebKit2GTK pixel smoke at default/compact viewports,
+      # including keyboard navigation to Settings. Golden approval remains separate.
+      - name: Capture packaged Tauri WebKit startup and Settings pixels
         shell: bash
         run: |
           set -euo pipefail

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real packaged Tauri WebKit2GTK pixel capture; no mock or golden update.
+# Real packaged Tauri WebKit2GTK startup and keyboard-navigated Settings pixels.
 set -euo pipefail
 
 if [[ "$1" == "--inside" ]]; then
@@ -78,6 +78,34 @@ if [[ "$1" == "--inside" ]]; then
   fi
   sleep 0.5
   capture_pixels "$compact_output" "compact"
+
+  # Exercise the real packaged WebKit tablist with keyboard navigation.
+  # Settings is the final destination in the standard (non-lab) build.
+  # No frontend mock, debug flag or DOM snapshot is used here.
+  xdotool windowfocus --sync "$window"
+  xdotool key --clearmodifiers Tab
+  xdotool key --clearmodifiers Home
+  xdotool key --clearmodifiers End
+  sleep 2
+  settings_compact="${output%.png}-settings-compact.png"
+  capture_pixels "$settings_compact" "settings compact"
+
+  # Require a meaningful visual state change, not merely a screenshot of
+  # the unchanged host startup screen. Both captures share one viewport.
+  set +e
+  settings_difference="$(compare -metric AE "$compact_output" "$settings_compact" null: 2>&1)"
+  settings_compare_status=$?
+  set -e
+  settings_difference="${settings_difference%% *}"
+  if (( settings_compare_status > 1 )) || [[ ! "$settings_difference" =~ ^[0-9]+$ ]] || (( settings_difference < 760 * 560 / 100 )); then
+    echo "Packaged WebKit keyboard navigation did not visibly reach Settings: $settings_difference changed pixels." >&2
+    exit 1
+  fi
+  echo "Packaged WebKit keyboard navigation changed $settings_difference compact pixels."
+
+  xdotool windowsize "$window" 1000 700
+  sleep 0.5
+  capture_pixels "${output%.png}-settings.png" "settings default"
   exit 0
 fi
 
@@ -116,12 +144,19 @@ done
 # The two captures must contain identical pixels at BOTH window sizes. This
 # is a reproducibility gate, not an approved golden or cross-platform parity
 # assertion. Compare decoded pixels (not PNG metadata/compression bytes).
-for label in default compact; do
+for label in default compact settings settings-compact; do
   original="$output"
   repeated="${output%.png}-repeat.png"
   if [[ "$label" == compact ]]; then
     original="${output%.png}-compact.png"
     repeated="${output%.png}-repeat-compact.png"
+  fi
+  if [[ "$label" == settings ]]; then
+    original="${output%.png}-settings.png"
+    repeated="${output%.png}-repeat-settings.png"
+  elif [[ "$label" == settings-compact ]]; then
+    original="${output%.png}-settings-compact.png"
+    repeated="${output%.png}-repeat-settings-compact.png"
   fi
   dimensions="$(identify -format '%wx%h' "$original")"
   if [[ "$dimensions" != "$(identify -format '%wx%h' "$repeated")" ]]; then
