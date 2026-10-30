@@ -27,9 +27,9 @@ mod bind;
 mod broadcast;
 #[cfg(test)]
 mod duplicate_join_tests;
-mod lookup;
 #[cfg(test)]
 mod host_only_control_injection_tests;
+mod lookup;
 #[cfg(test)]
 mod multi_peer_control_pressure_tests;
 mod node;

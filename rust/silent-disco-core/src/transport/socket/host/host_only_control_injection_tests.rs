@@ -12,8 +12,8 @@ use crate::transport::test_support::{
     wait_for_control_from, wait_for_frame, wait_for_host_event,
 };
 use crate::transport::{
-    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
-    ListenerDatagramRoutes, ManualTransportClock, SocketTransportFactory, TransportChannel,
+    HostTransportConfig, HostTransportNode, ListenerDatagramRoutes, ListenerTransportConfig,
+    ListenerTransportNode, ManualTransportClock, SocketTransportFactory, TransportChannel,
     TransportErrorKind, TransportEvent, TransportFactory,
 };
 
@@ -188,7 +188,13 @@ fn forged_listener_stop_is_rejected_without_disrupting_other_peer_pcm_or_replay(
     wait_for_frame(healthy.as_mut(), TransportChannel::Control, |frame| {
         frame == &ProtocolFrame::Control(stop.clone())
     });
-    assert!(host.playback_controls.lock().expect("cache").snapshot().is_empty());
+    assert!(
+        host.playback_controls
+            .lock()
+            .expect("cache")
+            .snapshot()
+            .is_empty()
+    );
 
     // A fresh TCP generation using the same unverified legacy ID must join
     // explicitly and must not inherit the old route or retired playback.
