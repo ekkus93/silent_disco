@@ -152,10 +152,10 @@ impl SocketHostTransport {
         Ok(())
     }
 
-    fn send_cached_playback_controls(
+    pub(super) fn send_cached_playback_controls(
         &self,
         peer: &super::peer::PeerState,
-    ) -> Result<(), TransportError> {
+    ) -> Result<u64, TransportError> {
         let controls = self
             .playback_controls
             .lock()
@@ -167,6 +167,7 @@ impl SocketHostTransport {
                 )
             })?
             .snapshot_at(self.clock.now());
+        let mut total_bytes = 0_u64;
         for message in controls {
             let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
                 .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
@@ -175,7 +176,8 @@ impl SocketHostTransport {
             let written = result?;
             self.counters.frame_sent(written);
             self.update_silence_clock(peer, &message);
+            total_bytes = total_bytes.saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
         }
-        Ok(())
+        Ok(total_bytes)
     }
 }

@@ -57,6 +57,20 @@ pub trait HostTransportNode: Send {
         device_id: &DeviceId,
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError>;
+    /// Replays the authoritative current StreamStart, upcoming boundaries and
+    /// Pause to one already-authorized listener after its recovery request.
+    /// Socket hosts serialize this snapshot with live broadcasts and joins.
+    fn replay_cached_playback_to_peer(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<TransportDelivery, TransportError> {
+        let _ = device_id;
+        Err(TransportError::new(
+            super::TransportErrorKind::Delivery,
+            super::TransportChannel::Control,
+            "cached playback recovery is unavailable on this transport",
+        ))
+    }
     fn broadcast_control(
         &self,
         message: &ControlMessage,

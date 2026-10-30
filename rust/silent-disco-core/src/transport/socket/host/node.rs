@@ -235,6 +235,32 @@ impl HostTransportNode for SocketHostTransport {
         }
     }
 
+    fn replay_cached_playback_to_peer(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<TransportDelivery, TransportError> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(shutting_down_error());
+        }
+        // A live boundary, Stop, or same-ID reconnect cannot interleave
+        // with the requested recovery snapshot or change its target route.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
+        let peer = self.peer_for_device(device_id)?;
+        let bytes = self.send_cached_playback_controls(&peer)?;
+        if bytes == 0 {
+            // A stopped/idle host has no active playback to replay.
+            Ok(TransportDelivery::new(0, 0, 0, 0))
+        } else {
+            Ok(TransportDelivery::new(1, 1, 0, bytes))
+        }
+    }
+
     fn broadcast_control(
         &self,
         message: &ControlMessage,

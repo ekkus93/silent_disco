@@ -63,11 +63,11 @@ internal fun MainViewModel.handleHostTransportEvent(
                 .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }
         }
         is FfiHostTransportEvent.SyncRequestReceived -> respondToSyncRequest(event, sourceHandle)
+        is FfiHostTransportEvent.ResyncNotice -> replayHostControlsForResync(event, sourceHandle)
         is FfiHostTransportEvent.PeerAccepted,
         is FfiHostTransportEvent.Heartbeat,
-        is FfiHostTransportEvent.ResyncNotice,
         is FfiHostTransportEvent.Rejected,
-        -> Unit // diagnostic-only for this pass; resync notices are out of scope until Block 23
+        -> Unit // best-effort connection diagnostics
     }
 }
 

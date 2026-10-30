@@ -141,6 +141,14 @@ class HostTransportController(
     suspend fun disconnectPeer(listenerId: String, reason: String): FfiHostTransportDelivery? =
         withHandle { it.disconnectPeer(listenerId, reason) }
 
+    /** Replay only to the admitted peer of the native session that requested recovery. */
+    internal suspend fun replayCachedPlaybackForGeneration(
+        expected: FfiHostTransportHandle,
+        listenerId: String,
+    ): FfiHostTransportDelivery? = withContext(callDispatcher) {
+        handleGate.withExpected(expected) { it.replayCachedPlaybackToListener(listenerId) }
+    }
+
     suspend fun broadcastStreamStart(
         streamId: String,
         hostStartTimeMs: Long,

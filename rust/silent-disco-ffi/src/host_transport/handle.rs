@@ -268,6 +268,20 @@ impl FfiHostTransportHandle {
         })
     }
 
+    /// Recover one admitted listener from the host's authoritative playback
+    /// cache. No caller-provided StreamStart or boundary may override the
+    /// transport's current generation, and an idle host sends no replay.
+    pub fn replay_cached_playback_to_listener(
+        &self,
+        listener_id: String,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        self.with_transport(|inner| {
+            let listener_id = device_id(listener_id)?;
+            let delivery = inner.transport.replay_cached_playback_to_peer(&listener_id)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
     /// Broadcasts a pause announcement to every connected listener.
     pub fn broadcast_pause(
         &self,
