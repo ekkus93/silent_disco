@@ -20,22 +20,30 @@ impl SocketHostTransport {
                 "peer registry is poisoned",
             )
         })?;
-        peers
-            .values()
-            .filter(|peer| {
-                peer.active.load(Ordering::Acquire)
-                    && !peer.authorized.load(Ordering::Acquire)
-                    && peer.device_id().as_ref() == Some(device_id)
-            })
-            .max_by_key(|peer| peer.number)
-            .cloned()
-            .ok_or_else(|| {
-                TransportError::new(
-                    TransportErrorKind::PeerNotFound,
-                    TransportChannel::Control,
-                    "identified pending control peer is not connected",
-                )
-            })
+        let mut candidates = peers.values().filter(|peer| {
+            peer.active.load(Ordering::Acquire)
+                && !peer.authorized.load(Ordering::Acquire)
+                && peer.device_id().as_ref() == Some(device_id)
+        });
+        let peer = candidates.next().cloned().ok_or_else(|| {
+            TransportError::new(
+                TransportErrorKind::PeerNotFound,
+                TransportChannel::Control,
+                "identified pending control peer is not connected",
+            )
+        })?;
+        // Legacy v3 exposes only a self-claimed device ID to the approval
+        // API. Selecting the newest of two pending TCP generations could
+        // authorize a different connection from the one the host approved.
+        // Refuse ambiguous admission until one generation disconnects.
+        if candidates.next().is_some() {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "multiple pending TCP peers claim the same device ID; admission is ambiguous",
+            ));
+        }
+        Ok(peer)
     }
 
     pub(super) fn peer_for_device(

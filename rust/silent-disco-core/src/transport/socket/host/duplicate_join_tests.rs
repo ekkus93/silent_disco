@@ -92,3 +92,66 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
     replacement.shutdown().expect("close current TCP");
     host.shutdown().expect("close host");
 }
+
+#[test]
+fn simultaneous_pending_same_id_connections_cannot_steal_approval() {
+    use crate::transport::test_support::wait_for_host_event;
+
+    let session = id_session("ambiguous-pending-admission");
+    let device = id_device("shared-claimed-id");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production host");
+    let factory = SocketTransportFactory;
+    let mut first = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock.clone(),
+        )
+        .expect("first pending connection");
+    first
+        .send_control(&join_request(&session, &device, "Original pending join"))
+        .expect("first join");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    let mut second = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("second pending connection");
+    second
+        .send_control(&join_request(&session, &device, "Conflicting pending join"))
+        .expect("second join");
+    wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+
+    // The host may have approved the first request, but the old
+    // device-ID-only lookup would authorize the newest TCP generation.
+    let error = host
+        .authorize_peer(&device, second.local_routes())
+        .expect_err("ambiguous claimed identity must not authorize either peer");
+    assert_eq!(error.kind, TransportErrorKind::Unauthorized);
+    assert!(
+        host.routes.lock().expect("route registry").get(&device).is_none(),
+        "failed admission must not publish a UDP route"
+    );
+
+    // Once the first pending generation actually disconnects, a fresh
+    // decision may authorize the remaining generation without poisoning it.
+    first.shutdown().expect("retire first pending connection");
+    drop(wait_for_host_event(&mut host, |event| {
+        matches!(event, TransportEvent::PeerDisconnected { peer, .. }
+            if peer.device_id.as_ref() == Some(&device))
+    }));
+    host.authorize_peer(&device, second.local_routes())
+        .expect("unambiguous remaining generation can be authorized");
+    wait_for_authorized(&mut host, &device);
+    second.shutdown().expect("retire second connection");
+    host.shutdown().expect("host shutdown");
+}
