@@ -112,6 +112,267 @@ fn join_approve_and_authorize(
     device_id
 }
 
+fn assert_stream_start_and_boundary(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    listener_b: &FfiListenerTransportHandle,
+) {
+    let start = host
+        .broadcast_stream_start(
+            "ffi-multi-stream".to_owned(),
+            1_000,
+            48_000,
+            2,
+            240,
+            Some("first".to_owned()),
+            Some("First track".to_owned()),
+        )
+        .expect("broadcast authoritative stream");
+    assert_eq!(start.successful_peers, 2);
+    for listener in [listener_a, listener_b] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::StreamStarted { .. }
+            )),
+            FfiListenerTransportEvent::StreamStarted {
+                stream_id,
+                current_entry_id: Some(entry),
+                ..
+            } if stream_id == "ffi-multi-stream" && entry == "first"
+        ));
+    }
+    assert_eq!(
+        host.broadcast_track_boundary(
+            "ffi-multi-stream".to_owned(),
+            240,
+            "second".to_owned(),
+            "Second track".to_owned(),
+        )
+        .expect("announce sample-indexed boundary")
+        .successful_peers,
+        2
+    );
+    for listener in [listener_a, listener_b] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::TrackBoundary { .. }
+            )),
+            FfiListenerTransportEvent::TrackBoundary {
+                first_sample_index: 240,
+                ..
+            }
+        ));
+    }
+
+}
+
+fn assert_targeted_clock_sync(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    listener_b: &FfiListenerTransportHandle,
+    a_id: &str,
+) {
+    // The FFI production transport must preserve per-listener correlation:
+    // B must not observe A's synchronization datagram.
+    listener_a
+        .send_sync_request(71, 7_100)
+        .expect("send A's clock probe");
+    let request = poll_host_until(host, |event| {
+        matches!(event, FfiHostTransportEvent::SyncRequestReceived { .. })
+    });
+    assert!(matches!(
+        request,
+        FfiHostTransportEvent::SyncRequestReceived {
+            listener_id: Some(ref id),
+            correlation_id: 71,
+            ..
+        } if id.as_str() == a_id
+    ));
+    assert_eq!(
+        host.send_sync_response_to_listener(a_id.to_owned(), 71, 7_100, 7_101, 7_102)
+            .expect("target A only")
+            .successful_peers,
+        1
+    );
+    assert!(matches!(
+        poll_listener_until(listener_a, |event| matches!(
+            event,
+            FfiListenerTransportEvent::SyncResponseReceived { .. }
+        )),
+        FfiListenerTransportEvent::SyncResponseReceived {
+            correlation_id: 71,
+            ..
+        }
+    ));
+    assert!(
+        listener_b
+            .poll_event(150)
+            .expect("poll unrelated listener")
+            .is_none(),
+        "listener B must not receive A's private sync response"
+    );
+    assert!(
+        host.send_sync_response_to_listener("unknown-ffi-peer".to_owned(), 72, 7_100, 7_101, 7_102)
+            .is_err(),
+        "unknown peer cannot receive a targeted synchronization response"
+    );
+
+}
+
+fn assert_pause_recovery(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    listener_b: &FfiListenerTransportHandle,
+    a_id: &str,
+) {
+    // A pause and explicit recovery replay must preserve the same stream,
+    // boundary sample index, and paused timeline.
+    assert_eq!(
+        host.broadcast_pause("ffi-multi-stream".to_owned(), 1_250)
+            .expect("pause both listeners")
+            .successful_peers,
+        2
+    );
+    for listener in [listener_a, listener_b] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::Paused { .. }
+            )),
+            FfiListenerTransportEvent::Paused {
+                host_pause_time_ms: 1_250,
+                ..
+            }
+        ));
+    }
+    host.replay_cached_playback_to_listener(a_id.to_owned())
+        .expect("replay authoritative paused state");
+    assert!(matches!(
+        poll_listener_until(listener_a, |event| matches!(
+            event,
+            FfiListenerTransportEvent::StreamStarted { .. }
+        )),
+        FfiListenerTransportEvent::StreamStarted { stream_id, .. }
+            if stream_id == "ffi-multi-stream"
+    ));
+    assert!(matches!(
+        poll_listener_until(listener_a, |event| matches!(
+            event,
+            FfiListenerTransportEvent::TrackBoundary { .. }
+        )),
+        FfiListenerTransportEvent::TrackBoundary {
+            first_sample_index: 240,
+            ..
+        }
+    ));
+    assert!(matches!(
+        poll_listener_until(listener_a, |event| matches!(
+            event,
+            FfiListenerTransportEvent::Paused { .. }
+        )),
+        FfiListenerTransportEvent::Paused {
+            host_pause_time_ms: 1_250,
+            ..
+        }
+    ));
+
+}
+
+fn assert_terminal_stop(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    listener_b: &FfiListenerTransportHandle,
+) {
+    let stopped = host
+        .broadcast_stop("ffi-multi-stream".to_owned(), 1_300)
+        .expect("stop original stream");
+    assert_eq!(stopped.successful_peers, 2);
+    for listener in [listener_a, listener_b] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::Stopped { .. }
+            )),
+            FfiListenerTransportEvent::Stopped {
+                host_stop_time_ms: 1_300,
+                ..
+            }
+        ));
+    }
+
+}
+
+fn assert_fresh_pcm(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    listener_b: &FfiListenerTransportHandle,
+) {
+    // A new Play creates a fresh stream identity; the new PCM must arrive
+    // exactly at its new sample origin rather than from the stopped cache.
+    assert_eq!(
+        host.broadcast_stream_start(
+            "ffi-fresh-stream".to_owned(),
+            2_000,
+            48_000,
+            2,
+            240,
+            Some("replay".to_owned()),
+            Some("Replay".to_owned()),
+        )
+        .expect("fresh Play")
+        .successful_peers,
+        2
+    );
+    for listener in [listener_a, listener_b] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::StreamStarted { .. }
+            )),
+            FfiListenerTransportEvent::StreamStarted { stream_id, .. }
+                if stream_id == "ffi-fresh-stream"
+        ));
+    }
+    let pcm: Vec<u8> = (0..960_u32)
+        .map(|index| u8::try_from((index * 13) % 256).expect("byte"))
+        .collect();
+    assert_eq!(
+        host.broadcast_audio(
+            "ffi-fresh-stream".to_owned(),
+            0,
+            48_000,
+            2,
+            240,
+            0,
+            2_000,
+            pcm.clone(),
+        )
+        .expect("send fresh PCM")
+        .successful_peers,
+        2
+    );
+    for listener in [listener_a, listener_b] {
+        assert_eq!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::AudioReceived { .. }
+            )),
+            FfiListenerTransportEvent::AudioReceived {
+                stream_id: "ffi-fresh-stream".to_owned(),
+                sequence: 0,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: 240,
+                first_sample_index: 0,
+                host_presentation_time_ms: 2_000,
+                payload: pcm.clone(),
+            }
+        );
+    }
+}
+
 #[test]
 fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
     let (control_port, sync_port, audio_port) = available_host_ports();
@@ -146,238 +407,19 @@ fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
     let a_id = join_approve_and_authorize(&host, &listener_a, "Listener A");
     let b_id = join_approve_and_authorize(&host, &listener_b, "Listener B");
 
-    let start = host
-        .broadcast_stream_start(
-            "ffi-multi-stream".to_owned(),
-            1_000,
-            48_000,
-            2,
-            240,
-            Some("first".to_owned()),
-            Some("First track".to_owned()),
-        )
-        .expect("broadcast authoritative stream");
-    assert_eq!(start.successful_peers, 2);
-    for listener in [&listener_a, &listener_b] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::StreamStarted { .. }
-            )),
-            FfiListenerTransportEvent::StreamStarted {
-                stream_id,
-                current_entry_id: Some(entry),
-                ..
-            } if stream_id == "ffi-multi-stream" && entry == "first"
-        ));
-    }
+    assert_stream_start_and_boundary(&host, &listener_a, &listener_b);
+    assert_targeted_clock_sync(&host, &listener_a, &listener_b, &a_id);
+    assert_pause_recovery(&host, &listener_a, &listener_b, &a_id);
+    assert_terminal_stop(&host, &listener_a, &listener_b);
+    assert_fresh_pcm(&host, &listener_a, &listener_b);
     assert_eq!(
-        host.broadcast_track_boundary(
-            "ffi-multi-stream".to_owned(),
-            240,
-            "second".to_owned(),
-            "Second track".to_owned(),
-        )
-        .expect("announce sample-indexed boundary")
-        .successful_peers,
-        2
-    );
-    for listener in [&listener_a, &listener_b] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::TrackBoundary { .. }
-            )),
-            FfiListenerTransportEvent::TrackBoundary {
-                first_sample_index: 240,
-                ..
-            }
-        ));
-    }
-
-    // The FFI production transport must preserve per-listener correlation:
-    // B must not observe A's synchronization datagram.
-    listener_a
-        .send_sync_request(71, 7_100)
-        .expect("send A's clock probe");
-    let request = poll_host_until(&host, |event| matches!(
-        event,
-        FfiHostTransportEvent::SyncRequestReceived { .. }
-    ));
-    assert!(matches!(
-        request,
-        FfiHostTransportEvent::SyncRequestReceived {
-            listener_id: Some(ref id),
-            correlation_id: 71,
-            ..
-        } if id == &a_id
-    ));
-    assert_eq!(
-        host.send_sync_response_to_listener(a_id.clone(), 71, 7_100, 7_101, 7_102)
-            .expect("target A only")
-            .successful_peers,
-        1
-    );
-    assert!(matches!(
-        poll_listener_until(&listener_a, |event| matches!(
-            event,
-            FfiListenerTransportEvent::SyncResponseReceived { .. }
-        )),
-        FfiListenerTransportEvent::SyncResponseReceived {
-            correlation_id: 71,
-            ..
-        }
-    ));
-    assert!(
-        listener_b.poll_event(150).expect("poll unrelated listener").is_none(),
-        "listener B must not receive A's private sync response"
-    );
-    assert!(
-        host.send_sync_response_to_listener(
-            "unknown-ffi-peer".to_owned(), 72, 7_100, 7_101, 7_102
-        )
-        .is_err(),
-        "unknown peer cannot receive a targeted synchronization response"
-    );
-
-    // A pause and explicit recovery replay must preserve the same stream,
-    // boundary sample index, and paused timeline.
-    assert_eq!(
-        host.broadcast_pause("ffi-multi-stream".to_owned(), 1_250)
-            .expect("pause both listeners")
-            .successful_peers,
-        2
-    );
-    for listener in [&listener_a, &listener_b] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::Paused { .. }
-            )),
-            FfiListenerTransportEvent::Paused {
-                host_pause_time_ms: 1_250,
-                ..
-            }
-        ));
-    }
-    host.replay_cached_playback_to_listener(a_id)
-        .expect("replay authoritative paused state");
-    assert!(matches!(
-        poll_listener_until(&listener_a, |event| matches!(
-            event,
-            FfiListenerTransportEvent::StreamStarted { .. }
-        )),
-        FfiListenerTransportEvent::StreamStarted { stream_id, .. }
-            if stream_id == "ffi-multi-stream"
-    ));
-    assert!(matches!(
-        poll_listener_until(&listener_a, |event| matches!(
-            event,
-            FfiListenerTransportEvent::TrackBoundary { .. }
-        )),
-        FfiListenerTransportEvent::TrackBoundary {
-            first_sample_index: 240,
-            ..
-        }
-    ));
-    assert!(matches!(
-        poll_listener_until(&listener_a, |event| matches!(
-            event,
-            FfiListenerTransportEvent::Paused { .. }
-        )),
-        FfiListenerTransportEvent::Paused {
-            host_pause_time_ms: 1_250,
-            ..
-        }
-    ));
-
-    let stopped = host
-        .broadcast_stop("ffi-multi-stream".to_owned(), 1_300)
-        .expect("stop original stream");
-    assert_eq!(stopped.successful_peers, 2);
-    for listener in [&listener_a, &listener_b] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::Stopped { .. }
-            )),
-            FfiListenerTransportEvent::Stopped {
-                host_stop_time_ms: 1_300,
-                ..
-            }
-        ));
-    }
-
-    // A new Play creates a fresh stream identity; the new PCM must arrive
-    // exactly at its new sample origin rather than from the stopped cache.
-    assert_eq!(
-        host.broadcast_stream_start(
-            "ffi-fresh-stream".to_owned(),
-            2_000,
-            48_000,
-            2,
-            240,
-            Some("replay".to_owned()),
-            Some("Replay".to_owned()),
-        )
-        .expect("fresh Play")
-        .successful_peers,
-        2
-    );
-    for listener in [&listener_a, &listener_b] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::StreamStarted { .. }
-            )),
-            FfiListenerTransportEvent::StreamStarted { stream_id, .. }
-                if stream_id == "ffi-fresh-stream"
-        ));
-    }
-    let pcm: Vec<u8> = (0..960_u32)
-        .map(|index| u8::try_from((index * 13) % 256).expect("byte"))
-        .collect();
-    assert_eq!(
-        host.broadcast_audio(
-            "ffi-fresh-stream".to_owned(),
-            0,
-            48_000,
-            2,
-            240,
-            0,
-            2_000,
-            pcm.clone(),
-        )
-        .expect("send fresh PCM")
-        .successful_peers,
-        2
-    );
-    for listener in [&listener_a, &listener_b] {
-        assert_eq!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::AudioReceived { .. }
-            )),
-            FfiListenerTransportEvent::AudioReceived {
-                stream_id: "ffi-fresh-stream".to_owned(),
-                sequence: 0,
-                sample_rate: 48_000,
-                channels: 2,
-                samples_per_packet: 240,
-                first_sample_index: 0,
-                host_presentation_time_ms: 2_000,
-                payload: pcm.clone(),
-            }
-        );
-    }
-    assert_eq!(
-        host.disconnect_peer(b_id, "peer B leaving".to_owned())
+        host.disconnect_peer(b_id.to_owned(), "peer B leaving".to_owned())
             .expect("disconnect B")
             .successful_peers,
         1
     );
     assert!(matches!(
-        poll_listener_until(&listener_b, |event| matches!(
+        poll_listener_until(listener_b, |event| matches!(
             event,
             FfiListenerTransportEvent::HostDisconnected { .. }
         )),
