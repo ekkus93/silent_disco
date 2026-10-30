@@ -453,9 +453,9 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
         )
     }));
 
-    // The replacement TCP generation is admitted independently. It receives
-    // no unsolicited old controls until the host explicitly targets it with
-    // the authoritative cached snapshot.
+    // Authorization of the replacement TCP generation automatically replays
+    // the authoritative paused timeline to this listener, not the other peer.
+    // An explicit subsequent resync must replay the same controls again.
     let sent_before_join = host.counters().control_frames_sent;
     let mut replacement = join(
         &mut host,
@@ -464,7 +464,13 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
         &session,
         "reconnecting-listener",
     );
-    assert_eq!(host.counters().control_frames_sent, sent_before_join);
+    assert_eq!(
+        host.counters().control_frames_sent - sent_before_join,
+        3
+    );
+    for control in [&start_control, &boundary, &pause] {
+        expect_controls(replacement.as_ref(), std::slice::from_ref(control));
+    }
     let sent_before_recovery = host.counters().control_frames_sent;
     assert_eq!(
         host.replay_cached_playback_to_peer(&first_id)
