@@ -215,7 +215,10 @@ fn paused_multitrack_recovery_preserves_exact_pcm_and_stop_replay_on_real_socket
         .collect();
     for control in std::iter::once(&original).chain(boundaries.iter()) {
         assert_eq!(
-            host.broadcast_control(control).expect("live control").report.successful_peers,
+            host.broadcast_control(control)
+                .expect("live control")
+                .report
+                .successful_peers,
             2,
         );
         expect_controls(first.as_ref(), std::slice::from_ref(control));
@@ -239,11 +242,16 @@ fn paused_multitrack_recovery_preserves_exact_pcm_and_stop_replay_on_real_socket
     for sequence in 0..2 {
         let packet = pcm(sequence, 1_000 + sequence);
         assert_eq!(
-            host.broadcast_audio(&packet).expect("live PCM").report.successful_peers,
+            host.broadcast_audio(&packet)
+                .expect("live PCM")
+                .report
+                .successful_peers,
             2,
         );
         for listener in [&mut first, &mut other] {
-            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| frame == &packet);
+            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
+                frame == &packet
+            });
         }
     }
 
@@ -323,7 +331,9 @@ fn paused_multitrack_recovery_preserves_exact_pcm_and_stop_replay_on_real_socket
             2,
         );
         for listener in [&mut first, &mut other] {
-            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| frame == &packet);
+            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
+                frame == &packet
+            });
         }
     }
 
@@ -365,7 +375,9 @@ fn paused_multitrack_recovery_preserves_exact_pcm_and_stop_replay_on_real_socket
         3,
     );
     for listener in [&mut first, &mut other, &mut late] {
-        wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| frame == &first_packet);
+        wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
+            frame == &first_packet
+        });
         listener.shutdown().expect("close listener");
     }
     host.shutdown().expect("close host");
