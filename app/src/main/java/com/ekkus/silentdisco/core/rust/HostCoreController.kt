@@ -16,7 +16,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistSource
 import com.ekkus.silentdisco.core.uniffi.FfiTransportState
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,7 +88,14 @@ class UniFfiHostCoreController(
     private val localDeviceId: String,
 ) : HostCoreController {
     private val closed = AtomicBoolean(false)
-    private val handleRef = AtomicReference<FfiCoreHandle?>(null)
+    private val nativeGate = CoreNativeHandleGate(
+        open = {
+            FfiCoreHandle.open(localDeviceId, observer).also { opened ->
+                _snapshots.value = opened.currentSnapshot()
+            }
+        },
+        retire = { retireNativeHandle(it, shutdown = { handle -> handle.shutdown() }, close = { handle -> handle.close() }) },
+    )
     private val commandMutex = Mutex()
     private val _snapshots = MutableStateFlow<FfiCoreSnapshot?>(null)
     private val notificationQueue = BoundedCoreNotificationQueue<FfiCoreNotification>()
@@ -117,9 +123,11 @@ class UniFfiHostCoreController(
         streamId: String,
         hostStartTimeMs: ULong,
         sources: List<FfiPlaylistSource>,
-    ): HostPlaylistStreamController = HostPlaylistStreamController.openAuthoritative(
-        sessionId, streamId, hostStartTimeMs, sources, openHandle(),
-    )
+    ): HostPlaylistStreamController = nativeGate.withOpen { handle ->
+        HostPlaylistStreamController.openAuthoritative(
+            sessionId, streamId, hostStartTimeMs, sources, handle,
+        )
+    }
 
     override suspend fun configureAndCreate(draft: FfiHostDraft) = withContext(Dispatchers.IO) {
         configureAndCreate(draft, emptyList())
@@ -127,28 +135,28 @@ class UniFfiHostCoreController(
 
     override suspend fun configureAndCreate(draft: FfiHostDraft, additionalEntries: List<FfiQueueEntry>) = withContext(Dispatchers.IO) {
         commandMutex.withLock {
-            val handle = openHandle()
-            var snapshot = currentSnapshot(handle)
+            var snapshot = nativeGate.withOpen { currentSnapshot(it) }
             if (snapshot.selectedRole != FfiAppRole.HOST) {
-                snapshot = awaitCommandSnapshot(
-                    handle.selectRole(snapshot.revision, FfiAppRole.HOST).acceptedAtRevision,
-                )
+                val accepted = nativeGate.withOpen {
+                    it.selectRole(snapshot.revision, FfiAppRole.HOST).acceptedAtRevision
+                }
+                snapshot = awaitCommandSnapshot(accepted)
             }
             if (snapshot.hostDraft != draft) {
-                snapshot = awaitCommandSnapshot(
-                    handle.updateHostDraft(snapshot.revision, draft).acceptedAtRevision,
-                )
+                val accepted = nativeGate.withOpen {
+                    it.updateHostDraft(snapshot.revision, draft).acceptedAtRevision
+                }
+                snapshot = awaitCommandSnapshot(accepted)
             }
             if (additionalEntries.isNotEmpty()) {
-                snapshot = awaitCommandSnapshot(
-                    handle.appendHostQueue(
-                        snapshot.revision,
-                        snapshot.hostQueueRevision,
-                        additionalEntries,
-                    ).acceptedAtRevision,
-                )
+                val accepted = nativeGate.withOpen {
+                    it.appendHostQueue(
+                        snapshot.revision, snapshot.hostQueueRevision, additionalEntries,
+                    ).acceptedAtRevision
+                }
+                snapshot = awaitCommandSnapshot(accepted)
             }
-            handle.createHostSession(snapshot.revision)
+            nativeGate.withOpen { it.createHostSession(snapshot.revision) }
             Unit
         }
     }
@@ -166,11 +174,13 @@ class UniFfiHostCoreController(
     }
 
     private suspend fun submitQueueCommand(
-        command: suspend (FfiCoreHandle, FfiCoreSnapshot) -> ULong,
+        command: (FfiCoreHandle, FfiCoreSnapshot) -> ULong,
     ) = withContext(Dispatchers.IO) {
         commandMutex.withLock {
-            val handle = openHandle()
-            awaitCommandSnapshot(command(handle, currentSnapshot(handle)))
+            val accepted = nativeGate.withOpen { handle ->
+                command(handle, currentSnapshot(handle))
+            }
+            awaitCommandSnapshot(accepted)
             Unit
         }
     }
@@ -199,9 +209,11 @@ class UniFfiHostCoreController(
     override suspend fun transitionPlaybackState(state: FfiPlaybackState): FfiCoreSnapshot =
         withContext(Dispatchers.IO) {
             commandMutex.withLock {
-                val handle = openHandle()
-                val currentRevision = currentSnapshot(handle).revision
-                handle.playbackStateChanged(state)
+                val currentRevision = nativeGate.withOpen { handle ->
+                    val revision = currentSnapshot(handle).revision
+                    handle.playbackStateChanged(state)
+                    revision
+                }
                 awaitPlaybackSnapshot(currentRevision, state)
             }
         }
@@ -281,9 +293,8 @@ class UniFfiHostCoreController(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        val handle = handleRef.getAndSet(null)
         try {
-            retireNativeHandle(handle, shutdown = { it.shutdown() }, close = { it.close() })
+            nativeGate.close()
         } finally {
             // A failed native shutdown must not strand an observer waiting on
             // the bounded bridge or leave its collector open after close.
@@ -295,24 +306,17 @@ class UniFfiHostCoreController(
         command: (FfiCoreHandle, ULong) -> Unit,
     ) = withContext(Dispatchers.IO) {
         commandMutex.withLock {
-            val handle = openHandle()
-            command(handle, currentSnapshot(handle).revision)
-        }
-    }
-
-    private fun openHandle(): FfiCoreHandle {
-        handleRef.get()?.let { return it }
-        check(!closed.get()) { "Rust host controller is closed" }
-        return synchronized(handleRef) {
-            handleRef.get() ?: FfiCoreHandle.open(localDeviceId, observer).also { opened ->
-                _snapshots.value = opened.currentSnapshot()
-                handleRef.set(opened)
+            nativeGate.withOpen { handle ->
+                command(handle, currentSnapshot(handle).revision)
             }
         }
     }
 
-    private inline fun withOpenHandle(action: (FfiCoreHandle) -> Unit) {
-        handleRef.get()?.let(action)
+    private fun withOpenHandle(action: (FfiCoreHandle) -> Unit) {
+        // All callbacks and native commands share the same lifetime gate as
+        // close. A concurrent shutdown must not free the UniFFI handle while
+        // a network/actor callback is still invoking it.
+        nativeGate.withExisting(action)
     }
 
     private fun hasActiveHostLifecycle(): Boolean {
