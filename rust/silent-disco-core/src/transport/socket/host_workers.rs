@@ -175,9 +175,7 @@ fn register_peer(
         sender: ControlSender::new(write_sender, config.operation_timeout, counters.clone()),
         stop: peer_stop.clone(),
         shutdown_stream: Mutex::new(shutdown_copy),
-        // Registration time, not zero -- a freshly authorized peer that
-        // hasn't had a chance to send its first sync probe yet must not
-        // read as already stale (see the field's own doc comment).
+        // Use registration time so a new peer is not already stale.
         last_inbound_millis: AtomicU64::new(clock.now().get()),
         silence_armed: AtomicBool::new(false),
     });
