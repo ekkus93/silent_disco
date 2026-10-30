@@ -7,7 +7,7 @@ use crate::domain::{MonotonicMillis, SampleIndex};
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, ResyncNotice, Stop, TrackBoundary};
 use crate::transport::test_support::{
     audio_frame_at, id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from, wait_for_frame,
+    wait_for_control_from, wait_for_frame, wait_for_host_event,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -380,5 +380,129 @@ fn paused_multitrack_recovery_preserves_exact_pcm_and_stop_replay_on_real_socket
         });
         listener.shutdown().expect("close listener");
     }
+    host.shutdown().expect("close host");
+}
+
+#[test]
+fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_sockets() {
+    let session = id_session("reconnect-pause-contiguous-pcm");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production TCP/UDP host");
+    let factory = SocketTransportFactory;
+    let first_id = id_device("reconnecting-listener");
+    let mut first = join(&mut host, factory, &clock, &session, "reconnecting-listener");
+    let mut other = join(&mut host, factory, &clock, &session, "stable-listener");
+
+    let ControlMessage::StreamStart(mut start) = stream_start(&session, 1_000) else {
+        panic!("stream start fixture");
+    };
+    start.samples_per_packet = 2;
+    let start_control = ControlMessage::StreamStart(start.clone());
+    let boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: start.stream_id.clone(),
+        first_sample_index: SampleIndex::new(4),
+        entry_id: "next-after-reconnect".to_owned(),
+        display_name: "Next after reconnect".to_owned(),
+    });
+    for control in [&start_control, &boundary] {
+        assert_eq!(
+            host.broadcast_control(control).expect("broadcast control").report.successful_peers,
+            2
+        );
+        expect_controls(first.as_ref(), std::slice::from_ref(control));
+        expect_controls(other.as_ref(), std::slice::from_ref(control));
+    }
+    for sequence in 0..2 {
+        let frame = audio_frame_at(&session, sequence, 1_000 + sequence);
+        host.broadcast_audio(&frame).expect("send before pause");
+        for listener in [&mut first, &mut other] {
+            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |received| {
+                received == &frame
+            });
+        }
+    }
+
+    let pause = ControlMessage::Pause(Pause {
+        session_id: session.clone(),
+        stream_id: start.stream_id.clone(),
+        host_pause_time_ms: MonotonicMillis::new(1_100),
+    });
+    host.broadcast_control(&pause).expect("pause");
+    expect_controls(first.as_ref(), std::slice::from_ref(&pause));
+    expect_controls(other.as_ref(), std::slice::from_ref(&pause));
+    first.shutdown().expect("close old TCP and UDP listener");
+    drop(wait_for_host_event(&mut host, |event| {
+        matches!(
+            event,
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&first_id)
+        )
+    }));
+
+    // The replacement TCP generation is admitted independently. It receives
+    // no unsolicited old controls until the host explicitly targets it with
+    // the authoritative cached snapshot.
+    let sent_before_join = host.counters().control_frames_sent;
+    let mut replacement = join(&mut host, factory, &clock, &session, "reconnecting-listener");
+    assert_eq!(host.counters().control_frames_sent, sent_before_join);
+    let sent_before_recovery = host.counters().control_frames_sent;
+    assert_eq!(
+        host.replay_cached_playback_to_peer(&first_id)
+            .expect("replay only to the current authorized TCP route")
+            .report
+            .successful_peers,
+        1
+    );
+    assert_eq!(host.counters().control_frames_sent - sent_before_recovery, 3);
+    for control in [&start_control, &boundary, &pause] {
+        expect_controls(replacement.as_ref(), std::slice::from_ref(control));
+    }
+
+    // A same-stream resume preserves the sequence/sample-index timeline and
+    // replaces the old Pause anchor. Neither listener gets stale controls.
+    start.host_start_time_ms = MonotonicMillis::new(1_300);
+    let resume = ControlMessage::StreamStart(start.clone());
+    host.broadcast_control(&resume).expect("resume same stream");
+    expect_controls(replacement.as_ref(), std::slice::from_ref(&resume));
+    expect_controls(other.as_ref(), std::slice::from_ref(&resume));
+    for sequence in 2..6 {
+        let frame = audio_frame_at(&session, sequence, 1_300 + sequence);
+        let ProtocolFrame::Audio(packet) = &frame else {
+            panic!("PCM packet fixture");
+        };
+        assert_eq!(packet.first_sample_index.get(), sequence * 2);
+        assert_eq!(
+            host.broadcast_audio(&frame)
+                .expect("send contiguous PCM after reconnect")
+                .report
+                .successful_peers,
+            2
+        );
+        for listener in [&mut replacement, &mut other] {
+            wait_for_frame(listener.as_mut(), TransportChannel::Audio, |received| {
+                received == &frame
+            });
+        }
+    }
+
+    let stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: start.stream_id,
+        host_stop_time_ms: MonotonicMillis::new(1_500),
+    });
+    host.broadcast_control(&stop).expect("stop after reconnect");
+    expect_controls(replacement.as_ref(), std::slice::from_ref(&stop));
+    expect_controls(other.as_ref(), std::slice::from_ref(&stop));
+    host.replay_cached_playback_to_peer(&first_id)
+        .expect("terminal recovery on replacement TCP route");
+    expect_controls(replacement.as_ref(), std::slice::from_ref(&stop));
+
+    replacement.shutdown().expect("close replacement");
+    other.shutdown().expect("close stable listener");
     host.shutdown().expect("close host");
 }
