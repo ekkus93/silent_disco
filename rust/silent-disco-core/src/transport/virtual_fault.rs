@@ -285,6 +285,14 @@ impl HostTransportNode for FaultInjectingHostTransport {
         self.inner.broadcast_sync(frame)
     }
 
+    fn send_sync_to_peer(
+        &self,
+        device_id: &DeviceId,
+        frame: &ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.send_sync_to_peer(device_id, frame)
+    }
+
     fn broadcast_audio(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError> {
         {
             let mut send_faults = self

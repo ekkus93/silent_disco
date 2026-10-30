@@ -90,6 +90,14 @@ impl HostTransportNode for LabFaultHostTransport {
         self.inner.broadcast_sync(frame)
     }
 
+    fn send_sync_to_peer(
+        &self,
+        device_id: &silent_disco_core::domain::DeviceId,
+        frame: &silent_disco_core::protocol::ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        self.inner.send_sync_to_peer(device_id, frame)
+    }
+
     fn broadcast_audio(
         &self,
         frame: &silent_disco_core::protocol::ProtocolFrame,

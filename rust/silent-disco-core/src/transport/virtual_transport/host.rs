@@ -117,6 +117,7 @@ impl VirtualHostTransport {
         &self,
         channel: TransportChannel,
         frame: &ProtocolFrame,
+        target: Option<&DeviceId>,
     ) -> Result<TransportDelivery, TransportError> {
         if frame.session_id() != &self.session_id {
             return Err(unauthorized(channel));
@@ -141,9 +142,19 @@ impl VirtualHostTransport {
         let host = state.hosts.get(&self.endpoint).ok_or_else(shutting_down)?;
         let listeners: Vec<&VirtualListenerRegistration> = host
             .listeners
-            .values()
-            .filter(|listener| listener.authorized)
+            .iter()
+            .filter(|(device_id, listener)| {
+                listener.authorized && target.is_none_or(|target| target == *device_id)
+            })
+            .map(|(_, listener)| listener)
             .collect();
+        if target.is_some() && listeners.is_empty() {
+            return Err(TransportError::new(
+                TransportErrorKind::PeerNotFound,
+                channel,
+                "virtual targeted synchronization listener is not authorized",
+            ));
+        }
         let intended = to_u32(listeners.len(), channel)?;
         let mut successful = 0_u32;
         let mut failed = 0_u32;
@@ -323,11 +334,26 @@ impl HostTransportNode for VirtualHostTransport {
     }
 
     fn broadcast_sync(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError> {
-        self.deliver_datagram(TransportChannel::Synchronization, frame)
+        self.deliver_datagram(TransportChannel::Synchronization, frame, None)
+    }
+
+    fn send_sync_to_peer(
+        &self,
+        device_id: &DeviceId,
+        frame: &ProtocolFrame,
+    ) -> Result<TransportDelivery, TransportError> {
+        if !matches!(frame, ProtocolFrame::SyncResponse(_)) {
+            return Err(TransportError::new(
+                TransportErrorKind::Protocol,
+                TransportChannel::Synchronization,
+                "virtual targeted synchronization requires a SyncResponse",
+            ));
+        }
+        self.deliver_datagram(TransportChannel::Synchronization, frame, Some(device_id))
     }
 
     fn broadcast_audio(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError> {
-        self.deliver_datagram(TransportChannel::Audio, frame)
+        self.deliver_datagram(TransportChannel::Audio, frame, None)
     }
 
     fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
