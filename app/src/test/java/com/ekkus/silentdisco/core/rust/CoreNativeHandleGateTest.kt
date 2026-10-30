@@ -41,7 +41,8 @@ class CoreNativeHandleGateTest {
             shutdown.get(5, TimeUnit.SECONDS)
             assertThat(opened.get()).isEqualTo(1)
             assertThat(retired.get()).isEqualTo(1)
-            assertThat(gate.withExisting { error("callback after close") }).isNull()
+            val staleCallback: String? = gate.withExisting { error("callback after close") }
+            assertThat(staleCallback).isNull()
             assertThat(runCatching { gate.withOpen { } }.exceptionOrNull())
                 .isInstanceOf(IllegalStateException::class.java)
         } finally {
@@ -74,7 +75,8 @@ class CoreNativeHandleGateTest {
             opening.get(5, TimeUnit.SECONDS)
             shutdown.get(5, TimeUnit.SECONDS)
             repeat(128) {
-                assertThat(gate.withExisting { error("stale actor callback") }).isNull()
+                val staleCallback: String? = gate.withExisting { error("stale actor callback") }
+                assertThat(staleCallback).isNull()
                 assertThat(runCatching { gate.withOpen { } }.isFailure).isTrue()
             }
             gate.close()
@@ -96,7 +98,8 @@ class CoreNativeHandleGateTest {
         assertThat(gate.withOpen { it }).isSameInstanceAs(handle)
         assertThat(runCatching { gate.close() }.exceptionOrNull())
             .hasMessageThat().contains("native shutdown failed")
-        assertThat(gate.withExisting { error("stale handle") }).isNull()
+        val staleHandle: String? = gate.withExisting { error("stale handle") }
+        assertThat(staleHandle).isNull()
         assertThat(runCatching { gate.withOpen { } }.isFailure).isTrue()
         gate.close()
     }
