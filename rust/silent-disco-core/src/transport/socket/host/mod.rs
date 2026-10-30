@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::domain::{DeviceId, MonotonicMillis, SessionId};
-use crate::protocol::{AudioDatagram, ControlMessage, Pause, StreamStart, TrackBoundary};
+use crate::protocol::{AudioDatagram, ControlMessage, Pause, Stop, StreamStart, TrackBoundary};
 use crate::runtime::NetworkEndpoint;
 
 use super::super::{HostTransportConfig, HostTransportNode, TransportClock, TransportEvent};
