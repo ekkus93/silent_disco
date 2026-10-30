@@ -55,7 +55,7 @@ fn expect_controls(listener: &dyn ListenerTransportNode, expected: &[ControlMess
                 ..
             } = listener.recv_event(remaining).expect("read listener control")
             {
-                assert_eq!(&received, control, "replay order and contents");
+                assert!(received == *control, "replay order and contents");
                 break;
             }
         }
@@ -90,6 +90,7 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
         stream_id: start_info.stream_id.clone(),
         host_pause_time_ms: MonotonicMillis::new(1_200),
     });
+    let stream_id = start_info.stream_id.clone();
     let expected = [start, boundary, pause];
     for control in &expected {
         assert_eq!(host.broadcast_control(control).expect("broadcast").report.successful_peers, 2);
@@ -109,14 +110,14 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
     let before = host.counters().control_frames_sent;
     let delivery = host.replay_cached_playback_to_peer(&first_id).expect("targeted recovery");
     assert_eq!(delivery.report.successful_peers, 1);
-    assert!(delivery.report.bytes_sent > 0);
+    assert!(delivery.bytes_sent > 0);
     assert_eq!(host.counters().control_frames_sent - before, 3);
     expect_controls(first.as_ref(), &expected);
 
     // Stop invalidates the cache: recovery must never resurrect the old stream.
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
-        stream_id: start_info.stream_id.clone(),
+        stream_id,
         host_stop_time_ms: MonotonicMillis::new(1_500),
     });
     host.broadcast_control(&stop).expect("stop playback");

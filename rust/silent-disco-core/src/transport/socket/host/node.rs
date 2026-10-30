@@ -255,9 +255,9 @@ impl HostTransportNode for SocketHostTransport {
         let bytes = self.send_cached_playback_controls(&peer)?;
         if bytes == 0 {
             // A stopped/idle host has no active playback to replay.
-            Ok(TransportDelivery::new(0, 0, 0, 0))
+            TransportDelivery::new(0, 0, 0, 0)
         } else {
-            Ok(TransportDelivery::new(1, 1, 0, bytes))
+            TransportDelivery::new(1, 1, 0, bytes)
         }
     }
 
