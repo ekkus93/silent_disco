@@ -14,9 +14,19 @@ import kotlinx.coroutines.launch
  * duplicate requests for the exact same peer and native host generation.
  * The native transport already bounds admitted peer count.
  */
-internal class HostRecoveryDispatch(private val maxSyncInFlight: Int = 32) {
-    init { require(maxSyncInFlight > 0) }
+internal class HostRecoveryDispatch(
+    private val maxSyncInFlight: Int = 32,
+    private val maxSyncPerListener: Int = 4,
+) {
+    init {
+        require(maxSyncInFlight > 0)
+        require(maxSyncPerListener > 0)
+    }
     private val syncSlots = Semaphore(maxSyncInFlight)
+    private val syncLock = Any()
+    // A noisy admitted peer cannot monopolize every sync slot and starve
+    // another listener's clock. Retired generations have independent quotas.
+    private val syncByListener = mutableMapOf<ResyncKey, Int>()
     private val refused = AtomicLong()
     private val resyncLock = Any()
     private val activeResyncs = mutableMapOf<ResyncKey, ResyncState>()
@@ -24,23 +34,49 @@ internal class HostRecoveryDispatch(private val maxSyncInFlight: Int = 32) {
 
     internal val rejectedSyncRequests: Long get() = refused.get()
     internal val activeSyncRequests: Int get() = maxSyncInFlight - syncSlots.availablePermits()
+    internal val activeSyncListeners: Int get() = synchronized(syncLock) { syncByListener.size }
     internal val activeResyncRequests: Int get() = synchronized(resyncLock) { activeResyncs.size }
 
     fun launchSync(
         scope: CoroutineScope,
         dispatcher: CoroutineDispatcher,
+        generation: Any,
+        listenerId: String,
         body: suspend () -> Unit,
     ): Boolean {
         if (!syncSlots.tryAcquire()) {
             refused.incrementAndGet()
             return false
         }
-        try {
-            // invokeOnCompletion also releases a slot when cancellation occurs
-            // before the dispatcher starts the coroutine at all.
-            scope.launch(dispatcher) { body() }.invokeOnCompletion { syncSlots.release() }
-        } catch (error: Throwable) {
+        val key = ResyncKey(generation, listenerId)
+        val admitted = synchronized(syncLock) {
+            val current = syncByListener[key] ?: 0
+            if (current >= maxSyncPerListener) {
+                false
+            } else {
+                syncByListener[key] = current + 1
+                true
+            }
+        }
+        if (!admitted) {
             syncSlots.release()
+            refused.incrementAndGet()
+            return false
+        }
+        fun release() {
+            synchronized(syncLock) {
+                val remaining = (syncByListener[key] ?: 1) - 1
+                if (remaining == 0) syncByListener.remove(key)
+                else syncByListener[key] = remaining
+            }
+            syncSlots.release()
+        }
+        try {
+            // Completion also releases both quotas when cancellation occurs
+            // before the IO dispatcher starts the coroutine.
+            scope.launch(dispatcher) { body() }.invokeOnCompletion { release() }
+        } catch (error: Throwable) {
+            release()
             throw error
         }
         return true

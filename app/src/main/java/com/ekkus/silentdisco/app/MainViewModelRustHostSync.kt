@@ -16,12 +16,19 @@ internal fun MainViewModel.respondToSyncRequest(
     event: FfiHostTransportEvent.SyncRequestReceived,
     sourceHandle: FfiHostTransportHandle,
 ) {
+    val listenerId = event.listenerId
+    if (listenerId == null) {
+        reportRustHostCommandFailure(
+            "send sync response",
+            IllegalStateException("Clock synchronization request had no authorized listener identity"),
+        )
+        return
+    }
     val t2HostReceiveElapsedMs = SystemClock.elapsedRealtime().toULong()
-    val admitted = hostRecoveryDispatch.launchSync(viewModelScope, Dispatchers.IO) {
+    val admitted = hostRecoveryDispatch.launchSync(
+        viewModelScope, Dispatchers.IO, sourceHandle, listenerId,
+    ) {
         try {
-            val listenerId = checkNotNull(event.listenerId) {
-                "Clock synchronization request had no authorized listener identity"
-            }
             hostTransportController.sendSyncResponseToListenerForGeneration(
                 expected = sourceHandle,
                 listenerId = listenerId,

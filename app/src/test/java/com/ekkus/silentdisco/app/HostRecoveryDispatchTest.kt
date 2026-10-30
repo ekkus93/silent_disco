@@ -18,11 +18,12 @@ class HostRecoveryDispatchTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         val limiter = HostRecoveryDispatch(maxSyncInFlight = 4)
+        val handle = Any()
         repeat(4) {
-            assertThat(limiter.launchSync(scope, dispatcher) { awaitCancellation() }).isTrue()
+            assertThat(limiter.launchSync(scope, dispatcher, handle, "peer-a") { awaitCancellation() }).isTrue()
         }
         repeat(256) {
-            assertThat(limiter.launchSync(scope, dispatcher) { error("unreachable overflow") }).isFalse()
+            assertThat(limiter.launchSync(scope, dispatcher, handle, "peer-a") { error("unreachable overflow") }).isFalse()
         }
         assertThat(limiter.activeSyncRequests).isEqualTo(4)
         assertThat(limiter.rejectedSyncRequests).isEqualTo(256)
@@ -33,12 +34,46 @@ class HostRecoveryDispatchTest {
         val replacement = CoroutineScope(SupervisorJob() + dispatcher)
         var delivered = 0
         repeat(4) {
-            assertThat(limiter.launchSync(replacement, dispatcher) { delivered++ }).isTrue()
+            assertThat(limiter.launchSync(replacement, dispatcher, handle, "peer-a") { delivered++ }).isTrue()
         }
         advanceUntilIdle()
         assertThat(delivered).isEqualTo(4)
         assertThat(limiter.activeSyncRequests).isEqualTo(0)
         replacement.cancel()
+    }
+
+    @Test
+    fun noisyPeerCannotStarveOtherListenersOrReplacementGeneration() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        val limiter = HostRecoveryDispatch(maxSyncInFlight = 5, maxSyncPerListener = 2)
+        val generation = Any()
+        val replacement = Any()
+        repeat(2) {
+            assertThat(limiter.launchSync(scope, dispatcher, generation, "noisy") {
+                awaitCancellation()
+            }).isTrue()
+        }
+        repeat(200) {
+            assertThat(limiter.launchSync(scope, dispatcher, generation, "noisy") {
+                error("per-listener quota must reject")
+            }).isFalse()
+        }
+        assertThat(limiter.rejectedSyncRequests).isEqualTo(200)
+        // A distinct peer and the same peer on a replacement host each get
+        // their own quota, even when the old native generation is still busy.
+        assertThat(limiter.launchSync(scope, dispatcher, generation, "quiet") {
+            awaitCancellation()
+        }).isTrue()
+        assertThat(limiter.launchSync(scope, dispatcher, replacement, "noisy") {
+            awaitCancellation()
+        }).isTrue()
+        assertThat(limiter.activeSyncRequests).isEqualTo(4)
+        assertThat(limiter.activeSyncListeners).isEqualTo(3)
+        scope.cancel()
+        advanceUntilIdle()
+        assertThat(limiter.activeSyncRequests).isEqualTo(0)
+        assertThat(limiter.activeSyncListeners).isEqualTo(0)
     }
 
     @Test
