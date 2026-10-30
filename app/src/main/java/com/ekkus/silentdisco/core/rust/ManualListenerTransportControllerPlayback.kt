@@ -140,7 +140,7 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     // transport clock's reading at the runtime's own t=0. See
     // `translateToPumpClock` for how this turns a transport-clock
     // receive timestamp into the runtime's timeline.
-    transportClockOriginMs = runCatching { handle.nowMs() }.getOrNull()
+    transportClockOriginMs = runCatching { withManualHandle(handle) { it.nowMs() } }.getOrNull()
 
     // Reuse the stream this session was already granted whenever one is
     // open, so a track change swaps only the content. Reopening is the
@@ -171,7 +171,10 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     // second, which delayed the control traffic queued behind it (sync
     // responses were timestamped ~140ms late against a 7.7ms real round
     // trip) and is what drove the rebuffering heard as dropouts.
-    handle.attachPlayback(runtime)
+    if (withManualHandle(handle) { it.attachPlayback(runtime); true } != true) {
+        stopPlayback()
+        return
+    }
     startDebugCapture(runtime, event.streamId)
     startDiagnosticsSampler(scope, runtime)
     logger.i(
@@ -264,7 +267,7 @@ internal fun ManualListenerTransportController.endStream(keepOutputOpen: Boolean
     // runtime that is shutting down. Every cleanup step is still attempted
     // if one fails; the first failure remains primary and later failures are
     // attached as suppressed exceptions.
-    capture { handleRef.get()?.detachPlayback() }
+    capture { withCurrentManualHandle { it.detachPlayback() } }
     // Order matters and is deliberate: `stop()` drains the render ring
     // *through the still-running Oboe callback* so the stream ends on its
     // own final sample rather than mid-note (see `await_ring_drain`, which

@@ -49,7 +49,10 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
                 break
             }
             try {
-                handle.sendSyncRequest(correlationId.toULong(), sendTimeMs)
+                checkNotNull(withManualHandle(handle) {
+                    it.sendSyncRequest(correlationId.toULong(), sendTimeMs)
+                    true
+                }) { "Manual listener session retired before sync request" }
             } catch (error: Throwable) {
                 logger.w("manual.audio.sync_send_failed", error.message ?: "sync request send failed")
                 stopPlayback()?.let(error::addSuppressed)
@@ -170,12 +173,14 @@ internal fun ManualListenerTransportController.handleSyncResponse(
             "degradedLock=${outcome.degradedLock}",
     )
     runCatching {
-        handle.sendSynchronizationReport(
-            outcome.confidence,
-            outcome.offsetMs,
-            outcome.roundTripTimeMs,
-            outcome.skewPpm,
-        )
+        withManualHandle(handle) {
+            it.sendSynchronizationReport(
+                outcome.confidence,
+                outcome.offsetMs,
+                outcome.roundTripTimeMs,
+                outcome.skewPpm,
+            )
+        }
     }.onFailure { error ->
         logger.w(
             "manual.audio.sync_report_send_failed",

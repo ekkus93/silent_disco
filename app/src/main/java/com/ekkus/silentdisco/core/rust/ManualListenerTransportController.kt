@@ -85,7 +85,13 @@ class ManualListenerTransportController(
     /** Held for the connection's lifetime; null when the platform provides none. */
     private val networkSessionLock: NetworkSessionLock? = null,
 ) : AutoCloseable {
-    internal val handleRef = AtomicReference<FfiListenerTransportHandle?>(null)
+    internal val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
+    internal fun <T> withManualHandle(
+        expected: FfiListenerTransportHandle,
+        action: (FfiListenerTransportHandle) -> T,
+    ): T? = handleGate.withExpected(expected, action)
+    internal fun <T> withCurrentManualHandle(action: (FfiListenerTransportHandle) -> T): T? =
+        handleGate.withCurrent(action)
     private var eventLoop: Job? = null
     internal var syncProbeJob: Job? = null
     internal var diagnosticsSampleJob: Job? = null
@@ -156,33 +162,39 @@ class ManualListenerTransportController(
                 parseManualHostEndpoint(rawInput, nowMs())
             } catch (error: FfiListenerTransportException) {
                 _connectState.value = ManualConnectUiState.Failed(error.message ?: "connection payload is invalid")
+                closeExistingHandle() // release network lock after failed parse
                 return@withContext
             }
             sessionId = SessionId(endpoint.sessionId)
             protocolVersion = endpoint.protocolVersion.toInt()
-            val handle = try {
-                FfiListenerTransportHandle.connect(rawInput, nowMs(), localDeviceId, LOCAL_BIND_ADDRESS)
-            } catch (error: FfiListenerTransportException) {
+            try {
+                // Bind, Join and poller startup share one native lifetime gate.
+                handleGate.replace(
+                    retire = ::retireManualHandle,
+                    open = {
+                        FfiListenerTransportHandle.connect(
+                            rawInput, nowMs(), localDeviceId, LOCAL_BIND_ADDRESS,
+                        )
+                    },
+                    start = { handle ->
+                        handle.sendJoinRequest(displayName, inviteCode)
+                        startEventLoop(scope, handle)
+                    },
+                )
+            } catch (error: Exception) {
+                val cleanup = closeExistingHandle()
+                if (cleanup != null && cleanup !== error) error.addSuppressed(cleanup)
                 _connectState.value = ManualConnectUiState.Failed(error.message ?: "connection failed")
                 return@withContext
             }
-            handleRef.set(handle)
-            try {
-                handle.sendJoinRequest(displayName, inviteCode)
-            } catch (error: FfiListenerTransportException) {
-                _connectState.value = ManualConnectUiState.Failed(error.message ?: "join request failed")
-                closeExistingHandle()
-                return@withContext
-            }
-            startEventLoop(scope, handle)
         }
     }
 
     suspend fun disconnect(reason: String) {
         withContext(Dispatchers.IO) {
-            val handle = handleRef.get() ?: return@withContext
+            val expected = handleGate.currentHandle() ?: return@withContext
             try {
-                handle.sendDisconnect(reason)
+                handleGate.withExpected(expected) { it.sendDisconnect(reason) }
             } catch (error: Throwable) {
                 _connectState.value = ManualConnectUiState.Failed(
                     error.message ?: "disconnect send failed",
@@ -217,19 +229,20 @@ class ManualListenerTransportController(
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
         eventLoop?.cancel()
         eventLoop = scope.launch(Dispatchers.IO) {
-            while (isActive && handleRef.get() === handle) {
+            while (isActive && handleGate.currentHandle() === handle) {
                 val event = try {
-                    handle.pollEvent(POLL_TIMEOUT_MS)
+                    // Poll outside the command lock with a native lease.
+                    handleGate.withExpectedPoll(handle) { it.pollEvent(POLL_TIMEOUT_MS) }
                 } catch (error: FfiListenerTransportException) {
+                    if (!isActive || handleGate.currentHandle() !== handle) break
                     val playbackFailure = stopPlayback()
                     val transportFailure = closeExistingHandle()
                     val cleanupFailure = playbackFailure ?: transportFailure
                     _connectState.value = mapPostConnectionFailure(error, cleanupFailure)
                     break
                 }
-                if (event != null) {
-                    applyEvent(scope, handle, event)
-                }
+                if (!isActive || handleGate.currentHandle() !== handle) break
+                if (event != null) applyEvent(scope, handle, event)
             }
         }
     }
@@ -290,10 +303,7 @@ class ManualListenerTransportController(
             }
         }
 
-        handleRef.getAndSet(null)?.let { handle ->
-            capture { handle.shutdown() }
-            capture { handle.close() }
-        }
+        capture { handleGate.close(::retireManualHandle) }
         capture { networkSessionLock?.release() }
         firstFailure?.let { error ->
             logger.w("manual.transport_teardown_failed", error.message ?: "transport teardown failed")
@@ -302,6 +312,23 @@ class ManualListenerTransportController(
             )
         }
         return firstFailure
+    }
+
+    /** A blocked poll must finish before its UniFFI handle is freed. */
+    private fun retireManualHandle(handle: FfiListenerTransportHandle?) {
+        eventLoop?.cancel()
+        eventLoop = null
+        retireNativeHandle(
+            handle,
+            shutdown = { it.shutdown() },
+            close = { it.close() },
+            awaitPoll = { handleGate.awaitPollQuiescence(it) },
+            deferClose = { retired, close ->
+                handleGate.deferCloseUntilPollDrained(retired, close) {
+                    logger.w("manual.transport_deferred_close", it.message ?: "native close failed")
+                }
+            },
+        )
     }
 
     private fun nowMs(): ULong = System.currentTimeMillis().toULong()

@@ -107,7 +107,7 @@ internal fun ManualListenerTransportController.logPlaybackSummary(runtime: FfiLi
     val diagnostics = runtime.finalDiagnostics() ?: runtime.diagnostics()
     appendDiagnosticsLine(
         "summary streamId=$currentStreamId " +
-            "forwarded=${runCatching { handleRef.get()?.forwardedAudioCount() }.getOrNull()} " +
+            "forwarded=${runCatching { withCurrentManualHandle { it.forwardedAudioCount() } }.getOrNull()} " +
             "received=$receivedCount " +
             "accepted=${diagnostics.packetsAccepted} emitted=${diagnostics.packetsEmitted} " +
             "concealed=${diagnostics.concealedPackets} late=${diagnostics.lateRejections} " +
