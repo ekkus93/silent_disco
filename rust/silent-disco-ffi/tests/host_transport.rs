@@ -428,7 +428,7 @@ fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
     )
     .expect("connect listener transport");
 
-    join_approve_and_authorize(&host, &listener, "Sync Audio Listener");
+    let listener_id = join_approve_and_authorize(&host, &listener, "Sync Audio Listener");
 
     listener
         .send_sync_request(42, 1_000)
@@ -447,8 +447,18 @@ fn host_transport_authorizes_listener_and_exchanges_sync_and_audio() {
     assert_eq!(correlation_id, 42);
     assert_eq!(t1, 1_000);
 
-    host.send_sync_response(correlation_id, t1, 1_005, 1_007)
-        .expect("send sync response");
+    // Legacy broadcast must fail closed: a response contains one listener's
+    // private correlation/timestamps and may only use its authorized route.
+    assert!(
+        host.send_sync_response(correlation_id, t1, 1_005, 1_007)
+            .is_err(),
+        "broadcasting a host-originated sync response must be forbidden"
+    );
+    let delivery = host
+        .send_sync_response_to_listener(listener_id, correlation_id, t1, 1_005, 1_007)
+        .expect("send targeted sync response");
+    assert_eq!(delivery.intended_peers, 1);
+    assert_eq!(delivery.successful_peers, 1);
 
     let sync_response = poll_listener_until(&listener, |event| {
         matches!(
