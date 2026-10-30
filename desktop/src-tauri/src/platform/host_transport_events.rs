@@ -119,13 +119,25 @@ impl HostTransportEventProcessor {
                         &request.device.device_id,
                     )));
                 }
-                let device_id = self.pending.register(
+                // Actor mailbox failure or pending-capacity exhaustion must
+                // not terminate the desktop host or strand the listener.
+                // Only successfully projected requests receive Hello.
+                let device_id = match self.pending.register(
                     &request,
                     peer.control_address,
                     received_at,
                     advertisement,
                     sink,
-                )?;
+                ) {
+                    Ok(device_id) => device_id,
+                    Err(_) => {
+                        return Ok(Some(Self::refuse_unprojected_join(
+                            node,
+                            advertisement,
+                            &request.device.device_id,
+                        )));
+                    }
+                };
                 Ok(send_pending_hello(node, &device_id, advertisement))
             }
             RuntimeTransportEvent::FrameReceived {
@@ -238,6 +250,27 @@ impl HostTransportEventProcessor {
         node.replay_cached_playback_to_peer(listener_id)
             .err()
             .map(|error| DesktopNetworkError::transport(&error).to_string())
+    }
+
+    /// Explicitly refuse an unprojected generation; the actor has not
+    /// accepted its JoinRequested event and no UDP route was retained.
+    fn refuse_unprojected_join(
+        node: &dyn HostTransportNode,
+        advertisement: &SessionAdvertisement,
+        device_id: &DeviceId,
+    ) -> String {
+        let rejection = ControlMessage::JoinRejection(JoinRejection {
+            session_id: advertisement.session_id.clone(),
+            listener_id: device_id.clone(),
+            reason: "host_busy".to_owned(),
+        });
+        match node.send_pending_control(device_id, &rejection) {
+            Ok(delivery) if delivery.report.successful_peers > 0 => {
+                "Desktop join refused before actor admission (host busy)".to_owned()
+            }
+            Ok(_) => "Desktop join refused but no TCP peer received the refusal".to_owned(),
+            Err(error) => format!("Desktop join refused; rejection delivery failed: {error}"),
+        }
     }
 
     /// Keep the rejection visible even when sending the refusal fails.

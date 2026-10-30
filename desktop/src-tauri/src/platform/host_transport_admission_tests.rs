@@ -385,3 +385,103 @@ fn wait_for_control(
         assert!(Instant::now() < deadline, "timed out waiting for control");
     }
 }
+
+// A full or unavailable authoritative actor must never silently strand an
+// accepted TCP listener, nor terminate unrelated desktop-host playback.
+struct RejectFirstJoin {
+    attempts: std::sync::atomic::AtomicUsize,
+    accepted: mpsc::Sender<CoreTransportEvent>,
+}
+
+impl DesktopHostTransportEventSink for RejectFirstJoin {
+    fn current_snapshot(&self) -> Result<CoreSnapshot, CoreError> {
+        Ok(CoreSnapshot::default())
+    }
+
+    fn submit_transport_event(&self, event: CoreTransportEvent) -> Result<(), CoreError> {
+        if self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            == 0
+        {
+            return Err(CoreError::new(
+                silent_disco_core::error::CoreErrorCode::WorkerStopped,
+                "simulated actor mailbox refusal",
+                silent_disco_core::error::ErrorSeverity::Error,
+                false,
+                None,
+            )
+            .expect("static error"));
+        }
+        self.accepted.send(event).expect("test observer");
+        Ok(())
+    }
+
+    fn submit_audio_event(
+        &self,
+        _event: silent_disco_core::runtime::AudioEvent,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn rejected_actor_join_gets_explicit_tcp_refusal_and_next_listener_can_join() {
+    let factory = production_transport_factory();
+    let session = SessionId::new("desktop-join-refusal-recovery").expect("session");
+    let host = DeviceId::new("desktop-refusal-host").expect("host");
+    let advertisement = advertisement(&session, &host);
+    let clock = Arc::new(SystemTransportClock::default());
+    let node = factory
+        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .expect("bind real host TCP");
+    let endpoint = node.endpoint();
+    let (tx, rx) = mpsc::channel();
+    let sink = Arc::new(RejectFirstJoin {
+        attempts: std::sync::atomic::AtomicUsize::new(0),
+        accepted: tx,
+    });
+    let runtime = DesktopHostTransportRuntime::start(
+        node, advertisement, sink.clone(), clock,
+    ).expect("start host worker");
+
+    let mut refused = connect_listener(
+        &factory,
+        &session,
+        &DeviceId::new("desktop-first-refused").expect("listener"),
+        endpoint,
+    );
+    send_join(
+        refused.as_ref(),
+        &session,
+        &DeviceId::new("desktop-first-refused").expect("listener"),
+    );
+    wait_for_control(refused.as_mut(), |message| {
+        matches!(
+            message,
+            ControlMessage::JoinRejection(denial)
+                if denial.reason == "host_busy"
+                    && denial.listener_id.as_str() == "desktop-first-refused"
+        )
+    });
+    assert!(runtime.status().expect("status").running);
+
+    let second_id = DeviceId::new("desktop-second-accepted").expect("listener");
+    let mut accepted = connect_listener(&factory, &session, &second_id, endpoint);
+    send_join(accepted.as_ref(), &session, &second_id);
+    wait_for_control(accepted.as_mut(), |message| matches!(message, ControlMessage::Hello(_)));
+    let event = rx.recv_timeout(TEST_TIMEOUT).expect("second actor join");
+    assert!(matches!(
+        event,
+        CoreTransportEvent::JoinRequested(request) if request.device_id == second_id
+    ));
+    assert_eq!(
+        sink.attempts.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert!(runtime.status().expect("status").running);
+
+    refused.shutdown().expect("refused socket shutdown");
+    accepted.shutdown().expect("accepted socket shutdown");
+    runtime.shutdown().expect("host shutdown");
+}

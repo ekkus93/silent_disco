@@ -10,6 +10,10 @@ use silent_disco_core::runtime::{
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
+// Bound pending actor projections independently of TCP accept capacity.
+// A stalled actor must not retain an unlimited set of claimed identities.
+const MAX_PENDING_JOIN_REQUESTS: usize = 128;
+
 /// A pending join's listener-reported sync/audio UDP ports -- needed once
 /// (if) the join is approved, to call `authorize_peer_ports`. The host
 /// cannot discover these ports any other way (the listener's audio channel
@@ -54,6 +58,11 @@ impl PendingJoinProjection {
             }
             return Err(DesktopNetworkError::invalid_state(
                 "a different TCP peer is already awaiting approval for this listener ID",
+            ));
+        }
+        if self.requests.len() >= MAX_PENDING_JOIN_REQUESTS {
+            return Err(DesktopNetworkError::invalid_state(
+                "desktop pending join capacity exhausted",
             ));
         }
         let snapshot = sink
