@@ -154,7 +154,9 @@ impl HostTransportEventProcessor {
                 // claimed identity. Preserve that invariant at this platform
                 // boundary as well: never replay another listener's state.
                 if peer.device_id.as_ref() != Some(&notice.listener_id) {
-                    return Ok(Some("Recovery request identity did not match its TCP peer".to_owned()));
+                    return Ok(Some(
+                        "Recovery request identity did not match its TCP peer".to_owned(),
+                    ));
                 }
                 // Replay the transport's authoritative Start/boundary/Pause
                 // snapshot (or terminal Stop) only to this admitted peer.
