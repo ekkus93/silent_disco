@@ -92,9 +92,16 @@ internal fun ManualListenerTransportController.handleStreamStarted(
         // counters exactly as they were; tearing down and reopening the
         // engine here would trade the timeline bug this fixes for a
         // guaranteed audible restart on every single resume.
-        runCatching {
+        val reanchored = runCatching {
             runningRuntime.reanchorPresentationTime(event.hostStartTimeMs)
         }.onFailure { error -> handlePlaybackEngineFailure(error) }
+        if (reanchored.isFailure) return
+        // Pause leaves the UI in PAUSED. A same-stream StreamStart is Resume,
+        // not a new native output: update presentation state without opening
+        // or rebinding Oboe. The Rust estimator remains authoritative about
+        // whether playback has a usable clock lock.
+        val syncLocked = runCatching { runningRuntime.diagnostics().syncLocked }.getOrDefault(false)
+        _connectState.value = manualResumedUiState(trustedForFuture, syncLocked)
         logger.i(
             "manual.audio.stream_reanchored",
             "streamId=${event.streamId} hostStartMs=${event.hostStartTimeMs}",
@@ -324,3 +331,16 @@ internal fun ManualListenerTransportController.handlePlaybackEngineFailure(error
     stopPlayback()?.let(error::addSuppressed)
     _connectState.value = ManualConnectUiState.Failed(error.message ?: "playback engine failed")
 }
+
+/**
+ * Resume is a same-stream reanchor, not a new output open. Never leave the
+ * presentation stuck in PAUSED after the host has resumed. Without a valid
+ * Rust clock estimate the correct state is BUFFERING, not false PLAYING.
+ */
+internal fun manualResumedUiState(
+    trustedForFuture: Boolean,
+    syncLocked: Boolean,
+): ManualConnectUiState.Streaming = ManualConnectUiState.Streaming(
+    trustedForFuture,
+    if (syncLocked) PlaybackState.PLAYING else PlaybackState.BUFFERING,
+)
