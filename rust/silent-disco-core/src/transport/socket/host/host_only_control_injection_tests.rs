@@ -1,18 +1,20 @@
 //! Production TCP/UDP negative acceptance: an admitted listener cannot inject
 //! host-only playback controls into another listener's authoritative timeline.
 //! This is a legacy-v3 fail-closed validation test, NOT TLS authentication.
+use std::io::Write;
+use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::sync::Arc;
 
 use crate::domain::{MonotonicMillis, SampleIndex};
-use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, TrackBoundary};
+use crate::protocol::{ControlMessage, Pause, ProtocolFrame, Stop, TrackBoundary, encode_frame};
 use crate::transport::test_support::{
     audio_frame_at, id_device, id_session, join_request, stream_start, wait_for_authorized,
     wait_for_control_from, wait_for_frame, wait_for_host_event,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
-    ManualTransportClock, SocketTransportFactory, TransportChannel, TransportErrorKind,
-    TransportEvent, TransportFactory,
+    ListenerDatagramRoutes, ManualTransportClock, SocketTransportFactory, TransportChannel,
+    TransportErrorKind, TransportEvent, TransportFactory,
 };
 
 use super::SocketHostTransport;
@@ -52,7 +54,6 @@ fn forged_listener_stop_is_rejected_without_disrupting_other_peer_pcm_or_replay(
     )
     .expect("bind production TCP/UDP host");
     let attacker_id = id_device("injecting-listener");
-    let mut attacker = join(&mut host, &clock, &session, "injecting-listener");
     let mut healthy = join(&mut host, &clock, &session, "healthy-listener");
 
     let start = stream_start(&session, 1_000);
@@ -72,14 +73,46 @@ fn forged_listener_stop_is_rejected_without_disrupting_other_peer_pcm_or_replay(
                 .expect("broadcast authoritative control")
                 .report
                 .successful_peers,
-            2,
+            1,
         );
-        for listener in [&mut attacker, &mut healthy] {
-            wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
-                frame == &ProtocolFrame::Control(control.clone())
-            });
-        }
+        wait_for_frame(healthy.as_mut(), TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(control.clone())
+        });
     }
+
+    // Use a raw TCP peer, not the normal listener API, which correctly
+    // refuses to encode host-only commands. The host must independently
+    // reject an attacker that bypasses the client-side guard.
+    let mut attacker = TcpStream::connect(SocketAddr::new(
+        host.endpoint().address,
+        host.endpoint().control_port,
+    ))
+    .expect("connect adversarial TCP peer");
+    attacker
+        .write_all(
+            &encode_frame(&ProtocolFrame::Control(join_request(
+                &session,
+                &attacker_id,
+                "Adversarial listener",
+            )))
+            .expect("encode join"),
+        )
+        .expect("write real TCP join");
+    wait_for_control_from(&mut host, &attacker_id, |control| {
+        matches!(control, ControlMessage::JoinRequest(_))
+    });
+    let sync_socket = UdpSocket::bind("127.0.0.1:0").expect("sync route");
+    let audio_socket = UdpSocket::bind("127.0.0.1:0").expect("audio route");
+    host.authorize_peer(
+        &attacker_id,
+        ListenerDatagramRoutes {
+            synchronization: sync_socket.local_addr().expect("sync address"),
+            audio: audio_socket.local_addr().expect("audio address"),
+        },
+    )
+    .expect("authorize adversarial peer for receiving");
+    wait_for_authorized(&mut host, &attacker_id);
+    assert_eq!(host.routes.lock().expect("routes").len(), 2);
 
     // This frame has a valid session and stream, but arrives from a listener
     // TCP route. It must never be projected as a host Stop, even though the
@@ -90,7 +123,7 @@ fn forged_listener_stop_is_rejected_without_disrupting_other_peer_pcm_or_replay(
         host_stop_time_ms: MonotonicMillis::new(1_050),
     });
     attacker
-        .send_control(&forged)
+        .write_all(&encode_frame(&ProtocolFrame::Control(forged)).expect("encode forged Stop"))
         .expect("send syntactically valid but unauthorized Stop");
     let event = wait_for_host_event(&mut host, |event| {
         matches!(
@@ -168,7 +201,7 @@ fn forged_listener_stop_is_rejected_without_disrupting_other_peer_pcm_or_replay(
             frame == &ProtocolFrame::Control(fresh.clone())
         });
     }
-    attacker.shutdown().expect("close rejected connection");
+    drop(attacker);
     healthy.shutdown().expect("close healthy listener");
     returning.shutdown().expect("close rejoined listener");
     host.shutdown().expect("close host");
