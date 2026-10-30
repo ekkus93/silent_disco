@@ -27,6 +27,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
+import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
@@ -74,13 +75,16 @@ private fun MainViewModel.ensureHostTransportEventLoop(controller: HostCoreContr
     if (hostTransportEventLoopStarted) return
     hostTransportEventLoopStarted = true
     viewModelScope.launch {
-        hostTransportController.events.collect { event -> handleHostTransportEvent(controller, event) }
+        hostTransportController.eventsWithGeneration.collect { source ->
+            handleHostTransportEvent(controller, source.event, source.handle)
+        }
     }
 }
 
 private fun MainViewModel.handleHostTransportEvent(
     controller: HostCoreController,
     event: FfiHostTransportEvent,
+    sourceHandle: FfiHostTransportHandle,
 ) {
     when (event) {
         is FfiHostTransportEvent.JoinRequestReceived -> {
@@ -102,7 +106,7 @@ private fun MainViewModel.handleHostTransportEvent(
             runCatching { controller.submitListenerDisconnected(listenerId) }
                 .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }
         }
-        is FfiHostTransportEvent.SyncRequestReceived -> respondToSyncRequest(event)
+        is FfiHostTransportEvent.SyncRequestReceived -> respondToSyncRequest(event, sourceHandle)
         is FfiHostTransportEvent.PeerAccepted,
         is FfiHostTransportEvent.Heartbeat,
         is FfiHostTransportEvent.ResyncNotice,
@@ -111,12 +115,16 @@ private fun MainViewModel.handleHostTransportEvent(
     }
 }
 
-private fun MainViewModel.respondToSyncRequest(event: FfiHostTransportEvent.SyncRequestReceived) {
+private fun MainViewModel.respondToSyncRequest(
+    event: FfiHostTransportEvent.SyncRequestReceived,
+    sourceHandle: FfiHostTransportHandle,
+) {
     val t2HostReceiveElapsedMs = SystemClock.elapsedRealtime().toULong()
     viewModelScope.launch(Dispatchers.IO) {
         val t3HostSendElapsedMs = SystemClock.elapsedRealtime().toULong()
         runCatching {
-            hostTransportController.sendSyncResponse(
+            hostTransportController.sendSyncResponseForGeneration(
+                expected = sourceHandle,
                 correlationId = event.correlationId,
                 t1ListenerSendElapsedMs = event.t1ListenerSendElapsedMs,
                 t2HostReceiveElapsedMs = t2HostReceiveElapsedMs,

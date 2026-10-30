@@ -6,12 +6,19 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.selects.select
 
 private data class TransportQueueEntry<H : Any, E : Any>(
     val handle: H,
     val event: E,
     val bestEffort: Boolean,
+)
+
+/** Retains the socket generation across an asynchronous UI/effect handoff. */
+internal data class TransportGenerationEvent<H : Any, E : Any>(
+    val handle: H,
+    val event: E,
 )
 
 /**
@@ -54,12 +61,18 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
 
     // Decrement before emitting downstream, even when the generation is stale
     // or the collector is cancelled while processing a delivered event.
-    val events: Flow<Event> = flow {
+    val eventsWithGeneration: Flow<TransportGenerationEvent<Handle, Event>> = flow {
         for (queued in channel) {
             if (queued.bestEffort) queuedBestEffort.decrementAndGet()
-            if (currentHandle() === queued.handle) emit(queued.event)
+            if (currentHandle() === queued.handle) {
+                emit(TransportGenerationEvent(queued.handle, queued.event))
+            }
         }
     }
+
+    // Existing consumers need only the event; host clock-sync dispatch also
+    // needs the original native generation when its IO coroutine resumes.
+    val events: Flow<Event> = eventsWithGeneration.map { it.event }
 
     val droppedBestEffort: Long get() = dropped.get()
 

@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.core.rust
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -226,6 +227,44 @@ class BoundedTransportEventQueueTest {
         val received = backgroundScope.async { queue.events.first() }
         runCurrent()
         assertThat(received.await()).isEqualTo("new-stop")
+        queue.close()
+    }
+
+
+    @Test
+    fun delayedSyncResponseCannotCrossNativeHostGenerationAfterQueueDelivery() = runTest {
+        val gate = HostNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        val queue = BoundedTransportEventQueue<Any, String>(gate::currentHandle, capacity = 2)
+        gate.replace(retire = {}, open = { old }, start = {})
+        queue.emit(old, "sync-old")
+        val allowIoDispatch = CompletableDeferred<Unit>()
+        val oldResponse = backgroundScope.async {
+            val source = queue.eventsWithGeneration.first()
+            assertThat(source.event).isEqualTo("sync-old")
+            allowIoDispatch.await() // real ViewModel dispatch can wait here
+            gate.withExpected(source.handle) { "sent-to-retired-host" }
+        }
+        runCurrent()
+        assertThat(oldResponse.isCompleted).isFalse()
+        gate.replace(
+            retire = {},
+            open = { replacement },
+            start = { queue.discardRetiredEvents() },
+        )
+        allowIoDispatch.complete(Unit)
+        runCurrent()
+        assertThat(oldResponse.await()).isNull()
+
+        queue.emit(replacement, "sync-current")
+        val currentResponse = backgroundScope.async {
+            val source = queue.eventsWithGeneration.first()
+            gate.withExpected(source.handle) { source.event }
+        }
+        runCurrent()
+        assertThat(currentResponse.await()).isEqualTo("sync-current")
+        gate.close { queue.discardRetiredEvents() }
         queue.close()
     }
 

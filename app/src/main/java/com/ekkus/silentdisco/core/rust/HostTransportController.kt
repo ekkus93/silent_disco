@@ -58,6 +58,8 @@ class HostTransportController(
     )
 
     val events: Flow<FfiHostTransportEvent> = eventQueue.events
+    internal val eventsWithGeneration: Flow<TransportGenerationEvent<FfiHostTransportHandle, FfiHostTransportEvent>> =
+        eventQueue.eventsWithGeneration
     /** Best-effort diagnostic events dropped while the UI collector was slow. */
     val droppedDiagnosticEvents: Long get() = eventQueue.droppedBestEffort
 
@@ -215,6 +217,23 @@ class HostTransportController(
         t3HostSendElapsedMs: ULong,
     ): FfiHostTransportDelivery = requireDeliveredHostSyncResponse(withHandle {
         it.sendSyncResponse(correlationId, t1ListenerSendElapsedMs, t2HostReceiveElapsedMs, t3HostSendElapsedMs)
+    })
+
+    /**
+     * A SyncRequest can wait in the ViewModel's IO dispatcher while Stop or
+     * a new host session replaces the socket. Never answer that OLD request
+     * using a new host's handle just because dispatch resumed after rebind.
+     */
+    internal suspend fun sendSyncResponseForGeneration(
+        expected: FfiHostTransportHandle,
+        correlationId: ULong,
+        t1ListenerSendElapsedMs: ULong,
+        t2HostReceiveElapsedMs: ULong,
+        t3HostSendElapsedMs: ULong,
+    ): FfiHostTransportDelivery = requireDeliveredHostSyncResponse(withContext(callDispatcher) {
+        handleGate.withExpected(expected) {
+            it.sendSyncResponse(correlationId, t1ListenerSendElapsedMs, t2HostReceiveElapsedMs, t3HostSendElapsedMs)
+        }
     })
 
     suspend fun broadcastAudio(
