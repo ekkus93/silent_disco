@@ -419,7 +419,7 @@ fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
         1
     );
     assert!(matches!(
-        poll_listener_until(listener_b, |event| matches!(
+        poll_listener_until(&listener_b, |event| matches!(
             event,
             FfiListenerTransportEvent::HostDisconnected { .. }
         )),
