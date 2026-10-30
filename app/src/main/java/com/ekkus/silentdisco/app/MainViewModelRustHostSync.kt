@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
+import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import kotlinx.coroutines.Dispatchers
