@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
  * duplicate requests for the exact same peer and native host generation.
  * The native transport already bounds admitted peer count.
  */
-internal class HostRecoveryDispatch(maxSyncInFlight: Int = 32) {
+internal class HostRecoveryDispatch(private val maxSyncInFlight: Int = 32) {
     init { require(maxSyncInFlight > 0) }
     private val syncSlots = Semaphore(maxSyncInFlight)
     private val refused = AtomicLong()
