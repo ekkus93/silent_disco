@@ -46,6 +46,11 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
     // passed its outer generation check just before replacement must not
     // enqueue stale PCM *after* the replacement drains the old queue.
     private val enqueueGate = Any()
+    // Retire suspended critical sends as well as buffered events. Otherwise
+    // a non-cancelled producer waiting on a full old-generation queue could
+    // enqueue after rebind's drain and occupy the new session's control slots.
+    // Protected by enqueueGate; each pending send captures its own epoch.
+    private var retirement = CompletableDeferred<Unit>()
 
     // Decrement before emitting downstream, even when the generation is stale
     // or the collector is cancelled while processing a delivered event.
@@ -70,6 +75,9 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
      * already handed to a collector; that consumer still checks the handle.
      */
     fun discardRetiredEvents() = synchronized(enqueueGate) {
+        val oldRetirement = retirement
+        retirement = CompletableDeferred()
+        oldRetirement.complete(Unit)
         while (true) {
             val retired = channel.tryReceive().getOrNull() ?: break
             if (retired.bestEffort) queuedBestEffort.decrementAndGet()
@@ -101,8 +109,16 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
      * The owner cancels any already-suspended old poller during replacement.
      */
     suspend fun emit(handle: Handle, event: Event) {
-        if (currentHandle() !== handle) return
+        val epoch = synchronized(enqueueGate) {
+            if (currentHandle() !== handle) return
+            retirement
+        }
+        // Kotlin select prioritizes the first ready clause. When rebind
+        // retires this epoch while a sender waits for space, the sender
+        // exits instead of injecting a stale critical event into the fresh
+        // generation's bounded queue. The rebind drains any earlier send.
         select<Unit> {
+            epoch.onAwait { }
             channel.onSend(TransportQueueEntry(handle, event, bestEffort = false)) { }
             closed.onAwait { error("Native transport event queue closed") }
         }

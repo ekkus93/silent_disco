@@ -184,6 +184,52 @@ class BoundedTransportEventQueueTest {
     }
 
     @Test
+    fun nonCancelledBlockedCriticalSendRetiresWithoutOccupyingNewSession() = runTest {
+        val old = Any()
+        val replacement = Any()
+        var current = old
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 1)
+        queue.emit(old, "old-join")
+        // Deliberately leave this producer alive across rebind: cancellation
+        // cannot be the only guard against old-generation queue pollution.
+        val stale = backgroundScope.async { queue.emit(old, "old-stop") }
+        runCurrent()
+        assertThat(stale.isCompleted).isFalse()
+
+        current = replacement
+        queue.discardRetiredEvents()
+        runCurrent()
+        assertThat(stale.isCompleted).isTrue()
+        queue.emit(replacement, "fresh-join")
+        val received = backgroundScope.async { queue.events.first() }
+        runCurrent()
+        assertThat(received.await()).isEqualTo("fresh-join")
+        queue.close()
+    }
+
+    @Test
+    fun repeatedRebindRetiresWaitingCriticalProducersWithoutCollector() = runTest {
+        var current = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 1)
+        repeat(128) { generation ->
+            queue.emit(current, "queued-$generation")
+            val retired = current
+            val waiting = backgroundScope.async { queue.emit(retired, "stale-stop-$generation") }
+            runCurrent()
+            assertThat(waiting.isCompleted).isFalse()
+            current = Any()
+            queue.discardRetiredEvents()
+            runCurrent()
+            assertThat(waiting.isCompleted).isTrue()
+        }
+        queue.emit(current, "new-stop")
+        val received = backgroundScope.async { queue.events.first() }
+        runCurrent()
+        assertThat(received.await()).isEqualTo("new-stop")
+        queue.close()
+    }
+
+    @Test
     fun closingQueueUnblocksPendingAuthoritativeEventAndPreservesAlreadyQueuedJoin() = runTest {
         val handle = Any()
         val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 1)
