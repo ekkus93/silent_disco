@@ -138,7 +138,11 @@ fn simultaneous_pending_same_id_connections_cannot_steal_approval() {
         .expect_err("ambiguous claimed identity must not authorize either peer");
     assert_eq!(error.kind, TransportErrorKind::Unauthorized);
     assert!(
-        host.routes.lock().expect("route registry").get(&device).is_none(),
+        host.routes
+            .lock()
+            .expect("route registry")
+            .get(&device)
+            .is_none(),
         "failed admission must not publish a UDP route"
     );
 
