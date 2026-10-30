@@ -433,7 +433,10 @@ fn rejected_actor_join_gets_explicit_tcp_refusal_and_next_listener_can_join() {
     let advertisement = advertisement(&session, &host);
     let clock = Arc::new(SystemTransportClock::default());
     let node = factory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("bind real host TCP");
     let endpoint = node.endpoint();
     let (tx, rx) = mpsc::channel();
@@ -441,9 +444,8 @@ fn rejected_actor_join_gets_explicit_tcp_refusal_and_next_listener_can_join() {
         attempts: std::sync::atomic::AtomicUsize::new(0),
         accepted: tx,
     });
-    let runtime = DesktopHostTransportRuntime::start(
-        node, advertisement, sink.clone(), clock,
-    ).expect("start host worker");
+    let runtime = DesktopHostTransportRuntime::start(node, advertisement, sink.clone(), clock)
+        .expect("start host worker");
 
     let mut refused = connect_listener(
         &factory,
@@ -469,16 +471,15 @@ fn rejected_actor_join_gets_explicit_tcp_refusal_and_next_listener_can_join() {
     let second_id = DeviceId::new("desktop-second-accepted").expect("listener");
     let mut accepted = connect_listener(&factory, &session, &second_id, endpoint);
     send_join(accepted.as_ref(), &session, &second_id);
-    wait_for_control(accepted.as_mut(), |message| matches!(message, ControlMessage::Hello(_)));
+    wait_for_control(accepted.as_mut(), |message| {
+        matches!(message, ControlMessage::Hello(_))
+    });
     let event = rx.recv_timeout(TEST_TIMEOUT).expect("second actor join");
     assert!(matches!(
         event,
         CoreTransportEvent::JoinRequested(request) if request.device_id == second_id
     ));
-    assert_eq!(
-        sink.attempts.load(std::sync::atomic::Ordering::SeqCst),
-        2
-    );
+    assert_eq!(sink.attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert!(runtime.status().expect("status").running);
 
     refused.shutdown().expect("refused socket shutdown");
