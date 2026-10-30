@@ -27,7 +27,7 @@ jobs:
     name: Rust quality gates
     # All pushes and PRs compile on ephemeral GitHub-hosted runners.
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 50
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -36,6 +36,20 @@ jobs:
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.97.1
+
+      # Rust quality and PCM integration suites compile the complete workspace on
+      # hosted runners. Reuse compiled dependencies across exact-head pushes so
+      # Clippy cannot consume the entire per-job budget before tests begin.
+      - name: Restore Rust workspace build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: rust-quality-${{ runner.os }}-1.97.1-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            rust-quality-${{ runner.os }}-1.97.1-
 
       - name: Check Rust formatting
         id: rust-format
