@@ -27,6 +27,8 @@ mod bind;
 mod broadcast;
 #[cfg(test)]
 mod duplicate_join_tests;
+#[cfg(test)]
+mod rejected_generation_tests;
 mod lookup;
 #[cfg(test)]
 mod multi_peer_control_pressure_tests;

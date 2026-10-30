@@ -168,6 +168,7 @@ fn register_peer(
         remote,
         identity: Mutex::new(None),
         authorized: AtomicBool::new(false),
+        admission_denied: AtomicBool::new(false),
         join_forwarded: AtomicBool::new(false),
         active: AtomicBool::new(true),
         consecutive_failures: AtomicU32::new(0),

@@ -176,6 +176,15 @@ impl HostTransportNode for SocketHostTransport {
         self.record_peer_result(&peer, &result);
         match result {
             Ok(written) => {
+                // The same ordering gate protects the authorization recheck.
+                // Once the host has refused this TCP attempt, a delayed
+                // approval cannot revive it or redirect it to a new peer.
+                if matches!(
+                    message,
+                    ControlMessage::JoinRejection(_) | ControlMessage::Disconnect(_)
+                ) {
+                    peer.admission_denied.store(true, Ordering::Release);
+                }
                 self.update_silence_clock(&peer, message);
                 TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
             }

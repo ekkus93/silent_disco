@@ -23,6 +23,7 @@ impl SocketHostTransport {
         let mut candidates = peers.values().filter(|peer| {
             peer.active.load(Ordering::Acquire)
                 && !peer.authorized.load(Ordering::Acquire)
+                && !peer.admission_denied.load(Ordering::Acquire)
                 && peer.device_id().as_ref() == Some(device_id)
         });
         let peer = candidates.next().cloned().ok_or_else(|| {
