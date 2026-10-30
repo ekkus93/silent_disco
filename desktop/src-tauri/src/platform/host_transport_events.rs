@@ -122,21 +122,18 @@ impl HostTransportEventProcessor {
                 // Actor mailbox failure or pending-capacity exhaustion must
                 // not terminate the desktop host or strand the listener.
                 // Only successfully projected requests receive Hello.
-                let device_id = match self.pending.register(
+                let Ok(device_id) = self.pending.register(
                     &request,
                     peer.control_address,
                     received_at,
                     advertisement,
                     sink,
-                ) {
-                    Ok(device_id) => device_id,
-                    Err(_) => {
-                        return Ok(Some(Self::refuse_unprojected_join(
-                            node,
-                            advertisement,
-                            &request.device.device_id,
-                        )));
-                    }
+                ) else {
+                    return Ok(Some(Self::refuse_unprojected_join(
+                        node,
+                        advertisement,
+                        &request.device.device_id,
+                    )));
                 };
                 Ok(send_pending_hello(node, &device_id, advertisement))
             }
@@ -253,7 +250,7 @@ impl HostTransportEventProcessor {
     }
 
     /// Explicitly refuse an unprojected generation; the actor has not
-    /// accepted its JoinRequested event and no UDP route was retained.
+    /// accepted its `JoinRequested` event and no UDP route was retained.
     fn refuse_unprojected_join(
         node: &dyn HostTransportNode,
         advertisement: &SessionAdvertisement,
