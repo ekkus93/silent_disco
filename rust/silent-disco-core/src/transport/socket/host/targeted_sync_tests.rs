@@ -1,16 +1,19 @@
 //! Real TCP admission and UDP synchronization isolation. Only the listener
 //! that sent a clock probe receives its response; a retired or unknown route
 //! cannot redirect another listener's clock/timestamp data.
+use std::io::Write;
+use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::domain::{DeviceId, MonotonicMillis};
-use crate::protocol::{ProtocolFrame, SyncRequest, SyncResponse};
+use crate::protocol::{ControlMessage, ProtocolFrame, SyncRequest, SyncResponse, encode_frame};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, wait_for_authorized, wait_for_control_from, wait_for_frame,
+    audio_frame_at, id_device, id_session, join_request, stream_start, wait_for_authorized,
+    wait_for_control_from, wait_for_frame, wait_for_host_event,
 };
 use crate::transport::{
-    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
+    HostTransportConfig, HostTransportNode, ListenerDatagramRoutes, ListenerTransportConfig, ListenerTransportNode,
     ManualTransportClock, SocketTransportFactory, TransportChannel, TransportErrorKind,
     TransportEvent, TransportFactory,
 };
@@ -170,5 +173,123 @@ fn real_udp_sync_replies_target_only_the_admitted_requester_and_retire_with_rout
         |frame| frame == &second_response,
     );
     second.shutdown().expect("close second listener");
+    host.shutdown().expect("close host");
+}
+
+#[test]
+fn admitted_udp_route_cannot_inject_host_sync_responses_or_keep_peer_alive_with_wrong_direction() {
+    let session = id_session("host-sync-direction-real-udp");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind real TCP and UDP host");
+    let mut healthy = join(&mut host, &clock, &session, "healthy-sync-listener");
+    let adversary_id = id_device("sync-response-injector");
+
+    // A raw TCP peer and its own UDP route bypass the listener API's
+    // direction checks. The host must independently enforce protocol roles.
+    let mut raw_control = TcpStream::connect(SocketAddr::new(
+        host.endpoint().address,
+        host.endpoint().control_port,
+    ))
+    .expect("connect raw TCP peer");
+    raw_control
+        .write_all(
+            &encode_frame(&ProtocolFrame::Control(join_request(
+                &session,
+                &adversary_id,
+                "Raw sync peer",
+            )))
+            .expect("encode raw join"),
+        )
+        .expect("send raw join");
+    wait_for_control_from(&mut host, &adversary_id, |control| {
+        matches!(control, ControlMessage::JoinRequest(_))
+    });
+    let sync = UdpSocket::bind("127.0.0.1:0").expect("raw sync socket");
+    let audio = UdpSocket::bind("127.0.0.1:0").expect("raw audio socket");
+    host.authorize_peer(
+        &adversary_id,
+        ListenerDatagramRoutes {
+            synchronization: sync.local_addr().expect("sync route"),
+            audio: audio.local_addr().expect("audio route"),
+        },
+    )
+    .expect("authorize raw route");
+    wait_for_authorized(&mut host, &adversary_id);
+
+    let forged = ProtocolFrame::SyncResponse(SyncResponse {
+        session_id: session.clone(),
+        correlation_id: 77,
+        t1_listener_send_elapsed_ms: MonotonicMillis::new(200),
+        t2_host_receive_elapsed_ms: MonotonicMillis::new(201),
+        t3_host_send_elapsed_ms: MonotonicMillis::new(202),
+    });
+    let received_before = host.counters().sync_datagrams_received;
+    let source = SocketAddr::new(host.endpoint().address, host.endpoint().sync_port);
+    sync.send_to(&encode_frame(&forged).expect("encode forged response"), source)
+        .expect("inject response from authorized UDP port");
+    let rejected = wait_for_host_event(&mut host, |event| {
+        matches!(
+            event,
+            TransportEvent::Rejected {
+                channel: TransportChannel::Synchronization,
+                error,
+                ..
+            } if error.kind == TransportErrorKind::Protocol
+        )
+    });
+    assert!(matches!(rejected, TransportEvent::Rejected { .. }));
+    assert_eq!(
+        host.counters().sync_datagrams_received,
+        received_before,
+        "host-only response must not count as a valid inbound probe"
+    );
+
+    // A legitimate request on that SAME admitted UDP route must still work:
+    // reject the wrong frame direction, not the entire healthy connection.
+    let probe = ProtocolFrame::SyncRequest(SyncRequest {
+        session_id: session.clone(),
+        correlation_id: 78,
+        t1_listener_send_elapsed_ms: MonotonicMillis::new(250),
+    });
+    sync.send_to(&encode_frame(&probe).expect("encode request"), source)
+        .expect("send legitimate UDP probe");
+    let observed = wait_for_host_event(&mut host, |event| {
+        matches!(
+            event,
+            TransportEvent::FrameReceived {
+                channel: TransportChannel::Synchronization,
+                peer,
+                frame: ProtocolFrame::SyncRequest(request),
+                ..
+            } if peer.device_id.as_ref() == Some(&adversary_id)
+                && request.correlation_id == 78
+        )
+    });
+    assert!(matches!(observed, TransportEvent::FrameReceived { .. }));
+    assert_eq!(host.counters().sync_datagrams_received, received_before + 1);
+
+    // An unrelated listener's PCM and authoritative controls must remain
+    // intact after the invalid datagram and the valid clock probe.
+    let start = stream_start(&session, 1_000);
+    host.broadcast_control(&start).expect("authoritative Start");
+    wait_for_frame(healthy.as_mut(), TransportChannel::Control, |frame| {
+        frame == &ProtocolFrame::Control(start.clone())
+    });
+    let pcm = audio_frame_at(&session, 0, 1_000);
+    assert_eq!(
+        host.broadcast_audio(&pcm)
+            .expect("PCM broadcast")
+            .report
+            .successful_peers,
+        2
+    );
+    wait_for_frame(healthy.as_mut(), TransportChannel::Audio, |frame| frame == &pcm);
+
+    drop(raw_control);
+    healthy.shutdown().expect("close healthy");
     host.shutdown().expect("close host");
 }
