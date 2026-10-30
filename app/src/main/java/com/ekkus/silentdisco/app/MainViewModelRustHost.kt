@@ -488,7 +488,7 @@ private fun MainViewModel.startAdvertisingForRust(
     // forms and its own address is known -- see completeRustHostAdvertising.
 }
 
-private fun MainViewModel.stopAdvertisingForRust(
+private suspend fun MainViewModel.stopAdvertisingForRust(
     controller: HostCoreController,
     effect: FfiPlatformEffect.StopAdvertising,
 ) {
@@ -500,7 +500,10 @@ private fun MainViewModel.stopAdvertisingForRust(
     wifiDirectService.stop()
     pendingStartAdvertisingOperationId = null
     pendingListenerDatagramPorts.clear()
-    hostTransportController.close()
+    // Native shutdown waits for in-flight UniFFI operations and the poller.
+    // Never hold the Compose/main dispatcher while waiting for those threads.
+    // Complete retirement even if the notification coroutine is cancelled.
+    retireHostTransportOffMain(hostTransportController)
     controller.transportStateChanged(FfiTransportState.IDLE)
     controller.platformOperationSucceeded(
         effect.operationId,
