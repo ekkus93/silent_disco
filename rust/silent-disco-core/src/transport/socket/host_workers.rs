@@ -723,8 +723,10 @@ pub(super) fn spawn_udp_receiver(
 fn datagram_matches_channel(channel: TransportChannel, frame: &ProtocolFrame) -> bool {
     matches!(
         (channel, frame),
-        (TransportChannel::Synchronization, ProtocolFrame::SyncRequest(_))
-            | (TransportChannel::Audio, ProtocolFrame::Audio(_))
+        (
+            TransportChannel::Synchronization,
+            ProtocolFrame::SyncRequest(_)
+        ) | (TransportChannel::Audio, ProtocolFrame::Audio(_))
     )
 }
 

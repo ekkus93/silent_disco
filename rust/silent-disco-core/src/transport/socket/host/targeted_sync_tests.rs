@@ -13,9 +13,9 @@ use crate::transport::test_support::{
     wait_for_control_from, wait_for_frame, wait_for_host_event,
 };
 use crate::transport::{
-    HostTransportConfig, HostTransportNode, ListenerDatagramRoutes, ListenerTransportConfig, ListenerTransportNode,
-    ManualTransportClock, SocketTransportFactory, TransportChannel, TransportErrorKind,
-    TransportEvent, TransportFactory,
+    HostTransportConfig, HostTransportNode, ListenerDatagramRoutes, ListenerTransportConfig,
+    ListenerTransportNode, ManualTransportClock, SocketTransportFactory, TransportChannel,
+    TransportErrorKind, TransportEvent, TransportFactory,
 };
 
 use super::SocketHostTransport;
@@ -229,8 +229,11 @@ fn admitted_udp_route_cannot_inject_host_sync_responses_or_keep_peer_alive_with_
     });
     let received_before = host.counters().sync_datagrams_received;
     let source = SocketAddr::new(host.endpoint().address, host.endpoint().sync_port);
-    sync.send_to(&encode_frame(&forged).expect("encode forged response"), source)
-        .expect("inject response from authorized UDP port");
+    sync.send_to(
+        &encode_frame(&forged).expect("encode forged response"),
+        source,
+    )
+    .expect("inject response from authorized UDP port");
     let rejected = wait_for_host_event(&mut host, |event| {
         matches!(
             event,
@@ -287,7 +290,9 @@ fn admitted_udp_route_cannot_inject_host_sync_responses_or_keep_peer_alive_with_
             .successful_peers,
         2
     );
-    wait_for_frame(healthy.as_mut(), TransportChannel::Audio, |frame| frame == &pcm);
+    wait_for_frame(healthy.as_mut(), TransportChannel::Audio, |frame| {
+        frame == &pcm
+    });
 
     drop(raw_control);
     healthy.shutdown().expect("close healthy");
