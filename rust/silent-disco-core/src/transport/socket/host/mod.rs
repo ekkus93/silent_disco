@@ -35,6 +35,8 @@ mod peer;
 #[cfg(test)]
 mod reconnect_snapshot_tests;
 #[cfg(test)]
+mod resync_replay_tests;
+#[cfg(test)]
 mod rejected_generation_tests;
 #[cfg(test)]
 mod socket_multitrack_audio_reconnect_tests;
