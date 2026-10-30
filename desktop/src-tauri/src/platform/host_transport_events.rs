@@ -5,7 +5,9 @@ use super::host_pending_handshake::send_pending_hello;
 use super::network_error::DesktopNetworkError;
 use silent_disco_core::domain::{DeviceId, TransportState, TrustState};
 use silent_disco_core::error::CoreError;
-use silent_disco_core::protocol::{ControlMessage, JoinRejection, ProtocolFrame, SyncResponse};
+use silent_disco_core::protocol::{
+    ControlMessage, JoinRejection, ProtocolFrame, SyncResponse, SynchronizationReport,
+};
 use silent_disco_core::runtime::{
     AudioEvent, CoreActorHandle, CoreSnapshot, ListenerSummary, SessionAdvertisement,
     SynchronizationSummary, TransportEvent as CoreTransportEvent,
@@ -158,35 +160,7 @@ impl HostTransportEventProcessor {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::SynchronizationReport(report)),
                 ..
-            } => {
-                // The listener is the only side that ever knows this (see
-                // `SynchronizationReport`'s doc comment: the host never sees
-                // `t4`) -- this is a straight relay into the same
-                // `AudioEvent` the actor already exposes per listener, not a
-                // host-side computation. A malformed report (non-finite
-                // values from a corrupted/adversarial peer) is reported as a
-                // visible warning and otherwise ignored, not fatal to the
-                // whole event-processing loop.
-                match SynchronizationSummary::new(
-                    report.confidence,
-                    report.offset_ms,
-                    report.round_trip_ms,
-                    report.drift_ppm,
-                ) {
-                    Ok(summary) => {
-                        sink.submit_audio_event(AudioEvent::SynchronizationUpdated {
-                            device_id: report.listener_id,
-                            summary,
-                        })
-                        .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
-                        Ok(None)
-                    }
-                    Err(error) => Ok(Some(format!(
-                        "listener {} sent an invalid synchronization report: {error}",
-                        report.listener_id.as_str()
-                    ))),
-                }
-            }
+            } => Self::forward_sync_report(report, sink)
             RuntimeTransportEvent::PeerDisconnected { peer, error, .. } => {
                 let Some(device_id) = peer.device_id else {
                     return Ok(error.map(|error| error.to_string()));
@@ -213,6 +187,34 @@ impl HostTransportEventProcessor {
             RuntimeTransportEvent::PeerAccepted { .. }
             | RuntimeTransportEvent::PeerAuthorized { .. }
             | RuntimeTransportEvent::FrameReceived { .. } => Ok(None),
+        }
+    }
+
+    /// Relay the listener's clock-quality report to the authoritative actor.
+    /// Only the listener observes t4; a malformed/non-finite report must
+    /// become a visible warning rather than aborting the host event loop.
+    fn forward_sync_report(
+        report: SynchronizationReport,
+        sink: &dyn DesktopHostTransportEventSink,
+    ) -> Result<Option<String>, DesktopNetworkError> {
+        match SynchronizationSummary::new(
+            report.confidence,
+            report.offset_ms,
+            report.round_trip_ms,
+            report.drift_ppm,
+        ) {
+            Ok(summary) => {
+                sink.submit_audio_event(AudioEvent::SynchronizationUpdated {
+                    device_id: report.listener_id,
+                    summary,
+                })
+                .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
+                Ok(None)
+            }
+            Err(error) => Ok(Some(format!(
+                "listener {} sent an invalid synchronization report: {error}",
+                report.listener_id.as_str()
+            ))),
         }
     }
 
