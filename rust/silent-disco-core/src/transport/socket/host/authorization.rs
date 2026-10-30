@@ -174,7 +174,8 @@ impl SocketHostTransport {
             let result = peer.sender.send(bytes);
             self.record_peer_result(peer, &result);
             let written = result?;
-            self.counters.frame_sent(written);
+            // The TCP writer already increments control_frames_sent and byte
+            // counters when the frame is written. Do not double-count replay.
             self.update_silence_clock(peer, &message);
             total_bytes = total_bytes.saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
         }
