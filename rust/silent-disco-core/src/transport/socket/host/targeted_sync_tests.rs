@@ -95,7 +95,17 @@ fn real_udp_sync_replies_target_only_the_admitted_requester_and_retire_with_rout
         t2_host_receive_elapsed_ms: MonotonicMillis::new(205),
         t3_host_send_elapsed_ms: MonotonicMillis::new(207),
     });
+    // A legacy caller must not bypass targeted delivery through the
+    // generic broadcast API and disclose another listener's correlation ID
+    // and host timestamps. Rejection occurs before any datagram is sent.
     let sent_before = host.counters().sync_datagrams_sent;
+    let rejected = host
+        .broadcast_sync(&response)
+        .expect_err("host SyncResponse must not be broadcast to every listener");
+    assert_eq!(rejected.kind, TransportErrorKind::Unauthorized);
+    assert_eq!(host.counters().sync_datagrams_sent, sent_before);
+    assert_eq!(first.counters().sync_datagrams_received, 0);
+    assert_eq!(second.counters().sync_datagrams_received, 0);
     let delivery = host
         .send_sync_to_peer(&first_id, &response)
         .expect("send only to first listener");

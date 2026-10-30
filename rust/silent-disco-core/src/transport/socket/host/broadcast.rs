@@ -117,10 +117,17 @@ impl SocketHostTransport {
         frame: &ProtocolFrame,
     ) -> Result<TransportDelivery, TransportError> {
         match (channel, frame) {
-            (
-                TransportChannel::Synchronization,
-                ProtocolFrame::SyncRequest(_) | ProtocolFrame::SyncResponse(_),
-            )
+            (TransportChannel::Synchronization, ProtocolFrame::SyncResponse(_)) => {
+                // A SyncResponse contains the requester's correlation ID and
+                // host timestamps. It is a per-peer reply, never a broadcast.
+                // Prevent legacy callers from bypassing send_targeted_sync.
+                return Err(TransportError::new(
+                    TransportErrorKind::Unauthorized,
+                    channel,
+                    "host synchronization responses require a targeted authorized route",
+                ));
+            }
+            (TransportChannel::Synchronization, ProtocolFrame::SyncRequest(_))
             | (TransportChannel::Audio, ProtocolFrame::Audio(_)) => {}
             _ => {
                 return Err(TransportError::new(
