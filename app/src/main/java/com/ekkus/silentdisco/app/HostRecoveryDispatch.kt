@@ -1,6 +1,5 @@
 package com.ekkus.silentdisco.app
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
@@ -19,11 +18,13 @@ internal class HostRecoveryDispatch(maxSyncInFlight: Int = 32) {
     init { require(maxSyncInFlight > 0) }
     private val syncSlots = Semaphore(maxSyncInFlight)
     private val refused = AtomicLong()
-    private val activeResyncs = ConcurrentHashMap.newKeySet<ResyncKey>()
+    private val resyncLock = Any()
+    private val activeResyncs = mutableMapOf<ResyncKey, ResyncState>()
+    private class ResyncState(var replayAgain: Boolean = false)
 
     internal val rejectedSyncRequests: Long get() = refused.get()
     internal val activeSyncRequests: Int get() = maxSyncInFlight - syncSlots.availablePermits()
-    internal val activeResyncRequests: Int get() = activeResyncs.size
+    internal val activeResyncRequests: Int get() = synchronized(resyncLock) { activeResyncs.size }
 
     fun launchSync(
         scope: CoroutineScope,
@@ -53,12 +54,42 @@ internal class HostRecoveryDispatch(maxSyncInFlight: Int = 32) {
         body: suspend () -> Unit,
     ): Boolean {
         val key = ResyncKey(generation, listenerId)
-        if (!activeResyncs.add(key)) return false
+        val state = synchronized(resyncLock) {
+            activeResyncs[key]?.let {
+                // Never lose the last authoritative notice behind an in-flight
+                // replay. Coalesce any number of duplicates into ONE follow-up.
+                it.replayAgain = true
+                return false
+            }
+            ResyncState().also { activeResyncs[key] = it }
+        }
+        fun retire() = synchronized(resyncLock) {
+            if (activeResyncs[key] === state) activeResyncs.remove(key)
+        }
         try {
-            scope.launch(dispatcher) { body() }
-                .invokeOnCompletion { activeResyncs.remove(key) }
+            scope.launch(dispatcher) {
+                try {
+                    while (true) {
+                        body()
+                        val repeat = synchronized(resyncLock) {
+                            if (state.replayAgain) {
+                                state.replayAgain = false
+                                true
+                            } else {
+                                // Removal and final dirty check must be atomic:
+                                // a concurrent notice then starts a fresh job.
+                                activeResyncs.remove(key)
+                                false
+                            }
+                        }
+                        if (!repeat) break
+                    }
+                } finally {
+                    retire()
+                }
+            }.invokeOnCompletion { retire() }
         } catch (error: Throwable) {
-            activeResyncs.remove(key)
+            retire()
             throw error
         }
         return true

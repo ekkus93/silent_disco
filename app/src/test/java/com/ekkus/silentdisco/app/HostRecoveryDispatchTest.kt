@@ -82,6 +82,40 @@ class HostRecoveryDispatchTest {
     }
 
     @Test
+    fun repeatedNoticeDuringBlockedReplayCausesOneFollowupNotSilentLoss() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        val limiter = HostRecoveryDispatch()
+        val handle = Any()
+        val unblock = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var replays = 0
+        assertThat(limiter.launchResync(scope, dispatcher, handle, "listener") {
+            replays++
+            if (replays == 1) unblock.await()
+        }).isTrue()
+        advanceUntilIdle()
+        assertThat(replays).isEqualTo(1)
+        repeat(256) {
+            assertThat(limiter.launchResync(scope, dispatcher, handle, "listener") {
+                error("duplicate must coalesce into the original replay body")
+            }).isFalse()
+        }
+        assertThat(limiter.activeResyncRequests).isEqualTo(1)
+        unblock.complete(Unit)
+        advanceUntilIdle()
+        assertThat(replays).isEqualTo(2)
+        assertThat(limiter.activeResyncRequests).isEqualTo(0)
+        // A notice after the final replay must start a new generation-scoped
+        // operation, not be lost in the completion-to-retirement race.
+        assertThat(limiter.launchResync(scope, dispatcher, handle, "listener") {
+            replays++
+        }).isTrue()
+        advanceUntilIdle()
+        assertThat(replays).isEqualTo(3)
+        scope.cancel()
+    }
+
+    @Test
     fun invalidSyncLimitCannotEnableAnUnboundedQueue() {
         val error = runCatching { HostRecoveryDispatch(maxSyncInFlight = 0) }.exceptionOrNull()
         assertThat(error).isInstanceOf(IllegalArgumentException::class.java)
