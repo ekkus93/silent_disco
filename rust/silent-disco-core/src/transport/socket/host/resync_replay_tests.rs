@@ -6,8 +6,7 @@ use std::time::{Duration, Instant};
 use crate::domain::{MonotonicMillis, SampleIndex};
 use crate::protocol::{ControlMessage, Pause, ProtocolFrame, ResyncNotice, Stop, TrackBoundary};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from,
+    id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
@@ -53,7 +52,9 @@ fn expect_controls(listener: &dyn ListenerTransportNode, expected: &[ControlMess
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(received),
                 ..
-            } = listener.recv_event(remaining).expect("read listener control")
+            } = listener
+                .recv_event(remaining)
+                .expect("read listener control")
             {
                 assert!(received == *control, "replay order and contents");
                 break;
@@ -67,7 +68,8 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
     let session = id_session("resync-authoritative-snapshot");
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut host = SocketHostTransport::bind(
-        HostTransportConfig::loopback(session.clone()), clock.clone(),
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
     )
     .expect("bind host");
     let factory = SocketTransportFactory;
@@ -93,22 +95,31 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
     let stream_id = start_info.stream_id.clone();
     let expected = [start, boundary, pause];
     for control in &expected {
-        assert_eq!(host.broadcast_control(control).expect("broadcast").report.successful_peers, 2);
+        assert_eq!(
+            host.broadcast_control(control)
+                .expect("broadcast")
+                .report
+                .successful_peers,
+            2
+        );
     }
     expect_controls(first.as_ref(), &expected);
     expect_controls(second.as_ref(), &expected);
 
-    first.send_control(&ControlMessage::ResyncNotice(ResyncNotice {
-        session_id: session.clone(),
-        listener_id: first_id.clone(),
-        reason: "missing control after reconnect".to_owned(),
-    }))
-    .expect("authorized listener requests recovery");
+    first
+        .send_control(&ControlMessage::ResyncNotice(ResyncNotice {
+            session_id: session.clone(),
+            listener_id: first_id.clone(),
+            reason: "missing control after reconnect".to_owned(),
+        }))
+        .expect("authorized listener requests recovery");
     wait_for_control_from(&mut host, &first_id, |message| {
         matches!(message, ControlMessage::ResyncNotice(_))
     });
     let before = host.counters().control_frames_sent;
-    let delivery = host.replay_cached_playback_to_peer(&first_id).expect("targeted recovery");
+    let delivery = host
+        .replay_cached_playback_to_peer(&first_id)
+        .expect("targeted recovery");
     assert_eq!(delivery.report.successful_peers, 1);
     assert!(delivery.bytes_sent > 0);
     assert_eq!(host.counters().control_frames_sent - before, 3);
@@ -124,9 +135,18 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
     expect_controls(first.as_ref(), std::slice::from_ref(&stop));
     expect_controls(second.as_ref(), std::slice::from_ref(&stop));
     let stopped = host.counters().control_frames_sent;
-    assert_eq!(host.replay_cached_playback_to_peer(&first_id).expect("idle recovery").report.intended_peers, 0);
+    assert_eq!(
+        host.replay_cached_playback_to_peer(&first_id)
+            .expect("idle recovery")
+            .report
+            .intended_peers,
+        0
+    );
     assert_eq!(host.counters().control_frames_sent, stopped);
-    assert!(host.replay_cached_playback_to_peer(&id_device("unknown")).is_err());
+    assert!(
+        host.replay_cached_playback_to_peer(&id_device("unknown"))
+            .is_err()
+    );
 
     first.shutdown().expect("close first");
     second.shutdown().expect("close second");

@@ -277,7 +277,9 @@ impl FfiHostTransportHandle {
     ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
         self.with_transport(|inner| {
             let listener_id = device_id(listener_id)?;
-            let delivery = inner.transport.replay_cached_playback_to_peer(&listener_id)?;
+            let delivery = inner
+                .transport
+                .replay_cached_playback_to_peer(&listener_id)?;
             Ok(delivery_from(delivery))
         })
     }
