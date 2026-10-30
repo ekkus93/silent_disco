@@ -58,7 +58,7 @@ pub trait HostTransportNode: Send {
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError>;
     /// Replays the authoritative current `StreamStart`, upcoming boundaries and
-    /// Pause to one already-authorized listener after its recovery request.
+    /// Pause, or the last terminal Stop, to an already-authorized listener.
     /// Socket hosts serialize this snapshot with live broadcasts and joins.
     fn replay_cached_playback_to_peer(
         &self,

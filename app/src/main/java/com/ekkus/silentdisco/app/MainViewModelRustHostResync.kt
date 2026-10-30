@@ -19,9 +19,9 @@ internal fun MainViewModel.replayHostControlsForResync(
 ) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            // A retired generation returns null. Zero successful peers is
-            // valid when the host is idle/Stopped: there is no playback to
-            // replay, and the listener must not be resurrected.
+            // A retired host generation returns null. A stopped host replays
+            // its terminal Stop to an admitted listener, never a retired
+            // StreamStart; a newly joining listener receives no stale replay.
             hostTransportController.replayCachedPlaybackForGeneration(
                 expected = sourceHandle,
                 listenerId = event.listenerId,

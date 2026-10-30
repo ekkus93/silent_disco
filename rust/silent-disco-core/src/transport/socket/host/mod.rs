@@ -63,6 +63,9 @@ pub(super) struct PlaybackControls {
     stream_start: Option<StreamStart>,
     boundaries: VecDeque<TrackBoundary>,
     pause: Option<Pause>,
+    // Stop is retained only for an already-authorized listener requesting
+    // recovery. New joiners must never receive the retired stream's Stop.
+    last_stop: Option<Stop>,
     // Highest pause timestamp already observed for this stream. A Resume
     // clears the active pause but must not erase its retransmission fence.
     last_pause_time_ms: Option<u64>,
@@ -207,6 +210,7 @@ impl PlaybackControls {
                         self.resume_anchor_floor = Some(current_start.host_start_time_ms.get());
                     }
                 } else {
+                    self.last_stop = None;
                     self.resume_anchor_floor = None;
                     self.boundaries.clear();
                     self.last_applied_boundary_sample_index = None;
@@ -286,6 +290,7 @@ impl PlaybackControls {
                     Some((retired.session_id.clone(), retired.host_start_time_ms.get()));
                 self.last_stopped_control =
                     Some((retired.session_id, stop.host_stop_time_ms.get()));
+                self.last_stop = Some(stop.clone());
                 self.boundaries.clear();
                 self.last_applied_boundary_sample_index = None;
                 self.pause = None;
@@ -307,6 +312,7 @@ impl PlaybackControls {
                     // start cannot resurrect playback for a new listener.
                     self.last_stopped_control =
                         Some((stop.session_id.clone(), stop.host_stop_time_ms.get()));
+                    self.last_stop = Some(stop.clone());
                     self.awaiting_replay_first_packet = true;
                     self.replay_next_packet = None;
                     true
@@ -407,6 +413,20 @@ impl PlaybackControls {
         controls.extend(upcoming);
         controls.extend(self.pause.clone().map(ControlMessage::Pause));
         controls
+    }
+
+    /// Unlike a new join, recovery of an existing admitted listener must
+    /// replay a missed terminal Stop when playback is no longer active.
+    pub(super) fn recovery_snapshot_at(&self, now: MonotonicMillis) -> Vec<ControlMessage> {
+        if self.stream_start.is_some() {
+            self.snapshot_at(now)
+        } else {
+            self.last_stop
+                .clone()
+                .map(ControlMessage::Stop)
+                .into_iter()
+                .collect()
+        }
     }
 
     #[cfg(test)]

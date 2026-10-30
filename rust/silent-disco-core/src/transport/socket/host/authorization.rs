@@ -67,7 +67,7 @@ impl SocketHostTransport {
         // Replay before switching the live route. If the new socket cannot
         // receive the authoritative snapshot, the old TCP/UDP route must
         // remain usable instead of being replaced by a broken connection.
-        self.send_cached_playback_controls(&peer)?;
+        self.send_cached_playback_controls(&peer, false)?;
         if !peer.active.load(Ordering::Acquire) {
             return Err(TransportError::new(
                 TransportErrorKind::PeerNotFound,
@@ -155,6 +155,7 @@ impl SocketHostTransport {
     pub(super) fn send_cached_playback_controls(
         &self,
         peer: &super::peer::PeerState,
+        include_terminal_stop: bool,
     ) -> Result<u64, TransportError> {
         let controls = self
             .playback_controls
@@ -165,8 +166,12 @@ impl SocketHostTransport {
                     TransportChannel::Runtime,
                     "playback control cache is poisoned",
                 )
-            })?
-            .snapshot_at(self.clock.now());
+            })?;
+        let controls = if include_terminal_stop {
+            controls.recovery_snapshot_at(self.clock.now())
+        } else {
+            controls.snapshot_at(self.clock.now())
+        };
         let mut total_bytes = 0_u64;
         for message in controls {
             let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))

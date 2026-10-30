@@ -125,7 +125,9 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
     assert_eq!(host.counters().control_frames_sent - before, 3);
     expect_controls(first.as_ref(), &expected);
 
-    // Stop invalidates the cache: recovery must never resurrect the old stream.
+    // Stop invalidates the active cache. A new join sees no playback, but an
+    // already-admitted listener requesting recovery must receive the missed
+    // terminal Stop instead of continuing its retired output indefinitely.
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
         stream_id,
@@ -137,12 +139,13 @@ fn resync_replays_only_to_admitted_requester_and_stop_disarms_recovery() {
     let stopped = host.counters().control_frames_sent;
     assert_eq!(
         host.replay_cached_playback_to_peer(&first_id)
-            .expect("idle recovery")
+            .expect("terminal recovery")
             .report
-            .intended_peers,
-        0
+            .successful_peers,
+        1
     );
-    assert_eq!(host.counters().control_frames_sent, stopped);
+    expect_controls(first.as_ref(), std::slice::from_ref(&stop));
+    assert_eq!(host.counters().control_frames_sent, stopped + 1);
     assert!(
         host.replay_cached_playback_to_peer(&id_device("unknown"))
             .is_err()

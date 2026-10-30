@@ -252,7 +252,7 @@ impl HostTransportNode for SocketHostTransport {
             )
         })?;
         let peer = self.peer_for_device(device_id)?;
-        let bytes = self.send_cached_playback_controls(&peer)?;
+        let bytes = self.send_cached_playback_controls(&peer, true)?;
         if bytes == 0 {
             // A stopped/idle host has no active playback to replay.
             TransportDelivery::new(0, 0, 0, 0)
