@@ -394,7 +394,13 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
     .expect("bind production TCP/UDP host");
     let factory = SocketTransportFactory;
     let first_id = id_device("reconnecting-listener");
-    let mut first = join(&mut host, factory, &clock, &session, "reconnecting-listener");
+    let mut first = join(
+        &mut host,
+        factory,
+        &clock,
+        &session,
+        "reconnecting-listener",
+    );
     let mut other = join(&mut host, factory, &clock, &session, "stable-listener");
 
     let ControlMessage::StreamStart(mut start) = stream_start(&session, 1_000) else {
@@ -411,7 +417,10 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
     });
     for control in [&start_control, &boundary] {
         assert_eq!(
-            host.broadcast_control(control).expect("broadcast control").report.successful_peers,
+            host.broadcast_control(control)
+                .expect("broadcast control")
+                .report
+                .successful_peers,
             2
         );
         expect_controls(first.as_ref(), std::slice::from_ref(control));
@@ -448,7 +457,13 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
     // no unsolicited old controls until the host explicitly targets it with
     // the authoritative cached snapshot.
     let sent_before_join = host.counters().control_frames_sent;
-    let mut replacement = join(&mut host, factory, &clock, &session, "reconnecting-listener");
+    let mut replacement = join(
+        &mut host,
+        factory,
+        &clock,
+        &session,
+        "reconnecting-listener",
+    );
     assert_eq!(host.counters().control_frames_sent, sent_before_join);
     let sent_before_recovery = host.counters().control_frames_sent;
     assert_eq!(
@@ -458,7 +473,10 @@ fn same_id_reconnect_during_pause_recovers_controls_and_contiguous_pcm_on_real_s
             .successful_peers,
         1
     );
-    assert_eq!(host.counters().control_frames_sent - sent_before_recovery, 3);
+    assert_eq!(
+        host.counters().control_frames_sent - sent_before_recovery,
+        3
+    );
     for control in [&start_control, &boundary, &pause] {
         expect_controls(replacement.as_ref(), std::slice::from_ref(control));
     }
