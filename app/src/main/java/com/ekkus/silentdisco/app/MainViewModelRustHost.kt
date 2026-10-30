@@ -26,6 +26,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostDraft
 import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
+import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
