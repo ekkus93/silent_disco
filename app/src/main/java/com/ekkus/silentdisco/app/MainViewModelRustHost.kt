@@ -84,11 +84,15 @@ private fun MainViewModel.handleHostTransportEvent(
 ) {
     when (event) {
         is FfiHostTransportEvent.JoinRequestReceived -> {
+            // A claimed device ID is not a join-request identity: the same
+            // listener can reconnect and submit a new request in this session.
+            // Each observed native join gets a fresh actor request ID.
+            val requestId = newHostJoinRequestId()
             pendingListenerDatagramPorts[event.deviceId] = event.syncPort to event.audioPort
             runCatching {
                 controller.submitJoinRequest(
                     FfiJoinRequestInput(
-                        requestId = event.deviceId,
+                        requestId = requestId,
                         deviceId = event.deviceId,
                         displayName = event.displayName,
                         trustState = FfiTrustState.UNKNOWN,
@@ -96,7 +100,12 @@ private fun MainViewModel.handleHostTransportEvent(
                         receivedAtMs = SystemClock.elapsedRealtime().toULong(),
                     ),
                 )
-            }.onFailure { error -> reportRustHostCommandFailure("submit join request", error) }
+            }.onFailure { error ->
+                // Do not retain datagram ports for a request the Rust actor
+                // never accepted; a later approval must not use stale ports.
+                pendingListenerDatagramPorts.remove(event.deviceId)
+                reportRustHostCommandFailure("submit join request", error)
+            }
         }
         is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->
             runCatching { controller.submitListenerDisconnected(listenerId) }
